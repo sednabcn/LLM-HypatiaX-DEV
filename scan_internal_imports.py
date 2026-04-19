@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
+import warnings
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Iterator
@@ -90,7 +91,11 @@ def extract_imports(py_file: Path) -> list[str]:
     """Return every imported module name from *py_file* (best-effort AST walk)."""
     try:
         source = py_file.read_text(errors="replace")
-        tree   = ast.parse(source)
+        # Suppress SyntaxWarning: Python 3.12 warns on non-raw strings containing
+        # escape sequences like \d in scanned files — not our bug, not actionable.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(source)
     except SyntaxError:
         return []
 

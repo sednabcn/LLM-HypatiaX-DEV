@@ -153,11 +153,12 @@ class PatchP1(Patch):
             "from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem",
             "import statements",
         ),
-        # 2. Class/method name used in benchmark table row  (line 2559)
-        #    HybridSystemV40Method  →  HybridSystemV50_2Method
+        # 2. Class definition (line 2392) and benchmark table row (line 2559).
+        #    Line 2302 is a comment "# Same adaptive budget as HybridSystemV40Method"
+        #    — excluded by anchoring to class keyword or tuple indent pattern.
         (
-            r"\bHybridSystemV40Method\b",
-            "HybridSystemV50_2Method",
+            r"^(class |        \(\d+,\s*)HybridSystemV40Method\b",
+            r"\1HybridSystemV50_2Method",
             "wrapper class name",
         ),
         # 3. Path string in benchmark table tuple  (line 2559)
@@ -269,22 +270,27 @@ class PatchP2(Patch):
                 ok(f"P-2 rename {old[:40]!r}: not found — already patched or not present")
                 continue
 
-            # FIX-4: guard against unexpected 3+ occurrences
-            if occurrences > 2:
-                warn(
-                    f"P-2: {occurrences} occurrences of {old[:40]!r} found — "
-                    "expected at most 2; skipping to avoid incorrect edit. "
-                    "Review manually."
-                )
-                continue
-
             if occurrences == 1:
                 ok(f"P-2 rename {old[:40]!r}: only one occurrence — already patched")
                 continue
 
-            # Exactly 2 occurrences: replace the second one only.
-            # parts == [before_1st, between_1st_and_2nd, after_2nd]
-            text = parts[0] + old + parts[1] + new + parts[2]
+            # Guard: more than 3 is unexpected
+            if occurrences > 3:
+                warn(
+                    f"P-2: {occurrences} occurrences of {old[:40]!r} — "
+                    "too many to patch safely; review manually."
+                )
+                continue
+
+            # Replace SECOND occurrence only regardless of total count:
+            #   2 occurrences: parts = [pre1, between, post2]
+            #   3 occurrences: parts = [pre1, between, between2, post3]
+            #     → keep 1st and 3rd as-is, rename 2nd only
+            text = (
+                parts[0] + old           # keep 1st occurrence
+                + parts[1] + new         # rename 2nd occurrence
+                + old.join(parts[2:])    # keep remaining occurrences unchanged
+            )
             if dry_run:
                 print(f"  DRY-RUN  P-2: would rename second {old[:40]!r} → {new[:40]!r}")
             else:
@@ -418,7 +424,7 @@ class PatchP5(Patch):
     Results are NOT directly comparable. See §10.7 disclosure note in the paper.
     """
 '''
-    MARKER = "def run_experiment("
+    MARKER = "def main():"  # actual entry point in this file (line 3218)
 
     def apply(self, root: Path, dry_run: bool) -> bool:
         path = root / self.TARGET
@@ -479,14 +485,24 @@ def run_verification(root: Path) -> None:
         text=True,
     )
     print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
 
+    # Filter stderr — Python 3.12 emits SyntaxWarning for \d in non-raw strings
+    # in scanned files; these are cosmetic and do not affect scan correctness.
+    real_errors = [
+        line for line in result.stderr.splitlines()
+        if line
+        and "SyntaxWarning" not in line
+        and "invalid escape sequence" not in line
+    ]
+    if real_errors:
+        print("\n".join(real_errors))
+
+    # Match against the actual console output format of scan_internal_imports.py
     all_clear = (
-        "Stale engine imports  :   0" in result.stdout
-        and "Ghost imports         :   0" in result.stdout
-        and "Protocol layer leaks :   0" in result.stdout
-        and "Import cycles        :   0" in result.stdout
+        "[A] Stale engine imports : 0" in result.stdout
+        and "[B] Ghost imports        : 0" in result.stdout
+        and "[C] Protocol layer leaks : 0" in result.stdout
+        and "[D] Import cycles        : 0" in result.stdout
     )
     if all_clear:
         ok("Verification passed — all checks clean ✓")
@@ -514,8 +530,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # FIX-1: file lives at repo root — parent[0] is correct, not parents[2]
-    repo_root = Path(__file__).resolve().parent
+    # FIX-1: file lives at repo root — parents[2] is correct, not parents[2]
+    repo_root = Path(__file__).resolve().parents[2]
     print(f"\n  HypatiaX apply_patches.py")
     print(f"  Repo root : {repo_root}")
     print(f"  Dry run   : {args.dry_run}")
