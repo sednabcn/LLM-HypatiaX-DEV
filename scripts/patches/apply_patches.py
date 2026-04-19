@@ -13,17 +13,29 @@ Patches applied:
   P-5  Add Feynman 80/20 split protocol comment to run_comparative_suite_benchmark_v2.py
 
 Usage:
-    python3 scripts/patches/apply_patches.py          # apply all patches
-    python3 scripts/patches/apply_patches.py --dry-run # show diffs, no writes
-    python3 scripts/patches/apply_patches.py --patch P-1  # apply one patch only
+    python3 apply_patches.py                # apply all patches
+    python3 apply_patches.py --dry-run      # show diffs, no writes
+    python3 apply_patches.py --patch P-1    # apply one patch only
+    python3 apply_patches.py --verify       # apply all + re-run scanner
 
 Exit codes:
   0 — all patches applied (or already applied — idempotent)
   1 — one or more patches failed
+
+Fixes vs original:
+  FIX-1  repo_root now resolves correctly (file lives at repo root, not scripts/patches/)
+  FIX-2  P-1 uses word-boundary \\b instead of (?!fix) lookahead
+  FIX-3  P-4 also catches bare sk-ant-... string assignments (not only Anthropic() calls)
+  FIX-4  P-2 guards against 3+ occurrences of the same duplicate name
+  FIX-5  P-3 target file corrected to match actual tree (experiment_protocol_all_18_a.py)
+  FIX-6  Backup (.bak) written before every file overwrite
+  FIX-7  --verify flag re-runs scan_internal_imports.py after patching
 """
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -46,11 +58,24 @@ class Patch:
     description: str = ""
 
     def apply(self, root: Path, dry_run: bool) -> bool:
-        """Return True on success."""
         raise NotImplementedError
 
-    def _replace_in_file(self, path: Path, old: str, new: str,
-                         dry_run: bool, label: str = "") -> bool:
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _backup(path: Path) -> None:
+        """Write a .bak copy alongside the original before overwriting."""
+        bak = path.with_suffix(path.suffix + ".bak")
+        shutil.copy2(path, bak)
+
+    def _replace_in_file(
+        self,
+        path: Path,
+        old: str,
+        new: str,
+        dry_run: bool,
+        label: str = "",
+    ) -> bool:
         if not path.exists():
             fail(f"{label or path}: file not found")
             return False
@@ -61,12 +86,20 @@ class Patch:
         if dry_run:
             print(f"  DRY-RUN  {label or path.name}: would replace {repr(old[:60])} …")
             return True
+        self._backup(path)
         path.write_text(text.replace(old, new))
-        ok(f"{label or path.name}: patched")
+        ok(f"{label or path.name}: patched  (backup: {path.name}.bak)")
         return True
 
-    def _regex_replace(self, path: Path, pattern: str, repl: str,
-                       dry_run: bool, label: str = "", flags=0) -> bool:
+    def _regex_replace(
+        self,
+        path: Path,
+        pattern: str,
+        repl: str,
+        dry_run: bool,
+        label: str = "",
+        flags: int = 0,
+    ) -> bool:
         if not path.exists():
             fail(f"{label or path}: file not found")
             return False
@@ -78,8 +111,9 @@ class Patch:
         if dry_run:
             print(f"  DRY-RUN  {label or path.name}: would make {n} replacement(s)")
             return True
+        self._backup(path)
         path.write_text(new_text)
-        ok(f"{label or path.name}: {n} replacement(s) applied")
+        ok(f"{label or path.name}: {n} replacement(s) applied  (backup: {path.name}.bak)")
         return True
 
 
@@ -89,27 +123,115 @@ class PatchP1(Patch):
     id = "P-1"
     description = "Swap hybrid_system_v40 → hybrid_system_v50_2 (FIX-C2)"
 
-    # Files that contain v40 imports per Pipeline Plan §PART 1 / P-1
-    TARGETS = [
-        "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
+    # Files where only live import statements are rewritten.
+    # (no method-name or benchmark-table references)
+    SIMPLE_TARGETS = [
         "hypatiax/core/generation/hybrid_all_domains/suite_hybrid_system_all_domains.py",
         "hypatiax/core/generation/hybrid_defi_llm_guided/llm_guided_symbolic_discovery_defi.py",
         "hypatiax/core/generation/hybrid_defi_system/complete_defi_hybrid_system.py",
     ]
 
+    # run_comparative_suite_benchmark_v2.py needs surgical, line-by-line treatment
+    # because it contains a mix of:
+    #   • live import statements  (must change)
+    #   • a wrapper class name    (must change)
+    #   • comments / docstrings referencing the old filename  (update wording)
+    #   • a benchmark table row   (update name + path string)
+    BENCHMARK_FILE = (
+        "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+    )
+
+    # ── substitution rules applied to BENCHMARK_FILE, in order ───────────────
+    # Each entry: (regex_pattern, replacement, description)
+    # Rules are intentionally narrow so comments/docs get human-readable updates
+    # rather than a blind find-replace that leaves "v50_2.py" in prose.
+    BENCHMARK_RULES: list[tuple[str, str, str]] = [
+        # 1. Live import lines  (lines 2070, 2404)
+        #    from hypatiax.tools.symbolic.hybrid_system_v40 import HybridDiscoverySystem
+        (
+            r"from hypatiax\.tools\.symbolic\.hybrid_system_v40 import HybridDiscoverySystem",
+            "from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem",
+            "import statements",
+        ),
+        # 2. Class/method name used in benchmark table row  (line 2559)
+        #    HybridSystemV40Method  →  HybridSystemV50_2Method
+        (
+            r"\bHybridSystemV40Method\b",
+            "HybridSystemV50_2Method",
+            "wrapper class name",
+        ),
+        # 3. Path string in benchmark table tuple  (line 2559)
+        #    "tools/symbolic/hybrid_system_v40.py"
+        (
+            r'"tools/symbolic/hybrid_system_v40\.py"',
+            '"tools/symbolic/hybrid_system_v50_2.py"',
+            "benchmark table path string",
+        ),
+        # 4. Docstring / comment: "Wraps hypatiax...hybrid_system_v40.HybridDiscoverySystem"
+        #    (line 2394)
+        (
+            r"(Wraps hypatiax\.tools\.symbolic\.)hybrid_system_v40(\.HybridDiscoverySystem)",
+            r"\1hybrid_system_v50_2\2",
+            "docstring module reference",
+        ),
+        # 5. Inline comment: "tools/symbolic/hybrid_system_v40.py"  (lines 29, 1997, 2389)
+        #    Only inside # comment or docstring lines — leave prose wording intact
+        #    but update the filename so readers can find the actual file.
+        (
+            r"(#[^\n]*?)hybrid_system_v40(\.py)",
+            r"\1hybrid_system_v50_2\2",
+            "inline comment filename references",
+        ),
+        # 6. Remaining bare "v40" label in the benchmark summary comment (line 3232)
+        #    "HybridDiscovery v40" → "HybridDiscovery v50_2"
+        (
+            r"(HybridDiscovery\s+)v40\b",
+            r"\1v50_2",
+            "benchmark summary label",
+        ),
+    ]
+
     def apply(self, root: Path, dry_run: bool) -> bool:
         ok_all = True
-        for rel in self.TARGETS:
+
+        # ── Simple targets: only import lines need changing ───────────────────
+        for rel in self.SIMPLE_TARGETS:
             path = root / rel
-            # Replace all occurrences of v40 (but NOT v40fix — that's a separate file)
             ok_all &= self._regex_replace(
                 path,
-                r"hybrid_system_v40(?!fix)",
-                "hybrid_system_v50_2",
+                r"from hypatiax\.tools\.symbolic\.hybrid_system_v40 import",
+                "from hypatiax.tools.symbolic.hybrid_system_v50_2 import",
                 dry_run,
                 label=rel,
                 flags=re.MULTILINE,
             )
+
+        # ── Benchmark file: apply each rule in sequence ───────────────────────
+        bm_path = root / self.BENCHMARK_FILE
+        if not bm_path.exists():
+            fail(f"P-1: {self.BENCHMARK_FILE} not found")
+            return False
+
+        text     = bm_path.read_text(errors="replace")
+        original = text
+        total_n  = 0
+
+        for pattern, repl, desc in self.BENCHMARK_RULES:
+            text, n = re.subn(pattern, repl, text, flags=re.MULTILINE)
+            if n:
+                total_n += n
+                if dry_run:
+                    print(f"  DRY-RUN  {bm_path.name}: [{desc}] would make {n} replacement(s)")
+                else:
+                    ok(f"  {bm_path.name}: [{desc}] {n} replacement(s)")
+
+        if text == original:
+            ok(f"{bm_path.name}: already fully patched — no changes needed")
+        elif not dry_run:
+            self._backup(bm_path)
+            bm_path.write_text(text)
+            ok(f"{bm_path.name}: {total_n} total replacement(s)  (backup: {bm_path.name}.bak)")
+
         return ok_all
 
 
@@ -122,9 +244,10 @@ class PatchP2(Patch):
     TARGET = "hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
 
     RENAMES = [
-        # (old_name_in_hard_tier, new_name)
-        ('"Constant product formula"',           '"Constant product formula (multivariate)"'),
-        ('"Funding rate cost"',                  '"Funding rate cost (extended)"'),
+        ('"Constant product formula"',
+         '"Constant product formula (multivariate)"'),
+        ('"Funding rate cost"',
+         '"Funding rate cost (extended)"'),
         ('"Concentrated liquidity position width"',
          '"Concentrated liquidity position width (v2)"'),
     ]
@@ -135,21 +258,37 @@ class PatchP2(Patch):
             fail(f"P-2: {self.TARGET} not found")
             return False
 
-        text = path.read_text(errors="replace")
+        text     = path.read_text(errors="replace")
         original = text
 
-        # Apply renames — only rename the SECOND occurrence of each duplicate
         for old, new in self.RENAMES:
             parts = text.split(old)
-            if len(parts) < 3:
-                ok(f"P-2 rename {old[:40]}: already patched or no duplicate")
+            occurrences = len(parts) - 1
+
+            if occurrences == 0:
+                ok(f"P-2 rename {old[:40]!r}: not found — already patched or not present")
                 continue
-            # Replace only the last occurrence (2nd duplicate)
-            text = old.join(parts[:-1]) + new + parts[-1]
-            if not dry_run:
-                ok(f"P-2: renamed second occurrence of {old[:40]!r}")
-            else:
+
+            # FIX-4: guard against unexpected 3+ occurrences
+            if occurrences > 2:
+                warn(
+                    f"P-2: {occurrences} occurrences of {old[:40]!r} found — "
+                    "expected at most 2; skipping to avoid incorrect edit. "
+                    "Review manually."
+                )
+                continue
+
+            if occurrences == 1:
+                ok(f"P-2 rename {old[:40]!r}: only one occurrence — already patched")
+                continue
+
+            # Exactly 2 occurrences: replace the second one only.
+            # parts == [before_1st, between_1st_and_2nd, after_2nd]
+            text = parts[0] + old + parts[1] + new + parts[2]
+            if dry_run:
                 print(f"  DRY-RUN  P-2: would rename second {old[:40]!r} → {new[:40]!r}")
+            else:
+                ok(f"P-2: renamed second occurrence of {old[:40]!r}")
 
         # Fix checkpoint key: case["name"] → case["equation_id"]
         text, n = re.subn(
@@ -158,16 +297,17 @@ class PatchP2(Patch):
             text,
         )
         if n > 0:
-            if not dry_run:
-                ok(f"P-2: checkpoint key → equation_id ({n} replacement(s))")
-            else:
+            if dry_run:
                 print(f"  DRY-RUN  P-2: would fix checkpoint key ({n} replacement(s))")
+            else:
+                ok(f"P-2: checkpoint key → equation_id ({n} replacement(s))")
 
         if text == original:
             ok("P-2: already fully patched — no changes needed")
             return True
 
         if not dry_run:
+            self._backup(path)
             path.write_text(text)
         return True
 
@@ -178,9 +318,10 @@ class PatchP3(Patch):
     id = "P-3"
     description = "Set populations=30 as default in make_pysr() (fair ablation baseline)"
 
+    # FIX-5: corrected to actual files present in the tree.
     TARGETS = [
         "hypatiax/core/training/baseline_neural_network.py",
-        "protocols/experiment_protocol_ablation_exp1.py",
+        "hypatiax/protocols/experiment_protocol_all_18_a.py",  # was: non-existent path
     ]
 
     def apply(self, root: Path, dry_run: bool) -> bool:
@@ -188,7 +329,7 @@ class PatchP3(Patch):
         for rel in self.TARGETS:
             path = root / rel
             if not path.exists():
-                warn(f"P-3: {rel} not found — skipping")
+                warn(f"P-3: {rel} not found — skipping (non-fatal)")
                 continue
             ok_all &= self._regex_replace(
                 path,
@@ -207,50 +348,66 @@ class PatchP4(Patch):
     id = "P-4"
     description = "Replace hardcoded API keys with os.environ lookup"
 
-    # Pattern: anthropic.Anthropic(api_key="sk-ant-...")
-    API_KEY_PATTERN = re.compile(
+    # Pattern 1: anthropic.Anthropic(api_key="sk-ant-...")
+    _CALL_PATTERN = re.compile(
         r'anthropic\.Anthropic\(\s*api_key\s*=\s*["\']sk-ant-[^"\']{10,}["\']',
         re.MULTILINE,
     )
-    SAFE_REPLACEMENT = 'anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"]'
+    _CALL_REPLACEMENT = 'anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"]'
+
+    # FIX-3: Pattern 2 — bare string assignments, e.g. API_KEY = "sk-ant-..."
+    _BARE_PATTERN = re.compile(
+        r'(["\'])sk-ant-[A-Za-z0-9\-_]{20,}\1',
+        re.MULTILINE,
+    )
+    _BARE_REPLACEMENT = 'os.environ["ANTHROPIC_API_KEY"]'
 
     def apply(self, root: Path, dry_run: bool) -> bool:
-        # Scan all .py files in repo for hardcoded keys
-        hits = []
+        hits: list[Path] = []
         for py in root.rglob("*.py"):
+            # Never rewrite apply_patches.py itself or .bak files
+            if py.name in ("apply_patches.py",) or py.suffix == ".bak":
+                continue
             try:
                 text = py.read_text(errors="replace")
-            except Exception:
+            except OSError:
                 continue
-            if self.API_KEY_PATTERN.search(text):
+            if self._CALL_PATTERN.search(text) or self._BARE_PATTERN.search(text):
                 hits.append(py)
 
         if not hits:
             ok("P-4: no hardcoded API keys found ✓")
             return True
 
-        ok_all = True
         for py in hits:
-            text = py.read_text(errors="replace")
-            new_text = self.API_KEY_PATTERN.sub(self.SAFE_REPLACEMENT, text)
-            # Ensure os is imported
+            text     = py.read_text(errors="replace")
+            new_text = self._CALL_PATTERN.sub(self._CALL_REPLACEMENT, text)
+            new_text = self._BARE_PATTERN.sub(self._BARE_REPLACEMENT, new_text)
+
+            # Ensure `import os` is present at the top
             if "import os" not in new_text:
                 new_text = "import os\n" + new_text
+
             if dry_run:
                 warn(f"P-4 DRY-RUN: would remove hardcoded key in {py.relative_to(root)}")
             else:
+                self._backup(py)
                 py.write_text(new_text)
-                ok(f"P-4: removed hardcoded API key from {py.relative_to(root)}")
-                warn("  ⚠  Rotate the exposed key at console.anthropic.com immediately!")
+                ok(f"P-4: removed hardcoded API key from {py.relative_to(root)}"
+                   f"  (backup: {py.name}.bak)")
+                warn("  Rotate the exposed key at console.anthropic.com immediately!")
 
-        return ok_all
+        return True
 
 
 # ── P-5: Feynman split protocol comment ──────────────────────────────────────
 
 class PatchP5(Patch):
     id = "P-5"
-    description = "Add Feynman 80/20 split protocol comment to run_comparative_suite_benchmark_v2.py"
+    description = (
+        "Add Feynman 80/20 split protocol comment to "
+        "run_comparative_suite_benchmark_v2.py"
+    )
 
     TARGET = "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
 
@@ -261,14 +418,13 @@ class PatchP5(Patch):
     Results are NOT directly comparable. See §10.7 disclosure note in the paper.
     """
 '''
-    # Insert after `def run_experiment(` line
     MARKER = "def run_experiment("
 
     def apply(self, root: Path, dry_run: bool) -> bool:
         path = root / self.TARGET
         if not path.exists():
-            warn(f"P-5: {self.TARGET} not found — skipping")
-            return True  # non-fatal
+            warn(f"P-5: {self.TARGET} not found — skipping (non-fatal)")
+            return True
 
         text = path.read_text(errors="replace")
         if "Split protocol:" in text:
@@ -280,16 +436,19 @@ class PatchP5(Patch):
             warn(f"P-5: marker '{self.MARKER}' not found — skipping")
             return True
 
-        # Find end of the def signature line
         end_of_line = text.find("\n", idx) + 1
-        new_text = text[:end_of_line] + self.COMMENT + text[end_of_line:]
+        new_text    = text[:end_of_line] + self.COMMENT + text[end_of_line:]
 
         if dry_run:
-            print(f"  DRY-RUN  P-5: would insert split protocol comment after {self.MARKER!r}")
+            print(
+                f"  DRY-RUN  P-5: would insert split protocol comment "
+                f"after {self.MARKER!r}"
+            )
             return True
 
+        self._backup(path)
         path.write_text(new_text)
-        ok(f"P-5: split protocol comment inserted into {self.TARGET}")
+        ok(f"P-5: split protocol comment inserted  (backup: {Path(self.TARGET).name}.bak)")
         return True
 
 
@@ -304,17 +463,59 @@ ALL_PATCHES: list[Patch] = [
 ]
 
 
+# ── Post-patch verification ───────────────────────────────────────────────────
+
+def run_verification(root: Path) -> None:
+    """Re-run scan_internal_imports.py and print a pass/fail summary."""
+    scanner = root / "scan_internal_imports.py"
+    if not scanner.exists():
+        warn("Verification skipped — scan_internal_imports.py not found at repo root")
+        return
+
+    print("\n  ── Post-patch verification (scan_internal_imports.py)")
+    result = subprocess.run(
+        [sys.executable, str(scanner), "--root", str(root)],
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+
+    all_clear = (
+        "Stale engine imports  :   0" in result.stdout
+        and "Ghost imports         :   0" in result.stdout
+        and "Protocol layer leaks :   0" in result.stdout
+        and "Import cycles        :   0" in result.stdout
+    )
+    if all_clear:
+        ok("Verification passed — all checks clean ✓")
+    else:
+        warn("Verification found remaining issues — review import_report.txt")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="HypatiaX — apply reproducibility patches")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be changed without writing files")
-    parser.add_argument("--patch", metavar="ID",
-                        help="Apply only this patch (e.g. P-1)")
+    parser = argparse.ArgumentParser(
+        description="HypatiaX — apply reproducibility patches"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be changed without writing files",
+    )
+    parser.add_argument(
+        "--patch", metavar="ID",
+        help="Apply only this patch (e.g. P-1)",
+    )
+    parser.add_argument(
+        "--verify", action="store_true",
+        help="Re-run scan_internal_imports.py after patching to confirm results",
+    )
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[2]  # scripts/patches/ → repo root
+    # FIX-1: file lives at repo root — parent[0] is correct, not parents[2]
+    repo_root = Path(__file__).resolve().parent
     print(f"\n  HypatiaX apply_patches.py")
     print(f"  Repo root : {repo_root}")
     print(f"  Dry run   : {args.dry_run}")
@@ -324,10 +525,13 @@ def main() -> int:
     if args.patch:
         patches = [p for p in ALL_PATCHES if p.id == args.patch]
         if not patches:
-            fail(f"Unknown patch id: {args.patch!r}  (valid: {[p.id for p in ALL_PATCHES]})")
+            fail(
+                f"Unknown patch id: {args.patch!r}  "
+                f"(valid: {[p.id for p in ALL_PATCHES]})"
+            )
             return 1
 
-    failed_patches = []
+    failed_patches: list[str] = []
     for patch in patches:
         print(f"  ── {patch.id}: {patch.description}")
         try:
@@ -344,9 +548,14 @@ def main() -> int:
         return 1
 
     if args.dry_run:
-        print(f"  DRY-RUN complete — no files were modified")
+        print("  DRY-RUN complete — no files were modified")
     else:
         ok(f"All {len(patches)} patch(es) applied successfully ✓")
+
+    # FIX-7: optional post-patch scan
+    if args.verify and not args.dry_run:
+        run_verification(repo_root)
+
     return 0
 
 
