@@ -33,9 +33,6 @@ Original file is located at
 > §1, §2, §4, §5, §6 all work from existing JSON files without running the benchmark.
 """
 
-from google.colab import files
-files.upload()
-
 """---
 ## §0 — Environment & Configuration
 """
@@ -59,14 +56,30 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── Output directory ──────────────────────────────────────────────────────────
-RESULTS_DIR = Path("/content")  # All outputs saved to /content
+# Portable: write outputs next to this script (or set HYPATIAX_RESULTS_DIR env var)
+_DEFAULT_OUT = PROJECT_ROOT / 'hypatiax' / 'data' / 'results' / 'portfolio_variance_audit'
+RESULTS_DIR = Path(os.environ.get('HYPATIAX_RESULTS_DIR', str(_DEFAULT_OUT)))
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Input data paths ──────────────────────────────────────────────────────────
-SWEEP_JSON_ORIGINAL = Path('/content') / 'portfolio_variance_seed_sweep.json'
-SWEEP_JSON_DEFI     = RESULTS_DIR  / 'portfolio_variance_defi_seed_sweep.json'
-V3C3_RESULTS        = RESULTS_DIR  / 'hypatiax_defi_benchmark_v3c3_results.json'
-V3C2_RESULTS        = RESULTS_DIR  / 'hypatiax_defi_benchmark_v3c2_results.json'
+# Expected location: hypatiax/data/results/comparison_results/noise-noiseless/15/
+_SWEEP_SEARCH_DIRS = [
+    PROJECT_ROOT / 'hypatiax' / 'data' / 'results' / 'comparison_results' / 'noise-noiseless' / '15',
+    PROJECT_ROOT / 'hypatiax' / 'data' / 'results',
+    PROJECT_ROOT,
+    RESULTS_DIR,
+]
+def _find_input(filename):
+    for d in _SWEEP_SEARCH_DIRS:
+        p = d / filename
+        if p.exists():
+            return p
+    return RESULTS_DIR / filename  # fallback (will trigger "not found" message)
+
+SWEEP_JSON_ORIGINAL = _find_input('portfolio_variance_seed_sweep.json')
+SWEEP_JSON_DEFI     = RESULTS_DIR / 'portfolio_variance_defi_seed_sweep.json'
+V3C3_RESULTS        = _find_input('hypatiax_defi_benchmark_v3c3_results.json')
+V3C2_RESULTS        = _find_input('hypatiax_defi_benchmark_v3c2_results.json')
 
 # ── Output paths ──────────────────────────────────────────────────────────────
 CORRECTED_OUTPUT = RESULTS_DIR / 'hypatiax_defi_benchmark_v3c3_corrected.json'
@@ -89,8 +102,19 @@ print(f'   BENCHMARK_SEED : {BENCHMARK_SEED}')
 print(f'   RERUN_STRATEGY : {RERUN_STRATEGY}')
 
 # ── API Key ──────────────────────────────────────────────────────────────────
-import os
-os.environ['ANTHROPIC_API_KEY']='ANTHROPIC_API_KEY_REMOVED'
+# Load from Kaggle secrets / Colab secrets / .env / environment — all handled by secrets.py
+try:
+    import secrets as _secrets_mod  # noqa: F401  (side-effect: sets ANTHROPIC_API_KEY)
+except ImportError:
+    pass
+
+try:
+    from anthropic import Anthropic  # noqa: F401
+    ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    print("⚠️  anthropic library not available — LLM-based methods will fall back")
+
 
 API_KEY_SET = bool(os.environ.get('ANTHROPIC_API_KEY'))
 print(f'   ANTHROPIC_API_KEY set: {API_KEY_SET}')
@@ -327,7 +351,7 @@ defi_sweep_results = []
 if RERUN_STRATEGY in ('A', 'B'):
     try:
         from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
-        from hypatiax_defi_benchmark_v3c3 import (
+        from hypatiax_defi_benchmark_kaggle_v3c3_2_fixed import (
             _hybrid_predict_and_eval, _eval_formula_r2, _execute_formula,
             _run_case_full, _build_header, _save_checkpoint, _save_final,
             CHECKPOINT_FILE, FINAL_OUTPUT,
@@ -424,7 +448,7 @@ if RERUN_STRATEGY == 'A' and HYPATIA_AVAILABLE:
 # ── 3e: Strategy B — full 74-case benchmark ──────────────────────────────────
 if RERUN_STRATEGY == 'B' and HYPATIA_AVAILABLE:
     import argparse
-    from hypatiax_defi_benchmark_v3c3 import run_benchmark
+    from hypatiax_defi_benchmark_kaggle_v3c3_2_fixed import run_benchmark
 
     RESUME = False   # <- Set True to resume from checkpoint
 
@@ -440,8 +464,8 @@ if RERUN_STRATEGY == 'B' and HYPATIA_AVAILABLE:
 elif RERUN_STRATEGY == 'B' and not HYPATIA_AVAILABLE:
     print('Strategy B skipped — HypatiaX not available.')
     print('CLI alternative:')
-    print('  python hypatiax_defi_benchmark_v3c3.py')
-    print('  python hypatiax_defi_benchmark_v3c3.py --resume')
+    print('  python hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_kaggle_v3c3_2_fixed.py')
+    print('  python hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_kaggle_v3c3_2_fixed.py --resume')
 
 """---
 ## §4 — Trace R²=1.000 Origin
@@ -872,10 +896,7 @@ print('Files in RESULTS_DIR:')
 for fpath in sorted(RESULTS_DIR.glob('*')):
     print(f'  {fpath.name:<55} {fpath.stat().st_size:>8} bytes')
 
-# ── Download all results ──────────────────────────────────────────────────────
-from google.colab import files
-
-saved_files = [
+# ── Download all results ──────────────────────────────────────────────────────saved_files = [
     'fig_seed_sweep_comparison.png',
     'defi_table_footnote.tex',
     'section6_defi_paragraph.tex',
@@ -885,13 +906,16 @@ saved_files = [
     'contradiction_audit_report.json',
 ]
 
-print('⬇️  Downloading results...')
+# ── Results summary ───────────────────────────────────────────────────────────
+# On Colab: files are already in RESULTS_DIR; use the Colab file browser or
+#   from google.colab import files; files.download(str(RESULTS_DIR / fname))
+# On Kaggle: files appear in the output tab automatically.
+# Locally:   all outputs are written to RESULTS_DIR (printed above).
+
+print('📁 Output files written to:', RESULTS_DIR)
 for fname in saved_files:
     fpath = RESULTS_DIR / fname
-    if fpath.exists():
-        files.download(str(fpath))
-        print(f'✅ {fname}')
-    else:
-        print(f'⚠️  Not found (skipped): {fname}')
+    status = f'{fpath.stat().st_size:>8} bytes' if fpath.exists() else '  NOT FOUND'
+    print(f'   {"✅" if fpath.exists() else "⚠️ "} {fname:<55} {status}')
 
 print('\n🎉 Done!')
