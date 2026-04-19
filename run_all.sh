@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # HypatiaX JMLR — Full Reproducibility Pipeline
-# Version: v4.0 (camera-ready, Apr 2026)
+# Version: v5.0 (Apr 2026)
 #
 # Usage:
 #   ./run_all.sh                    # full pipeline
@@ -16,7 +16,7 @@
 #   pip install -r requirements.txt
 #
 # Step IDs (use with --only):
-#   Setup   : deps  patches-gen  patches-apply  validate
+#   Setup   : deps  patches-gen  patches-apply  patches-verify  validate
 #   Phase 1 : exp1  exp1b  exp2  exp3  exp3b
 #   Phase 2 : suppB  suppA  instability  extrap
 #   Phase 3 : provenance  verify  hashlock
@@ -56,7 +56,7 @@ export PYTHON_JULIACALL_HANDLE_SIGNALS="yes"
 # ── Reproducibility seeds & model ─────────────────────────────────────────────
 export NN_SEED="${NN_SEED:-42}"
 export PYSR_SEED="${PYSR_SEED:-42}"
-export LLM_MODEL="${LLM_MODEL:-claude-sonnet-4-20250514}"
+export LLM_MODEL="${LLM_MODEL:-claude-sonnet-4-6}"
 export LLM_RETRIES="${LLM_RETRIES:-3}"
 export LLM_K_RUNS="${LLM_K_RUNS:-1}"   # set to 30 for full §10.9 sweep
 export N_TASKS_DEFI=74
@@ -126,7 +126,7 @@ run_step() {
 # ── Preflight ─────────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║  HypatiaX · Reproducibility Pipeline v4.0           ║"
+echo "║  HypatiaX · Reproducibility Pipeline v5.0           ║"
 echo "║  JMLR Apr 2026                                       ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo "  ROOT      : $ROOT"
@@ -207,7 +207,7 @@ fi
 
 if [[ "$VERIFY_ONLY" -eq 1 ]]; then
     phase "Verify-only mode"
-    python3 "$SCRIPTS/verify_results.py" --report
+    python3 "$SCRIPTS/verify_results.py" --report --json
     python3 "$ROOT/reproducibility/hash_lock.py" --check
     exit 0
 fi
@@ -224,6 +224,9 @@ run_step "patches-gen"   "Generate patches"                "" \
 
 run_step "patches-apply" "Apply patches (FIX-C1…FIX-5b)"  "" \
     python3 "$SCRIPTS/apply_patches.py"
+
+run_step "patches-verify" "Verify patches (import scan)"         "" \
+    python3 "$SCRIPTS/apply_patches.py" --verify
 
 run_step "validate"      "Validate patched source"         "" \
     python3 "$SCRIPTS/validate_code.py"
@@ -333,7 +336,7 @@ run_step "scan-imports" \
 
 run_step "verify" \
     "Verify results against paper targets" "" \
-    python3 "$SCRIPTS/verify_results.py" --report
+    python3 "$SCRIPTS/verify_results.py" --report --json
 
 run_step "hashlock" \
     "Hash lock check" "" \

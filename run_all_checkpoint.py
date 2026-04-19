@@ -5,7 +5,7 @@ Paper: "HypatiaX: A Hybrid Symbolic-Neural Framework for
         Extrapolation-Reliable Analytical Discovery"  (JMLR v3.0, Apr 2026)
 
 Usage:
-    python3 run_all.py                      # full pipeline
+    python3 run_all_checkpoint.py           # full pipeline
     python3 run_all.py --skip-slow          # skip slow steps (Feynman, noise sweep, instability)
     python3 run_all.py --only exp3          # run one step by id
     python3 run_all.py --resume             # resume from last checkpoint
@@ -15,7 +15,7 @@ Usage:
     python3 run_all.py --verify-only        # re-check existing results without re-running
 
 Step IDs (use with --only / --from):
-    Setup   : deps  patches-gen  patches-apply  validate  check-hypatiax-protocols
+    Setup   : deps  patches-gen  patches-apply  patches-verify  validate  check-hypatiax-protocols
     Phase 1 : exp1  exp1b  exp2  exp3  exp3b
     Phase 2 : suppB  suppA  instability  extrap
     Phase 3 : provenance  discover-provenance  scan-imports  verify  hashlock
@@ -71,6 +71,11 @@ STEPS: list[Step] = [
     Step("patches-apply", "Apply patches (FIX-C1…FIX-5b)",
          ["python3", "scripts/patches/apply_patches.py"],
          phase="0 · Setup"),
+
+    Step("patches-verify", "Verify patches (import scan + 0-cycle check)",
+         ["python3", "scripts/patches/apply_patches.py", "--verify"],
+         phase="0 · Setup",
+         expected="All 5 patches applied · 0 stale imports · 0 cycles"),
 
     Step("validate",      "Validate patched source",
          ["python3", "scripts/patches/validate_code.py"],
@@ -188,7 +193,7 @@ STEPS: list[Step] = [
 
     Step("verify",
          "Verify results against paper targets",
-         ["python3", "scripts/patches/verify_results.py", "--report"],
+         ["python3", "scripts/patches/verify_results.py", "--report", "--json"],
          phase="3 · Audit & verification"),
 
     Step("hashlock",
@@ -443,7 +448,7 @@ def main() -> None:
         clear_checkpoint()
         sys.exit(0)
 
-    banner("HypatiaX · Reproducibility Pipeline v4.1 (checkpoint/resume)")
+    banner("HypatiaX · Reproducibility Pipeline v5.0 (checkpoint/resume)")
     print(f"  Repo      : {REPO_ROOT}")
     print(f"  Python    : {sys.version.split()[0]}")
     print(f"  Date      : {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -510,7 +515,7 @@ def main() -> None:
     env = {**os.environ}
     env.setdefault("NN_SEED",               "42")
     env.setdefault("PYSR_SEED",             "42")
-    env.setdefault("LLM_MODEL",             "claude-sonnet-4-20250514")
+    env.setdefault("LLM_MODEL",             "claude-sonnet-4-6")
     env.setdefault("LLM_RETRIES",           "3")
     env.setdefault("LLM_K_RUNS",            "1")   # overridden to 30 for instability
     env.setdefault("N_TASKS_DEFI",          "74")

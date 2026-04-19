@@ -11,7 +11,7 @@ Usage:
     python3 run_all.py --continue-on-fail # log failures but keep going
 
 Step IDs (use with --only):
-    Setup   : deps  patches-gen  patches-apply  validate
+    Setup   : deps  patches-gen  patches-apply  patches-verify  validate
     Phase 1 : exp1  exp1b  exp2  exp3  exp3b
     Phase 2 : suppB  suppA  instability  extrap
     Phase 3 : provenance  verify  hashlock
@@ -55,6 +55,11 @@ STEPS: list[Step] = [
     Step("patches-apply", "Apply patches (FIX-C1…FIX-5b)",
          ["python3", "scripts/patches/apply_patches.py"],
          phase="0 · Setup"),
+
+    Step("patches-verify", "Verify patches (import scan + 0-cycle check)",
+         ["python3", "scripts/patches/apply_patches.py", "--verify"],
+         phase="0 · Setup",
+         expected="All 5 patches applied · 0 stale imports · 0 cycles"),
 
     Step("validate",      "Validate patched source",
          ["python3", "scripts/patches/validate_code.py"],
@@ -173,7 +178,7 @@ STEPS: list[Step] = [
 
     Step("verify",
          "Verify results against paper targets",
-         ["python3", "scripts/patches/verify_results.py", "--report"],
+         ["python3", "scripts/patches/verify_results.py", "--report", "--json"],
          phase="3 · Audit & verification"),
 
     Step("hashlock",
@@ -322,7 +327,7 @@ def main() -> None:
     log_dir = repo_root / "logs"
     log_dir.mkdir(exist_ok=True)
 
-    banner("HypatiaX · Reproducibility Pipeline v4.0")
+    banner("HypatiaX · Reproducibility Pipeline v5.0")
     print(f"  Repo  : {repo_root}")
     print(f"  Python: {sys.version.split()[0]}")
     print(f"  Date  : {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -382,7 +387,7 @@ def main() -> None:
     env = {**os.environ}
     env.setdefault("NN_SEED",               "42")
     env.setdefault("PYSR_SEED",             "42")
-    env.setdefault("LLM_MODEL",             "claude-sonnet-4-20250514")
+    env.setdefault("LLM_MODEL",             "claude-sonnet-4-6")
     env.setdefault("LLM_RETRIES",           "3")
     env.setdefault("LLM_K_RUNS",            "1")   # overridden to 30 for instability
     env.setdefault("N_TASKS_DEFI",          "74")
