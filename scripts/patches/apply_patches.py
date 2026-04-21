@@ -369,9 +369,13 @@ class PatchP4(Patch):
     _BARE_REPLACEMENT = 'os.environ["ANTHROPIC_API_KEY"]'
 
     def apply(self, root: Path, dry_run: bool) -> bool:
+        import json as _json
+
         hits: list[Path] = []
+        nb_hits: list[Path] = []
+
+        # ── Scan .py files ────────────────────────────────────────────────────
         for py in root.rglob("*.py"):
-            # Never rewrite apply_patches.py itself or .bak files
             if py.name in ("apply_patches.py",) or py.suffix == ".bak":
                 continue
             try:
@@ -381,19 +385,28 @@ class PatchP4(Patch):
             if self._CALL_PATTERN.search(text) or self._BARE_PATTERN.search(text):
                 hits.append(py)
 
-        if not hits:
+        # ── Scan .ipynb notebooks ─────────────────────────────────────────────
+        for nb_path in root.rglob("*.ipynb"):
+            if nb_path.suffix == ".bak":
+                continue
+            try:
+                raw = nb_path.read_text(errors="replace")
+            except OSError:
+                continue
+            if self._BARE_PATTERN.search(raw):
+                nb_hits.append(nb_path)
+
+        if not hits and not nb_hits:
             ok("P-4: no hardcoded API keys found ✓")
             return True
 
+        # ── Fix .py files ─────────────────────────────────────────────────────
         for py in hits:
             text     = py.read_text(errors="replace")
             new_text = self._CALL_PATTERN.sub(self._CALL_REPLACEMENT, text)
             new_text = self._BARE_PATTERN.sub(self._BARE_REPLACEMENT, new_text)
-
-            # Ensure `import os` is present at the top
             if "import os" not in new_text:
                 new_text = "import os\n" + new_text
-
             if dry_run:
                 warn(f"P-4 DRY-RUN: would remove hardcoded key in {py.relative_to(root)}")
             else:
@@ -401,6 +414,40 @@ class PatchP4(Patch):
                 py.write_text(new_text)
                 ok(f"P-4: removed hardcoded API key from {py.relative_to(root)}"
                    f"  (backup: {py.name}.bak)")
+                warn("  Rotate the exposed key at console.anthropic.com immediately!")
+
+        # ── Fix .ipynb notebooks ──────────────────────────────────────────────
+        for nb_path in nb_hits:
+            try:
+                nb = _json.loads(nb_path.read_text(errors="replace"))
+            except Exception:
+                warn(f"P-4: could not parse {nb_path.name} as JSON — skipping")
+                continue
+            changed = False
+            for cell in nb.get("cells", []):
+                src_lines = cell.get("source", [])
+                new_lines = []
+                cell_text = "".join(src_lines)
+                needs_os  = "import os" not in cell_text
+                for line in src_lines:
+                    new_line = self._BARE_PATTERN.sub(self._BARE_REPLACEMENT, line)
+                    if new_line != line:
+                        changed = True
+                        if needs_os:
+                            new_lines.append("import os\n")
+                            needs_os = False
+                    new_lines.append(new_line)
+                if changed:
+                    cell["source"] = new_lines
+            if not changed:
+                continue
+            if dry_run:
+                warn(f"P-4 DRY-RUN: would remove hardcoded key from {nb_path.name}")
+            else:
+                self._backup(nb_path)
+                nb_path.write_text(_json.dumps(nb, indent=1, ensure_ascii=False))
+                ok(f"P-4: removed hardcoded API key from {nb_path.relative_to(root)}"
+                   f"  (backup: {nb_path.name}.bak)")
                 warn("  Rotate the exposed key at console.anthropic.com immediately!")
 
         return True

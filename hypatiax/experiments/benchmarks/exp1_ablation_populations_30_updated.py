@@ -42,9 +42,13 @@ from sklearn.model_selection import train_test_split
 warnings.filterwarnings("ignore")
 
 # ── Reproducibility ──────────────────────────────────────────────────────────
+# Read seed from env so run_all.py --seed N propagates end-to-end.
+# Falls back to 42 (paper default) when run directly without env setup.
 import random
-random.seed(42)
-np.random.seed(42)
+_GLOBAL_SEED = int(os.environ.get("PYSR_SEED", os.environ.get("NN_SEED", 42)))
+random.seed(_GLOBAL_SEED)
+np.random.seed(_GLOBAL_SEED)
+os.environ["PYTHONHASHSEED"] = str(_GLOBAL_SEED)
 
 # ── API key: Kaggle Secrets only — no hardcoded keys ────────────────────────
 try:
@@ -62,15 +66,19 @@ except Exception:
 # ── Output paths ──────────────────────────────────────────────────────────────
 _HERE = Path().resolve()
 OUTPUT_DIR  = _HERE  # write beside the notebook on Kaggle
-RESULTS_PATH = OUTPUT_DIR / "exp1_ablation_results.json"
-CKPT_PATH    = OUTPUT_DIR / "exp1_ablation_checkpoint.json"
-TEX_PATH     = OUTPUT_DIR / "exp1_ablation_table.tex"
-RF01_JSON    = OUTPUT_DIR / "exp1_rf01_mannwhitney.json"
-RF01_SIGTEX  = OUTPUT_DIR / "exp1_rf01_significant.tex"
-RF01_SUBDTEX = OUTPUT_DIR / "exp1_rf01_subdomain.tex"
-INSTAB_STATS = OUTPUT_DIR / "exp1_instability_stats.json"
-INSTAB_CSV   = OUTPUT_DIR / "instability_extrapolation_v2.csv"
-PROV_PATH    = OUTPUT_DIR / "provenance_map_exp1.json"
+
+# Seed-namespace output files so runs with different seeds never overwrite each other.
+# seed=42 (paper primary) keeps the canonical names for backwards compatibility.
+_seed_suffix = f"_seed{_GLOBAL_SEED}" if _GLOBAL_SEED != 42 else ""
+RESULTS_PATH = OUTPUT_DIR / f"exp1_ablation_results{_seed_suffix}.json"
+CKPT_PATH    = OUTPUT_DIR / f"exp1_ablation_checkpoint{_seed_suffix}.json"
+TEX_PATH     = OUTPUT_DIR / f"exp1_ablation_table{_seed_suffix}.tex"
+RF01_JSON    = OUTPUT_DIR / f"exp1_rf01_mannwhitney{_seed_suffix}.json"
+RF01_SIGTEX  = OUTPUT_DIR / f"exp1_rf01_significant{_seed_suffix}.tex"
+RF01_SUBDTEX = OUTPUT_DIR / f"exp1_rf01_subdomain{_seed_suffix}.tex"
+INSTAB_STATS = OUTPUT_DIR / f"exp1_instability_stats{_seed_suffix}.json"
+INSTAB_CSV   = OUTPUT_DIR / f"instability_extrapolation_v2{_seed_suffix}.csv"
+PROV_PATH    = OUTPUT_DIR / f"provenance_map_exp1{_seed_suffix}.json"
 
 # ── JMLR output path (where paper reads results from) ─────────────────────────
 # Adjust this to your local checkout of jmlr-source-last/
@@ -80,17 +88,18 @@ JMLR_ABLATION_DIR = Path("jmlr-source-last/ablation/results-ablation")
 # populations=30 matches the main DeFi benchmark and what the paper describes.
 # The original Copy_of_hypatiax_exp1_v2_fixed.ipynb used populations=2 —
 # that was a fast-development preset that inflates apparent speedup. Fix here.
-POPULATIONS   = 30    # ← FIXED from 2; must match paper claim
-NITERATIONS   = 1000
-TIMEOUT_SECS  = 300
-SEED          = 42
+POPULATIONS   = int(os.environ.get("PYSR_POPULATIONS", "30"))
+NITERATIONS   = int(os.environ.get("PYSR_NITERATIONS", "1000"))
+TIMEOUT_SECS  = int(os.environ.get("PYSR_TIMEOUT", "300"))
+SEED          = _GLOBAL_SEED   # env-driven: PYSR_SEED → NN_SEED → 42
 CONDITIONS    = ["pysr_only", "hypatia"]
-MODEL_STRING  = "claude-sonnet-4-20250514"  # not printed in submitted tex (double-blind)
+MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")  # not printed in submitted tex (double-blind)
 
+_seed_source = "PYSR_SEED" if os.environ.get("PYSR_SEED") else ("NN_SEED" if os.environ.get("NN_SEED") else "default")
 print(f"populations : {POPULATIONS}  (paper-quality)")
 print(f"niterations : {NITERATIONS}")
 print(f"timeout_s   : {TIMEOUT_SECS}")
-print(f"seed        : {SEED}")
+print(f"seed        : {SEED}  (source: {_seed_source})")
 print("✅ Setup complete")
 
 # ── Import HybridDiscoverySystem from hybrid_system_v50_2.py ─────────────────
@@ -99,6 +108,7 @@ import pathlib as _pl
 
 _V50_CANDIDATES = [
     _pl.Path("hybrid_system_v50_2.py"),
+    _pl.Path(__file__).resolve().parents[2] / "tools/symbolic/hybrid_system_v50_2.py",
     _pl.Path("/kaggle/working/hybrid_system_v50_2.py"),
     _pl.Path("/kaggle/input/hybrid-system/hybrid_system_v50_2.py"),
 ]
@@ -252,8 +262,7 @@ CORE_15 = [
         "train_range": [(0.01, 0.2), (0.01, 0.2), (-0.8, 0.8)],
         "extrap_range": [(0.2, 0.5), (0.2, 0.5), (-0.9, 0.9)],
         "fn": lambda s1, s2, rho: np.sqrt(s1**2 + s2**2 + 2 * rho * s1 * s2),
-        "formula_latex": r"\sigma_p = \sqrt{\sigma_1^2 + \sigma_2^2 + 2
-ho\sigma_1\sigma_2}",
+        "formula_latex": r"\sigma_p = \sqrt{\sigma_1^2 + \sigma_2^2 + 2\rho\sigma_1\sigma_2}",
         "note": "C4: 5-seed sweep — seeds [42,99,123,777,2024]",
     },
 ]
@@ -846,7 +855,7 @@ with open(RF01_JSON, "w") as f:
     json.dump(rf01, f, indent=2)
 print(f"\n✅ RF-01 JSON saved: {RF01_JSON}")
 
-"""## 7 · Table 5 LaTeX (`exp1_ablation_table.tex`)
+r"""## 7 · Table 5 LaTeX (`exp1_ablation_table.tex`)
 
 > `resizebox{\linewidth}{!}` wrapper prevents Michaelis-Menten far-R²=−634.5989 truncation.
 """
@@ -902,7 +911,8 @@ lines.append(r"{\footnotesize "
              r"$\dag$~Wall-clock timeout; result excluded from timing statistics. "
              r"Michaelis-Menten HypatiaX far-$R^2 = -634.5989$ reflects saturation "
              r"function failure under extreme extrapolation (known failure mode). "
-             r"All runs: populations=30, seed=42, v5.1 engine.}")
+             + f"All runs: populations={POPULATIONS}, seed={SEED}, v5.1 engine."
+             + "}")
 lines.append(r"\end{flushleft}")
 lines.append(r"\end{table*}")
 
@@ -1000,6 +1010,7 @@ provenance = {
     "engine": "hybrid_system_v50_2.py",
     "engine_version": "5.1",
     "seed": SEED,
+    "seed_is_paper_primary": SEED == 42,   # True only for the paper-submitted run
     "populations": POPULATIONS,
     "niterations": NITERATIONS,
     "model_string": MODEL_STRING,
@@ -1016,8 +1027,10 @@ provenance = {
     },
     "paper_sections": ["§10.6", "§10.9"],
     "paper_targets": {
-        "MW_run_a": "U=126, p=0.295",
-        "MW_run_b": "U=101.5, p=0.683",
+        # These MW targets were computed at seed=42 with populations=30.
+        # They are valid for comparison only when seed_is_paper_primary=True.
+        "MW_run_a": "U=126, p=0.295  [seed=42 only]",
+        "MW_run_b": "U=101.5, p=0.683  [seed=42 only]",
         "spearman_rho": "-0.70  (p<0.001) — cross-ref instability_analysis.csv from exp4",
     },
     "fixes_applied": [
@@ -1071,3 +1084,5 @@ for p in output_files:
         except Exception: pass
     else:
         print(f"  ⚠️  {Path(p).name}  — not yet generated")
+if __name__ == "__main__":
+    pass  # TODO: add entry point

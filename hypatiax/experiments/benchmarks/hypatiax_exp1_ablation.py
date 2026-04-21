@@ -1999,7 +1999,7 @@ if len(non_a) >= 3:
 
 print("\n✅ C2 complete")
 
-"""## C3 · Tag wall-clock-capped equations (`$\dag$`)
+r"""## C3 · Tag wall-clock-capped equations (`$\dag$`)
 
 **Blocker C3 fix.** Reads the results JSON, identifies equations where
 `excluded_from_timing=True` or `timed_out=True`, and writes a
@@ -2309,3 +2309,6 @@ for fname in found:
         print(f"   Download failed: {fname} — {e}")
 
 print("\n🎉 Done!")
+
+if __name__ == "__main__":
+    pass  # TODO: add entry point

@@ -2886,3 +2886,5 @@ for fpath in [CHECKPOINT_FILE, FINAL_OUTPUT]:
     else:
         print(f"  ⚠️  Not found: {fpath.name}")
 print("\n🎉 Done! Output tab → click file → Download")
+if __name__ == "__main__":
+    pass  # TODO: add entry point

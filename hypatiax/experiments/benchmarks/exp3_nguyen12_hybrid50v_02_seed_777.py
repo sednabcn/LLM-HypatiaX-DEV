@@ -30,7 +30,7 @@ Original file is located at
 - v23: `SymbolicTreeEngine` (PySR-free tree search)
 """
 
-!pip install pysr anthropic scikit-learn scipy sympy numpy pandas matplotlib -q
+# deps managed by pipeline (removed Jupyter magic)
 print("Installs OK ✓")
 
 # SEGFAULT GUARD — must be before any import that loads juliacall / PySR

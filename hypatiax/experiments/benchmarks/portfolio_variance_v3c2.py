@@ -896,7 +896,8 @@ print('Files in RESULTS_DIR:')
 for fpath in sorted(RESULTS_DIR.glob('*')):
     print(f'  {fpath.name:<55} {fpath.stat().st_size:>8} bytes')
 
-# ── Download all results ──────────────────────────────────────────────────────saved_files = [
+# ── Download all results ────────────────────────────────────────────────────────
+saved_files = [
     'fig_seed_sweep_comparison.png',
     'defi_table_footnote.tex',
     'section6_defi_paragraph.tex',
@@ -919,3 +920,6 @@ for fname in saved_files:
     print(f'   {"✅" if fpath.exists() else "⚠️ "} {fname:<55} {status}')
 
 print('\n🎉 Done!')
+
+if __name__ == "__main__":
+    pass  # TODO: add entry point

@@ -362,3 +362,6 @@ def _parse_response(raw: str, var_names: List[str]) -> List[str]:
         valid_exprs.append(expr)
 
     return valid_exprs
+
+if __name__ == "__main__":
+    pass  # TODO: add entry point

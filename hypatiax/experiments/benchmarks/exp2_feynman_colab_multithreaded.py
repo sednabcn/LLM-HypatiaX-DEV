@@ -42,7 +42,7 @@ print('Next: run Cell 2 to install PySR.')
 
 """## 2 · Install dependencies"""
 
-!pip install -q pysr scikit-learn scipy numpy pandas
+# deps managed by pipeline (removed Jupyter magic)
 import pysr, subprocess
 print(f'PySR version: {pysr.__version__}')
 result = subprocess.run(['julia', '-e', 'println(Threads.nthreads())'],
@@ -1054,3 +1054,5 @@ for fname in sorted(os.listdir(EXPORT_DIR)):
 from google.colab import files
 print(f'Downloading {zip_path} ...')
 files.download(zip_path)
+if __name__ == "__main__":
+    pass  # TODO: add entry point

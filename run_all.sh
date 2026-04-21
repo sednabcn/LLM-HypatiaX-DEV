@@ -141,24 +141,25 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
 fi
 ok "API key set (${#ANTHROPIC_API_KEY} chars)"
 
-# Scan for exposed keys in source
+# Scan for exposed keys in source (real keys only — 80+ chars after prefix)
 echo "  Scanning for exposed API keys..."
-if grep -r "sk-ant-api" "$ROOT" --include="*.py" --include="*.ipynb" -l 2>/dev/null \
+if grep -rP "sk-ant-api\d+-[A-Za-z0-9_-]{80,}" "$ROOT" \
+        --include="*.py" --include="*.ipynb" -l 2>/dev/null \
         | grep -v ".git"; then
     fail "Exposed API key found — revoke at console.anthropic.com, then remove from source"
 fi
 ok "No exposed API keys"
 
-# Scan for stale v40 engine references (FIX-C2)
-echo "  Checking for stale v40 engine imports..."
-STALE=$(grep -r "hybrid_system_v40[^_]" "$ROOT" --include="*.py" \
-    --exclude="hybrid_system_v40.py" --exclude="hybrid_system_v40fix.py" \
-    -l 2>/dev/null || true)
+# Scan for stale v40 import STATEMENTS only (FIX-C2)
+# Comments/docs in v52.py, symbolic_engine.py etc. are historical — not flagged
+echo "  Checking for stale v40 engine import statements..."
+STALE=$(grep -rP "^\s*(import|from)\s+.*hybrid_system_v40(?!fix)" "$ROOT" \
+    --include="*.py" -l 2>/dev/null || true)
 if [[ -n "$STALE" ]]; then
-    warn "Stale v40 imports found — auto-patching:"
+    warn "Stale v40 import statements found — auto-patching:"
     echo "$STALE"
-    echo "$STALE" | xargs sed -i 's/hybrid_system_v40\([^_]\)/hybrid_system_v50_2\1/g'
-    ok "v40 → v50_2 patched"
+    echo "$STALE" | xargs sed -i 's/from hypatiax\.tools\.symbolic\.hybrid_system_v40 import/from hypatiax.tools.symbolic.hybrid_system_v50_2 import/g'
+    ok "v40 → v50_2 import statements patched"
 fi
 
 # Verify hypatiax/protocols/ input-data modules are present

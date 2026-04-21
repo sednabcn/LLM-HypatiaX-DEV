@@ -5,3 +5,6 @@ from core.runners.common import run_task
 def run():
     config = {"name": "feynman_exp2"}
     return run_protocol(config, run_task)
+
+if __name__ == "__main__":
+    run()
