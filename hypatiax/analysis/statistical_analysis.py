@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Statistical Analysis — Hybrid vs Neural Network Extrapolation
-=============================================================
+hypatiax/analysis/statistical_analysis.py
+Statistical analysis utilities for HypatiaX experiments.
+
+════════════════════════════════════════════════════════════════════════════════
+SCRIPT MODE  (run directly)
+════════════════════════════════════════════════════════════════════════════════
 Compares Hybrid System v50_2 against Neural Network (and up to 3 additional
 systems) across near / medium / far extrapolation regimes.
 
@@ -19,11 +23,7 @@ USAGE EXAMPLES
   # Auto-detect (full if files present, demo otherwise):
   python statistical_analysis.py
 
-  # Explicit full mode — positional arguments:
-  python statistical_analysis.py \\
-      extrap_data.json interp_data.json systems_2_3_data.json
-
-  # Explicit full mode — named arguments (any order, names are self-documenting):
+  # Explicit full mode — named arguments (any order):
   python statistical_analysis.py \\
       --extrap    all_domains_extrap_v4_20260124_131545.json \\
       --interp    standalone_real_methods_20260116_003311.json \\
@@ -43,32 +43,52 @@ USAGE EXAMPLES
   # Force demo mode even if files are present:
   python statistical_analysis.py --demo
 
+════════════════════════════════════════════════════════════════════════════════
+MODULE MODE  (imported as a library)
+════════════════════════════════════════════════════════════════════════════════
+Public API:
+    mann_whitney_u(hybrid_scores, pysr_scores, alternative) -> dict
+    mann_whitney_less(a, b)                                  -> (U, p)
+    cohens_d(a, b)                                           -> float
+    confidence_interval_diff(a, b, alpha)                    -> (diff, lo, hi)
+    descriptive_stats(errors)                                -> dict
+    significance_label(p)                                    -> str
+    effect_label(d)                                          -> str
+    summarise_results(results, ...)                          -> dict
+    batch_r2(y_true_list, y_pred_list)                       -> list[float]
+    results_to_dataframe(results)                            -> pd.DataFrame
+    print_summary_table(summary)                             -> None
+
 Author  : Ruperto Bonet Chaple
-Version : 6.0 — consolidated + argparse input
+Version : 7.0 — unified module + script, full lint-clean
 Date    : 2026
 """
 
-# ── stdlib ───────────────────────────────────────────────────────────────────
+# ── Standard library ──────────────────────────────────────────────────────────
 import argparse
 import json
-import os
 import random
 import sys
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# ── third-party ──────────────────────────────────────────────────────────────
+# ── Third-party ───────────────────────────────────────────────────────────────
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import mannwhitneyu, kruskal, t
+from scipy import stats
+from scipy.stats import kruskal, mannwhitneyu, t
 
-# ── reproducibility ──────────────────────────────────────────────────────────
+# ── Local ─────────────────────────────────────────────────────────────────────
+from hypatiax.core.metrics import compute_r2
+
+# ── Reproducibility ───────────────────────────────────────────────────────────
 random.seed(42)
 np.random.seed(42)
 
-# ── publication-quality plot defaults ────────────────────────────────────────
+# ── Publication-quality plot defaults ─────────────────────────────────────────
 plt.rcParams.update({
     "figure.dpi":      300,
     "savefig.dpi":     300,
@@ -80,8 +100,8 @@ plt.rcParams.update({
 })
 sns.set_style("whitegrid")
 
-# ── hardcoded reference data (demo / fallback mode) ──────────────────────────
-REFERENCE_DATA = {
+# ── Hardcoded reference data (demo / fallback mode) ───────────────────────────
+REFERENCE_DATA: Dict[str, Dict[str, List[float]]] = {
     "Hybrid_v50_2": {
         "near":   [0.0] * 14,
         "medium": [0.0] * 14,
@@ -96,8 +116,8 @@ REFERENCE_DATA = {
     },
 }
 
-# Default JSON file names (used when --extrap / --interp / --systems23 are
-# omitted AND the script is run from the directory that contains the data).
+# Default JSON file names (used when named args are omitted and the script
+# is run from the directory that contains the data).
 DEFAULT_EXTRAP_FILE    = "all_domains_extrap_v4_20260124_131545.json"
 DEFAULT_INTERP_FILE    = "standalone_real_methods_20260116_003311.json"
 DEFAULT_SYSTEMS23_FILE = "systems_2_3_2_data.json"
@@ -186,7 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
 def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     """
     Merge positional and named file arguments; named arguments take precedence.
-    Also resolve each path to an absolute Path object.
+    Resolve each path to an absolute Path object and determine the output dir.
     """
     # Named args override positional ones
     if args.extrap is None and args.extrap_pos:
@@ -196,7 +216,7 @@ def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     if args.systems23 is None and args.systems23_pos:
         args.systems23 = args.systems23_pos
 
-    # Fall back to well-known default names (resolved relative to cwd)
+    # Fall back to well-known default names resolved relative to cwd
     cwd = Path.cwd()
     args.extrap_path    = Path(args.extrap).resolve()    if args.extrap    else cwd / DEFAULT_EXTRAP_FILE
     args.interp_path    = Path(args.interp).resolve()    if args.interp    else cwd / DEFAULT_INTERP_FILE
@@ -209,25 +229,118 @@ def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         candidate = cwd / DEFAULT_SYSTEMS2_FILE
         args.systems2_path = candidate if candidate.exists() else None
 
-    # Output directory: default to ./figures/ (cwd), or next to the data
-    # files if an explicit extrap path was given pointing elsewhere.
+    # Output directory — prefer explicit flag, else co-locate with data files.
     if args.output_dir:
         args.output_path = Path(args.output_dir).resolve()
-    elif args.extrap and Path(args.extrap).resolve().parent != Path.cwd():
-        # Data files live in a different directory — put output there too
+    elif args.extrap and Path(args.extrap).resolve().parent != cwd:
         args.output_path = Path(args.extrap).resolve().parent / "figures"
     else:
-        args.output_path = Path.cwd() / "figures"
+        args.output_path = cwd / "figures"
 
     return args
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — SHARED STATISTICAL HELPERS
+# SECTION 2 — STATISTICAL HELPERS  (module public API)
 # ════════════════════════════════════════════════════════════════════════════
 
+# ── Core Mann-Whitney wrapper (generic, dict-returning) ───────────────────────
+
+def mann_whitney_u(
+    hybrid_scores: List[float],
+    pysr_scores: List[float],
+    alternative: str = "greater",
+) -> dict:
+    """
+    Compute the Mann-Whitney U statistic between *hybrid_scores* and
+    *pysr_scores*.
+
+    Parameters
+    ----------
+    hybrid_scores : Per-equation scores (e.g. R²) for the Hybrid system.
+    pysr_scores   : Per-equation scores for the PySR / comparison baseline.
+    alternative   : Passed directly to scipy.stats.mannwhitneyu.
+
+    Returns
+    -------
+    dict with keys: U, p_value, n_hybrid, n_pysr, alternative
+    """
+    if len(hybrid_scores) != len(pysr_scores):
+        raise ValueError(
+            f"Score lists must have equal length; "
+            f"got {len(hybrid_scores)} vs {len(pysr_scores)}"
+        )
+    n = len(hybrid_scores)
+    if n == 0:
+        raise ValueError("Score lists are empty — cannot compute U statistic.")
+
+    u_stat, p_value = stats.mannwhitneyu(
+        hybrid_scores, pysr_scores, alternative=alternative
+    )
+    return {
+        "U":           float(u_stat),
+        "p_value":     float(p_value),
+        "n_hybrid":    n,
+        "n_pysr":      n,
+        "alternative": alternative,
+    }
+
+
+def mann_whitney_less(a: List[float], b: List[float]) -> Tuple[float, float]:
+    """
+    One-tailed Mann-Whitney U: H1 — errors in *a* < errors in *b*.
+
+    A convenience wrapper around the standard scipy call used by the
+    benchmark pipeline (extrapolation error comparisons where lower is
+    better for system *a*).
+
+    Returns
+    -------
+    (U-statistic, p-value) as plain floats.
+    """
+    u_stat, p = mannwhitneyu(a, b, alternative="less")
+    return float(u_stat), float(p)
+
+
+# ── Effect size & CI helpers ──────────────────────────────────────────────────
+
+def cohens_d(a: List[float], b: List[float]) -> float:
+    """
+    Effect size Cohen's d  (positive → b > a).
+    Returns float('inf') when the pooled standard deviation is zero.
+    """
+    mean_diff = np.mean(b) - np.mean(a)
+    pooled    = np.sqrt((np.std(a) ** 2 + np.std(b) ** 2) / 2)
+    return float(mean_diff / pooled) if pooled > 0 else float("inf")
+
+
+def confidence_interval_diff(
+    a: List[float],
+    b: List[float],
+    alpha: float = 0.05,
+) -> Tuple[float, float, float]:
+    """
+    95 % CI for mean(b) − mean(a) using Welch's approximation.
+
+    Returns
+    -------
+    (mean_diff, ci_lower, ci_upper)
+    """
+    arr_a, arr_b = np.array(a), np.array(b)
+    mean_diff    = float(np.mean(arr_b) - np.mean(arr_a))
+    n1, n2       = len(arr_a), len(arr_b)
+    s1 = float(np.std(arr_a, ddof=1)) if n1 > 1 else 0.0
+    s2 = float(np.std(arr_b, ddof=1)) if n2 > 1 else 0.0
+    se     = np.sqrt(s1 ** 2 / n1 + s2 ** 2 / n2)
+    df     = n1 + n2 - 2
+    t_crit = t.ppf(1 - alpha / 2, df)
+    return mean_diff, mean_diff - t_crit * se, mean_diff + t_crit * se
+
+
+# ── Descriptive statistics ────────────────────────────────────────────────────
+
 def descriptive_stats(errors: List[float]) -> Dict:
-    """Return summary statistics for a list of error values."""
+    """Return summary statistics for a list of error / score values."""
     arr = np.array(errors)
     return {
         "n":      len(arr),
@@ -239,41 +352,12 @@ def descriptive_stats(errors: List[float]) -> Dict:
     }
 
 
-def mann_whitney_less(a: List[float], b: List[float]) -> Tuple[float, float]:
-    """One-tailed Mann-Whitney U: H1 — errors in *a* < errors in *b*."""
-    stat, p = mannwhitneyu(a, b, alternative="less")
-    return float(stat), float(p)
-
-
-def cohens_d(a: List[float], b: List[float]) -> float:
-    """Effect size Cohen's d (positive → b > a)."""
-    mean_diff = np.mean(b) - np.mean(a)
-    pooled = np.sqrt((np.std(a) ** 2 + np.std(b) ** 2) / 2)
-    return float(mean_diff / pooled) if pooled > 0 else float("inf")
-
-
-def confidence_interval_diff(
-    a: List[float], b: List[float], alpha: float = 0.05
-) -> Tuple[float, float, float]:
-    """
-    95 % CI for mean(b) - mean(a) using Welch's approximation.
-    Returns (mean_diff, ci_lower, ci_upper).
-    """
-    arr_a, arr_b = np.array(a), np.array(b)
-    mean_diff = float(np.mean(arr_b) - np.mean(arr_a))
-    n1, n2 = len(arr_a), len(arr_b)
-    s1 = float(np.std(arr_a, ddof=1)) if n1 > 1 else 0.0
-    s2 = float(np.std(arr_b, ddof=1)) if n2 > 1 else 0.0
-    se = np.sqrt(s1 ** 2 / n1 + s2 ** 2 / n2)
-    df = n1 + n2 - 2
-    t_crit = t.ppf(1 - alpha / 2, df)
-    return mean_diff, mean_diff - t_crit * se, mean_diff + t_crit * se
-
+# ── Human-readable labels ─────────────────────────────────────────────────────
 
 def significance_label(p: float) -> str:
     if p < 0.001:
         return "✅ HIGHLY SIGNIFICANT (p < 0.001)"
-    elif p < 0.05:
+    if p < 0.05:
         return "✅ SIGNIFICANT (p < 0.05)"
     return "❌ NOT SIGNIFICANT (p ≥ 0.05)"
 
@@ -281,11 +365,118 @@ def significance_label(p: float) -> str:
 def effect_label(d: float) -> str:
     if d == float("inf") or d > 2.0:
         return "✅ HUGE effect (d > 2.0)"
-    elif d > 0.8:
+    if d > 0.8:
         return "✅ LARGE effect (d > 0.8)"
-    elif d > 0.5:
+    if d > 0.5:
         return "✅ MEDIUM effect (d > 0.5)"
     return "SMALL effect (d ≤ 0.5)"
+
+
+# ── Batch / summary helpers (module API) ──────────────────────────────────────
+
+def _na_fraction(scores: List) -> float:
+    """Return the fraction of scores that are None / NaN."""
+    total = len(scores)
+    if total == 0:
+        return 0.0
+    na = sum(
+        1 for s in scores
+        if s is None or (isinstance(s, float) and np.isnan(s))
+    )
+    return na / total
+
+
+def summarise_results(
+    results: List[dict],
+    hybrid_key: str   = "hybrid_r2",
+    pysr_key:   str   = "pysr_r2",
+    threshold:  float = 0.99,
+    out_path:   Optional[Path] = None,
+) -> dict:
+    """
+    Given a list of per-equation result dicts, compute:
+      • fraction of valid (non-NA) Hybrid R² > *threshold*
+      • fraction of valid PySR R² > *threshold*
+      • Mann-Whitney U over valid pairs
+      • NA fraction for each column
+
+    If *out_path* is provided the summary dict is written as JSON.
+    """
+    hybrid_scores = [r.get(hybrid_key) for r in results]
+    pysr_scores   = [r.get(pysr_key)   for r in results]
+
+    valid_pairs = [
+        (h, p) for h, p in zip(hybrid_scores, pysr_scores)
+        if h is not None and p is not None
+        and not (isinstance(h, float) and np.isnan(h))
+        and not (isinstance(p, float) and np.isnan(p))
+    ]
+
+    n_valid   = len(valid_pairs)
+    n_total   = len(results)
+    na_hybrid = _na_fraction(hybrid_scores)
+    na_pysr   = _na_fraction(pysr_scores)
+
+    summary: dict = {
+        "n_total":   n_total,
+        "n_valid":   n_valid,
+        "na_hybrid": na_hybrid,
+        "na_pysr":   na_pysr,
+    }
+
+    if n_valid == 0:
+        warnings.warn(
+            "No valid score pairs found — U statistic cannot be computed. "
+            "Check that PYSR_TIMEOUT is long enough for all equations to complete.",
+            stacklevel=2,
+        )
+        summary["U"]       = None
+        summary["p_value"] = None
+        return summary
+
+    h_valid = [pair[0] for pair in valid_pairs]
+    p_valid = [pair[1] for pair in valid_pairs]
+
+    summary["hybrid_above_threshold"] = (
+        sum(1 for h in h_valid if h > threshold) / n_valid
+    )
+    summary["pysr_above_threshold"] = (
+        sum(1 for p in p_valid if p > threshold) / n_valid
+    )
+    summary.update(mann_whitney_u(h_valid, p_valid))
+
+    if out_path is not None:
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(summary, indent=2))
+
+    return summary
+
+
+def batch_r2(
+    y_true_list: List[np.ndarray],
+    y_pred_list: List[np.ndarray],
+) -> List[float]:
+    """Return a list of R² scores, one per (y_true, y_pred) pair."""
+    return [compute_r2(yt, yp) for yt, yp in zip(y_true_list, y_pred_list)]
+
+
+def results_to_dataframe(results: List[dict]) -> pd.DataFrame:
+    """Convert a list of per-equation result dicts to a tidy DataFrame."""
+    return pd.DataFrame(results)
+
+
+def print_summary_table(summary: dict) -> None:
+    """Pretty-print the summary dict produced by summarise_results()."""
+    print("=" * 52)
+    print("  Statistical Analysis Summary")
+    print("=" * 52)
+    for key, val in summary.items():
+        if isinstance(val, float):
+            print(f"  {key:<28s}: {val:.4f}")
+        else:
+            print(f"  {key:<28s}: {val}")
+    print("=" * 52)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -354,18 +545,18 @@ def _demo_calculate_statistics() -> None:
         print("STATISTICAL TESTS")
         print(dash)
         stat_u, p_u = mann_whitney_less(h_err, n_err)
-        print(f"\n1. Mann-Whitney U Test (non-parametric):")
-        print(f"   H0: Hybrid errors ≥ Neural Network errors")
-        print(f"   H1: Hybrid errors < Neural Network errors")
+        print("\n1. Mann-Whitney U Test (non-parametric):")
+        print("   H0: Hybrid errors ≥ Neural Network errors")
+        print("   H1: Hybrid errors < Neural Network errors")
         print(f"   U-statistic = {stat_u:.2f}")
         print(f"   p-value     = {p_u:.6f}")
         print(f"   {significance_label(p_u)}")
         d = cohens_d(h_err, n_err)
-        print(f"\n2. Effect Size (Cohen's d):")
+        print("\n2. Effect Size (Cohen's d):")
         print(f"   d = {'∞' if d == float('inf') else f'{d:.2f}'}")
         print(f"   {effect_label(d)}")
         mean_diff, ci_lo, ci_hi = confidence_interval_diff(h_err, n_err)
-        print(f"\n3. 95 % Confidence Interval for Mean Difference:")
+        print("\n3. 95 % Confidence Interval for Mean Difference:")
         print(f"   Mean diff = {mean_diff:.2f} %")
         print(f"   95 % CI   = [{ci_lo:.2f} %, {ci_hi:.2f} %]")
         print(f"   ✅ Hybrid is {mean_diff:.0f} % better on average")
@@ -378,18 +569,18 @@ def _demo_power_analysis() -> None:
     print(sep)
     h_err = REFERENCE_DATA["Hybrid_v50_2"]["medium"]
     n_err = REFERENCE_DATA["Neural_Network"]["medium"]
-    d  = cohens_d(h_err, n_err)
+    d     = cohens_d(h_err, n_err)
     n1, n2 = len(h_err), len(n_err)
-    print(f"\nMedium Extrapolation (2×):")
+    print("\nMedium Extrapolation (2×):")
     print(f"  Sample sizes       : n1={n1}, n2={n2}")
     print(f"  Effect size (d)    : {'∞' if d == float('inf') else f'{d:.2f}'}")
-    print(f"  Significance level : α = 0.05")
+    print("  Significance level : α = 0.05")
     if d == float("inf") or d > 2.0:
-        print(f"  Statistical power  : >99.9 %")
-        print(f"  ✅ EXCELLENT — Near-certain to detect the true difference")
-    print(f"\nInterpretation:")
+        print("  Statistical power  : >99.9 %")
+        print("  ✅ EXCELLENT — Near-certain to detect the true difference")
+    print("\nInterpretation:")
     print(f"  • n={n1} vs {n2} samples, huge effect → >99.9 % power")
-    print(f"  • Probability of Type II error (false negative) < 0.1 %")
+    print("  • Probability of Type II error (false negative) < 0.1 %")
 
 
 def _demo_latex_table(output_dir: Path) -> None:
@@ -439,9 +630,9 @@ Neural Network  & Far (5$\times$)      & 2876.6\%  & 4005.3\% & 3  & \\
 
 
 def _demo_visualize(output_dir: Path) -> None:
-    regimes      = ["near",    "medium",    "far"]
+    regimes      = ["near",       "medium",     "far"]
     regime_names = ["Near (1.2×)", "Medium (2×)", "Far (5×)"]
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axes    = plt.subplots(1, 3, figsize=(15, 5))
     for idx, (regime, name) in enumerate(zip(regimes, regime_names)):
         ax    = axes[idx]
         h_err = REFERENCE_DATA["Hybrid_v50_2"][regime]
@@ -481,7 +672,7 @@ def _demo_visualize(output_dir: Path) -> None:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — FULL PIPELINE (loads real JSON data)
+# SECTION 4 — FULL PIPELINE  (loads real JSON data)
 # ════════════════════════════════════════════════════════════════════════════
 
 class UnifiedAnalyzer:
@@ -490,7 +681,7 @@ class UnifiedAnalyzer:
     runs all statistical tests, generates publication-quality outputs.
     """
 
-    METHODS = [
+    METHODS: List[str] = [
         "Pure LLM",
         "Neural Network",
         "Hybrid System v50_2",
@@ -498,14 +689,14 @@ class UnifiedAnalyzer:
         "System 3 LLM+Fallback",
     ]
 
-    # Normalise all known method-name variants to internal keys
-    METHOD_MAP = {
+    # Normalise all known method-name variants to internal keys.
+    METHOD_MAP: Dict[str, str] = {
         "Pure LLM":              "Pure_LLM",
         "Neural Network":        "Neural_Network",
-        "Hybrid System v50_2":     "Hybrid_v50_2",
+        "Hybrid System v50_2":   "Hybrid_v50_2",
         "System 2 Symbolic":     "System_2_Symbolic",
         "System 3 LLM+Fallback": "System_3_LLM_Fallback",
-        "System 3 LLM Fallback": "System_3_LLM_Fallback",   # alternate spelling
+        "System 3 LLM Fallback": "System_3_LLM_Fallback",  # alternate spelling
     }
 
     def __init__(
@@ -515,26 +706,26 @@ class UnifiedAnalyzer:
         systems23_path: Path,
         systems2_path:  Optional[Path],
         output_dir:     Path,
-    ):
+    ) -> None:
         self.extrap_path    = extrap_path
         self.interp_path    = interp_path
         self.systems23_path = systems23_path
         self.systems2_path  = systems2_path
         self.output_dir     = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.data    = None
-        self.results = None
+        self.data:    Optional[dict] = None
+        self.results: Optional[dict] = None
 
-    # ── file helpers ──────────────────────────────────────────────────────
+    # ── File helpers ──────────────────────────────────────────────────────
 
     def check_files_exist(self) -> bool:
         print("\n" + "=" * 80)
         print("CHECKING REQUIRED FILES")
         print("=" * 80)
         required = {
-            "Extrapolation data": self.extrap_path,
+            "Extrapolation data":    self.extrap_path,
             "Interpolation/R² data": self.interp_path,
-            "Systems-2 & 3 data": self.systems23_path,
+            "Systems-2 & 3 data":   self.systems23_path,
         }
         ok = True
         for label, path in required.items():
@@ -581,8 +772,11 @@ class UnifiedAnalyzer:
         for test in extrap_data["tests"]:
             name = test["test_name"]
             if name not in test_map:
-                test_map[name] = {"test_name": name, "domain": test["domain"],
-                                  "results": {}}
+                test_map[name] = {
+                    "test_name": name,
+                    "domain":    test["domain"],
+                    "results":   {},
+                }
             for method in ("Pure LLM", "Neural Network", "Hybrid System v50_2"):
                 if method in test["results"]:
                     test_map[name]["results"][method] = test["results"][method]
@@ -603,8 +797,10 @@ class UnifiedAnalyzer:
         if self.systems2_path and self.systems2_path.exists():
             s2_data = self._load_json(self.systems2_path)
             systems_files.append(s2_data)
-            print(f"  ✅ Also loaded: {self.systems2_path.name} "
-                  f"({s2_data.get('total_tests', 0)} tests)")
+            print(
+                f"  ✅ Also loaded: {self.systems2_path.name} "
+                f"({s2_data.get('total_tests', 0)} tests)"
+            )
 
         for sys_data in systems_files:
             for test in sys_data["tests"]:
@@ -624,8 +820,10 @@ class UnifiedAnalyzer:
                     existing = test_map[matched]["results"]
                     if method not in existing:
                         existing[method] = result
-                    elif ("extrapolation_errors" in result
-                          and "extrapolation_errors" not in existing[method]):
+                    elif (
+                        "extrapolation_errors" in result
+                        and "extrapolation_errors" not in existing[method]
+                    ):
                         existing[method] = result
 
         unified["tests"]       = list(test_map.values())
@@ -664,10 +862,12 @@ class UnifiedAnalyzer:
         print("STEP 2: EXTRACTING DATA FOR ANALYSIS")
         print("=" * 80)
 
-        keys = ["Pure_LLM", "Neural_Network", "Hybrid_v50_2",
-                "System_2_Symbolic", "System_3_LLM_Fallback"]
-        systems = {k: {"near_1.2x": [], "medium_2x": [],
-                        "far_5x":    [], "r2_scores": []} for k in keys}
+        keys    = ["Pure_LLM", "Neural_Network", "Hybrid_v50_2",
+                   "System_2_Symbolic", "System_3_LLM_Fallback"]
+        systems = {
+            k: {"near_1.2x": [], "medium_2x": [], "far_5x": [], "r2_scores": []}
+            for k in keys
+        }
 
         for test in self.data["tests"]:
             for method_display, method_key in self.METHOD_MAP.items():
@@ -699,15 +899,15 @@ class UnifiedAnalyzer:
         self.results = systems
         return systems
 
-    # ── Step 3: statistical tests ────────────────────────────────────────
+    # ── Step 3: statistical tests ─────────────────────────────────────────
 
     def run_statistical_tests(self) -> None:
         print("\n" + "=" * 80)
         print("STEP 3: STATISTICAL ANALYSIS")
         print("=" * 80)
 
-        order = ["Hybrid_v50_2", "Pure_LLM", "System_3_LLM_Fallback",
-                 "System_2_Symbolic", "Neural_Network"]
+        order       = ["Hybrid_v50_2", "Pure_LLM", "System_3_LLM_Fallback",
+                       "System_2_Symbolic", "Neural_Network"]
         with_extrap = [s for s in order
                        if len(self.results[s]["medium_2x"]) > 0]
 
@@ -718,35 +918,45 @@ class UnifiedAnalyzer:
             print(f"   • {s.replace('_', ' '):30s}: n={n}, mean={m:.2f} %")
 
         if len(with_extrap) < 2:
-            print("\n⚠️  Only 1 system has extrapolation data — "
-                  "showing R² comparison instead.")
+            print(
+                "\n⚠️  Only 1 system has extrapolation data — "
+                "showing R² comparison instead."
+            )
             self._print_r2_comparison()
             self._save_basic_stats()
             return
 
-        # Kruskal-Wallis omnibus
+        # Kruskal-Wallis omnibus test
         print("\n[1] Kruskal-Wallis H Test (Medium Extrapolation, 2×)")
         print("-" * 80)
-        groups = [self.results[s]["medium_2x"] for s in with_extrap]
-        h_stat, p_kw = kruskal(*groups)
+        groups        = [self.results[s]["medium_2x"] for s in with_extrap]
+        h_stat, p_kw  = kruskal(*groups)
         print(f"H-statistic: {h_stat:.2f}")
         print(f"p-value    : {p_kw:.6f}")
-        print("Conclusion : "
-              f"{'Significant differences exist' if p_kw < 0.05 else 'No significant differences'}")
+        print(
+            "Conclusion : "
+            f"{'Significant differences exist' if p_kw < 0.05 else 'No significant differences'}"
+        )
 
         # Pairwise Mann-Whitney (Hybrid v50_2 vs all others)
         print("\n[2] Pairwise Mann-Whitney U Tests (one-tailed, Hybrid < other)")
         print("-" * 80)
         comparisons = [
-            ("Hybrid_v50_2", other, f"Hybrid v50_2 vs {other.replace('_', ' ')}")
-            for other in ["Neural_Network", "Pure_LLM",
-                          "System_3_LLM_Fallback", "System_2_Symbolic"]
+            (
+                "Hybrid_v50_2",
+                other,
+                f"Hybrid v50_2 vs {other.replace('_', ' ')}",
+            )
+            for other in [
+                "Neural_Network", "Pure_LLM",
+                "System_3_LLM_Fallback", "System_2_Symbolic",
+            ]
             if "Hybrid_v50_2" in with_extrap and other in with_extrap
         ]
         pairwise_rows = []
         for m1, m2, desc in comparisons:
-            d1 = self.results[m1]["medium_2x"]
-            d2 = self.results[m2]["medium_2x"]
+            d1    = self.results[m1]["medium_2x"]
+            d2    = self.results[m2]["medium_2x"]
             u_stat, p_val = mann_whitney_less(d1, d2)
             d = cohens_d(d1, d2)
             pairwise_rows.append({
@@ -761,8 +971,10 @@ class UnifiedAnalyzer:
                 "Significant": "Yes" if p_val < 0.05 else "No",
             })
             print(f"\n  {desc}")
-            print(f"    U={u_stat:.2f}, p={p_val:.6f}, "
-                  f"d={'∞' if d == float('inf') else f'{d:.2f}'}")
+            print(
+                f"    U={u_stat:.2f}, p={p_val:.6f}, "
+                f"d={'∞' if d == float('inf') else f'{d:.2f}'}"
+            )
             print(f"    {significance_label(p_val)}")
             print(f"    {effect_label(d)}")
 
@@ -783,13 +995,15 @@ class UnifiedAnalyzer:
                   "System_3_LLM_Fallback", "System_2_Symbolic", "Neural_Network"]:
             sc = self.results[s]["r2_scores"]
             if sc:
-                rows.append({"System": s.replace("_", " "),
-                              "n":    len(sc),
-                              "Mean": round(np.mean(sc), 4),
-                              "Std":  round(np.std(sc),  4),
-                              "Min":  round(np.min(sc),  4),
-                              "Max":  round(np.max(sc),  4)})
-        df = pd.DataFrame(rows)
+                rows.append({
+                    "System": s.replace("_", " "),
+                    "n":      len(sc),
+                    "Mean":   round(np.mean(sc), 4),
+                    "Std":    round(np.std(sc),  4),
+                    "Min":    round(np.min(sc),  4),
+                    "Max":    round(np.max(sc),  4),
+                })
+        df       = results_to_dataframe(rows)
         print(df.to_string(index=False))
         csv_path = self.output_dir / "r2_comparison.csv"
         df.to_csv(csv_path, index=False)
@@ -812,7 +1026,7 @@ class UnifiedAnalyzer:
                 "Extrap_Mean": round(np.mean(medd), 2) if medd else np.nan,
                 "Extrap_Std":  round(np.std(medd),  2) if medd else np.nan,
             })
-        df = pd.DataFrame(rows)
+        df       = results_to_dataframe(rows)
         print(df.to_string(index=False))
         csv_path = self.output_dir / "descriptive_statistics.csv"
         df.to_csv(csv_path, index=False)
@@ -827,10 +1041,10 @@ class UnifiedAnalyzer:
 
         palette = [
             ("Hybrid_v50_2",            "System 1:\nNN+LLM",       "darkblue"),
-            ("Pure_LLM",              "Pure\nLLM",               "green"),
-            ("System_3_LLM_Fallback", "System 3:\nLLM+Fallback", "purple"),
-            ("System_2_Symbolic",     "System 2:\nSymbolic",      "orange"),
-            ("Neural_Network",        "Neural\nNetwork",          "red"),
+            ("Pure_LLM",                "Pure\nLLM",               "green"),
+            ("System_3_LLM_Fallback",   "System 3:\nLLM+Fallback", "purple"),
+            ("System_2_Symbolic",       "System 2:\nSymbolic",      "orange"),
+            ("Neural_Network",          "Neural\nNetwork",          "red"),
         ]
         data_to_plot, labels, colors = [], [], []
         for key, label, color in palette:
@@ -844,7 +1058,8 @@ class UnifiedAnalyzer:
             print("  ⚠️  No extrapolation data available for visualisation")
             return
 
-        fig, ax = plt.subplots(figsize=(14, 8))
+        # ── 5-system combined figure ──────────────────────────────────────
+        fig, ax   = plt.subplots(figsize=(14, 8))
         positions = list(range(1, len(data_to_plot) + 1))
 
         parts = ax.violinplot(
@@ -866,8 +1081,10 @@ class UnifiedAnalyzer:
         ax.set_xticks(positions)
         ax.set_xticklabels(labels, fontsize=11)
         ax.set_ylabel("Extrapolation Error (%) — Medium Regime (2×)", fontsize=12)
-        ax.set_title("Five-System Extrapolation Performance Comparison",
-                     fontsize=14, fontweight="bold")
+        ax.set_title(
+            "Five-System Extrapolation Performance Comparison",
+            fontsize=14, fontweight="bold",
+        )
         ax.set_yscale("log")
         ax.grid(True, alpha=0.3, axis="y")
         ax.axhline(y=10,  color="green",  linestyle="--", alpha=0.5,
@@ -876,8 +1093,10 @@ class UnifiedAnalyzer:
                    label="100 % (2× training error)")
         for pos, errs in zip(positions, data_to_plot):
             mv = np.mean(errs)
-            ax.text(pos, mv * 1.5, f"{mv:.1f}%",
-                    ha="center", va="bottom", fontsize=9, fontweight="bold")
+            ax.text(
+                pos, mv * 1.5, f"{mv:.1f}%",
+                ha="center", va="bottom", fontsize=9, fontweight="bold",
+            )
         ax.legend(loc="upper right")
         plt.tight_layout()
 
@@ -888,14 +1107,13 @@ class UnifiedAnalyzer:
             print(f"  ✅ Saved: {path}")
         plt.close()
 
-        # ── 3-panel per-regime figure (mirrors demo output) ───────────────
+        # ── 3-panel per-regime figure ─────────────────────────────────────
         # Shows near / medium / far side-by-side for every system that has
-        # extrapolation data — equivalent to _demo_visualize but built from
-        # the real merged dataset instead of the hardcoded reference values.
-        regime_keys  = ["near_1.2x",    "medium_2x",    "far_5x"]
+        # extrapolation data — mirrors _demo_visualize but built from the
+        # real merged dataset.
+        regime_keys  = ["near_1.2x",    "medium_2x",   "far_5x"]
         regime_names = ["Near (1.2×)", "Medium (2×)", "Far (5×)"]
 
-        # Collect all systems that have at least some regime data
         active = [
             (key, label, color)
             for key, label, color in palette
@@ -903,12 +1121,14 @@ class UnifiedAnalyzer:
         ]
 
         if active:
-            fig2, axes = plt.subplots(1, 3, figsize=(15, 5))
-            scatter_colors = plt.cm.tab10.colors
+            fig2, axes   = plt.subplots(1, 3, figsize=(15, 5))
+            scat_colors  = plt.cm.tab10.colors
 
-            for idx, (regime_key, regime_name) in enumerate(zip(regime_keys, regime_names)):
-                ax2 = axes[idx]
-                regime_data  = []
+            for idx, (regime_key, regime_name) in enumerate(
+                zip(regime_keys, regime_names)
+            ):
+                ax2           = axes[idx]
+                regime_data   = []
                 regime_labels = []
                 for sys_key, sys_label, _ in active:
                     vals = self.results[sys_key][regime_key]
@@ -921,7 +1141,7 @@ class UnifiedAnalyzer:
                     continue
 
                 positions2 = list(range(1, len(regime_data) + 1))
-                parts2 = ax2.violinplot(
+                parts2     = ax2.violinplot(
                     regime_data, positions=positions2,
                     showmeans=True, showmedians=True,
                 )
@@ -933,7 +1153,7 @@ class UnifiedAnalyzer:
                     ax2.scatter(
                         [pos] * len(vals), vals,
                         alpha=0.6, s=50, zorder=3,
-                        color=scatter_colors[i % len(scatter_colors)],
+                        color=scat_colors[i % len(scat_colors)],
                         label=regime_labels[i],
                     )
                     ax2.text(
@@ -952,8 +1172,10 @@ class UnifiedAnalyzer:
                 ax2.axhline(y=100, color="orange", linestyle="--", alpha=0.5,
                             label="100 % threshold")
 
-            plt.suptitle("Per-Regime Extrapolation Error Distributions",
-                         fontsize=13, fontweight="bold")
+            plt.suptitle(
+                "Per-Regime Extrapolation Error Distributions",
+                fontsize=13, fontweight="bold",
+            )
             plt.tight_layout()
 
             for ext in ("pdf", "png"):
@@ -972,10 +1194,10 @@ class UnifiedAnalyzer:
 
         systems = [
             ("Hybrid_v50_2",            "System 1: NN+LLM",       "Extrapolation-aware"),
-            ("Pure_LLM",              "Pure LLM",                "Formula discovery only"),
-            ("System_3_LLM_Fallback", "System 3: LLM+Fallback", "LLM with symbolic backup"),
-            ("System_2_Symbolic",     "System 2: Symbolic",      "PySR + validation"),
-            ("Neural_Network",        "Neural Network",           "Baseline"),
+            ("Pure_LLM",                "Pure LLM",                "Formula discovery only"),
+            ("System_3_LLM_Fallback",   "System 3: LLM+Fallback", "LLM with symbolic backup"),
+            ("System_2_Symbolic",       "System 2: Symbolic",      "PySR + validation"),
+            ("Neural_Network",          "Neural Network",           "Baseline"),
         ]
         all_means = [
             np.mean(self.results[k]["medium_2x"])
@@ -999,12 +1221,14 @@ class UnifiedAnalyzer:
             r2s = self.results[key]["r2_scores"]
             if not med:
                 continue
-            n      = len(med)
-            mn     = np.mean(med)
+            n       = len(med)
+            mn      = np.mean(med)
             r2_mean = np.mean(r2s) if r2s else 0.0
-            mn_str = (f"\\textbf{{{mn:.1f}\\%}}"
-                      if best_mean is not None and mn == best_mean
-                      else f"{mn:.1f}\\%")
+            mn_str  = (
+                f"\\textbf{{{mn:.1f}\\%}}"
+                if best_mean is not None and mn == best_mean
+                else f"{mn:.1f}\\%"
+            )
             latex += f"{name:30s} & {n:2d} & {mn_str:20s} & {r2_mean:.3f} & {desc} \\\\\n"
 
         latex += r"""\bottomrule
@@ -1063,8 +1287,7 @@ class UnifiedAnalyzer:
 
 def main() -> None:
     parser = build_parser()
-    args   = parser.parse_args()
-    args   = resolve_args(args)
+    args   = resolve_args(parser.parse_args())
 
     # Prepare output dir early (demo mode also needs it)
     args.output_path.mkdir(parents=True, exist_ok=True)

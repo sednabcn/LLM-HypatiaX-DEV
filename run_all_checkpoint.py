@@ -16,6 +16,8 @@ Usage:
     python3 run_all.py --seed 123           # override seed for all steps (default: 42)
     python3 run_all.py --only exp3 --seed 777  # single step with custom seed
     python3 run_all.py --skip-paper         # skip pdflatex compile steps
+    python3 run_all.py --pysr-timeout 900   # extend PySR wall-clock limit (default 360s)
+    python3 run_all.py --one-equation       # smoke-test: 1 equation per experiment, fast timeout
 
 Step IDs (use with --only / --from):
     Setup   : deps  patches-gen  patches-apply  fixup-tex  validate  check-hypatiax-protocols
@@ -28,6 +30,26 @@ Step IDs (use with --only / --from):
 Prerequisites:
     export ANTHROPIC_API_KEY="sk-ant-..."
     pip install -r requirements.txt
+
+Changelog v4.3 (2026-04-21):
+    NEW: --one-equation flag injects ONE_EQUATION=1 + N_TASKS_*=1 + N_FEYNMAN_TASKS=1
+         into the environment so every experiment script runs exactly one equation.
+         Also forces PYSR_TIMEOUT=120 (overridable with --pysr-timeout) and prints a
+         SMOKE-TEST banner.  Use this to verify the full pipeline end-to-end quickly
+         before committing to a full multi-hour run.
+
+Changelog v4.2 (2026-04-21):
+    FIX: KeyboardInterrupt (Ctrl+C) now caught in both run_step() and main():
+         subprocess is terminated cleanly, checkpoint is saved, summary is
+         printed, and the process exits with code 130 (standard Ctrl+C exit).
+    FIX: archive_step_results() rglob sub_pattern no longer uses fragile
+         lstrip() chain — '**/*.json' is passed to rglob() directly.
+    FIX: exp3b label corrected to "seeds 99/123/777/2024" (SEED=42 = exp3).
+    FIX: Popen now uses bufsize=1 (line-buffered) for more responsive streaming.
+    NEW: --pysr-timeout SECS flag injects PYSR_TIMEOUT env var so experiment
+         scripts can extend the PySR wall-clock limit on slower hardware (the
+         360 s default causes 11/15 Hybrid results to be N/A locally, breaking
+         the Mann-Whitney U stat — paper expects U=126 over 15 pairs, not 4).
 """
 
 import argparse
@@ -245,9 +267,9 @@ STEPS: list[Step] = [
          expected="11/12 H (91.7%) · 10/12 P · MW U=113, p=0.0097",
          result_glob="hypatiax/data/results/nguyen12_exp3_*.json"),
 
-    # §10.8 stability: all 5 seeds (mirrors exp1b seed sweep pattern)
+    # §10.8 stability: remaining 4 seeds (SEED=42 is exp3 above)
     Step("exp3b",
-         "Exp 3b · Nguyen-12 seed sweep 99/123/777/2024 (§10.8 stability)",
+         "Exp 3b · Nguyen-12 seeds 99/123/777/2024 (§10.8 stability)",
          ["python3", "protocols/experiment_protocol_nguyen12_exp3.py",
           "--seeds", "99", "123", "777", "2024"],
          phase="1 · Core experiments",
@@ -474,8 +496,9 @@ def archive_step_results(step: Step) -> None:
         parts = Path(pattern).parts
         star_idx = next(i for i, p in enumerate(parts) if "**" in p)
         base_dir = RESULTS_DIR / Path(*parts[:star_idx])
+        # Reconstruct only the glob portion after (and including) the '**' part
         sub_pattern = str(Path(*parts[star_idx:]))
-        matches = list(base_dir.rglob(sub_pattern.lstrip("**/").lstrip("/"))) \
+        matches = list(base_dir.rglob(sub_pattern)) \
                   if base_dir.exists() else []
     else:
         matches = list(RESULTS_DIR.glob(pattern))
@@ -537,6 +560,7 @@ def run_step(step: Step, env: dict) -> StepResult:
     print(f"│    cmd: {' '.join(str(x) for x in step.cmd)}")
 
     t0 = time.time()
+    proc: Optional[subprocess.Popen] = None
     try:
         with open(log_path, "w") as log_fh:
             proc = subprocess.Popen(
@@ -545,6 +569,7 @@ def run_step(step: Step, env: dict) -> StepResult:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,          # line-buffered for responsive streaming
             )
             # Stream line-by-line: write to log and echo to terminal
             assert proc.stdout is not None
@@ -565,6 +590,22 @@ def run_step(step: Step, env: dict) -> StepResult:
         return StepResult(step.id, step.label,
                           "pass" if ok else "fail",
                           elapsed, log_path, proc.returncode)
+
+    except KeyboardInterrupt:
+        # ── Ctrl+C: kill the child process cleanly, then re-raise so main()
+        #    can save the checkpoint and print a tidy summary.
+        elapsed = time.time() - t0
+        if proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        print(f"\n└─── ✗ INTERRUPTED  ({elapsed:.0f}s) — step killed, checkpoint saved")
+        raise   # propagate so main() can handle graceful shutdown
 
     except Exception as exc:
         elapsed = time.time() - t0
@@ -604,6 +645,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, metavar="N",
                         help="Override PYSR_SEED / NN_SEED / PYTHONHASHSEED for all steps "
                              "(e.g. --seed 123). Defaults to 42 when omitted.")
+    parser.add_argument("--pysr-timeout", type=int, default=None, metavar="SECS",
+                        help="Wall-clock timeout (seconds) passed to PySR via PYSR_TIMEOUT "
+                             "env var. Default is whatever the experiment script sets (360s). "
+                             "Use e.g. --pysr-timeout 900 on slower hardware.")
+    parser.add_argument("--one-equation", action="store_true",
+                        help="Smoke-test mode: run exactly 1 equation per experiment. "
+                             "Injects ONE_EQUATION=1, N_TASKS_DEFI=1, N_FEYNMAN_TASKS=1, "
+                             "N_TASKS_INSTABILITY=1, and forces PYSR_TIMEOUT=120 (unless "
+                             "--pysr-timeout is also given). Use this to verify the full "
+                             "pipeline end-to-end quickly on local hardware.")
     args = parser.parse_args()
 
     # FIX: validate --from is only used alongside --resume; warn otherwise
@@ -621,7 +672,8 @@ def main() -> None:
         clear_checkpoint()
         sys.exit(0)
 
-    banner("HypatiaX · Reproducibility Pipeline v4.1 (checkpoint/resume)")
+    banner("HypatiaX · Reproducibility Pipeline v4.3 (checkpoint/resume)"
+           + ("  [SMOKE-TEST: 1 equation]" if args.one_equation else ""))
     print(f"  Repo      : {REPO_ROOT}")
     print(f"  Python    : {sys.version.split()[0]}")
     print(f"  Date      : {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -706,6 +758,36 @@ def main() -> None:
     env.setdefault("NN_TIME_LIMIT",         "120")
     env.setdefault("ENGINE_NAME",           "hybrid_system_v50_2")  # FIX-C2: never v40
     env.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
+    # PYSR_TIMEOUT: experiment scripts should read this to override their default
+    # wall-clock limit (360 s).  Use --pysr-timeout on slower local hardware to
+    # prevent the Hybrid column from being all N/A due to PySR timing out.
+    if args.pysr_timeout is not None:
+        env["PYSR_TIMEOUT"] = str(args.pysr_timeout)
+        print(f"  PYSR_TIMEOUT={args.pysr_timeout}s  (--pysr-timeout override)")
+    else:
+        env.setdefault("PYSR_TIMEOUT", "360")   # match experiment script default
+
+    # ── --one-equation: smoke-test mode ───────────────────────────────────
+    if args.one_equation:
+        # Tell every experiment script to run only 1 equation/task.
+        # Scripts should check ONE_EQUATION=1 and/or the N_TASKS_* vars.
+        env["ONE_EQUATION"]          = "1"
+        env["N_TASKS_DEFI"]          = "1"   # exp1: 1 of 74 DeFi tasks
+        env["N_FEYNMAN_TASKS"]       = "1"   # exp2: 1 of 30 Feynman equations
+        env["N_TASKS_INSTABILITY"]   = "1"   # instability: 1 of 70 tasks
+        env["N_NGUYEN_TASKS"]        = "1"   # exp3/exp3b: 1 of 12 Nguyen equations
+        env["N_NOISE_EQUATIONS"]     = "1"   # suppB: 1 equation across all noise levels
+        env["LLM_K_RUNS"]            = "1"   # force K=1 even for instability step
+        # Use a short PySR timeout (120 s) unless the user explicitly overrode it
+        if args.pysr_timeout is None:
+            env["PYSR_TIMEOUT"] = "120"
+        print("\n" + "▲" * 68)
+        print("  ▲▲  SMOKE-TEST MODE  (--one-equation)")
+        print("  ▲▲  1 equation per experiment · PYSR_TIMEOUT="
+              + env["PYSR_TIMEOUT"] + "s")
+        print("  ▲▲  This is NOT a full reproducibility run.")
+        print("  ▲▲  Results will NOT match paper targets.")
+        print("▲" * 68)
     env["PYTHONPATH"]  = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env["RESULTS_DIR"] = str(RESULTS_DIR)
     env["REPRO_ROOT"]  = str(REPO_ROOT)
@@ -747,54 +829,71 @@ def main() -> None:
     # once we reach --from step, all subsequent steps run regardless of checkpoint
     past_from = args.from_step is None
 
-    for step in STEPS:
-        if step.phase != current_phase:
-            banner(f"Phase {step.phase}")
-            current_phase = step.phase
+    try:
+        for step in STEPS:
+            if step.phase != current_phase:
+                banner(f"Phase {step.phase}")
+                current_phase = step.phase
 
-        if args.from_step and step.id == args.from_step:
-            past_from = True
+            if args.from_step and step.id == args.from_step:
+                past_from = True
 
-        # --only filter
-        if args.only and step.id != args.only:
-            results.append(StepResult(step.id, step.label, "skip"))
-            print(f"  ── skip [{step.id}]  (--only {args.only})")
-            continue
+            # --only filter
+            if args.only and step.id != args.only:
+                results.append(StepResult(step.id, step.label, "skip"))
+                print(f"  ── skip [{step.id}]  (--only {args.only})")
+                continue
 
-        # --resume: skip steps that already passed, unless we're past --from
-        if (args.resume
-                and checkpoint_state.get(step.id) == "pass"
-                and not past_from):
-            results.append(StepResult(step.id, step.label, "resume-skip"))
-            print(f"  ↩  skip [{step.id}]  (checkpoint: already passed)")
-            continue
+            # --resume: skip steps that already passed, unless we're past --from
+            if (args.resume
+                    and checkpoint_state.get(step.id) == "pass"
+                    and not past_from):
+                results.append(StepResult(step.id, step.label, "resume-skip"))
+                print(f"  ↩  skip [{step.id}]  (checkpoint: already passed)")
+                continue
 
-        # --skip-slow filter
-        if args.skip_slow and step.slow:
-            results.append(StepResult(step.id, step.label, "skip"))
-            print(f"  ── skip [{step.id}]  (--skip-slow)")
-            continue
+            # --skip-slow filter
+            if args.skip_slow and step.slow:
+                results.append(StepResult(step.id, step.label, "skip"))
+                print(f"  ── skip [{step.id}]  (--skip-slow)")
+                continue
 
-        # FIX: --skip-paper filter — previously parsed but never applied
-        if args.skip_paper and step.paper:
-            results.append(StepResult(step.id, step.label, "skip"))
-            print(f"  ── skip [{step.id}]  (--skip-paper)")
-            continue
+            # FIX: --skip-paper filter — previously parsed but never applied
+            if args.skip_paper and step.paper:
+                results.append(StepResult(step.id, step.label, "skip"))
+                print(f"  ── skip [{step.id}]  (--skip-paper)")
+                continue
 
-        result = run_step(step, env)
-        results.append(result)
+            result = run_step(step, env)
+            results.append(result)
 
-        # save checkpoint after every step
-        checkpoint_state[step.id] = result.status
+            # save checkpoint after every step
+            checkpoint_state[step.id] = result.status
+            save_checkpoint(checkpoint_state)
+
+            if result.status == "fail" and not args.continue_on_fail:
+                print(f"\n  Pipeline aborted at [{step.id}].")
+                print(f"  Checkpoint saved → {CHECKPOINT}")
+                print(f"  To resume:         python3 run_all.py --resume")
+                print(f"  To rerun this step: python3 run_all.py --only {step.id}")
+                _print_summary(results, time.time() - t_total)
+                sys.exit(1)
+
+    except KeyboardInterrupt:
+        # ── Ctrl+C pressed between steps (or re-raised from run_step) ──────
+        print(f"\n\n  ⚠  Interrupted by user (Ctrl+C).")
+        # Mark any step currently being attempted as failed in checkpoint
+        # (run_step already appended its StepResult before re-raising, so
+        #  results list is up to date; just ensure the checkpoint reflects it.)
+        for r in results:
+            if r.id not in checkpoint_state:
+                checkpoint_state[r.id] = r.status
         save_checkpoint(checkpoint_state)
-
-        if result.status == "fail" and not args.continue_on_fail:
-            print(f"\n  Pipeline aborted at [{step.id}].")
-            print(f"  Checkpoint saved → {CHECKPOINT}")
-            print(f"  To resume:         python3 run_all.py --resume")
-            print(f"  To rerun this step: python3 run_all.py --only {step.id}")
-            _print_summary(results, time.time() - t_total)
-            sys.exit(1)
+        print(f"  Checkpoint saved → {CHECKPOINT}")
+        print(f"  Resume with:       python3 run_all.py --resume"
+              + ("  --one-equation" if args.one_equation else ""))
+        _print_summary(results, time.time() - t_total)
+        sys.exit(130)   # conventional exit code for Ctrl+C
 
     _print_summary(results, time.time() - t_total)
 
@@ -803,7 +902,14 @@ def main() -> None:
     if not failed and not args.only:
         clear_checkpoint()
 
+    if args.one_equation:
+        print("\n" + "▲" * 68)
+        print("  ▲▲  SMOKE-TEST COMPLETE  (--one-equation)")
+        print("  ▲▲  Re-run without --one-equation for a full reproducibility run.")
+        print("▲" * 68)
+
     sys.exit(1 if failed else 0)
+
 
 
 def _print_summary(results: list[StepResult], elapsed: float) -> None:

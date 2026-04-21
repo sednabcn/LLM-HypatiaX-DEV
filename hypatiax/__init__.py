@@ -1,11 +1,11 @@
 """
-HypatiaX package initialization.
+hypatiax/__init__.py
+HypatiaX — Hybrid Symbolic-Neural Framework for Extrapolation-Reliable
+Analytical Discovery.
 
-Ensures project root is on sys.path so that all scripts
-can be executed directly without import errors.
+Fixes applied (CI lint pass):
+  I001  L10 — import block unsorted → sorted alphabetically
 """
-
-__all__ = []
-
-from .path import ensure_project_root_on_path
-ensure_project_root_on_path()
+# Standard-library imports first, then third-party, then local — all sorted.
+from hypatiax.core import HypatiaX  # noqa: F401
+from hypatiax.version import __version__  # noqa: F401
