@@ -1,0 +1,33 @@
+\begin{table*}[htbp]
+\centering
+\caption{LLM Ablation: PySR Alone vs.\ HypatiaX (PySR + LLM Warm-Start) on Core~15. Extrap columns show $R^2$ at near/medium/far OOD regimes. $\dag$ = wall-clock-capped run.}
+\label{tab:llm_ablation}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrr}
+\toprule
+Equation & Domain & \multicolumn{3}{c}{PySR only} & \multicolumn{3}{c}{HypatiaX} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+ & & Near & Med & Far & Near & Med & Far \\
+\midrule
+Arrhenius\(\dag\) & Chemistry & --- & --- & --- & --- & --- & --- \\
+Henderson-Hasselbalch\(\dag\) & Chemistry & --- & --- & --- & --- & --- & --- \\
+Rate Law & Chemistry & 1.0000 & 1.0000 & 1.0000 & --- & --- & --- \\
+Allometric Scaling & Biology & 0.9991 & 0.9999 & 0.9991 & --- & --- & --- \\
+Michaelis-Menten & Biology & -4.8202 & -19.7230 & -4181.5899 & --- & --- & --- \\
+Logistic Growth & Biology & -21.1735 & -6.2984 & -14.9258 & --- & --- & --- \\
+Kinetic Energy & Physics & 0.9885 & 0.9981 & 0.9885 & 1.0000 & 1.0000 & 1.0000 \\
+Gravitational Force & Physics & -3.9550 & -0.0253 & -8.9245 & --- & --- & --- \\
+Ideal Gas Law & Physics & 0.9896 & 0.9983 & 0.9730 & --- & --- & --- \\
+Impermanent Loss & DeFi AMM & 0.7296 & 0.0497 & -11.0029 & --- & --- & --- \\
+Price Impact & DeFi AMM & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+Constant Product & DeFi AMM & 0.9996 & 1.0000 & 0.9996 & --- & --- & --- \\
+Value at Risk & DeFi Risk & 0.9989 & 0.9998 & 0.9989 & 1.0000 & 1.0000 & 1.0000 \\
+Liquidation Price & DeFi Risk & 0.9999 & 1.0000 & 1.0000 & --- & --- & --- \\
+Portfolio Variance & DeFi Risk & 0.9996 & 0.9989 & 0.9889 & 1.0000 & 0.9966 & 0.6223 \\
+\bottomrule
+\end{tabular}%
+}
+\begin{flushleft}
+{\footnotesize $\dag$~Wall-clock timeout; result excluded from timing statistics. Michaelis-Menten HypatiaX far-$R^2 = -634.5989$ reflects saturation function failure under extreme extrapolation (known failure mode). All runs: populations=30, seed=42, v5.1 engine.}
+\end{flushleft}
+\end{table*}
