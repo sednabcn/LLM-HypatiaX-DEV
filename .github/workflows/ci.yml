@@ -80,6 +80,14 @@ jobs:
         run: |
           pip install --quiet ruff pyflakes
 
+      - name: Install pipeline dependencies (needed for patches)
+        run: pip install --quiet -r requirements.txt
+
+      - name: Apply patches before lint checks (FIX-C2 must run first)
+        run: |
+          python3 scripts/patches/generate_patches.py
+          python3 scripts/patches/apply_patches.py
+
       - name: ruff — style & import checks
         run: |
           ruff check hypatiax/ protocols/ scripts/ core/ \
@@ -87,10 +95,14 @@ jobs:
             --output-format github || true
           # Treat as warning only in CI (--|| true); set to exit 1 to enforce
 
-      - name: Check for stale v40 engine references (FIX-C2)
+      - name: Check for stale v40 engine references (FIX-C2, post-patch)
         run: |
-          STALE=$(grep -r "hybrid_system_v40[^_]" hypatiax/ protocols/ \
-                    --include="*.py" -l 2>/dev/null || true)
+          # Exclude BACKUP/ — .bak files are historical copies, not live code.
+          # Patches have already been applied above so live .py files are checked.
+          STALE=$(grep -r "hybrid_system_v40[^_]" hypatiax/ protocols/ scripts/ \
+                    --include="*.py" \
+                    --exclude-dir=BACKUP \
+                    -l 2>/dev/null || true)
           if [ -n "$STALE" ]; then
             echo "::error ::Stale hybrid_system_v40 import found — must be v50_2:"
             echo "$STALE"
@@ -114,9 +126,6 @@ jobs:
 
       - name: Validate patched source syntax
         run: |
-          pip install --quiet -r requirements.txt
-          python3 scripts/patches/generate_patches.py
-          python3 scripts/patches/apply_patches.py
           python3 run_all_checkpoint.py --only fixup-tex
           python3 scripts/patches/validate_code.py
 
