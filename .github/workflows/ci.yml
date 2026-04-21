@@ -68,10 +68,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -143,10 +143,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -157,7 +157,7 @@ jobs:
           version: "1.10"
 
       - name: Restore pip cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
@@ -170,7 +170,7 @@ jobs:
 
       # ── Restore checkpoint if a previous run left one ───────────────────
       - name: Restore checkpoint (if any)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: logs/pipeline_checkpoint.json
           key: checkpoint-smoke-${{ github.ref }}-${{ github.run_id }}
@@ -199,14 +199,14 @@ jobs:
 
       - name: Save checkpoint
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: logs/pipeline_checkpoint.json
           key: checkpoint-smoke-${{ github.ref }}-${{ github.run_id }}
 
       - name: Upload smoke-test logs & results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-test-${{ github.sha }}
           path: |
@@ -231,10 +231,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -257,7 +257,7 @@ jobs:
 
       # ── Restore checkpoint from a previous run ──────────────────────────
       - name: Restore checkpoint
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: logs/pipeline_checkpoint.json
           key: checkpoint-full-${{ github.ref }}-${{ github.run_id }}
@@ -265,7 +265,7 @@ jobs:
 
       # ── Restore cached result files so verify step can find them ────────
       - name: Restore result cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: hypatiax/data/results/
           key: results-full-${{ github.ref }}-${{ github.run_id }}
@@ -308,21 +308,21 @@ jobs:
 
       - name: Save checkpoint
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: logs/pipeline_checkpoint.json
           key: checkpoint-full-${{ github.ref }}-${{ github.run_id }}
 
       - name: Save result cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: hypatiax/data/results/
           key: results-full-${{ github.ref }}-${{ github.run_id }}
 
       - name: Upload results artefact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: full-pipeline-results-${{ github.sha }}
           path: |
@@ -332,7 +332,7 @@ jobs:
 
       - name: Upload figures & tables artefact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: figures-tables-${{ github.sha }}
           path: |
@@ -356,10 +356,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -380,14 +380,14 @@ jobs:
           echo "RESULTS_DIR=${{ github.workspace }}/hypatiax/data/results" >> $GITHUB_ENV
 
       - name: Restore checkpoint
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: logs/pipeline_checkpoint.json
           key: checkpoint-slow-${{ github.ref }}-${{ github.run_id }}
           restore-keys: checkpoint-slow-${{ github.ref }}-
 
       - name: Restore result cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: hypatiax/data/results/
           key: results-slow-${{ github.ref }}-${{ github.run_id }}
@@ -413,21 +413,21 @@ jobs:
 
       - name: Save checkpoint
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: logs/pipeline_checkpoint.json
           key: checkpoint-slow-${{ github.ref }}-${{ github.run_id }}
 
       - name: Save result cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: hypatiax/data/results/
           key: results-slow-${{ github.ref }}-${{ github.run_id }}
 
       - name: Upload all artefacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: slow-pipeline-results-${{ github.sha }}
           path: |
@@ -448,10 +448,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -460,7 +460,7 @@ jobs:
         run: pip install -q -r requirements.txt
 
       - name: Restore result cache from main branch
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: hypatiax/data/results/
           # Try to restore from main's latest full-pipeline run
@@ -477,7 +477,7 @@ jobs:
 
       - name: Upload verify log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: verify-${{ github.sha }}
           path: logs/
