@@ -1,0 +1,68 @@
+name: Cleanup Failed Workflow Runs
+
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight
+
+permissions:
+  actions: write   # Required to delete workflow runs
+  contents: read   # Read repository contents
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || (sudo apt-get update && sudo apt-get install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install gh -y
+          sudo apt-get install jq -y
+
+      - name: Authenticate with GitHub
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Cleanup Failed, Cancelled, and Timed-Out Workflow Runs
+        run: |
+          # Get repository name from the environment
+          REPO="${GITHUB_REPOSITORY}"
+
+          echo "Cleaning up workflow runs for $REPO..."
+
+          # Calculate timestamp for 4 hours ago (in seconds since epoch)
+          FOUR_HOURS_AGO=$(date -d "4 hours ago" +%s)
+
+          # Process runs with status 'failure', 'cancelled', and 'timed_out'
+          for STATUS in failure cancelled timed_out; do
+            echo "Processing runs with status: $STATUS"
+
+            # Get all runs with the current status
+            RUNS=$(gh api repos/$REPO/actions/runs?status=$STATUS --jq '.workflow_runs[]')
+
+            # Process each run
+            echo "$RUNS" | jq -c '. | {id: .id, created_at: .created_at, name: .name}' | while read -r RUN; do
+              RUN_ID=$(echo "$RUN" | jq -r '.id')
+              RUN_DATE=$(echo "$RUN" | jq -r '.created_at')
+              RUN_NAME=$(echo "$RUN" | jq -r '.name')
+
+              # Convert run date to timestamp
+              RUN_TIMESTAMP=$(date -d "$RUN_DATE" +%s)
+
+              # Skip if the run is from the last 4 hours
+              if [ "$RUN_TIMESTAMP" -gt "$FOUR_HOURS_AGO" ]; then
+                echo "Skipping recent run: $RUN_NAME (ID: $RUN_ID) from $RUN_DATE"
+              else
+                echo "Deleting run: $RUN_NAME (ID: $RUN_ID) from $RUN_DATE"
+                gh api --method DELETE repos/$REPO/actions/runs/$RUN_ID
+              fi
+            done
+          done
+
+          echo "Cleanup complete!"
