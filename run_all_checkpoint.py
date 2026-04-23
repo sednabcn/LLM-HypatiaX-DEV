@@ -876,6 +876,87 @@ def banner(msg: str) -> None:
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+def _clear_stale_locks() -> None:
+    """
+    Remove all stale lock files that can cause experiments to hang or skip silently.
+
+    Locks cleared:
+      1. universal_protocol lock files  — hypatiax/data/results/.lock_*
+         Written on success; interrupted runs leave orphan locks that cause
+         the next run to silently skip the experiment (cached).
+
+      2. Julia / juliapkg lock.pid      — <venv>/julia_env/lock.pid
+         Held by Julia while resolving packages. If a PySR subprocess is
+         killed (Ctrl+C, timeout, OOM) Julia never releases it, causing all
+         subsequent Julia-backed experiments to hang indefinitely printing
+         "Waiting for lock on lock.pid to be freed."
+
+      3. ~/.julia lock files            — ~/.julia/locks/*
+                                          ~/.julia/registries/**/*.lock
+         Left behind by crashed Julia depot operations.
+
+      4. Any lock.pid found under the repo root (juliapkg per-project).
+    """
+    import sys as _sys_locks
+
+    _cleared: list[str] = []
+    _failed:  list[str] = []
+
+    def _try_unlink(p: Path) -> None:
+        if p.exists():
+            try:
+                p.unlink()
+                _cleared.append(str(p))
+            except Exception as e:
+                _failed.append(f"{p} ({e})")
+
+    # ── 1. universal_protocol .lock_* files ───────────────────────────────
+    for lf in RESULTS_DIR.glob(".lock_*"):
+        _try_unlink(lf)
+
+    # ── 2. Julia / juliapkg lock.pid ──────────────────────────────────────
+    # Search: active venv, parent dirs, and common local Python install paths.
+    _julia_roots = [
+        Path(_sys_locks.executable).parent.parent,
+        Path(_sys_locks.executable).parent.parent.parent,
+        Path.home() / ".local",
+        Path.home() / "Downloads" / "py312",
+        Path.home() / "Downloads" / "py311",
+        Path.home() / "Downloads" / "py310",
+    ]
+    for _root in _julia_roots:
+        if _root.exists():
+            for _pid in _root.rglob("julia_env/lock.pid"):
+                _try_unlink(_pid)
+
+    # ── 3. ~/.julia depot lock files ──────────────────────────────────────
+    _julia_home = Path.home() / ".julia"
+    if _julia_home.exists():
+        _locks_dir = _julia_home / "locks"
+        if _locks_dir.exists():
+            for lf in _locks_dir.iterdir():
+                if lf.is_file():
+                    _try_unlink(lf)
+        for lf in (_julia_home / "registries").rglob("*.lock") if (_julia_home / "registries").exists() else []:
+            _try_unlink(lf)
+
+    # ── 4. Any lock.pid under repo root ───────────────────────────────────
+    for lf in REPO_ROOT.rglob("lock.pid"):
+        _try_unlink(lf)
+
+    # ── Report ─────────────────────────────────────────────────────────────
+    if _cleared:
+        print(f"  🔓 Cleared {len(_cleared)} stale lock file(s):")
+        for lf in _cleared:
+            print(f"       {lf}")
+    else:
+        print("  🔓 No stale lock files found")
+    if _failed:
+        print(f"  ⚠  Could not remove {len(_failed)} lock(s):")
+        for lf in _failed:
+            print(f"       {lf}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="HypatiaX reproducibility pipeline",
@@ -922,6 +1003,9 @@ def main() -> None:
     os.chdir(REPO_ROOT)
     LOG_DIR.mkdir(exist_ok=True)
     ensure_output_dirs()
+
+    # ── Pre-flight: clear all stale lock files ─────────────────────────────
+    _clear_stale_locks()
 
     # ── --clear-checkpoint ─────────────────────────────────────────────────
     if args.clear_checkpoint:
