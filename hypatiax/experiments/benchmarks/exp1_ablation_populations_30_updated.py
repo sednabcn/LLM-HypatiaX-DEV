@@ -80,17 +80,19 @@ INSTAB_STATS = OUTPUT_DIR / f"exp1_instability_stats{_seed_suffix}.json"
 INSTAB_CSV   = OUTPUT_DIR / f"instability_extrapolation_v2{_seed_suffix}.csv"
 PROV_PATH    = OUTPUT_DIR / f"provenance_map_exp1{_seed_suffix}.json"
 
-# ── JMLR output path (where paper reads results from) ─────────────────────────
-# Adjust this to your local checkout of jmlr-source-last/
-JMLR_ABLATION_DIR = Path("jmlr-source-last/ablation/results-ablation")
+# JMLR_ABLATION_DIR removed — Kaggle-only path, not needed for local runs
 
 # ── Paper constants ───────────────────────────────────────────────────────────
 # populations=30 matches the main DeFi benchmark and what the paper describes.
 # The original Copy_of_hypatiax_exp1_v2_fixed.ipynb used populations=2 —
 # that was a fast-development preset that inflates apparent speedup. Fix here.
-POPULATIONS   = int(os.environ.get("PYSR_POPULATIONS", "30"))
-NITERATIONS   = int(os.environ.get("PYSR_NITERATIONS", "1000"))
-TIMEOUT_SECS  = int(os.environ.get("PYSR_TIMEOUT", "300"))
+# Read smoke-test env vars injected by run_all_checkpoint.py --one-equation.
+# N_ITERATIONS and POPULATIONS are the canonical names set by the pipeline.
+# PYSR_NITERATIONS / PYSR_POPULATIONS are kept as fallbacks for direct runs.
+# Paper-quality defaults: populations=30, niterations=1000, timeout=300s.
+POPULATIONS   = int(os.environ.get("POPULATIONS",    os.environ.get("PYSR_POPULATIONS", "30")))
+NITERATIONS   = int(os.environ.get("N_ITERATIONS",   os.environ.get("PYSR_NITERATIONS", "1000")))
+TIMEOUT_SECS  = int(os.environ.get("PYSR_TIMEOUT",   "300"))
 SEED          = _GLOBAL_SEED   # env-driven: PYSR_SEED → NN_SEED → 42
 CONDITIONS    = ["pysr_only", "hypatia"]
 MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")  # not printed in submitted tex (double-blind)
@@ -355,7 +357,7 @@ def make_pysr(warm_start_expr=None, seed=42, niterations=NITERATIONS,
     if _PYSR_VALID_PARAMS is None:
         _PYSR_VALID_PARAMS = set(inspect.signature(PySRRegressor.__init__).parameters.keys())
     valid = _PYSR_VALID_PARAMS
-    effective_timeout = timeout_secs if timeout_secs is not None else 120
+    effective_timeout = timeout_secs if timeout_secs is not None else TIMEOUT_SECS
     kwargs = dict(
         niterations=niterations,
         populations=populations,        # 30 = paper quality
@@ -440,7 +442,9 @@ class _Timeout:
     def __exit__(self, *args):
         if self._ok: signal.alarm(0)
 
-EQUATION_WALL_CLOCK_TIMEOUT = 360  # slightly above TIMEOUT_SECS for safety
+# Wall-clock limit per equation = 3 attempts × TIMEOUT_SECS + 60s margin.
+# This respects PYSR_TIMEOUT set by run_all_checkpoint.py --one-equation.
+EQUATION_WALL_CLOCK_TIMEOUT = 3 * TIMEOUT_SECS + 60
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 def load_checkpoint(path):
@@ -582,8 +586,15 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
                             _rng = np.log10(_abs.max() + 1e-30) - np.log10(_abs.min() + 1e-30)
                             if _rng > 6:
                                 _X_e_use[:, _ci] = np.sign(_col) * np.log10(np.abs(_col) + 1.0)
-                _ns = {"np": np, **{vn: _X_e_use[:, ci]
-                                    for ci, vn in enumerate(safe_var_names)}}
+                _math_ns = {
+                    "sqrt": np.sqrt, "exp": np.exp, "log": np.log,
+                    "sin":  np.sin,  "cos": np.cos, "tan": np.tan,
+                    "abs":  np.abs,  "log2": np.log2, "log10": np.log10,
+                    "pow":  np.power, "sign": np.sign,
+                }
+                _ns = {"np": np, **_math_ns,
+                       **{vn: _X_e_use[:, ci]
+                          for ci, vn in enumerate(safe_var_names)}}
                 _y_pred = eval(_norm_expr, {"__builtins__": {}}, _ns)
                 _y_pred = np.asarray(_y_pred, dtype=float)
                 if _y_pred.shape == ():
@@ -737,7 +748,15 @@ print(f"Iterations  : {NITERATIONS}  |  Timeout: {TIMEOUT_SECS}s")
 print(f"Resuming    : {len(all_results)} checkpointed entries")
 print("=" * 65)
 
-for eq_idx, eq in enumerate(CORE_15):
+# --one-equation smoke-test: honour N_CORE15_TASKS or ONE_EQUATION env vars
+_n_core15 = os.environ.get("N_CORE15_TASKS")
+_one_eq   = os.environ.get("ONE_EQUATION", "0") == "1"
+_n_run    = int(_n_core15) if _n_core15 is not None else (1 if _one_eq else len(CORE_15))
+_CORE_15_RUN = CORE_15[:_n_run]
+if _n_run < len(CORE_15):
+    print(f"⚠  Smoke-test mode: running {_n_run}/{len(CORE_15)} equations (N_CORE15_TASKS={_n_run})")
+
+for eq_idx, eq in enumerate(_CORE_15_RUN):
     eq_key = str(eq_idx)   # string key for JSON compatibility
     all_results.setdefault(eq_key, {"name": eq["name"], "domain": eq["domain"]})
     entry = all_results[eq_key]
@@ -929,27 +948,33 @@ Computes per-equation instability index from the Core-15 multi-seed variance, th
 """
 
 # ── C4: Portfolio Variance 5-seed sweep ──────────────────────────────────────
-PV_EQ   = next(e for e in CORE_15 if e["name"] == "Portfolio Variance")
-SEEDS_5 = [42, 123, 777, 2024, 99]
-N_ITER_SWEEP = 300   # fast; change to 1000 for paper-final run
+# Skip in smoke-test mode — this sweep runs 5 seeds × 2 conditions independently
+# of the main Core-15 loop and must respect ONE_EQUATION / N_CORE15_TASKS.
+if _one_eq or (_n_core15 is not None and int(_n_core15) < len(CORE_15)):
+    print("⚠  Smoke-test mode: skipping Portfolio Variance 5-seed sweep")
+    seed_results = {}
+else:
+    PV_EQ   = next(e for e in CORE_15 if e["name"] == "Portfolio Variance")
+    SEEDS_5 = [42, 123, 777, 2024, 99]
+    N_ITER_SWEEP = 300   # fast; change to 1000 for paper-final run
 
-print("Portfolio Variance — 5-seed stability sweep")
-print(f"Seeds : {SEEDS_5}  |  iterations: {N_ITER_SWEEP}")
-print("=" * 65)
+    print("Portfolio Variance — 5-seed stability sweep")
+    print(f"Seeds : {SEEDS_5}  |  iterations: {N_ITER_SWEEP}")
+    print("=" * 65)
 
-seed_results = {}
-for s in SEEDS_5:
-    print(f"\n── Seed {s} ──")
-    for cond in ["pysr_only", "hypatia"]:
-        r = run_condition(PV_EQ, cond, seed=s,
-                          niterations=N_ITER_SWEEP,
-                          timeout_secs=90,
-                          populations=POPULATIONS)
-        seed_results.setdefault(cond, []).append({
-            "seed": s, "far_r2": r.get("extrap_r2_far"),
-            "near_r2": r.get("extrap_r2_near"),
-        })
-        print(f"  {cond}: far_R2={r.get('extrap_r2_far')}")
+    seed_results = {}
+    for s in SEEDS_5:
+        print(f"\n── Seed {s} ──")
+        for cond in ["pysr_only", "hypatia"]:
+            r = run_condition(PV_EQ, cond, seed=s,
+                              niterations=N_ITER_SWEEP,
+                              timeout_secs=90,
+                              populations=POPULATIONS)
+            seed_results.setdefault(cond, []).append({
+                "seed": s, "far_r2": r.get("extrap_r2_far"),
+                "near_r2": r.get("extrap_r2_near"),
+            })
+            print(f"  {cond}: far_R2={r.get('extrap_r2_far')}")
 
 # ── Instability index: std(far_R2) across seeds ───────────────────────────────
 import csv
@@ -1006,7 +1031,6 @@ from datetime import datetime
 
 provenance = {
     "family": "ablation_exp1",
-    "jmlr_path": "jmlr-source-last/ablation/results-ablation/",
     "engine": "hybrid_system_v50_2.py",
     "engine_version": "5.1",
     "seed": SEED,
@@ -1050,16 +1074,7 @@ with open(PROV_PATH, "w") as f:
     json.dump(provenance, f, indent=2)
 print(f"✅ Provenance saved: {PROV_PATH}")
 
-# ── Copy final outputs to JMLR path if it exists ──────────────────────────────
-import shutil
-if JMLR_ABLATION_DIR.exists():
-    for src_path in [RESULTS_PATH, TEX_PATH, RF01_JSON, INSTAB_CSV]:
-        dest = JMLR_ABLATION_DIR / Path(src_path).name
-        shutil.copy2(src_path, dest)
-        print(f"  Copied → {dest}")
-else:
-    print(f"⚠️  JMLR path {JMLR_ABLATION_DIR} not found locally — copy outputs manually.")
-    print("     Outputs are saved beside this notebook.")
+# (JMLR_ABLATION_DIR copy removed — Kaggle-only path, not needed for local runs)
 
 print("\n✅ exp1_ablation.ipynb complete — all outputs written.")
 

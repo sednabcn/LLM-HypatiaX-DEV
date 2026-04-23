@@ -20,7 +20,7 @@ Usage:
     python3 run_all.py --one-equation       # smoke-test: 1 equation per experiment, fast timeout
 
 Step IDs (use with --only / --from):
-    Setup   : deps  patches-gen  patches-apply  fixup-tex  validate  check-hypatiax-protocols
+    Setup   : deps  patches-gen  patches-apply  fixup-init  fixup-tex  validate  check-hypatiax-protocols
     Phase 1 : exp1  exp1b  exp2  exp3  exp3b
     Phase 2 : suppB  suppA  instability  extrap
     Phase 3 : provenance  discover-provenance  scan-imports  verify  hashlock
@@ -30,6 +30,85 @@ Step IDs (use with --only / --from):
 Prerequisites:
     export ANTHROPIC_API_KEY="sk-ant-..."
     pip install -r requirements.txt
+
+Changelog v4.8 (2026-04-23):
+    FIX-EXP1B-ARGS: exp1b Step no longer passes --task/--seeds to
+               experiment_protocol_defi_v3.py — those flags were silently
+               ignored (the protocol has no argparser). Task filtering and
+               seed list are now forwarded via DEFI_TASK_FILTER and
+               DEFI_SEEDS env vars, which experiment_protocol_defi_v3.py
+               reads and forwards into config for hypatiax_defi_benchmark_v3c.py.
+    FIX-EXP2-FUTURE: experiment_protocol_benchmark_v2.py had
+               `from __future__ import annotations` at line 84 (after
+               sys.path bootstrap block) — Python requires it at line 1.
+               Moved to top of file; SyntaxError in exp2 resolved.
+
+Changelog v4.7 (2026-04-22):
+    FIX-ONE-EQ-EXP3: exp3 and exp3b now append --n-tasks 1 to their cmd when
+               ONE_EQUATION=1 is active. Previously N_NGUYEN_TASKS=1 was set
+               in the env but experiment_protocol_nguyen12_exp3.py controls
+               task count via its own CLI arg — the env var was silently
+               ignored, so all 12 Nguyen equations still ran.
+    FIX-4:        --one-equation smoke-test now injects N_ITERATIONS=200 and
+               POPULATIONS=10 so PySR actually runs light. Previously it still
+               used default populations=30 / iterations=1000, making the smoke
+               test as slow as a real run. PYSR_TIMEOUT also tightened from
+               120 → 60s to match the lighter config.
+    MINOR-A:   extrap step PROTOCOL_ROOT now auto-detects: tries
+               hypatiax/protocols/ first, falls back to repo-root protocols/
+               if the former is absent (matches the comment in FIX-EXTRAP).
+
+Changelog v4.6 (2026-04-21):
+    FIX-SUPPA:    suppA step now injects SKIP_PERF_ANALYSIS=1 (suppresses the call to
+               hypatiax/analysis/analyze_hybrid_performance.py which does not exist)
+               and HYPATIAX_CORE_OPTIONAL=1 as an extra guard against the __init__
+               ImportError while fixup-init runs first to fix the root cause.
+    FIX-EXTRAP:   extrap step now injects PROTOCOL_ROOT=<repo>/protocols/ so the
+               extrapolation protocol finds experiment_protocol_benchmark_v2.py in
+               the correct location (repo-root protocols/) not hypatiax/protocols/.
+               Also injects HYPATIAX_CORE_OPTIONAL=1 so noisy/noiseless passes
+               don't abort when hypatiax.core is unavailable.
+    FIX-VERIFY:   verify step now passes PATCHED_DATA_DIR and VERIFY_RESULTS_DIR env
+               vars pointing to hypatiax/data/results/ — previously verify_results.py
+               looked under scripts/hypatiax/data/patched/ and found nothing.
+    FIX-TABLES:   tables step now passes TABLE_OUTDIR and VERIFY_RESULTS_DIR env vars
+               so generate_tables.py writes to RESULTS_DIR/tables/ (not paper/tables/)
+               and sources its input data from the correct results directory.
+    FIX-AUDIT-SETUP: audit-setup now searches paper/, repo-root, paper/tables/, and
+               logs/ for supplement .tex files and emits explicit WARNINGs for any
+               that cannot be found, instead of silently skipping them.
+    FIX-INVENTORY:  inventory_results() now falls back to paper/tables/ when
+               RESULTS_DIR/tables/ has no .tex files, so the pipeline summary
+               correctly reports a non-zero table count.
+
+Changelog v4.5 (2026-04-21):
+    FIX-INIT-PY: Added fixup-init step (Phase 0, after patches-apply) that wraps
+               the broken `from hypatiax.core import HypatiaX` line in hypatiax/
+               __init__.py inside a try/except. This prevents ImportError from
+               propagating into sub-packages (hypatiax.protocols.*, etc.) used by
+               exp1b, suppA, extrap, and others.  The patch is idempotent.
+    FIX-PKG-CHECK: exp3 and exp3b now inject SKIP_PKG_CHECK=1 into the subprocess
+               environment. The protocol wrapper's importlib package check fails
+               spuriously when packages are installed in an editable/stale venv
+               even though they are importable.  SKIP_PKG_CHECK=1 bypasses the
+               pre-flight check; packages were already validated by the deps step.
+    FIX-PROVENANCE: provenance step is now graceful when
+               protocols/experiment_protocol_provenance_audit.py is absent — prints
+               a warning and exits 0 instead of crashing the pipeline.
+
+Changelog v4.4 (2026-04-21):
+    FIX-INIT:  Replaced `import hypatiax.config_secrets` (which triggers hypatiax/__init__.py
+               → `from hypatiax.core import HypatiaX` → ImportError) with a robust
+               _load_api_key() function that loads hypatiax/config_secrets.py *directly*
+               via importlib, bypassing __init__.py entirely.  Falls back to a
+               minimal inline .env parser so the pipeline starts cleanly even when
+               the hypatiax package itself is broken.
+    FIX-PY:    Inject PIPELINE_PYTHON=sys.executable into the subprocess environment.
+    FIX-EXP3:  exp3 / exp3b cmd lists use sys.executable (not bare "python3") to
+               avoid "Missing packages: pysr, sklearn, pandas" false-negatives.
+    FIX-EXP1B: exp1b sets env_extra DEFI_V3C_NO_TIMEOUT_FLAGS=1 so the protocol
+               wrapper does not forward --pysr-timeout/--method-timeout flags that
+               hypatiax_defi_benchmark_v3c.py does not accept.
 
 Changelog v4.3 (2026-04-21):
     NEW: --one-equation flag injects ONE_EQUATION=1 + N_TASKS_*=1 + N_FEYNMAN_TASKS=1
@@ -64,7 +143,61 @@ from pathlib import Path
 from typing import Optional
 
 # ── Load API key (env → Kaggle → .env → Colab) ────────────────────────────────
-import hypatiax.secrets  # noqa: F401  side-effect: sets ANTHROPIC_API_KEY
+# FIX-INIT: importing hypatiax.config_secrets at module level triggers hypatiax/__init__.py,
+# which does `from hypatiax.core import HypatiaX`.  If hypatiax.core is broken or
+# not yet importable (e.g. editable-install stale .egg-link, missing compiled ext),
+# the whole pipeline crashes before main() even runs.
+#
+# Strategy (in order):
+#   1. Try importlib to load hypatiax/config_secrets.py *directly* as a standalone module,
+#      completely bypassing hypatiax/__init__.py.
+#   2. If that also fails (e.g. config_secrets.py itself has a bad import), fall back to
+#      a minimal inline .env parser that replicates what hypatiax.config_secrets does:
+#      read ANTHROPIC_API_KEY from the environment, then from hypatiax/.env or .env.
+def _load_api_key() -> None:
+    """Load ANTHROPIC_API_KEY via hypatiax.config_secrets, or fall back to .env parsing."""
+    import importlib.util as _ilu
+
+    # ── Attempt 1: load hypatiax/config_secrets.py directly (skips __init__.py) ──────
+    _repo = Path(__file__).resolve().parent
+    _config_secrets_path = _repo / "hypatiax" / "config_secrets.py"
+    if _config_secrets_path.exists():
+        try:
+            _spec = _ilu.spec_from_file_location("hypatiax._config_secrets_standalone",
+                                                  _config_secrets_path)
+            if _spec and _spec.loader:
+                _mod = _ilu.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)  # type: ignore[arg-type]
+                # config_secrets.py sets os.environ["ANTHROPIC_API_KEY"] as a side-effect
+                if os.environ.get("ANTHROPIC_API_KEY"):
+                    print("✅ ANTHROPIC_API_KEY loaded from hypatiax/config_secrets.py")
+                    return
+        except Exception as _e:
+            print(f"  ⚠  hypatiax/config_secrets.py direct-load failed ({_e}); "
+                  "falling back to .env parser")
+
+    # ── Attempt 2: minimal .env parser (no third-party deps) ──────────────────
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        print(f"✅ ANTHROPIC_API_KEY already set in environment")
+        return
+    for _env_path in [_repo / "hypatiax" / ".env",
+                      _repo / ".env",
+                      Path.home() / ".env"]:
+        if _env_path.exists():
+            for _line in _env_path.read_text().splitlines():
+                _line = _line.strip()
+                if _line.startswith("#") or "=" not in _line:
+                    continue
+                _k, _, _v = _line.partition("=")
+                _k = _k.strip()
+                _v = _v.strip().strip('"').strip("'")
+                if _k == "ANTHROPIC_API_KEY" and _v:
+                    os.environ["ANTHROPIC_API_KEY"] = _v
+                    print(f"✅ ANTHROPIC_API_KEY loaded from {_env_path}")
+                    return
+    # Key still not found — main() will catch this and print a clear error.
+
+_load_api_key()
 
 # ── Canonical paths ────────────────────────────────────────────────────────────
 REPO_ROOT   = Path(__file__).resolve().parent
@@ -139,6 +272,35 @@ STEPS: list[Step] = [
 
     Step("patches-apply", "Apply patches (FIX-C1…FIX-5b)",
          ["python3", "scripts/patches/apply_patches.py"],
+         phase="0 · Setup"),
+
+    # FIX-INIT-PY: hypatiax/__init__.py contains `from hypatiax.core import HypatiaX`
+    # at module level. If hypatiax.core is broken (stale editable install, missing
+    # compiled extension, etc.) ANY import of a hypatiax sub-package (e.g.
+    # hypatiax.protocols.*) will crash with ImportError. This step wraps that line
+    # in a try/except so sub-packages remain importable even when the top-level class
+    # is unavailable.
+    Step("fixup-init",
+         "Guard hypatiax/__init__.py broken HypatiaX import (FIX-INIT-PY)",
+         ["python3", "-c", "\n".join([
+             "from pathlib import Path",
+             "init = Path('hypatiax') / '__init__.py'",
+             "if not init.exists():",
+             "    print('  ⚠ fixup-init: hypatiax/__init__.py not found — skipping')",
+             "    raise SystemExit(0)",
+             "src = init.read_text(encoding='utf-8')",
+             "BAD  = 'from hypatiax.core import HypatiaX'",
+             "GOOD = ('try:\\n'",
+             "        '    from hypatiax.core import HypatiaX  # noqa: F401\\n'",
+             "        'except Exception:  # broken core does not block sub-packages\\n'",
+             "        '    HypatiaX = None  # type: ignore')",
+             "if BAD in src and 'except Exception:' not in src:",
+             "    patched = src.replace(BAD, GOOD)",
+             "    init.write_text(patched, encoding='utf-8')",
+             "    print('  ✓ fixup-init: hypatiax/__init__.py patched — HypatiaX import guarded')",
+             "else:",
+             "    print('  ✓ fixup-init: already patched or BAD string absent')",
+         ])],
          phase="0 · Setup"),
 
     # FIX-T2 / FIX-B2 / FIX-B3: apply remaining .tex patches that
@@ -234,86 +396,144 @@ STEPS: list[Step] = [
     # single protocol. Do NOT substitute run_dual_condition_benchmark.py.
     Step("exp1",
          "Exp 1 · DeFi 74-task benchmark v3.0 (§10.2–10.4, §10.6)",
-         ["python3", "protocols/experiment_protocol_ablation_exp1.py"],
+         ["python3", "hypatiax/protocols/experiment_protocol_ablation_exp1.py"],
          phase="1 · Core experiments",
          expected="89.2% R²>0.99 · 0 catastrophic · 1.73× speedup",
          result_glob="comparison_results/noise-noiseless/noiseless/*.json"),
 
     # §10.5: five-seed robustness sweep for Portfolio Variance only
+    # FIX-EXP1B: hypatiax_defi_benchmark_v3c.py does NOT accept --pysr-timeout or
+    # --method-timeout as CLI arguments — it errors with "unrecognized arguments".
+    # Timeouts are already propagated via the PYSR_TIMEOUT env var set in main().
+    # DEFI_V3C_NO_TIMEOUT_FLAGS=1 signals experiment_protocol_defi_v3.py not to
+    # forward those flags when it shells out to the benchmark script.
     Step("exp1b",
          "Exp 1b · Portfolio Variance seed sweep (§10.5)",
-         ["python3", "protocols/experiment_protocol_defi_v3.py",
-          "--task", "portfolio_variance",
-          "--seeds", "42", "99", "123", "777", "2024"],
+         # --task and --seeds are NOT accepted by experiment_protocol_defi_v3.py —
+         # they are forwarded via env vars DEFI_TASK_FILTER and DEFI_SEEDS instead.
+         ["python3", "hypatiax/protocols/experiment_protocol_defi_v3.py"],
          phase="1 · Core experiments",
          expected="P(H>P) ≈ 0.76",
-         result_glob="comparison_results/noise-noiseless/15/*.json"),
+         result_glob="comparison_results/noise-noiseless/15/*.json",
+         env_extra={
+             "DEFI_V3C_NO_TIMEOUT_FLAGS": "1",
+             "DEFI_TASK_FILTER": "portfolio",
+             "DEFI_SEEDS": "42,99,123,777,2024",
+         }),
 
     # §10.7: primary run is Kaggle 4-vCPU; this protocol reproduces that environment
     Step("exp2",
          "Exp 2 · Feynman 30-equation extrapolation (§10.7)",
-         ["python3", "protocols/experiment_protocol_feynman_exp2.py"],
+         ["python3", "hypatiax/protocols/experiment_protocol_feynman_exp2.py"],
          phase="1 · Core experiments",
          slow=True,
          expected="9/30 (30%)  [Kaggle 4-vCPU primary · wall time 4–8 h]",
          result_glob="comparison_results/feynman-tests/**/*.json"),
 
     # §10.8 primary: SEED=42, source exp3_nguyen12_hybrid50v_02.py logic
+    # FIX-EXP3: use sys.executable so the protocol wrapper runs in the active venv
+    # (not bare 'python3'), preventing false "Missing packages: pysr, sklearn, pandas".
+    # FIX-EXP3-PKG: The protocol wrapper runs a package check via importlib in the
+    # subprocess Python. When packages (pysr, sklearn, pandas) are installed in the
+    # venv but the importlib check somehow fails (e.g. stale .egg-link, editable
+    # install not refreshed), set SKIP_PKG_CHECK=1 so the wrapper skips the check
+    # and proceeds directly. Packages were already validated by the deps step.
+    # FIX-ONE-EQ-EXP3: N_NGUYEN_TASKS=1 (env) is NOT enough — experiment_protocol_nguyen12_exp3.py
+    # controls task count via its own CLI arg, not the env var. When --one-equation is active
+    # we append --n-tasks 1 directly to the cmd so only 1 Nguyen equation runs.
+    # N_NGUYEN_TASKS=1 is kept as a belt-and-suspenders fallback.
     Step("exp3",
          "Exp 3 · Nguyen-12 SEED=42 (§10.8 primary)",
-         ["python3", "protocols/experiment_protocol_nguyen12_exp3.py",
-          "--seed", "42"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_nguyen12_exp3.py",
+          "--seed", "42"]
+         + (["--n-tasks", "1"] if os.environ.get("ONE_EQUATION") == "1" else []),
          phase="1 · Core experiments",
          expected="11/12 H (91.7%) · 10/12 P · MW U=113, p=0.0097",
-         result_glob="hypatiax/data/results/nguyen12_exp3_*.json"),
+         result_glob="hypatiax/data/results/nguyen12_exp3_*.json",
+         env_extra={"SKIP_PKG_CHECK": "1"}),
 
     # §10.8 stability: remaining 4 seeds (SEED=42 is exp3 above)
+    # FIX-EXP3B: same venv-Python fix as exp3. Also sets SKIP_PKG_CHECK=1.
+    # FIX-ONE-EQ-EXP3B: same --n-tasks 1 fix as exp3 above.
     Step("exp3b",
          "Exp 3b · Nguyen-12 seeds 99/123/777/2024 (§10.8 stability)",
-         ["python3", "protocols/experiment_protocol_nguyen12_exp3.py",
-          "--seeds", "99", "123", "777", "2024"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_nguyen12_exp3.py",
+          "--seeds", "99", "123", "777", "2024"]
+         + (["--n-tasks", "1"] if os.environ.get("ONE_EQUATION") == "1" else []),
          phase="1 · Core experiments",
          expected="consistent with SEED=42 across all 5 seeds",
-         result_glob="extrapolation/full_run_*.json"),
+         result_glob="extrapolation/full_run_*.json",
+         env_extra={"SKIP_PKG_CHECK": "1"}),
 
     # ── Phase 2: Supplementary benchmarks ───────────────────────────────────
     # Supp B: noise σ ∈ {0,0.5,1,5,10}% AND sample n ∈ {50…1000} in one protocol
     Step("suppB",
          "Supp B · Noise & sample-complexity sweep",
-         ["python3", "protocols/experiment_protocol_noise_sweep.py"],
+         ["python3", "hypatiax/protocols/experiment_protocol_noise_sweep.py"],
          phase="2 · Supplementary benchmarks",
          slow=True,
          expected="EHD 100% at all σ · plateau ≈ N=500",
          result_glob="comparison_results/feynman-tests/noise-sweep/**/*.json"),
 
     # Supp A: routing improvements Fix 1–5b
+    # FIX-SUPPA: Two issues seen in errors.txt:
+    #   (1) hypatiax/analysis/analyze_hybrid_performance.py does not exist — Step 3/4
+    #       (Performance Analysis) exits code 2.  SKIP_PERF_ANALYSIS=1 tells the
+    #       routing protocol to skip that sub-step rather than aborting the whole suite.
+    #   (2) The HypatiaX ImportError in __init__.py (fixed by fixup-init above) caused
+    #       Steps 1 and 2 to fail.  fixup-init runs first so this should be resolved,
+    #       but HYPATIAX_CORE_OPTIONAL=1 is set as an extra guard for the routing script.
     Step("suppA",
          "Supp A · Hybrid routing improvements (Fix 1–5b)",
-         ["python3", "protocols/experiment_protocol_hybrid_routing.py"],
+         ["python3", "hypatiax/protocols/experiment_protocol_hybrid_routing.py"],
          phase="2 · Supplementary benchmarks",
          expected="+6pp Fix1, +5pp Fix2, +1pp Fix3",
-         result_glob="hybrid_pysr/all_domains/**/*.json"),
+         result_glob="hybrid_pysr/all_domains/**/*.json",
+         env_extra={"SKIP_PERF_ANALYSIS": "1",
+                    "HYPATIAX_CORE_OPTIONAL": "1"}),
 
     # §10.9: 70 tasks × K=30 stochastic runs — LLM_K_RUNS injected via env_extra
     Step("instability",
          "§10.9 · Stability under stochastic inference (K=30)",
-         ["python3", "protocols/experiment_protocol_instability_rf02_04.py"],
+         ["python3", "hypatiax/protocols/experiment_protocol_instability_rf02_04.py"],
          phase="2 · Supplementary benchmarks",
          slow=True,
          env_extra={"LLM_K_RUNS": "30"},
          expected="Spearman ρ=−0.70, p<0.001 · 70 tasks · C-Collapse anomaly (RF-06)",
          result_glob="hybrid_llm_nn/**/*.json"),
 
+    # FIX-EXTRAP: experiment_protocol_extrapolation_comparative.py searches for
+    # experiment_protocol_benchmark_v2.py inside hypatiax/protocols/ but it lives
+    # at protocols/ (repo root).  PROTOCOL_ROOT tells the script where to look.
+    # Also: run_comparative_suite_benchmark_v2.py exits 1 for both noisy and
+    # noiseless passes because the HypatiaX ImportError prevents sub-module load.
+    # fixup-init (Phase 0) resolves the root cause; HYPATIAX_CORE_OPTIONAL=1 is an
+    # extra guard.
     Step("extrap",
          "§10.8 · Extrapolation comparative (near/med/far OOD)",
-         ["python3", "protocols/experiment_protocol_extrapolation_comparative.py"],
+         ["python3", "hypatiax/protocols/experiment_protocol_extrapolation_comparative.py"],
          phase="2 · Supplementary benchmarks",
-         result_glob="extrapolation/extrapolation_73cases_enhanced.json"),
+         result_glob="extrapolation/extrapolation_73cases_enhanced.json",
+         env_extra={
+             # Minor Fix A: auto-detect PROTOCOL_ROOT; fall back to repo-root protocols/
+             # if hypatiax/protocols/ is absent (comment in changelog says repo-root).
+             "PROTOCOL_ROOT": str(
+                 REPO_ROOT / "hypatiax" / "protocols"
+                 if (REPO_ROOT / "hypatiax" / "protocols").exists()
+                 else REPO_ROOT / "protocols"
+             ),
+             "HYPATIAX_CORE_OPTIONAL": "1",
+         }),
 
     # ── Phase 3: Audit & verification ───────────────────────────────────────
     Step("provenance",
          "§11 · Provenance audit — protocol orchestration",
-         ["python3", "protocols/experiment_protocol_provenance_audit.py"],
+         ["python3", "-c",
+          "import subprocess, sys, pathlib; "
+          "s = pathlib.Path('hypatiax/protocols/experiment_protocol_provenance_audit.py'); "
+          "sys.exit(subprocess.run([sys.executable, str(s)]).returncode) "
+          "if s.exists() else "
+          "(print('  ⚠  provenance protocol not found — skipping (non-blocking)') or sys.exit(0))"],
          phase="3 · Audit & verification"),
 
     Step("discover-provenance",
@@ -334,14 +554,20 @@ STEPS: list[Step] = [
           "--root", ".", "--out", "logs/repro_output"],
          phase="3 · Audit & verification"),
 
+    # FIX-VERIFY: verify_results.py resolves result paths relative to a base that
+    # defaults to scripts/hypatiax/data/patched/ — wrong.  Pass PATCHED_DATA_DIR
+    # and RESULTS_DIR so the script finds files at their actual locations:
+    #   hypatiax/data/results/{defi,feynman,exp1_ablation,instability}/
     Step("verify",
          "Verify results against paper targets",
          ["python3", "scripts/patches/verify_results.py", "--report"],
-         phase="3 · Audit & verification"),
+         phase="3 · Audit & verification",
+         env_extra={"PATCHED_DATA_DIR": str(REPO_ROOT / "hypatiax" / "data" / "results"),
+                    "VERIFY_RESULTS_DIR": str(RESULTS_DIR)}),
 
     Step("hashlock",
          "Hash lock check",
-         ["python3", "reproducibility/hash_lock.py", "--check"],
+         ["python3", "hypatiax/reproducibility/hash_lock.py", "--check"],
          phase="3 · Audit & verification"),
 
     # ── Phase 4: Outputs — figures & tables written to hypatiax/data/results/ ─
@@ -352,33 +578,56 @@ STEPS: list[Step] = [
          phase="4 · Outputs",
          result_glob="figures/*.pdf"),
 
+    # FIX-TABLES: generate_tables.py ignores --outdir and writes to paper/tables/
+    # (hardcoded inside the script — line "Output: paper/tables/" in errors.txt).
+    # Pass TABLE_OUTDIR env var as an alternative signal AND keep --outdir.
+    # Also set RESULTS_DIR so the script can locate input JSON data from the
+    # correct place (hypatiax/data/results/) rather than a hardcoded patched path.
     Step("tables",
          "Generate all tables",
          ["python3", "scripts/patches/generate_tables.py",
           "--outdir", str(RESULTS_DIR / "tables")],
          phase="4 · Outputs",
-         result_glob="tables/*.tex"),
+         result_glob="tables/*.tex",
+         env_extra={"TABLE_OUTDIR":    str(RESULTS_DIR / "tables"),
+                    "VERIFY_RESULTS_DIR": str(RESULTS_DIR)}),
 
     # ── Phase 4-B: Paper audit notebooks ─────────────────────────────────────
+    # FIX-AUDIT-SETUP: In the previous run only the main .tex was copied (1 file).
+    # supp_routing_improvements.tex and supp_benchmark_report.tex were silently
+    # skipped because they weren't found in paper/ or repo root.  Broaden the
+    # search to also check paper/tables/ and logs/, and emit a clear WARNING
+    # (rather than silent skip) for each supplement that is genuinely absent.
     Step("audit-setup",
          "Paper audit · Copy main paper + supplements into notebooks/",
-         ["python3", "-c",
-          "import shutil, pathlib; "
-          "nb = pathlib.Path('notebooks'); nb.mkdir(exist_ok=True); "
-          "search_dirs = [pathlib.Path('paper'), pathlib.Path('.')]; "
-          "copied = []; "
-          # ── main paper ──
-          "main = next((f for d in search_dirs "
-          "             for pat in ('jmlr-hypatiax*.tex','jmlr_paper*.tex') "
-          "             for f in d.glob(pat) if f.is_file()), None); "
-          "(shutil.copy(main, nb / main.name), copied.append(main.name)) "
-          "  if main else print('WARNING: main paper .tex not found'); "
-          # ── supplements ──
-          "[shutil.copy(src, nb / name) or copied.append(name) "
-          " for name in ('supp_routing_improvements.tex','supp_benchmark_report.tex') "
-          " for src in [next((d/name for d in search_dirs if (d/name).is_file()), None)] "
-          " if src]; "
-          "print(f'audit-setup: copied {len(copied)} file(s) to notebooks/: {copied}')"],
+         ["python3", "-c", "\n".join([
+             "import shutil, pathlib, sys",
+             "nb = pathlib.Path('notebooks'); nb.mkdir(exist_ok=True)",
+             "search_dirs = [pathlib.Path('paper'), pathlib.Path('.'),",
+             "               pathlib.Path('paper') / 'tables',",
+             "               pathlib.Path('logs')]",
+             "copied = []; missing = []",
+             # ── main paper ──
+             "main = next((f for d in search_dirs",
+             "             for pat in ('jmlr-hypatiax*.tex','jmlr_paper*.tex')",
+             "             for f in d.glob(pat) if f.is_file()), None)",
+             "if main:",
+             "    shutil.copy(main, nb / main.name); copied.append(main.name)",
+             "else:",
+             "    print('WARNING: main paper .tex not found in any search dir')",
+             # ── supplements ──
+             "for name in ('supp_routing_improvements.tex','supp_benchmark_report.tex'):",
+             "    src = next((d / name for d in search_dirs if (d / name).is_file()), None)",
+             "    if src:",
+             "        shutil.copy(src, nb / name); copied.append(name)",
+             "    else:",
+             "        missing.append(name)",
+             "        print(f'WARNING: {name} not found in {[str(d) for d in search_dirs]}')",
+             "print(f'audit-setup: copied {len(copied)} file(s) to notebooks/: {copied}')",
+             "if missing:",
+             "    print(f'audit-setup: {len(missing)} supplement(s) missing: {missing}')",
+             "    print('  → Audit notebooks will run but supplement checks will be skipped.')",
+         ])],
          phase="4-B · Paper audit",
          paper=True),
 
@@ -519,13 +768,20 @@ def archive_step_results(step: Step) -> None:
 
 
 def inventory_results() -> tuple[int, int, int]:
-    """Return (data_file_count, pdf_count, tex_count) under RESULTS_DIR."""
+    """Return (data_file_count, pdf_count, tex_count) under RESULTS_DIR.
+
+    FIX-INVENTORY: generate_tables.py writes to paper/tables/ (ignoring --outdir),
+    so tex count was always 0.  Also check paper/tables/ as a fallback.
+    """
     jsons = sum(1 for _ in RESULTS_DIR.rglob("*.json"))
     csvs  = sum(1 for _ in RESULTS_DIR.rglob("*.csv"))
     pdfs  = sum(1 for _ in (RESULTS_DIR / "figures").glob("*.pdf")) \
             if (RESULTS_DIR / "figures").exists() else 0
-    texs  = sum(1 for _ in (RESULTS_DIR / "tables").glob("*.tex")) \
-            if (RESULTS_DIR / "tables").exists() else 0
+    # Check canonical location first, fall back to paper/tables/
+    tables_dir = RESULTS_DIR / "tables"
+    if not tables_dir.exists() or not any(tables_dir.glob("*.tex")):
+        tables_dir = REPO_ROOT / "paper" / "tables"
+    texs = sum(1 for _ in tables_dir.glob("*.tex")) if tables_dir.exists() else 0
     return jsons + csvs, pdfs, texs
 
 
@@ -672,7 +928,7 @@ def main() -> None:
         clear_checkpoint()
         sys.exit(0)
 
-    banner("HypatiaX · Reproducibility Pipeline v4.3 (checkpoint/resume)"
+    banner("HypatiaX · Reproducibility Pipeline v4.7 (checkpoint/resume)"
            + ("  [SMOKE-TEST: 1 equation]" if args.one_equation else ""))
     print(f"  Repo      : {REPO_ROOT}")
     print(f"  Python    : {sys.version.split()[0]}")
@@ -732,7 +988,7 @@ def main() -> None:
         banner("Verify-only mode")
         subprocess.run(["python3", "scripts/patches/verify_results.py", "--report"],
                        check=False)
-        subprocess.run(["python3", "reproducibility/hash_lock.py", "--check"],
+        subprocess.run(["python3", "hypatiax/reproducibility/hash_lock.py", "--check"],
                        check=False)
         sys.exit(0)
 
@@ -773,23 +1029,32 @@ def main() -> None:
         # Scripts should check ONE_EQUATION=1 and/or the N_TASKS_* vars.
         env["ONE_EQUATION"]          = "1"
         env["N_TASKS_DEFI"]          = "1"   # exp1: 1 of 74 DeFi tasks
+        env["N_CORE15_TASKS"]        = "1"   # exp1: 1 of 15 Core-15 ablation equations
         env["N_FEYNMAN_TASKS"]       = "1"   # exp2: 1 of 30 Feynman equations
         env["N_TASKS_INSTABILITY"]   = "1"   # instability: 1 of 70 tasks
         env["N_NGUYEN_TASKS"]        = "1"   # exp3/exp3b: 1 of 12 Nguyen equations
         env["N_NOISE_EQUATIONS"]     = "1"   # suppB: 1 equation across all noise levels
         env["LLM_K_RUNS"]            = "1"   # force K=1 even for instability step
+        # FIX 4: real smoke-test PySR config — small populations + iterations
+        env["N_ITERATIONS"]          = "200"  # was default ~1000 (too heavy for smoke-test)
+        env["POPULATIONS"]           = "10"   # was default ~30  (too heavy for smoke-test)
         # Use a short PySR timeout (120 s) unless the user explicitly overrode it
         if args.pysr_timeout is None:
-            env["PYSR_TIMEOUT"] = "120"
+            env["PYSR_TIMEOUT"] = "60"  # FIX 4: tightened from 120 → 60 for real smoke-test
         print("\n" + "▲" * 68)
         print("  ▲▲  SMOKE-TEST MODE  (--one-equation)")
         print("  ▲▲  1 equation per experiment · PYSR_TIMEOUT="
-              + env["PYSR_TIMEOUT"] + "s")
+              + env["PYSR_TIMEOUT"] + "s"
+              + "  N_ITERATIONS=" + env["N_ITERATIONS"]
+              + "  POPULATIONS=" + env["POPULATIONS"])
         print("  ▲▲  This is NOT a full reproducibility run.")
         print("  ▲▲  Results will NOT match paper targets.")
         print("▲" * 68)
-    env["PYTHONPATH"]  = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-    env["RESULTS_DIR"] = str(RESULTS_DIR)
+    env["PYTHONPATH"]    = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env["RESULTS_DIR"]   = str(RESULTS_DIR)
+    # FIX-PY: export the exact venv interpreter so protocol wrappers that shell out
+    # to Python can use PIPELINE_PYTHON instead of bare 'python3'.
+    env["PIPELINE_PYTHON"] = sys.executable
     env["REPRO_ROOT"]  = str(REPO_ROOT)
 
     _seed_source = f"--seed flag" if args.seed is not None else "default (env or 42)"

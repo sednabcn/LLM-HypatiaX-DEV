@@ -3470,6 +3470,15 @@ Examples
         _skip = {5, 6}
         _method_indices = [m for m in (_method_indices or [1,2,3,4,5,6]) if m not in _skip]
         print(f"ℹ️  --skip-pysr: running methods {_method_indices}")
+
+    # ONE_EQUATION smoke-test: auto-skip PySR methods 5+6 because Julia startup
+    # alone takes 60-90s — longer than the entire PYSR_TIMEOUT=60s smoke-test
+    # budget. They will always timeout and produce no result.
+    if os.environ.get("ONE_EQUATION") == "1" and not getattr(args, "skip_pysr", False):
+        _method_indices = [m for m in (_method_indices or [1,2,3,4,5,6]) if m not in {5, 6}]
+        print(f"ℹ️  Smoke-test (ONE_EQUATION=1): auto-skipping PySR methods 5+6 "
+              f"(Julia startup > PYSR_TIMEOUT). Running methods {_method_indices}")
+
     _no_llm_cache = getattr(args, "no_llm_cache", False)
     _nn_seeds     = getattr(args, "nn_seeds", 1)
     _parsimony    = getattr(args, "parsimony", None)
@@ -3547,6 +3556,16 @@ Examples
             _desc = t[0]
             print(f"   [{_equation_indices[i] if i < len(_equation_indices) else '?'}] {_desc}")
         all_tests = filtered
+
+    # ── ONE_EQUATION / N_FEYNMAN_TASKS smoke-test: limit to first N equations ──
+    # run_all_checkpoint.py --one-equation sets N_FEYNMAN_TASKS=1 in env.
+    # Paper-quality runs leave it unset → all equations run.
+    _n_feynman = os.environ.get("N_FEYNMAN_TASKS")
+    if _n_feynman and not _equation_indices and not args.test:
+        _n_feynman = int(_n_feynman)
+        all_tests = all_tests[:_n_feynman]
+        print(f"\n🔥 Smoke-test mode (N_FEYNMAN_TASKS={_n_feynman}): running {len(all_tests)} equation(s)")
+        print(f"   Equation: {all_tests[0][0] if all_tests else 'none'}")
 
     if not all_tests:
         print("❌  No test cases found.")

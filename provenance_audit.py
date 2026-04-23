@@ -6,7 +6,7 @@ Traces run_all_checkpoint.py end-to-end and audits:
 
   §1  Seed propagation        — NN_SEED / PYSR_SEED / PYTHONHASHSEED consistency
   §2  Task-name mapping       — experiment id → canonical task name (repro.yaml)
-  §3  Secrets verification    — ANTHROPIC_API_KEY loaded from secrets.py / env
+  §3  Secrets verification    — ANTHROPIC_API_KEY loaded from config_secrets.py / env
   §4  Numerical issues        — RMSE=inf / R²=inf or R²<0 in result JSON + CSV files
   §5  Results directory       — all *.json / *.csv present under hypatiax/data/results/
   §6  Figures directory       — all *.pdf present under hypatiax/data/figures/
@@ -17,7 +17,7 @@ Usage
     python3 provenance_audit.py                     # full audit, auto-detect repo root
     python3 provenance_audit.py --root /path/to/repo
     python3 provenance_audit.py --seed 123          # check seed override path
-    python3 provenance_audit.py --fix-secrets       # copy secrets.py template if absent
+    python3 provenance_audit.py --fix-config_secrets       # copy config_secrets.py template if absent
     python3 provenance_audit.py --json              # machine-readable JSON report
     python3 provenance_audit.py --fail-fast         # exit 1 on first blocker
 
@@ -257,18 +257,18 @@ def audit_task_names(report: AuditReport) -> None:
 #  §3  Secrets / API key verification
 # ─────────────────────────────────────────────────────────────────────────────
 
-# FIX: use a single canonical secrets path constant shared between --fix-secrets
-# and audit_secrets, so both always agree on where the file lives.
-_SECRETS_RELATIVE = Path("hypatiax") / "secrets.py"
+# FIX: use a single canonical config_secrets path constant shared between --fix-config_secrets
+# and audit_config_secrets, so both always agree on where the file lives.
+_SECRETS_RELATIVE = Path("hypatiax") / "config_secrets.py"
 
 
-def audit_secrets(report: AuditReport, repo_root: Path) -> None:
+def audit_config_secrets(report: AuditReport, repo_root: Path) -> None:
     """
     Verify ANTHROPIC_API_KEY is available without any hardcoded value leaking.
 
     Strategy (in priority order):
       1. Check os.environ — this is what run_all.py requires at startup.
-      2. Try to import secrets.py from repo root and extract the key.
+      2. Try to import config_secrets.py from repo root and extract the key.
       3. Scan all .py and .ipynb for raw 'sk-ant-...' strings (FIX-3 from apply_patches.py).
 
     apply_patches.py P-4 is supposed to have replaced any hardcoded keys
@@ -292,12 +292,12 @@ def audit_secrets(report: AuditReport, repo_root: Path) -> None:
                    "run_all.py will exit(1) at startup. "
                    "Run: export ANTHROPIC_API_KEY='sk-ant-...'")
 
-    # ── 3b. secrets.py import ────────────────────────────────────────────────
-    # FIX: use _SECRETS_RELATIVE so this path matches what --fix-secrets creates
-    secrets_path = repo_root / _SECRETS_RELATIVE
-    if secrets_path.exists():
+    # ── 3b. config_secrets.py import ────────────────────────────────────────────────
+    # FIX: use _SECRETS_RELATIVE so this path matches what --fix-config_secrets creates
+    config_secrets_path = repo_root / _SECRETS_RELATIVE
+    if config_secrets_path.exists():
         try:
-            spec = importlib.util.spec_from_file_location("_secrets", secrets_path)
+            spec = importlib.util.spec_from_file_location("_config_secrets", config_secrets_path)
             mod  = importlib.util.module_from_spec(spec)         # type: ignore[arg-type]
             spec.loader.exec_module(mod)                          # type: ignore[union-attr]
 
@@ -310,30 +310,30 @@ def audit_secrets(report: AuditReport, repo_root: Path) -> None:
                     # Check it's not a placeholder
                     if isinstance(val, str) and val.startswith("sk-ant-"):
                         report.add(sec, "WARN",
-                                   f"secrets.py.{attr} contains a raw API key",
+                                   f"config_secrets.py.{attr} contains a raw API key",
                                    "P-4 patch should have replaced this with "
                                    "os.environ[\"ANTHROPIC_API_KEY\"]. "
                                    "Rotate this key immediately at console.anthropic.com")
                     elif isinstance(val, str) and "os.environ" in val:
                         report.add(sec, "PASS",
-                                   f"secrets.py.{attr} delegates to os.environ ✓")
+                                   f"config_secrets.py.{attr} delegates to os.environ ✓")
                     else:
                         report.add(sec, "WARN",
-                                   f"secrets.py.{attr} = {repr(str(val)[:40])}",
+                                   f"config_secrets.py.{attr} = {repr(str(val)[:40])}",
                                    "Value is neither a raw key nor an os.environ reference")
                     break
 
             if not found_attr:
                 report.add(sec, "WARN",
-                           "secrets.py found but no known API key attribute detected",
+                           "config_secrets.py found but no known API key attribute detected",
                            "Expected ANTHROPIC_API_KEY, api_key, or API_KEY")
         except Exception as exc:
             report.add(sec, "WARN",
-                       f"secrets.py found but could not be imported: {exc}")
+                       f"config_secrets.py found but could not be imported: {exc}")
     else:
         report.add(sec, "WARN",
-                   f"secrets.py not found at {_SECRETS_RELATIVE}",
-                   "Notebooks reference secrets.py (see repro.yaml llm_model comment). "
+                   f"config_secrets.py not found at {_SECRETS_RELATIVE}",
+                   "Notebooks reference config_secrets.py (see repro.yaml llm_model comment). "
                    "Create it with: ANTHROPIC_API_KEY = os.environ['ANTHROPIC_API_KEY']")
 
     # ── 3c. Scan for residual hardcoded keys (P-4 verification) ─────────────
@@ -927,8 +927,8 @@ def main() -> int:
                         help="Write JSON report to this file (implies --json)")
     parser.add_argument("--fail-fast", action="store_true",
                         help="Stop audit on first BLOCK finding")
-    parser.add_argument("--fix-secrets", action="store_true",
-                        help="Create a secrets.py template if absent")
+    parser.add_argument("--fix-config_secrets", action="store_true",
+                        help="Create a config_secrets.py template if absent")
     args = parser.parse_args()
 
     # ── Resolve repo root ────────────────────────────────────────────────────
@@ -952,17 +952,17 @@ def main() -> int:
         except ValueError:
             seed = 42
 
-    # ── Optional: create secrets.py template ─────────────────────────────────
-    # FIX: use _SECRETS_RELATIVE so this path always matches what audit_secrets checks
-    secrets_path = repo_root / _SECRETS_RELATIVE
-    if args.fix_secrets and not secrets_path.exists():
-        secrets_path.parent.mkdir(parents=True, exist_ok=True)
-        secrets_path.write_text(
-            "# secrets.py — do NOT commit to git\n"
+    # ── Optional: create config_secrets.py template ─────────────────────────────────
+    # FIX: use _SECRETS_RELATIVE so this path always matches what audit_config_secrets checks
+    config_secrets_path = repo_root / _SECRETS_RELATIVE
+    if args.fix_config_secrets and not config_secrets_path.exists():
+        config_secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        config_secrets_path.write_text(
+            "# config_secrets.py — do NOT commit to git\n"
             "import os\n"
             "ANTHROPIC_API_KEY = os.environ['ANTHROPIC_API_KEY']\n"
         )
-        print(f"Created secrets.py template at {secrets_path}")
+        print(f"Created config_secrets.py template at {config_secrets_path}")
 
     # ── Build report ─────────────────────────────────────────────────────────
     report = AuditReport(repo_root=str(repo_root), seed_used=seed)
@@ -973,7 +973,7 @@ def main() -> int:
     audit_fns = [
         (audit_seeds,           (seed,)),
         (audit_task_names,      ()),
-        (audit_secrets,         (repo_root,)),
+        (audit_config_secrets,         (repo_root,)),
         (audit_numerical,       (results_dir,)),
         (audit_results_dir,     (results_dir,)),
         (audit_figures_dir,     (results_dir,)),

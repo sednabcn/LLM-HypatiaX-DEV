@@ -86,9 +86,9 @@ def _load_api_key() -> None:
                 if key:
                     os.environ["ANTHROPIC_API_KEY"] = key
                     return
-    # Also try hypatiax/secrets.py (Kaggle / Colab paths)
+    # Also try hypatiax/config_secrets.py (Kaggle / Colab paths)
     try:
-        import hypatiax.secrets  # noqa: F401  side-effect: sets ANTHROPIC_API_KEY
+        import hypatiax.config_secrets  # noqa: F401  side-effect: sets ANTHROPIC_API_KEY
     except Exception:
         pass
 

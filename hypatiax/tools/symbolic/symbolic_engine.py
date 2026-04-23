@@ -68,6 +68,8 @@ Version: unified (v21 + v22 + v23)
 import os
 os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
 
+MAX_COMPLEXITY = int(os.getenv("MAX_COMPLEXITY", 30))
+
 import warnings
 import re
 import json
@@ -373,7 +375,7 @@ class DiscoveryConfig:
     smart_discovery_priority: bool = False
 
     # Complexity / search tuning
-    parsimony: float = 0.0032  # PySR default; lower (e.g. 0.001) allows deeper compositions
+    parsimony: float = 0.01  # raised from 0.0032 — stronger parsimony pressure by default
 
     # ── Loss function ─────────────────────────────────────────────────────────
     # Explicit Julia loss string passed to PySRRegressor.  Ported from core engine.
@@ -1084,8 +1086,8 @@ class SymbolicEngine:
             _trace.append(f"eq_file_kwarg={_eq_file_kwarg!r}")
 
             pysr_kwargs = dict(
-                niterations=self.config.niterations,
-                populations=self.config.populations,
+                niterations=int(os.environ.get("N_ITERATIONS", self.config.niterations)),
+                populations=int(os.environ.get("POPULATIONS", self.config.populations)),
                 population_size=self.config.population_size,
                 binary_operators=self.config.binary_operators,
                 unary_operators=active_unary,
@@ -1164,8 +1166,9 @@ class SymbolicEngine:
             # PySRRegressor accepts timeout_in_seconds to cap a single fit()
             # call.  This prevents the 5-retry loop in HybridDiscoverySystem
             # from multiplying a slow PySR run into a full benchmark timeout.
-            if self.config.pysr_timeout and self.config.pysr_timeout > 0:
-                pysr_kwargs["timeout_in_seconds"] = self.config.pysr_timeout
+            _timeout = int(os.environ.get("PYSR_TIMEOUT", self.config.pysr_timeout or 0))
+            if _timeout > 0:
+                pysr_kwargs["timeout_in_seconds"] = _timeout
 
             if extra_sympy:
                 pysr_kwargs["extra_sympy_mappings"] = extra_sympy
@@ -1419,58 +1422,84 @@ class SymbolicEngine:
                 best_eq = eqs.iloc[best_idx]
                 expression = str(best_eq["equation"])
 
-                # ── Pareto front trace ────────────────────────────────────────
-                # Dump all equations in the Pareto front so we can see what PySR
-                # actually found, even if R² is low.  Top 5 by R² only.
-                _pareto_r2s = []
-                for _pi in range(len(eqs)):
-                    try:
-                        _pr2 = r2_score(y, self.model.predict(_X_fit, index=_pi) * _y_std)
-                        _pareto_r2s.append((_pi, str(eqs.iloc[_pi]["equation"]), round(_pr2, 4)))
-                    except Exception:
-                        pass
-                _pareto_r2s.sort(key=lambda x: x[1], reverse=False)
-                _top5 = sorted(_pareto_r2s, key=lambda x: x[2], reverse=True)[:5]
-                _trace.append(f"pareto_top5={_top5}")
-                _trace.append(f"best_r2={best_r2:.4f}")
-                _trace.append(f"best_expr={expression[:80]}")
-
-                # If y was scaled, fold the scale factor into the expression so
-                # the string represents the original (physical) equation.
-                if _y_std != 1.0:
-                    expression = f"{_y_std:.6e} * ({expression})"
-
-                # If X columns were scaled, annotate the expression to record
-                # which columns were normalised and by what factor.  Full
-                # symbolic de-normalisation (substituting var → var/scale in the
-                # expression string) is deferred because arbitrary string
-                # manipulation of PySR output is fragile; R² and RMSE are
-                # computed correctly regardless (we always predict on _X_fit).
-                if _x_scaled_cols:
-                    _xscale_note = ", ".join(
-                        f"{_xn}÷{_xsc:.3e}"
-                        for _, _xn, _xsc in _x_scaled_cols
+                # ── Complexity gate ───────────────────────────────────────────
+                # Reject equations that exceed MAX_COMPLEXITY; treat as if no
+                # valid equations were found so the caller can retry or fall back.
+                _best_complexity = best_eq.get("complexity", len(expression))
+                if _best_complexity > MAX_COMPLEXITY:
+                    print(
+                        f"   ⚠ Rejected: complexity {_best_complexity} > {MAX_COMPLEXITY}",
+                        flush=True,
                     )
-                    expression = f"[X-normalised: {_xscale_note}] {expression}"
+                    _trace.append(f"outcome=COMPLEXITY_REJECTED({_best_complexity}>{MAX_COMPLEXITY})")
+                    _result = {
+                        "expression": "NO_VALID_EQUATIONS",
+                        "r2_score": 0.0,
+                        "complexity": 0,
+                        "variable_names": safe_names,
+                        "original_variable_names": variable_names,
+                        "variable_name_mapping": name_mapping,
+                        "predictions": np.zeros_like(y),
+                        "validation": {
+                            "valid": False,
+                            "errors": [f"Best equation complexity {_best_complexity} exceeds MAX_COMPLEXITY={MAX_COMPLEXITY}"],
+                            "warnings": [],
+                        },
+                        "trace": _trace,
+                    }
+                else:
+                    # ── Pareto front trace ────────────────────────────────────
+                    # Dump all equations in the Pareto front so we can see what PySR
+                    # actually found, even if R² is low.  Top 5 by R² only.
+                    _pareto_r2s = []
+                    for _pi in range(len(eqs)):
+                        try:
+                            _pr2 = r2_score(y, self.model.predict(_X_fit, index=_pi) * _y_std)
+                            _pareto_r2s.append((_pi, str(eqs.iloc[_pi]["equation"]), round(_pr2, 4)))
+                        except Exception:
+                            pass
+                    _pareto_r2s.sort(key=lambda x: x[1], reverse=False)
+                    _top5 = sorted(_pareto_r2s, key=lambda x: x[2], reverse=True)[:5]
+                    _trace.append(f"pareto_top5={_top5}")
+                    _trace.append(f"best_r2={best_r2:.4f}")
+                    _trace.append(f"best_expr={expression[:80]}")
 
-                # Make predictions with the best-R² equation (rescaled to original y)
-                y_pred = self.model.predict(_X_fit, index=best_idx) * _y_std
-                r2 = best_r2
+                    # If y was scaled, fold the scale factor into the expression so
+                    # the string represents the original (physical) equation.
+                    if _y_std != 1.0:
+                        expression = f"{_y_std:.6e} * ({expression})"
 
-                print(f"   ✅ Found: {expression}")
-                print(f"   R²: {r2:.4f}  (selected index {best_idx}/{len(eqs)-1} by R²)")
+                    # If X columns were scaled, annotate the expression to record
+                    # which columns were normalised and by what factor.  Full
+                    # symbolic de-normalisation (substituting var → var/scale in the
+                    # expression string) is deferred because arbitrary string
+                    # manipulation of PySR output is fragile; R² and RMSE are
+                    # computed correctly regardless (we always predict on _X_fit).
+                    if _x_scaled_cols:
+                        _xscale_note = ", ".join(
+                            f"{_xn}÷{_xsc:.3e}"
+                            for _, _xn, _xsc in _x_scaled_cols
+                        )
+                        expression = f"[X-normalised: {_xscale_note}] {expression}"
 
-                _result = {
-                    "expression": expression,
-                    "r2_score": r2,
-                    "complexity": best_eq.get("complexity", len(expression)),
-                    "variable_names": safe_names,
-                    "original_variable_names": variable_names,
-                    "variable_name_mapping": name_mapping,
-                    "predictions": y_pred,
-                    "validation": {"valid": True, "errors": [], "warnings": []},
-                    "trace": _trace,
-                }
+                    # Make predictions with the best-R² equation (rescaled to original y)
+                    y_pred = self.model.predict(_X_fit, index=best_idx) * _y_std
+                    r2 = best_r2
+
+                    print(f"   ✅ Found: {expression}")
+                    print(f"   R²: {r2:.4f}  (selected index {best_idx}/{len(eqs)-1} by R²)")
+
+                    _result = {
+                        "expression": expression,
+                        "r2_score": r2,
+                        "complexity": _best_complexity,
+                        "variable_names": safe_names,
+                        "original_variable_names": variable_names,
+                        "variable_name_mapping": name_mapping,
+                        "predictions": y_pred,
+                        "validation": {"valid": True, "errors": [], "warnings": []},
+                        "trace": _trace,
+                    }
             else:
                 print("   ⚠️ No valid equations found")
                 _trace.append("outcome=NO_VALID_EQUATIONS")
@@ -1777,6 +1806,16 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 "validation": {"valid": True, "errors": [], "warnings": []},
                 "llm_hypotheses": [h.equation for h in hypotheses],
             }
+
+        # Discard LLM prior if it is too weak to be a useful seed for PySR
+        _use_llm_seed = True
+        if best_hyp.r2_score is None or best_hyp.r2_score < 0.5:
+            print(
+                f"   ⚠ LLM R²={best_hyp.r2_score:.3f} < 0.5 — discarding LLM prior, "
+                f"running pure PySR",
+                flush=True,
+            )
+            _use_llm_seed = False
 
         # Phase 2: PySR Refinement
         print("   → Refining with PySR...")

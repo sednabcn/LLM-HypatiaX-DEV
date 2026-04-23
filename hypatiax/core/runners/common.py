@@ -90,7 +90,9 @@ _TIMEOUT_AWARE_SCRIPTS: frozenset[str] = frozenset({
     "run_noise_sweep",
     "run_dual_condition",
     "run_hybrid_system",
-    "hypatiax_defi_benchmark_v3c",
+    # hypatiax_defi_benchmark_v3c does NOT accept --pysr-timeout / --method-timeout
+    # (it errors with "unrecognized arguments"). Removed from this set so
+    # _timeout_args() returns [] for the defi_v3 task.
 })
 
 
@@ -131,7 +133,9 @@ def run_task(config: dict) -> dict:
         return {"status": "missing_script", "name": name, "script": script}
 
     extra_args = config.get("args", [])
-    fast_args  = _timeout_args(str(script_path))
+    # no_timeout_flags=True is set by universal_protocol when DEFI_V3C_NO_TIMEOUT_FLAGS
+    # is in the environment — honour it as a belt-and-suspenders guard.
+    fast_args  = [] if config.get("no_timeout_flags") else _timeout_args(str(script_path))
     cmd        = [python(), str(script_path)] + fast_args + extra_args
 
     print(f"  → running: {' '.join(cmd)}")

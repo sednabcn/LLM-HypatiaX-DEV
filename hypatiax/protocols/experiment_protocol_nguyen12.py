@@ -50,8 +50,23 @@ Cite as : Bonet Chaple, R.P. (2026). HypatiaX: A Hybrid Framework for
           Analytical Expression Discovery. JMLR (under review).
 """
 
+import os as _os
+import pathlib as _pathlib
+import sys as _sys
+
+# ── sys.path bootstrap ────────────────────────────────────────────────────
+# Ensures hypatiax.* imports resolve whether this file is run directly
+# or imported by run_all_checkpoint.py.
+_PROTO_DIR  = _pathlib.Path(__file__).resolve().parent
+_REPO_ROOT  = _pathlib.Path(_os.environ.get("REPRO_ROOT", str(_PROTO_DIR.parent)))
+for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
+
 from __future__ import annotations
 
+import os
 import warnings
 import random
 from dataclasses import dataclass, field
@@ -60,10 +75,16 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Module-level reproducibility
+# Module-level reproducibility — seed resolved from env var set by wrapper,
+# falls back to 42 so the module is safe to import standalone.
 # ---------------------------------------------------------------------------
-random.seed(42)
-np.random.seed(42)
+_MODULE_SEED = int(
+    os.environ.get("EXPERIMENT_SEED")
+    or os.environ.get("NN_SEED")
+    or 42
+)
+random.seed(_MODULE_SEED)
+np.random.seed(_MODULE_SEED)
 
 # ---------------------------------------------------------------------------
 # Optional heavy imports — gracefully degrade for documentation-only use

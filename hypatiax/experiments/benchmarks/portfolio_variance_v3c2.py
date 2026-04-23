@@ -102,9 +102,9 @@ print(f'   BENCHMARK_SEED : {BENCHMARK_SEED}')
 print(f'   RERUN_STRATEGY : {RERUN_STRATEGY}')
 
 # ── API Key ──────────────────────────────────────────────────────────────────
-# Load from Kaggle secrets / Colab secrets / .env / environment — all handled by secrets.py
+# Load from Kaggle config_secrets / Colab config_secrets / .env / environment — all handled by config_secrets.py
 try:
-    import secrets as _secrets_mod  # noqa: F401  (side-effect: sets ANTHROPIC_API_KEY)
+    import config_secrets as _config_secrets_mod  # noqa: F401  (side-effect: sets ANTHROPIC_API_KEY)
 except ImportError:
     pass
 

@@ -1022,15 +1022,35 @@ _FIX5_VERIFY_CASES = {
 
 
 def run_benchmark(resume: bool = False, verify_fix5: bool = False,
-                  verbose: bool = False, cases: list = None):
+                  verbose: bool = False, cases: list = None,
+                  seeds: list = None):
     protocol   = DeFiExperimentProtocol()
     test_cases = _get_test_cases()
     total      = len(test_cases)
+
+    # ── Env-driven overrides (set by run_all.py via experiment_protocol_defi_v3.py) ──
+    # DEFI_TASK_FILTER: run only cases whose name contains this substring
+    _task_filter = os.environ.get("DEFI_TASK_FILTER")
+    if _task_filter and not cases:
+        cases = [_task_filter]
+        print(f"\n  DEFI_TASK_FILTER={_task_filter!r}: filtering to matching cases")
+    # DEFI_SEEDS: comma-separated seed list for multi-seed sweep
+    _seeds_env = os.environ.get("DEFI_SEEDS")
+    if _seeds_env and seeds is None:
+        seeds = [int(s) for s in _seeds_env.split(",")]
+        print(f"\n  DEFI_SEEDS={_seeds_env!r}: will run seeds {seeds}")
 
     if verify_fix5:
         test_cases = [tc for tc in test_cases if tc["name"] in _FIX5_VERIFY_CASES]
         total      = len(test_cases)
         print(f"\n🔍 Fix-5 verification mode: running {total} target cases only")
+
+    # ONE_EQUATION smoke-test: run only the first case
+    # Triggered by run_all_checkpoint.py --one-equation (sets ONE_EQUATION=1 in env).
+    if os.environ.get("ONE_EQUATION") == "1" and not verify_fix5 and not cases:
+        test_cases = test_cases[:1]
+        total = 1
+        print(f"\n🔥 Smoke-test mode (ONE_EQUATION=1): running 1 of {len(_get_test_cases())} cases only")
 
     # --cases filter: keep only cases whose name contains any of the given substrings
     if cases:
