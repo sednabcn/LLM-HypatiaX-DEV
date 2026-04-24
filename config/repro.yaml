@@ -1,133 +1,129 @@
 # =============================================================================
-# HypatiaX JMLR — Reproducibility Configuration
+# HypatiaX JMLR — PAPER-QUALITY REPRODUCIBILITY CONFIGURATION
 # =============================================================================
 
-# ── Identity ─────────────────────────────────────────────────────────────────
 run_id:       "paper_v3"
-run_version:  "3.0"       # paper/run version — distinct from engine.version below
+run_version:  "3.0"
 date:         "2026-04"
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-# Set HYPATIAX_ROOT in your shell before running:
-#   export HYPATIAX_ROOT=/absolute/path/to/LLM-HypatiaX-PAPERS-Public/2025-JMLR/hypatiax
-#
-# Typical values:
-#   Local clone : $HOME/LLM-HypatiaX-PAPERS-Public/2025-JMLR/hypatiax
-#   Kaggle/Colab: /kaggle/working/LLM-HypatiaX-PAPERS-Public/2025-JMLR/hypatiax
 paths:
-  root:       "${HYPATIAX_ROOT}"          # resolved from env var at runtime
+  root:       "${HYPATIAX_ROOT}"
   results:    "hypatiax/data/results"
-  patched:    "hypatiax/data/patched"  # created by apply_patches.py on first run; not pre-existing
+  patched:    "hypatiax/data/patched"
   paper:      "paper"
   figures:    "paper/figures"
   tables:     "paper/tables"
   patches:    "patches/generated"
   logs:       "logs"
-  jmlr_sync:  "JMLR-SOURCE-LAST/auto_synced"  # INTERNAL PATH — not in repro repo; reviewers can ignore
 
-# ── Seeds ─────────────────────────────────────────────────────────────────────
 seeds:
   default:    42
   pysr_seed:  42
-  validation: [123]              # Nguyen-12 seed-stability rerun (§10.8, action guide item 5)
-                                 # seed=777 removed from here — belongs in portfolio_variance below
-  portfolio_variance: [42, 99, 123, 777, 2024]  # 5-seed sweep for §10.5 Tab 4
-                                                 # passed as --seeds arg to experiment_protocol_defi_v3.py
+  validation: [123]
+  portfolio_variance: [42, 99, 123, 777, 2024]
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
-# IMPORTANT: notebooks use ANTHROPIC_API_KEY (see secrets.py).
-# This must match the model string used in run_all.py (LLM_MODEL env default)
-# and the Anthropic API — NOT a short alias like "claude-sonnet-4-6".
-# BUG FIX: was "claude-sonnet-4-6" (invalid API model string) → corrected below.
-llm_model:   "claude-sonnet-4-20250514"   # ← fixed: matches run_all.py default & API
-llm_retries: 3
-llm_k_runs:  30  # set to 1 for a fast check; use 30 only for full instability
-                 # analysis from §10.9
+llm_model:     "claude-sonnet-4-20250514"
+llm_retries:   3
+llm_k_runs:    30
 
-# ── Benchmark globals ─────────────────────────────────────────────────────────
-n_tasks_defi:   74    # total DeFi cases (easy=24, medium=29, hard=21)
-n_tasks_instability: 70  # instability sweep subset — 4 cases excluded (see §10.9)
-pca_train_frac: 0.40  # DeFi: 40/60 PCA-directed extrapolation split
-nn_time_limit:  120   # wall-clock seconds per NN case
+n_tasks_defi:       74
+n_tasks_instability: 70
+pca_train_frac:     0.40
+nn_time_limit:      120
 
-# ── Engine ────────────────────────────────────────────────────────────────────
+timeouts:
+  pysr_attempt_seconds: 120
+  method_seconds: 360
+  equation_wall_clock: 270
+  feynman_pysr_seconds: 180
+  instability_pysr_seconds: 90
+
+pysr:
+  niterations: 25
+  populations: 10
+  population_size: 33
+  parsimony: 0.01
+  maxsize: 30
+  binary_operators: ["+", "-", "*", "/"]
+  unary_operators: ["exp", "log", "sin", "cos", "sqrt"]
+  use_transcendental_compositions: true
+  deterministic: true
+  parallelism: "serial"
+
 engine:
-  name:    "hybrid_system_v50_2"
+  name: "hybrid_system_v50_2"
   version: "v5.1"
-  # ⚠ WARNING: hybrid_system_v50.py is ABSENT from the public hypatiax repo as of April 2026.
-  # Only hybrid_system_v40.py is present at hypatiax/tools/symbolic/. Confirm with authors.
-  # NEVER use: hybrid_system_v40 (stale, FIX-C2) — but see warning above.
+  max_retries: 3
+  allow_nondeterministic: false
 
-# ── Benchmarks ────────────────────────────────────────────────────────────────
 benchmarks:
   defi:
-    enabled:        true
-    script:         "hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
-    # ⚠ WARNING: this script is ABSENT from the public hypatiax repo as of April 2026.
-    # All other benchmark scripts are present. Confirm with authors before running.
-    output_subdir:  "defi"
-    split:          "pca_40_60"    # PCA-directed; distinct from feynman.split below
-    train_frac:     0.40
+    enabled: true
+    script: "hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
+    output_subdir: "defi"
+    split: "pca_40_60"
+    train_frac: 0.40
     expected:
-      accuracy:     0.892
-      total_cases:  74
-      easy_cases:   24
-      medium_cases: 29
-      hard_cases:   21
-
+      accuracy: 0.892
+      total_cases: 74
+      catastrophic: 0
   core15:
-    enabled:       true
-    script:        "hypatiax/experiments/benchmarks/run_dual_condition_benchmark.py"
+    enabled: true
+    script: "hypatiax/experiments/benchmarks/run_dual_condition_benchmark.py"
     output_subdir: "exp1_ablation"
     expected:
-      # PROVISIONAL — computed from populations=2 run (action guide item 2, Tier 1
-      # blocker). Rerun run_dual_condition_benchmark.py with populations=30 against
-      # v50-2 engine before treating these as ground truth. Update if values change.
-      mw_p:        0.2948
-      mw_u:        126.0
-
+      mw_u: 126.0
+      mw_p: 0.295
+      speedup: 1.73
   feynman:
-    enabled:       true
-    script:        "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+    enabled: true
+    script: "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
     output_subdir: "feynman"
-    split:         "random_80_20"  # random split — NOT the PCA 40/60 used in DeFi
-    extrap_mult:   2.0
+    split: "random_80_20"
+    extrap_mult: 2.0
     expected:
-      successes:   9
-      total:       30
-    note: >
-      Feynman uses a random 80/20 train/test split with extrap_mult=2.0.
-      DeFi uses a PCA-directed 40/60 split (see defi.split above).
-      Results are not directly comparable across these two benchmarks.
-      See §9 Experimental Setup and §10.7 for the explicit protocol note
-      required by action guide item 10.
-
+      successes: 9
+      total: 30
+  nguyen12:
+    enabled: true
+    output_subdir: "nguyen12"
+    expected:
+      hypatia_success: 11
+      pysr_success: 10
+      nn_success: 0
+      mw_u: 113
+      mw_p: 0.0097
   noise_sweep:
-    enabled:       true
-    script:        "hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py"
+    enabled: true
+    script: "hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py"
     output_subdir: "noise"
-    fast_skip:     true     # skipped under --fast mode
-
-  sample_complexity:
-    enabled:       true
-    script:        "hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
-    output_subdir: "sample_complexity"
-    fast_skip:     true
-
-  routing:
-    enabled:       true
-    script:        "hypatiax/experiments/benchmarks/run_hybrid_system_benchmark.py"
-    output_subdir: "routing"
-    fast_skip:     true
-
-  instability:
-    enabled:       true
-    script:        "hypatiax/experiments/benchmarks/run_dual_sweep_benchmarks.py"
-    output_subdir: "instability"
-    fast_skip:     true
+    fast_skip: true
     expected:
-      total_tasks: 70    # 70-task subset of the 74-task DeFi set (FIX-T1; see §10.9)
-      k_runs:      30
+      ehd_rate: 1.0
+      plateau_n: 500
+  routing:
+    enabled: true
+    script: "hypatiax/experiments/benchmarks/run_hybrid_system_benchmark.py"
+    output_subdir: "routing"
+    expected:
+      fix1_improvement: 0.06
+      fix2_improvement: 0.05
+      fix3_improvement: 0.01
+  instability:
+    enabled: true
+    script: "hypatiax/experiments/benchmarks/run_dual_sweep_benchmarks.py"
+    output_subdir: "instability"
+    fast_skip: true
+    k_runs: 30
+    total_tasks: 70
+    expected:
+      spearman_rho: -0.70
+      p_value: 0.001
+  extrapolation:
+    enabled: true
+    output_subdir: "extrapolation"
+    regimes: ["near", "medium", "far"]
+    extrap_mults: [1.2, 2.0, 5.0]
 
 # ── Known paper fixes (applied by apply_patches.py) ──────────────────────────
 fixes:
@@ -162,3 +158,4 @@ fixes:
   FIX-B3:
     description: "Remove duplicate bibkey udrescu2020aifeynman"
     target:      "paper/jmlr-hypatiax-paper-final.tex"
+ 

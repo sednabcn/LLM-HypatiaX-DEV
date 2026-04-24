@@ -154,7 +154,6 @@ from typing import Optional
 #   2. If that also fails (e.g. config_secrets.py itself has a bad import), fall back to
 #      a minimal inline .env parser that replicates what hypatiax.config_secrets does:
 #      read ANTHROPIC_API_KEY from the environment, then from hypatiax/.env or .env.
-# Add after the imports (around line 50)
 
 def load_repro_config() -> dict:
     """Load configuration from repro.yaml, with environment variable overrides."""
@@ -175,7 +174,7 @@ def load_repro_config() -> dict:
     except Exception as e:
         print(f"  ⚠ Failed to load repro.yaml: {e}")
         return {}
-    
+
 def _load_api_key() -> None:
     """Load ANTHROPIC_API_KEY via hypatiax.config_secrets, or fall back to .env parsing."""
     import importlib.util as _ilu
@@ -1133,6 +1132,8 @@ def main() -> None:
                        check=False)
         sys.exit(0)
 
+
+    
     # ── Load repro.yaml config ───────────────────────────────────────────────────
     _repro_config = load_repro_config()
     _timeout_config = _repro_config.get("timeouts", {})

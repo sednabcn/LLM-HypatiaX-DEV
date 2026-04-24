@@ -154,6 +154,28 @@ from typing import Optional
 #   2. If that also fails (e.g. config_secrets.py itself has a bad import), fall back to
 #      a minimal inline .env parser that replicates what hypatiax.config_secrets does:
 #      read ANTHROPIC_API_KEY from the environment, then from hypatiax/.env or .env.
+# Add after the imports (around line 50)
+
+def load_repro_config() -> dict:
+    """Load configuration from repro.yaml, with environment variable overrides."""
+    import yaml
+    
+    config_path = REPO_ROOT / "config" / "repro.yaml"
+    if not config_path.exists():
+        config_path = REPO_ROOT / "repro.yaml"  # fallback to repo root
+    
+    if not config_path.exists():
+        print("  ⚠ repro.yaml not found — using defaults")
+        return {}
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return config or {}
+    except Exception as e:
+        print(f"  ⚠ Failed to load repro.yaml: {e}")
+        return {}
+    
 def _load_api_key() -> None:
     """Load ANTHROPIC_API_KEY via hypatiax.config_secrets, or fall back to .env parsing."""
     import importlib.util as _ilu
@@ -1111,6 +1133,15 @@ def main() -> None:
                        check=False)
         sys.exit(0)
 
+    # ── Load repro.yaml config ───────────────────────────────────────────────────
+    _repro_config = load_repro_config()
+    _timeout_config = _repro_config.get("timeouts", {})
+    _pysr_config = _repro_config.get("pysr", {})
+
+    # Timeout defaults (paper-quality: 120s)
+    DEFAULT_PYSR_TIMEOUT = _timeout_config.get("pysr_attempt_seconds", 120)
+    DEFAULT_METHOD_TIMEOUT = _timeout_config.get("method_seconds", 360)
+
     # ── Build environment (mirrors run_all.sh and notebook cell 2) ─────────
     _seed_str = str(args.seed) if args.seed is not None else "42"
 
@@ -1119,29 +1150,78 @@ def main() -> None:
     env["NN_SEED"]               = os.environ.get("NN_SEED",   _seed_str)
     env["PYSR_SEED"]             = os.environ.get("PYSR_SEED", _seed_str)
     env["PYTHONHASHSEED"]        = os.environ.get("PYTHONHASHSEED", _seed_str)
-    # If --seed was given explicitly it overrides any pre-existing env value.
+
+    # Override seeds if --seed was given
     if args.seed is not None:
         env["NN_SEED"]        = _seed_str
         env["PYSR_SEED"]      = _seed_str
         env["PYTHONHASHSEED"] = _seed_str
-    env.setdefault("LLM_MODEL",             "claude-sonnet-4-20250514")
-    env.setdefault("LLM_RETRIES",           "3")
-    env.setdefault("LLM_K_RUNS",            "1")   # overridden to 30 for instability
-    env.setdefault("N_TASKS_DEFI",          "74")
-    env.setdefault("N_TASKS_INSTABILITY",   "70")  # FIX-T1: must be 70 not 71
-    env.setdefault("PCA_TRAIN_FRAC",        "0.40")
-    env.setdefault("NN_TIME_LIMIT",         "120")
-    env.setdefault("ENGINE_NAME",           "hybrid_system_v50_2")  # FIX-C2: never v40
+
+    # LLM config
+    env.setdefault("LLM_MODEL", _repro_config.get("llm_model", "claude-sonnet-4-20250514"))
+    env.setdefault("LLM_RETRIES", str(_repro_config.get("llm_retries", 3)))
+    env.setdefault("LLM_K_RUNS", str(_repro_config.get("llm_k_runs", 1)))
+
+    # Task counts
+    env.setdefault("N_TASKS_DEFI", str(_repro_config.get("n_tasks_defi", 74)))
+    env.setdefault("N_TASKS_INSTABILITY", str(_repro_config.get("n_tasks_instability", 70)))
+    env.setdefault("PCA_TRAIN_FRAC", str(_repro_config.get("pca_train_frac", 0.40)))
+    env.setdefault("NN_TIME_LIMIT", str(_repro_config.get("nn_time_limit", 120)))
+
+    # Engine
+    env.setdefault("ENGINE_NAME", _repro_config.get("engine", {}).get("name", "hybrid_system_v50_2"))
     env.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
-    # PYSR_TIMEOUT: experiment scripts should read this to override their default
-    # wall-clock limit (360 s).  Use --pysr-timeout on slower local hardware to
-    # prevent the Hybrid column from being all N/A due to PySR timing out.
+    env.setdefault("JULIA_NUM_THREADS", "1")
+
+    # ── TIMEOUT: priority order ───────────────────────────────────────────────────
+    # 1. --pysr-timeout CLI flag (highest priority)
+    # 2. repro.yaml timeouts.pysr_attempt_seconds
+    # 3. Environment variable PYSR_TIMEOUT (fallback)
+    # 4. Default 120s (paper-quality)
     if args.pysr_timeout is not None:
         env["PYSR_TIMEOUT"] = str(args.pysr_timeout)
+        env["METHOD_TIMEOUT"] = str(min(args.pysr_timeout * 3, 600))
         print(f"  PYSR_TIMEOUT={args.pysr_timeout}s  (--pysr-timeout override)")
+        print(f"  METHOD_TIMEOUT={env['METHOD_TIMEOUT']}s  (derived)")
     else:
-        env.setdefault("PYSR_TIMEOUT", "360")   # match experiment script default
+        # Check repro.yaml first
+        pysr_timeout = DEFAULT_PYSR_TIMEOUT
+        method_timeout = DEFAULT_METHOD_TIMEOUT
+        
+        # Then environment variable override
+        env_pysr = os.environ.get("PYSR_TIMEOUT")
+        if env_pysr:
+            pysr_timeout = int(env_pysr)
+            method_timeout = min(pysr_timeout * 3, 600)
+            print(f"  ⚠ PYSR_TIMEOUT={pysr_timeout}s from env (repro.yaml wants {DEFAULT_PYSR_TIMEOUT}s)")
+        
+        env["PYSR_TIMEOUT"] = str(pysr_timeout)
+        env["METHOD_TIMEOUT"] = str(method_timeout)
+        print(f"  PYSR_TIMEOUT={pysr_timeout}s  (paper-quality: 120s)")
+        print(f"  METHOD_TIMEOUT={method_timeout}s  (paper-quality: 360s)")
 
+    # PySR search parameters from repro.yaml
+    env.setdefault("POPULATIONS", str(_pysr_config.get("populations", 10)))
+    env.setdefault("N_ITERATIONS", str(_pysr_config.get("niterations", 25)))
+    env.setdefault("PYSR_POPULATION_SIZE", str(_pysr_config.get("population_size", 33)))
+    env.setdefault("PYSR_PARSIMONY", str(_pysr_config.get("parsimony", 0.01)))
+    env.setdefault("PYSR_MAXSIZE", str(_pysr_config.get("maxsize", 30)))
+
+    env["PYTHONPATH"]    = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env["RESULTS_DIR"]   = str(RESULTS_DIR)
+    env["PIPELINE_PYTHON"] = sys.executable
+    env["REPRO_ROOT"]  = str(REPO_ROOT)
+
+    _seed_source = f"--seed flag" if args.seed is not None else "default (env or 42)"
+    print(f"\n  NN_SEED={env['NN_SEED']}  PYSR_SEED={env['PYSR_SEED']}  "
+          f"PYTHONHASHSEED={env['PYTHONHASHSEED']}  (source: {_seed_source})")
+    print(f"  LLM_MODEL={env['LLM_MODEL']}")
+    print(f"  ENGINE={env['ENGINE_NAME']}  N_TASKS_INSTABILITY={env['N_TASKS_INSTABILITY']}")
+    print(f"  PySR: iterations={env['N_ITERATIONS']} populations={env['POPULATIONS']} pop_size={env['PYSR_POPULATION_SIZE']}")
+    if args.skip_paper:
+        print(f"  --skip-paper: Phase 4-B notebook steps will be skipped")
+
+    
     # ── --one-equation: smoke-test mode ───────────────────────────────────
     if args.one_equation:
         # Tell every experiment script to run only 1 equation/task.

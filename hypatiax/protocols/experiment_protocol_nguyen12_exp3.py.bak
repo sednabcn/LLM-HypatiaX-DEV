@@ -1,15 +1,19 @@
 import argparse
-import os as _os
-import sys as _sys
-import pathlib as _pathlib
+import os
+import pathlib
+import sys
 
-# ── sys.path bootstrap: ensures hypatiax.* imports resolve ────────────────
-_PROTO_DIR = _pathlib.Path(__file__).resolve().parent
-_REPO_ROOT = _pathlib.Path(_os.environ.get("REPRO_ROOT", str(_PROTO_DIR.parent)))
+# ── sys.path bootstrap ────────────────────────────────────────────────────
+# Works whether this file lives at:
+#   <repo>/hypatiax/experiments/benchmarks/   (old layout)
+#   <repo>/hypatiax/protocols/                (new layout)
+# Repo root is resolved via REPRO_ROOT env var (set by wrapper) or inferred.
+_SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+_REPO_ROOT  = pathlib.Path(os.environ.get("REPRO_ROOT", str(_SCRIPT_DIR.parents[2])))
+
 for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
-    if _p not in _sys.path:
-        _sys.path.insert(0, _p)
-del _pathlib, _PROTO_DIR, _REPO_ROOT, _p
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # ── [PATCH G] Import with pre/post-restructure fallback ──────────────────
 try:
@@ -40,37 +44,41 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def run():
     args = parse_args()
 
+    # Resolve the final list of seeds to run.
+    # Priority: --seeds > --seed > env var EXPERIMENT_SEED > default (42)
     if args.seeds:
         seeds = args.seeds
     elif args.seed is not None:
         seeds = [args.seed]
     else:
-        seeds = [int(_os.environ.get("EXPERIMENT_SEED", 42))]
+        seeds = [int(os.environ.get("EXPERIMENT_SEED", 42))]
 
     results = []
     for seed in seeds:
-        _os.environ["EXPERIMENT_SEED"] = str(seed)
-        _os.environ["NN_SEED"]         = str(seed)
-        _os.environ["PYSR_SEED"]       = str(seed)
+        # Propagate seed into env so downstream modules pick it up
+        os.environ["EXPERIMENT_SEED"] = str(seed)
+        os.environ["NN_SEED"]         = str(seed)
+        os.environ["PYSR_SEED"]       = str(seed)
 
+        # Forward --n-tasks (smoke-test) and PySR params via env so the
+        # benchmark script reads them with os.environ.get().
         if args.n_tasks is not None:
-            _os.environ["N_NGUYEN_TASKS"] = str(args.n_tasks)
+            os.environ["N_NGUYEN_TASKS"] = str(args.n_tasks)
 
         config = {
             "name": "nguyen12_exp3",
             "seed": seed,
         }
+        # FIX: run_protocol takes only one argument (config)
         result = run_protocol(config, run_task)
         results.append(result)
 
+    # Return single result for single-seed runs (backwards compatible),
+    # list for multi-seed runs.
     return results[0] if len(results) == 1 else results
-
 
 if __name__ == "__main__":
     run()
-
-    
