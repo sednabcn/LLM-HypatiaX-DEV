@@ -58,6 +58,33 @@ from typing import Optional
 
 # ── Canonical paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent
+
+
+def _load_api_key() -> None:
+    """
+    Mirror the key-loading logic from run_all_checkpoint.py:
+    if ANTHROPIC_API_KEY is absent from the environment, try to pull it
+    from config_secrets.py (ANTHROPIC_API_KEY or API_KEY variables).
+    Does nothing if the key is already set.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    secrets_path = SCRIPT_DIR / "config_secrets.py"
+    if not secrets_path.exists():
+        return
+    try:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("config_secrets", secrets_path)
+        mod  = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        key = getattr(mod, "ANTHROPIC_API_KEY", None) or getattr(mod, "API_KEY", None)
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
+    except Exception:
+        pass  # silent – run_all_checkpoint.py will handle errors itself
+
+
+_load_api_key()   # runs once at import time
 CHECKPOINT   = SCRIPT_DIR / "logs" / "pipeline_checkpoint.json"
 RESULTS_DIR  = SCRIPT_DIR / "hypatiax" / "data" / "results"
 LOG_DIR      = SCRIPT_DIR / "logs"
@@ -196,10 +223,13 @@ def run_pipeline_step(*extra_args, mode: str = "local", live: bool = True) -> in
         err(f"run_all_checkpoint.py not found at {RUN_ALL}")
         return 1
 
-    cmd = [sys.executable, str(RUN_ALL)] + list(extra_args)
-    info(f"Running: {' '.join(cmd)}")
+    # -u forces unbuffered stdout/stderr so output streams in real time
+    cmd = [sys.executable, "-u", str(RUN_ALL)] + list(extra_args)
+    info("Running: " + " ".join(cmd))
 
     env = build_env(mode)
+    # Belt-and-suspenders: propagate to any grandchild processes too
+    env["PYTHONUNBUFFERED"] = "1"
 
     if live:
         proc = subprocess.Popen(
@@ -360,9 +390,12 @@ def cmd_phase1(args) -> None:
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        err("ANTHROPIC_API_KEY not set. Export it first:")
-        print("    export ANTHROPIC_API_KEY='sk-ant-...'")
-        sys.exit(1)
+        warn("ANTHROPIC_API_KEY not found in environment or config_secrets.py.")
+        warn("LLM steps will fail unless run_all_checkpoint.py loads the key itself.")
+        warn("To silence this: export ANTHROPIC_API_KEY='sk-ant-...'")
+        warn("Continuing anyway — run_all_checkpoint.py will handle the key.")
+    else:
+        ok(f"ANTHROPIC_API_KEY loaded (sk-ant-...{api_key[-6:]})")
 
     # Check for existing checkpoint
     state = load_checkpoint()
@@ -421,9 +454,12 @@ def cmd_phase2(args) -> None:
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        err("ANTHROPIC_API_KEY not set.")
-        print("    import os; os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-...'")
-        sys.exit(1)
+        warn("ANTHROPIC_API_KEY not found in environment or config_secrets.py.")
+        warn("Set it in the notebook with:")
+        warn("    import os; os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-...'")
+        warn("Continuing — run_all_checkpoint.py will handle the key.")
+    else:
+        ok(f"ANTHROPIC_API_KEY loaded (sk-ant-...{api_key[-6:]})")
 
     info(f"Slow steps remaining: {pending_slow}")
     info("Running each step individually (one crash does not lose others).")
@@ -643,8 +679,11 @@ def cmd_reviewer(args) -> None:
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        err("ANTHROPIC_API_KEY not set.")
-        sys.exit(1)
+        warn("ANTHROPIC_API_KEY not found in environment or config_secrets.py.")
+        warn("LLM steps will fail. To fix: export ANTHROPIC_API_KEY='sk-ant-...'")
+        warn("Continuing — run_all_checkpoint.py will handle the key.")
+    else:
+        ok(f"ANTHROPIC_API_KEY loaded (sk-ant-...{api_key[-6:]})")
 
     if mode == "fast":
         info("Reviewer fast mode: ~20–60 min, validates pipeline structure")
