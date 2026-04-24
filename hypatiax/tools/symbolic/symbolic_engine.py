@@ -346,10 +346,14 @@ def detect_collapsed_constants(expression: str, variable_names: List[str]) -> Li
 class DiscoveryConfig:
     """Configuration for symbolic discovery."""
 
-    niterations: int = 40          # v21: lowered from 50; timeout guard makes this safe
-    populations: int = 15
-    population_size: int = 33      # REDUCED from 200 → 33. With populations=15
-                                   # total individuals = 15×33 = ~500, matching
+    niterations: int = 25          # v21: lowered from 40→25; keeps wall time well
+                                   # within pysr_timeout even after feature augmentation.
+                                   # Set N_ITERATIONS env var to override at runtime.
+    populations: int = 10          # reduced from 15→10; combined with niterations=25
+                                   # gives ~8750 evaluations/attempt instead of ~19800,
+                                   # comfortably within 120s budget after Julia startup.
+    population_size: int = 33      # REDUCED from 200 → 33. With populations=10
+                                   # total individuals = 10×33 = ~330, matching
                                    # the PySR docs "fast" preset. The old 200
                                    # (3000 individuals) added ~3× wall-time per
                                    # iteration with no proportional R² gain on
@@ -399,14 +403,14 @@ class DiscoveryConfig:
     # Passed directly to PySRRegressor(timeout_in_seconds=pysr_timeout).
     # Prevents a single runaway PySR call from consuming the full benchmark
     # budget.  With max_retries=3 (hybrid_system_v40) worst-case wall time is
-    # 3 × pysr_timeout + ~90s Julia startup ≈ 540s, well within a 900s budget.
+    # 3 × pysr_timeout + ~90s Julia startup ≈ 450s, well within a 900s budget.
     #
-    # REDUCED from 800 → 150:
-    # The old value of 800s caused the first retry alone to nearly exhaust the
-    # 900s method timeout (90s Julia startup + 800s PySR = 890s).  With 150s
-    # per attempt and max_retries=3: 90 + 3×150 = 540s, leaving 360s of slack.
+    # REDUCED from 150 → 120:
+    # After feature augmentation (GM/ratio columns) the effective search space
+    # can grow 3–5× for multi-variable problems.  120s keeps each attempt safe
+    # while leaving the remaining budget for retries.
     # Set to 0 to disable (no timeout, legacy behaviour).
-    pysr_timeout: int = 150
+    pysr_timeout: int = 120
 
     # Transcendental composition support
     # When True, atomic operators for arcsin(sin(x)), arccos(cos(x)), arctan(tan(x))
@@ -1376,6 +1380,11 @@ class SymbolicEngine:
                 if len(_pos_idx_exp) >= 2:
                     _ratio_cols: List[np.ndarray] = []
                     _ratio_names: List[str] = []
+                    # Cap at 10 ratio pairs: beyond this the search space blows
+                    # up (O(n²) new columns) while marginal benefit drops.
+                    # Prioritise pairs where numerator/denominator differ most
+                    # in magnitude (most informative ratios first).
+                    _ratio_candidates = []
                     for _pi in range(len(_pos_idx_exp)):
                         for _qi in range(len(_pos_idx_exp)):
                             if _pi == _qi:
@@ -1383,8 +1392,17 @@ class SymbolicEngine:
                             _ci, _cj = _pos_idx_exp[_pi], _pos_idx_exp[_qi]
                             _ratio_vec = _X_fit[:, _ci] / (_X_fit[:, _cj] + 1e-300)
                             _ratio_nm  = f"ratio_{safe_names[_ci]}_{safe_names[_cj]}"
-                            _ratio_cols.append(_ratio_vec)
-                            _ratio_names.append(_ratio_nm)
+                            # Score by variance (more varied ratio = more info)
+                            _var_score = float(np.std(_ratio_vec))
+                            _ratio_candidates.append((_var_score, _ratio_vec, _ratio_nm))
+                    # Sort by descending variance, take top 10
+                    _ratio_candidates.sort(key=lambda x: x[0], reverse=True)
+                    _MAX_RATIO_PAIRS = 10
+                    for _score, _rvec, _rnm in _ratio_candidates[:_MAX_RATIO_PAIRS]:
+                        _ratio_cols.append(_rvec)
+                        _ratio_names.append(_rnm)
+                    if len(_ratio_candidates) > _MAX_RATIO_PAIRS:
+                        _trace.append(f"ratio_capped={len(_ratio_candidates)}→{_MAX_RATIO_PAIRS}")
                     if _ratio_cols:
                         _X_fit    = np.column_stack([_X_fit] + _ratio_cols)
                         safe_names = list(safe_names) + _ratio_names
@@ -1399,6 +1417,55 @@ class SymbolicEngine:
                     _trace.append("ratio_features=skipped(insufficient_pos_cols)")
             else:
                 _trace.append("ratio_features=skipped")
+
+            # ── Population-aware iteration scaling ───────────────────────────
+            # Total evaluations = populations × population_size × niterations.
+            # A baseline budget of populations=10 × 33 × 25 = 8,250 evals fits
+            # comfortably in pysr_timeout.  When populations is raised (e.g. to
+            # 30 for deeper scratch searches), we scale niterations down
+            # proportionally so total evals stay ≤ the baseline.
+            #
+            # Formula: adjusted = max(5, floor(base_iters * 10 / populations))
+            # where 10 is the default populations value (the "baseline").
+            _base_populations = 10   # matches DiscoveryConfig default
+            _actual_populations = pysr_kwargs["populations"]
+            if _actual_populations > _base_populations:
+                import math as _math2
+                _pop_scale = _base_populations / _actual_populations
+                _pop_adjusted_iters = max(5, int(pysr_kwargs["niterations"] * _pop_scale))
+                if _pop_adjusted_iters < pysr_kwargs["niterations"]:
+                    print(
+                        f"   [POP-SCALE] populations={_actual_populations} > baseline={_base_populations}; "
+                        f"niterations {pysr_kwargs['niterations']} → {_pop_adjusted_iters} "
+                        f"(keeps total evals ≤ {_base_populations * self.config.population_size * self.config.niterations:,})",
+                        flush=True,
+                    )
+                    _trace.append(f"pop_scale={_pop_scale:.2f}({pysr_kwargs['niterations']}→{_pop_adjusted_iters})")
+                    pysr_kwargs["niterations"] = _pop_adjusted_iters
+
+            # ── Feature-count adaptive iteration scaling ─────────────────────
+            # When GM or ratio augmentation adds many columns (e.g. 6 vars →
+            # 6 + 30 ratio = 36 cols), the PySR search space grows O(n²) but
+            # the timeout budget stays constant.  Compensate by reducing
+            # niterations proportionally so we don't time out mid-search.
+            #
+            # Formula: scale = sqrt(original_n_vars / augmented_n_vars)
+            # clamped to [0.4, 1.0] so we never cut below 40% of base iters.
+            _orig_n_vars = len(variable_names)
+            _aug_n_vars  = _X_fit.shape[1]
+            if _aug_n_vars > _orig_n_vars:
+                import math as _math
+                _iter_scale = max(0.4, _math.sqrt(_orig_n_vars / _aug_n_vars))
+                _adjusted_iters = max(5, int(pysr_kwargs["niterations"] * _iter_scale))
+                if _adjusted_iters < pysr_kwargs["niterations"]:
+                    print(
+                        f"   [ITER-SCALE] {_orig_n_vars} → {_aug_n_vars} vars after augmentation; "
+                        f"niterations {pysr_kwargs['niterations']} → {_adjusted_iters} "
+                        f"(scale={_iter_scale:.2f}) to stay within timeout",
+                        flush=True,
+                    )
+                    _trace.append(f"iter_scale={_iter_scale:.2f}({pysr_kwargs['niterations']}→{_adjusted_iters})")
+                    pysr_kwargs["niterations"] = _adjusted_iters
 
             # Fit model with safe variable names
             self.model.fit(_X_fit, _y_fit, variable_names=safe_names)
