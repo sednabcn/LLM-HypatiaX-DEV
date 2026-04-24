@@ -636,7 +636,7 @@ JSON ARRAY:"""
                 eq = c.get("equation", "")
                 if "=" in eq:
                     eq = eq.split("=", 1)[1].strip()
-
+                eq = eq.replace("^", "**")   # ← ADD THIS LINE
                 hypotheses.append(
                     EquationHypothesis(
                         equation=eq,

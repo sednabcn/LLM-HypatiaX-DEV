@@ -92,7 +92,28 @@ PROV_PATH    = OUTPUT_DIR / f"provenance_map_exp1{_seed_suffix}.json"
 # Paper-quality defaults: populations=30, niterations=1000, timeout=300s.
 POPULATIONS   = int(os.environ.get("POPULATIONS",    os.environ.get("PYSR_POPULATIONS", "30")))
 NITERATIONS   = int(os.environ.get("N_ITERATIONS",   os.environ.get("PYSR_NITERATIONS", "1000")))
-TIMEOUT_SECS  = int(os.environ.get("PYSR_TIMEOUT",   "300"))
+
+# =============================================================================
+# FIX: TIMEOUT_SECS — use METHOD_TIMEOUT as primary, PYSR_TIMEOUT as fallback
+# =============================================================================
+# Previously: TIMEOUT_SECS = int(os.environ.get("PYSR_TIMEOUT", "300"))
+# Problem: run_all_checkpoint.py sets PYSR_TIMEOUT=1100 (too high)
+# Solution: 
+#   1. Check METHOD_TIMEOUT first (benchmark-level timeout)
+#   2. Fall back to PYSR_TIMEOUT
+#   3. Cap at 300s for paper-quality (120s is faster, 300s is safe)
+#   4. Default to 120s (matches symbolic_engine.py default)
+_TIMEOUT_ENV = os.environ.get("METHOD_TIMEOUT") or os.environ.get("PYSR_TIMEOUT", "120")
+TIMEOUT_SECS = int(_TIMEOUT_ENV)
+
+# Cap unreasonable timeouts (1140s is 19 minutes — too long for a single equation)
+# Paper-quality safe range: 60-300s. 120s is fast, 300s is generous.
+_MAX_REASONABLE_TIMEOUT = 300
+if TIMEOUT_SECS > _MAX_REASONABLE_TIMEOUT:
+    print(f"⚠️  TIMEOUT_SECS={TIMEOUT_SECS} exceeds {_MAX_REASONABLE_TIMEOUT}s — capping to {_MAX_REASONABLE_TIMEOUT}s")
+    print(f"   (Original value from env: {_TIMEOUT_ENV}. Set METHOD_TIMEOUT=120 for fast runs.)")
+    TIMEOUT_SECS = _MAX_REASONABLE_TIMEOUT
+
 SEED          = _GLOBAL_SEED   # env-driven: PYSR_SEED → NN_SEED → 42
 CONDITIONS    = ["pysr_only", "hypatia"]
 MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")  # not printed in submitted tex (double-blind)
@@ -100,7 +121,7 @@ MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")  # not p
 _seed_source = "PYSR_SEED" if os.environ.get("PYSR_SEED") else ("NN_SEED" if os.environ.get("NN_SEED") else "default")
 print(f"populations : {POPULATIONS}  (paper-quality)")
 print(f"niterations : {NITERATIONS}")
-print(f"timeout_s   : {TIMEOUT_SECS}")
+print(f"timeout_s   : {TIMEOUT_SECS}  (capped at {_MAX_REASONABLE_TIMEOUT}s)")
 print(f"seed        : {SEED}  (source: {_seed_source})")
 print("✅ Setup complete")
 
@@ -442,9 +463,17 @@ class _Timeout:
     def __exit__(self, *args):
         if self._ok: signal.alarm(0)
 
-# Wall-clock limit per equation = 3 attempts × TIMEOUT_SECS + 60s margin.
-# This respects PYSR_TIMEOUT set by run_all_checkpoint.py --one-equation.
-EQUATION_WALL_CLOCK_TIMEOUT = 3 * TIMEOUT_SECS + 60
+# =============================================================================
+# FIX: Wall-clock limit — use TIMEOUT_SECS (already capped at 300s)
+# Previously: EQUATION_WALL_CLOCK_TIMEOUT = 3 * TIMEOUT_SECS + 60
+# This caused 3× timeout + margin, leading to 1140s timeouts.
+# =============================================================================
+# For paper-quality: each equation gets TIMEOUT_SECS per attempt,
+# with 3 attempts max (handled by HybridDiscoverySystem retries).
+# The wall-clock limit here is a SAFETY NET, not the per-attempt timeout.
+# Setting it to 2× TIMEOUT_SECS allows 2 full attempts before failing.
+EQUATION_WALL_CLOCK_TIMEOUT = 2 * TIMEOUT_SECS + 30  # was 3× + 60, now 2× + 30
+print(f"   Equation wall-clock limit: {EQUATION_WALL_CLOCK_TIMEOUT}s (safety net)")
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 def load_checkpoint(path):
@@ -507,6 +536,8 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
             discovery_config=DiscoveryConfig(
                 niterations=niterations,
                 enable_auto_configuration=True,
+                # Pass timeout to engine so it respects the same limit
+                pysr_timeout=timeout_secs,
             ),
             max_retries=3,
             use_llm=_use_llm,
@@ -574,7 +605,7 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
         # Extrapolation: eval expression directly (FIX-D: apply log-scale to
         # extrap X if discover() did so for training data)
         extrap_r2, extrap_rmse = {}, {}
-        _norm_expr = best_expr_raw
+        _norm_expr = best_expr_raw.replace("^", "**")
         for regime_name, (X_e, y_e) in extrap_sets.items():
             try:
                 _X_e_use = X_e.copy().astype(float)
@@ -905,7 +936,7 @@ lines.append(r"Equation & Domain & "
              r"\multicolumn{3}{c}{PySR only} & "
              r"\multicolumn{3}{c}{HypatiaX} \\")
 lines.append(r"\cmidrule(lr){3-5}\cmidrule(lr){6-8}")
-lines.append(r" & & Near & Med & Far & Near & Med & Far \\")
+lines.append(r"& & Near & Med & Far & Near & Med & Far \\")
 lines.append(r"\midrule")
 
 for eq_idx, eq in enumerate(CORE_15):
@@ -1067,6 +1098,7 @@ provenance = {
         "FIX-POP: populations=30 (was 2 in original notebook)",
         "FIX-APIKEY: Kaggle Secrets only — no hardcoded sk-ant key",
         "FIX-WIRE: hypatia condition now routes through HybridDiscoverySystem (was bypassed)",
+        "FIX-TIMEOUT: TIMEOUT_SECS capped at 300s, EQUATION_WALL_CLOCK_TIMEOUT reduced to 2×+30",
     ],
 }
 

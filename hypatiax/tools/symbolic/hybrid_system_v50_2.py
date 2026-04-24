@@ -705,6 +705,7 @@ class HybridDiscoverySystem:
         FIX-SIMPLIFY v5.2: collapses log(exp(x))→x and exp(log(x))→x.
         """
         result = expression_str
+        result = result.replace("^", "**")   # ← ADD THIS LINE (first thing)
         for pat, numpy_name in HybridDiscoverySystem._PYSR_OP_PATTERNS.values():
             result = pat.sub(numpy_name, result)
         try:
