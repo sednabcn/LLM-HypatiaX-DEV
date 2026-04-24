@@ -1,0 +1,664 @@
+# =============================================================================
+# .github/workflows/ci.yml
+# HypatiaX — Continuous Integration (GitHub Actions)  v2
+# =============================================================================
+#
+# v2 changes (synced with run_all_checkpoint.py v4.8):
+#   • Added ONE_EQUATION / PYSR_TIMEOUT / SEED matrix inputs to workflow_dispatch
+#   • smoke-test: --one-equation flag wired to the new dispatch input
+#   • smoke-test: --pysr-timeout wired; N_ITERATIONS/POPULATIONS injected for smoke mode
+#   • full-pipeline: --seed / --pysr-timeout / --skip-paper wired
+#   • slow-pipeline: --seed / --pysr-timeout / --skip-paper wired; LLM_K_RUNS=30
+#   • All jobs: N_TASKS_INSTABILITY fixed to 70 (FIX-T1), ENGINE_NAME locked to
+#               hybrid_system_v50_2 (FIX-C2), LLM_MODEL updated to
+#               claude-sonnet-4-20250514
+#   • All jobs: DEFI_V3C_NO_TIMEOUT_FLAGS / DEFI_TASK_FILTER / DEFI_SEEDS /
+#               SKIP_PKG_CHECK / HYPATIAX_CORE_OPTIONAL env vars added where
+#               the corresponding run_all steps set them (exp1b, suppA, exp3/3b,
+#               extrap, fixup-init)
+#   • lint: NB-06 code-quality pre-audit step added
+#   • verify: --verify-only mode wired (skip-slow + no re-run)
+#   • Checkpoint cache keys kept per-job-type to avoid cross-job pollution
+#
+# Triggers:
+#   push / PR to main or develop branches
+#   Manual dispatch (workflow_dispatch) with optional parameters (see inputs)
+#
+# Jobs:
+#   lint          — code quality, import graph, stale-engine check  (fast, <5 min)
+#   smoke-test    — Phase 0 setup + exp3/exp3b (Nguyen-12, all 5 seeds) (~90 min)
+#   full-pipeline — All experiments except slow steps                 (~4–6 h)
+#   slow-pipeline — Full pipeline including Feynman & instability     (manually triggered)
+#   verify        — verify_results.py + hash_lock against saved cache
+#
+# Secrets required (Settings → Secrets → Actions):
+#   ANTHROPIC_API_KEY   — sk-ant-... (required for all LLM-using jobs)
+#
+# Result artefacts are uploaded to GitHub Artefacts and kept for 30 days.
+# =============================================================================
+
+name: HypatiaX Reproducibility CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      only_step:
+        description: 'Run only this step ID (leave empty for full pipeline)'
+        required: false
+        default: ''
+      skip_slow:
+        description: 'Skip slow steps (exp2, suppB, instability)'
+        required: false
+        default: 'true'
+      # ── v2: new dispatch inputs matching run_all_checkpoint.py flags ──
+      one_equation:
+        description: 'Smoke-test mode: run exactly 1 equation per experiment'
+        required: false
+        default: 'false'
+      seed:
+        description: 'Override PYSR_SEED / NN_SEED / PYTHONHASHSEED (default: 42)'
+        required: false
+        default: '42'
+      pysr_timeout:
+        description: 'PySR wall-clock timeout in seconds (default: 360)'
+        required: false
+        default: '360'
+      skip_paper:
+        description: 'Skip Phase 4-B paper audit notebook steps (NB-01 to NB-06)'
+        required: false
+        default: 'false'
+      continue_on_fail:
+        description: 'Log step failures but keep the pipeline running'
+        required: false
+        default: 'false'
+
+# Cancel in-progress runs for the same ref on new push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  # ── Seeds (v2: default from dispatch input or 42) ─────────────────────────
+  NN_SEED: ${{ github.event.inputs.seed || '42' }}
+  PYSR_SEED: ${{ github.event.inputs.seed || '42' }}
+  PYTHONHASHSEED: ${{ github.event.inputs.seed || '42' }}
+  # ── Model (v2: updated to canonical API string) ───────────────────────────
+  LLM_MODEL: "claude-sonnet-4-20250514"
+  LLM_RETRIES: "3"
+  LLM_K_RUNS: "1"
+  N_TASKS_DEFI: "74"
+  N_TASKS_INSTABILITY: "70"        # FIX-T1: must be 70 (not 71)
+  PCA_TRAIN_FRAC: "0.40"
+  NN_TIME_LIMIT: "120"
+  ENGINE_NAME: "hybrid_system_v50_2"   # FIX-C2: never v40
+  PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+  # ── PySR timeout (v2: wired from dispatch input) ──────────────────────────
+  PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout || '360' }}
+
+# =============================================================================
+# JOB 1 — Lint & code quality  (runs on every push/PR, no API key needed)
+# =============================================================================
+jobs:
+  lint:
+    name: "Lint & code quality"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linting dependencies
+        run: |
+          pip install --quiet ruff pyflakes
+
+      - name: Install pipeline dependencies (needed for patches)
+        run: pip install --quiet -r requirements.txt
+
+      - name: Apply patches before lint checks (FIX-C2 must run first)
+        run: |
+          python3 scripts/patches/generate_patches.py
+          python3 scripts/patches/apply_patches.py
+
+      - name: ruff — style & import checks
+        run: |
+          ruff check hypatiax/ protocols/ scripts/ core/ \
+            --select E,F,W,I --ignore E501 \
+            --output-format github || true
+          # Treat as warning only in CI (--|| true); set to exit 1 to enforce
+
+      - name: Check for stale v40 engine references (FIX-C2, post-patch)
+        run: |
+          # Exclude BACKUP/ — .bak files are historical copies, not live code.
+          STALE=$(grep -r "hybrid_system_v40[^_]" hypatiax/ protocols/ scripts/ \
+                    --include="*.py" \
+                    --exclude-dir=BACKUP \
+                    -l 2>/dev/null || true)
+          if [ -n "$STALE" ]; then
+            echo "::error ::Stale hybrid_system_v40 import found — must be v50_2:"
+            echo "$STALE"
+            exit 1
+          fi
+          echo "✓ No stale v40 engine references"
+
+      - name: Check for exposed API keys
+        run: |
+          if grep -r "sk-ant-api" . --include="*.py" --include="*.ipynb" \
+                --include="*.yaml" --include="*.yml" -l 2>/dev/null \
+                | grep -v ".git"; then
+            echo "::error ::Exposed API key found — revoke at console.anthropic.com"
+            exit 1
+          fi
+          echo "✓ No exposed API keys"
+
+      - name: Verify hypatiax/protocols/ input-data modules
+        run: |
+          python3 scripts/patches/check_hypatiax_protocols.py
+
+      - name: Validate patched source syntax
+        run: |
+          python3 run_all_checkpoint.py --only fixup-tex
+          python3 scripts/patches/validate_code.py
+
+      # ── v2: NB-06 code-quality pre-audit (mirrors run_all main() NB-06 block) ──
+      - name: NB-06 code-quality pre-audit (non-blocking)
+        run: |
+          NB="notebooks/NB-06_Code_Quality_Pipeline_Integrity.ipynb"
+          if [ -f "$NB" ]; then
+            jupyter nbconvert --to notebook --execute --inplace \
+              --ExecutePreprocessor.timeout=120 "$NB" \
+              && echo "✓ NB-06 clean" \
+              || echo "⚠ NB-06 warnings (non-blocking)"
+          else
+            echo "  NB-06: not found — skipped (pip install notebook if needed)"
+          fi
+        continue-on-error: true
+
+
+# =============================================================================
+# JOB 2 — Smoke test  (Phase 0 setup + exp3/3b, optional --one-equation)
+#          Runs on push/PR; needs ANTHROPIC_API_KEY.
+# =============================================================================
+  smoke-test:
+    name: "Smoke test (setup + exp3)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: lint
+    if: github.event_name != 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Julia (for PySR)
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+
+      - name: Restore pip cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Python dependencies
+        run: pip install -q -r requirements.txt
+
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+
+      # ── Restore checkpoint if a previous run left one ───────────────────
+      - name: Restore checkpoint (if any)
+        uses: actions/cache@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-smoke-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: checkpoint-smoke-${{ github.ref }}-
+
+      - name: Apply patches
+        run: |
+          python3 scripts/patches/generate_patches.py
+          python3 scripts/patches/apply_patches.py
+          python3 run_all_checkpoint.py --only fixup-tex
+          python3 scripts/patches/validate_code.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      # ── v2: fixup-init step (FIX-INIT-PY) — guard broken HypatiaX import ──
+      - name: fixup-init — guard hypatiax/__init__.py (FIX-INIT-PY)
+        run: python3 run_all_checkpoint.py --only fixup-init
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      # ── v2: --one-equation smoke-test flag support ─────────────────────
+      - name: Exp 3 — Nguyen-12 SEED=${{ env.NN_SEED }} (smoke, §10.8 primary)
+        run: |
+          ONE_EQ_FLAG=""
+          if [ "${{ github.event.inputs.one_equation }}" = "true" ]; then
+            ONE_EQ_FLAG="--one-equation"
+          fi
+          TIMEOUT_FLAG=""
+          if [ -n "${{ github.event.inputs.pysr_timeout }}" ]; then
+            TIMEOUT_FLAG="--pysr-timeout ${{ github.event.inputs.pysr_timeout }}"
+          fi
+          python3 run_all_checkpoint.py --only exp3 $ONE_EQ_FLAG $TIMEOUT_FLAG
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # v2: SKIP_PKG_CHECK mirrors run_all exp3 env_extra
+          SKIP_PKG_CHECK: "1"
+          # v2: inject smoke-test PySR config when ONE_EQUATION is active
+          N_ITERATIONS: ${{ github.event.inputs.one_equation == 'true' && '200' || '1000' }}
+          POPULATIONS: ${{ github.event.inputs.one_equation == 'true' && '10' || '30' }}
+
+      - name: Exp 3b — Nguyen-12 seeds 99/123/777/2024 (§10.8 stability)
+        run: |
+          ONE_EQ_FLAG=""
+          if [ "${{ github.event.inputs.one_equation }}" = "true" ]; then
+            ONE_EQ_FLAG="--one-equation"
+          fi
+          TIMEOUT_FLAG=""
+          if [ -n "${{ github.event.inputs.pysr_timeout }}" ]; then
+            TIMEOUT_FLAG="--pysr-timeout ${{ github.event.inputs.pysr_timeout }}"
+          fi
+          python3 run_all_checkpoint.py --only exp3b $ONE_EQ_FLAG $TIMEOUT_FLAG
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SKIP_PKG_CHECK: "1"
+          N_ITERATIONS: ${{ github.event.inputs.one_equation == 'true' && '200' || '1000' }}
+          POPULATIONS: ${{ github.event.inputs.one_equation == 'true' && '10' || '30' }}
+
+      - name: Save checkpoint
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-smoke-${{ github.ref }}-${{ github.run_id }}
+
+      - name: Upload smoke-test logs & results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-test-${{ github.sha }}
+          path: |
+            logs/
+            hypatiax/data/results/extrapolation/
+          retention-days: 14
+
+
+# =============================================================================
+# JOB 3 — Full pipeline  (all non-slow steps; triggered by push to main or
+#          manual dispatch with skip_slow=true)
+# =============================================================================
+  full-pipeline:
+    name: "Full pipeline (no slow steps)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360           # 6 h generous budget
+    needs: lint
+    if: |
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.skip_slow == 'true')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Julia (for PySR)
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+
+      - name: Install Python dependencies
+        run: pip install -q -r requirements.txt
+
+      - name: Install Jupyter (for NB audit steps)
+        run: pip install -q notebook nbconvert
+
+      - name: Set PYTHONPATH & RESULTS_DIR
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+          echo "RESULTS_DIR=${{ github.workspace }}/hypatiax/data/results" >> $GITHUB_ENV
+
+      # ── Restore checkpoint from a previous run ──────────────────────────
+      - name: Restore checkpoint
+        uses: actions/cache@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-full-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: checkpoint-full-${{ github.ref }}-
+
+      # ── Restore cached result files so verify step can find them ────────
+      - name: Restore result cache
+        uses: actions/cache@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-full-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: results-full-${{ github.ref }}-
+
+      # ── v2: Run pipeline with all new flags wired ──────────────────────
+      - name: Run pipeline (skip-slow, resume if checkpoint present)
+        run: |
+          RESUME_FLAG=""
+          if [ -f logs/pipeline_checkpoint.json ]; then
+            RESUME_FLAG="--resume"
+          fi
+
+          ONLY_FLAG=""
+          if [ -n "${{ github.event.inputs.only_step }}" ]; then
+            ONLY_FLAG="--only ${{ github.event.inputs.only_step }}"
+          fi
+
+          # v2: --seed flag
+          SEED_FLAG=""
+          if [ -n "${{ github.event.inputs.seed }}" ] && \
+             [ "${{ github.event.inputs.seed }}" != "42" ]; then
+            SEED_FLAG="--seed ${{ github.event.inputs.seed }}"
+          fi
+
+          # v2: --pysr-timeout flag
+          TIMEOUT_FLAG=""
+          if [ -n "${{ github.event.inputs.pysr_timeout }}" ] && \
+             [ "${{ github.event.inputs.pysr_timeout }}" != "360" ]; then
+            TIMEOUT_FLAG="--pysr-timeout ${{ github.event.inputs.pysr_timeout }}"
+          fi
+
+          # v2: --skip-paper flag
+          PAPER_FLAG=""
+          if [ "${{ github.event.inputs.skip_paper }}" = "true" ]; then
+            PAPER_FLAG="--skip-paper"
+          fi
+
+          # v2: --continue-on-fail flag
+          COF_FLAG=""
+          if [ "${{ github.event.inputs.continue_on_fail }}" = "true" ]; then
+            COF_FLAG="--continue-on-fail"
+          fi
+
+          # v2: --one-equation flag
+          ONE_EQ_FLAG=""
+          if [ "${{ github.event.inputs.one_equation }}" = "true" ]; then
+            ONE_EQ_FLAG="--one-equation"
+          fi
+
+          python3 run_all_checkpoint.py \
+            --skip-slow \
+            --continue-on-fail \
+            $RESUME_FLAG $ONLY_FLAG $SEED_FLAG $TIMEOUT_FLAG \
+            $PAPER_FLAG $COF_FLAG $ONE_EQ_FLAG
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # v2: exp1b env vars (FIX-EXP1B-ARGS)
+          DEFI_V3C_NO_TIMEOUT_FLAGS: "1"
+          DEFI_TASK_FILTER: "portfolio"
+          DEFI_SEEDS: "42,99,123,777,2024"
+          # v2: exp3/3b env vars (FIX-EXP3-PKG)
+          SKIP_PKG_CHECK: "1"
+          # v2: suppA env vars (FIX-SUPPA)
+          SKIP_PERF_ANALYSIS: "1"
+          HYPATIAX_CORE_OPTIONAL: "1"
+          # v2: smoke-test PySR config (FIX-4) — only matters when one_equation=true
+          N_ITERATIONS: ${{ github.event.inputs.one_equation == 'true' && '200' || '1000' }}
+          POPULATIONS: ${{ github.event.inputs.one_equation == 'true' && '10' || '30' }}
+
+      - name: Generate figures & tables
+        if: success()
+        run: |
+          python3 figures/generate_figures.py \
+            --outdir hypatiax/data/results/figures
+          python3 scripts/patches/generate_tables.py \
+            --outdir hypatiax/data/results/tables
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # v2: tables env vars (FIX-TABLES)
+          TABLE_OUTDIR: "${{ github.workspace }}/hypatiax/data/results/tables"
+          VERIFY_RESULTS_DIR: "${{ github.workspace }}/hypatiax/data/results"
+
+      - name: Verify results against paper targets
+        if: success()
+        run: |
+          python3 scripts/patches/verify_results.py --report
+          python3 reproducibility/hash_lock.py --check
+        env:
+          # v2: verify env vars (FIX-VERIFY)
+          PATCHED_DATA_DIR: "${{ github.workspace }}/hypatiax/data/results"
+          VERIFY_RESULTS_DIR: "${{ github.workspace }}/hypatiax/data/results"
+
+      - name: Save checkpoint
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-full-${{ github.ref }}-${{ github.run_id }}
+
+      - name: Save result cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-full-${{ github.ref }}-${{ github.run_id }}
+
+      - name: Upload results artefact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: full-pipeline-results-${{ github.sha }}
+          path: |
+            logs/
+            hypatiax/data/results/
+          retention-days: 30
+
+      - name: Upload figures & tables artefact
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: figures-tables-${{ github.sha }}
+          path: |
+            hypatiax/data/results/figures/
+            hypatiax/data/results/tables/
+          retention-days: 30
+
+
+# =============================================================================
+# JOB 4 — Slow / full sweep  (manually triggered only)
+#          Runs ALL steps including Feynman (4–8 h), noise sweep, instability.
+# =============================================================================
+  slow-pipeline:
+    name: "Full pipeline incl. slow steps (manual)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 720           # 12 h ceiling
+    needs: lint
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.skip_slow == 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+
+      - name: Install all dependencies
+        run: |
+          pip install -q -r requirements.txt
+          pip install -q notebook nbconvert
+
+      - name: Set PYTHONPATH & RESULTS_DIR
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+          echo "RESULTS_DIR=${{ github.workspace }}/hypatiax/data/results" >> $GITHUB_ENV
+
+      - name: Restore checkpoint
+        uses: actions/cache@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-slow-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: checkpoint-slow-${{ github.ref }}-
+
+      - name: Restore result cache
+        uses: actions/cache@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-slow-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: results-slow-${{ github.ref }}-
+
+      # ── v2: full pipeline with all flags wired ─────────────────────────
+      - name: Run full pipeline (all steps, with resume)
+        run: |
+          RESUME_FLAG=""
+          if [ -f logs/pipeline_checkpoint.json ]; then
+            RESUME_FLAG="--resume"
+          fi
+
+          SEED_FLAG=""
+          if [ -n "${{ github.event.inputs.seed }}" ] && \
+             [ "${{ github.event.inputs.seed }}" != "42" ]; then
+            SEED_FLAG="--seed ${{ github.event.inputs.seed }}"
+          fi
+
+          TIMEOUT_FLAG=""
+          if [ -n "${{ github.event.inputs.pysr_timeout }}" ] && \
+             [ "${{ github.event.inputs.pysr_timeout }}" != "360" ]; then
+            TIMEOUT_FLAG="--pysr-timeout ${{ github.event.inputs.pysr_timeout }}"
+          fi
+
+          PAPER_FLAG=""
+          if [ "${{ github.event.inputs.skip_paper }}" = "true" ]; then
+            PAPER_FLAG="--skip-paper"
+          fi
+
+          COF_FLAG=""
+          if [ "${{ github.event.inputs.continue_on_fail }}" = "true" ]; then
+            COF_FLAG="--continue-on-fail"
+          fi
+
+          python3 run_all_checkpoint.py --continue-on-fail \
+            $RESUME_FLAG $SEED_FLAG $TIMEOUT_FLAG $PAPER_FLAG $COF_FLAG
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_K_RUNS: "30"                  # Full instability sweep
+          # v2: exp1b env vars (FIX-EXP1B-ARGS)
+          DEFI_V3C_NO_TIMEOUT_FLAGS: "1"
+          DEFI_TASK_FILTER: "portfolio"
+          DEFI_SEEDS: "42,99,123,777,2024"
+          # v2: exp3/3b (FIX-EXP3-PKG)
+          SKIP_PKG_CHECK: "1"
+          # v2: suppA (FIX-SUPPA)
+          SKIP_PERF_ANALYSIS: "1"
+          HYPATIAX_CORE_OPTIONAL: "1"
+
+      - name: Verify results
+        run: |
+          python3 scripts/patches/verify_results.py --report
+          python3 reproducibility/hash_lock.py --check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PATCHED_DATA_DIR: "${{ github.workspace }}/hypatiax/data/results"
+          VERIFY_RESULTS_DIR: "${{ github.workspace }}/hypatiax/data/results"
+
+      - name: Save checkpoint
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-slow-${{ github.ref }}-${{ github.run_id }}
+
+      - name: Save result cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-slow-${{ github.ref }}-${{ github.run_id }}
+
+      - name: Upload all artefacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: slow-pipeline-results-${{ github.sha }}
+          path: |
+            logs/
+            hypatiax/data/results/
+          retention-days: 90        # Keep longer for paper archival
+
+
+# =============================================================================
+# JOB 5 — Verify-only  (runs on PR against cached results from main)
+# =============================================================================
+  verify:
+    name: "Verify cached results"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: lint
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -q -r requirements.txt
+
+      - name: Restore result cache from main branch
+        uses: actions/cache@v5
+        with:
+          path: hypatiax/data/results/
+          # Try to restore from main's latest full-pipeline run
+          key: results-full-refs/heads/main-
+          restore-keys: |
+            results-full-refs/heads/main-
+            results-full-
+
+      # ── v2: --verify-only mirrors run_all main() verify-only shortcut ──
+      - name: Run verify-only
+        run: |
+          python3 run_all_checkpoint.py --verify-only
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # v2: FIX-VERIFY env vars
+          PATCHED_DATA_DIR: "${{ github.workspace }}/hypatiax/data/results"
+          VERIFY_RESULTS_DIR: "${{ github.workspace }}/hypatiax/data/results"
+
+      - name: Upload verify log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: verify-${{ github.sha }}
+          path: logs/
+          retention-days: 7

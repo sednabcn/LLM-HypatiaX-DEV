@@ -50,6 +50,8 @@ Cite as : Bonet Chaple, R.P. (2026). HypatiaX: A Hybrid Framework for
           Analytical Expression Discovery. JMLR (under review).
 """
 
+from __future__ import annotations
+
 import os as _os
 import pathlib as _pathlib
 import sys as _sys
@@ -63,8 +65,6 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
     if _p not in _sys.path:
         _sys.path.insert(0, _p)
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
-
-from __future__ import annotations
 
 import os
 import warnings

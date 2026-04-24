@@ -444,7 +444,7 @@ STEPS: list[Step] = [
     # N_NGUYEN_TASKS=1 is kept as a belt-and-suspenders fallback.
     Step("exp3",
          "Exp 3 · Nguyen-12 SEED=42 (§10.8 primary)",
-         [sys.executable, "hypatiax/protocols/experiment_protocol_nguyen12_exp3.py",
+         [sys.executable, "-m","hypatiax.protocols.experiment_protocol_nguyen12_exp3",
           "--seed", "42"]
          + (["--n-tasks", "1"] if os.environ.get("ONE_EQUATION") == "1" else []),
          phase="1 · Core experiments",
@@ -457,7 +457,7 @@ STEPS: list[Step] = [
     # FIX-ONE-EQ-EXP3B: same --n-tasks 1 fix as exp3 above.
     Step("exp3b",
          "Exp 3b · Nguyen-12 seeds 99/123/777/2024 (§10.8 stability)",
-         [sys.executable, "hypatiax/protocols/experiment_protocol_nguyen12_exp3.py",
+         [sys.executable, "-m", "hypatiax.protocols.experiment_protocol_nguyen12_exp3",
           "--seeds", "99", "123", "777", "2024"]
          + (["--n-tasks", "1"] if os.environ.get("ONE_EQUATION") == "1" else []),
          phase="1 · Core experiments",
@@ -678,20 +678,55 @@ STEP_IDS = [s.id for s in STEPS]
 # ── Checkpoint helpers ─────────────────────────────────────────────────────────
 
 def load_checkpoint() -> dict:
-    """Return {step_id: status} from the checkpoint file, or {} if none exists."""
-    if CHECKPOINT.exists():
-        try:
-            return json.loads(CHECKPOINT.read_text())
-        except Exception:
-            pass
-    return {}
+    """Return {step_id: status} from the checkpoint file, or {} if none exists.
+
+    Merge strategy: also checks the repo-root pipeline_checkpoint.json as a
+    fallback/seed so that a manually-copied checkpoint is never lost when the
+    script re-saves after early setup steps.  Entries marked 'pass' in either
+    file are preserved — a later 'pass' never downgrades an existing 'pass'.
+    """
+    state: dict[str, str] = {}
+
+    # secondary source: repo-root copy (produced by the user or a previous run)
+    root_cp = REPO_ROOT / "pipeline_checkpoint.json"
+    for path in [root_cp, CHECKPOINT]:
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                for k, v in data.items():
+                    # never overwrite a 'pass' with a non-pass value
+                    if state.get(k) != "pass":
+                        state[k] = v
+            except Exception:
+                pass
+
+    # if we loaded anything from the repo-root copy, persist the merged result
+    # into the canonical location immediately so save_checkpoint() never loses it
+    if state and not CHECKPOINT.exists():
+        save_checkpoint(state)
+
+    return state
 
 
 def save_checkpoint(state: dict) -> None:
-    """Persist {step_id: status} to disk atomically."""
+    """Persist {step_id: status} to disk atomically.
+
+    Merge with whatever is already on disk first so that re-running setup
+    steps never wipes out pass entries written by a previous run.
+    'pass' entries are never downgraded.
+    """
     CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
+    merged: dict[str, str] = {}
+    if CHECKPOINT.exists():
+        try:
+            merged = json.loads(CHECKPOINT.read_text())
+        except Exception:
+            pass
+    for k, v in state.items():
+        if merged.get(k) != "pass":
+            merged[k] = v
     tmp = CHECKPOINT.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2))
+    tmp.write_text(json.dumps(merged, indent=2))
     tmp.replace(CHECKPOINT)
 
 

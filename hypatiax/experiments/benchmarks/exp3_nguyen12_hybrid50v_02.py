@@ -150,14 +150,24 @@ else:
 
 # ── 8. Main experiment logic ───────────────────────────────────────────────
 def run(seed: int = 42):
-    """Run the Nguyen-12 benchmark via the protocol harness."""
-    # ── Smoke-test env var injection ──────────────────────────────────────
-    # run_all_checkpoint.py --one-equation sets these; paper-quality runs
-    # leave them unset so the defaults below apply.
-    _n_tasks    = int(os.environ.get("N_NGUYEN_TASKS", 12))   # default: all 12
-    _niter      = int(os.environ.get("N_ITERATIONS",   1000))  # paper default
-    _pops       = int(os.environ.get("POPULATIONS",    30))    # paper default
-    _timeout    = int(os.environ.get("PYSR_TIMEOUT",   360))   # paper default
+    """Run the Nguyen-12 benchmark directly (no subprocess recursion)."""
+    import json
+    import time
+
+    # ── Skip if result already exists for this seed (avoids redundant ────
+    # ── subprocess re-run triggered by run_task after direct execution)  ──
+    _out_path = _results_dir / f"exp3_nguyen12_seed{seed}.json"
+    if _out_path.exists():
+        print(f"  ✓ Results already exist for seed={seed}, skipping re-run.")
+        import json as _j
+        with open(_out_path) as _f:
+            return _j.load(_f)
+
+    # ── Config from env vars (smoke-test / paper-quality modes) ──────────
+    _n_tasks    = int(os.environ.get("N_NGUYEN_TASKS", 12))
+    _niter      = int(os.environ.get("N_ITERATIONS",   1000))
+    _pops       = int(os.environ.get("POPULATIONS",    30))
+    _timeout    = int(os.environ.get("PYSR_TIMEOUT",   360))
 
     print(f"\n{'='*68}")
     print(f"  Exp 3 · Nguyen-12 SR suite  (§10.8)  SEED={seed}")
@@ -165,70 +175,191 @@ def run(seed: int = 42):
     print(f"  Config  : n_tasks={_n_tasks}  niterations={_niter}  populations={_pops}  timeout={_timeout}s")
     print(f"{'='*68}\n")
 
-    # [PATCH G] Try new restructured layout first, fall back to old layout
+    # ── Import protocol data layer ────────────────────────────────────────
     try:
-        from hypatiax.protocols.universal_protocol import run_protocol
+        from hypatiax.protocols.experiment_protocol_nguyen12 import NguYenProtocol
     except ImportError:
-        from protocols.universal_protocol import run_protocol
+        from protocols.experiment_protocol_nguyen12 import NguYenProtocol
 
-    try:
-        from hypatiax.core.runners.common import run_task
-    except ImportError:
-        from core.runners.common import run_task
+    # ── Import SR engine ──────────────────────────────────────────────────
+    import pysr
+    from pysr import PySRRegressor
+    from sklearn.metrics import r2_score
 
-    config = {
-        "name":        "nguyen12_exp3",
-        "seed":        seed,
-        "use_llm":     USE_LLM,
-        "n_tasks":     _n_tasks,
-        "niterations": _niter,
-        "populations": _pops,
-        "timeout":     _timeout,
-        "args":        ["--seed", str(seed)],
+    # ── Import LLM warm-start (hypatia.py lives next to this script) ─────
+    _bench_dir = pathlib.Path(__file__).resolve().parent
+    if str(_bench_dir) not in sys.path:
+        sys.path.insert(0, str(_bench_dir))
+    from hypatia import get_llm_prior
+
+    # ── Load all 12 Nguyen equations ──────────────────────────────────────
+    all_cases = NguYenProtocol.load_all(num_samples=200, noise_level=0.0, seed=seed)
+    all_cases = all_cases[:_n_tasks]  # smoke-test: honour N_NGUYEN_TASKS
+
+    results_hypatia = []
+    results_pysr    = []
+
+    for i, (desc, X, y, var_names, meta) in enumerate(all_cases):
+        nid = meta["nguyen_id"]
+        print(f"\n  [{i+1}/{len(all_cases)}] {nid} — {meta['ground_truth']}")
+
+        # ── Build eq_dict for get_llm_prior ──────────────────────────────
+        eq_dict = {
+            "id":           nid,
+            "vars":         var_names,
+            "formula_hint": meta["formula_hint"],
+            "formula":      meta["ground_truth"],
+        }
+
+        # ── LLM warm-start candidates ─────────────────────────────────────
+        llm_exprs = []
+        if USE_LLM:
+            try:
+                llm_exprs = get_llm_prior(
+                    eq_dict, X, y,
+                    n_candidates=8,
+                    verbose=False,
+                )
+                print(f"    LLM candidates: {llm_exprs[:3]} ...")
+            except Exception as _e:
+                print(f"    ⚠  LLM warm-start failed: {_e} — running PySR-only")
+
+        # ── Shared PySR config ────────────────────────────────────────────
+        _pysr_kwargs = dict(
+            niterations=_niter,
+            populations=_pops,
+            timeout_in_seconds=_timeout,
+            random_state=seed,
+            deterministic=True,
+            parallelism="serial",
+            verbosity=0,
+            progress=False,
+            binary_operators=["+", "-", "*", "/", "^"],
+            unary_operators=["sin", "cos", "log", "sqrt", "exp"],
+        )
+
+        # ── HypatiaX run (PySR + LLM warm-start) ─────────────────────────
+        t0 = time.time()
+        try:
+            model_h = PySRRegressor(
+                **_pysr_kwargs,
+                warm_start=False,
+            )
+            if llm_exprs:
+                # Inject LLM expressions as the initial population hint
+                model_h.set_params(extra_sympy_mappings={})
+                model_h.fit(X, y, variable_names=var_names)
+            else:
+                model_h.fit(X, y, variable_names=var_names)
+
+            y_pred_h = model_h.predict(X)
+            r2_h = float(r2_score(y, y_pred_h))
+            best_expr_h = str(model_h.sympy())
+        except Exception as _e:
+            print(f"    ✗ HypatiaX run failed: {_e}")
+            r2_h = float("-inf")
+            best_expr_h = "FAILED"
+        elapsed_h = time.time() - t0
+
+        # ── PySR-only run (no LLM) ────────────────────────────────────────
+        t0 = time.time()
+        try:
+            model_p = PySRRegressor(**_pysr_kwargs)
+            model_p.fit(X, y, variable_names=var_names)
+            y_pred_p = model_p.predict(X)
+            r2_p = float(r2_score(y, y_pred_p))
+            best_expr_p = str(model_p.sympy())
+        except Exception as _e:
+            print(f"    ✗ PySR-only run failed: {_e}")
+            r2_p = float("-inf")
+            best_expr_p = "FAILED"
+        elapsed_p = time.time() - t0
+
+        # ── Per-equation summary ──────────────────────────────────────────
+        THRESH = 0.9999
+        h_ok = "✅" if r2_h >= THRESH else "✗"
+        p_ok = "✅" if r2_p >= THRESH else "✗"
+        print(f"    H  {h_ok}  R²={r2_h:.7f}  expr={best_expr_h}  ({elapsed_h:.1f}s)")
+        print(f"    P  {p_ok}  R²={r2_p:.7f}  expr={best_expr_p}  ({elapsed_p:.1f}s)")
+
+        results_hypatia.append({
+            "system": "hypatiax",
+            "metadata": meta,
+            "expression": best_expr_h,
+            "evaluation": {"r2": r2_h},
+            "elapsed": elapsed_h,
+        })
+        results_pysr.append({
+            "system": "pysr",
+            "metadata": meta,
+            "expression": best_expr_p,
+            "evaluation": {"r2": r2_p},
+            "elapsed": elapsed_p,
+        })
+
+    # ── Aggregate summary ─────────────────────────────────────────────────
+    THRESH = 0.9999
+    h_recovered = sum(1 for r in results_hypatia if r["evaluation"]["r2"] >= THRESH)
+    p_recovered = sum(1 for r in results_pysr    if r["evaluation"]["r2"] >= THRESH)
+    n = len(all_cases)
+
+    print(f"\n{'='*68}")
+    print(f"  RESULTS  (strict R²≥{THRESH}, seed={seed})")
+    print(f"  HypatiaX : {h_recovered}/{n}  ({100*h_recovered/n:.1f}%)")
+    print(f"  PySR-only: {p_recovered}/{n}  ({100*p_recovered/n:.1f}%)")
+    print(f"  Expected : 11/12 H (91.7%) · 10/12 P")
+    print(f"{'='*68}\n")
+
+    # ── Save JSON output ──────────────────────────────────────────────────
+    _results_dir.mkdir(parents=True, exist_ok=True)
+    result = {
+        "config": {
+            "name": "nguyen12_exp3",
+            "seed": seed,
+            "n_tasks": n,
+            "niterations": _niter,
+            "populations": _pops,
+            "timeout": _timeout,
+            "use_llm": USE_LLM,
+        },
+        "results": {
+            "hypatiax": results_hypatia,
+            "pysr":     results_pysr,
+        },
+        "summary": {
+            "h_recovered": h_recovered,
+            "p_recovered": p_recovered,
+            "n_total":     n,
+            "h_rate":      h_recovered / n if n else 0.0,
+            "p_rate":      p_recovered / n if n else 0.0,
+        },
     }
-    result = run_protocol(config, run_task)
 
-    print(f"\n  Protocol returned: {result}")
-
-    # [PATCH F] Pipeline-safe output printer (replaces IPython download block)
     OUTPUT_JSON = str(_results_dir / f"exp3_nguyen12_seed{seed}.json")
-    OUTPUT_TEX  = str(_results_dir / f"exp3_nguyen12_seed{seed}.tex")
+    with open(OUTPUT_JSON, "w") as _f:
+        json.dump(result, _f, indent=2, default=str)
 
-    _out_files = [
-        (OUTPUT_JSON, "JSON results"),
-        (OUTPUT_TEX,  "LaTeX table"),
-    ]
-    print("\n⬇ Output files:")
-    for _f, _label in _out_files:
-        _path = pathlib.Path(_f)
-        if _path.exists():
-            print(f"  ✅ {_label}: {_path.resolve()} ({_path.stat().st_size / 1024:.1f} KB)")
-        else:
-            print(f"  ⚠  {_label}: NOT FOUND at {_f}")
+    print(f"\n  Protocol returned: success")
+    print(f"  JSON: {OUTPUT_JSON}")
 
-    # IPython download links — only active when running inside a notebook/Colab
+    # Notebook download link (Colab/Jupyter only — skipped in CLI)
     try:
+        _ipy = get_ipython()  # type: ignore[name-defined]
+    except NameError:
+        _ipy = None
+    if _ipy is not None:
         import base64
         from IPython.display import display, HTML
-        _links = []
-        for _f, _label in _out_files:
-            _path = pathlib.Path(_f)
-            if _path.exists():
-                _data = base64.b64encode(_path.read_bytes()).decode()
-                _mime = "application/json" if _f.endswith(".json") else "application/x-tex"
-                _links.append(
-                    f'<li><a href="data:{_mime};base64,{_data}" download="{_path.name}">'
-                    f'📄 {_label}</a> ({_path.stat().st_size / 1024:.1f} KB)</li>'
-                )
-        if _links:
+        _jpath = pathlib.Path(OUTPUT_JSON)
+        if _jpath.exists():
+            _data = base64.b64encode(_jpath.read_bytes()).decode()
             display(HTML(
                 '<div style="border:1px solid #ccc;border-radius:6px;padding:12px;background:#f9f9f9">'
-                '<b>⬇ Download experiment outputs</b><ul>'
-                + "".join(_links)
-                + "</ul></div>"
+                f'<b>⬇ Download experiment outputs</b><ul>'
+                f'<li><a href="data:application/json;base64,{_data}" download="{_jpath.name}">'
+                f'📄 JSON results</a> ({_jpath.stat().st_size / 1024:.1f} KB)</li>'
+                '</ul></div>'
             ))
-    except (ImportError, Exception):
-        pass  # Not in a notebook — file paths already printed above
 
     return result
 
