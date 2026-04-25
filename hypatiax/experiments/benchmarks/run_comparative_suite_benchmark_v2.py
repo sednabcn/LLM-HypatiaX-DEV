@@ -26,7 +26,7 @@ Core scripts accessed
   hypatiax/tools/symbolic/symbolic_engine.py
       → SymbolicEngineWithLLM
 
-  hypatiax/tools/symbolic/hybrid_system_v40.py
+  hypatiax/tools/symbolic/hybrid_system_v50_2.py
       → HybridDiscoverySystem
 
 Protocol
@@ -263,7 +263,7 @@ def _probe_hybrid_all() -> bool:
 HYBRID_ALL_AVAILABLE  = _probe_hybrid_all()
 SYM_ENGINE_AVAILABLE  = _probe("hypatiax.tools.symbolic.symbolic_engine",
                                 "SymbolicEngineWithLLM")
-HYBRID_V40_AVAILABLE  = _probe("hypatiax.tools.symbolic.hybrid_system_v40",
+HYBRID_V40_AVAILABLE  = _probe("hypatiax.tools.symbolic.hybrid_system_v50_2",
                                 "HybridDiscoverySystem")
 
 
@@ -2019,7 +2019,7 @@ payload = pickle.loads(base64.b64decode(sys.stdin.buffer.read()))
 
 sys.path.insert(0, payload["pkg_root_parent"])
 
-method   = payload["method"]   # "symbolic_engine" | "hybrid_v40"
+method   = payload["method"]   # "symbolic_engine" | "hybrid_v50_2"
 kwargs   = payload["kwargs"]
 import numpy as np
 
@@ -2036,7 +2036,7 @@ try:
             DiscoveryConfig,
             LLMConfig,
         )
-        # ── FIX: wire DiscoveryConfig from kwargs — same pattern as hybrid_v40 ──
+        # ── FIX: wire DiscoveryConfig from kwargs — same pattern as hybrid_v50_2 ──
         # Previously max_iterations defaulted to 5 (near-zero for PySR) and
         # pysr_timeout was never forwarded, causing guaranteed "Discovery failed".
         _n_iter   = kwargs.get("max_iterations", 40)   # FIX: was 5 → 40 minimum
@@ -2066,7 +2066,7 @@ try:
             max_iterations=0,   # 0 = do NOT override niterations (already set in config)
             verbose=False,
         )
-    elif method == "hybrid_v40":
+    elif method == "hybrid_v50_2":
         from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem
         from hypatiax.tools.symbolic.symbolic_engine import DiscoveryConfig
         # ── FIX: wire pysr_timeout + max_retries from kwargs into DiscoveryConfig ──
@@ -2132,7 +2132,7 @@ def _run_pysr_in_subprocess(
 
     Parameters
     ----------
-    method : "symbolic_engine" | "hybrid_v40"
+    method : "symbolic_engine" | "hybrid_v50_2"
     timeout : seconds before giving up (default 600; Julia startup alone can
               take 60-90 s, so 300 s left almost no time for actual search)
 
@@ -2302,7 +2302,7 @@ class SymbolicEngineMethod(BaseMethod):
         # ── Same adaptive budget as HybridSystemV40Method ────────────────────
         # Old code sent max_iterations=5 — PySR needs ≥40 to find anything.
         # Now we use the same 4-signal heuristic and per-attempt timeout so
-        # this method is directly comparable to v40.
+        # this method is directly comparable to v50_2.
         import math as _math
         _MAX_RETRIES_SE = 1   # SymbolicEngine does its own internal retry; one subprocess call
         _JULIA_OVERHEAD = 150
@@ -2385,7 +2385,7 @@ class SymbolicEngineMethod(BaseMethod):
 
 
 # ============================================================================
-# METHOD 6 — HybridDiscoverySystem v40
+# METHOD 6 — HybridDiscoverySystem v50_2
 # tools/symbolic/hybrid_system_v50_2.py
 # ============================================================================
 
@@ -2396,7 +2396,7 @@ class HybridSystemV50_2Method(BaseMethod):
     """
 
     def __init__(self, verbose=False):
-        super().__init__("HybridDiscoverySystem v40 (tools)", verbose)
+        super().__init__("HybridDiscoverySystem v50_2 (tools)", verbose)
         self._system = None
         if not HYBRID_V40_AVAILABLE:
             return
@@ -2413,7 +2413,7 @@ class HybridSystemV50_2Method(BaseMethod):
 
     def run(self, description, X, y, var_names, metadata, verbose=False) -> MethodResult:
         if not HYBRID_V40_AVAILABLE:
-            return self._unavailable("HybridDiscoverySystem v40 not available")
+            return self._unavailable("HybridDiscoverySystem v50_2 not available")
 
         # Rename any Julia-reserved variable names before calling PySR.
         safe_names, rename_map = _sanitise_var_names(var_names)
@@ -2512,7 +2512,7 @@ class HybridSystemV50_2Method(BaseMethod):
         # budget, leaving orphaned subprocesses and guaranteeing a timeout.
         _subprocess_timeout = max(60, _METHOD_TIMEOUT_SECS - 100)
         result = _run_pysr_in_subprocess(
-            method="hybrid_v40",
+            method="hybrid_v50_2",
             X=X, y=y,
             var_names=safe_names,
             description=description,
@@ -2803,7 +2803,7 @@ class ProtocolBenchmarkSuite:
                     "duplicates": {}, "y_scale": {}}
 
         # Symbolic method names — complexity penalty only applies to these.
-        _SYMBOLIC_NAMES = {"SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v40 (tools)"}
+        _SYMBOLIC_NAMES = {"SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v50_2 (tools)"}
 
         def _rank_key(name):
             r2   = valid[name]
@@ -2838,7 +2838,7 @@ class ProtocolBenchmarkSuite:
         # Only flag as duplicate when:
         #   • same full-formula hash (not the truncated display string)
         #   • neither method is independently derived (nn_applied / hardcoded)
-        #   • NOT a symbolic-only pair — SymbolicEngine and v40 both run PySR
+        #   • NOT a symbolic-only pair — SymbolicEngine and v50_2 both run PySR
         #     in isolated subprocesses with no shared cache; finding the same
         #     correct formula is a true independent discovery, not a cache hit.
         #   • RMSE values are also close (within 0.01%) — a hash collision on
@@ -2850,7 +2850,7 @@ class ProtocolBenchmarkSuite:
                 or res.metadata.get("nn_applied")
             )
         }
-        _SYMBOLIC_NAMES = {"SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v40 (tools)"}
+        _SYMBOLIC_NAMES = {"SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v50_2 (tools)"}
 
         formula_hashes: Dict[str, List[str]] = {}
         for name, res in results.items():
@@ -3234,7 +3234,7 @@ Core method index
   3  EnhancedHybridDeFi    core/generation/hybrid_defi_system/hybrid_system_nn_defi_domain.py
   4  HybridLLMNN all-dom.  core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py
   5  SymbolicEngineWithLLM  tools/symbolic/symbolic_engine.py
-  6  HybridDiscovery v50_2    tools/symbolic/hybrid_system_v40.py
+  6  HybridDiscovery v50_2    tools/symbolic/hybrid_system_v50_2.py
 
 Examples
 --------
@@ -3307,7 +3307,7 @@ Examples
         action="store_true",
         dest="skip_pysr",
         help=(
-            "Skip SymbolicEngineWithLLM and HybridDiscoverySystem v40 (both use "
+            "Skip SymbolicEngineWithLLM and HybridDiscoverySystem v50_2 (both use "
             "PySR/Julia). Useful when Julia startup overhead dominates test time."
         ),
     )
@@ -3364,7 +3364,7 @@ Examples
         help=(
             "PySR complexity penalty (default: 0.0032). Lower values (e.g. 0.001) "
             "allow deeper operator trees — needed for transcendental compositions "
-            "like arcsin(sin(x)). Only affects v40 / SymbolicEngine methods."
+            "like arcsin(sin(x)). Only affects v50_2 / SymbolicEngine methods."
         ),
     )
     parser.add_argument(
@@ -3493,7 +3493,7 @@ Examples
     suite._threshold  = _threshold
 
     # Propagate symbolic-engine tuning to suite so run_test() can pass
-    # them to DiscoveryConfig when constructing v40 / SymbolicEngine.
+    # them to DiscoveryConfig when constructing v50_2 / SymbolicEngine.
     if _parsimony is not None:
         suite._parsimony = _parsimony
         print(f"ℹ️  --parsimony {_parsimony} (PySR default 0.0032 overridden)")

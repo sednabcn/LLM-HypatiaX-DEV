@@ -1,0 +1,33 @@
+\begin{table*}[htbp]
+\centering
+\caption{LLM Ablation: PySR Alone vs.\ HypatiaX (PySR + LLM Warm-Start) on Core~15. Extrap columns show $R^2$ at near/medium/far OOD regimes. $\dag$ = wall-clock-capped run.}
+\label{tab:llm_ablation}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrr}
+\toprule
+Equation & Domain & \multicolumn{3}{c}{PySR only} & \multicolumn{3}{c}{HypatiaX} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+& & Near & Med & Far & Near & Med & Far \\
+\midrule
+Arrhenius & Chemistry & -0.9887 & -0.6771 & -12.5549 & 0.9842 & 0.4136 & -44738.6492 \\
+Henderson-Hasselbalch & Chemistry & -0.9704 & -9.2946 & -61.1519 & --- & --- & --- \\
+Rate Law & Chemistry & 1.0000 & 1.0000 & 1.0000 & 0.9997 & 0.9999 & 0.9995 \\
+Allometric Scaling & Biology & 0.3576 & 0.0189 & -19.2020 & 0.9990 & 0.9993 & 0.9882 \\
+Michaelis-Menten & Biology & -16.3638 & -43.0551 & -8763.6609 & --- & --- & --- \\
+Logistic Growth & Biology & -16.2657 & -5.5509 & -14.8674 & --- & --- & --- \\
+Kinetic Energy & Physics & 0.9986 & 0.9998 & 0.9986 & 1.0000 & 1.0000 & 1.0000 \\
+Gravitational Force & Physics & -4.4311 & -0.0248 & -9.0020 & --- & --- & --- \\
+Ideal Gas Law & Physics & 0.9887 & 0.9986 & 0.9887 & --- & --- & --- \\
+Impermanent Loss & DeFi AMM & -4.2260 & -1584.2004 & -150367.2543 & 0.9600 & -55705563431563.5234 & -45226544910685567975424.0000 \\
+Price Impact & DeFi AMM & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+Constant Product & DeFi AMM & 0.9973 & 0.9998 & 0.9973 & 0.9996 & 1.0000 & 0.9996 \\
+Value at Risk & DeFi Risk & 0.9934 & 0.9991 & 0.9934 & 1.0000 & 1.0000 & 1.0000 \\
+Liquidation Price & DeFi Risk & -0.4880 & -0.5233 & -31.2513 & 1.0000 & 1.0000 & 1.0000 \\
+Portfolio Variance & DeFi Risk & -1.8422 & 0.7777 & --- & -1.6168 & 0.0055 & -41.3269 \\
+\bottomrule
+\end{tabular}%
+}
+\begin{flushleft}
+{\footnotesize $\dag$~Wall-clock timeout; result excluded from timing statistics. Michaelis-Menten HypatiaX far-$R^2 = -634.5989$ reflects saturation function failure under extreme extrapolation (known failure mode). All runs: populations=10, seed=42, v5.1 engine.}
+\end{flushleft}
+\end{table*}

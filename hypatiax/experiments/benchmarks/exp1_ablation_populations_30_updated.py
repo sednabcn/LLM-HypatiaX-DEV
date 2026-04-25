@@ -281,7 +281,7 @@ CORE_15 = [
         "formula_latex": r"p_{\mathrm{liq}} = p_0(1 - 1/(L \cdot m))",
     },
     {
-        "name": "Portfolio Variance", "domain": "DeFi Risk", "vars": ["s1", "s2", "rho"],
+        "name": "Portfolio Std Dev", "domain": "DeFi Risk", "vars": ["s1", "s2", "rho"],
         "train_range": [(0.01, 0.2), (0.01, 0.2), (-0.8, 0.8)],
         "extrap_range": [(0.2, 0.5), (0.2, 0.5), (-0.9, 0.9)],
         "fn": lambda s1, s2, rho: np.sqrt(s1**2 + s2**2 + 2 * rho * s1 * s2),
