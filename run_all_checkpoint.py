@@ -1177,10 +1177,10 @@ def main() -> None:
     # 1. --pysr-timeout CLI flag (highest priority)
     # 2. repro.yaml timeouts.pysr_attempt_seconds
     # 3. Environment variable PYSR_TIMEOUT (fallback)
-    # 4. Default 120s (paper-quality)
+    # 4. Default 1100s (paper-quality)
     if args.pysr_timeout is not None:
         env["PYSR_TIMEOUT"] = str(args.pysr_timeout)
-        env["METHOD_TIMEOUT"] = str(min(args.pysr_timeout * 3, 600))
+        env["METHOD_TIMEOUT"] = str(min(args.pysr_timeout * 3, 1800))
         print(f"  PYSR_TIMEOUT={args.pysr_timeout}s  (--pysr-timeout override)")
         print(f"  METHOD_TIMEOUT={env['METHOD_TIMEOUT']}s  (derived)")
     else:
@@ -1192,17 +1192,23 @@ def main() -> None:
         env_pysr = os.environ.get("PYSR_TIMEOUT")
         if env_pysr:
             pysr_timeout = int(env_pysr)
-            method_timeout = min(pysr_timeout * 3, 600)
+            method_timeout = min(pysr_timeout * 3, 1800)
             print(f"  ⚠ PYSR_TIMEOUT={pysr_timeout}s from env (repro.yaml wants {DEFAULT_PYSR_TIMEOUT}s)")
         
         env["PYSR_TIMEOUT"] = str(pysr_timeout)
         env["METHOD_TIMEOUT"] = str(method_timeout)
-        print(f"  PYSR_TIMEOUT={pysr_timeout}s  (paper-quality: 120s)")
-        print(f"  METHOD_TIMEOUT={method_timeout}s  (paper-quality: 360s)")
+        print(f"  PYSR_TIMEOUT={pysr_timeout}s  (paper-quality: 1100s)")
+        print(f"  METHOD_TIMEOUT={method_timeout}s  (paper-quality: 900s)")
 
     # PySR search parameters from repro.yaml
-    env.setdefault("POPULATIONS", str(_pysr_config.get("populations", 10)))
-    env.setdefault("N_ITERATIONS", str(_pysr_config.get("niterations", 25)))
+    env.setdefault("POPULATIONS",    str(_pysr_config.get("populations", 30)))
+    env.setdefault("N_ITERATIONS",   str(_pysr_config.get("niterations", 1000)))
+    # Alias names used by some experiment scripts directly
+    env.setdefault("PYSR_POPULATIONS",  env["POPULATIONS"])
+    env.setdefault("PYSR_NITERATIONS",  env["N_ITERATIONS"])
+    env.setdefault("PYSR_PARALLELISM",  _pysr_config.get("parallelism", "multithreading"))
+    env.setdefault("_PYSR_TIMEOUT_SECS",   env["PYSR_TIMEOUT"])
+    env.setdefault("_METHOD_TIMEOUT_SECS",  env["METHOD_TIMEOUT"])
     env.setdefault("PYSR_POPULATION_SIZE", str(_pysr_config.get("population_size", 33)))
     env.setdefault("PYSR_PARSIMONY", str(_pysr_config.get("parsimony", 0.01)))
     env.setdefault("PYSR_MAXSIZE", str(_pysr_config.get("maxsize", 30)))
