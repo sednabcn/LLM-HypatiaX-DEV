@@ -1,21 +1,23 @@
 # validate_paper_config.py  — values sourced from repro.yaml
-# PYSR_TIMEOUT=1100   (repro.yaml: timeouts.pysr_attempt_seconds)
-# METHOD_TIMEOUT=900  (repro.yaml: timeouts.method_seconds)
-# POPULATIONS=30      (repro.yaml: pysr.populations)
-# N_ITERATIONS=1000   (repro.yaml: pysr.niterations)
-# NN_SEED=42          (repro.yaml: seeds.default)
-# PYSR_SEED=42        (repro.yaml: seeds.pysr_seed)
-# LLM_MODEL           (repro.yaml: llm_model)
+# PYSR_TIMEOUT=1100         (repro.yaml: timeouts.pysr_attempt_seconds)
+# METHOD_TIMEOUT=900        (repro.yaml: timeouts.method_seconds)
+# EQUATION_WALL_CLOCK=1200  (repro.yaml: timeouts.equation_wall_clock)
+# POPULATIONS=30            (repro.yaml: pysr.populations)
+# N_ITERATIONS=1000         (repro.yaml: pysr.niterations)
+# NN_SEED=42                (repro.yaml: seeds.default)
+# PYSR_SEED=42              (repro.yaml: seeds.pysr_seed)
+# LLM_MODEL                 (repro.yaml: llm_model)
 import os
 
 PAPER_CONFIG = {
-    "PYSR_TIMEOUT":   "1100",
-    "METHOD_TIMEOUT": "900",
-    "POPULATIONS":    "30",
-    "N_ITERATIONS":   "1000",
-    "NN_SEED":        "42",
-    "PYSR_SEED":      "42",
-    "LLM_MODEL":      "claude-sonnet-4-20250514",
+    "PYSR_TIMEOUT":        "1100",
+    "METHOD_TIMEOUT":      "900",
+    "EQUATION_WALL_CLOCK": "1200",   # repro.yaml: timeouts.equation_wall_clock
+    "POPULATIONS":         "30",
+    "N_ITERATIONS":        "1000",
+    "NN_SEED":             "42",
+    "PYSR_SEED":           "42",
+    "LLM_MODEL":           "claude-sonnet-4-20250514",
 }
 
 print("=" * 68)

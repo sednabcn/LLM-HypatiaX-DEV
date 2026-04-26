@@ -96,7 +96,11 @@ else:
 """## 5 · Run configuration"""
 
 CFG = dict(
-    timeout=300, populations=30, iterations=1000,
+    # FIX-WALLCLOCK: read timeout from env (PYSR_TIMEOUT=1100, METHOD_TIMEOUT=900)
+    # rather than hardcoding 300s. Priority: PYSR_TIMEOUT > METHOD_TIMEOUT > 1100 default.
+    timeout=int(os.environ.get("PYSR_TIMEOUT") or os.environ.get("METHOD_TIMEOUT") or 1100),
+    populations=int(os.environ.get("POPULATIONS", 30)),
+    iterations=int(os.environ.get("N_ITERATIONS", 1000)),
     n_equations=30, seed=42,
     output_json='exp2_feynman_extrap_multithreaded.json',
     nn_only=False,
@@ -449,7 +453,7 @@ print('NN baseline defined')
 > Requires `JULIA_NUM_THREADS` set in Cell 1 before import.
 """
 
-def make_pysr(seed=42, niterations=1000, timeout_secs=300, populations=30):
+def make_pysr(seed=42, niterations=1000, timeout_secs=1100, populations=30):
     """
     PySRRegressor with parallelism='multithreading'.
     Safe on Colab: avoids Julia Distributed deadlock.
@@ -490,7 +494,7 @@ def make_pysr(seed=42, niterations=1000, timeout_secs=300, populations=30):
 
 
 def run_hypatia(X_train, y_train, X_ext, y_ext, seed=42,
-                niterations=1000, timeout_secs=300, populations=30):
+                niterations=1000, timeout_secs=1100, populations=30):
     if not PYSR_AVAILABLE:
         return {'train_r2': None, 'extrap_r2': None, 'time_s': 0, 'error': 'pysr_not_installed'}
     try:

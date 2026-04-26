@@ -16,7 +16,7 @@ Usage:
     python3 run_all.py --seed 123           # override seed for all steps (default: 42)
     python3 run_all.py --only exp3 --seed 777  # single step with custom seed
     python3 run_all.py --skip-paper         # skip pdflatex compile steps
-    python3 run_all.py --pysr-timeout 900   # extend PySR wall-clock limit (default 360s)
+    python3 run_all.py --pysr-timeout 900   # extend PySR wall-clock limit (default 1100s)
     python3 run_all.py --one-equation       # smoke-test: 1 equation per experiment, fast timeout
 
 Step IDs (use with --only / --from):
@@ -1058,7 +1058,7 @@ def main() -> None:
                              "(e.g. --seed 123). Defaults to 42 when omitted.")
     parser.add_argument("--pysr-timeout", type=int, default=None, metavar="SECS",
                         help="Wall-clock timeout (seconds) passed to PySR via PYSR_TIMEOUT "
-                             "env var. Default is whatever the experiment script sets (360s). "
+                             "env var. Default is 1100s (paper-quality, from repro.yaml). "
                              "Use e.g. --pysr-timeout 900 on slower hardware.")
     parser.add_argument("--one-equation", action="store_true",
                         help="Smoke-test mode: run exactly 1 equation per experiment. "
@@ -1086,7 +1086,7 @@ def main() -> None:
         clear_checkpoint()
         sys.exit(0)
 
-    banner("HypatiaX · Reproducibility Pipeline v4.7 (checkpoint/resume)"
+    banner("HypatiaX · Reproducibility Pipeline v4.8 (checkpoint/resume)"
            + ("  [SMOKE-TEST: 1 equation]" if args.one_equation else ""))
     print(f"  Repo      : {REPO_ROOT}")
     print(f"  Python    : {sys.version.split()[0]}")
@@ -1155,9 +1155,9 @@ def main() -> None:
     _timeout_config = _repro_config.get("timeouts", {})
     _pysr_config = _repro_config.get("pysr", {})
 
-    # Timeout defaults (paper-quality: 120s)
-    DEFAULT_PYSR_TIMEOUT = _timeout_config.get("pysr_attempt_seconds", 120)
-    DEFAULT_METHOD_TIMEOUT = _timeout_config.get("method_seconds", 360)
+    # Timeout defaults (paper-quality: 1100s PySR, 900s method — from repro.yaml)
+    DEFAULT_PYSR_TIMEOUT = _timeout_config.get("pysr_attempt_seconds", 1100)
+    DEFAULT_METHOD_TIMEOUT = _timeout_config.get("method_seconds", 900)
 
     # ── Build environment (mirrors run_all.sh and notebook cell 2) ─────────
     _seed_str = str(args.seed) if args.seed is not None else "42"
@@ -1177,7 +1177,10 @@ def main() -> None:
     # LLM config
     env.setdefault("LLM_MODEL", _repro_config.get("llm_model", "claude-sonnet-4-20250514"))
     env.setdefault("LLM_RETRIES", str(_repro_config.get("llm_retries", 3)))
-    env.setdefault("LLM_K_RUNS", str(_repro_config.get("llm_k_runs", 1)))
+    # FIX: default LLM_K_RUNS to 1 (not llm_k_runs=30 from repro.yaml) so standard
+    # experiment steps run a single pass; the instability step overrides to 30 via
+    # its own env_extra={"LLM_K_RUNS": "30"}.
+    env.setdefault("LLM_K_RUNS", "1")
 
     # Task counts
     env.setdefault("N_TASKS_DEFI", str(_repro_config.get("n_tasks_defi", 74)))
@@ -1197,9 +1200,13 @@ def main() -> None:
     # 4. Default 1100s (paper-quality)
     if args.pysr_timeout is not None:
         env["PYSR_TIMEOUT"] = str(args.pysr_timeout)
-        env["METHOD_TIMEOUT"] = str(min(args.pysr_timeout * 3, 1800))
+        # FIX: do NOT derive METHOD_TIMEOUT as min(pysr_timeout*3, 1800) — that formula
+        # produces 1800 for pysr_timeout=1100, which the exp1 script caps to 300s then
+        # sets wall-clock=630s, causing a timeout before PySR finishes (the 630s bug).
+        # Instead always use the repro.yaml method_seconds value (900s) directly.
+        env["METHOD_TIMEOUT"] = str(DEFAULT_METHOD_TIMEOUT)
         print(f"  PYSR_TIMEOUT={args.pysr_timeout}s  (--pysr-timeout override)")
-        print(f"  METHOD_TIMEOUT={env['METHOD_TIMEOUT']}s  (derived)")
+        print(f"  METHOD_TIMEOUT={env['METHOD_TIMEOUT']}s  (repro.yaml method_seconds)")
     else:
         # Check repro.yaml first
         pysr_timeout = DEFAULT_PYSR_TIMEOUT
@@ -1209,7 +1216,8 @@ def main() -> None:
         env_pysr = os.environ.get("PYSR_TIMEOUT")
         if env_pysr:
             pysr_timeout = int(env_pysr)
-            method_timeout = min(pysr_timeout * 3, 1800)
+            # FIX: use repro.yaml method_seconds (900) rather than min(pysr*3, 1800)
+            method_timeout = DEFAULT_METHOD_TIMEOUT
             print(f"  ⚠ PYSR_TIMEOUT={pysr_timeout}s from env (repro.yaml wants {DEFAULT_PYSR_TIMEOUT}s)")
         
         env["PYSR_TIMEOUT"] = str(pysr_timeout)
@@ -1226,6 +1234,9 @@ def main() -> None:
     env.setdefault("PYSR_PARALLELISM",  _pysr_config.get("parallelism", "multithreading"))
     env.setdefault("_PYSR_TIMEOUT_SECS",   env["PYSR_TIMEOUT"])
     env.setdefault("_METHOD_TIMEOUT_SECS",  env["METHOD_TIMEOUT"])
+    # FIX: expose EQUATION_WALL_CLOCK from repro.yaml (timeouts.equation_wall_clock=1200)
+    # so experiment scripts that enforce a per-equation wall-clock cap use the correct value.
+    env.setdefault("EQUATION_WALL_CLOCK", str(_timeout_config.get("equation_wall_clock", 1200)))
     env.setdefault("PYSR_POPULATION_SIZE", str(_pysr_config.get("population_size", 33)))
     env.setdefault("PYSR_PARSIMONY", str(_pysr_config.get("parsimony", 0.01)))
     env.setdefault("PYSR_MAXSIZE", str(_pysr_config.get("maxsize", 30)))
@@ -1260,7 +1271,7 @@ def main() -> None:
         # FIX 4: real smoke-test PySR config — small populations + iterations
         env["N_ITERATIONS"]          = "200"  # was default ~1000 (too heavy for smoke-test)
         env["POPULATIONS"]           = "10"   # was default ~30  (too heavy for smoke-test)
-        # Use a short PySR timeout (120 s) unless the user explicitly overrode it
+        # Use a short PySR timeout (60s) unless the user explicitly overrode it
         if args.pysr_timeout is None:
             env["PYSR_TIMEOUT"] = "60"  # FIX 4: tightened from 120 → 60 for real smoke-test
         print("\n" + "▲" * 68)
@@ -1272,20 +1283,6 @@ def main() -> None:
         print("  ▲▲  This is NOT a full reproducibility run.")
         print("  ▲▲  Results will NOT match paper targets.")
         print("▲" * 68)
-    env["PYTHONPATH"]    = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-    env["RESULTS_DIR"]   = str(RESULTS_DIR)
-    # FIX-PY: export the exact venv interpreter so protocol wrappers that shell out
-    # to Python can use PIPELINE_PYTHON instead of bare 'python3'.
-    env["PIPELINE_PYTHON"] = sys.executable
-    env["REPRO_ROOT"]  = str(REPO_ROOT)
-
-    _seed_source = f"--seed flag" if args.seed is not None else "default (env or 42)"
-    print(f"\n  NN_SEED={env['NN_SEED']}  PYSR_SEED={env['PYSR_SEED']}  "
-          f"PYTHONHASHSEED={env['PYTHONHASHSEED']}  (source: {_seed_source})")
-    print(f"  LLM_MODEL={env['LLM_MODEL']}")
-    print(f"  ENGINE={env['ENGINE_NAME']}  N_TASKS_INSTABILITY={env['N_TASKS_INSTABILITY']}")
-    if args.skip_paper:
-        print(f"  --skip-paper: Phase 4-B notebook steps will be skipped")
 
     # ── Validate --only / --from ───────────────────────────────────────────
     if args.only and args.only not in STEP_IDS:

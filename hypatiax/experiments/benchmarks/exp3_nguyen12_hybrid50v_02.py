@@ -167,12 +167,16 @@ def run(seed: int = 42):
     _n_tasks    = int(os.environ.get("N_NGUYEN_TASKS", 12))
     _niter      = int(os.environ.get("N_ITERATIONS",   1000))
     _pops       = int(os.environ.get("POPULATIONS",    30))
-    _timeout    = int(os.environ.get("PYSR_TIMEOUT",   360))
+    # FIX-WALLCLOCK: use PYSR_TIMEOUT (1100s) not a hardcoded 360s default.
+    # No cap — repro.yaml values are authoritative.
+    _pysr_timeout   = int(os.environ.get("PYSR_TIMEOUT",   1100))
+    _method_timeout = int(os.environ.get("METHOD_TIMEOUT", _pysr_timeout))
+    _timeout        = _pysr_timeout   # passed to PySR's timeout_in_seconds
 
     print(f"\n{'='*68}")
     print(f"  Exp 3 · Nguyen-12 SR suite  (§10.8)  SEED={seed}")
     print(f"  Expected: 11/12 H (91.7%) · 10/12 P · MW U=113, p=0.0097")
-    print(f"  Config  : n_tasks={_n_tasks}  niterations={_niter}  populations={_pops}  timeout={_timeout}s")
+    print(f"  Config  : n_tasks={_n_tasks}  niterations={_niter}  populations={_pops}  pysr_timeout={_timeout}s  method_timeout={_method_timeout}s")
     print(f"{'='*68}\n")
 
     # ── Import protocol data layer ────────────────────────────────────────

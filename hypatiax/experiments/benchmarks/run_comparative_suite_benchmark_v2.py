@@ -77,8 +77,9 @@ from typing import Any, Dict, List, Optional
 
 # Hard ceiling on any single method call. Prevents Anthropic API exponential-
 # backoff retry storms from hanging the suite for 18+ minutes on one test.
-# Can be overridden at runtime with --method-timeout.
-_METHOD_TIMEOUT_SECS: int = 90
+# FIX-WALLCLOCK: read from METHOD_TIMEOUT env var (repro.yaml: 900s) rather
+# than hardcoding 90s. Falls back to 900 if not set.
+_METHOD_TIMEOUT_SECS: int = int(os.environ.get("METHOD_TIMEOUT", 900))
 
 # ---------------------------------------------------------------------------
 # SEGFAULT FIX — must happen BEFORE juliacall or torch are imported.
@@ -119,7 +120,8 @@ random.seed(42)
 np.random.seed(42)
 
 # PySR subprocess timeout — overridden by --pysr-timeout at runtime.
-_PYSR_TIMEOUT: int = 600
+# FIX-WALLCLOCK: read from PYSR_TIMEOUT env var (repro.yaml: 1100s).
+_PYSR_TIMEOUT: int = int(os.environ.get("PYSR_TIMEOUT", 1100))
 
 # ---------------------------------------------------------------------------
 # Path setup.
@@ -3312,19 +3314,19 @@ Examples
         ),
     )
     parser.add_argument(
-        "--pysr-timeout", type=int, default=600, dest="pysr_timeout",
+        "--pysr-timeout", type=int, default=int(os.environ.get("PYSR_TIMEOUT", 1100)), dest="pysr_timeout",
         metavar="SECS",
         help=(
-            "Seconds before a PySR subprocess is killed (default: 600). "
+            "Seconds before a PySR subprocess is killed (default: 1100, from PYSR_TIMEOUT env). "
             "Julia startup alone takes 60-90 s, so values below 300 will "
             "almost always time out before any search is attempted."
         ),
     )
     parser.add_argument(
-        "--method-timeout", type=int, default=90, dest="method_timeout",
+        "--method-timeout", type=int, default=int(os.environ.get("METHOD_TIMEOUT", 900)), dest="method_timeout",
         metavar="SECS",
         help=(
-            "Hard timeout in seconds for each individual method call (default: 90). "
+            "Hard timeout in seconds for each individual method call (default: 900, from METHOD_TIMEOUT env). "
             "Prevents Anthropic API retry storms from hanging the suite indefinitely."
         ),
     )

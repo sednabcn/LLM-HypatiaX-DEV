@@ -47,6 +47,13 @@ import matplotlib.patches as mpatches
 import matplotlib.ticker as mticker
 warnings.filterwarnings('ignore')
 
+# ── Timeout defaults (must be set before importing benchmark modules) ─────────
+# These mirror repro.yaml: pysr_attempt_seconds=1100, method_seconds=900,
+# equation_wall_clock=1200.  Using setdefault so explicit env vars always win.
+os.environ.setdefault("PYSR_TIMEOUT",        "1100")
+os.environ.setdefault("METHOD_TIMEOUT",      "900")
+os.environ.setdefault("EQUATION_WALL_CLOCK", "1200")
+
 # ── Project root (adjust if needed) ──────────────────────────────────────────
 PROJECT_ROOT = Path.cwd()
 # If running from a notebooks/ subfolder, uncomment:
@@ -100,6 +107,9 @@ print(f'   PROJECT_ROOT   : {PROJECT_ROOT}')
 print(f'   RESULTS_DIR    : {RESULTS_DIR}')
 print(f'   BENCHMARK_SEED : {BENCHMARK_SEED}')
 print(f'   RERUN_STRATEGY : {RERUN_STRATEGY}')
+print(f'   PYSR_TIMEOUT        : {os.environ["PYSR_TIMEOUT"]}s')
+print(f'   METHOD_TIMEOUT      : {os.environ["METHOD_TIMEOUT"]}s')
+print(f'   EQUATION_WALL_CLOCK : {os.environ["EQUATION_WALL_CLOCK"]}s')
 
 # ── API Key ──────────────────────────────────────────────────────────────────
 # Load from Kaggle config_secrets / Colab config_secrets / .env / environment — all handled by config_secrets.py

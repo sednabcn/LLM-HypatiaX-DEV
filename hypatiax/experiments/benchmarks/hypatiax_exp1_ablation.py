@@ -360,7 +360,8 @@ def make_pysr(warm_start_expr=None, seed=42, niterations=1000, timeout_secs=None
         _PYSR_VALID_PARAMS = set(inspect.signature(PySRRegressor.__init__).parameters.keys())
     valid = _PYSR_VALID_PARAMS
 
-    effective_timeout = timeout_secs if timeout_secs is not None else 120
+    # FIX-WALLCLOCK: default to PYSR_TIMEOUT env (1100s) not hardcoded 120s
+    effective_timeout = timeout_secs if timeout_secs is not None else int(os.environ.get("PYSR_TIMEOUT", 1100))
 
     kwargs = dict(
         niterations=niterations,
@@ -504,7 +505,17 @@ class _Timeout:
             signal.alarm(0)   # cancel any pending alarm
 
 
-EQUATION_WALL_CLOCK_TIMEOUT = 300
+# FIX-WALLCLOCK: derive from env vars (repro.yaml: PYSR_TIMEOUT=1100, METHOD_TIMEOUT=900).
+# Must be > PYSR_TIMEOUT so the safety net never fires during a legitimate PySR run.
+_PYSR_TO  = int(os.environ.get("PYSR_TIMEOUT",   1100))
+_METHOD_TO = int(os.environ.get("METHOD_TIMEOUT", 900))
+# Fixed post-processing budget: after Julia finishes, get_hof()→sympify() can
+# take minutes on complex expressions. *1.15 = 165s headroom was insufficient.
+# Use PYSR_TIMEOUT + 300s fixed budget (same formula as exp1_ablation_populations_30_updated.py).
+# This file uses raw PySRRegressor only (no HybridDiscoverySystem retries), so
+# no retry-multiplication is needed — just 1 attempt + post-proc headroom.
+_POST_PROC_BUDGET = int(os.environ.get("PYSR_POST_PROC_BUDGET", "300"))
+EQUATION_WALL_CLOCK_TIMEOUT = _PYSR_TO + _POST_PROC_BUDGET  # 1100 + 300 = 1400s
 
 
 def _timeout_result(condition, llm_time, wall_secs, eq_name):
@@ -913,9 +924,9 @@ def main():
 
     if args.full_iterations:
         args.iterations  = 1000
-        args.timeout     = 300
+        args.timeout     = int(os.environ.get("PYSR_TIMEOUT") or os.environ.get("METHOD_TIMEOUT") or 1100)
         args.populations = 2
-        print("🔬 --full-iterations preset: iterations=1000, timeout=300s, populations=30")
+        print("🔬 --full-iterations preset: iterations=1000, timeout={args.timeout}s, populations=2")
 
     wall_clock_limit = args.price_impact_timeout if args.price_impact_timeout else EQUATION_WALL_CLOCK_TIMEOUT
 
@@ -1117,7 +1128,7 @@ def main():
 print('✅ make_latex_table ready')
 
 """## 19 · Run experiment
-Full iterations: 1000 · timeout: 300s · both conditions · checkpoint/resume on.
+Full iterations: 1000 · timeout: PYSR_TIMEOUT env (default 1100s) · both conditions · checkpoint/resume on.
 
 """
 
@@ -1125,7 +1136,8 @@ import json as _json
 import numpy as np
 
 NITERATIONS   = 1000
-TIMEOUT_SECS  = 300
+# FIX-WALLCLOCK: read from env (repro.yaml: PYSR_TIMEOUT=1100, METHOD_TIMEOUT=900)
+TIMEOUT_SECS  = int(os.environ.get("PYSR_TIMEOUT") or os.environ.get("METHOD_TIMEOUT") or 1100)
 POPULATIONS   = 2
 SEED          = 42
 CONDITIONS    = ["pysr_only", "hypatia"]
@@ -1161,7 +1173,7 @@ for eq in CORE_15:
     all_results.setdefault(name, {"domain": eq["domain"]})
 
     for cond in to_run:
-        adaptive_cap = TIMEOUT_SECS + 60
+        adaptive_cap = EQUATION_WALL_CLOCK_TIMEOUT  # 1400s (PYSR_TIMEOUT + 300s post-proc)
         if cond == "hypatia":
             p = all_results.get(name, {}).get("pysr_only", {})
             pt = p.get("total_time_s")
@@ -2131,7 +2143,7 @@ for seed in SEEDS:
             niterations=N_ITER,
             timeout_secs=TIMEOUT,
             populations=30,
-            wall_clock_limit=TIMEOUT + 60,
+            wall_clock_limit=EQUATION_WALL_CLOCK_TIMEOUT,
         )
         far_r2 = r.get("extrap_r2_far")
         sweep_results[cond].append({

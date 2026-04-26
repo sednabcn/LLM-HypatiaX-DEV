@@ -94,25 +94,22 @@ POPULATIONS   = int(os.environ.get("POPULATIONS",    os.environ.get("PYSR_POPULA
 NITERATIONS   = int(os.environ.get("N_ITERATIONS",   os.environ.get("PYSR_NITERATIONS", "1000")))
 
 # =============================================================================
-# FIX: TIMEOUT_SECS — use METHOD_TIMEOUT as primary, PYSR_TIMEOUT as fallback
+# FIX-WALLCLOCK: Timeout setup — honour repro.yaml values without capping
 # =============================================================================
-# Previously: TIMEOUT_SECS = int(os.environ.get("PYSR_TIMEOUT", "300"))
-# Problem: run_all_checkpoint.py sets PYSR_TIMEOUT=1100 (too high)
-# Solution: 
-#   1. Check METHOD_TIMEOUT first (benchmark-level timeout)
-#   2. Fall back to PYSR_TIMEOUT
-#   3. Cap at 300s for paper-quality (120s is faster, 300s is safe)
-#   4. Default to 120s (matches symbolic_engine.py default)
-_TIMEOUT_ENV = os.environ.get("METHOD_TIMEOUT") or os.environ.get("PYSR_TIMEOUT", "120")
-TIMEOUT_SECS = int(_TIMEOUT_ENV)
-
-# Cap unreasonable timeouts (1140s is 19 minutes — too long for a single equation)
-# Paper-quality safe range: 60-300s. 120s is fast, 300s is generous.
-_MAX_REASONABLE_TIMEOUT = 300
-if TIMEOUT_SECS > _MAX_REASONABLE_TIMEOUT:
-    print(f"⚠️  TIMEOUT_SECS={TIMEOUT_SECS} exceeds {_MAX_REASONABLE_TIMEOUT}s — capping to {_MAX_REASONABLE_TIMEOUT}s")
-    print(f"   (Original value from env: {_TIMEOUT_ENV}. Set METHOD_TIMEOUT=120 for fast runs.)")
-    TIMEOUT_SECS = _MAX_REASONABLE_TIMEOUT
+# PYSR_TIMEOUT  = how long PySR itself is allowed to run (repro.yaml: 1100s)
+# METHOD_TIMEOUT = per-method wall-clock budget (repro.yaml: 900s)
+#
+# Previous bug: METHOD_TIMEOUT=900 was read into TIMEOUT_SECS, then capped to
+# 300s, giving EQUATION_WALL_CLOCK_TIMEOUT = 2×300+30 = 630s — which fired
+# before PySR's own timeout_in_seconds=1100 could finish.
+#
+# Fix: keep the two timeouts separate and correctly sourced:
+#   PYSR_TIMEOUT_SECS — passed to PySR's timeout_in_seconds (1100s)
+#   TIMEOUT_SECS      — per-method budget used for wall-clock safety net (900s)
+#   No arbitrary cap — repro.yaml values are authoritative.
+PYSR_TIMEOUT_SECS = int(os.environ.get("PYSR_TIMEOUT", "1100"))
+_TIMEOUT_ENV      = os.environ.get("METHOD_TIMEOUT") or os.environ.get("PYSR_TIMEOUT", "900")
+TIMEOUT_SECS      = int(_TIMEOUT_ENV)
 
 SEED          = _GLOBAL_SEED   # env-driven: PYSR_SEED → NN_SEED → 42
 CONDITIONS    = ["pysr_only", "hypatia"]
@@ -121,7 +118,7 @@ MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")  # not p
 _seed_source = "PYSR_SEED" if os.environ.get("PYSR_SEED") else ("NN_SEED" if os.environ.get("NN_SEED") else "default")
 print(f"populations : {POPULATIONS}  (paper-quality)")
 print(f"niterations : {NITERATIONS}")
-print(f"timeout_s   : {TIMEOUT_SECS}  (capped at {_MAX_REASONABLE_TIMEOUT}s)")
+print(f"timeout_s   : {TIMEOUT_SECS}s (METHOD_TIMEOUT)  pysr_timeout: {PYSR_TIMEOUT_SECS}s (PYSR_TIMEOUT)")
 print(f"seed        : {SEED}  (source: {_seed_source})")
 print("✅ Setup complete")
 
@@ -378,7 +375,9 @@ def make_pysr(warm_start_expr=None, seed=42, niterations=NITERATIONS,
     if _PYSR_VALID_PARAMS is None:
         _PYSR_VALID_PARAMS = set(inspect.signature(PySRRegressor.__init__).parameters.keys())
     valid = _PYSR_VALID_PARAMS
-    effective_timeout = timeout_secs if timeout_secs is not None else TIMEOUT_SECS
+    # FIX-WALLCLOCK: PySR's timeout_in_seconds should be PYSR_TIMEOUT_SECS (1100s),
+    # not TIMEOUT_SECS (METHOD_TIMEOUT=900s which is the per-method budget).
+    effective_timeout = timeout_secs if timeout_secs is not None else PYSR_TIMEOUT_SECS
     kwargs = dict(
         niterations=niterations,
         populations=populations,        # 30 = paper quality
@@ -464,16 +463,34 @@ class _Timeout:
         if self._ok: signal.alarm(0)
 
 # =============================================================================
-# FIX: Wall-clock limit — use TIMEOUT_SECS (already capped at 300s)
-# Previously: EQUATION_WALL_CLOCK_TIMEOUT = 3 * TIMEOUT_SECS + 60
-# This caused 3× timeout + margin, leading to 1140s timeouts.
-# =============================================================================
-# For paper-quality: each equation gets TIMEOUT_SECS per attempt,
-# with 3 attempts max (handled by HybridDiscoverySystem retries).
-# The wall-clock limit here is a SAFETY NET, not the per-attempt timeout.
-# Setting it to 2× TIMEOUT_SECS allows 2 full attempts before failing.
-EQUATION_WALL_CLOCK_TIMEOUT = 2 * TIMEOUT_SECS + 30  # was 3× + 60, now 2× + 30
-print(f"   Equation wall-clock limit: {EQUATION_WALL_CLOCK_TIMEOUT}s (safety net)")
+# FIX-WALLCLOCK v2: Wall-clock = PySR search budget + fixed post-processing budget.
+#
+# The previous formula (max(PYSR, METHOD) * 1.15 = 1265s) still fired because
+# after Julia's 1100s search finishes, PySR calls get_hof() → sympify() on every
+# candidate expression. On complex equations sympify alone can take >165s, so the
+# SIGALRM fired inside parse_expr() — long after the Julia search had already
+# stopped. A percentage-based headroom is fundamentally unsafe here.
+#
+# Fix: use a fixed post-processing budget (600s = 10 min) added on top of the
+# PySR search time. This accommodates even the most complex sympy conversions
+# while keeping the wall-clock as a genuine hang-detection safety net.
+# HybridDiscoverySystem runs max_retries attempts, each with up to PYSR_TIMEOUT_SECS.
+# The wall-clock wraps the ENTIRE hybrid.discover() call, so it must cover ALL retries.
+# Previous bug: wall-clock=1700s only covered 1 attempt (1100s) + 600s headroom.
+# Attempt 1 used ~1149s → only ~551s left for attempt 2 → SIGALRM fired inside Julia.
+#
+# Fix: wall_clock = (n_retries × PYSR_TIMEOUT_SECS) + fixed post-proc budget.
+# pysr_only uses 1 attempt (raw PySRRegressor, no retry loop) → separate constant.
+_HYPATIA_MAX_RETRIES  = int(os.environ.get("HYPATIA_MAX_RETRIES", "3"))
+_POST_PROC_BUDGET     = int(os.environ.get("PYSR_POST_PROC_BUDGET", "300"))
+HYPATIA_WALL_CLOCK    = _HYPATIA_MAX_RETRIES * PYSR_TIMEOUT_SECS + _POST_PROC_BUDGET
+PYSR_ONLY_WALL_CLOCK  = PYSR_TIMEOUT_SECS + _POST_PROC_BUDGET
+# Backward-compat name used as default in run_condition signature:
+EQUATION_WALL_CLOCK_TIMEOUT = HYPATIA_WALL_CLOCK
+print(f"   Wall-clock (hypatia)  : {HYPATIA_WALL_CLOCK}s  "
+      f"({_HYPATIA_MAX_RETRIES} retries x {PYSR_TIMEOUT_SECS}s + {_POST_PROC_BUDGET}s post-proc)")
+print(f"   Wall-clock (pysr_only): {PYSR_ONLY_WALL_CLOCK}s  "
+      f"(1 attempt x {PYSR_TIMEOUT_SECS}s + {_POST_PROC_BUDGET}s post-proc)")
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 def load_checkpoint(path):
@@ -497,8 +514,8 @@ print(f"   populations={POPULATIONS}  niterations={NITERATIONS}  timeout={TIMEOU
 """## 3 · `run_condition` — single equation × single condition"""
 
 def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
-                  timeout_secs=TIMEOUT_SECS, populations=POPULATIONS,
-                  wall_clock_limit=EQUATION_WALL_CLOCK_TIMEOUT):
+                  timeout_secs=PYSR_TIMEOUT_SECS, populations=POPULATIONS,
+                  wall_clock_limit=None):
     """Run one equation under 'pysr_only' or 'hypatia'.
 
     hypatia  -> HybridDiscoverySystem v5.1 (hybrid_system_v50_2):
@@ -508,8 +525,15 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
                 auto-config and operator injection are all active.
     pysr_only -> raw PySRRegressor (clean baseline, unchanged).
     """
+    # Per-condition wall-clock: hypatia runs _HYPATIA_MAX_RETRIES × PySR attempts;
+    # pysr_only runs exactly 1. Using a shared limit caused SIGALRM to fire inside
+    # Julia during attempt 2 (only ~551s remained after attempt 1's ~1149s run).
+    if wall_clock_limit is None:
+        wall_clock_limit = (HYPATIA_WALL_CLOCK if condition == "hypatia"
+                            else PYSR_ONLY_WALL_CLOCK)
+
     eq_seed = seed + EQ_ID.get(eq["name"], 0) * 7
-    dbg(f"run_condition: {eq['name']} [{condition}] seed={eq_seed}")
+    dbg(f"run_condition: {eq['name']} [{condition}] seed={eq_seed} wall_clock={wall_clock_limit}s")
 
     X_train, X_test, y_train, y_test, X_all, y_all = generate_data(
         eq, N=200, noise_level=0.05, seed=eq_seed)
@@ -539,7 +563,7 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
                 # Pass timeout to engine so it respects the same limit
                 pysr_timeout=timeout_secs,
             ),
-            max_retries=3,
+            max_retries=_HYPATIA_MAX_RETRIES,
             use_llm=_use_llm,
             llm_mode="hybrid" if _use_llm else "none",
             llm_n_candidates=3,
@@ -806,7 +830,7 @@ for eq_idx, eq in enumerate(_CORE_15_RUN):
     for cond in to_run:
         result = run_condition(eq, cond, seed=SEED,
                                niterations=NITERATIONS,
-                               timeout_secs=TIMEOUT_SECS,
+                               timeout_secs=PYSR_TIMEOUT_SECS,
                                populations=POPULATIONS)
         entry[cond] = result
         all_results[eq_key] = entry
@@ -1098,7 +1122,9 @@ provenance = {
         "FIX-POP: populations=30 (was 2 in original notebook)",
         "FIX-APIKEY: Kaggle Secrets only — no hardcoded sk-ant key",
         "FIX-WIRE: hypatia condition now routes through HybridDiscoverySystem (was bypassed)",
-        "FIX-TIMEOUT: TIMEOUT_SECS capped at 300s, EQUATION_WALL_CLOCK_TIMEOUT reduced to 2×+30",
+        "FIX-WALLCLOCK v3: per-condition wall-clocks. hypatia=_HYPATIA_MAX_RETRIES(3)*PYSR_TIMEOUT(1100)+300=3600s; "
+        "pysr_only=PYSR_TIMEOUT(1100)+300=1400s. v2's shared 1700s caused SIGALRM inside Julia on attempt 2 "
+        "(attempt 1 used ~1149s leaving only ~551s for attempt 2's 1100s run).",
     ],
 }
 
