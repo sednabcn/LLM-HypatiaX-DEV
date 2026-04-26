@@ -973,32 +973,18 @@ def _clear_stale_locks() -> None:
 
     # ── 2. Julia / juliapkg lock.pid ──────────────────────────────────────
     # Search: active venv, parent dirs, and common local Python install paths.
-    # NOTE: .parent.parent.parent is intentionally excluded — on Colab/Linux
-    #       sys.executable is /usr/bin/python3.x, so three .parent calls reach
-    #       filesystem root (/), causing rglob to walk /proc and crash with
-    #       OSError: [Errno 22] Invalid argument.
-    _exe = Path(_sys_locks.executable).resolve()
     _julia_roots = [
-        _exe.parent.parent,                    # e.g. /usr/local  (venv base)
+        Path(_sys_locks.executable).parent.parent,
+        Path(_sys_locks.executable).parent.parent.parent,
         Path.home() / ".local",
-        Path.home() / ".julia" / "environments",
         Path.home() / "Downloads" / "py312",
         Path.home() / "Downloads" / "py311",
         Path.home() / "Downloads" / "py310",
     ]
-    # Guard: never rglob from / or /usr — too broad and traverses /proc on Linux.
-    _FS_ROOT = Path("/")
-    _BLOCKED_ROOTS = {_FS_ROOT, Path("/usr"), Path("/usr/local")}
     for _root in _julia_roots:
-        if not _root.exists():
-            continue
-        if _root in _BLOCKED_ROOTS or _root == _FS_ROOT:
-            continue
-        try:
+        if _root.exists():
             for _pid in _root.rglob("julia_env/lock.pid"):
                 _try_unlink(_pid)
-        except OSError:
-            pass  # pseudo-filesystems (e.g. /proc) silently skipped
 
     # ── 3. ~/.julia depot lock files ──────────────────────────────────────
     _julia_home = Path.home() / ".julia"
@@ -1012,11 +998,8 @@ def _clear_stale_locks() -> None:
             _try_unlink(lf)
 
     # ── 4. Any lock.pid under repo root ───────────────────────────────────
-    try:
-        for lf in REPO_ROOT.rglob("lock.pid"):
-            _try_unlink(lf)
-    except OSError:
-        pass
+    for lf in REPO_ROOT.rglob("lock.pid"):
+        _try_unlink(lf)
 
     # ── Report ─────────────────────────────────────────────────────────────
     if _cleared:
