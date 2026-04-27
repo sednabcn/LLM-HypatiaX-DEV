@@ -19,21 +19,18 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+
 import numpy as np
-import importlib.util
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from hypatiax.protocols.experiment_protocol_all_18_a import ExperimentProtocolA
-from hypatiax.protocols.experiment_protocol_all_18_b import ExperimentProtocolB as ExperimentProtocolB18
-from hypatiax.protocols.experiment_protocol_all_20_b import ExperimentProtocolB
-from hypatiax.protocols.experiment_protocol_all_30 import ExperimentProtocolAll
 
 
 try:
@@ -98,7 +95,7 @@ class SessionManager:
                     print(
                         f"\n📂 Checkpoint: {len(self.completed_tests)} completed, {len(self.failed_tests)} failed"
                     )
-            except:
+            except Exception:
                 pass
 
     def _save_checkpoint(self):
@@ -154,7 +151,7 @@ class SessionManager:
                 try:
                     with open(f, "r") as file:
                         results[f.stem] = json.load(file)
-                except:
+                except Exception:
                     pass
         return results
 
@@ -355,7 +352,7 @@ def detect_validator_bug(
 def print_results_table(results: Dict[str, Dict], test_cases: Dict[str, Dict]):
     """Print comprehensive results table: R² | Val Score | Status | Observation."""
     print(f"\n{'=' * 120}")
-    print(f"FINAL RESULTS TABLE".center(120))
+    print("FINAL RESULTS TABLE".center(120))
     print(f"{'=' * 120}")
     print(f"{'Test Name':<35} {'R²':>8} {'Val':>6} {'Status':^8} {'Observation':<50}")
     print(f"{'-' * 35} {'-' * 8} {'-' * 6} {'-' * 8} {'-' * 50}")
@@ -567,6 +564,7 @@ def run_all_tests_with_resume(
     resume: bool = False,
     skip_tests: List[str] = None,
     session_id: Optional[str] = None,
+    mode: str = "FAST",
 ) -> Dict[str, Dict]:
     if resume and Path(RESULTS_DIR / "current_session.json").exists():
         with open(RESULTS_DIR / "current_session.json", "r") as f:
@@ -587,7 +585,7 @@ def run_all_tests_with_resume(
         print_results_table(results, test_cases)
         return results
 
-    mode_label = {"FAST": "FAST", "STANDARD": "STANDARD", "THOROUGH": "THOROUGH"}.get(args.mode, "FAST")
+    mode_label = {"FAST": "FAST", "STANDARD": "STANDARD", "THOROUGH": "THOROUGH"}.get(mode, "FAST")
     print(f"\n🔧 Mode: {mode_label}")
     print(
         f"   Tests: {len(pending)}/{len(all_tests)} | Iterations: {SYMBOLIC_CONFIG['niterations']}"
@@ -600,7 +598,7 @@ def run_all_tests_with_resume(
         except KeyboardInterrupt:
             print("\n⚠️  Interrupted! Progress saved. Use --resume")
             break
-        except:
+        except Exception:
             continue
 
     results = session.load_all_results()
@@ -669,6 +667,7 @@ def main():
             verbose=not args.quiet,
             resume=args.resume,
             skip_tests=skip,
+            mode=args.mode,
         )
 
 

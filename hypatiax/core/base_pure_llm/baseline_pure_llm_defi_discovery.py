@@ -16,11 +16,11 @@ from typing import Dict, List, Optional
 import numpy as np
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
 # Reproducibility seeds (added for JMLR submission)
 random.seed(42)
 np.random.seed(42)
-from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
 env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -61,7 +61,7 @@ class PureLLMBaseline:
                 y = np.asarray(y)
                 if y.shape[0] == n_samples:
                     return y.flatten()
-            except:
+            except Exception:
                 pass
 
             try:
@@ -70,7 +70,7 @@ class PureLLMBaseline:
                 for i in range(n_samples):
                     y[i] = func(*[X[i, j] for j in range(n_features)])
                 return y
-            except:
+            except Exception:
                 pass
 
         # ============================================================
@@ -84,7 +84,7 @@ class PureLLMBaseline:
                 y = np.asarray(y)
                 if y.shape[0] == n_samples:
                     return y.flatten()
-            except:
+            except Exception:
                 pass
 
             try:
@@ -94,7 +94,7 @@ class PureLLMBaseline:
                     params = {name: float(X[i, j]) for j, name in enumerate(var_names)}
                     y[i] = func(params)
                 return y
-            except:
+            except Exception:
                 pass
 
         # ============================================================
@@ -108,7 +108,7 @@ class PureLLMBaseline:
                 y = np.asarray(y)
                 if y.shape[0] == n_samples:
                     return y.flatten()
-            except:
+            except Exception:
                 pass
 
             try:
@@ -118,7 +118,7 @@ class PureLLMBaseline:
                     kwargs = {name: float(X[i, j]) for j, name in enumerate(var_names)}
                     y[i] = func(**kwargs)
                 return y
-            except:
+            except Exception:
                 pass
 
         # ============================================================
@@ -144,7 +144,7 @@ class PureLLMBaseline:
                     y = np.asarray(y)
                     if y.shape[0] == n_samples:
                         return y.flatten()
-            except:
+            except Exception:
                 pass
 
         # ============================================================
@@ -230,7 +230,8 @@ class PureLLMBaseline:
                     # that pushes small-y values toward zero.
                     pos_mask = (x_col > 0) & (y > 0)
                     if pos_mask.sum() >= 20:
-                        x_pos = x_col[pos_mask]; y_pos = y[pos_mask]
+                        x_pos = x_col[pos_mask]
+                        y_pos = y[pos_mask]
                         med_y  = float(np.median(y_pos))
                         top    = y_pos >= med_y
                         if top.sum() >= 10:
