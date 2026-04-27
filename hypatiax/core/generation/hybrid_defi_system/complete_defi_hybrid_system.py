@@ -945,13 +945,13 @@ def main():
 Examples:
   # Run single test with LLM interpretation
   python %(prog)s --test kelly_criterion --samples 200 --llm
-  
+
   # Run batch tests without LLM (faster)
   python %(prog)s --batch --samples 100
-  
+
   # Run all tests with Gemini
   python %(prog)s --batch --llm --provider google
-  
+
 Available test cases:
   - amm_constant_product: AMM K = sqrt(x*y)
   - impermanent_loss: IL formula

@@ -13,7 +13,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -71,7 +70,6 @@ def train_nn_model(
     - 1000 epochs (up from 500)
     - Adaptive architecture by input dimensionality
     """
-    import copy
     from sklearn.preprocessing import StandardScaler
 
     scaler_X = StandardScaler()

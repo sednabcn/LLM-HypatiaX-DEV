@@ -293,7 +293,7 @@ NO markdown code blocks, individual parameters NOT dict."""
 
         y_train_w = np.log(y_train) if use_logy else y_train
         y_val_w   = np.log(y_val)   if use_logy else y_val
-        # y_all_w not used downstream; log-transform applied via scaler in _get_nn_predictions
+        # y_all_w omitted — log-transform applied via scaler in _get_nn_predictions
 
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()
