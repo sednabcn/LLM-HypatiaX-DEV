@@ -113,34 +113,7 @@ jobs:
           cache: pip
 
       - name: Deduplicate requirements.txt (remove conflicting pins)
-        run: |
-          if [[ -f requirements.txt ]]; then
-            python3 - << 'PYEOF'
-import re, pathlib
-
-path = pathlib.Path("requirements.txt")
-lines = path.read_text().splitlines()
-
-seen = {}   # pkg_name_lower -> (line_index, version)
-output = []
-for line in lines:
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
-        output.append(line)
-        continue
-    # parse name (ignore extras, markers, version specifiers)
-    name = re.split(r"[>=<!;\[]", stripped)[0].strip().lower()
-    if name in seen:
-        prev_idx, prev_line = seen[name]
-        print(f"  DEDUP: keeping '{stripped}', dropping earlier '{prev_line}'")
-        output[prev_idx] = f"# (deduped) {prev_line}"
-    seen[name] = (len(output), stripped)
-    output.append(line)
-
-path.write_text("\n".join(output) + "\n")
-print(f"  requirements.txt cleaned ({len(lines)} -> {len(output)} lines)")
-PYEOF
-          fi
+        run: python3 .github/scripts/dedup_requirements.py
 
       - name: Install linting + pipeline deps
         run: |
