@@ -1,0 +1,439 @@
+# =============================================================================
+# .github/workflows/ci.yml
+# HypatiaX — Continuous Integration  v4  (refactored multi-task pipeline)
+# =============================================================================
+#
+# Architecture
+# ────────────
+# Heavy shell logic has been extracted into reusable scripts under
+# .github/scripts/ so each job step stays minimal and readable:
+#
+#   scripts/setup_env.sh          — pip + env-var bootstrap (all jobs)
+#   scripts/lint_checks.sh        — stale-engine / key-scan / syntax checks
+#   scripts/build_pipeline_flags.sh — translate inputs → run_all CLI flags
+#   scripts/verify_results.sh     — verify_results.py + hash_lock
+#   scripts/generate_outputs.sh   — figures + tables generation
+#
+# Jobs
+# ────
+#   lint          — code quality, FIX-C2, key scan, syntax     (<5 min)
+#   full-pipeline — all experiments, paper-quality PySR        (~15-25 h)
+#   slow-pipeline — same + LLM_K_RUNS=30, manual only         (~15-25 h)
+#   verify        — verify-only against cached main results    (<20 min)
+#
+# Triggers: push / PR → main or develop; workflow_dispatch
+# Secret:   ANTHROPIC_API_KEY (Settings → Secrets → Actions)
+# =============================================================================
+
+name: HypatiaX Reproducibility CI — v4
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      only_step:
+        description: "Run only this step ID (empty = full pipeline)"
+        required: false
+        default: ""
+      skip_slow:
+        description: "Skip slow steps (exp2, suppB, instability)"
+        required: false
+        default: "false"
+      seed:
+        description: "Override PYSR_SEED / NN_SEED / PYTHONHASHSEED (default 42)"
+        required: false
+        default: "42"
+      pysr_timeout:
+        description: "PySR wall-clock timeout in seconds (default 1100 = paper value)"
+        required: false
+        default: "1100"
+      skip_paper:
+        description: "Skip Phase 4-B paper audit notebook steps"
+        required: false
+        default: "false"
+      continue_on_fail:
+        description: "Log step failures but keep the pipeline running"
+        required: false
+        default: "false"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Global env (paper-quality defaults — shared across all jobs) ───────────
+env:
+  PYTHON_VERSION: "3.12"
+  FAST: "0"
+  LLM_MODEL: "claude-sonnet-4-20250514"
+  LLM_RETRIES: "3"
+  LLM_K_RUNS: "1"
+  NN_SEED: ${{ github.event.inputs.seed || '42' }}
+  PYSR_SEED: ${{ github.event.inputs.seed || '42' }}
+  PYTHONHASHSEED: ${{ github.event.inputs.seed || '42' }}
+  PYSR_NITERATIONS: "1000"
+  PYSR_POPULATIONS: "30"
+  PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout || '1100' }}
+  METHOD_TIMEOUT: "900"
+  EQUATION_WALL_CLOCK: "1200"   # repro.yaml: timeouts.equation_wall_clock
+  NN_TIME_LIMIT: "120"
+  PCA_TRAIN_FRAC: "0.40"
+  N_TASKS_DEFI: "74"
+  N_TASKS_INSTABILITY: "70"
+  N_FEYNMAN_TASKS: "30"
+  N_NGUYEN_TASKS: "12"
+  ENGINE_NAME: "hybrid_system_v50_2"
+  PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+
+# =============================================================================
+# REUSABLE SETUP — declared once, referenced by name in each job
+# =============================================================================
+
+# Shared Python setup steps are inlined as named steps and kept DRY via scripts.
+# GitHub Actions does not support YAML anchors, so we keep the repeated structure
+# short (3 lines each) and delegate the real work to shell scripts.
+
+# =============================================================================
+# JOB 1  lint — code quality  (every push / PR, no API key needed)
+# =============================================================================
+jobs:
+  lint:
+    name: "Lint & code quality"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linting + pipeline deps
+        run: |
+          pip install --quiet ruff pyflakes
+          pip install --quiet -r requirements.txt
+
+      - name: Apply patches (FIX-C2 must precede lint)
+        run: |
+          python3 scripts/patches/generate_patches.py
+          python3 scripts/patches/apply_patches.py
+
+      - name: ruff — style & import checks
+        run: |
+          ruff check hypatiax/ protocols/ scripts/ core/ \
+            --select E,F,W,I --ignore E501 \
+            --output-format github || true
+
+      - name: Code-quality checks (stale engine / key scan / syntax)
+        run: bash .github/scripts/lint_checks.sh
+
+      - name: NB-06 code-quality pre-audit (non-blocking)
+        run: |
+          NB="notebooks/NB-06_Code_Quality_Pipeline_Integrity.ipynb"
+          if [ -f "${NB}" ]; then
+            pip install --quiet notebook nbconvert
+            jupyter nbconvert --to notebook --execute --inplace \
+              --ExecutePreprocessor.timeout=120 "${NB}" \
+              && echo "✓ NB-06 clean" \
+              || echo "⚠ NB-06 warnings (non-blocking)"
+          else
+            echo "  NB-06 not found — skipped"
+          fi
+        continue-on-error: true
+
+
+# =============================================================================
+# JOB 2  full-pipeline — all experiments, paper-quality PySR
+#         Runs: push to main  OR  manual dispatch with skip_slow=false
+# =============================================================================
+  full-pipeline:
+    name: "Full pipeline — paper-quality (all steps)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440   # 24 h ceiling; paper run needs ~15-25 h
+    needs: lint
+    if: |
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.event.inputs.skip_slow == 'false')
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+
+      - name: Bootstrap environment
+        run: bash .github/scripts/setup_env.sh --jupyter
+
+      # ── Checkpoint / result caches ─────────────────────────────────────
+      - uses: actions/cache@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-full-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: checkpoint-full-${{ github.ref }}-
+
+      - uses: actions/cache@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-full-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: results-full-${{ github.ref }}-
+
+      # ── Build CLI flags from dispatch inputs ───────────────────────────
+      - name: Resolve pipeline flags
+        env:
+          INPUT_ONLY_STEP: ${{ github.event.inputs.only_step }}
+          INPUT_SEED: ${{ github.event.inputs.seed }}
+          INPUT_PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout }}
+          INPUT_SKIP_PAPER: ${{ github.event.inputs.skip_paper }}
+          INPUT_CONTINUE_ON_FAIL: ${{ github.event.inputs.continue_on_fail }}
+        run: bash .github/scripts/build_pipeline_flags.sh
+
+      # ── Paper-config validation (must pass before any experiment runs) ───
+      - name: Validate paper-quality configuration (repro.yaml v3.0)
+        run: python3 validation_paper_config.py
+        env:
+          PYSR_TIMEOUT:        ${{ env.PYSR_TIMEOUT }}
+          METHOD_TIMEOUT:      ${{ env.METHOD_TIMEOUT }}
+          EQUATION_WALL_CLOCK: ${{ env.EQUATION_WALL_CLOCK }}
+          POPULATIONS:         ${{ env.PYSR_POPULATIONS }}
+          N_ITERATIONS:        ${{ env.PYSR_NITERATIONS }}
+          PYSR_POPULATION_SIZE: "33"
+          PYSR_PARSIMONY:      "0.01"
+          PYSR_MAXSIZE:        "30"
+          PYSR_PARALLELISM:    "multithreading"
+          NN_SEED:             ${{ env.NN_SEED }}
+          PYSR_SEED:           ${{ env.PYSR_SEED }}
+          LLM_MODEL:           ${{ env.LLM_MODEL }}
+          ENGINE_NAME:         ${{ env.ENGINE_NAME }}
+          PCA_TRAIN_FRAC:      ${{ env.PCA_TRAIN_FRAC }}
+          NN_TIME_LIMIT:       ${{ env.NN_TIME_LIMIT }}
+
+      # ── Main pipeline run ──────────────────────────────────────────────
+      - name: Run full pipeline (all experiments, paper-quality)
+        run: python3 run_all_checkpoint.py --continue-on-fail ${{ env.PIPELINE_FLAGS }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FAST: "0"
+          N_ITERATIONS: "1000"
+          POPULATIONS: "30"
+          N_FEYNMAN_TASKS: "30"
+          N_NGUYEN_TASKS: "12"
+          EQUATION_WALL_CLOCK: ${{ env.EQUATION_WALL_CLOCK }}
+          DEFI_V3C_NO_TIMEOUT_FLAGS: "1"
+          DEFI_TASK_FILTER: "portfolio"
+          DEFI_SEEDS: "42,99,123,777,2024"
+          SKIP_PKG_CHECK: "1"
+          SKIP_PERF_ANALYSIS: "1"
+          HYPATIAX_CORE_OPTIONAL: "1"
+
+      # ── Post-run: outputs + verification ──────────────────────────────
+      - name: Generate figures & tables
+        if: success()
+        run: bash .github/scripts/generate_outputs.sh
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Verify results + hash-lock
+        if: success()
+        run: bash .github/scripts/verify_results.sh
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      # ── Checkpoint / cache save ────────────────────────────────────────
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-full-${{ github.ref }}-${{ github.run_id }}
+
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: hypatiax/data/results/
+          key: results-full-${{ github.ref }}-${{ github.run_id }}
+
+      # ── Artefacts ─────────────────────────────────────────────────────
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: full-pipeline-results-${{ github.sha }}
+          path: |
+            logs/
+            hypatiax/data/results/
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v6
+        if: success()
+        with:
+          name: figures-tables-${{ github.sha }}
+          path: |
+            hypatiax/data/results/figures/
+            hypatiax/data/results/tables/
+          retention-days: 30
+
+
+# =============================================================================
+# JOB 3  slow-pipeline — identical to full but LLM_K_RUNS=30 (manual only)
+#         ~15-25 h wall time; keeps results for 90 days (paper archival)
+# =============================================================================
+  slow-pipeline:
+    name: "Full pipeline incl. slow steps — LLM_K_RUNS=30 (manual)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440
+    needs: lint
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.skip_slow == 'false'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+
+      - name: Bootstrap environment
+        run: bash .github/scripts/setup_env.sh --jupyter
+
+      - uses: actions/cache@v5
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-slow-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: checkpoint-slow-${{ github.ref }}-
+
+      - uses: actions/cache@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-slow-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: results-slow-${{ github.ref }}-
+
+      - name: Resolve pipeline flags
+        env:
+          INPUT_SEED: ${{ github.event.inputs.seed }}
+          INPUT_PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout }}
+          INPUT_SKIP_PAPER: ${{ github.event.inputs.skip_paper }}
+          INPUT_CONTINUE_ON_FAIL: ${{ github.event.inputs.continue_on_fail }}
+        run: bash .github/scripts/build_pipeline_flags.sh
+
+      # ── Paper-config validation (must pass before any experiment runs) ───
+      - name: Validate paper-quality configuration (repro.yaml v3.0)
+        run: python3 validation_paper_config.py
+        env:
+          PYSR_TIMEOUT:        ${{ env.PYSR_TIMEOUT }}
+          METHOD_TIMEOUT:      ${{ env.METHOD_TIMEOUT }}
+          EQUATION_WALL_CLOCK: ${{ env.EQUATION_WALL_CLOCK }}
+          POPULATIONS:         ${{ env.PYSR_POPULATIONS }}
+          N_ITERATIONS:        ${{ env.PYSR_NITERATIONS }}
+          PYSR_POPULATION_SIZE: "33"
+          PYSR_PARSIMONY:      "0.01"
+          PYSR_MAXSIZE:        "30"
+          PYSR_PARALLELISM:    "multithreading"
+          NN_SEED:             ${{ env.NN_SEED }}
+          PYSR_SEED:           ${{ env.PYSR_SEED }}
+          LLM_MODEL:           ${{ env.LLM_MODEL }}
+          ENGINE_NAME:         ${{ env.ENGINE_NAME }}
+          PCA_TRAIN_FRAC:      ${{ env.PCA_TRAIN_FRAC }}
+          NN_TIME_LIMIT:       ${{ env.NN_TIME_LIMIT }}
+
+      - name: Run full pipeline (K=30 instability sweep)
+        run: python3 run_all_checkpoint.py --continue-on-fail ${{ env.PIPELINE_FLAGS }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FAST: "0"
+          LLM_K_RUNS: "30"
+          N_ITERATIONS: "1000"
+          POPULATIONS: "30"
+          N_FEYNMAN_TASKS: "30"
+          N_NGUYEN_TASKS: "12"
+          EQUATION_WALL_CLOCK: ${{ env.EQUATION_WALL_CLOCK }}
+          DEFI_V3C_NO_TIMEOUT_FLAGS: "1"
+          DEFI_TASK_FILTER: "portfolio"
+          DEFI_SEEDS: "42,99,123,777,2024"
+          SKIP_PKG_CHECK: "1"
+          SKIP_PERF_ANALYSIS: "1"
+          HYPATIAX_CORE_OPTIONAL: "1"
+
+      - name: Verify results + hash-lock
+        run: bash .github/scripts/verify_results.sh
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: logs/pipeline_checkpoint.json
+          key: checkpoint-slow-${{ github.ref }}-${{ github.run_id }}
+
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: hypatiax/data/results/
+          key: results-slow-${{ github.ref }}-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: slow-pipeline-results-${{ github.sha }}
+          path: |
+            logs/
+            hypatiax/data/results/
+          retention-days: 90
+
+
+# =============================================================================
+# JOB 4  verify — verify-only against cached main results (PRs only)
+# =============================================================================
+  verify:
+    name: "Verify cached results"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: lint
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install --quiet -r requirements.txt
+
+      - uses: actions/cache@v5
+        with:
+          path: hypatiax/data/results/
+          key: results-full-refs/heads/main-
+          restore-keys: |
+            results-full-refs/heads/main-
+            results-full-
+
+      - name: Run verify-only
+        run: python3 run_all_checkpoint.py --verify-only
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PATCHED_DATA_DIR: "${{ github.workspace }}/hypatiax/data/results"
+          VERIFY_RESULTS_DIR: "${{ github.workspace }}/hypatiax/data/results"
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: verify-${{ github.sha }}
+          path: logs/
+          retention-days: 7

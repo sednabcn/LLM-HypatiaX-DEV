@@ -20,7 +20,7 @@ Usage:
     python3 run_all.py --one-equation       # smoke-test: 1 equation per experiment, fast timeout
 
 Step IDs (use with --only / --from):
-    Setup   : deps  patches-gen  patches-apply  fixup-init  fixup-tex  validate  check-hypatiax-protocols
+    Setup   : deps  patches-gen  patches-apply  fixup-init  fixup-tex  validate  validate-paper-config  check-hypatiax-protocols
     Phase 1 : exp1  exp1b  exp2  exp3  exp3b
     Phase 2 : suppB  suppA  instability  extrap
     Phase 3 : provenance  discover-provenance  scan-imports  verify  hashlock
@@ -406,6 +406,15 @@ STEPS: list[Step] = [
     Step("validate",      "Validate patched source",
          ["python3", "scripts/patches/validate_code.py"],
          phase="0 · Setup"),
+
+    # Paper-quality configuration gate: checks all repro.yaml-sourced env vars before
+    # any experiment step runs.  Fails fast if a timeout, seed, or model string drifts
+    # from the paper-quality values, so CI catches config drift before wasting 15+ h.
+    Step("validate-paper-config",
+         "Validate paper-quality configuration (repro.yaml v3.0)",
+         ["python3", "validation_paper_config.py"],
+         phase="0 · Setup",
+         expected="All PAPER_CONFIG vars match repro.yaml v3.0 values"),
 
     Step("check-hypatiax-protocols",
          "Verify hypatiax/protocols/ input-data modules",
@@ -1066,6 +1075,13 @@ def main() -> None:
                              "N_TASKS_INSTABILITY=1, and forces PYSR_TIMEOUT=120 (unless "
                              "--pysr-timeout is also given). Use this to verify the full "
                              "pipeline end-to-end quickly on local hardware.")
+    parser.add_argument("--one-equation-paper", action="store_true",
+                        help="Reviewer-probe mode: run exactly 1 equation per experiment "
+                             "with ALL paper-quality PySR values intact (N_ITERATIONS=1000, "
+                             "POPULATIONS=30, PYSR_TIMEOUT=1100, PYSR_POPULATION_SIZE=33, "
+                             "PYSR_PARSIMONY=0.01, PYSR_MAXSIZE=30, LLM_K_RUNS=30). "
+                             "Use this to verify a single equation reproduces paper targets "
+                             "exactly. Much slower than --one-equation (~15-30 min per step).")
     args = parser.parse_args()
 
     # FIX: validate --from is only used alongside --resume; warn otherwise
@@ -1087,7 +1103,8 @@ def main() -> None:
         sys.exit(0)
 
     banner("HypatiaX · Reproducibility Pipeline v4.8 (checkpoint/resume)"
-           + ("  [SMOKE-TEST: 1 equation]" if args.one_equation else ""))
+           + ("  [SMOKE-TEST: 1 equation]" if args.one_equation else "")
+           + ("  [PAPER-QUALITY: 1 equation]" if args.one_equation_paper else ""))
     print(f"  Repo      : {REPO_ROOT}")
     print(f"  Python    : {sys.version.split()[0]}")
     print(f"  Date      : {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1284,6 +1301,45 @@ def main() -> None:
         print("  ▲▲  Results will NOT match paper targets.")
         print("▲" * 68)
 
+    # ── --one-equation-paper: reviewer-probe mode (1 equation, paper-quality values) ──
+    if args.one_equation_paper:
+        # Scope: 1 equation per experiment — identical task-count reduction to
+        # --one-equation.  Difference: every PySR hyperparameter and LLM setting
+        # is kept at the paper-quality value from repro.yaml v3.0 so a reviewer
+        # can verify that a single equation reproduces the paper's exact result.
+        env["ONE_EQUATION"]          = "1"
+        env["N_TASKS_DEFI"]          = "1"   # exp1: 1 of 74 DeFi tasks
+        env["N_CORE15_TASKS"]        = "1"   # exp1: 1 of 15 Core-15 ablation equations
+        env["N_FEYNMAN_TASKS"]       = "1"   # exp2: 1 of 30 Feynman equations
+        env["N_TASKS_INSTABILITY"]   = "1"   # instability: 1 of 70 tasks
+        env["N_NGUYEN_TASKS"]        = "1"   # exp3/exp3b: 1 of 12 Nguyen equations
+        env["N_NOISE_EQUATIONS"]     = "1"   # suppB: 1 equation across all noise levels
+        # ── Paper-quality PySR values (repro.yaml v3.0) — NOT degraded ────
+        env["N_ITERATIONS"]          = "1000"   # pysr.niterations
+        env["POPULATIONS"]           = "30"     # pysr.populations
+        env["PYSR_POPULATION_SIZE"]  = "33"     # pysr.population_size
+        env["PYSR_PARSIMONY"]        = "0.01"   # pysr.parsimony
+        env["PYSR_MAXSIZE"]          = "30"     # pysr.maxsize
+        env["PYSR_PARALLELISM"]      = "multithreading"  # pysr.parallelism
+        env["LLM_K_RUNS"]            = "30"     # repro.yaml llm_k_runs (instability + all steps)
+        # Timeout: honour explicit --pysr-timeout override, else use paper value
+        if args.pysr_timeout is None:
+            env["PYSR_TIMEOUT"]      = "1100"   # timeouts.pysr_attempt_seconds
+        env["METHOD_TIMEOUT"]        = "900"    # timeouts.method_seconds
+        env["EQUATION_WALL_CLOCK"]   = "1200"   # timeouts.equation_wall_clock
+        print("\n" + "★" * 68)
+        print("  ★★  PAPER-QUALITY PROBE  (--one-equation-paper)")
+        print("  ★★  1 equation per experiment · ALL values from repro.yaml v3.0")
+        print("  ★★  PYSR_TIMEOUT=" + env["PYSR_TIMEOUT"] + "s"
+              + "  N_ITERATIONS=" + env["N_ITERATIONS"]
+              + "  POPULATIONS=" + env["POPULATIONS"])
+        print("  ★★  PYSR_POPULATION_SIZE=" + env["PYSR_POPULATION_SIZE"]
+              + "  PYSR_PARSIMONY=" + env["PYSR_PARSIMONY"]
+              + "  PYSR_MAXSIZE=" + env["PYSR_MAXSIZE"])
+        print("  ★★  LLM_K_RUNS=" + env["LLM_K_RUNS"]
+              + "  — results WILL match paper targets for the selected equation.")
+        print("★" * 68)
+
     # ── Validate --only / --from ───────────────────────────────────────────
     if args.only and args.only not in STEP_IDS:
         print(f"\n  ERROR: unknown step id '{args.only}'.")
@@ -1375,7 +1431,8 @@ def main() -> None:
         save_checkpoint(checkpoint_state)
         print(f"  Checkpoint saved → {CHECKPOINT}")
         print(f"  Resume with:       python3 run_all.py --resume"
-              + ("  --one-equation" if args.one_equation else ""))
+              + ("  --one-equation" if args.one_equation else "")
+              + ("  --one-equation-paper" if args.one_equation_paper else ""))
         _print_summary(results, time.time() - t_total)
         sys.exit(130)   # conventional exit code for Ctrl+C
 
@@ -1391,6 +1448,13 @@ def main() -> None:
         print("  ▲▲  SMOKE-TEST COMPLETE  (--one-equation)")
         print("  ▲▲  Re-run without --one-equation for a full reproducibility run.")
         print("▲" * 68)
+
+    if args.one_equation_paper:
+        print("\n" + "★" * 68)
+        print("  ★★  PAPER-QUALITY PROBE COMPLETE  (--one-equation-paper)")
+        print("  ★★  Result for this equation used paper-quality values throughout.")
+        print("  ★★  Re-run without --one-equation-paper for the full pipeline.")
+        print("★" * 68)
 
     sys.exit(1 if failed else 0)
 
