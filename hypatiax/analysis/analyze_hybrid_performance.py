@@ -119,17 +119,17 @@ class HybridPerformanceAnalyzer:
             stats = {'error': 'No valid R² scores found'}
 
         # Print summary
-        print(f"\n📈 Summary Statistics:")
+        print("\n📈 Summary Statistics:")
         print(f"   Total cases: {stats['total_cases']}")
         print(f"   Valid R² scores: {stats['valid_r2_count']}")
         print(f"   Success rate: {stats['success_rate'] * 100:.1f}% (R² > 0.9)")
-        print(f"\n📊 R² Distribution:")
+        print("\n📊 R² Distribution:")
         print(f"   Mean: {stats['mean_r2']:.6f}")
         print(f"   Median: {stats['median_r2']:.6f}")
         print(f"   Std Dev: {stats['std_r2']:.6f}")
         print(f"   Range: [{stats['min_r2']:.6f}, {stats['max_r2']:.6f}]")
         print(f"   Q25-Q75: [{stats['q25_r2']:.6f}, {stats['q75_r2']:.6f}]")
-        print(f"\n🎯 Performance Tiers:")
+        print("\n🎯 Performance Tiers:")
         valid = stats['valid_r2_count']
         print(f"   Excellent (R² > 0.99): {stats['excellent_count']} ({stats['excellent_count']/valid*100:.1f}%)")
         print(f"   Good (0.95-0.99): {stats['good_count']} ({stats['good_count']/valid*100:.1f}%)")
@@ -180,7 +180,7 @@ class HybridPerformanceAnalyzer:
                 }
 
         # Print domain performance
-        print(f"\n📊 Performance by Domain:")
+        print("\n📊 Performance by Domain:")
         print(f"{'Domain':<25} {'Cases':<8} {'Mean R²':<12} {'Success Rate':<15} {'Range'}")
         print("-" * 80)
 
@@ -236,13 +236,13 @@ class HybridPerformanceAnalyzer:
         # Print strategy performance
         total = sum(s['count'] for s in strategy_stats.values())
 
-        print(f"\n📊 Strategy Distribution:")
+        print("\n📊 Strategy Distribution:")
         print(f"   Total decisions: {total}")
         for strategy, stats in strategy_stats.items():
             pct = stats['count'] / total * 100 if total > 0 else 0
             print(f"   {strategy.upper():<10}: {stats['count']:>4} ({pct:>5.1f}%)")
 
-        print(f"\n📈 Strategy Performance:")
+        print("\n📈 Strategy Performance:")
         print(f"{'Strategy':<12} {'Count':<8} {'Mean R²':<12} {'Success Rate':<15} {'Range'}")
         print("-" * 80)
 
@@ -254,7 +254,7 @@ class HybridPerformanceAnalyzer:
                       f"[{stats['min_r2']:.3f}, {stats['max_r2']:.3f}]")
 
         # Comparative analysis
-        print(f"\n🔍 Comparative Insights:")
+        print("\n🔍 Comparative Insights:")
 
         if 'llm' in strategy_stats and 'ensemble' in strategy_stats:
             llm_mean = strategy_stats['llm']['mean_r2']
@@ -325,7 +325,7 @@ class HybridPerformanceAnalyzer:
                     component_stats['nn']['failures'].append(result)
 
         # Print component statistics
-        print(f"\n📊 Component Statistics:")
+        print("\n📊 Component Statistics:")
         print(f"{'Component':<12} {'Attempts':<10} {'Successes':<12} {'Failures':<10} {'Mean R²'}")
         print("-" * 80)
 
@@ -378,7 +378,7 @@ class HybridPerformanceAnalyzer:
             # Sort by R² (worst first)
             failures.sort(key=lambda x: x['r2'])
 
-            print(f"\n🔍 Top 10 Worst Cases:")
+            print("\n🔍 Top 10 Worst Cases:")
             print(f"{'Description':<45} {'Domain':<15} {'Decision':<10} {'R²'}")
             print("-" * 90)
 
@@ -387,7 +387,7 @@ class HybridPerformanceAnalyzer:
                 print(f"{desc:<45} {failure['domain']:<15} {failure['decision']:<10} {failure['r2']:.6f}")
 
             # Analyze failure patterns
-            print(f"\n📊 Failure Patterns:")
+            print("\n📊 Failure Patterns:")
 
             # By domain
             failure_domains = {}
@@ -395,7 +395,7 @@ class HybridPerformanceAnalyzer:
                 domain = f['domain']
                 failure_domains[domain] = failure_domains.get(domain, 0) + 1
 
-            print(f"\n   By Domain:")
+            print("\n   By Domain:")
             for domain, count in sorted(failure_domains.items(), key=lambda x: x[1], reverse=True):
                 print(f"      {domain}: {count}")
 
@@ -405,7 +405,7 @@ class HybridPerformanceAnalyzer:
                 decision = f['decision']
                 failure_decisions[decision] = failure_decisions.get(decision, 0) + 1
 
-            print(f"\n   By Decision:")
+            print("\n   By Decision:")
             for decision, count in sorted(failure_decisions.items(), key=lambda x: x[1], reverse=True):
                 print(f"      {decision.upper()}: {count}")
 
@@ -450,7 +450,7 @@ class HybridPerformanceAnalyzer:
                 'max_r2': np.max(r2_scores),
             }
 
-            print(f"\n📈 Extrapolation Statistics:")
+            print("\n📈 Extrapolation Statistics:")
             print(f"   Total cases: {stats['total_cases']}")
             print(f"   Success rate: {stats['success_rate'] * 100:.1f}%")
             print(f"   Mean R²: {stats['mean_r2']:.6f}")
@@ -586,7 +586,7 @@ class HybridPerformanceAnalyzer:
         print("\n" + "=" * 80)
         print("✅ ANALYSIS COMPLETE")
         print("=" * 80)
-        print(f"\n📊 Summary:")
+        print("\n📊 Summary:")
         print(f"   Total cases analyzed: {overall_stats.get('total_cases', 0)}")
         print(f"   Mean R²: {overall_stats.get('mean_r2', 0):.6f}")
         print(f"   Success rate: {overall_stats.get('success_rate', 0) * 100:.1f}%")
