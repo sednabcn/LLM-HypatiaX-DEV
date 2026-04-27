@@ -18,18 +18,18 @@ Date: 2026-01-03
 Version: 1.0
 """
 
-import json
 import hashlib
-import random
+import json
 import os
+import random
 import time
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
 from collections import defaultdict
-import numpy as np
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 
 # ============================================================================
 # SEED MANAGEMENT
@@ -660,7 +660,7 @@ class AdaptiveRetryStrategy:
                 # Early stopping if excellent
                 if result.passed and quality >= quality_threshold:
                     if verbose:
-                        print(f"   🎯 Excellent result achieved, stopping early")
+                        print("   🎯 Excellent result achieved, stopping early")
                     self.retry_stats[test_name]["successes"] += 1
                     break
 
@@ -813,7 +813,7 @@ class StabilityReporter:
                     f"  Val Change: {reg.baseline_val:.1f} → {reg.current_val:.1f} (Δ={reg.val_delta:+.1f})"
                 )
                 if reg.expression_changed:
-                    lines.append(f"  ⚠️ Expression changed")
+                    lines.append("  ⚠️ Expression changed")
             lines.append("")
         else:
             lines.append("✅ No regressions detected")
@@ -983,7 +983,7 @@ class RobustTestRunner:
         )
         self.data_validator = DataValidator()
 
-        print(f"🚀 Initialized RobustTestRunner")
+        print("🚀 Initialized RobustTestRunner")
         print(f"   Base Seed: {base_seed}")
         print(f"   Max Retries: {max_retries}")
         print(f"   History: {history_file}")
@@ -1015,7 +1015,7 @@ class RobustTestRunner:
             (results, metadata)
         """
         print(f"\n{'=' * 80}")
-        print(f"🧪 ROBUST TEST SUITE")
+        print("🧪 ROBUST TEST SUITE")
         print(f"{'=' * 80}")
         print(f"Tests: {len(test_functions)}")
         print(f"Compare Baseline: {compare_baseline}")
@@ -1117,7 +1117,7 @@ class RobustTestRunner:
         # Save history
         if save_history:
             self.tracker.save_history()
-            print(f"💾 Test history saved")
+            print("💾 Test history saved")
 
         # Save baseline
         if save_baseline:
@@ -1164,7 +1164,7 @@ class RobustTestRunner:
             print(f"   Only {metrics.get('total_runs', 0)} runs recorded")
             return metrics
 
-        print(f"📊 Stability Metrics:")
+        print("📊 Stability Metrics:")
         print(f"   Total Runs: {metrics['total_runs']}")
         print(f"   Pass Rate: {metrics['pass_rate']:.1%}")
         print(f"   R² Stats: μ={metrics['r2_mean']:.4f}, σ={metrics['r2_std']:.4f}")
@@ -1305,13 +1305,13 @@ def main():
 Examples:
   # Analyze stability from history
   python pp.py analyze --history test_history.json --test kinetic_energy
-  
+
   # Compare with baseline
   python pp.py compare --baseline baseline.json --current results.json
-  
+
   # Generate reports
   python pp.py report --history test_history.json --output reports/
-  
+
   # Validate test data
   python pp.py validate --data test_data.npz
         """,
@@ -1354,7 +1354,7 @@ Examples:
 
     elif args.command == "compare":
         # Load and compare results
-        comparator = BaselineComparator(args.baseline)
+        _comparator = BaselineComparator(args.baseline)
         with open(args.current, "r") as f:
             current_data = json.load(f)
 
@@ -1365,9 +1365,6 @@ Examples:
 
     elif args.command == "report":
         tracker = StabilityTracker(args.history)
-        comparator = (
-            BaselineComparator(args.baseline) if args.baseline else BaselineComparator()
-        )
 
         # Generate reports (would need actual results)
         print(f"\n📄 Generating reports in {args.output}/")
