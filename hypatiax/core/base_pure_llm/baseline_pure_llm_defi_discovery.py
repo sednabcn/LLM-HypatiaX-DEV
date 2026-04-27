@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 import numpy as np
 from anthropic import Anthropic
 from dotenv import load_dotenv
+
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
 # Reproducibility seeds (added for JMLR submission)

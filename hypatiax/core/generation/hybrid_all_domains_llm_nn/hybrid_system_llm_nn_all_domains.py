@@ -4,19 +4,20 @@ Combines LLM symbolic reasoning with Neural Network learning
 Now includes comprehensive results table and error fixes
 """
 
+import inspect
 import json
 import os
+import re
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple, Optional
-from datetime import datetime
-from pathlib import Path
-from dotenv import load_dotenv
 from anthropic import Anthropic
-import re
-import inspect
+from dotenv import load_dotenv
 
 # Load environment - try multiple locations
 env_paths = [
@@ -293,7 +294,7 @@ NO markdown code blocks, individual parameters NOT dict."""
 
         y_train_w = np.log(y_train) if use_logy else y_train
         y_val_w   = np.log(y_val)   if use_logy else y_val
-        y_all_w   = np.log(y)       if use_logy else y
+        # y_all_w is not used downstream; scalers are applied via _get_nn_predictions
 
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()
@@ -488,7 +489,7 @@ NO markdown code blocks, individual parameters NOT dict."""
             try:
                 y = func(*[X[:, i] for i in range(n_features)])
                 return np.asarray(y).flatten()
-            except:
+            except Exception:
                 pass
 
         # Strategy 2: Keyword matching by variable name
@@ -519,7 +520,7 @@ NO markdown code blocks, individual parameters NOT dict."""
                 kwargs = {p: X[:, col_map[p]] for p in param_names}
                 y = func(**kwargs)
                 return np.asarray(y).flatten()
-            except:
+            except Exception:
                 pass
 
         # Strategy 3: Row-by-row positional (exact match only — no silent truncation)
@@ -529,7 +530,7 @@ NO markdown code blocks, individual parameters NOT dict."""
                 for i in range(X.shape[0]):
                     y[i] = func(*X[i, :])
                 return y
-            except:
+            except Exception:
                 pass
 
         raise RuntimeError(
@@ -540,7 +541,8 @@ NO markdown code blocks, individual parameters NOT dict."""
     def _get_llm_predictions(self, formula_dict: Dict, X: np.ndarray, var_names: List[str]) -> Optional[np.ndarray]:
         """Re-run the LLM formula to obtain raw predictions for blending."""
         try:
-            import math as _math, warnings as _warnings
+            import math as _math
+            import warnings as _warnings
             code = formula_dict.get("python_code", "")
             if not code or code == "N/A":
                 return None
@@ -606,7 +608,7 @@ NO markdown code blocks, individual parameters NOT dict."""
         """Hybrid prediction with enhanced decision logic"""
 
         if verbose:
-            print(f"\n  [HYBRID] Generating LLM formula...")
+            print("\n  [HYBRID] Generating LLM formula...")
 
         # Step 1: Get LLM formula — pass X/y so PureLLMBaseline can run OLS
         # enrichment (Arrhenius, Michaelis-Menten, logistic growth, allometric)
@@ -666,7 +668,7 @@ NO markdown code blocks, individual parameters NOT dict."""
             }
 
         if verbose:
-            print(f"  [HYBRID] Training NN...")
+            print("  [HYBRID] Training NN...")
 
         nn_model, nn_metrics = self.train_nn(X, y_true, epochs=1000)
 
@@ -826,7 +828,7 @@ def run_hybrid_test_all_domains(
     print("=" * 80)
     print("🔬 HYBRID SYSTEM - ALL DOMAINS 🔬".center(80))
     print("=" * 80)
-    print(f"Strategy: LLM (if succeeded & strong) → Blended Ensemble (both strong, NN beats LLM) → NN (LLM failed)")
+    print("Strategy: LLM (if succeeded & strong) → Blended Ensemble (both strong, NN beats LLM) → NN (LLM failed)")
     print(f"Domains: {', '.join(domains)}")
     print("=" * 80)
 
@@ -879,7 +881,7 @@ def run_hybrid_test_all_domains(
     print(f"Max R²: {np.max(r2_scores):.6f}")
 
     # Decision breakdown
-    print(f"\n🎯 Decision Breakdown:")
+    print("\n🎯 Decision Breakdown:")
     decisions = {"llm": [], "ensemble": [], "nn": []}
     for r in all_results:
         decisions[r["decision"]].append(r["evaluation"]["r2"])
@@ -894,7 +896,7 @@ def run_hybrid_test_all_domains(
             )
 
     # Validation score breakdown
-    print(f"\n📈 Validation Score Breakdown:")
+    print("\n📈 Validation Score Breakdown:")
     val_scores = {}
     for r in all_results:
         score = r["validation_score"]
