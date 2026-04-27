@@ -87,22 +87,22 @@ TIPS FOR HIGH VALIDATION SCORES:
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import random
 import numpy as np
+import pandas as pd
 
 # Reproducibility seeds (added for JMLR submission)
 random.seed(42)
 np.random.seed(42)
 
-# Add project root to path
+# Add project root to path — must precede hypatiax imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem
-from hypatiax.tools.validation.ensemble_validator import EnsembleValidator
+from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem  # noqa: E402
 
 
 # ============================================================================
@@ -229,7 +229,6 @@ def add_epsilon_guard(expression: str, epsilon: float = 1e-10) -> str:
         Input:  "x / (1 + y)"
         Output: "x / (1 + y + 1e-10)"
     """
-    import re
 
     # This is a simple implementation - production would use AST parsing
     # Add epsilon to expressions like (... + x) that appear in denominators
@@ -401,7 +400,7 @@ def print_validation_details(result: Dict, verbose: bool = True):
 
     # Recommendations
     if val.get("recommendations"):
-        print(f"\n💡 Recommendations:")
+        print("\n💡 Recommendations:")
         for i, rec in enumerate(val["recommendations"][:5], 1):
             print(f"   {i}. {rec}")
 
@@ -429,30 +428,30 @@ def print_interpretation(result: Dict, verbose: bool = True):
 
     # Main interpretation
     if interp.get("interpretation"):
-        print(f"\n📖 Interpretation:")
+        print("\n📖 Interpretation:")
         print(f"   {interp['interpretation']}")
 
     # Relationships
     if interp.get("relationships") and verbose:
-        print(f"\n🔗 Mathematical Relationships:")
+        print("\n🔗 Mathematical Relationships:")
         for i, rel in enumerate(interp["relationships"][:3], 1):
             print(f"   {i}. {rel}")
 
     # Domain insights
     if interp.get("domain_insights") and verbose:
-        print(f"\n💎 DeFi Domain Insights:")
+        print("\n💎 DeFi Domain Insights:")
         for i, insight in enumerate(interp["domain_insights"][:3], 1):
             print(f"   {i}. {insight}")
 
     # Use cases
     if interp.get("use_cases"):
-        print(f"\n🎯 Practical Use Cases:")
+        print("\n🎯 Practical Use Cases:")
         for i, use_case in enumerate(interp["use_cases"][:3], 1):
             print(f"   {i}. {use_case}")
 
     # Limitations
     if interp.get("limitations") and verbose:
-        print(f"\n⚠️  Limitations:")
+        print("\n⚠️  Limitations:")
         for i, limitation in enumerate(interp["limitations"][:3], 1):
             print(f"   {i}. {limitation}")
 
@@ -468,10 +467,10 @@ def print_discovery_summary(result: Dict):
 
     print_subheader("SYMBOLIC DISCOVERY")
 
-    print(f"\n🔍 Discovered Expression:")
+    print("\n🔍 Discovered Expression:")
     print(f"   {disc['expression']}")
 
-    print(f"\n📊 Model Performance:")
+    print("\n📊 Model Performance:")
     print(f"   • R² Score:    {disc['r2_score']:.6f}")
     print(f"   • Complexity:  {disc['complexity']}")
 
@@ -515,7 +514,7 @@ def run_single_test(
     # Add small noise
     y = y + np.random.normal(0, np.abs(y) * 0.01, size=y.shape)
 
-    print(f"✅ Data generated:")
+    print("✅ Data generated:")
     print(f"   • Features: {X.shape}")
     print(f"   • Targets: {y.shape}")
     print(f"   • Target range: [{y.min():.4f}, {y.max():.4f}]")
@@ -586,7 +585,7 @@ def run_single_test(
     # If validation failed, show remediation steps
     if not validation_success:
         print(f"\n{'⚠️  VALIDATION FAILURE - REMEDIATION REQUIRED':^80}")
-        print(f"\nThe formula did not pass validation due to:")
+        print("\nThe formula did not pass validation due to:")
 
         # Show critical issues
         critical_errors = [e for e in result["validation"]["errors"] if "CRITICAL" in e]
@@ -597,12 +596,12 @@ def run_single_test(
 
         # Show recommended fixes
         if result["validation"].get("recommendations"):
-            print(f"\n💡 Recommended Actions:")
+            print("\n💡 Recommended Actions:")
             for i, rec in enumerate(result["validation"]["recommendations"][:3], 1):
                 print(f"   {i}. {rec}")
 
         print(f"\n{'=' * 80}")
-        print(f"⚠️  Formula requires modifications before production use!")
+        print("⚠️  Formula requires modifications before production use!")
         print(f"{'=' * 80}")
 
     print(f"\n{'=' * 40}")
@@ -659,13 +658,13 @@ def run_batch_tests(
     )
     total = len(results)
 
-    print(f"\n📊 Overall Statistics:")
+    print("\n📊 Overall Statistics:")
     print(f"   • Total Tests:     {total}")
     print(f"   • Successful:      {successful}")
     print(f"   • Failed:          {total - successful}")
     print(f"   • Success Rate:    {successful / total * 100:.1f}%")
 
-    print(f"\n📋 Individual Results:")
+    print("\n📋 Individual Results:")
     for test_name, result in results.items():
         if "error" in result:
             print(f"   ❌ {test_name}: ERROR - {result['error'][:50]}")

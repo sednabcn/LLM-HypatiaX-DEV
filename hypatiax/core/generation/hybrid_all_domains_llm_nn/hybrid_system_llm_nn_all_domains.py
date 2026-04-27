@@ -4,20 +4,19 @@ Combines LLM symbolic reasoning with Neural Network learning
 Now includes comprehensive results table and error fixes
 """
 
-import inspect
 import json
 import os
-import re
 import sys
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
 import numpy as np
 import torch
 import torch.nn as nn
-from anthropic import Anthropic
+from typing import Dict, List, Tuple, Optional
+from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
+from anthropic import Anthropic
+import re
+import inspect
 
 # Load environment - try multiple locations
 env_paths = [
@@ -294,7 +293,7 @@ NO markdown code blocks, individual parameters NOT dict."""
 
         y_train_w = np.log(y_train) if use_logy else y_train
         y_val_w   = np.log(y_val)   if use_logy else y_val
-        # y_all_w is not used downstream; scalers are applied via _get_nn_predictions
+        # y_all_w not used downstream; log-transform applied via scaler in _get_nn_predictions
 
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()

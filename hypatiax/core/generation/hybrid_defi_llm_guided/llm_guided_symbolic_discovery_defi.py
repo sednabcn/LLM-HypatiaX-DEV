@@ -1074,6 +1074,7 @@ Examples:
         return 0
 
     # Run tests
+
     try:
         if args.test:
             # Single test
