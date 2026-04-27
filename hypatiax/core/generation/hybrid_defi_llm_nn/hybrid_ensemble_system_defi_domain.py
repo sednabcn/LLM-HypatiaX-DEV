@@ -19,12 +19,14 @@ Could help when both methods are valid but imperfect
 """
 
 import numpy as np
-from sklearn.metrics import r2_score
-from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
 # Import your LLM baseline and NN baseline implementations
 from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
-from hypatiax.core.training.baseline_neural_network_defi_improved import NeuralNetworkBaseline
+from hypatiax.core.training.baseline_neural_network_defi_improved import (
+    NeuralNetworkBaseline,
+)
+from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
+from sklearn.metrics import r2_score
 
 
 def execute_python_code_get_predictions(python_code: str, X: np.ndarray):
@@ -176,7 +178,7 @@ def main():
             metadata=meta,
             verbose=False,
         )
-    except Exception as e:
+    except Exception:
         # No API key or call failed -> use canonical specialized code (Kelly)
         llm_result = {"python_code": "N/A", "formula": "N/A"}
         print("LLM call failed or unavailable; will use canonical fallback.")

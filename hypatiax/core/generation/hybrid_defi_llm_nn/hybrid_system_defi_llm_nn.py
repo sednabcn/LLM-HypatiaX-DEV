@@ -18,25 +18,25 @@ Version: 5.0 Consolidated
 Date: 2026-01-15
 """
 
+import inspect
 import json
 import os
+import re
 import sys
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple, Optional
-from datetime import datetime
-from pathlib import Path
-from collections import defaultdict
-from tabulate import tabulate
-from dotenv import load_dotenv
 from anthropic import Anthropic
-import re
-import inspect
+from dotenv import load_dotenv
+from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression
-from scipy.optimize import minimize
+from tabulate import tabulate
 
 # Load environment
 env_paths = [
@@ -171,7 +171,7 @@ class ConsolidatedHybridSystem:
         cache_key = f"{description}|{domain}|{','.join(variable_names)}"
         if cache_key in self.formula_cache:
             if verbose:
-                print(f"  [LLM] Using cached formula")
+                print("  [LLM] Using cached formula")
             return self.formula_cache[cache_key].copy()
 
         # Try specialized prompt first
@@ -700,8 +700,6 @@ EXPLANATION:
         nn_model, nn_metrics, scaler_X, scaler_y = self.train_nn(
             X, y_true, is_extrapolation=is_extrapolation, epochs=500, verbose=verbose
         )
-        nn_predictions = self.get_nn_predictions(nn_model, X, scaler_X, scaler_y)
-
         # Extract scores
         llm_r2 = llm_metrics.get("r2", -999) if llm_metrics.get("success") else -999
         nn_r2 = nn_metrics.get("r2", -999)
@@ -715,7 +713,7 @@ EXPLANATION:
         # EXTRAPOLATION-AWARE DECISION LOGIC
         if is_extrapolation:
             if verbose:
-                print(f"  [HYBRID] 🔴 EXTRAPOLATION MODE")
+                print("  [HYBRID] 🔴 EXTRAPOLATION MODE")
 
             if llm_valid and llm_r2 > 0.90:
                 decision = "llm"
@@ -731,12 +729,12 @@ EXPLANATION:
                 decision = "llm"
                 final_r2 = llm_r2
                 final_rmse = llm_metrics["rmse"]
-                reason = f"🔶 EXTRAP: LLM safer than NN"
+                reason = "🔶 EXTRAP: LLM safer than NN"
             elif nn_valid:
                 decision = "nn"
                 final_r2 = nn_r2
                 final_rmse = nn_metrics["rmse"]
-                reason = f"⚠️ EXTRAP: NN only (LLM failed)"
+                reason = "⚠️ EXTRAP: NN only (LLM failed)"
             else:
                 decision = "failed"
                 final_r2 = max(llm_r2, nn_r2)
@@ -1004,13 +1002,13 @@ def run_full_test(
             print(f"  R²: {metrics['r2']:.6f}, RMSE: {metrics['rmse']:.6f}")
 
             if metrics["r2"] > 0.99:
-                print(f"  ⭐ EXCELLENT")
+                print("  ⭐ EXCELLENT")
             elif metrics["r2"] > 0.95:
-                print(f"  ✅ GOOD")
+                print("  ✅ GOOD")
             elif metrics["r2"] > 0.80:
-                print(f"  🟡 ACCEPTABLE")
+                print("  🟡 ACCEPTABLE")
             else:
-                print(f"  🟠 NEEDS WORK")
+                print("  🟠 NEEDS WORK")
 
             all_results.append(result)
             hybrid.results.append(result)
@@ -1050,7 +1048,7 @@ def run_full_test(
     acceptable = sum(1 for r2 in r2_scores if 0.80 < r2 <= 0.95)
     weak = sum(1 for r2 in r2_scores if r2 <= 0.80)
 
-    print(f"\n📊 Performance:")
+    print("\n📊 Performance:")
     print(
         f"   ⭐ Excellent (>0.99): {excellent:2d} ({100*excellent/len(r2_scores):5.1f}%)"
     )
@@ -1064,7 +1062,7 @@ def run_full_test(
     for r in all_results:
         decisions[r["decision"]] += 1
 
-    print(f"\n🎯 Decisions:")
+    print("\n🎯 Decisions:")
     for decision in ["llm", "nn", "failed"]:
         if decision in decisions:
             count = decisions[decision]

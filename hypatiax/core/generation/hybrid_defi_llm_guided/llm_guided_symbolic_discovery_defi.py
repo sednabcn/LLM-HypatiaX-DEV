@@ -1074,8 +1074,6 @@ Examples:
         return 0
 
     # Run tests
-    verbose = not args.quiet
-
     try:
         if args.test:
             # Single test
