@@ -40,10 +40,9 @@ import os
 import sys
 import time
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from dotenv import load_dotenv
@@ -68,8 +67,8 @@ try:
         SymbolicEngineWithLLM,
     )
     from hypatiax.tools.symbolic.hybrid_system_v50_2 import (
-        HybridDiscoverySystem,
         DiscoveryMode,
+        HybridDiscoverySystem,
     )
 
     HAS_INTEGRATED_ENGINE = True
@@ -80,7 +79,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from hypatiax.tools.validation.ensemble_validator import EnsembleValidator
+    from hypatiax.tools.validation.ensemble_validator import EnsembleValidator as _EnsembleValidator  # noqa: F401
 
     HAS_VALIDATOR = True
 except ImportError:
@@ -136,7 +135,7 @@ def convert_defi_protocol_to_test_cases(
     all_domains = protocol.get_all_domains()
     domains_to_load = domains if domains else all_domains
 
-    print(f"\n📥 Converting DeFi Protocol to test cases...")
+    print("\n📥 Converting DeFi Protocol to test cases...")
     print(f"   Domains: {', '.join(domains_to_load)}")
 
     for domain in domains_to_load:
@@ -412,7 +411,7 @@ class IntegratedLLMDiscoveryDeFi:
         if not self.api_key and llm_mode != "none":
             raise ValueError("ANTHROPIC_API_KEY required for LLM modes")
 
-        print(f"✅ Integrated LLM Discovery initialized (DeFi)")
+        print("✅ Integrated LLM Discovery initialized (DeFi)")
         print(f"   Mode: {llm_mode}")
         print(f"   Iterations: {niterations}")
 
@@ -431,7 +430,7 @@ class IntegratedLLMDiscoveryDeFi:
 
         if verbose:
             print(f"\n{'='*80}")
-            print(f"INTEGRATED LLM-GUIDED DISCOVERY - DEFI v1.0")
+            print("INTEGRATED LLM-GUIDED DISCOVERY - DEFI v1.0")
             print(f"{'='*80}")
             print(f"Domain: {domain}")
             print(f"Variables: {', '.join(variable_names)}")
@@ -477,12 +476,12 @@ class IntegratedLLMDiscoveryDeFi:
 
             # Patch hybrid system to use LLM engine
             if self.llm_mode != "none" and llm_config:
-                print(f"   🔧 Patching hybrid system with LLM engine")
+                print("   🔧 Patching hybrid system with LLM engine")
                 hybrid.symbolic_engine = symbolic_engine
 
             # Run discovery
             if verbose:
-                print(f"\n🔬 Starting discovery...")
+                print("\n🔬 Starting discovery...")
 
             result = hybrid.discover_validate_interpret(
                 X=X,
@@ -578,7 +577,7 @@ def run_single_test_llm(
         print(f"{'='*80}")
         print(f"Difficulty: {test_config.get('difficulty', 'unknown')}")
         if test_config.get("extrapolation_test"):
-            print(f"🚀 EXTRAPOLATION TEST")
+            print("🚀 EXTRAPOLATION TEST")
 
     start = time.time()
 
@@ -654,13 +653,13 @@ def run_single_test_by_name(
 
     if not matching_tests:
         print(f"❌ Test '{test_name}' not found")
-        print(f"\nAvailable tests:")
+        print("\nAvailable tests:")
         for t in sorted(test_cases.keys()):
             print(f"  - {t}")
         return {}
 
     if len(matching_tests) > 1:
-        print(f"⚠️  Multiple matches found:")
+        print("⚠️  Multiple matches found:")
         for t in matching_tests:
             print(f"  - {t}")
         print(f"\nUsing: {matching_tests[0]}")
@@ -702,7 +701,7 @@ def run_defi_suite(
         json.dump({"session_id": session.session_id}, f)
 
     print(f"\n{'='*80}")
-    print(f"LLM-GUIDED DISCOVERY - DEFI SUITE v1.0")
+    print("LLM-GUIDED DISCOVERY - DEFI SUITE v1.0")
     print(f"{'='*80}")
     print(f"Tests: {len(test_cases)}")
     print(f"Mode: {llm_mode}")
@@ -850,7 +849,7 @@ def generate_summary(
 def print_results_table(results: Dict[str, Dict], test_cases: Dict):
     """Print detailed results table."""
     print(f"\n{'='*120}")
-    print(f"LLM-GUIDED DISCOVERY - DEFI RESULTS".center(120))
+    print("LLM-GUIDED DISCOVERY - DEFI RESULTS".center(120))
     print(f"{'='*120}")
     print(
         f"{'Test Name':<40} | {'R²':>6} | {'Val':>5} | {'Time':>6} | {'Status':>6} | {'Observations':<40}"
@@ -931,7 +930,7 @@ def print_results_table(results: Dict[str, Dict], test_cases: Dict):
         print(f"\nSUMMARY: {passed}/{total} passed ({passed/total*100:.1f}%)")
 
         if r2_values:
-            print(f"\n📈 R² Statistics:")
+            print("\n📈 R² Statistics:")
             print(f"   Mean: {np.mean(r2_values):.4f}")
             print(f"   Median: {np.median(r2_values):.4f}")
             print(f"   Std Dev: {np.std(r2_values):.4f}")
@@ -939,7 +938,7 @@ def print_results_table(results: Dict[str, Dict], test_cases: Dict):
             print(f"   Max: {np.max(r2_values):.4f}")
 
         if val_values:
-            print(f"\n📊 Validation Statistics:")
+            print("\n📊 Validation Statistics:")
             print(f"   Mean: {np.mean(val_values):.1f}/100")
             print(f"   Median: {np.median(val_values):.1f}/100")
             print(f"   Std Dev: {np.std(val_values):.1f}")
@@ -1029,13 +1028,13 @@ Examples:
             return 1
 
     # Load DeFi protocol
-    print(f"\n📄 Loading DeFi Protocol v3.0...")
+    print("\n📄 Loading DeFi Protocol v3.0...")
     protocol = DeFiExperimentProtocolExtended()
 
     # Show statistics
     stats = protocol.get_protocol_statistics()
     print(f"\n{'='*80}")
-    print(f"DEFI PROTOCOL STATISTICS".center(80))
+    print("DEFI PROTOCOL STATISTICS".center(80))
     print(f"{'='*80}")
     print(f"Total tests: {stats['total_tests']}")
     print(f"Extrapolation tests: {stats['extrapolation_tests']}")
@@ -1058,7 +1057,7 @@ Examples:
     # Handle --list
     if args.list:
         print(f"\n{'='*80}")
-        print(f"AVAILABLE DEFI TEST CASES".center(80))
+        print("AVAILABLE DEFI TEST CASES".center(80))
         print(f"{'='*80}")
         for domain in protocol.get_all_domains():
             domain_tests = [
@@ -1089,10 +1088,10 @@ Examples:
             )
 
             if result and result.get("success"):
-                print(f"\n✅ Test passed!")
+                print("\n✅ Test passed!")
                 return 0
             else:
-                print(f"\n❌ Test failed!")
+                print("\n❌ Test failed!")
                 return 1
 
         elif args.batch:
