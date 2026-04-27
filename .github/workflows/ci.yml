@@ -118,15 +118,14 @@ jobs:
       - name: Install linting + pipeline deps
         run: |
           pip install --quiet --upgrade pip
-          pip install --quiet ruff pyflakes
 
-          # Install requirements, allowing pip to resolve conflicts automatically.
-          # --upgrade-strategy eager lets pip pick the highest compatible version
-          # when requirements.txt has duplicate/conflicting pins (e.g. two gitpython entries).
-          pip install --quiet             --upgrade             --upgrade-strategy eager             -r requirements.txt             || {
-              echo "::warning ::Full requirements install failed — retrying with --no-deps to unblock lint"
-              pip install --quiet --no-deps -r requirements.txt
-            }
+          # Core lint tools — must always succeed
+          pip install --quiet ruff pyflakes gitpython==3.1.47
+
+          # Install the rest of requirements.txt, skipping any package that
+          # cannot be resolved (e.g. pmlb==1.1.2 doesn't exist on PyPI).
+          # Lint only needs the packages above; this is best-effort for richer checks.
+          pip install --quiet             --upgrade             --upgrade-strategy eager             -r requirements.txt             || echo "::warning ::Some requirements.txt packages could not be installed (e.g. bad pins) — lint continues with core deps only" 
 
       - name: Apply patches (FIX-C2 must precede lint)
         run: |
