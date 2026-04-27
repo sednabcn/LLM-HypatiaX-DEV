@@ -3,17 +3,18 @@ COMPLETE FIXED VERSION: baseline_pure_llm_defi_final.py
 All liquidation domain fixes + FIXED evaluation logic + FIXED dict handling.
 """
 
+import inspect
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
-import inspect
-import random
+
 import numpy as np
 from anthropic import Anthropic
-from pathlib import Path
 from dotenv import load_dotenv
 
 # Reproducibility seeds (added for JMLR submission)
@@ -1453,7 +1454,7 @@ def run_comprehensive_test(
             print(f"  Ground truth: {meta.get('ground_truth', 'N/A')}")
 
             if meta.get("extrapolation_test"):
-                print(f"  ⚠️  EXTRAPOLATION TEST")
+                print("  ⚠️  EXTRAPOLATION TEST")
 
             start = time.time()
             result = baseline.generate_formula(
@@ -1474,13 +1475,13 @@ def run_comprehensive_test(
                 print(f"  ✅ R²: {r2:.6f}, RMSE: {metrics['rmse']:.6f}")
 
                 if r2 > 0.99:
-                    print(f"  🎯 EXCELLENT FIT")
+                    print("  🎯 EXCELLENT FIT")
                 elif r2 > 0.95:
-                    print(f"  ✓ Good fit")
+                    print("  ✓ Good fit")
                 elif r2 > 0.80:
-                    print(f"  ⚠️ Moderate fit")
+                    print("  ⚠️ Moderate fit")
                 else:
-                    print(f"  ❌ Poor fit")
+                    print("  ❌ Poor fit")
             else:
                 print(f"  ❌ Failed: {metrics.get('error', 'Unknown error')[:100]}")
                 if verbose and "code_snippet" in metrics:
@@ -1517,14 +1518,14 @@ def run_comprehensive_test(
         print(f"Mean R²: {overall['mean_r2']:.6f}")
         print(f"Median R²: {overall['median_r2']:.6f}")
 
-    print(f"\n📈 By Domain:")
+    print("\n📈 By Domain:")
     for domain, stats in report["by_domain"].items():
         mean_r2 = stats.get("mean_r2")
         r2_str = f"{mean_r2:.4f}" if mean_r2 is not None else "N/A"
         print(f"  {domain}: {stats['successful']}/{stats['total']} - R²: {r2_str}")
 
     if report.get("extrapolation_tests"):
-        print(f"\n🎯 Extrapolation Tests:")
+        print("\n🎯 Extrapolation Tests:")
         for test in report["extrapolation_tests"]:
             status = "✅" if test["success"] else "❌"
             r2 = test.get("r2")

@@ -1,12 +1,12 @@
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import random
 import numpy as np
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -338,7 +338,7 @@ Be mathematically precise and use standard conventions for the {domain} domain."
                     func = local_vars2.get("generated_func")
 
                     if verbose and func:
-                        print(f"  DEBUG - Successfully wrapped expression")
+                        print("  DEBUG - Successfully wrapped expression")
 
             if func is None:
                 return {
@@ -378,7 +378,7 @@ Be mathematically precise and use standard conventions for the {domain} domain."
                 else:
                     # Parameter mismatch - try to recover by using only the expected number
                     if verbose:
-                        print(f"  DEBUG - Parameter mismatch, attempting recovery...")
+                        print("  DEBUG - Parameter mismatch, attempting recovery...")
                     if num_params < num_features:
                         # Function expects fewer params - use first N columns
                         if num_params == 1:
@@ -399,11 +399,11 @@ Be mathematically precise and use standard conventions for the {domain} domain."
 
                 y_pred = np.array(y_pred)
 
-            except (TypeError, ValueError) as e:
+            except (TypeError, ValueError):
                 # Function doesn't support vectorized operations, try element-wise
                 if verbose:
                     print(
-                        f"    Vectorization failed, trying element-wise evaluation..."
+                        "    Vectorization failed, trying element-wise evaluation..."
                     )
                 y_pred = []
                 try:
@@ -598,7 +598,6 @@ def run_comprehensive_test(
             if metrics.get("success"):
                 r2 = metrics["r2"]
                 rmse = metrics["rmse"]
-                status = metrics.get("status", "unknown")
 
                 # Display with appropriate symbol based on performance
                 if r2 >= 0.95:
@@ -617,9 +616,9 @@ def run_comprehensive_test(
 
                 # Add warning for failed tests
                 if r2 < 0.0:
-                    print(f"  ⚠️  WARNING: Formula performs worse than baseline!")
+                    print("  ⚠️  WARNING: Formula performs worse than baseline!")
                     if r2 < -1.0:
-                        print(f"  🚨 CRITICAL FAILURE: Review formula generation")
+                        print("  🚨 CRITICAL FAILURE: Review formula generation")
             else:
                 print(
                     f"  ✗ Evaluation failed: {metrics.get('error', 'Unknown error')[:60]}..."
@@ -650,14 +649,14 @@ def run_comprehensive_test(
     print("EXPERIMENT SUMMARY".center(70))
     print("=" * 70)
 
-    print(f"\n📊 Overall Results:")
+    print("\n📊 Overall Results:")
     print(f"   Total test cases: {report['overall']['total_cases']}")
     print(
         f"   Successfully evaluated: {report['overall']['successful']}/{report['overall']['total_cases']} ({100 * report['overall']['success_rate']:.1f}%)"
     )
 
     if report["overall"].get("mean_r2"):
-        print(f"\n📈 R² Score Statistics:")
+        print("\n📈 R² Score Statistics:")
         print(f"   Mean:   {report['overall']['mean_r2']:.4f}")
         print(f"   Median: {report['overall']['median_r2']:.4f}")
         print(f"   Std:    {report['overall']['std_r2']:.4f}")
@@ -665,14 +664,14 @@ def run_comprehensive_test(
             f"   Range:  [{report['overall']['min_r2']:.4f}, {report['overall']['max_r2']:.4f}]"
         )
 
-    print(f"\n🎯 Performance by Domain:")
+    print("\n🎯 Performance by Domain:")
     for domain, stats in report["by_domain"].items():
         r2_str = f"R²={stats['mean_r2']:.3f}" if stats["mean_r2"] else "N/A"
         print(
             f"   {domain:12s}: {stats['successful']}/{stats['total']} ({100 * stats['success_rate']:5.1f}%)  {r2_str}"
         )
 
-    print(f"\n💾 Results saved to:")
+    print("\n💾 Results saved to:")
     print(f"   {results_file}")
     print(f"   {report_file}")
     print("=" * 70)
