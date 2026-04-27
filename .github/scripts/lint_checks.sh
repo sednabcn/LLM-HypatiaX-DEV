@@ -26,9 +26,8 @@ fail() {
 echo "── 1 · Stale v40 engine check (FIX-C2) ─────────────────────────────"
 STALE=$(find hypatiax/ -name "*.py"           ! -path "*/BACKUP/*"           ! -path "*/patches/*"           -print0 2>/dev/null         | xargs -0 grep -En "^[[:space:]]*(import|from)[[:space:]]+.*hybrid_system_v40[^_]" 2>/dev/null || true)
 if [[ -n "${STALE}" ]]; then
-  echo "::error ::Stale hybrid_system_v40 live import found — must be v50_2:"
   echo "${STALE}"
-  fail "Check 1 FAILED: stale v40 import statement"
+  fail "Check 1 FAILED: stale v40 import — must be v50_2"
 else
   echo "  ✓ No stale v40 import statements (comments/docs/patches excluded)"
 fi
@@ -45,9 +44,8 @@ EXPOSED=$(grep -r "sk-ant-api" . \
           | grep -v "notebooks/" \
           || true)
 if [[ -n "${EXPOSED}" ]]; then
-  echo "::error ::Exposed API key — revoke immediately at console.anthropic.com"
   echo "${EXPOSED}"
-  fail "Check 2 FAILED: exposed API key"
+  fail "Check 2 FAILED: exposed API key — revoke immediately at console.anthropic.com"
 else
   echo "  ✓ No exposed API keys"
 fi
@@ -68,8 +66,8 @@ fi
 # ── 4a · fixup-tex ────────────────────────────────────────────────────────────
 echo "── 4 · Patched source syntax (fixup-tex + validate_code) ───────────"
 if [[ -f "run_all_checkpoint.py" ]]; then
-    if ! ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-dummy-lint-key}" \
-         python3 run_all_checkpoint.py --only fixup-tex; then
+  if ! ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-dummy-lint-key}" \
+       python3 run_all_checkpoint.py --only fixup-tex; then
     fail "Check 4a FAILED: run_all_checkpoint.py --only fixup-tex"
   else
     echo "  ✓ fixup-tex passed"

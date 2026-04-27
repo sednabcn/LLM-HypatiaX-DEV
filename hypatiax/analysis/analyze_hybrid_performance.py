@@ -20,7 +20,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Any
 import argparse
 
 
@@ -129,10 +129,11 @@ class HybridPerformanceAnalyzer:
         print(f"   Range: [{stats['min_r2']:.6f}, {stats['max_r2']:.6f}]")
         print(f"   Q25-Q75: [{stats['q25_r2']:.6f}, {stats['q75_r2']:.6f}]")
         print(f"\n🎯 Performance Tiers:")
-        print(f"   Excellent (R² > 0.99): {stats['excellent_count']} ({stats['excellent_count']/total_cases*100:.1f}%)")
-        print(f"   Good (0.95-0.99): {stats['good_count']} ({stats['good_count']/total_cases*100:.1f}%)")
-        print(f"   Acceptable (0.90-0.95): {stats['acceptable_count']} ({stats['acceptable_count']/total_cases*100:.1f}%)")
-        print(f"   Poor (< 0.90): {stats['poor_count']} ({stats['poor_count']/total_cases*100:.1f}%)")
+        valid = stats['valid_r2_count']
+        print(f"   Excellent (R² > 0.99): {stats['excellent_count']} ({stats['excellent_count']/valid*100:.1f}%)")
+        print(f"   Good (0.95-0.99): {stats['good_count']} ({stats['good_count']/valid*100:.1f}%)")
+        print(f"   Acceptable (0.90-0.95): {stats['acceptable_count']} ({stats['acceptable_count']/valid*100:.1f}%)")
+        print(f"   Poor (< 0.90): {stats['poor_count']} ({stats['poor_count']/valid*100:.1f}%)")
         
         return stats
     
@@ -518,7 +519,7 @@ class HybridPerformanceAnalyzer:
         # Print recommendations
         print()
         for i, rec in enumerate(recommendations, 1):
-            print(f"{rec}")
+            print(f"{i:>2}. {rec}")
         
         return recommendations
     
