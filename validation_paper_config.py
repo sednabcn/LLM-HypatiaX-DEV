@@ -14,7 +14,7 @@
 #   PYSR_SEED            = repro.yaml: seeds.pysr_seed                 (42)
 #   LLM_MODEL            = repro.yaml: llm_model
 #   ENGINE_NAME          = repro.yaml: engine.name
-#   PCA_TRAIN_FRAC       = repro.yaml: pca_train_frac                  (0.40)
+#   PCA_TRAIN_FRAC       = repro.yaml: pca_train_frac                  (0.4)
 #   NN_TIME_LIMIT        = repro.yaml: nn_time_limit                   (120)
 #
 # Called as a pipeline step ("validate-paper-config") in run_all_checkpoint.py
@@ -46,7 +46,7 @@ PAPER_CONFIG: dict[str, str] = {
     "LLM_MODEL":           "claude-sonnet-4-20250514",  # llm_model
     # ── Engine / misc ─────────────────────────────────────────────────────
     "ENGINE_NAME":         "hybrid_system_v50_2",  # engine.name  ← previously unvalidated
-    "PCA_TRAIN_FRAC":      "0.40",   # pca_train_frac        ← previously unvalidated
+    "PCA_TRAIN_FRAC":      "0.4",   # pca_train_frac        ← previously unvalidated
     "NN_TIME_LIMIT":       "120",    # nn_time_limit         ← previously unvalidated
 }
 
