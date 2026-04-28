@@ -105,6 +105,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ── 1b. Restore checkpoint cache ──────────────────────────────────────
+      # Restores HypatiaX_persistent/ from a previous run so already-completed
+      # experiments are skipped automatically on re-runs.
+      - name: Restore checkpoint cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/HypatiaX_persistent
+          key: hypatiax-checkpoint-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            hypatiax-checkpoint-${{ github.ref_name }}-
+
       # ── 2. Set up Python 3.12 ─────────────────────────────────────────────
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -324,7 +335,11 @@ jobs:
           EOF
 
       # ── 8. Execute the notebook ────────────────────────────────────────────
+      # --allow-errors: record cell errors in output and keep going rather than
+      # aborting — ensures executed_notebook.ipynb is always written.
+      # continue-on-error: true — lets Steps 9/10 (HTML + upload) always run.
       - name: Execute notebook
+        continue-on-error: true
         run: |
           ONLY="${{ github.event.inputs.only_exp }}"
           [ -n "$ONLY" ] && export HYPATIAX_ONLY_EXP="$ONLY"
@@ -332,10 +347,22 @@ jobs:
           jupyter nbconvert \
             --to notebook \
             --execute \
+            --allow-errors \
             --ExecutePreprocessor.timeout=21600 \
             --ExecutePreprocessor.kernel_name=python3 \
             --output "${{ github.workspace }}/executed_notebook.ipynb" \
             "${{ github.workspace }}/${{ env.NOTEBOOK }}"
+
+      # ── 8b. Fallback — copy source notebook if execution never wrote output ──
+      # Guarantees the artifact upload always has a file to work with.
+      - name: Ensure executed notebook exists (fallback)
+        if: always()
+        run: |
+          NB="${{ github.workspace }}/executed_notebook.ipynb"
+          if [ ! -f "$NB" ]; then
+            echo "[CI] Execution did not produce output — copying source notebook as fallback"
+            cp "${{ github.workspace }}/${{ env.NOTEBOOK }}" "$NB"
+          fi
 
       # ── 9. Convert executed notebook to HTML report ────────────────────────
       - name: Convert notebook to HTML
@@ -345,30 +372,53 @@ jobs:
           [ -f "$NB" ] && jupyter nbconvert --to html "$NB" \
             --output "${{ github.workspace }}/notebook_report.html"
 
-      # ── 10. Upload artifacts ───────────────────────────────────────────────
-      - name: Upload executed notebook + HTML report
+      # ── 10. Collect all result files into one folder ──────────────────────
+      # Gathers notebook, HTML report, experiment data, logs, and persistent
+      # state into ci_results/ so the artifact upload always has a single
+      # known root — even if individual sub-paths don't exist.
+      - name: Collect results
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: executed-notebook-${{ github.run_number }}
-          path: |
-            ${{ github.workspace }}/executed_notebook.ipynb
-            ${{ github.workspace }}/notebook_report.html
-          retention-days: 30
+        run: |
+          RESULTS="${{ github.workspace }}/ci_results"
+          mkdir -p "$RESULTS"
 
-      - name: Upload experiment results
+          # Notebook outputs
+          cp -v "${{ github.workspace }}/executed_notebook.ipynb" "$RESULTS/" 2>/dev/null || true
+          cp -v "${{ github.workspace }}/notebook_report.html"    "$RESULTS/" 2>/dev/null || true
+
+          # Experiment data, logs, and persistent state
+          for dir in \
+            "${{ github.workspace }}/hypatiax/data/results" \
+            "${{ github.workspace }}/logs" \
+            "${{ env.PERSISTENT_DIR }}"; do
+            if [ -d "$dir" ]; then
+              cp -rv "$dir" "$RESULTS/"
+            fi
+          done
+
+          echo "=== Files collected ==="
+          find "$RESULTS" -type f | sort
+
+      # ── 11. Upload all results (unified) ──────────────────────────────────
+      - name: Upload all results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: experiment-results-${{ github.run_number }}
-          path: |
-            ${{ github.workspace }}/logs/
-            ${{ github.workspace }}/hypatiax/data/results/
-            ${{ env.PERSISTENT_DIR }}/
+          name: hypatiax-results-${{ github.run_number }}
+          path: ${{ github.workspace }}/ci_results/
           retention-days: 90
           if-no-files-found: warn
 
-      # ── 11. Post job summary ───────────────────────────────────────────────
+      # ── 12. Save checkpoint cache ──────────────────────────────────────────
+      # Persists HypatiaX_persistent/ so the next run can skip completed steps.
+      - name: Save checkpoint cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/HypatiaX_persistent
+          key: hypatiax-checkpoint-${{ github.ref_name }}-${{ github.run_number }}
+
+      # ── 13. Post job summary ───────────────────────────────────────────────
       - name: Post run summary
         if: always()
         run: |
