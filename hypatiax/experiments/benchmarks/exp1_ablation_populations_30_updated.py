@@ -1027,8 +1027,8 @@ lines.append(r"\end{tabular}%")
 lines.append(r"}")  # close resizebox
 lines.append(r"\begin{flushleft}")
 lines.append(r"{\footnotesize "
-             r"$\dag$~Wall-clock timeout
-             result excluded from timing statistics. "
+             r"$\dag$~Wall-clock timeout "
+             r"result excluded from timing statistics. "
              r"Michaelis-Menten HypatiaX far-$R^2 = -634.5989$ reflects saturation "
              r"function failure under extreme extrapolation (known failure mode). "
              + f"All runs: populations={POPULATIONS}, seed={SEED}, v5.1 engine."
@@ -1058,8 +1058,7 @@ if _one_eq or (_n_core15 is not None and int(_n_core15) < len(CORE_15)):
 else:
     PV_EQ   = next(e for e in CORE_15 if e["name"] == "Portfolio Variance")
     SEEDS_5 = [42, 123, 777, 2024, 99]
-    N_ITER_SWEEP = 300   # fast
-    change to 1000 for paper-final run
+    N_ITER_SWEEP = 300   # fast; change to 1000 for paper-final run
 
     print("Portfolio Variance — 5-seed stability sweep")
     print(f"Seeds : {SEEDS_5}  |  iterations: {N_ITER_SWEEP}")
@@ -1171,8 +1170,7 @@ provenance = {
         "FIX-POP: populations=30 (was 2 in original notebook)",
         "FIX-APIKEY: Kaggle Secrets only — no hardcoded sk-ant key",
         "FIX-WIRE: hypatia condition now routes through HybridDiscoverySystem (was bypassed)",
-        "FIX-WALLCLOCK v3: per-condition wall-clocks. hypatia=_HYPATIA_MAX_RETRIES(3)*PYSR_TIMEOUT(1100)+300=3600s
-        "
+        "FIX-WALLCLOCK v3: per-condition wall-clocks. hypatia=_HYPATIA_MAX_RETRIES(3)*PYSR_TIMEOUT(1100)+300=3600s "
         "pysr_only=PYSR_TIMEOUT(1100)+300=1400s. v2's shared 1700s caused SIGALRM inside Julia on attempt 2 "
         "(attempt 1 used ~1149s leaving only ~551s for attempt 2's 1100s run).",
     ],
