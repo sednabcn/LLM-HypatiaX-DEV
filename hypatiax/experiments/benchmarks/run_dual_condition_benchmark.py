@@ -333,7 +333,7 @@ def _run_condition(
     print(f"\n{'='*80}")
     print(f"  PASS: {label}".center(80))
     if fail_fast:
-        print(f"  ⛔  FAIL-FAST enabled — any method failure will abort the run")
+        print("  ⛔  FAIL-FAST enabled — any method failure will abort the run")
     print(f"{'='*80}\n")
 
     cmd = _build_runner_cmd(condition, args, runner_script)
@@ -391,7 +391,7 @@ def _run_condition(
 
     # Mid-run kill: abort immediately
     if mid_run_kill:
-        print(f"  ⛔  FAIL-FAST: aborting dual-condition run.")
+        print("  ⛔  FAIL-FAST: aborting dual-condition run.")
         sys.exit(1)
 
     # ── Level 1: subprocess crash ─────────────────────────────────────────
@@ -399,10 +399,10 @@ def _run_condition(
         print(f"\n  ❌  Runner process exited with code {returncode} "
               f"for {condition} pass  ({elapsed/60:.1f} min elapsed).")
         if fail_fast:
-            print(f"  ⛔  FAIL-FAST: aborting dual-condition run.")
+            print("  ⛔  FAIL-FAST: aborting dual-condition run.")
             sys.exit(returncode)
         else:
-            print(f"      Attempting to locate partial results…")
+            print("      Attempting to locate partial results…")
 
     # Locate the JSON written by the runner
     json_path = _find_latest_result(condition)
@@ -410,7 +410,7 @@ def _run_condition(
     if json_path is None:
         print(f"\n  ❌ No result JSON found for {condition} pass.")
         if fail_fast:
-            print(f"  ⛔  FAIL-FAST: no results produced — aborting.")
+            print("  ⛔  FAIL-FAST: no results produced — aborting.")
             sys.exit(1)
         return None
 
@@ -680,7 +680,7 @@ def _print_comparison_table(comparison: Dict) -> None:
     print(f"{'='*90}")
 
     # ── Per-equation table ────────────────────────────────────────────────
-    print(f"\n  Per-equation detail (best method per condition):")
+    print("\n  Per-equation detail (best method per condition):")
     print(f"  {'Equation':<30} {'Noisy best R²':>14} {'NL best R²':>12} {'Δ':>8}")
     print("  " + "-" * 68)
     for eq_entry in comparison["equations"]:
@@ -948,8 +948,8 @@ def main() -> None:
         print(f"\n  Noise-sensitivity summary over {total} equations:")
         print(f"  Methods that improved ≥0.01 R² in noiseless : {improved}")
         print(f"  Methods that degraded ≥0.01 R² in noiseless : {degraded}")
-        print(f"  (degradation = noiseless R² < noisy R², which can happen when")
-        print(f"   the noisy result is cached or the noiseless model overfits)")
+        print("  (degradation = noiseless R² < noisy R², which can happen when")
+        print("   the noisy result is cached or the noiseless model overfits)")
 
     elif noisy_path or noiseless_path:
         available = noisy_path or noiseless_path
@@ -983,7 +983,7 @@ def main() -> None:
             except Exception as _exc:
                 print(f"⚠️  Could not process {_cond} checkpoint: {_exc}")
 
-    print(f"\n✅  Dual-condition run complete.\n")
+    print("\n✅  Dual-condition run complete.\n")
 
 
 if __name__ == "__main__":

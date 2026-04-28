@@ -63,7 +63,7 @@ for env_path in env_paths:
             api_key_found = True
             break
         else:
-            print(f"⚠️  .env file found but no ANTHROPIC_API_KEY in it")
+            print("⚠️  .env file found but no ANTHROPIC_API_KEY in it")
 
 if not env_loaded:
     print("⚠️  No .env file with API key found in standard locations. Trying environment variables...")
@@ -101,7 +101,7 @@ class ComparativeTestSuite:
                 api_key = os.getenv("ANTHROPIC_API_KEY")
                 
                 if api_key:
-                    print(f"✅ Successfully loaded API key on retry")
+                    print("✅ Successfully loaded API key on retry")
                 else:
                     # Check what's actually in the file
                     print(f"\n🔍 Checking contents of {hypatiax_env}:")
@@ -115,7 +115,7 @@ class ComparativeTestSuite:
             if not api_key:
                 raise ValueError(
                     "ANTHROPIC_API_KEY not set. Please ensure it's in your .env file.\n"
-                    f"Checked locations:\n" +
+                    "Checked locations:\n" +
                     "\n".join([f"  - {p}" for p in env_paths]) +
                     f"\n\n💡 Your .env is at: {Path.cwd() / 'hypatiax' / '.env'}\n" +
                     "   Make sure it contains: ANTHROPIC_API_KEY=sk-ant-..."
@@ -510,7 +510,7 @@ FORM_HINT: [description]
                 "unary_operators": unary_ops,
                 "form_hint": content
             }
-        except:
+        except Exception:
             return {
                 "operators": ["add", "sub", "mul", "div"],
                 "unary_operators": ["exp", "log"]
@@ -532,7 +532,7 @@ Does this make physical/mathematical sense? (YES/NO + brief reason)
                 messages=[{"role": "user", "content": prompt}]
             )
             return response.content[0].text[:100]
-        except:
+        except Exception:
             return "Validation unavailable"
     
     def _generate_llm_prompt(self, description: str, var_names: List[str], metadata: Dict) -> str:
@@ -568,7 +568,7 @@ def formula({', '.join(var_names)}):
         try:
             y = func(*[X[:, i] for i in range(n_params)])
             return np.asarray(y).flatten()
-        except:
+        except Exception:
             y = np.empty(X.shape[0])
             for i in range(X.shape[0]):
                 y[i] = func(*X[i, :n_params])
@@ -683,7 +683,7 @@ def formula({', '.join(var_names)}):
         
         if comparison["llm_pysr_wins"]:
             print("\n🎯 LLM+PySR WINS!")
-            print(f"Advantages over other methods:")
+            print("Advantages over other methods:")
             for adv in comparison["llm_pysr_advantages"]:
                 print(f"  • {adv}")
         else:
@@ -1075,7 +1075,7 @@ Examples:
     print("\n" + "="*80)
     print("LLM-GUIDED PySR COMPARATIVE TEST SUITE".center(80))
     print("="*80)
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Samples: {args.samples}")
     print(f"  Domain Filter: {args.domain}")
     print(f"  Verbose: {args.verbose}")

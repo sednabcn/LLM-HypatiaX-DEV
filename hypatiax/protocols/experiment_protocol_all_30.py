@@ -1367,7 +1367,7 @@ if __name__ == "__main__":
     print("=" * 80)
     print("EXPERIMENT PROTOCOL ALL v2.2: COMPLETE (BEST OF v2.0 + v2.1)".center(80))
     print("=" * 80)
-    print(f"Version: 2.2 | Date: 2026-01-13")
+    print("Version: 2.2 | Date: 2026-01-13")
     print("=" * 80)
 
     total_count = 0
@@ -1390,16 +1390,16 @@ if __name__ == "__main__":
             total_count += len(test_cases)
 
     print(f"\n{'=' * 80}")
-    print(f"SUMMARY".center(80))
+    print("SUMMARY".center(80))
     print(f"{'=' * 80}")
     print(f"Total test cases: {total_count}")
-    print(f"Protocol A (Physics/Engineering): 18 tests")
-    print(f"Protocol B (Multi-Domain): 12 tests")
-    print(f"\nImprovements in v2.2:")
-    print(f"  ✅ Complete implementation from v2.0 (all domains fully coded)")
-    print(f"  ✅ Quantum fixes from v2.1 (normalized/eV units)")
-    print(f"  ✅ All metadata and structure hints preserved")
-    print(f"\nDifficulty distribution:")
+    print("Protocol A (Physics/Engineering): 18 tests")
+    print("Protocol B (Multi-Domain): 12 tests")
+    print("\nImprovements in v2.2:")
+    print("  ✅ Complete implementation from v2.0 (all domains fully coded)")
+    print("  ✅ Quantum fixes from v2.1 (normalized/eV units)")
+    print("  ✅ All metadata and structure hints preserved")
+    print("\nDifficulty distribution:")
     for diff, count in difficulty_count.items():
         print(f"  - {diff.capitalize()}: {count} tests")
     print(f"\nDomains: {len(protocol.get_all_domains())}")

@@ -288,7 +288,7 @@ def cmd_doctor(_args) -> None:
 
     # run_all_checkpoint.py
     if RUN_ALL.exists():
-        ok(f"run_all_checkpoint.py found")
+        ok("run_all_checkpoint.py found")
     else:
         err(f"run_all_checkpoint.py NOT found at {RUN_ALL}")
 
@@ -472,8 +472,8 @@ def cmd_phase2(args) -> None:
         else:
             err(f"{step_id} failed (exit {rc}).")
             err("Checkpoint saved. Re-run this step with:")
-            print(f"    python3 repro_master.py phase2  (it will skip already-passed steps)")
-            print(f"    -- or --")
+            print("    python3 repro_master.py phase2  (it will skip already-passed steps)")
+            print("    -- or --")
             print(f"    python3 run_all_checkpoint.py --resume --only {step_id}")
             sys.exit(rc)
 
@@ -893,10 +893,10 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     # run
-    p_run = sub.add_parser("run", help="Auto-detect phase and proceed")
+    sub.add_parser("run", help="Auto-detect phase and proceed")
 
     # phase1
-    p1 = sub.add_parser("phase1", help="Local --skip-slow (Celeron)")
+    sub.add_parser("phase1", help="Local --skip-slow (Celeron)")
 
     # phase2
     p2 = sub.add_parser("phase2", help="Heavy steps on Colab/Kaggle")
@@ -904,7 +904,7 @@ def main() -> None:
                     help="Target environment (default: auto-detect)")
 
     # phase3
-    p3 = sub.add_parser("phase3", help="Merge checkpoint + final --resume")
+    sub.add_parser("phase3", help="Merge checkpoint + final --resume")
 
     # status
     sub.add_parser("status", help="Show checkpoint state")

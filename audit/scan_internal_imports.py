@@ -136,7 +136,6 @@ def find_cycles_dfs(graph: dict[str, list[str]]) -> list[list[str]]:
     cycles: list[list[str]] = []
     visited: set[str]       = set()
     rec_stack: set[str]     = set()
-    parent: dict[str, str]  = {}
 
     all_nodes = set(graph.keys()) | {t for ts in graph.values() for t in ts}
 
@@ -304,7 +303,7 @@ def main() -> int:
 
     # Ghost hits that are *also* already in stale_hits — tag them as combined
     stale_set = {(f, i) for f, i in stale_hits}
-    ghost_only = [(f, i, s) for f, i, s in ghost_hits if (f, i) not in stale_set]
+    [(f, i, s) for f, i, s in ghost_hits if (f, i) not in stale_set]
 
     # ── DOT output ────────────────────────────────────────────────────────────
     dot_lines = [

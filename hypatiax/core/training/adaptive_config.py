@@ -425,10 +425,10 @@ class CaseProfile:
         # Difficulty multiplier
         if s.difficulty == "expert":
             base_epochs = int(base_epochs * 2.0)
-            rat.append(f"Epochs multiplier ×2.0: difficulty=expert")
+            rat.append("Epochs multiplier ×2.0: difficulty=expert")
         elif s.difficulty == "hard":
             base_epochs = int(base_epochs * 1.5)
-            rat.append(f"Epochs multiplier ×1.5: difficulty=hard")
+            rat.append("Epochs multiplier ×1.5: difficulty=hard")
 
         # Cap to the appropriate hard ceiling
         max_epochs = min(base_epochs, _EPOCHS_MAX_LOG if s.use_log_y else _EPOCHS_MAX_LIN)

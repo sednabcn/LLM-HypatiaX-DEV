@@ -459,7 +459,7 @@ def plot_3d_surface(rows: list, out_dir: Path, fmt: list,
     ax.view_init(elev=elev, azim=azim)
 
     # Surface
-    surf = ax.plot_surface(
+    ax.plot_surface(
         MX, II, PI,
         facecolors=face_colors,
         linewidth=0.15,
@@ -595,19 +595,19 @@ def main():
     rows = compute_stats(data)
     fmt  = args.format
 
-    print(f"\n📊 Figure 1 — 3D phase scatter ...")
+    print("\n📊 Figure 1 — 3D phase scatter ...")
     plot_3d(rows, args.out, fmt)
 
-    print(f"📊 Figure 2 — Phase plot (mean R² vs II) ...")
+    print("📊 Figure 2 — Phase plot (mean R² vs II) ...")
     plot_phase(rows, args.out, fmt)
 
-    print(f"📊 Figure 3 — II histogram ...")
+    print("📊 Figure 3 — II histogram ...")
     plot_hist(rows, args.out, fmt)
 
-    print(f"📊 Figure 4 — Success vs Instability ...")
+    print("📊 Figure 4 — Success vs Instability ...")
     plot_success_vs_instability(rows, args.out, fmt)
 
-    print(f"📊 Figure 5 — Regime counts ...")
+    print("📊 Figure 5 — Regime counts ...")
     plot_regimes(rows, args.out, fmt)
 
     print(f"📊 Figure 6 — 3D regime surface (elev={args.elev}°, azim={args.azim}°) ...")

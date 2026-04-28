@@ -1032,7 +1032,7 @@ if __name__ == "__main__":
     print("=" * 80)
     print("EXPERIMENT PROTOCOL B v2.1: 20 MULTI-DOMAIN TEST CASES (FIXED)".center(80))
     print("=" * 80)
-    print(f"Version: 2.1 FIXED | Date: 2026-01-06 | Alignment: suite v4.2")
+    print("Version: 2.1 FIXED | Date: 2026-01-06 | Alignment: suite v4.2")
     print("=" * 80)
 
     total_tests = 0
@@ -1061,7 +1061,7 @@ if __name__ == "__main__":
 
             # Show variable descriptions
             if meta.get("variable_descriptions"):
-                print(f"     Descriptions:")
+                print("     Descriptions:")
                 for var, desc_text in meta["variable_descriptions"].items():
                     print(f"       • {var}: {desc_text}")
 
@@ -1070,24 +1070,24 @@ if __name__ == "__main__":
                 print(f"     Structure hints: {list(meta['structure_hints'].keys())}")
 
             if meta.get("use_enhanced_config"):
-                print(f"     🚀 Enhanced configuration enabled")
+                print("     🚀 Enhanced configuration enabled")
 
     print(f"\n{'=' * 80}")
-    print(f"PROTOCOL SUMMARY".center(80))
+    print("PROTOCOL SUMMARY".center(80))
     print(f"{'=' * 80}")
     print(f"Total test cases: {total_tests}")
     print(f"Domains covered: {len(protocol.get_all_domains())}")
-    print(f"\nDifficulty distribution:")
+    print("\nDifficulty distribution:")
     for diff, count in difficulty_count.items():
         print(f"  - {diff.capitalize()}: {count} tests")
 
     stats = protocol.get_protocol_statistics()
-    print(f"\nFormula types:")
+    print("\nFormula types:")
     for ftype, count in stats["formula_types"].items():
         print(f"  - {ftype}: {count} tests")
 
     print(f"\n{'=' * 80}")
-    print(f"✅ Protocol B v2.1 FULLY FIXED and ready")
+    print("✅ Protocol B v2.1 FULLY FIXED and ready")
     print(f"{'=' * 80}")
 
     protocol.save_protocol_documentation()

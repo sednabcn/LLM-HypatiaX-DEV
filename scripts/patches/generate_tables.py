@@ -244,7 +244,7 @@ def main():
     print("═" * 55)
     print("  Table Generator — HypatiaX JMLR")
     print("═" * 55)
-    print(f"  Output: paper/tables/\n")
+    print("  Output: paper/tables/\n")
 
     gen_defi_main()
     gen_defi_tiers()

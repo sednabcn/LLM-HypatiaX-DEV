@@ -930,7 +930,7 @@ class PhysicsAwareRegressor:
         population = []
         symbols   = {v: sp.Symbol(v) for v in variable_names}
         varying   = [v for v in variable_names if not var_stats[v]["is_constant"]]
-        const     = [v for v in variable_names if var_stats[v]["is_constant"]]
+        [v for v in variable_names if var_stats[v]["is_constant"]]
 
         def sym(name):
             return symbols.get(name, sp.Symbol(name))
@@ -960,7 +960,7 @@ class PhysicsAwareRegressor:
                 if template == "snell_exact":
                     # arcsin(n1/n2 * sin(θ1))
                     c = np.random.uniform(0.92, 1.08)
-                    inner = sp.Rational(1, 1) * n1 / n2 * sp.sin(theta1)
+                    sp.Rational(1, 1) * n1 / n2 * sp.sin(theta1)
                     # Use clip-safe form: SymPy arcsin — evaluated via lambdify
                     population.append(sp.asin(c * n1 / n2 * sp.sin(theta1)))
 
@@ -1061,7 +1061,7 @@ class PhysicsAwareRegressor:
 
         v0 = varying[0] if varying else variable_names[0]
         v1 = varying[1] if len(varying) > 1 else v0
-        v2 = varying[2] if len(varying) > 2 else v1
+        varying[2] if len(varying) > 2 else v1
         c0 = const[0]   if const else variable_names[0]
 
         # ── 1. Fermi-Dirac / Bose-Einstein (30 %) ────────────────────────
@@ -1248,7 +1248,7 @@ class PhysicsAwareRegressor:
         population = []
         symbols   = {v: sp.Symbol(v) for v in variable_names}
         varying   = [v for v in variable_names if not var_stats[v]["is_constant"]]
-        const     = [v for v in variable_names if var_stats[v]["is_constant"]]
+        [v for v in variable_names if var_stats[v]["is_constant"]]
 
         def sym(name):
             return symbols.get(name, sp.Symbol(name))

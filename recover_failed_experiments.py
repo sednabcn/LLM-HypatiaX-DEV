@@ -291,7 +291,7 @@ def identify_step_from_failed_entry(entry: Dict) -> Optional[str]:
     file_parent = str(filepath.parent).lower()
     
     equation = entry.get("equation", "").lower()
-    condition = entry.get("condition", "").lower()
+    entry.get("condition", "").lower()
     
     # Check by filename
     for step, patterns in STEP_SEARCH_PATTERNS.items():
@@ -339,7 +339,7 @@ def clean_checkpoint(
     with open(checkpoint_path, "r") as f:
         checkpoint = json.load(f)
     
-    original_checkpoint = checkpoint.copy()
+    checkpoint.copy()
     removed_count = 0
     removed_steps = defaultdict(list)
     
@@ -429,13 +429,13 @@ def generate_recover_script(
     
     # Add commands for each step
     for step, entries in step_entries.items():
-        lines.append(f"")
-        lines.append(f"echo \"")
+        lines.append("")
+        lines.append("echo \"")
         lines.append(f"  === Step: {step} ===")
         lines.append(f"  Failed equations: {len(entries)}")
-        lines.append(f"\"")
+        lines.append("\"")
         lines.append(f"python3 run_all_checkpoint.py --resume --only {step}")
-        lines.append(f"")
+        lines.append("")
     
     lines.extend([
         "",
@@ -536,13 +536,13 @@ def main():
             results_dir, args.min_r2, args.max_rmse, args.verbose
         )
         
-        print(f"\n📊 Scan results:")
+        print("\n📊 Scan results:")
         print(f"   Files scanned : {stats['files_scanned']}")
         print(f"   Total entries : {stats['total_entries']}")
         print(f"   Failed entries: {stats['total_failed']} ({stats['total_failed']/max(1,stats['total_entries'])*100:.1f}%)")
         
         if failed_entries:
-            print(f"\n❌ Failed experiments by type:")
+            print("\n❌ Failed experiments by type:")
             reasons_count = defaultdict(int)
             for e in failed_entries:
                 for r in e["reasons"]:
@@ -554,7 +554,7 @@ def main():
                 print(f"   {reason}: {count}")
             
             if args.verbose:
-                print(f"\n📋 Failed entries detail:")
+                print("\n📋 Failed entries detail:")
                 for e in failed_entries[:20]:
                     print(f"   {e['file']}: {e.get('equation', '?')} - {', '.join(e['reasons'][:2])}")
                 if len(failed_entries) > 20:
@@ -582,9 +582,9 @@ def main():
             failed_entries, output_path, checkpoint_path
         )
         
-        print(f"\n🚀 To recover failed experiments:")
+        print("\n🚀 To recover failed experiments:")
         print(f"   bash {script_path}")
-        print(f"\n   Or manually:")
+        print("\n   Or manually:")
         for step in set(identify_step_from_failed_entry(e) for e in failed_entries):
             print(f"   python3 run_all_checkpoint.py --resume --only {step}")
     

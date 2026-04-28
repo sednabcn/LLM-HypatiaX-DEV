@@ -677,7 +677,7 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
         def _f(v):
             if v is None: return "N/A"
             try: return f"{float(v):.4f}" if np.isfinite(float(v)) else "N/A"
-            except: return "N/A"
+            except Exception: return "N/A"
         print(f"  [hypatia] {best_expr_raw[:55]}  R2={_f(train_r2)}  "
               f"extrap(near={_f(extrap_r2.get('near'))} "
               f"med={_f(extrap_r2.get('medium'))} "
@@ -721,7 +721,7 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
         with _Timeout(wall_clock_limit):
             model.fit(X_train, y_train, variable_names=safe_var_names)
         sr_time = time.time() - t_sr
-    except TimeoutError as te:
+    except TimeoutError:
         sr_time = time.time() - t_sr
         print(f"  [{condition}] TIMEOUT after {sr_time:.1f}s")
         return {
@@ -767,7 +767,7 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
         except Exception:
             eqs_df     = model.equations_
             complexity = int(eqs_df.loc[eqs_df["loss"].idxmin(), "complexity"])
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         train_r2 = train_rmse = None
@@ -809,7 +809,7 @@ all_results = load_checkpoint(CKPT_PATH)
 
 print("=" * 65)
 print("EXPERIMENT 1: LLM ABLATION  (§10.6 Core-15)")
-print(f"Engine      : hybrid_system_v50_2 (v5.1)")
+print("Engine      : hybrid_system_v50_2 (v5.1)")
 print(f"Equations   : {len(CORE_15)}")
 print(f"Conditions  : {CONDITIONS}")
 print(f"populations : {POPULATIONS}  (paper-quality)")

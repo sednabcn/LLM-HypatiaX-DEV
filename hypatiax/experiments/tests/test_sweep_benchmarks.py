@@ -1586,7 +1586,6 @@ class TestCatastrophicFailureDetection:
         return {"tests": tests}
 
     def test_catastrophic_failure_flagged(self, tmp_results_dir, sample_equations):
-        methods = ["M3", "M4"]
         payload = self._make_payload_with_low_r2({"M3": 0.999, "M4": 0.643}, sample_equations)
         path = tmp_results_dir / "protocol_core_noisy_cat.json"
         path.write_text(json.dumps(payload))

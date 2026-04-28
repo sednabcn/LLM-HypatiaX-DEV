@@ -175,7 +175,7 @@ def run(seed: int = 42):
 
     print(f"\n{'='*68}")
     print(f"  Exp 3 · Nguyen-12 SR suite  (§10.8)  SEED={seed}")
-    print(f"  Expected: 11/12 H (91.7%) · 10/12 P · MW U=113, p=0.0097")
+    print("  Expected: 11/12 H (91.7%) · 10/12 P · MW U=113, p=0.0097")
     print(f"  Config  : n_tasks={_n_tasks}  niterations={_niter}  populations={_pops}  pysr_timeout={_timeout}s  method_timeout={_method_timeout}s")
     print(f"{'='*68}\n")
 
@@ -311,7 +311,7 @@ def run(seed: int = 42):
     print(f"  RESULTS  (strict R²≥{THRESH}, seed={seed})")
     print(f"  HypatiaX : {h_recovered}/{n}  ({100*h_recovered/n:.1f}%)")
     print(f"  PySR-only: {p_recovered}/{n}  ({100*p_recovered/n:.1f}%)")
-    print(f"  Expected : 11/12 H (91.7%) · 10/12 P")
+    print("  Expected : 11/12 H (91.7%) · 10/12 P")
     print(f"{'='*68}\n")
 
     # ── Save JSON output ──────────────────────────────────────────────────
@@ -343,7 +343,7 @@ def run(seed: int = 42):
     with open(OUTPUT_JSON, "w") as _f:
         json.dump(result, _f, indent=2, default=str)
 
-    print(f"\n  Protocol returned: success")
+    print("\n  Protocol returned: success")
     print(f"  JSON: {OUTPUT_JSON}")
 
     # Notebook download link (Colab/Jupyter only — skipped in CLI)

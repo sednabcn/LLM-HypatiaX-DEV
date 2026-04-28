@@ -807,7 +807,7 @@ class SymbolicEngine:
             variable_names, auto_fix=auto_sanitize, verbose=True
         )
 
-        print(f"\n[DISCOVERY] Starting symbolic regression...")
+        print("\n[DISCOVERY] Starting symbolic regression...")
         print(f"   Variables: {', '.join(safe_names)}")
         print(f"   Samples: {X.shape[0]}")
         print(f"   Iterations: {self.config.niterations}")
@@ -961,13 +961,13 @@ class SymbolicEngine:
                         f"   [AUTO-TRIG] domain='{self.domain}' eq='{_eq_hint[:30]}' "
                         f"→ injected sin, cos, safe_asin, safe_acos (inv-trig needed)"
                     )
-                    _trace.append(f"trig=sin,cos,safe_asin,safe_acos")
+                    _trace.append("trig=sin,cos,safe_asin,safe_acos")
                 else:
                     print(
                         f"   [AUTO-TRIG] domain='{self.domain}' eq='{_eq_hint[:30]}' "
                         f"→ injected sin, cos only (no inverse trig needed)"
                     )
-                    _trace.append(f"trig=sin,cos")
+                    _trace.append("trig=sin,cos")
 
             # (duplicate AUTO-TRIG block removed — first block above handles this)
 
@@ -1224,11 +1224,11 @@ class SymbolicEngine:
                 print(f"   [PySR] define_operators ({len(pysr_kwargs['define_operators'])} entries) = "
                       f"{[d.split('(')[0] for d in pysr_kwargs['define_operators']]}", flush=True)
             else:
-                print(f"   [PySR] define_operators = NOT SET (old PySR path)", flush=True)
+                print("   [PySR] define_operators = NOT SET (old PySR path)", flush=True)
 
             try:
                 self.model = PySRRegressor(**pysr_kwargs)
-                print(f"   [PySR] PySRRegressor constructed OK", flush=True)
+                print("   [PySR] PySRRegressor constructed OK", flush=True)
             except Exception as _init_exc:
                 import sys as _sys2
                 import traceback as _tb2
@@ -1289,7 +1289,7 @@ class SymbolicEngine:
             if _x_scaled_cols:
                 _X_fit = X / _x_col_scales[np.newaxis, :]
                 print(
-                    f"   [X-SCALE] extreme X-column scale(s) detected — normalising before PySR fit",
+                    "   [X-SCALE] extreme X-column scale(s) detected — normalising before PySR fit",
                     flush=True,
                 )
                 for _xi, _xn, _xsc in _x_scaled_cols:
@@ -1682,7 +1682,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 if self.llm_engine.config.enabled:
                     print(f"   ✓ LLM mode: {llm_mode}")
                 else:
-                    print(f"   ⚠️  LLM disabled, falling back to pure PySR")
+                    print("   ⚠️  LLM disabled, falling back to pure PySR")
                     self.llm_mode = "none"
 
     def discover(
@@ -2021,7 +2021,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             try:
                 y_pred = self._predict_from_equation(hyp.equation, X, variable_names)
                 hyp.r2_score = r2_score(y, y_pred)
-            except Exception as e:
+            except Exception:
                 hyp.r2_score = 0.0
                 hyp.validation_score = 0.0
 
@@ -2781,7 +2781,7 @@ if __name__ == "__main__":
 
     print(f"\nVariable names: {variable_names}")
     print(f"Data shape: X={X.shape}, y={y.shape}")
-    print(f"Note: 'Q' is a PySR reserved word and will be auto-sanitized")
+    print("Note: 'Q' is a PySR reserved word and will be auto-sanitized")
 
     # Test symbolic regression with auto-sanitization
     print("\n" + "=" * 80)
@@ -2805,7 +2805,7 @@ if __name__ == "__main__":
         auto_sanitize=True,
     )
 
-    print(f"\nDiscovery Result:")
+    print("\nDiscovery Result:")
     print(f"   Expression: {result['expression']}")
     print(f"   R² Score: {result['r2_score']:.4f}")
     print(f"   Variable Mapping: {result['variable_name_mapping']}")
@@ -2829,7 +2829,7 @@ if __name__ == "__main__":
             auto_sanitize=True,
         )
 
-        print(f"\nLLM-Guided Result:")
+        print("\nLLM-Guided Result:")
         print(f"   Expression: {result_llm['expression']}")
         print(f"   R² Score: {result_llm['r2_score']:.4f}")
         print(f"   LLM Mode: {result_llm.get('llm_mode', 'N/A')}")

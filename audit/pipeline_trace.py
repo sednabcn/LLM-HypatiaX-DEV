@@ -391,7 +391,7 @@ def trace_protocol_map(report: TraceReport, steps: list[Step],
         if cmd[0] in ("python3", "python") and len(cmd) > 1 and not cmd[1].startswith("-"):
             script = cmd[1]
         elif cmd[0] == "pip":
-            report.add(sec, "OK", step.id, f"pip command — no script to resolve")
+            report.add(sec, "OK", step.id, "pip command — no script to resolve")
             continue
         elif cmd[0] == "jupyter":
             # notebook path is the last positional arg
@@ -467,7 +467,6 @@ def trace_env(report: TraceReport, steps: list[Step], env: dict[str, str]) -> No
     # Per-step env_extra overrides
     for step in steps:
         if step.env_extra:
-            merged = {**env, **step.env_extra}
             overrides = ", ".join(f"{k}={v}" for k, v in step.env_extra.items())
             # Validate no seed var is accidentally overridden
             seed_keys = {"NN_SEED", "PYSR_SEED", "PYTHONHASHSEED"}

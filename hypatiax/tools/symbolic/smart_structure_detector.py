@@ -71,7 +71,7 @@ class SmartStructureDetector:
         """
         print("   [SMART] Analyzing equation structure...")
 
-        n_vars = X.shape[1]
+        X.shape[1]
 
         # 1. Test for additive structure
         is_additive = self._test_additive_structure(X, y)
@@ -439,11 +439,11 @@ class IntelligentEquationBuilder:
         """
         config = base_config.copy()
 
-        print(f"   [SMART] Configuring based on structure...")
+        print("   [SMART] Configuring based on structure...")
 
         # Additive structure: encourage + and -
         if self.structure.is_additive:
-            print(f"   [SMART] → Additive structure: enabling sum operators")
+            print("   [SMART] → Additive structure: enabling sum operators")
             config["binary_operators"] = ["+", "-", "*", "/"]
             config["niterations"] = 100
 
@@ -452,7 +452,7 @@ class IntelligentEquationBuilder:
         # but causes Julia DomainError on negative bases.  We include only
         # safe operators here and let the parsimony penalty prefer simpler forms.
         elif self.structure.is_multiplicative:
-            print(f"   [SMART] → Multiplicative structure: enabling power operators")
+            print("   [SMART] → Multiplicative structure: enabling power operators")
             config["binary_operators"] = ["*", "/"]
             config["niterations"] = 100
 
@@ -478,7 +478,7 @@ class IntelligentEquationBuilder:
         if len(self.structure.interactions) > 2:
             config["maxsize"] = 30
             config["parsimony"] = 0.0001
-            print(f"   [SMART] → Multiple interactions: increased complexity limit")
+            print("   [SMART] → Multiple interactions: increased complexity limit")
         else:
             config["maxsize"] = 20
             config["parsimony"] = 0.001
@@ -553,7 +553,7 @@ if __name__ == "__main__":
     detector = SmartStructureDetector()
     structure = detector.analyze_structure(X, y, var_names)
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Additive: {structure.is_additive}")
     print(f"  Term forms: {structure.term_forms}")
     print(f"  Interactions: {structure.interactions}")
@@ -564,7 +564,7 @@ if __name__ == "__main__":
     builder = IntelligentEquationBuilder(structure)
     config = builder.generate_pysr_config({})
 
-    print(f"\nGenerated Config:")
+    print("\nGenerated Config:")
     print(f"  Binary ops: {config.get('binary_operators')}")
     print(f"  Unary ops: {config.get('unary_operators', [])}")
     print(f"  Max size: {config.get('maxsize')}")

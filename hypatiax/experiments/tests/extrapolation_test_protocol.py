@@ -178,7 +178,7 @@ class ExtrapolationTestProtocol:
         rmse_train = self.calculate_rmse(y_train, y_pred_train)
 
         if verbose:
-            print(f"\n📊 Training Performance:")
+            print("\n📊 Training Performance:")
             print(f"   RMSE: {rmse_train:.6f}")
 
         # Test each extrapolation regime

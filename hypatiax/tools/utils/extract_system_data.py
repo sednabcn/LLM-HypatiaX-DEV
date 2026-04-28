@@ -390,7 +390,7 @@ class SystemDataExtractor:
 
         print(f"\n✅ Generated statistical analysis JSON: {output_file}")
         print(f"   • {len(output['tests'])} unique tests")
-        print(f"   • Ready for statistical_analysis.py")
+        print("   • Ready for statistical_analysis.py")
 
 
 def main():

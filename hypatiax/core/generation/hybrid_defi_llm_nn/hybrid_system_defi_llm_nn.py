@@ -8,7 +8,7 @@ All components consolidated into single file:
 4. Hybrid decision logic (built-in)
 5. Results table generation (built-in)
 
-No external dependencies except:
+No external dependencies except Exception:
 - Standard libraries (numpy, torch, sklearn)
 - Anthropic API client
 - External protocol (experiment_protocol_defi_20.py)

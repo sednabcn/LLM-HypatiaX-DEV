@@ -178,7 +178,7 @@ def main():
     print("═" * 55)
     print("  Code Validator — HypatiaX JMLR")
     print("═" * 55)
-    print(f"\n[0] Resolving repo root...")
+    print("\n[0] Resolving repo root...")
     markers = ["hypatiax", "scripts", "requirements.txt"]
     missing = [m for m in markers if not (ROOT / m).exists()]
     if missing:

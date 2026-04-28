@@ -777,7 +777,7 @@ lines += [
     r'\midrule', r'\midrule',
     f'\\textbf{{Mean extrap $R^2$ (raw)}} & --- & --- & ${raw_hyp:.2e}$ & ${raw_nn:.2e}$ \\\\',
     f'\\textbf{{Mean extrap $R^2$ (clip $-15$)}} & --- & --- & {clip_hyp:.3f} & {clip_nn:.3f} \\\\',
-    f'\\textbf{{Success}} ($R^2 > 0.99$) & --- & --- & '
+    '\\textbf{Success} ($R^2 > 0.99$) & --- & --- & '
     r'\PASS{' + f'{hyp_successes}/{n_total} ({hyp_successes/n_total*100:.1f}\\%)' + '} & '
     r'\FAIL{' + f'{nn_successes}/{n_total} ({nn_successes/n_total*100:.1f}\\%)' + '} \\\\',
     r'\bottomrule',
@@ -865,7 +865,7 @@ print(f'[3/7] table.tex          {os.path.getsize(tex_path):,} bytes')
 # 4 · HTML colour-coded table
 def _bg(v, extrap=False):
     try: v = float(v)
-    except: return ''
+    except Exception: return ''
     if extrap:
         if v > 0.99: return 'background:#d4edda;color:#155724;font-weight:bold'
         if v < 0:    return 'background:#f8d7da;color:#721c24'

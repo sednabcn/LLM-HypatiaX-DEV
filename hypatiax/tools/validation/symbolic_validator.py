@@ -26,7 +26,7 @@ deducts 15 points; each warning deducts 2 points.  Final score clamped to
 
 Notes on bare-except removal
 -----------------------------
-The original code contained three bare ``except:`` clauses.  These have been
+The original code contained three bare ``except Exception:`` clauses.  These have been
 replaced with ``except Exception`` blocks that log the suppressed exception at
 DEBUG level, preserving the graceful-fallback behaviour while making failures
 visible during development and debugging.

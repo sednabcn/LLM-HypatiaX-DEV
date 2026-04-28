@@ -578,7 +578,7 @@ def main() -> int:
 
     # FIX-1: file lives at repo root — parents[2] is correct, not parents[2]
     repo_root = Path(__file__).resolve().parents[2]
-    print(f"\n  HypatiaX apply_patches.py")
+    print("\n  HypatiaX apply_patches.py")
     print(f"  Repo root : {repo_root}")
     print(f"  Dry run   : {args.dry_run}")
     print()

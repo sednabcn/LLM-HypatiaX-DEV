@@ -26,7 +26,7 @@ Acceptance threshold: 85.0 / 100.
 
 Notes on bare-except removal
 -----------------------------
-The original code contained five bare ``except:`` clauses inside
+The original code contained five bare ``except Exception:`` clauses inside
 ``clean_expression_string`` and ``validate_complete``.  These have been
 replaced with typed ``except Exception`` blocks that log the suppressed
 exception at DEBUG level, preserving the graceful-fallback behaviour while

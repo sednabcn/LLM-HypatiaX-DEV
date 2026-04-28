@@ -12,5 +12,5 @@ for path, _, files in os.walk(root):
         if f.endswith(".json"):
             try:
                 json.load(open(os.path.join(path,f)))
-            except:
+            except Exception:
                 print("Corrupt:", f)

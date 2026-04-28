@@ -187,25 +187,25 @@ def run_nn_baseline(domains=None, save_dir="hypatiax/data/results"):
     print("EXPERIMENT SUMMARY".center(70))
     print("=" * 70)
 
-    print(f"\n📊 Overall Results:")
+    print("\n📊 Overall Results:")
     print(f"   Total test cases: {report['overall']['total_cases']}")
     print(
         f"   Successfully evaluated: {report['overall']['successful']}/{report['overall']['total_cases']}"
     )
 
     if report["overall"].get("mean_r2"):
-        print(f"\n📈 R² Score Statistics:")
+        print("\n📈 R² Score Statistics:")
         print(f"   Mean:   {report['overall']['mean_r2']:.4f}")
         print(f"   Median: {report['overall']['median_r2']:.4f}")
 
-    print(f"\n🎯 Performance by Domain:")
+    print("\n🎯 Performance by Domain:")
     for domain, stats in report["by_domain"].items():
         r2_str = f"R²={stats['mean_r2']:.3f}" if stats["mean_r2"] else "N/A"
         print(
             f"   {domain:12s}: {stats['successful']}/{stats['total']} ({100 * stats['success_rate']:5.1f}%)  {r2_str}"
         )
 
-    print(f"\n💾 Results saved to:")
+    print("\n💾 Results saved to:")
     print(f"   {results_file}")
     print(f"   {report_file}")
     print("=" * 70)

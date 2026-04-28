@@ -2243,7 +2243,6 @@ def _sanitise_var_names(var_names: List[str]):
     """
     safe_names = []
     rename_map: Dict[str, str] = {}   # safe_name → original_name
-    counters: Dict[str, int] = {}
 
     for name in var_names:
         if name in _JULIA_RESERVED:
@@ -2382,7 +2381,7 @@ class SymbolicEngineMethod(BaseMethod):
         # was active, what operators were injected, what the Pareto front found).
         _trace = result.get("trace", []) if result else []
         if _trace:
-            print(f"\n   [SE-TRACE] subprocess diagnostic trace:", flush=True)
+            print("\n   [SE-TRACE] subprocess diagnostic trace:", flush=True)
             for _t in _trace:
                 print(f"      {_t}", flush=True)
         self._log(f"run error: {err}")
@@ -2604,7 +2603,7 @@ class ProtocolBenchmarkSuite:
         # Build a set of already-instantiated method names for O(1) lookup —
         # avoids calling cls(verbose=False) in the loop which re-initialises
         # HybridDiscoverySystem (2 s each) and prints 7 duplicate log blocks.
-        active_names = {m.name for m in self.methods}
+        {m.name for m in self.methods}
 
         print(f"\n{'='*80}")
         print("PROTOCOL BENCHMARK — CORE SCRIPT METHODS".center(80))
@@ -2616,12 +2615,11 @@ class ProtocolBenchmarkSuite:
             # Use a temporary instance only to read .name — but only if we
             # didn't already instantiate it above.  Since cls.__init__ may be
             # expensive, derive the name from the already-created instance.
-            method_name = next(
+            next(
                 (m.name for m in self.methods
                  if type(m).__name__ == cls.__name__),
                 cls.__name__   # fallback: use class name
             )
-            flag = "✅" if method_name in active_names else "❌"
             print(f"  [{idx}] {cls.__name__:<38} ← {src}")
         print(f"{'='*80}\n")
 
@@ -2898,21 +2896,21 @@ class ProtocolBenchmarkSuite:
             _scale_dec = int(np.log10(max(sc["max"], 1.0))) if sc["max"] >= 1.0 else 0
             print(f"\n  📐 Target scale:  std={sc['std']:.3g}  mean|y|={sc['mean']:.3g}"
                   f"  range={sc['range']:.3g}  (~10^{_scale_dec})", flush=True)
-            print(f"     NRMSE = RMSE / std(y).  <0.10 → excellent  |  >0.30 → poor fit", flush=True)
+            print("     NRMSE = RMSE / std(y).  <0.10 → excellent  |  >0.30 → poor fit", flush=True)
 
         # ── Cache / duplicate-result warning ─────────────────────────────────
         dupes = comparison.get("duplicates", {})
         if dupes:
-            print(f"\n  ⚠️  DUPLICATE RESULT DETECTED:", flush=True)
+            print("\n  ⚠️  DUPLICATE RESULT DETECTED:", flush=True)
             for formula_hash, methods in dupes.items():
                 print(f"     formula_hash={formula_hash[:16]}… shared by: {', '.join(methods)}", flush=True)
             if self._no_llm_cache:
-                print(f"     --no-llm-cache is active: this is API-level determinism", flush=True)
-                print(f"     (same prompt → same completion at temperature=0).", flush=True)
-                print(f"     These methods are not independent for this equation.", flush=True)
+                print("     --no-llm-cache is active: this is API-level determinism", flush=True)
+                print("     (same prompt → same completion at temperature=0).", flush=True)
+                print("     These methods are not independent for this equation.", flush=True)
             else:
-                print(f"     These LLM-backed methods returned the same formula.", flush=True)
-                print(f"     If this is unexpected, run with --no-llm-cache to force fresh generation.", flush=True)
+                print("     These LLM-backed methods returned the same formula.", flush=True)
+                print("     If this is unexpected, run with --no-llm-cache to force fresh generation.", flush=True)
 
         # ── Main table ───────────────────────────────────────────────────────
         _COL_R2 = 9   # header field width for "R²" column (data uses 8)
@@ -3001,7 +2999,7 @@ class ProtocolBenchmarkSuite:
         # ── Primary metric: R² + NRMSE statistics ────────────────────────────
         # Sorted by median R² — more robust than mean when outliers are present.
         print(f"\n📊 R² / NRMSE summary  (all finite results, n={total}):")
-        print(f"   NRMSE = RMSE / std(y) per test.  <0.10 = excellent  |  >0.30 = poor")
+        print("   NRMSE = RMSE / std(y) per test.  <0.10 = excellent  |  >0.30 = poor")
         print(f"   {'Method':<42} {'Med R²':>8}  {'Med NRMSE':>9}  {'Std R²':>7}  "
               f"{'Failures':>8}  {'Cache⚠':>6}  {'Success'}")
         print("   " + "-" * 92)
@@ -3044,10 +3042,10 @@ class ProtocolBenchmarkSuite:
         total_dupes = sum(dupe_count.values())
         if total_dupes > 0:
             print(f"\n  ⚠️  CACHE HIT SUMMARY: {total_dupes} duplicate-result events.")
-            print(f"     Run with --no-llm-cache to force fresh generation for LLM methods.")
+            print("     Run with --no-llm-cache to force fresh generation for LLM methods.")
         # ── Secondary metric: win count ───────────────────────────────────────
         # Note: wins are broken by speed for ties, so this is a fair count.
-        print(f"\n🏆 Wins  (tiebreaker: faster method wins):")
+        print("\n🏆 Wins  (tiebreaker: faster method wins):")
         if wins:
             for m, c in sorted(wins.items(), key=lambda x: x[1], reverse=True):
                 bar = "█" * int(c / total * 40)
@@ -3067,11 +3065,11 @@ class ProtocolBenchmarkSuite:
         )
         if n_truncated > 0:
             print()
-            print(f"  ⚠️  PURE LLM INTEGRITY WARNING")
+            print("  ⚠️  PURE LLM INTEGRITY WARNING")
             print(f"  {n_truncated}/{total} PureLLM formulas were syntactically incomplete")
-            print(f"  (truncated — no valid return statement).")
-            print(f"  Those results are recorded as success=False in the JSON.")
-            print(f"  Pure LLM recovery rate excludes these cases.")
+            print("  (truncated — no valid return statement).")
+            print("  Those results are recorded as success=False in the JSON.")
+            print("  Pure LLM recovery rate excludes these cases.")
             print()
 
         self._save(
@@ -3655,7 +3653,7 @@ Examples
         # Progress header
         elapsed     = _test_start - _suite_start
         done_before = global_done
-        remaining   = total_tests - i  # tests still to run after this one
+        total_tests - i  # tests still to run after this one
 
         if _test_times:
             avg_t   = sum(_test_times) / len(_test_times)
@@ -3719,7 +3717,7 @@ Examples
         suite.print_summary()
     except Exception as _summary_exc:
         print(f"\n⚠️  print_summary raised: {_summary_exc}")
-        print(f"   Checkpoint cleanup will still proceed.")
+        print("   Checkpoint cleanup will still proceed.")
 
     # ── Checkpoint lifecycle ─────────────────────────────────────────────────
     # Default behaviour: checkpoint is ALWAYS retained after a run completes.
@@ -3730,15 +3728,15 @@ Examples
         pass   # checkpointing was disabled — no file was written, nothing to clean up
     elif getattr(args, "clear_checkpoint", False):
         ProtocolBenchmarkSuite.clear_checkpoint()
-        print(f"\n🗑️  Checkpoint deleted (--clear-checkpoint requested).")
+        print("\n🗑️  Checkpoint deleted (--clear-checkpoint requested).")
     elif _run_had_timeouts:
-        print(f"\n⚠️  Checkpoint retained (had_timeouts=True — internet drop or Julia hang?).")
-        print(f"   Use --resume on next run to continue from where it stopped.")
+        print("\n⚠️  Checkpoint retained (had_timeouts=True — internet drop or Julia hang?).")
+        print("   Use --resume on next run to continue from where it stopped.")
     elif _all_accounted_for:
         print(f"\n📋  Checkpoint retained — all {total_tests} tests complete. Pass --clear-checkpoint to remove.")
     else:
         print(f"\n⚠️  Checkpoint retained — {len(completed_keys)}/{total_tests} tests done.")
-        print(f"   Use --resume on next run to continue.")
+        print("   Use --resume on next run to continue.")
 
     print("\n✅  Done.\n")
 

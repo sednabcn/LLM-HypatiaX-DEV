@@ -910,7 +910,7 @@ def main() -> None:
             })
             print(f"  📄 Noise sweep log  → {noise_log}")
             print(f"  📁 Outputs          → {_RESULTS_DIR}/noise_sweep_*.json / *.csv")
-            print(f"  🔖 Inner checkpoints: noise_sweep_<sigma_label>_checkpoint.json")
+            print("  🔖 Inner checkpoints: noise_sweep_<sigma_label>_checkpoint.json")
 
     # =========================================================================
     # SAMPLE COMPLEXITY SWEEP
@@ -950,7 +950,7 @@ def main() -> None:
             })
             print(f"  📄 SC sweep log     → {sc_log}")
             print(f"  📁 Outputs          → {_RESULTS_DIR}/sample_complexity_*.json / *.csv")
-            print(f"  🔖 Inner checkpoints: sample_complexity_n<NNNN>_checkpoint.json")
+            print("  🔖 Inner checkpoints: sample_complexity_n<NNNN>_checkpoint.json")
 
     # =========================================================================
     # FINAL SUMMARY

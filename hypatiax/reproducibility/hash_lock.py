@@ -56,7 +56,7 @@ def _check(results_dir: Path) -> int:
         if not matched:
             orphans.append(lock)
 
-    print(f"\n  hash_lock --check")
+    print("\n  hash_lock --check")
     print(f"  Results dir : {results_dir}")
     print(f"  Lock files  : {len(locks)}")
     print(f"  JSON files  : {len(jsons)}")

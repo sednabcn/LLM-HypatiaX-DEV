@@ -200,7 +200,7 @@ def _load_api_key() -> None:
 
     # ── Attempt 2: minimal .env parser (no third-party deps) ──────────────────
     if os.environ.get("ANTHROPIC_API_KEY"):
-        print(f"✅ ANTHROPIC_API_KEY already set in environment")
+        print("✅ ANTHROPIC_API_KEY already set in environment")
         return
     for _env_path in [_repo / "hypatiax" / ".env",
                       _repo / ".env",
@@ -1213,14 +1213,14 @@ def main() -> None:
     env["PIPELINE_PYTHON"] = sys.executable
     env["REPRO_ROOT"]  = str(REPO_ROOT)
 
-    _seed_source = f"--seed flag" if args.seed is not None else "default (env or 42)"
+    _seed_source = "--seed flag" if args.seed is not None else "default (env or 42)"
     print(f"\n  NN_SEED={env['NN_SEED']}  PYSR_SEED={env['PYSR_SEED']}  "
           f"PYTHONHASHSEED={env['PYTHONHASHSEED']}  (source: {_seed_source})")
     print(f"  LLM_MODEL={env['LLM_MODEL']}")
     print(f"  ENGINE={env['ENGINE_NAME']}  N_TASKS_INSTABILITY={env['N_TASKS_INSTABILITY']}")
     print(f"  PySR: iterations={env['N_ITERATIONS']} populations={env['POPULATIONS']} pop_size={env['PYSR_POPULATION_SIZE']}")
     if args.skip_paper:
-        print(f"  --skip-paper: Phase 4-B notebook steps will be skipped")
+        print("  --skip-paper: Phase 4-B notebook steps will be skipped")
 
     
     # ── --one-equation: smoke-test mode ───────────────────────────────────
@@ -1257,13 +1257,13 @@ def main() -> None:
     env["PIPELINE_PYTHON"] = sys.executable
     env["REPRO_ROOT"]  = str(REPO_ROOT)
 
-    _seed_source = f"--seed flag" if args.seed is not None else "default (env or 42)"
+    _seed_source = "--seed flag" if args.seed is not None else "default (env or 42)"
     print(f"\n  NN_SEED={env['NN_SEED']}  PYSR_SEED={env['PYSR_SEED']}  "
           f"PYTHONHASHSEED={env['PYTHONHASHSEED']}  (source: {_seed_source})")
     print(f"  LLM_MODEL={env['LLM_MODEL']}")
     print(f"  ENGINE={env['ENGINE_NAME']}  N_TASKS_INSTABILITY={env['N_TASKS_INSTABILITY']}")
     if args.skip_paper:
-        print(f"  --skip-paper: Phase 4-B notebook steps will be skipped")
+        print("  --skip-paper: Phase 4-B notebook steps will be skipped")
 
     # ── Validate --only / --from ───────────────────────────────────────────
     if args.only and args.only not in STEP_IDS:
@@ -1339,14 +1339,14 @@ def main() -> None:
             if result.status == "fail" and not args.continue_on_fail:
                 print(f"\n  Pipeline aborted at [{step.id}].")
                 print(f"  Checkpoint saved → {CHECKPOINT}")
-                print(f"  To resume:         python3 run_all.py --resume")
+                print("  To resume:         python3 run_all.py --resume")
                 print(f"  To rerun this step: python3 run_all.py --only {step.id}")
                 _print_summary(results, time.time() - t_total)
                 sys.exit(1)
 
     except KeyboardInterrupt:
         # ── Ctrl+C pressed between steps (or re-raised from run_step) ──────
-        print(f"\n\n  ⚠  Interrupted by user (Ctrl+C).")
+        print("\n\n  ⚠  Interrupted by user (Ctrl+C).")
         # Mark any step currently being attempted as failed in checkpoint
         # (run_step already appended its StepResult before re-raising, so
         #  results list is up to date; just ensure the checkpoint reflects it.)
@@ -1355,7 +1355,7 @@ def main() -> None:
                 checkpoint_state[r.id] = r.status
         save_checkpoint(checkpoint_state)
         print(f"  Checkpoint saved → {CHECKPOINT}")
-        print(f"  Resume with:       python3 run_all.py --resume"
+        print("  Resume with:       python3 run_all.py --resume"
               + ("  --one-equation" if args.one_equation else ""))
         _print_summary(results, time.time() - t_total)
         sys.exit(130)   # conventional exit code for Ctrl+C

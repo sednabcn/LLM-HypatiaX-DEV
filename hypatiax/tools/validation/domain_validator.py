@@ -193,7 +193,7 @@ class DomainValidator:
         }
 
         # WEEK 2: Normalize expression for better matching
-        expr_lower = expression_str.lower()
+        expression_str.lower()
 
         # Check positive variable constraints
         result = self._check_positive_variables(expression_str, test_data, result)

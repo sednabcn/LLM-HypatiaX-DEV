@@ -1024,8 +1024,8 @@ def main():
                 and p_train - h_train > 0.05):
             print(f"\n  ⚠️  FAILURE MODE DETECTED — {name}")
             print(f"     HypatiaX train R²={h_train:.3f} < PySR-only train R²={p_train:.3f}")
-            print(f"     Arrhenius pattern: correct LLM prior may have constrained PySR's")
-            print(f"     search space → premature convergence. Document in §Analysis.")
+            print("     Arrhenius pattern: correct LLM prior may have constrained PySR's")
+            print("     search space → premature convergence. Document in §Analysis.")
 
     with open(args.output, "w") as f:
         json.dump(all_results, f, indent=2)
@@ -1039,7 +1039,7 @@ def main():
     def _sv(v):
         if v is None: return "---"
         try: return "---" if not np.isfinite(v) else f"{v:.4f}"
-        except: return "---"
+        except Exception: return "---"
 
     def _verdict(p_res, h_res):
         if not p_res or not h_res: return "?"
@@ -1111,7 +1111,7 @@ def main():
             for cond in ("pysr_only", "hypatia")
             if res.get(cond, {}).get("excluded_from_timing")
         )
-        print(f"\nSpeedup summary (PySR time / HypatiaX time):")
+        print("\nSpeedup summary (PySR time / HypatiaX time):")
         print(f"  Equations included : {len(per_eq_speedups)}")
         if n_excluded:
             print(f"  Equations excluded : {n_excluded}  (timed out)")
@@ -1233,7 +1233,7 @@ with open("exp1_ablation_results.json") as f:
 def _sv(v):
     if v is None: return "---"
     try: return "---" if not np.isfinite(v) else f"{v:.4f}"
-    except: return "---"
+    except Exception: return "---"
 
 print(f"{'Equation':<25} {'Cond':<12} {'Train R²':>9} {'Near R²':>9} {'Med R²':>9} {'Far R²':>9} {'Time(s)':>8}")
 print("-" * 90)
@@ -1303,7 +1303,7 @@ if not os.path.exists(RESULTS_PATH):
                      if isinstance(v, dict) and ('pysr_only' in v or 'hypatia' in v))
         print(f"   {n_done}/15 equations in checkpoint.\n")
         if n_done < 3:
-            print(f"⛔  Need ≥ 3 equations. Run Cell 38 first.")
+            print("⛔  Need ≥ 3 equations. Run Cell 38 first.")
             raise SystemExit(0)
     else:
         print(f"⛔  '{RESULTS_PATH}' not found and no checkpoint available.")
@@ -1731,7 +1731,7 @@ elif os.path.exists(CKPT_PATH):
     ) else ckpt.get('results', ckpt)
     print(f"⚠️  Using checkpoint: {CKPT_PATH}")
 else:
-    print(f"⛔  No results found. Run Cell 38 first.")
+    print("⛔  No results found. Run Cell 38 first.")
     raise SystemExit(0)
 
 # 1. Main ablation LaTeX table

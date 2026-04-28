@@ -1673,8 +1673,8 @@ if __name__ == "__main__":
             if meta.get("series") == "crossover":
                 feynman_crossover += 1
 
-    print(f"\n  [F] = Feynman benchmark    [S] = SRBench benchmark")
-    print(f"  ⭐  = flagged for extrapolation testing")
+    print("\n  [F] = Feynman benchmark    [S] = SRBench benchmark")
+    print("  ⭐  = flagged for extrapolation testing")
     print(f"\n  Total test cases         : {total_cases}")
     if args.benchmark in ("feynman", "both"):
         print(f"  Extrapolation-flagged    : {feynman_extrap}")

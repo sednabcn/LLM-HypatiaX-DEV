@@ -941,7 +941,7 @@ def _generate_report(results: List):
                   f"{'nan' if hy is None or (isinstance(hy, float) and np.isnan(hy)) else f'{hy:.4f}'}")
 
     # By-difficulty breakdown
-    print(f"\n── By difficulty ─────────────────────────────────────────────────────────")
+    print("\n── By difficulty ─────────────────────────────────────────────────────────")
     for diff in ["easy", "medium", "hard"]:
         subset = [r for r in standard if r.get("difficulty") == diff]
         if not subset:
@@ -952,7 +952,7 @@ def _generate_report(results: List):
                   f">0.99: {s['pct_099']:.1f}%  (n={len(subset)})")
 
     # ── Timing and speedup ─────────────────────────────────────────────────
-    print(f"\n── Timing summary (per-case mean) ────────────────────────────────────────")
+    print("\n── Timing summary (per-case mean) ────────────────────────────────────────")
 
     # Identify timed-out NN cases (Issue 2)
     timed_out_cases = [
@@ -987,7 +987,7 @@ def _generate_report(results: List):
                    if speedup_mean > 1 else f"Hybrid {1/speedup_mean:.2f}× slower than NN (mean)")
         print(f"  Hybrid vs NN speedup: {verdict}")
         print(f"  Hybrid vs NN speedup (median): {speedup_median:.2f}×")
-        print(f"  (Paper claims 73% reduction = 3.7×)")
+        print("  (Paper claims 73% reduction = 3.7×)")
         reduction_mean   = (1 - np.mean(hyb_times) / np.mean(nn_times)) * 100
         reduction_median = (1 - np.median(hyb_times) / np.median(nn_times)) * 100
         print(f"  This run: mean-based {reduction_mean:.1f}% reduction, "

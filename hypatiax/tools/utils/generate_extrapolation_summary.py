@@ -66,7 +66,7 @@ class ExtrapolationSummaryGenerator:
             self.methods.update(result['methods'].keys())
             self.test_cases.add(result['test'])
         
-        print(f"\n📊 Summary:")
+        print("\n📊 Summary:")
         print(f"   Tests: {len(self.test_cases)}")
         print(f"   Methods: {len(self.methods)}")
         print(f"   Methods found: {', '.join(sorted(self.methods))}")

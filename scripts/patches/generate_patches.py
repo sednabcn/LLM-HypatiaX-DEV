@@ -223,7 +223,7 @@ def main():
             f.write(json.dumps(entry) + "\n")
 
     print(f"\n✅ {len(all_patches)} patches written to patches/generated/")
-    print(f"   Log appended to patches/patch_log.jsonl")
+    print("   Log appended to patches/patch_log.jsonl")
 
 if __name__ == "__main__":
     main()

@@ -1198,7 +1198,7 @@ class EnhancedExtrapolationTest:
         print(f"  Hybrid         (n={hybrid_s['n']:2d}): {_fmt_stat(hybrid_s)}")
 
         if llm_s["mean_raw"] != llm_s["mean_clipped"]:
-            print(f"\n  Info: Raw (unclipped) means for reference:")
+            print("\n  Info: Raw (unclipped) means for reference:")
             print(f"     LLM={llm_s['mean_raw']:.4f}, "
                   f"NN={nn_s['mean_raw']:.4f}, "
                   f"Hybrid={hybrid_s['mean_raw']:.4f}")
@@ -1210,7 +1210,7 @@ class EnhancedExtrapolationTest:
             t, p   = stats.ttest_ind(llm_cl, nn_cl)
             sig    = "OK" if p < 0.05 else "ns"
             winner = "LLM" if float(np.mean(llm_cl)) > float(np.mean(nn_cl)) else "NN"
-            print(f"\nSignificance (clipped scores):")
+            print("\nSignificance (clipped scores):")
             print(f"  LLM vs NN:    t={t:.4f}, p={p:.4f}  [{sig}]  ({winner} higher)")
 
             if len(hybrid_scores) >= 3:

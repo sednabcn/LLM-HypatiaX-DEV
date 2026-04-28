@@ -628,7 +628,7 @@ def main():
     merged = merge_with_instability(extrap_df, args.instability_csv)
 
     merged.to_csv(args.output, index=False)
-    print(f"\nPipeline complete")
+    print("\nPipeline complete")
     print(f"CSV saved  : {args.output}  ({merged.shape[0]} rows x {merged.shape[1]} cols)")
 
     if "regime" in merged.columns:

@@ -937,7 +937,7 @@ if __name__ == "__main__":
             )
 
     print(f"\n  Total equations : {total_cases}")
-    print(f"  ⭐ = extrapolation test,  [+] = positive domain only")
+    print("  ⭐ = extrapolation test,  [+] = positive domain only")
     print()
     print("  Published recovery (strict R²≥0.9999, hybrid50v run):")
     print("    HypatiaX  : 11/12  (91.7%)")

@@ -78,7 +78,7 @@ def extract_plot_data(data):
     # Filter to only systems with data
     systems = {k: v for k, v in systems.items() if len(v) > 0}
 
-    print(f"\nExtracted data:")
+    print("\nExtracted data:")
     for name, values in systems.items():
         print(
             f"  • {name:20s}: {len(values):2d} points (median: {np.median(values):.1f}%)"
@@ -149,8 +149,8 @@ def create_boxplot(systems, output_dir):
     # Add statistics labels
     for pos, errors in zip(positions, data_to_plot):
         median = np.median(errors)
-        q1 = np.percentile(errors, 25)
-        q3 = np.percentile(errors, 75)
+        np.percentile(errors, 25)
+        np.percentile(errors, 75)
 
         # Median value above box
         ax.text(

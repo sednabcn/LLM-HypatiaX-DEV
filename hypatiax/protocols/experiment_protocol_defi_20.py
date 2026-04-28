@@ -808,7 +808,7 @@ if __name__ == "__main__":
     print("=" * 80)
     print("DEFI PROTOCOL v3.0 EXTENDED: 20 COMPLETE TEST CASES".center(80))
     print("=" * 80)
-    print(f"Version: 3.0 Extended | Date: 2026-01-06")
+    print("Version: 3.0 Extended | Date: 2026-01-06")
     print("=" * 80)
 
     total_tests = 0
@@ -832,12 +832,12 @@ if __name__ == "__main__":
 
     stats = protocol.get_protocol_statistics()
     print(f"\n{'=' * 80}")
-    print(f"SUMMARY".center(80))
+    print("SUMMARY".center(80))
     print(f"{'=' * 80}")
     print(f"Total tests: {stats['total_tests']}")
     print(f"Extrapolation tests: {stats['extrapolation_tests']}")
     print(f"Domains: {len(stats['domains'])}")
-    print(f"Difficulty breakdown:")
+    print("Difficulty breakdown:")
     print(f"  Easy: {stats['difficulty']['easy']}")
     print(f"  Medium: {stats['difficulty']['medium']}")
     print(f"  Hard: {stats['difficulty']['hard']}")

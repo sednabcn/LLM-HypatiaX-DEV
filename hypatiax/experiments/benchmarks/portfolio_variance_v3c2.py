@@ -290,10 +290,10 @@ if sweep_data:
 
     h42 = df_hypatia[df_hypatia.seed == 42].iloc[0]
     p42 = df_pysr[df_pysr.seed == 42].iloc[0]
-    print(f'\nHypatiaX @ seed 42 (default benchmark seed):')
+    print('\nHypatiaX @ seed 42 (default benchmark seed):')
     print(f'   far_r2 = {h42.far_r2:.1f}  <- catastrophic failure')
     print(f'   expr   = {h42.expr}')
-    print(f'\nPySR-only @ seed 42:')
+    print('\nPySR-only @ seed 42:')
     print(f'   far_r2 = {p42.far_r2:.3f}')
     print(f'   expr   = {p42.expr}')
 else:

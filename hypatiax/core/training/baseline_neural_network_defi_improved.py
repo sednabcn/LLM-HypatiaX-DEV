@@ -493,9 +493,9 @@ def run_comprehensive_test(
     print("=" * 80)
     print("IMPROVED NEURAL NETWORK BASELINE - DEFI & RISK MANAGEMENT".center(80))
     print("=" * 80)
-    print(f"Architecture  : adaptive — resolved per-equation by adaptive_config.py")
-    print(f"                (1-2 vars→[128,64,32]  3-4→[256,128,64,32]  5+→[512,256,128,64])")
-    print(f"Solver params : adaptive — log-y, lr, wd, scheduler, seeds all from CaseProfile")
+    print("Architecture  : adaptive — resolved per-equation by adaptive_config.py")
+    print("                (1-2 vars→[128,64,32]  3-4→[256,128,64,32]  5+→[512,256,128,64])")
+    print("Solver params : adaptive — log-y, lr, wd, scheduler, seeds all from CaseProfile")
     print(f"Budget        : {budget_secs:.0f}s / equation (early-stopping + wall-clock cap)")
     print(f"Domains       : {', '.join(domains)}")
     print(f"Samples/test  : {num_samples}")
@@ -519,10 +519,10 @@ def run_comprehensive_test(
             print(f"  Shape: X={X.shape}, y={y.shape}")
 
             if metadata.get("extrapolation_test"):
-                print(f"  ⚠️  EXTRAPOLATION TEST CASE")
+                print("  ⚠️  EXTRAPOLATION TEST CASE")
 
             # Train and evaluate
-            print(f"  Training neural network…")
+            print("  Training neural network…")
             result = train_neural_network(
                 X,
                 y,
@@ -547,13 +547,13 @@ def run_comprehensive_test(
             # Categorize performance
             r2 = metrics["r2"]
             if r2 > 0.99:
-                print(f"  🎯 EXCELLENT FIT")
+                print("  🎯 EXCELLENT FIT")
             elif r2 > 0.95:
-                print(f"  ✓ Good fit")
+                print("  ✓ Good fit")
             elif r2 > 0.80:
-                print(f"  ⚠️  Moderate fit")
+                print("  ⚠️  Moderate fit")
             else:
-                print(f"  ❌ Poor fit")
+                print("  ❌ Poor fit")
 
             # Extrapolation info
             if result.get("extrapolation_stats"):
@@ -595,7 +595,7 @@ def run_comprehensive_test(
     print("=" * 80)
 
     overall = report["overall"]
-    print(f"\n📊 Overall Performance:")
+    print("\n📊 Overall Performance:")
     print(f"  Total test cases: {overall['total_cases']}")
     print(
         f"  Successful: {overall['successful']}/{overall['total_cases']} "
@@ -610,7 +610,7 @@ def run_comprehensive_test(
             print(f"  Min R²: {overall['min_r2']:.6f}")
             print(f"  Max R²: {overall['max_r2']:.6f}")
 
-    print(f"\n📈 By Domain:")
+    print("\n📈 By Domain:")
     for domain, stats in report["by_domain"].items():
         mean_r2_str = (
             f"R²: {stats.get('mean_r2', 0):.4f}"
@@ -623,7 +623,7 @@ def run_comprehensive_test(
         )
 
     if report.get("extrapolation_tests"):
-        print(f"\n🎯 Extrapolation Test Cases:")
+        print("\n🎯 Extrapolation Test Cases:")
         for test in report["extrapolation_tests"]:
             status = "✅" if test["success"] else "❌"
             r2_str = (

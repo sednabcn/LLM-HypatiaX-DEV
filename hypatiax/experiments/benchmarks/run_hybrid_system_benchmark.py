@@ -360,7 +360,7 @@ def generate_final_report():
             if n_saved < TOTAL_EXTRAP_CASES:
                 remaining = TOTAL_EXTRAP_CASES - n_saved
                 print(f"\n  \u2139\ufe0f  {remaining} case(s) still to run.  Resume with:")
-                print(f"     python run_hybrid_system_benchmark.py --resume")
+                print("     python run_hybrid_system_benchmark.py --resume")
 
     # ── 2. In-distribution hybrid results (Step 1) ────────────────────────
     if hybrid_files:
@@ -389,7 +389,7 @@ def generate_final_report():
                 print(f"     {key.capitalize():<12}: {cnt:>3}  ({cnt / total * 100:.1f}%)")
 
             # R² by decision type
-            print(f"   R\u00b2 by decision (in-distribution):")
+            print("   R\u00b2 by decision (in-distribution):")
             for label in ("llm", "nn", "ensemble"):
                 group = [r for r in hybrid_data if r.get("decision") == label]
                 if not group:
@@ -434,7 +434,7 @@ def generate_final_report():
                 raw_mean = overall.get("mean_r2", 0)
                 print(f"   Mean R\u00b2 (raw):  {raw_mean:.6f}  "
                       "\u26a0\ufe0f use median for extrapolation benchmarks")
-            print(f"   By domain:")
+            print("   By domain:")
             for domain, dstats in report_data.get("by_domain", {}).items():
                 dm = dstats.get("median_r2", dstats.get("mean_r2", 0))
                 print(f"     {domain:<24}: R\u00b2 = {dm:.4f}  "

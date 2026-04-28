@@ -508,7 +508,7 @@ def _print_noise_sweep_table(agg: Dict) -> None:
     # Recovery rate table
     print(f"\n{'='*100}")
     print("  NOISE SWEEP  --  Recovery Rate  (R2 >= threshold)".center(100))
-    print(f"  threshold: sigma=0% -> 0.9999    sigma>0% -> 0.995".center(100))
+    print("  threshold: sigma=0% -> 0.9999    sigma>0% -> 0.995".center(100))
     print(f"{'='*100}")
     print(f"  {'Method':<44}" + headers)
     print("  " + "-" * 98)
@@ -784,7 +784,7 @@ def main() -> None:
     _save_sweep_json(agg, ts)
     _save_sweep_csv(agg, ts)
 
-    print(f"\nNoise sweep complete.\n")
+    print("\nNoise sweep complete.\n")
 
 
 if __name__ == "__main__":

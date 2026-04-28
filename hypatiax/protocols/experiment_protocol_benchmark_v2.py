@@ -1707,7 +1707,7 @@ if __name__ == "__main__":
         print("=" * 70)
         print(f"  NOISY MODE — noise_level={protocol.noise_level}")
         print(f"  R² threshold: {threshold}  (practical, not literature-comparable)")
-        print(f"  R² ceiling: ~0.9982 (noise floor prevents R²>0.9999)")
+        print("  R² ceiling: ~0.9982 (noise floor prevents R²>0.9999)")
         print("=" * 70)
 
     print()
@@ -1746,8 +1746,8 @@ if __name__ == "__main__":
             if meta.get("series") == "crossover":
                 feynman_crossover += 1
 
-    print(f"\n  [F] = Feynman benchmark    [S] = SRBench benchmark")
-    print(f"  ⭐  = flagged for extrapolation testing")
+    print("\n  [F] = Feynman benchmark    [S] = SRBench benchmark")
+    print("  ⭐  = flagged for extrapolation testing")
     print(f"\n  Total test cases         : {total_cases}")
     if args.benchmark in ("feynman", "both"):
         print(f"  Extrapolation-flagged    : {feynman_extrap}")

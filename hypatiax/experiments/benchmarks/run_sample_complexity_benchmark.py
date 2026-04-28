@@ -851,7 +851,6 @@ def main() -> None:
 
     noiseless   = getattr(args, "noiseless", False)
     mode_label  = "noiseless (σ=0)" if noiseless else "noisy (σ=0.05)"
-    threshold   = args.threshold_noiseless if noiseless else args.threshold_noisy
     methods_str = str(args.methods) if args.methods else "all available"
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -860,7 +859,7 @@ def main() -> None:
     print(f"{'='*80}")
     print(f"  Runner script   : {runner_path}")
     print(f"  Results dir     : {_RESULTS_DIR}")
-    sizes_to_show = sorted(set(sample_sizes) | set(existing_map.keys()))
+    sorted(set(sample_sizes) | set(existing_map.keys()))
     print(f"  Sample sizes    : n ∈ {sample_sizes}  (run)")
     if existing_map:
         print(f"  Sizes MERGED    : n ∈ {sorted(existing_map.keys())}  (pre-existing)")
@@ -929,7 +928,7 @@ def main() -> None:
     _save_complexity_json(agg, ts)
     _save_complexity_csv(agg, ts)
 
-    print(f"\n✅  Sample complexity sweep complete.\n")
+    print("\n✅  Sample complexity sweep complete.\n")
 
 
 if __name__ == "__main__":

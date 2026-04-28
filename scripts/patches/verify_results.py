@@ -66,7 +66,6 @@ def find_result(subdir, filename_glob):
 def check(name, actual, expected, tol, fmt=".4f"):
     global PASS_COUNT, FAIL_COUNT
     diff = abs(actual - expected)
-    status = "✅ PASS" if diff <= tol else "❌ FAIL"
     symbol = "✅" if diff <= tol else "❌"
     print(f"  {symbol} {name:40s}  got={actual:{fmt}}  expected={expected:{fmt}}  tol=±{tol:{fmt}}")
     if diff <= tol:
@@ -188,13 +187,13 @@ def check_defi_duplicates():
     dupes = {n: c for n, c in Counter(names).items() if c > 1}
     if dupes:
         global FAIL_COUNT
-        print(f"  ❌ Duplicate case names found (FIX-C1 not applied):")
+        print("  ❌ Duplicate case names found (FIX-C1 not applied):")
         for name, count in dupes.items():
             print(f"       '{name}' appears {count}×")
         FAIL_COUNT += 1
     else:
         global PASS_COUNT
-        print(f"  ✅ No duplicate case names")
+        print("  ✅ No duplicate case names")
         PASS_COUNT += 1
 
 # ── Main ──────────────────────────────────────────────────────────────────────

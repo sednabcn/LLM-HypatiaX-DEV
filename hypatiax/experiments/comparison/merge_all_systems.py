@@ -380,7 +380,7 @@ def main():
     with open("all_systems_complete_only.json", "w") as f:
         json.dump(complete_subset, f, indent=2)
 
-    print(f"✅ Saved complete-coverage subset: all_systems_complete_only.json")
+    print("✅ Saved complete-coverage subset: all_systems_complete_only.json")
     print(f"   Contains {len(complete)} tests with all 5 systems")
 
     print("\n" + "=" * 80)

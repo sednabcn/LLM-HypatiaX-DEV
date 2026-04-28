@@ -249,7 +249,7 @@ def infer_dimensions(expr: str, units: dict):
                         base_dims = units[base]
                         for k, v in base_dims.items():
                             dims[k] = dims.get(k, 0) + v * exp_val
-                except:
+                except Exception:
                     pass
             elif token in units:
                 dims = add_dims(dims, units[token])
@@ -274,7 +274,7 @@ def infer_dimensions(expr: str, units: dict):
             if base in units:
                 base_dims = units[base]
                 return {k: v * exp_val for k, v in base_dims.items()}
-        except:
+        except Exception:
             pass
 
     # Single variable
@@ -397,7 +397,7 @@ class ExternalProtocolLoader:
 
         if not protocol_file:
             print(f"❌ Protocol file not found: {filename}")
-            print(f"Searched in:")
+            print("Searched in:")
             for path in search_paths:
                 print(f"  - {path}")
             return None
@@ -748,7 +748,7 @@ class DataPatternAnalyzer:
                 r2 = r2_score(y, model.predict(X_poly))
                 if r2 > best_r2:
                     best_r2, best_degree = r2, degree
-            except:
+            except Exception:
                 continue
         return (
             best_r2 > self.threshold_nonlinear,
@@ -767,7 +767,7 @@ class DataPatternAnalyzer:
                 slope, _, r_value, _, _ = stats.linregress(np.log(x_col), np.log(y))
                 if r_value**2 > self.threshold_nonlinear:
                     exponents[var] = slope
-            except:
+            except Exception:
                 continue
         return len(exponents) > 0, exponents
 
@@ -779,7 +779,7 @@ class DataPatternAnalyzer:
 
             model = LinearRegression().fit(X, np.log(y))
             return r2_score(np.log(y), model.predict(X)) > self.threshold_nonlinear
-        except:
+        except Exception:
             return False
 
     def _test_logarithmic(self, X: np.ndarray, y: np.ndarray) -> bool:
@@ -790,7 +790,7 @@ class DataPatternAnalyzer:
 
             model = LinearRegression().fit(np.log(X), y)
             return r2_score(y, model.predict(np.log(X))) > self.threshold_nonlinear
-        except:
+        except Exception:
             return False
 
     def _test_periodic(self, y: np.ndarray) -> bool:
@@ -801,7 +801,7 @@ class DataPatternAnalyzer:
             max_freq = np.max(fft_vals[1 : len(fft_vals) // 2])
             mean_freq = np.mean(fft_vals[1 : len(fft_vals) // 2])
             return max_freq > 5 * mean_freq
-        except:
+        except Exception:
             return False
 
     def _test_interactions(self, X: np.ndarray, y: np.ndarray) -> bool:
@@ -814,7 +814,7 @@ class DataPatternAnalyzer:
             X_inter = np.column_stack([X, X[:, 0] * X[:, 1]])
             r2_inter = r2_score(y, LinearRegression().fit(X_inter, y).predict(X_inter))
             return (r2_inter - r2_no_inter) > 0.05
-        except:
+        except Exception:
             return False
 
     def _classify_scale(self, y: np.ndarray) -> str:
@@ -970,15 +970,6 @@ class LLMHypothesisGenerator:
             convert_to_json_serializable(patterns.to_dict()), indent=2
         )
         # ADD THIS BLOCK HERE ↓↓↓
-        domain_hints = {
-            "fluid_dynamics": (
-                "For Hagen-Poiseuille: Express flow as Q = dP * r**4 / (mu * L) "
-                "using simplified form without pi/8 constants."
-            ),
-            "mechanics": (
-                "For Hooke's Law restoring forces: F = -k * x (negative sign matters)."
-            ),
-        }
         prompt = f"""You are an expert scientific equation discovery system. Generate {n_candidates} candidate equations for this problem.
 
 PROBLEM CONTEXT:
@@ -1104,8 +1095,8 @@ class HypothesisVerifier:
 
             # 🔥 STEP 2: Dimensional inference check
             if domain and target_var:
-                units = UNIT_TABLES.get(domain, {})
-                target_dims = infer_target_dimension(target_var, domain)
+                UNIT_TABLES.get(domain, {})
+                infer_target_dimension(target_var, domain)
 
                 # Only check dimensions if we have confident target dimensions
                 # Skip check if target_dims is empty (dimensionless) or None
@@ -1236,20 +1227,20 @@ class LLMGuidedDiscovery:
 
         if verbose:
             print(f"\n{'=' * 80}")
-            print(f"LLM-GUIDED DISCOVERY")
+            print("LLM-GUIDED DISCOVERY")
             print(f"{'=' * 80}")
             print(f"Domain: {domain}")
             print(f"Variables: {', '.join(variable_names)}")
             print(f"Samples: {len(y)}")
             print(f"Hypothesis candidates: {n_hypotheses}")
             if variable_units:
-                print(f"Validation: ENABLED")
+                print("Validation: ENABLED")
 
         start_time = time.time()
 
         # Phase 1: Analyze patterns
         if verbose:
-            print(f"\n[PHASE 1] Analyzing data patterns...")
+            print("\n[PHASE 1] Analyzing data patterns...")
         phase1_start = time.time()
         patterns = self.pattern_analyzer.analyze(X, y, variable_names)
         phase1_time = time.time() - phase1_start
@@ -1278,7 +1269,7 @@ class LLMGuidedDiscovery:
 
         # Phase 3: Verify
         if verbose:
-            print(f"\n[PHASE 3] Verifying hypotheses...")
+            print("\n[PHASE 3] Verifying hypotheses...")
         phase3_start = time.time()
         verified = []
 
@@ -1327,13 +1318,13 @@ class LLMGuidedDiscovery:
         if verbose:
             print(f"\n{'=' * 80}")
             if success:
-                print(f"✅ SUCCESS")
+                print("✅ SUCCESS")
                 print(f"   Equation: {best.fitted_equation or best.equation}")
                 print(f"   R² Score: {best.r2_score:.4f}")
                 if best.validation_score:
                     print(f"   Validation: {best.validation_score:.1f}/100")
             else:
-                print(f"⚠️  No hypothesis met thresholds")
+                print("⚠️  No hypothesis met thresholds")
             print(f"   Total time: {total_time:.2f}s")
 
         return {
@@ -1361,7 +1352,7 @@ class LLMGuidedDiscovery:
 def print_results_table(results: Dict[str, Dict], test_cases: Dict[str, Dict]):
     """Print comprehensive results table matching suite format."""
     print(f"\n{'=' * 120}")
-    print(f"LLM-GUIDED DISCOVERY RESULTS".center(120))
+    print("LLM-GUIDED DISCOVERY RESULTS".center(120))
     print(f"{'=' * 120}")
     print(
         f"{'Test Name':<35} {'R²':>8} {'Val':>6} {'Time':>6} {'Status':^8} {'Observation':<45}"

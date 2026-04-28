@@ -507,7 +507,7 @@ def print_summary(df: pd.DataFrame, csv_path: Path):
     n_C = df["regime"].str.startswith("C").sum()
     n_total = len(df)
 
-    print(f"\n── Key statistics ────────────────────────────────────────────────────────")
+    print("\n── Key statistics ────────────────────────────────────────────────────────")
     print(f"  Cases analysed           : {n_total}")
     print(f"  Regime A (symbolic)      : {n_A}  ({100*n_A/n_total:.1f}%)")
     print(f"  Regime C (collapse)      : {n_C}  ({100*n_C/n_total:.1f}%)")
@@ -519,11 +519,11 @@ def print_summary(df: pd.DataFrame, csv_path: Path):
           f"{df[df['regime']=='A-Symbolic']['std'].mean():.4f}")
     print(f"  Mean II (Regime C)       : "
           f"{df[df['regime'].str.startswith('C')]['std'].mean():.4f}")
-    print(f"── Instability Index legend ──────────────────────────────────────────────")
-    print(f"  II_i := sigma_i = std(R²_i^(k))  across N independent LLM runs")
-    print(f"  II=0     → deterministic (Regime A/B)")
-    print(f"  II≥0.05  → marginal stochastic instability")
-    print(f"  II≥0.10  → severe collapse (LLM samples formula distribution)")
+    print("── Instability Index legend ──────────────────────────────────────────────")
+    print("  II_i := sigma_i = std(R²_i^(k))  across N independent LLM runs")
+    print("  II=0     → deterministic (Regime A/B)")
+    print("  II≥0.05  → marginal stochastic instability")
+    print("  II≥0.10  → severe collapse (LLM samples formula distribution)")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -572,19 +572,19 @@ def main():
     df  = build_dataframe(data)
     fmt = args.format
 
-    print(f"\n📊 Figure 1 — Complexity vs Instability (KEY) ...")
+    print("\n📊 Figure 1 — Complexity vs Instability (KEY) ...")
     plot_complexity_vs_instability(df, args.out, fmt, show_regline=not args.no_regline)
 
-    print(f"📊 Figure 2 — Complexity vs Success Probability ...")
+    print("📊 Figure 2 — Complexity vs Success Probability ...")
     plot_complexity_vs_success(df, args.out, fmt)
 
-    print(f"📊 Figure 3 — Mean R² vs Instability ...")
+    print("📊 Figure 3 — Mean R² vs Instability ...")
     plot_mean_vs_instability(df, args.out, fmt)
 
-    print(f"📊 Figure 4 — Instability distribution (KDE histogram) ...")
+    print("📊 Figure 4 — Instability distribution (KDE histogram) ...")
     plot_instability_hist(df, args.out, fmt)
 
-    print(f"📊 Figure 5 — Regime counts ...")
+    print("📊 Figure 5 — Regime counts ...")
     plot_regime_counts(df, args.out, fmt)
 
     print_summary(df, csv_path)
