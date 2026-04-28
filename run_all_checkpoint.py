@@ -200,7 +200,7 @@ def _load_api_key() -> None:
 
     # ── Attempt 2: minimal .env parser (no third-party deps) ──────────────────
     if os.environ.get("ANTHROPIC_API_KEY"):
-        print(f"✅ ANTHROPIC_API_KEY already set in environment")
+        print("✅ ANTHROPIC_API_KEY already set in environment")
         return
     for _env_path in [_repo / "hypatiax" / ".env",
                       _repo / ".env",
@@ -234,8 +234,8 @@ _REQUIREMENTS = REPO_ROOT / "requirements.txt"
 _STRIP_PATTERNS = ["defi-risk", "optimum-onnx"]
 if _REQUIREMENTS.exists():
     _lines = _REQUIREMENTS.read_text().splitlines(keepends=True)
-    _filtered = [l for l in _lines
-                 if not any(p in l for p in _STRIP_PATTERNS)]
+    _filtered = [_line for _line in _lines
+                 if not any(p in _line for p in _STRIP_PATTERNS)]
     if len(_filtered) < len(_lines):
         _REQUIREMENTS.write_text("".join(_filtered))
         print(f"  ✂  Removed {len(_lines)-len(_filtered)} incompatible dep(s) "
@@ -244,7 +244,7 @@ if _REQUIREMENTS.exists():
 # ── Stage paper .tex files into paper/ if they live at repo root ──────────────
 # validate_code.py and audit notebooks expect tex files in paper/.
 # If the repo was published with them at root, copy them across automatically.
-import shutil as _shutil
+import shutil as _shutil  # noqa: E402 — must follow REPO_ROOT definition
 _PAPER_DIR = REPO_ROOT / "paper"
 _TEX_PATTERNS = [
     "jmlr_paper*.tex",               # main paper (underscore variant)
@@ -427,7 +427,7 @@ STEPS: list[Step] = [
     # single protocol. Do NOT substitute run_dual_condition_benchmark.py.
     Step("exp1",
          "Exp 1 · DeFi 74-task benchmark v3.0 (§10.2–10.4, §10.6)",
-         ["python3", "hypatiax/protocols/experiment_protocol_ablation_exp1.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_ablation_exp1.py"],
          phase="1 · Core experiments",
          expected="89.2% R²>0.99 · 0 catastrophic · 1.73× speedup",
          result_glob="comparison_results/noise-noiseless/noiseless/*.json"),
@@ -442,7 +442,7 @@ STEPS: list[Step] = [
          "Exp 1b · Portfolio Variance seed sweep (§10.5)",
          # --task and --seeds are NOT accepted by experiment_protocol_defi_v3.py —
          # they are forwarded via env vars DEFI_TASK_FILTER and DEFI_SEEDS instead.
-         ["python3", "hypatiax/protocols/experiment_protocol_defi_v3.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_defi_v3.py"],
          phase="1 · Core experiments",
          expected="P(H>P) ≈ 0.76",
          result_glob="comparison_results/noise-noiseless/15/*.json",
@@ -455,7 +455,7 @@ STEPS: list[Step] = [
     # §10.7: primary run is Kaggle 4-vCPU; this protocol reproduces that environment
     Step("exp2",
          "Exp 2 · Feynman 30-equation extrapolation (§10.7)",
-         ["python3", "hypatiax/protocols/experiment_protocol_feynman_exp2.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_feynman_exp2.py"],
          phase="1 · Core experiments",
          slow=True,
          expected="9/30 (30%)  [Kaggle 4-vCPU primary · wall time 4–8 h]",
@@ -500,7 +500,7 @@ STEPS: list[Step] = [
     # Supp B: noise σ ∈ {0,0.5,1,5,10}% AND sample n ∈ {50…1000} in one protocol
     Step("suppB",
          "Supp B · Noise & sample-complexity sweep",
-         ["python3", "hypatiax/protocols/experiment_protocol_noise_sweep.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_noise_sweep.py"],
          phase="2 · Supplementary benchmarks",
          slow=True,
          expected="EHD 100% at all σ · plateau ≈ N=500",
@@ -516,7 +516,7 @@ STEPS: list[Step] = [
     #       but HYPATIAX_CORE_OPTIONAL=1 is set as an extra guard for the routing script.
     Step("suppA",
          "Supp A · Hybrid routing improvements (Fix 1–5b)",
-         ["python3", "hypatiax/protocols/experiment_protocol_hybrid_routing.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_hybrid_routing.py"],
          phase="2 · Supplementary benchmarks",
          expected="+6pp Fix1, +5pp Fix2, +1pp Fix3",
          result_glob="hybrid_pysr/all_domains/**/*.json",
@@ -526,7 +526,7 @@ STEPS: list[Step] = [
     # §10.9: 70 tasks × K=30 stochastic runs — LLM_K_RUNS injected via env_extra
     Step("instability",
          "§10.9 · Stability under stochastic inference (K=30)",
-         ["python3", "hypatiax/protocols/experiment_protocol_instability_rf02_04.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_instability_rf02_04.py"],
          phase="2 · Supplementary benchmarks",
          slow=True,
          env_extra={"LLM_K_RUNS": "30"},
@@ -542,7 +542,7 @@ STEPS: list[Step] = [
     # extra guard.
     Step("extrap",
          "§10.8 · Extrapolation comparative (near/med/far OOD)",
-         ["python3", "hypatiax/protocols/experiment_protocol_extrapolation_comparative.py"],
+         [sys.executable, "hypatiax/protocols/experiment_protocol_extrapolation_comparative.py"],
          phase="2 · Supplementary benchmarks",
          result_glob="extrapolation/extrapolation_73cases_enhanced.json",
          env_extra={
@@ -581,7 +581,7 @@ STEPS: list[Step] = [
 
     Step("scan-imports",
          "§11 · scan_internal_imports.py — internal import DAG",
-         ["python3", "scan_internal_imports.py",
+         [sys.executable, "scan_internal_imports.py",
           "--root", ".", "--out", "logs/repro_output"],
          phase="3 · Audit & verification"),
 
@@ -591,20 +591,20 @@ STEPS: list[Step] = [
     #   hypatiax/data/results/{defi,feynman,exp1_ablation,instability}/
     Step("verify",
          "Verify results against paper targets",
-         ["python3", "scripts/patches/verify_results.py", "--report"],
+         [sys.executable, "scripts/patches/verify_results.py", "--report"],
          phase="3 · Audit & verification",
          env_extra={"PATCHED_DATA_DIR": str(REPO_ROOT / "hypatiax" / "data" / "results"),
                     "VERIFY_RESULTS_DIR": str(RESULTS_DIR)}),
 
     Step("hashlock",
          "Hash lock check",
-         ["python3", "hypatiax/reproducibility/hash_lock.py", "--check"],
+         [sys.executable, "hypatiax/reproducibility/hash_lock.py", "--check"],
          phase="3 · Audit & verification"),
 
     # ── Phase 4: Outputs — figures & tables written to hypatiax/data/results/ ─
     Step("figures",
          "Generate all figures",
-         ["python3", "figures/generate_figures.py",
+         [sys.executable, "figures/generate_figures.py",
           "--outdir", str(RESULTS_DIR / "figures")],
          phase="4 · Outputs",
          result_glob="figures/*.pdf"),
@@ -616,7 +616,7 @@ STEPS: list[Step] = [
     # correct place (hypatiax/data/results/) rather than a hardcoded patched path.
     Step("tables",
          "Generate all tables",
-         ["python3", "scripts/patches/generate_tables.py",
+         [sys.executable, "scripts/patches/generate_tables.py",
           "--outdir", str(RESULTS_DIR / "tables")],
          phase="4 · Outputs",
          result_glob="tables/*.tex",
@@ -1161,9 +1161,9 @@ def main() -> None:
     # ── verify-only shortcut ───────────────────────────────────────────────
     if args.verify_only:
         banner("Verify-only mode")
-        subprocess.run(["python3", "scripts/patches/verify_results.py", "--report"],
+        subprocess.run([sys.executable, "scripts/patches/verify_results.py", "--report"],
                        check=False)
-        subprocess.run(["python3", "hypatiax/reproducibility/hash_lock.py", "--check"],
+        subprocess.run([sys.executable, "hypatiax/reproducibility/hash_lock.py", "--check"],
                        check=False)
         sys.exit(0)
 
@@ -1263,14 +1263,14 @@ def main() -> None:
     env["PIPELINE_PYTHON"] = sys.executable
     env["REPRO_ROOT"]  = str(REPO_ROOT)
 
-    _seed_source = f"--seed flag" if args.seed is not None else "default (env or 42)"
+    _seed_source = "--seed flag" if args.seed is not None else "default (env or 42)"
     print(f"\n  NN_SEED={env['NN_SEED']}  PYSR_SEED={env['PYSR_SEED']}  "
           f"PYTHONHASHSEED={env['PYTHONHASHSEED']}  (source: {_seed_source})")
     print(f"  LLM_MODEL={env['LLM_MODEL']}")
     print(f"  ENGINE={env['ENGINE_NAME']}  N_TASKS_INSTABILITY={env['N_TASKS_INSTABILITY']}")
     print(f"  PySR: iterations={env['N_ITERATIONS']} populations={env['POPULATIONS']} pop_size={env['PYSR_POPULATION_SIZE']}")
     if args.skip_paper:
-        print(f"  --skip-paper: Phase 4-B notebook steps will be skipped")
+        print("  --skip-paper: Phase 4-B notebook steps will be skipped")
 
     
     # ── --one-equation: smoke-test mode ───────────────────────────────────
@@ -1414,14 +1414,14 @@ def main() -> None:
             if result.status == "fail" and not args.continue_on_fail:
                 print(f"\n  Pipeline aborted at [{step.id}].")
                 print(f"  Checkpoint saved → {CHECKPOINT}")
-                print(f"  To resume:         python3 run_all.py --resume")
+                print("  To resume:         python3 run_all.py --resume")
                 print(f"  To rerun this step: python3 run_all.py --only {step.id}")
                 _print_summary(results, time.time() - t_total)
                 sys.exit(1)
 
     except KeyboardInterrupt:
         # ── Ctrl+C pressed between steps (or re-raised from run_step) ──────
-        print(f"\n\n  ⚠  Interrupted by user (Ctrl+C).")
+        print("\n\n  ⚠  Interrupted by user (Ctrl+C).")
         # Mark any step currently being attempted as failed in checkpoint
         # (run_step already appended its StepResult before re-raising, so
         #  results list is up to date; just ensure the checkpoint reflects it.)
@@ -1430,7 +1430,7 @@ def main() -> None:
                 checkpoint_state[r.id] = r.status
         save_checkpoint(checkpoint_state)
         print(f"  Checkpoint saved → {CHECKPOINT}")
-        print(f"  Resume with:       python3 run_all.py --resume"
+        print("  Resume with:       python3 run_all.py --resume"
               + ("  --one-equation" if args.one_equation else "")
               + ("  --one-equation-paper" if args.one_equation_paper else ""))
         _print_summary(results, time.time() - t_total)
