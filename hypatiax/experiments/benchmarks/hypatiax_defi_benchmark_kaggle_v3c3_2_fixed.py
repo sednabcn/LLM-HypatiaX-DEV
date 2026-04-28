@@ -2400,7 +2400,7 @@ def formula({var_list}):
             # Strip markdown fences
             if "```" in code:
                 lines = [ln for ln in code.splitlines()
-                         if not l.strip().startswith("```")]
+                         if not ln.strip().startswith("```")]
                 code  = "\n".join(lines).strip()
 
             # B4 FIX: normalise function name → always 'formula'

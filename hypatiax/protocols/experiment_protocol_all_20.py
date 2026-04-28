@@ -110,9 +110,9 @@ class ExperimentProtocolB:
             )
 
             # 2. Ohm's Law
-            _idx = np.random.uniform(0.1, 10, num_samples)
+            I = np.random.uniform(0.1, 10, num_samples)  # noqa: E741
             R = np.random.uniform(1, 1000, num_samples)
-            X = np.column_stack([I, R])
+            X = np.column_stack([I, R])  # noqa: E741
             y_true = I * R
             y = y_true + np.random.normal(0, np.abs(y_true) * 0.01, num_samples)
             test_cases.append(

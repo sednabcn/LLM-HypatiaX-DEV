@@ -522,7 +522,7 @@ def formula({var_list}):
         # Strip markdown fences if present
         if "```" in code:
             lines = [ln for ln in code.splitlines()
-                     if not l.strip().startswith("```")]
+                     if not ln.strip().startswith("```")]
             code  = "\n".join(lines).strip()
         return {"python_code": code, "formula": code,
                 "success": "def formula" in code, "error": None}
