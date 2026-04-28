@@ -18,7 +18,7 @@ def load_data():
     """Load the shared dataset"""
     data_file = DATA_DIR / "all_systems_merged.json"
     if data_file.exists():
-        with open(data_file, 'r') as f:
+        with open(data_file) as f:
             return json.load(f)
     else:
         print(f"Warning: {data_file} not found. Using sample data.")
@@ -35,13 +35,13 @@ def generate_sample_data():
 def plot_results():
     """Create main results figure"""
     data = load_data()
-    
+
     plt.figure(figsize=(10, 6))
-    
+
     if 'systems' in data and 'scores' in data:
         systems = data['systems']
         scores = data['scores']
-        
+
         plt.bar(systems, scores, color=['#2E86AB', '#A23B72', '#F18F01'])
         plt.ylabel('Performance Score', fontsize=12)
         plt.xlabel('System', fontsize=12)
@@ -54,7 +54,7 @@ def plot_results():
         plt.plot(x, np.sin(x), label='Sample Data')
         plt.legend()
         plt.title('Placeholder Figure')
-    
+
     plt.tight_layout()
     plt.savefig(FIG_DIR / 'results.pdf', bbox_inches='tight', dpi=300)
     plt.close()

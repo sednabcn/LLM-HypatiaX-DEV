@@ -8,7 +8,6 @@ Produces minimal field-level patches in patches/generated/.
 Usage:
     python scripts/generate_patches.py [--dry-run]
 """
-import argparse
 import json
 import os
 import sys

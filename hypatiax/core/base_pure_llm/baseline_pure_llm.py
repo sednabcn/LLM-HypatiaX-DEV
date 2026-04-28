@@ -5,7 +5,6 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from anthropic import Anthropic
@@ -44,9 +43,9 @@ class PureLLMBaseline:
         self,
         description: str,
         domain: str,
-        variable_names: Optional[List[str]] = None,
-        metadata: Optional[Dict] = None,
-    ) -> Dict:
+        variable_names: list[str] | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
         """
         Generate a mathematical formula using LLM.
 
@@ -182,7 +181,7 @@ Be mathematically precise and use standard conventions for the {domain} domain."
                 "timestamp": datetime.now().isoformat(),
             }
 
-    def _parse_response(self, content: str) -> Dict[str, str]:
+    def _parse_response(self, content: str) -> dict[str, str]:
         """
         Parse structured response from LLM.
 
@@ -232,7 +231,7 @@ Be mathematically precise and use standard conventions for the {domain} domain."
         code = code.strip()
         return code
 
-    def compile_formula(self, formula_dict: Dict):
+    def compile_formula(self, formula_dict: dict):
         """
         Compile the generated Python code into a callable function
         so it can be reused (e.g. for extrapolation).
@@ -253,11 +252,11 @@ Be mathematically precise and use standard conventions for the {domain} domain."
 
     def test_formula_accuracy(
         self,
-        formula_dict: Dict,
+        formula_dict: dict,
         X: np.ndarray,
         y_true: np.ndarray,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Test formula accuracy against ground truth data.
 
@@ -523,7 +522,7 @@ Be mathematically precise and use standard conventions for the {domain} domain."
 
 def load_test_data(
     domain: str,
-) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
     """
     Load test data for evaluation.
 
@@ -542,7 +541,7 @@ def load_test_data(
 
 
 def run_comprehensive_test(
-    domains: List[str] = None, save_dir: str = "hypatiax/data/results"
+    domains: list[str] = None, save_dir: str = "hypatiax/data/results"
 ):
     """
     Run comprehensive test of pure LLM baseline across all domains.

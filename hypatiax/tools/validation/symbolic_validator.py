@@ -41,7 +41,7 @@ import logging
 import random
 import re
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import sympy as sp
@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 
 def safe_sympify(
     expression_str: str,
-    variable_names: Optional[List[str]] = None,
+    variable_names: list[str] | None = None,
 ) -> sp.Expr:
     """Parse *expression_str* into a SymPy expression with Pint isolation.
 
@@ -95,7 +95,7 @@ def safe_sympify(
     if not isinstance(expression_str, str):
         expression_str = str(expression_str)
 
-    local_dict: Dict[str, Any] = {}
+    local_dict: dict[str, Any] = {}
     if variable_names:
         for var in variable_names:
             local_dict[var] = sp.Symbol(var, real=True)
@@ -163,7 +163,7 @@ class SymbolicValidator:
     The last *max_history* results are retained in a bounded deque.
     """
 
-    def __init__(self, max_history: Optional[int] = 1000) -> None:
+    def __init__(self, max_history: int | None = 1000) -> None:
         """Initialise the validator.
 
         Args:
@@ -191,10 +191,10 @@ class SymbolicValidator:
     def validate(
         self,
         expression: str,
-        variable_definitions: Dict[str, str],
+        variable_definitions: dict[str, str],
         domain: str = "defi",
         from_latex: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Validate *expression* symbolically.
 
         Args:
@@ -221,7 +221,7 @@ class SymbolicValidator:
             - ``warnings`` (list[str])
             - ``score`` (int in [0, 100])
         """
-        results: Dict[str, Any] = {
+        results: dict[str, Any] = {
             "valid": True,
             "syntactically_valid": False,
             "dimensionally_consistent": False,
@@ -330,7 +330,7 @@ class SymbolicValidator:
     # Internal — parsing
     # ------------------------------------------------------------------
 
-    def _finalize_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    def _finalize_results(self, results: dict[str, Any]) -> dict[str, Any]:
         """Calculate score, log outcome, and store in history."""
         results["score"] = self._calculate_score(results)
         logger.debug(
@@ -341,7 +341,7 @@ class SymbolicValidator:
         self.validation_history.append(results)
         return results
 
-    def _safe_parse_latex(self, latex_str: str) -> Optional[sp.Expr]:
+    def _safe_parse_latex(self, latex_str: str) -> sp.Expr | None:
         """Parse a LaTeX expression, returning None on failure.
 
         Uses a lazy import of parse_latex so the module can be loaded without
@@ -367,7 +367,7 @@ class SymbolicValidator:
     # Internal — numerical stability
     # ------------------------------------------------------------------
 
-    def _check_numerical_stability(self, expr: sp.Expr) -> Dict[str, Any]:
+    def _check_numerical_stability(self, expr: sp.Expr) -> dict[str, Any]:
         """Scan the expression tree for numerical stability risks.
 
         Checks:
@@ -384,8 +384,8 @@ class SymbolicValidator:
         Returns:
             Dict with keys ``stable`` (bool), ``warnings``, ``errors``.
         """
-        warnings: List[str] = []
-        errors: List[str] = []
+        warnings: list[str] = []
+        errors: list[str] = []
 
         # 1. Division by zero
         for denom in self._extract_denominators(expr):
@@ -471,9 +471,9 @@ class SymbolicValidator:
         s = str(expr).lower()
         return any(p in s for p in ("epsilon", "eps", "ε", "+ 1e-", "+ 0.000"))
 
-    def _extract_exp_arguments(self, expr: sp.Expr) -> List[sp.Expr]:
+    def _extract_exp_arguments(self, expr: sp.Expr) -> list[sp.Expr]:
         """Return all direct arguments of exp() nodes in the tree."""
-        args: List[sp.Expr] = []
+        args: list[sp.Expr] = []
         if expr.func == sp.exp:
             args.append(expr.args[0])
         for arg in getattr(expr, "args", ()):
@@ -487,9 +487,9 @@ class SymbolicValidator:
             return True
         return bool(arg.free_symbols) and not arg.is_Number
 
-    def _extract_multiplication_chains(self, expr: sp.Expr) -> List[sp.Expr]:
+    def _extract_multiplication_chains(self, expr: sp.Expr) -> list[sp.Expr]:
         """Return the args of top-level and nested Mul nodes."""
-        terms: List[sp.Expr] = []
+        terms: list[sp.Expr] = []
         if expr.is_Mul:
             terms.extend(expr.args)
         for arg in getattr(expr, "args", ()):
@@ -497,27 +497,27 @@ class SymbolicValidator:
                 terms.extend(arg.args)
         return terms
 
-    def _extract_sqrt_arguments(self, expr: sp.Expr) -> List[sp.Expr]:
+    def _extract_sqrt_arguments(self, expr: sp.Expr) -> list[sp.Expr]:
         """Return all direct arguments of sqrt() nodes in the tree."""
-        args: List[sp.Expr] = []
+        args: list[sp.Expr] = []
         if expr.func == sp.sqrt:
             args.append(expr.args[0])
         for arg in getattr(expr, "args", ()):
             args.extend(self._extract_sqrt_arguments(arg))
         return args
 
-    def _extract_log_arguments(self, expr: sp.Expr) -> List[sp.Expr]:
+    def _extract_log_arguments(self, expr: sp.Expr) -> list[sp.Expr]:
         """Return all direct arguments of log() nodes in the tree."""
-        args: List[sp.Expr] = []
+        args: list[sp.Expr] = []
         if expr.func == sp.log:
             args.append(expr.args[0])
         for arg in getattr(expr, "args", ()):
             args.extend(self._extract_log_arguments(arg))
         return args
 
-    def _extract_power_terms(self, expr: sp.Expr) -> List[tuple]:
+    def _extract_power_terms(self, expr: sp.Expr) -> list[tuple]:
         """Return (base, exponent) pairs for all Pow nodes in the tree."""
-        terms: List[tuple] = []
+        terms: list[tuple] = []
         if expr.is_Pow:
             terms.append((expr.args[0], expr.args[1]))
         for arg in getattr(expr, "args", ()):
@@ -549,7 +549,7 @@ class SymbolicValidator:
             return True
         return False
 
-    def _extract_denominators(self, expr: sp.Expr) -> List[sp.Expr]:
+    def _extract_denominators(self, expr: sp.Expr) -> list[sp.Expr]:
         """Return all denominator sub-expressions (bases of Pow(..., -n)).
 
         FIX: the original had a double-recursion bug.  When ``expr.is_Add``,
@@ -559,7 +559,7 @@ class SymbolicValidator:
         "division-by-zero" errors.  Fixed with ``elif`` so only one branch
         recurses per node type.
         """
-        denoms: List[sp.Expr] = []
+        denoms: list[sp.Expr] = []
 
         if expr.is_Mul:
             # Collect denominators at this level.
@@ -630,9 +630,9 @@ class SymbolicValidator:
 
         return False
 
-    def _find_subtractions(self, expr: sp.Expr) -> List[sp.Expr]:
+    def _find_subtractions(self, expr: sp.Expr) -> list[sp.Expr]:
         """Return Add nodes that contain at least one negated term."""
-        subs: List[sp.Expr] = []
+        subs: list[sp.Expr] = []
         if expr.is_Add:
             if any(arg.could_extract_minus_sign() for arg in expr.args):
                 subs.append(expr)
@@ -645,8 +645,8 @@ class SymbolicValidator:
     # ------------------------------------------------------------------
 
     def _defi_rules(
-        self, expr: sp.Expr, variable_definitions: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, expr: sp.Expr, variable_definitions: dict[str, str]
+    ) -> dict[str, Any]:
         """DeFi-specific validation rules.
 
         Checks:
@@ -658,8 +658,8 @@ class SymbolicValidator:
         - Liquidity positivity.
         - AMM constant product invariant advisory.
         """
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
 
         expr_str = str(expr).lower()
         free_vars = [str(s).lower() for s in expr.free_symbols]
@@ -701,11 +701,11 @@ class SymbolicValidator:
         return {"valid": not errors, "errors": errors, "warnings": warnings}
 
     def _finance_rules(
-        self, expr: sp.Expr, variable_definitions: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, expr: sp.Expr, variable_definitions: dict[str, str]
+    ) -> dict[str, Any]:
         """Finance-specific validation rules."""
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
         s = str(expr).lower()
 
         if "risk" in s or "var" in s:
@@ -718,11 +718,11 @@ class SymbolicValidator:
         return {"valid": not errors, "errors": errors, "warnings": warnings}
 
     def _esg_rules(
-        self, expr: sp.Expr, variable_definitions: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, expr: sp.Expr, variable_definitions: dict[str, str]
+    ) -> dict[str, Any]:
         """ESG-specific validation rules."""
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
         s = str(expr).lower()
 
         if "score" in s:
@@ -733,11 +733,11 @@ class SymbolicValidator:
         return {"valid": not errors, "errors": errors, "warnings": warnings}
 
     def _risk_rules(
-        self, expr: sp.Expr, variable_definitions: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, expr: sp.Expr, variable_definitions: dict[str, str]
+    ) -> dict[str, Any]:
         """Risk management validation rules."""
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
         s = str(expr).lower()
 
         if "var" in s:
@@ -750,15 +750,15 @@ class SymbolicValidator:
         return {"valid": not errors, "errors": errors, "warnings": warnings}
 
     def _biology_rules(
-        self, expr: sp.Expr, variable_definitions: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, expr: sp.Expr, variable_definitions: dict[str, str]
+    ) -> dict[str, Any]:
         """Biology/biochemistry validation rules.
 
         Recognises Michaelis-Menten kinetics patterns and flags concentration
         and rate-constant variables for positivity constraints.
         """
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
         expr_str = str(expr).lower()
         free_vars = [str(s).lower() for s in expr.free_symbols]
 
@@ -789,8 +789,8 @@ class SymbolicValidator:
         return {"valid": not errors, "errors": errors, "warnings": warnings}
 
     def _default_rules(
-        self, expr: sp.Expr, variable_definitions: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, expr: sp.Expr, variable_definitions: dict[str, str]
+    ) -> dict[str, Any]:
         """Permissive default rules for unrecognised domains."""
         return {"valid": True, "errors": [], "warnings": []}
 
@@ -798,7 +798,7 @@ class SymbolicValidator:
     # Internal — scoring
     # ------------------------------------------------------------------
 
-    def _calculate_score(self, results: Dict[str, Any]) -> int:
+    def _calculate_score(self, results: dict[str, Any]) -> int:
         """Compute a score in [0, 100] from the sub-check flags.
 
         Each of the four boolean checks (syntactically_valid,
@@ -831,12 +831,12 @@ class SymbolicValidator:
         else:
             self.validation_history = []
 
-    def get_history(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_history(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return the validation history, optionally limited to the most recent *limit* entries."""
         history = list(self.validation_history)
         return history[-limit:] if limit is not None else history
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Return aggregate statistics over the validation history."""
         if not self.validation_history:
             return {"total_validations": 0, "success_rate": 0.0, "average_score": 0.0}

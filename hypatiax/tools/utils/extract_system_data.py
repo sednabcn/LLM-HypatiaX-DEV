@@ -9,10 +9,8 @@ Author: Ruperto Bonet Chaple
 Date: January 2026
 """
 
-import glob
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -32,7 +30,7 @@ class SystemDataExtractor:
         self.test_files = []
         self.extracted_data = {"System_2_Symbolic": [], "System_3_LLM_Fallback": []}
 
-    def find_test_files(self, pattern: str = "*test*.json") -> List[Path]:
+    def find_test_files(self, pattern: str = "*test*.json") -> list[Path]:
         """
         Find all test files matching pattern.
 
@@ -53,7 +51,7 @@ class SystemDataExtractor:
 
         return self.test_files
 
-    def extract_from_file(self, filepath: Path) -> Optional[Dict]:
+    def extract_from_file(self, filepath: Path) -> dict | None:
         """
         Extract relevant data from a single test file.
 
@@ -64,7 +62,7 @@ class SystemDataExtractor:
             Dictionary with extracted data or None if invalid
         """
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 data = json.load(f)
 
             # Determine which system this is
@@ -123,7 +121,7 @@ class SystemDataExtractor:
             print(f"⚠️  Error reading {filepath.name}: {e}")
             return None
 
-    def _identify_system(self, data: Dict) -> Optional[str]:
+    def _identify_system(self, data: dict) -> str | None:
         """
         Identify which system generated this data.
 
@@ -159,7 +157,7 @@ class SystemDataExtractor:
 
         return None
 
-    def _extract_extrapolation_errors(self, data: Dict) -> Dict:
+    def _extract_extrapolation_errors(self, data: dict) -> dict:
         """
         Extract extrapolation errors if available.
 

@@ -19,7 +19,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -65,7 +65,7 @@ class HybridPerformanceAnalyzer:
 
         return True
 
-    def analyze_overall_performance(self) -> Dict[str, Any]:
+    def analyze_overall_performance(self) -> dict[str, Any]:
         """Analyze overall system performance"""
 
         print("\n" + "=" * 80)
@@ -138,7 +138,7 @@ class HybridPerformanceAnalyzer:
 
         return stats
 
-    def analyze_by_domain(self) -> Dict[str, Dict[str, Any]]:
+    def analyze_by_domain(self) -> dict[str, dict[str, Any]]:
         """Analyze performance by DeFi domain"""
 
         print("\n" + "=" * 80)
@@ -192,7 +192,7 @@ class HybridPerformanceAnalyzer:
 
         return domain_stats
 
-    def analyze_decision_strategy(self) -> Dict[str, Any]:
+    def analyze_decision_strategy(self) -> dict[str, Any]:
         """Analyze performance of different decision strategies"""
 
         print("\n" + "=" * 80)
@@ -274,7 +274,7 @@ class HybridPerformanceAnalyzer:
 
         return strategy_stats
 
-    def analyze_component_performance(self) -> Dict[str, Any]:
+    def analyze_component_performance(self) -> dict[str, Any]:
         """Analyze individual component performance (LLM, Ensemble, NN)"""
 
         print("\n" + "=" * 80)
@@ -349,7 +349,7 @@ class HybridPerformanceAnalyzer:
 
         return summary
 
-    def analyze_failures(self) -> List[Dict[str, Any]]:
+    def analyze_failures(self) -> list[dict[str, Any]]:
         """Analyze cases where the system performed poorly"""
 
         print("\n" + "=" * 80)
@@ -411,7 +411,7 @@ class HybridPerformanceAnalyzer:
 
         return failures
 
-    def analyze_extrapolation(self) -> Dict[str, Any]:
+    def analyze_extrapolation(self) -> dict[str, Any]:
         """Analyze extrapolation performance"""
 
         if not self.extrapolation_results:
@@ -462,8 +462,8 @@ class HybridPerformanceAnalyzer:
             print("❌ No valid extrapolation R² scores")
             return {}
 
-    def generate_recommendations(self, overall_stats: Dict, domain_stats: Dict,
-                                strategy_stats: Dict, failures: List) -> List[str]:
+    def generate_recommendations(self, overall_stats: dict, domain_stats: dict,
+                                strategy_stats: dict, failures: list) -> list[str]:
         """Generate actionable recommendations based on analysis"""
 
         print("\n" + "=" * 80)
@@ -524,9 +524,9 @@ class HybridPerformanceAnalyzer:
 
         return recommendations
 
-    def save_report(self, overall_stats: Dict, domain_stats: Dict,
-                   strategy_stats: Dict, component_stats: Dict,
-                   failures: List, recommendations: List):
+    def save_report(self, overall_stats: dict, domain_stats: dict,
+                   strategy_stats: dict, component_stats: dict,
+                   failures: list, recommendations: list):
         """Save comprehensive report to JSON"""
 
         report = {

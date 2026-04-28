@@ -92,13 +92,12 @@ import logging
 import os
 import random
 import re
-import time
 from collections import deque
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from dotenv import load_dotenv
@@ -146,14 +145,14 @@ def _cached_quality(
     expression: str,
     r2_rounded: float,
     complexity_threshold: int,
-) -> Tuple[bool, int, Tuple[str, ...]]:
+) -> tuple[bool, int, tuple[str, ...]]:
     """
     Pure-function quality check used as the LRU target.
     Returns (is_overfit, complexity, warnings_tuple) — fully hashable.
     """
     complexity = len(expression)
     is_overfit = False
-    warnings: List[str] = []
+    warnings: list[str] = []
 
     if complexity > complexity_threshold and r2_rounded < 0.999:
         is_overfit = True
@@ -173,7 +172,7 @@ def _cached_quality(
 # ---------------------------------------------------------------------------
 # PROD-3: Pre-compiled regex patterns for PySR operator normalisation.
 # ---------------------------------------------------------------------------
-def _build_op_patterns(aliases: Dict[str, str]) -> Dict[str, Tuple[re.Pattern, str]]:
+def _build_op_patterns(aliases: dict[str, str]) -> dict[str, tuple[re.Pattern, str]]:
     return {
         pysr_name: (re.compile(r"\b" + re.escape(pysr_name) + r"\b"), numpy_name)
         for pysr_name, numpy_name in aliases.items()
@@ -213,24 +212,24 @@ class HybridDiscoverySystem:
     """
 
     # PROD-3: Alias table (unchanged from v4.1-PROD)
-    _PYSR_OP_ALIASES: Dict[str, str] = {
+    _PYSR_OP_ALIASES: dict[str, str] = {
         "safe_asin":   "arcsin",
         "safe_acos":   "arccos",
         "asin_of_sin": "arcsin",
         "acos_of_cos": "arccos",
         "atan_of_tan": "arctan",
     }
-    _PYSR_OP_PATTERNS: Dict[str, Tuple[re.Pattern, str]] = _build_op_patterns(
+    _PYSR_OP_PATTERNS: dict[str, tuple[re.Pattern, str]] = _build_op_patterns(
         _PYSR_OP_ALIASES
     )
 
     def __init__(
         self,
         domain: str = "general",
-        discovery_config: Optional[DiscoveryConfig] = None,
+        discovery_config: DiscoveryConfig | None = None,
         discovery_mode: DiscoveryMode = DiscoveryMode.STRICT,
-        max_results: Optional[int] = 100,
-        validation_weights: Optional[Dict[str, float]] = None,
+        max_results: int | None = 100,
+        validation_weights: dict[str, float] | None = None,
         use_rich_output: bool = True,
         primary_llm: str = "anthropic",
         enable_fallback: bool = True,
@@ -241,8 +240,8 @@ class HybridDiscoverySystem:
         physics_generations: int = 100,
         max_retries: int = 5,                # PIN-1: raised from 3 for reproducibility
         enable_auto_config: bool = True,
-        anthropic_api_key: Optional[str] = None,
-        google_api_key: Optional[str] = None,
+        anthropic_api_key: str | None = None,
+        google_api_key: str | None = None,
         # FIX-2: New parameters to control LLM engine behaviour.
         use_llm: bool = False,
         llm_mode: str = "hybrid",          # none | seed | hybrid | fallback
@@ -397,7 +396,7 @@ class HybridDiscoverySystem:
         self.max_results = max_results
         self.results: Any = deque(maxlen=max_results) if max_results is not None else []
 
-        self.stats: Dict[str, int] = {
+        self.stats: dict[str, int] = {
             "discoveries": 0,
             "symbolic_attempts": 0,
             "symbolic_successes": 0,
@@ -443,7 +442,7 @@ class HybridDiscoverySystem:
             )
 
     def _initialize_llm_providers(
-        self, anthropic_api_key: Optional[str], google_api_key: Optional[str]
+        self, anthropic_api_key: str | None, google_api_key: str | None
     ) -> None:
         """
         Initialize external LLM provider references (FIX-5).
@@ -455,7 +454,9 @@ class HybridDiscoverySystem:
         api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
         if api_key:
             try:
-                from hypatiax.tools.llm_providers.anthropic_provider import AnthropicProvider
+                from hypatiax.tools.llm_providers.anthropic_provider import (
+                    AnthropicProvider,
+                )
                 self.anthropic_provider = AnthropicProvider(api_key=api_key, max_tokens=4096)
             except Exception:
                 self.anthropic_provider = None
@@ -473,7 +474,7 @@ class HybridDiscoverySystem:
             self.google_provider = None
 
     def _create_optimized_physics_regressor(
-        self, noise_level: Optional[float] = None
+        self, noise_level: float | None = None
     ) -> PhysicsAwareRegressor:
         return PhysicsAwareRegressor(
             domain=self.domain,
@@ -483,7 +484,7 @@ class HybridDiscoverySystem:
             noise_level=noise_level,
         )
 
-    def _check_expression_quality(self, expression: str, r2: float) -> Dict[str, Any]:
+    def _check_expression_quality(self, expression: str, r2: float) -> dict[str, Any]:
         """Quality check — PROD-1: delegates to LRU-cached pure function."""
         r2_rounded = round(r2, 6)
         is_overfit, complexity, warnings_tuple = _cached_quality(
@@ -542,11 +543,11 @@ class HybridDiscoverySystem:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-        variable_descriptions: Dict[str, str],
-        variable_units: Dict[str, str],
-        equation_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        variable_names: list[str],
+        variable_descriptions: dict[str, str],
+        variable_units: dict[str, str],
+        equation_name: str | None = None,
+    ) -> dict[str, Any]:
         """
         Discover with retry.
 
@@ -557,7 +558,7 @@ class HybridDiscoverySystem:
         """
         best_result = None
         best_r2 = -np.inf
-        last_attempt_error: Optional[Exception] = None
+        last_attempt_error: Exception | None = None
         _inv_injected = False
 
         for attempt in range(self.max_retries):
@@ -723,10 +724,10 @@ class HybridDiscoverySystem:
     def _safe_validate(
         self,
         expression_str: str,
-        variable_definitions: Dict[str, str],
-        variable_units: Dict[str, str],
-        test_data: Dict[str, np.ndarray],
-    ) -> Dict[str, Any]:
+        variable_definitions: dict[str, str],
+        variable_units: dict[str, str],
+        test_data: dict[str, np.ndarray],
+    ) -> dict[str, Any]:
         """Safe validation (unchanged from v4.1-PROD)."""
         normalised = self._normalise_expression(expression_str)
         if normalised != expression_str:
@@ -764,16 +765,16 @@ class HybridDiscoverySystem:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-        variable_descriptions: Dict[str, str],
-        variable_units: Dict[str, str],
-        description: Optional[str] = None,
-        equation_name: Optional[str] = None,
+        variable_names: list[str],
+        variable_descriptions: dict[str, str],
+        variable_units: dict[str, str],
+        description: str | None = None,
+        equation_name: str | None = None,
         validate_first: bool = True,
         show_formatted: bool = True,
         use_llm: bool = False,          # FIX-3: now actually read and respected
         min_validation_score: float = 85.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Complete discovery workflow v5.1.
 
@@ -836,13 +837,13 @@ class HybridDiscoverySystem:
                 _orig_binary  = list(self.symbolic_engine.config.binary_operators)
                 _orig_unary   = list(self.symbolic_engine.config.unary_operators)
                 _orig_maxsize = self.symbolic_engine.config.maxsize
-                
+
                 try:
                     _ws_constraints = self.symbolic_engine._extract_operators_from_equation(
                         _p1_expr
                     )
                     # Temporarily tighten the engine config
-                   
+
                     if _ws_constraints.get("binary_operators"):
                         self.symbolic_engine.config.binary_operators = (
                             _ws_constraints["binary_operators"]
@@ -983,11 +984,11 @@ class HybridDiscoverySystem:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        var_names: List[str],
+        var_names: list[str],
         description: str = "",
-        metadata: Optional[Dict] = None,
+        metadata: dict | None = None,
         verbose: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Thin adapter for benchmark runners.
 
@@ -1035,7 +1036,7 @@ class HybridDiscoverySystem:
             return np.sign(arr) * np.log10(np.abs(arr) + 1.0)
 
         try:
-            _needs_log: List[bool] = []
+            _needs_log: list[bool] = []
             for _col in range(X.shape[1]):
                 _vals = X[:, _col]
                 _abs = np.abs(_vals[np.isfinite(_vals) & (_vals != 0)])
@@ -1143,7 +1144,7 @@ class HybridDiscoverySystem:
                     _safe_names = discovery.get("variable_names", var_names)
                     _X_aug   = getattr(self.symbolic_engine, "_last_X_aug",    _X_for_rmse)
                     _aug_nms = getattr(self.symbolic_engine, "_last_aug_names", list(var_names))
-                    _ns: Dict[str, Any] = {
+                    _ns: dict[str, Any] = {
                         "np": np,
                         # base cols — use normalised X (matches what formula was fit to)
                         **{name: _X_aug[:, i] for i, name in enumerate(var_names)
@@ -1244,7 +1245,7 @@ class HybridDiscoverySystem:
         print(f"   Used: {self.stats['auto_configs']} times")
         print(f"\n{'=' * 70}\n")
 
-    def save_results(self, filename: Optional[str] = None) -> str:
+    def save_results(self, filename: str | None = None) -> str:
         """Save results to JSON — PROD-4/5: single-pass serialisation."""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

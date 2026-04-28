@@ -186,7 +186,6 @@ def run(seed: int = 42):
         from protocols.experiment_protocol_nguyen12 import NguYenProtocol
 
     # ── Import SR engine ──────────────────────────────────────────────────
-    import pysr
     from pysr import PySRRegressor
     from sklearn.metrics import r2_score
 

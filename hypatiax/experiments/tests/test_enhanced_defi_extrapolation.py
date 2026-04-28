@@ -26,11 +26,9 @@ Fixes vs the 20-case version
 
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import torch
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 
@@ -148,7 +146,9 @@ class EnhancedExtrapolationTest:
         import torch
         from sklearn.preprocessing import StandardScaler
 
-        from hypatiax.core.training.baseline_neural_network_defi_improved import ImprovedNN
+        from hypatiax.core.training.baseline_neural_network_defi_improved import (
+            ImprovedNN,
+        )
 
         n = len(X_train)
         split = int(n * (1 - probe_frac))
@@ -235,7 +235,9 @@ class EnhancedExtrapolationTest:
         import torch
         torch.manual_seed(seed)
         np.random.seed(seed)
-        from hypatiax.core.training.baseline_neural_network_defi_improved import ImprovedNN
+        from hypatiax.core.training.baseline_neural_network_defi_improved import (
+            ImprovedNN,
+        )
 
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()
@@ -1173,7 +1175,8 @@ class EnhancedExtrapolationTest:
             )
 
         def _fmt_stat(s):
-            na = lambda x: f"{x:.4f}" if not np.isnan(x) else "nan"
+            def na(x):
+                return f"{x:.4f}" if not np.isnan(x) else "nan"
             return (f"median={na(s['median'])}, "
                     f"mean(clip)={na(s['mean_clipped'])}, "
                     f">0.9: {s['pct_09']:.1f}%, "
@@ -1254,7 +1257,8 @@ class EnhancedExtrapolationTest:
                 return float(np.median(v)) if len(v) else float("nan")
 
             l, n_m, h = _med("pure_llm"), _med("neural_network"), _med("hybrid")
-            na = lambda x: f"{x:.4f}" if not np.isnan(x) else "nan"
+            def na(x):
+                return f"{x:.4f}" if not np.isnan(x) else "nan"
             print(f"  {diff.upper():6s} (n={len(sub):2d}): "
                   f"LLM={na(l)}, NN={na(n_m)}, Hybrid={na(h)}")
 
@@ -1303,7 +1307,8 @@ class EnhancedExtrapolationTest:
             return float(np.median(v)) if len(v) else float("nan")
 
         sg_l, sg_n, sg_h = _sg("pure_llm"), _sg("neural_network"), _sg("hybrid")
-        na = lambda x: f"{x:.4f}" if not np.isnan(x) else "nan"
+        def na(x):
+            return f"{x:.4f}" if not np.isnan(x) else "nan"
         print(f"  LLM={na(sg_l)},  NN={na(sg_n)},  Hybrid={na(sg_h)}")
 
         # ── Bootstrap CIs (clipped, standard, median-based) ───────────────────
@@ -1346,8 +1351,9 @@ class EnhancedExtrapolationTest:
                 h    = r["results"].get("hybrid", {})
                 lv   = r["results"].get("pure_llm", {})
                 nv   = r["results"].get("neural_network", {})
-                na2  = lambda x: f"{x:.3f}" if (x is not None
-                                                  and not np.isnan(x)) else "nan"
+                def na2(x):
+                    return f"{x:.3f}" if (x is not None
+                                                                  and not np.isnan(x)) else "nan"
                 print(f"\n  [{r['difficulty'].upper()}] {name}")
                 print(f"    LLM={na2(lv.get('test_r2'))}, "
                       f"NN={na2(nv.get('test_r2'))}, "

@@ -15,7 +15,6 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -34,7 +33,7 @@ load_dotenv(dotenv_path=env_path)
 # ---------------------------------------------------------------------------
 
 class ImprovedNN(nn.Module):
-    def __init__(self, input_dim: int, hidden_dims: List[int] = None):
+    def __init__(self, input_dim: int, hidden_dims: list[int] = None):
         super().__init__()
         if hidden_dims is None:
             hidden_dims = [128, 64, 32]
@@ -56,10 +55,10 @@ class ImprovedNN(nn.Module):
 def train_nn_model(
     X_train: np.ndarray,
     y_train: np.ndarray,
-    hidden_dims: List[int] = None,
+    hidden_dims: list[int] = None,
     epochs: int = 1000,
     lr: float = 0.003,
-) -> Tuple[ImprovedNN, object, object]:
+) -> tuple[ImprovedNN, object, object]:
     """Train NN; returns (model, scaler_X, scaler_y).
 
     KEY IMPROVEMENTS vs original:
@@ -150,7 +149,7 @@ def r2_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # Formula evaluation helpers
 # ---------------------------------------------------------------------------
 
-def _safe_exec_formula(python_code: str, X: np.ndarray, var_names: List[str]) -> Optional[np.ndarray]:
+def _safe_exec_formula(python_code: str, X: np.ndarray, var_names: list[str]) -> np.ndarray | None:
     """Execute a formula string against data rows. Returns array or None."""
     import math as _math
     # Build namespace with safe wrappers for common out-of-domain operations.
@@ -236,7 +235,7 @@ def _safe_exec_formula(python_code: str, X: np.ndarray, var_names: List[str]) ->
 # Stage 2 — Nonlinear parameter fitting via scipy.optimize
 # ---------------------------------------------------------------------------
 
-def _parametrize_formula(python_code: str, var_names: List[str]) -> tuple:
+def _parametrize_formula(python_code: str, var_names: list[str]) -> tuple:
     """
     Make formula parameters free by replacing their assigned numeric values
     with _P[i] index references so scipy can optimize them.
@@ -267,8 +266,8 @@ def _parametrize_formula(python_code: str, var_names: List[str]) -> tuple:
         r'\s*([+-]?\s*\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)\s*$',
         re.MULTILINE,
     )
-    seen_names: Dict[str, int] = {}
-    init_vals: List[float] = []
+    seen_names: dict[str, int] = {}
+    init_vals: list[float] = []
     new_body = body
 
     for m in pattern.finditer(body):
@@ -303,7 +302,7 @@ def _parametrize_formula(python_code: str, var_names: List[str]) -> tuple:
     # named-assignment pass instead, so they are unaffected by this choice.
     _STRUCTURAL = {0.0, 1.0, 2.0}
     counter = [0]
-    b_init: List[float] = []
+    b_init: list[float] = []
 
     def _replace_literal(m: re.Match) -> str:
         val = float(m.group(0))
@@ -326,9 +325,9 @@ def fit_formula_params(
     python_code: str,
     X_train: np.ndarray,
     y_train: np.ndarray,
-    variable_names: List[str],
+    variable_names: list[str],
     verbose: bool = False,
-) -> Tuple[Optional[str], float]:
+) -> tuple[str | None, float]:
     """
     Stage 2: parametrize the LLM formula and fit numeric constants to data.
 
@@ -487,7 +486,7 @@ def fit_formula_params(
         np.full(n, float(np.abs(y_train).max())),
         rng.uniform(0.5, 2.0, n),
     ]
-    scored: List[tuple] = []
+    scored: list[tuple] = []
     for c in candidates:
         p = _predict(c)
         r = r2_score(y_train, p) if p is not None else -np.inf
@@ -605,7 +604,7 @@ class EnhancedHybridSystemDeFi:
         self.client = Anthropic(api_key=api_key)
         self.model = model
         self.results = []
-        self.formula_cache: Dict[str, Dict] = {}
+        self.formula_cache: dict[str, dict] = {}
         self._no_cache = no_cache   # honoured in generate_llm_formula
 
         # Delegate LLM formula generation to PureLLMBaseline so Feynman
@@ -629,12 +628,12 @@ class EnhancedHybridSystemDeFi:
         self,
         description: str,
         domain: str,
-        variable_names: List[str],
-        metadata: Dict,
+        variable_names: list[str],
+        metadata: dict,
         verbose: bool = False,
         X: "np.ndarray | None" = None,
         y: "np.ndarray | None" = None,
-    ) -> Dict:
+    ) -> dict:
         cache_key = f"{description}|{domain}|{','.join(variable_names)}"
         if not self._no_cache and cache_key in self.formula_cache:
             return self.formula_cache[cache_key].copy()
@@ -842,7 +841,7 @@ Expected Shortfall at 95% confidence for normal returns (ES multiplier = 2.063).
         # fallback
         return self._standard_prompt(description, domain, variable_names, metadata)
 
-    def _parse_response(self, content: str) -> Dict[str, str]:
+    def _parse_response(self, content: str) -> dict[str, str]:
         parsed = {"formula": "N/A", "latex": "N/A", "python": "N/A", "explanation": "N/A"}
 
         for key, tag in [("formula", "FORMULA"), ("latex", "LATEX"), ("explanation", "EXPLANATION")]:
@@ -879,10 +878,10 @@ Expected Shortfall at 95% confidence for normal returns (ES multiplier = 2.063).
             domain: str,
             X_train: np.ndarray,
             y_train: np.ndarray,
-            variable_names: List[str],
-            metadata: Dict,
+            variable_names: list[str],
+            metadata: dict,
             verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Hybrid symbolic + neural system.
 
@@ -1052,12 +1051,12 @@ Expected Shortfall at 95% confidence for normal returns (ES multiplier = 2.063).
 
     def evaluate_llm_formula(
         self,
-        result_dict: Dict,
+        result_dict: dict,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
+        variable_names: list[str],
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Evaluate a formula dict (with 'python_code') against data."""
         code = result_dict.get("python_code", "N/A")
         if not code or code == "N/A":

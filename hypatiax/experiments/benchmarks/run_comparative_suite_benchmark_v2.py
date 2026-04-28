@@ -59,13 +59,18 @@ Usage
   python run_protocol_benchmark_core.py --samples 500
 """
 
+import ctypes as _ctypes
+
+def _kill_thread(tid):
+    # Raise SystemExit in a thread by id (best-effort)
+    return _ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        _ctypes.c_ulong(tid), _ctypes.py_object(SystemExit)
+    )
+
 import concurrent.futures as _cf
-import ctypes  # for _kill_thread (hard timeout enforcement)
-import inspect
 import json
 import os
 import random
-import re
 import sys
 import threading as _threading
 import time
@@ -73,7 +78,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Hard ceiling on any single method call. Prevents Anthropic API exponential-
 # backoff retry storms from hanging the suite for 18+ minutes on one test.
@@ -184,7 +189,7 @@ except ImportError:
     pass
 
 try:
-    from anthropic import Anthropic
+    from anthropic import Anthropic  # noqa: F401
     ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
 except ImportError:
     ANTHROPIC_AVAILABLE = False
@@ -283,12 +288,12 @@ class MethodResult:
     r2:            float
     rmse:          float
     formula:       str
-    error:         Optional[str]        = None
+    error:         str | None        = None
     time:          float                = 0.0
-    metadata:      Dict[str, Any]       = field(default_factory=dict)
+    metadata:      dict[str, Any]       = field(default_factory=dict)
     formula_hash:  str                  = ""   # SHA-256 of the FULL formula pre-truncation
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "method":       self.method,
             "success":      self.success,
@@ -387,8 +392,8 @@ class BaseMethod:
     def _runner_eval_formula(
         python_code: str,
         X: np.ndarray,
-        var_names: List[str],
-    ) -> Optional[np.ndarray]:
+        var_names: list[str],
+    ) -> np.ndarray | None:
         """
         Try to evaluate *python_code* as a numpy expression that maps X
         columns to a 1-D prediction array.
@@ -406,7 +411,7 @@ class BaseMethod:
         except ImportError:
             _spsp = None
 
-        safe_globals: Dict[str, Any] = {
+        safe_globals: dict[str, Any] = {
             "__builtins__": {},
             "np": np,
             "numpy": np,
@@ -445,7 +450,7 @@ class BaseMethod:
             safe_globals["special"] = _spsp
 
         # Inject each variable as the corresponding X column (broadcast-safe)
-        local_ns: Dict[str, Any] = {}
+        local_ns: dict[str, Any] = {}
         for i, vn in enumerate(var_names):
             local_ns[vn] = X[:, i] if X.ndim == 2 else X
 
@@ -479,7 +484,7 @@ class BaseMethod:
         # Strategy 3: def form — find the first def and call it
         if y_pred is None and "def " in code:
             try:
-                exec_ns: Dict[str, Any] = dict(safe_globals)
+                exec_ns: dict[str, Any] = dict(safe_globals)
                 exec(code, exec_ns)  # noqa: S102
                 fn = next(
                     (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
@@ -505,7 +510,7 @@ class BaseMethod:
         X: np.ndarray,
         y: np.ndarray,
         y_pred_llm: np.ndarray,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Train a shallow MLP on the LLM formula residuals and return
         corrected predictions.
 
@@ -592,7 +597,7 @@ class BaseMethod:
                     pred_s = net(X_t).numpy().flatten()
                 return pred_s * t_std + t_mean
 
-            best_y_hybrid: Optional[np.ndarray] = None
+            best_y_hybrid: np.ndarray | None = None
             best_r2 = float("-inf")
 
             # ── Strategy A: log-space NN (for power-law / tiny-scale eqs) ───
@@ -669,7 +674,9 @@ class PureLLMBaselineMethod(BaseMethod):
         if not PURE_LLM_AVAILABLE:
             return
         try:
-            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
+            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
+                PureLLMBaseline,
+            )
             self._baseline = PureLLMBaseline()
             self._log("initialised ✅")
         except Exception as exc:
@@ -697,7 +704,9 @@ class PureLLMBaselineMethod(BaseMethod):
         # If no dict-typed cache attribute found, re-instantiate the baseline.
         # This is heavier but guaranteed to produce a clean state.
         try:
-            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
+            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
+                PureLLMBaseline,
+            )
             self._baseline = PureLLMBaseline()
             self._log("re-instantiated PureLLMBaseline (no cache attribute found)")
         except Exception as exc:
@@ -713,8 +722,8 @@ class PureLLMBaselineMethod(BaseMethod):
     def _runner_eval_formula(
         python_code: str,
         X: np.ndarray,
-        var_names: List[str],
-    ) -> Optional[np.ndarray]:
+        var_names: list[str],
+    ) -> np.ndarray | None:
         """
         Try to evaluate *python_code* as a numpy expression that maps X
         columns to a 1-D prediction array.
@@ -732,7 +741,7 @@ class PureLLMBaselineMethod(BaseMethod):
         except ImportError:
             _spsp = None
 
-        safe_globals: Dict[str, Any] = {
+        safe_globals: dict[str, Any] = {
             "__builtins__": {},
             "np": np,
             "numpy": np,
@@ -771,7 +780,7 @@ class PureLLMBaselineMethod(BaseMethod):
             safe_globals["special"] = _spsp
 
         # Inject each variable as the corresponding X column (broadcast-safe)
-        local_ns: Dict[str, Any] = {}
+        local_ns: dict[str, Any] = {}
         for i, vn in enumerate(var_names):
             local_ns[vn] = X[:, i] if X.ndim == 2 else X
 
@@ -805,7 +814,7 @@ class PureLLMBaselineMethod(BaseMethod):
         # Strategy 3: def form — find the first def and call it
         if y_pred is None and "def " in code:
             try:
-                exec_ns: Dict[str, Any] = dict(safe_globals)
+                exec_ns: dict[str, Any] = dict(safe_globals)
                 exec(code, exec_ns)  # noqa: S102
                 fn = next(
                     (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
@@ -921,7 +930,9 @@ class ImprovedNNMethod(BaseMethod):
         if not NN_AVAILABLE:
             return
         try:
-            from hypatiax.core.training.baseline_neural_network_defi_improved import ImprovedNN
+            from hypatiax.core.training.baseline_neural_network_defi_improved import (
+                ImprovedNN,
+            )
             self._ImprovedNN = ImprovedNN
             self._log(f"initialised ✅  (nn_seeds={self._nn_seeds})")
         except Exception as exc:
@@ -1393,7 +1404,7 @@ class HybridDeFiMethod(BaseMethod):
             # first one that contains a numeric r2.
             decision = result.get("decision", "unknown")
 
-            def _extract_eval(d: dict) -> Optional[dict]:
+            def _extract_eval(d: dict) -> dict | None:
                 """Return the sub-dict that contains a numeric r2, or None."""
                 if not isinstance(d, dict):
                     return None
@@ -1536,7 +1547,7 @@ class HybridAllDomainsMethod(BaseMethod):
         super().__init__("HybridSystemLLMNN all-domains (core)", verbose)
         self._system = None
         self._no_cache = no_cache
-        self._init_error: Optional[str] = None
+        self._init_error: str | None = None
         # Do NOT gate on HYBRID_ALL_AVAILABLE — the probe found `datetime` as
         # the first public class because the real model class is defined inside
         # a function / conditional block and does not appear at module top-level.
@@ -1620,7 +1631,7 @@ class HybridAllDomainsMethod(BaseMethod):
         X: np.ndarray,
         y: np.ndarray,
         y_pred_llm: np.ndarray,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Train a shallow MLP on the LLM formula's residuals and return
         corrected predictions: y_hybrid = y_pred_llm + NN(X).
 
@@ -2026,6 +2037,7 @@ method   = payload["method"]   # "symbolic_engine" | "hybrid_v50_2"
 kwargs   = payload["kwargs"]
 import numpy as np
 
+
 X        = np.array(kwargs["X"])
 y        = np.array(kwargs["y"])
 var_names = kwargs["var_names"]
@@ -2124,12 +2136,12 @@ def _run_pysr_in_subprocess(
     method: str,
     X: "np.ndarray",
     y: "np.ndarray",
-    var_names: List[str],
+    var_names: list[str],
     description: str,
-    metadata: Dict,
-    extra_kwargs: Optional[Dict] = None,
-    timeout: Optional[int] = None,
-) -> Dict:
+    metadata: dict,
+    extra_kwargs: dict | None = None,
+    timeout: int | None = None,
+) -> dict:
     """
     Run a PySR-backed method in an isolated subprocess.
 
@@ -2236,13 +2248,13 @@ _JULIA_RESERVED = frozenset({
 })
 
 
-def _sanitise_var_names(var_names: List[str]):
+def _sanitise_var_names(var_names: list[str]):
     """
     Return (safe_names, rename_map) where rename_map maps safe→original.
     Only renames variables whose names appear in _JULIA_RESERVED.
     """
     safe_names = []
-    rename_map: Dict[str, str] = {}   # safe_name → original_name
+    rename_map: dict[str, str] = {}   # safe_name → original_name
 
     for name in var_names:
         if name in _JULIA_RESERVED:
@@ -2261,7 +2273,7 @@ def _sanitise_var_names(var_names: List[str]):
     return safe_names, rename_map
 
 
-def _restore_var_names(formula: str, rename_map: Dict[str, str]) -> str:
+def _restore_var_names(formula: str, rename_map: dict[str, str]) -> str:
     """Replace safe aliases back with original variable names in a formula string."""
     if not rename_map:
         return formula
@@ -2405,7 +2417,9 @@ class HybridSystemV50_2Method(BaseMethod):
         if not HYBRID_V40_AVAILABLE:
             return
         try:
-            from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem
+            from hypatiax.tools.symbolic.hybrid_system_v50_2 import (
+                HybridDiscoverySystem,
+            )
             self._system = HybridDiscoverySystem()
             if not hasattr(self._system, "discover"):
                 self._log("⚠️  missing 'discover' method — disabled")
@@ -2565,19 +2579,19 @@ class ProtocolBenchmarkSuite:
 
     def __init__(
         self,
-        method_indices: Optional[List[int]] = None,
+        method_indices: list[int] | None = None,
         verbose: bool = False,
         no_llm_cache: bool = False,
         nn_seeds: int = 1,
     ):
         self.verbose = verbose
-        self.results: List[Dict] = []
+        self.results: list[dict] = []
         self._no_llm_cache = no_llm_cache   # used by _print_comparison for warning text
 
         # Instantiate only the requested method indices (default: all).
         active_indices = set(method_indices) if method_indices else {i for i, *_ in self.METHOD_REGISTRY}
 
-        self.methods: List[BaseMethod] = []
+        self.methods: list[BaseMethod] = []
         for idx, cls, src in self.METHOD_REGISTRY:
             if idx not in active_indices:
                 continue
@@ -2630,11 +2644,11 @@ class ProtocolBenchmarkSuite:
         description: str,
         X: np.ndarray,
         y: np.ndarray,
-        var_names: List[str],
-        metadata: Dict,
+        var_names: list[str],
+        metadata: dict,
         domain: str,
         verbose: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """Run all active methods on one protocol test case."""
 
         if verbose:
@@ -2643,7 +2657,7 @@ class ProtocolBenchmarkSuite:
             print(f"  Domain: {domain}  |  Samples: {X.shape[0]}  |  Vars: {X.shape[1]}")
             print(f"{'='*80}")
 
-        results: Dict[str, MethodResult] = {}
+        results: dict[str, MethodResult] = {}
 
         # ── overflow guard ─────────────────────────────────────────────────
         # Detect astronomically large y (e.g. Planck f³/(exp(hf/kT)-1) with
@@ -2785,7 +2799,7 @@ class ProtocolBenchmarkSuite:
     # ── comparison helpers ──────────────────────────────────────────────────
 
     @staticmethod
-    def _y_scale_stats(y: np.ndarray) -> Dict:
+    def _y_scale_stats(y: np.ndarray) -> dict:
         """Compute scale statistics for y used to power NRMSE and diagnostics."""
         y_fin   = y[np.isfinite(y)] if y is not None and len(y) > 0 else np.array([1.0])
         y_std   = float(np.std(y_fin))  if len(y_fin) > 1 else 1.0
@@ -2795,7 +2809,7 @@ class ProtocolBenchmarkSuite:
         denom   = y_std if y_std > 0 else (y_range if y_range > 0 else 1.0)
         return {"std": y_std, "mean": y_mean, "range": y_range, "max": y_max, "denom": denom}
 
-    def _compare(self, results: Dict[str, MethodResult], y: np.ndarray = None) -> Dict:
+    def _compare(self, results: dict[str, MethodResult], y: np.ndarray = None) -> dict:
         valid = {
             name: res.r2
             for name, res in results.items()
@@ -2855,7 +2869,7 @@ class ProtocolBenchmarkSuite:
         }
         _SYMBOLIC_NAMES = {"SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v50_2 (tools)"}
 
-        formula_hashes: Dict[str, List[str]] = {}
+        formula_hashes: dict[str, list[str]] = {}
         for name, res in results.items():
             if res.success and res.formula and res.formula not in ("N/A", ""):
                 if name in _independent_methods:
@@ -2887,7 +2901,7 @@ class ProtocolBenchmarkSuite:
             "y_scale":    y_scale,
         }
 
-    def _print_comparison(self, results: Dict[str, MethodResult], comparison: Dict,
+    def _print_comparison(self, results: dict[str, MethodResult], comparison: dict,
                           y: np.ndarray = None):
         # ── Scale diagnostic ─────────────────────────────────────────────────
         sc = comparison.get("y_scale") or (self._y_scale_stats(y) if y is not None else {})
@@ -2953,14 +2967,14 @@ class ProtocolBenchmarkSuite:
             return
 
         total = len(self.results)
-        wins: Dict[str, int]           = {}
-        all_r2: Dict[str, List[float]] = {}
-        bad_r2: Dict[str, int]         = {}   # count of non-finite R² per method
-        fail_r2: Dict[str, int]        = {}   # count of R² ≤ 0 (practical failure)
-        success_n: Dict[str, int]      = {}
+        wins: dict[str, int]           = {}
+        all_r2: dict[str, list[float]] = {}
+        bad_r2: dict[str, int]         = {}   # count of non-finite R² per method
+        fail_r2: dict[str, int]        = {}   # count of R² ≤ 0 (practical failure)
+        success_n: dict[str, int]      = {}
 
-        all_nrmse: Dict[str, List[float]] = {}   # NRMSE values per method across tests
-        dupe_count: Dict[str, int] = {}            # # tests where method hit cache
+        all_nrmse: dict[str, list[float]] = {}   # NRMSE values per method across tests
+        dupe_count: dict[str, int] = {}            # # tests where method hit cache
 
         for rec in self.results:
             w = rec["winner"]
@@ -3170,7 +3184,7 @@ class ProtocolBenchmarkSuite:
         out_dir.mkdir(parents=True, exist_ok=True)
         return out_dir / f"{_CHECKPOINT_NAME}.json"
 
-    def save_checkpoint(self, total_tests: int, completed_keys: List[str],
+    def save_checkpoint(self, total_tests: int, completed_keys: list[str],
                         had_timeouts: bool = False):
         """Atomically write current results + metadata to the checkpoint file.
 
@@ -3195,7 +3209,7 @@ class ProtocolBenchmarkSuite:
         os.replace(tmp, path)   # POSIX atomic
 
     @staticmethod
-    def load_checkpoint() -> Optional[Dict]:
+    def load_checkpoint() -> dict | None:
         """Return checkpoint dict if one exists, else None."""
         path = ProtocolBenchmarkSuite._checkpoint_path()
         if path.exists():
@@ -3429,7 +3443,9 @@ Examples
 
     # ── Load BenchmarkProtocol ──────────────────────────────────────────────
     try:
-        from hypatiax.protocols.experiment_protocol_benchmark_v2 import BenchmarkProtocol
+        from hypatiax.protocols.experiment_protocol_benchmark_v2 import (
+            BenchmarkProtocol,
+        )
         _noiseless = getattr(args, "noiseless", False)
         _threshold = getattr(args, "threshold", None)
         if _threshold is None:
@@ -3505,7 +3521,7 @@ Examples
         print("ℹ️  --use-transcendental-compositions: asin_of_sin / acos_of_cos / atan_of_tan enabled")
 
     # ── Collect test cases (same logic as run_comparative_suite_benchmark) ──
-    all_tests: List[tuple] = []
+    all_tests: list[tuple] = []
     _equation_indices = getattr(args, "equations", None)  # 1-based list or None
 
     if args.test:
@@ -3584,7 +3600,7 @@ Examples
         ProtocolBenchmarkSuite.clear_checkpoint()
 
     # ── --resume: skip already-done tests ───────────────────────────────────
-    completed_keys: List[str] = []
+    completed_keys: list[str] = []
     if getattr(args, "resume", False):
         ckpt = ProtocolBenchmarkSuite.load_checkpoint()
         if ckpt:
@@ -3615,7 +3631,7 @@ Examples
 
     # ── Progress tracking ────────────────────────────────────────────────────
     _suite_start = time.time()
-    _test_times: List[float] = []
+    _test_times: list[float] = []
 
     def _fmt_duration(seconds: float) -> str:
         seconds = int(seconds)

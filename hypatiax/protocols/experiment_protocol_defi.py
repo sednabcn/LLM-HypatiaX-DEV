@@ -17,8 +17,6 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
         _sys.path.insert(0, _p)
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
-import json
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -47,11 +45,11 @@ class DeFiExperimentProtocol:
             "derivatives": self._generate_derivatives_tests,
         }
 
-    def get_all_domains(self) -> List[str]:
+    def get_all_domains(self) -> list[str]:
         """Get all available domains"""
         return list(self.domains.keys())
 
-    def load_test_data(self, domain: str, num_samples: int = 100) -> List[Tuple]:
+    def load_test_data(self, domain: str, num_samples: int = 100) -> list[tuple]:
         """Load test data for a domain"""
         if domain not in self.domains:
             raise ValueError(f"Unknown domain: {domain}")
@@ -61,7 +59,7 @@ class DeFiExperimentProtocol:
     # AMM DOMAIN
     # ========================================================================
 
-    def _generate_amm_tests(self, n: int) -> List[Tuple]:
+    def _generate_amm_tests(self, n: int) -> list[tuple]:
         """AMM test cases"""
         tests = []
 
@@ -308,7 +306,7 @@ class DeFiExperimentProtocol:
 
         return tests
 
-    def _generate_var_tests(self, n: int) -> List[Tuple]:
+    def _generate_var_tests(self, n: int) -> list[tuple]:
         """Value at Risk test cases"""
         tests = []
 
@@ -471,7 +469,7 @@ class DeFiExperimentProtocol:
     # LIQUIDITY DOMAIN - FIXED KELLY
     # ========================================================================
 
-    def _generate_liquidity_tests(self, n: int) -> List[Tuple]:
+    def _generate_liquidity_tests(self, n: int) -> list[tuple]:
         """Liquidity test cases with FIXED Kelly criterion"""
         tests = []
 
@@ -641,7 +639,7 @@ class DeFiExperimentProtocol:
     # EXPECTED SHORTFALL DOMAIN
     # ========================================================================
 
-    def _generate_es_tests(self, n: int) -> List[Tuple]:
+    def _generate_es_tests(self, n: int) -> list[tuple]:
         """Expected Shortfall test cases"""
         tests = []
 
@@ -795,7 +793,7 @@ class DeFiExperimentProtocol:
     # LIQUIDATION DOMAIN - FIXED
     # ========================================================================
 
-    def _generate_liquidation_tests(self, n: int) -> List[Tuple]:
+    def _generate_liquidation_tests(self, n: int) -> list[tuple]:
         """Liquidation test cases with CORRECT formulas"""
         tests = []
 
@@ -966,7 +964,7 @@ class DeFiExperimentProtocol:
     # Added to support the domain names used in test_enhanced_defi_extrapolation
     # ========================================================================
 
-    def _generate_risk_alias_tests(self, n: int) -> List[Tuple]:
+    def _generate_risk_alias_tests(self, n: int) -> list[tuple]:
         """
         'risk' domain — combines VaR and Expected-Shortfall test cases so that
         the extrapolation test can look up cases like:
@@ -1026,7 +1024,7 @@ class DeFiExperimentProtocol:
 
         return tests
 
-    def _generate_lending_tests(self, n: int) -> List[Tuple]:
+    def _generate_lending_tests(self, n: int) -> list[tuple]:
         """
         'lending' domain — collateral ratio, LTV, borrowing interest, health factor.
         Covers extrapolation test cases:
@@ -1221,7 +1219,7 @@ class DeFiExperimentProtocol:
 
         return tests
 
-    def _generate_staking_tests(self, n: int) -> List[Tuple]:
+    def _generate_staking_tests(self, n: int) -> list[tuple]:
         """
         'staking' domain — APY / compounding reward tests.
         Covers: "Simple Staking APY", "Compounding Staking Returns"
@@ -1372,7 +1370,7 @@ class DeFiExperimentProtocol:
 
         return tests
 
-    def _generate_trading_tests(self, n: int) -> List[Tuple]:
+    def _generate_trading_tests(self, n: int) -> list[tuple]:
         """
         'trading' domain — leveraged trading formulas.
         Covers: "Liquidation Price Long/Short", "Effective Leverage"
@@ -1529,7 +1527,7 @@ class DeFiExperimentProtocol:
 
         return tests
 
-    def _generate_derivatives_tests(self, n: int) -> List[Tuple]:
+    def _generate_derivatives_tests(self, n: int) -> list[tuple]:
         """
         'derivatives' domain — options pricing tests.
         Covers: "Options Delta", "Black-Scholes Call Price", "Volatility Smile Skew"
@@ -1819,7 +1817,7 @@ class DeFiExperimentProtocol:
     # REPORTING
     # ========================================================================
 
-    def generate_experiment_report(self, results: List[Dict]) -> Dict:
+    def generate_experiment_report(self, results: list[dict]) -> dict:
         """Generate comprehensive experiment report"""
 
         successful = [

@@ -25,7 +25,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -76,7 +75,7 @@ SYMBOLIC_CONFIG = FAST_CONFIG
 
 
 class SessionManager:
-    def __init__(self, session_id: Optional[str] = None):
+    def __init__(self, session_id: str | None = None):
         self.session_id = session_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.session_dir = RESULTS_DIR / self.session_id
         self.session_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +87,7 @@ class SessionManager:
     def _load_checkpoint(self):
         if self.checkpoint_file.exists():
             try:
-                with open(self.checkpoint_file, "r") as f:
+                with open(self.checkpoint_file) as f:
                     data = json.load(f)
                     self.completed_tests = set(data.get("completed", []))
                     self.failed_tests = set(data.get("failed", []))
@@ -114,7 +113,7 @@ class SessionManager:
     def is_completed(self, test_name: str) -> bool:
         return test_name in self.completed_tests
 
-    def save_test_result(self, test_name: str, result: Dict, passed: bool):
+    def save_test_result(self, test_name: str, result: dict, passed: bool):
         test_file = self.session_dir / f"{test_name}.json"
         result["_metadata"] = {
             "session_id": self.session_id,
@@ -144,18 +143,18 @@ class SessionManager:
         self._save_checkpoint()
         print(f"   💾 Saved: {test_file.name}")
 
-    def load_all_results(self) -> Dict[str, Dict]:
+    def load_all_results(self) -> dict[str, dict]:
         results = {}
         for f in self.session_dir.glob("*.json"):
             if f.name not in ["checkpoint.json", "summary.json"]:
                 try:
-                    with open(f, "r") as file:
+                    with open(f) as file:
                         results[f.stem] = json.load(file)
                 except Exception:
                     pass
         return results
 
-    def get_pending_tests(self, all_tests: List[str]) -> List[str]:
+    def get_pending_tests(self, all_tests: list[str]) -> list[str]:
         return [t for t in all_tests if t not in self.completed_tests]
 
 
@@ -167,8 +166,8 @@ class SessionManager:
 class ExternalProtocolLoader:
     @staticmethod
     def load_protocol(
-        protocol_name: str, protocol_path: Optional[str] = None
-    ) -> Optional[object]:
+        protocol_name: str, protocol_path: str | None = None
+    ) -> object | None:
         protocol_files = {
             "A": "experiment_protocol_all_18_a.py",
             "B": "experiment_protocol_all_20_b.py",
@@ -224,8 +223,8 @@ class ExternalProtocolLoader:
 
     @staticmethod
     def convert_protocol_to_test_cases(
-        protocol_instance, domains: Optional[List[str]] = None
-    ) -> Dict[str, Dict]:
+        protocol_instance, domains: list[str] | None = None
+    ) -> dict[str, dict]:
         """Convert protocol to test cases MATCHING 10_new_all.py format."""
         if not protocol_instance:
             return {}
@@ -307,7 +306,7 @@ class ExternalProtocolLoader:
 # ============================================================================
 
 
-def extract_validation_data(result: Dict) -> Tuple:
+def extract_validation_data(result: dict) -> tuple:
     validation = result.get("validation", {})
     val_score = validation.get("total_score", validation.get("overall_score", 0.0))
     val_passed = validation.get("valid", False)
@@ -328,9 +327,9 @@ def detect_validator_bug(
     r2: float,
     dim_check: bool,
     val_score: float,
-    errors: List,
-    expr: Optional[str],
-) -> Tuple[bool, Optional[str]]:
+    errors: list,
+    expr: str | None,
+) -> tuple[bool, str | None]:
     """Enhanced bug detection matching 10_new_all.py."""
     if r2 > 0.99 and val_score > 30.0 and expr:
         if "bernoulli" in test_name.lower():
@@ -349,7 +348,7 @@ def detect_validator_bug(
 # ============================================================================
 
 
-def print_results_table(results: Dict[str, Dict], test_cases: Dict[str, Dict]):
+def print_results_table(results: dict[str, dict], test_cases: dict[str, dict]):
     """Print comprehensive results table: R² | Val Score | Status | Observation."""
     print(f"\n{'=' * 120}")
     print("FINAL RESULTS TABLE".center(120))
@@ -436,12 +435,12 @@ def print_results_table(results: Dict[str, Dict], test_cases: Dict[str, Dict]):
 
 def run_single_test(
     test_name: str,
-    test_cases: Dict,
+    test_cases: dict,
     n_samples: int = 1000,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     verbose: bool = True,
-    session: Optional[SessionManager] = None,
-) -> Dict:
+    session: SessionManager | None = None,
+) -> dict:
     test_config = test_cases[test_name]
 
     if verbose:
@@ -557,17 +556,17 @@ def run_single_test(
 
 
 def run_all_tests_with_resume(
-    test_cases: Dict,
+    test_cases: dict,
     n_samples: int = 1000,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     verbose: bool = True,
     resume: bool = False,
-    skip_tests: List[str] = None,
-    session_id: Optional[str] = None,
+    skip_tests: list[str] = None,
+    session_id: str | None = None,
     mode: str = "FAST",
-) -> Dict[str, Dict]:
+) -> dict[str, dict]:
     if resume and Path(RESULTS_DIR / "current_session.json").exists():
-        with open(RESULTS_DIR / "current_session.json", "r") as f:
+        with open(RESULTS_DIR / "current_session.json") as f:
             session_id = json.load(f).get("session_id")
 
     session = SessionManager(session_id)

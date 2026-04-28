@@ -36,10 +36,8 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
 import json
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -60,7 +58,7 @@ PYSR_KWARGS = {'random_state': SEED, 'deterministic': True}
 
 def save_results(results: dict, out_base: str = 'data/results/') -> str:
     """Save campaign results to timestamped JSON — matches repo structure."""
-    ts  = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    ts  = datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')
     out = Path(out_base) / 'hybrid_pysr' / 'defi'
     out.mkdir(parents=True, exist_ok=True)
     path = out / f'protocol_defi_{ts}.json'
@@ -88,11 +86,11 @@ class DeFiExperimentProtocolExtended:
             "staking": self._generate_staking_tests,
         }
 
-    def get_all_domains(self) -> List[str]:
+    def get_all_domains(self) -> list[str]:
         """Get all available domains"""
         return list(self.domains.keys())
 
-    def load_test_data(self, domain: str, num_samples: int = 100) -> List[Tuple]:
+    def load_test_data(self, domain: str, num_samples: int = 100) -> list[tuple]:
         """Load test data for a domain"""
         if domain not in self.domains:
             raise ValueError(f"Unknown domain: {domain}")
@@ -102,7 +100,7 @@ class DeFiExperimentProtocolExtended:
     # AMM DOMAIN - 4 TESTS
     # ========================================================================
 
-    def _generate_amm_tests(self, n: int) -> List[Tuple]:
+    def _generate_amm_tests(self, n: int) -> list[tuple]:
         """AMM test cases - 4 tests"""
         tests = []
 
@@ -206,7 +204,7 @@ class DeFiExperimentProtocolExtended:
     # RISK VAR DOMAIN - 4 TESTS
     # ========================================================================
 
-    def _generate_var_tests(self, n: int) -> List[Tuple]:
+    def _generate_var_tests(self, n: int) -> list[tuple]:
         """Value at Risk test cases - 4 tests"""
         tests = []
 
@@ -315,7 +313,7 @@ class DeFiExperimentProtocolExtended:
     # LIQUIDITY DOMAIN - 4 TESTS
     # ========================================================================
 
-    def _generate_liquidity_tests(self, n: int) -> List[Tuple]:
+    def _generate_liquidity_tests(self, n: int) -> list[tuple]:
         """Liquidity test cases - 4 tests"""
         tests = []
 
@@ -422,7 +420,7 @@ class DeFiExperimentProtocolExtended:
     # EXPECTED SHORTFALL DOMAIN - 4 TESTS
     # ========================================================================
 
-    def _generate_es_tests(self, n: int) -> List[Tuple]:
+    def _generate_es_tests(self, n: int) -> list[tuple]:
         """Expected Shortfall test cases - 4 tests"""
         tests = []
 
@@ -528,7 +526,7 @@ class DeFiExperimentProtocolExtended:
     # LIQUIDATION DOMAIN - 4 TESTS
     # ========================================================================
 
-    def _generate_liquidation_tests(self, n: int) -> List[Tuple]:
+    def _generate_liquidation_tests(self, n: int) -> list[tuple]:
         """Liquidation test cases - 4 tests"""
         tests = []
         maintenance_margin = 0.8
@@ -635,7 +633,7 @@ class DeFiExperimentProtocolExtended:
     # STAKING DOMAIN - 3 TESTS ⭐ NEW!
     # ========================================================================
 
-    def _generate_staking_tests(self, n: int) -> List[Tuple]:
+    def _generate_staking_tests(self, n: int) -> list[tuple]:
         """Staking reward test cases - 3 tests"""
         tests = []
 
@@ -736,7 +734,7 @@ class DeFiExperimentProtocolExtended:
         return descriptions.get(domain, "Unknown domain")
 
     @staticmethod
-    def get_protocol_statistics() -> Dict:
+    def get_protocol_statistics() -> dict:
         return {
             "version": "3.0 Extended",
             "total_tests": 20,
@@ -752,7 +750,7 @@ class DeFiExperimentProtocolExtended:
             "extrapolation_tests": 6,
         }
 
-    def generate_experiment_report(self, results: List[Dict]) -> Dict:
+    def generate_experiment_report(self, results: list[dict]) -> dict:
         """Generate comprehensive experiment report"""
         successful = [
             r for r in results if r.get("evaluation", {}).get("success", False)

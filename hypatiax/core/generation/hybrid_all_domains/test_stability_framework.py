@@ -27,7 +27,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -95,7 +95,7 @@ class ReproducibleSeedManager:
 
     def load_seed_history(self, filepath: str):
         """Load seed history from file."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
             self.base_seed = data["base_seed"]
             self.seed_history = data["history"]
@@ -116,9 +116,9 @@ class DataValidationResult:
     """Result of data generation validation."""
 
     stable: bool
-    issues: List[str]
-    warnings: List[str]
-    metadata: Dict[str, Any]
+    issues: list[str]
+    warnings: list[str]
+    metadata: dict[str, Any]
 
 
 class DataValidator:
@@ -236,14 +236,14 @@ class TestRun:
     attempt: int
     timestamp: str
     execution_time: float
-    expression: Optional[str] = None
-    failure_reason: Optional[str] = None
+    expression: str | None = None
+    failure_reason: str | None = None
 
 
 class StabilityTracker:
     """Tracks test stability over multiple runs."""
 
-    def __init__(self, history_file: Optional[str] = None):
+    def __init__(self, history_file: str | None = None):
         self.test_history = defaultdict(list)
         self.history_file = history_file
 
@@ -254,7 +254,7 @@ class StabilityTracker:
         """Record a test run."""
         self.test_history[run.test_name].append(run)
 
-    def get_stability_metrics(self, test_name: str) -> Dict[str, Any]:
+    def get_stability_metrics(self, test_name: str) -> dict[str, Any]:
         """
         Calculate stability metrics for a test.
 
@@ -323,7 +323,7 @@ class StabilityTracker:
 
     def identify_flaky_tests(
         self, pass_rate_threshold: float = 0.7, r2_std_threshold: float = 0.1
-    ) -> List[Tuple[str, Dict]]:
+    ) -> list[tuple[str, dict]]:
         """
         Identify flaky tests based on thresholds.
 
@@ -346,14 +346,14 @@ class StabilityTracker:
         # Sort by flakiness score (worst first)
         return sorted(flaky, key=lambda x: x[1]["flakiness_score"], reverse=True)
 
-    def get_all_metrics(self) -> Dict[str, Dict]:
+    def get_all_metrics(self) -> dict[str, dict]:
         """Get metrics for all tests."""
         return {
             test_name: self.get_stability_metrics(test_name)
             for test_name in self.test_history.keys()
         }
 
-    def save_history(self, filepath: Optional[str] = None):
+    def save_history(self, filepath: str | None = None):
         """Save test history to JSON."""
         filepath = filepath or self.history_file
         if not filepath:
@@ -370,7 +370,7 @@ class StabilityTracker:
 
     def load_history(self, filepath: str):
         """Load test history from JSON."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             history_dict = json.load(f)
 
         self.test_history.clear()
@@ -401,7 +401,7 @@ class RegressionReport:
     passed_before: bool
     passed_now: bool
     expression_changed: bool
-    details: Dict[str, Any]
+    details: dict[str, Any]
 
 
 class BaselineComparator:
@@ -416,7 +416,7 @@ class BaselineComparator:
     VAL_MAJOR_THRESHOLD = -15.0
     VAL_MINOR_THRESHOLD = -10.0
 
-    def __init__(self, baseline_file: Optional[str] = None):
+    def __init__(self, baseline_file: str | None = None):
         self.baseline = {}
         self.baseline_file = baseline_file
 
@@ -425,10 +425,10 @@ class BaselineComparator:
 
     def load_baseline(self, filepath: str):
         """Load baseline from JSON file."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             self.baseline = json.load(f)
 
-    def save_baseline(self, results: List[Any], filepath: Optional[str] = None):
+    def save_baseline(self, results: list[Any], filepath: str | None = None):
         """
         Save successful test results as new baseline.
 
@@ -547,8 +547,8 @@ class BaselineComparator:
         )
 
     def get_all_regressions(
-        self, results: List[Any], min_severity: str = "minor"
-    ) -> List[RegressionReport]:
+        self, results: list[Any], min_severity: str = "minor"
+    ) -> list[RegressionReport]:
         """
         Get all regressions from a list of results.
 
@@ -582,8 +582,8 @@ class AdaptiveRetryStrategy:
     def __init__(
         self,
         max_retries: int = 5,
-        seed_manager: Optional[ReproducibleSeedManager] = None,
-        data_validator: Optional[DataValidator] = None,
+        seed_manager: ReproducibleSeedManager | None = None,
+        data_validator: DataValidator | None = None,
     ):
         self.max_retries = max_retries
         self.seed_manager = seed_manager or ReproducibleSeedManager()
@@ -596,7 +596,7 @@ class AdaptiveRetryStrategy:
         test_function: callable,
         quality_threshold: float = 0.90,
         verbose: bool = True,
-    ) -> Tuple[Any, Dict]:
+    ) -> tuple[Any, dict]:
         """
         Execute test with adaptive retry strategy.
 
@@ -709,7 +709,7 @@ class AdaptiveRetryStrategy:
         quality = (r2_component * 0.6 + val_component * 0.4) * pass_bonus
         return quality
 
-    def get_retry_statistics(self) -> Dict[str, Any]:
+    def get_retry_statistics(self) -> dict[str, Any]:
         """Get statistics about retry effectiveness."""
         if not self.retry_stats:
             return {"no_data": True}
@@ -743,8 +743,8 @@ class StabilityReporter:
     def generate_summary_report(
         tracker: StabilityTracker,
         comparator: BaselineComparator,
-        results: List[Any],
-        output_file: Optional[str] = None,
+        results: list[Any],
+        output_file: str | None = None,
     ) -> str:
         """Generate comprehensive text report."""
         lines = []
@@ -853,10 +853,10 @@ class StabilityReporter:
     def generate_json_report(
         tracker: StabilityTracker,
         comparator: BaselineComparator,
-        results: List[Any],
-        retry_strategy: Optional[AdaptiveRetryStrategy] = None,
-        output_file: Optional[str] = None,
-    ) -> Dict:
+        results: list[Any],
+        retry_strategy: AdaptiveRetryStrategy | None = None,
+        output_file: str | None = None,
+    ) -> dict:
         """Generate machine-readable JSON report."""
         all_metrics = tracker.get_all_metrics()
         regressions = comparator.get_all_regressions(results)
@@ -922,7 +922,7 @@ class StabilityReporter:
 
     @staticmethod
     def print_console_summary(
-        tracker: StabilityTracker, comparator: BaselineComparator, results: List[Any]
+        tracker: StabilityTracker, comparator: BaselineComparator, results: list[Any]
     ):
         """Print concise summary to console."""
         passed = sum(1 for r in results if r.passed)
@@ -991,14 +991,14 @@ class RobustTestRunner:
 
     def run_test_suite(
         self,
-        test_functions: Dict[str, callable],
+        test_functions: dict[str, callable],
         compare_baseline: bool = True,
         save_baseline: bool = False,
         save_history: bool = True,
         generate_reports: bool = True,
         report_dir: str = "reports",
         verbose: bool = True,
-    ) -> Tuple[List[Any], Dict]:
+    ) -> tuple[list[Any], dict]:
         """
         Run complete test suite with all protections.
 
@@ -1143,7 +1143,7 @@ class RobustTestRunner:
 
     def analyze_test_stability(
         self, test_name: str, num_runs: int = 10, verbose: bool = True
-    ) -> Dict:
+    ) -> dict:
         """
         Analyze stability of a specific test by running it multiple times.
 
@@ -1209,7 +1209,7 @@ def set_global_seed(seed: int = 42):
 
 def compare_test_runs(
     history_file: str, test_name: str, show_plot: bool = False
-) -> Dict:
+) -> dict:
     """
     Compare multiple runs of the same test.
 
@@ -1355,7 +1355,7 @@ Examples:
     elif args.command == "compare":
         # Load and compare results
         _comparator = BaselineComparator(args.baseline)
-        with open(args.current, "r") as f:
+        with open(args.current) as f:
             current_data = json.load(f)
 
         print(

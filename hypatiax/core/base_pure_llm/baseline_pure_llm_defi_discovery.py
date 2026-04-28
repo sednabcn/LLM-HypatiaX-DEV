@@ -11,7 +11,6 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 from anthropic import Anthropic
@@ -162,11 +161,11 @@ class PureLLMBaseline:
         self,
         description: str,
         domain: str,
-        variable_names: Optional[List[str]] = None,
-        metadata: Optional[Dict] = None,
+        variable_names: list[str] | None = None,
+        metadata: dict | None = None,
         X: "np.ndarray | None" = None,
         y: "np.ndarray | None" = None,
-    ) -> Dict:
+    ) -> dict:
         """Generate formula with specialized handling.
 
         Args:
@@ -368,8 +367,8 @@ class PureLLMBaseline:
 
     def _try_hardcoded_formula(
         self, description: str, desc_lower: str,
-        variable_names: List[str], metadata: Dict
-    ) -> Optional[Dict]:
+        variable_names: list[str], metadata: dict
+    ) -> dict | None:
         """
         Return hardcoded formula dict for equations where the LLM
         deterministically produces wrong output (confirmed ≥3 runs).
@@ -738,7 +737,7 @@ class PureLLMBaseline:
         return None  # fall through to normal LLM call
 
     def _generate_specialized_prompt(
-        self, description: str, domain: str, variable_names: List[str], metadata: Dict
+        self, description: str, domain: str, variable_names: list[str], metadata: dict
     ) -> str:
         """Generate specialized prompts for problematic formulas."""
         desc_lower = description.lower()
@@ -1132,7 +1131,7 @@ Arrhenius: temperature dependence of rate constant. R=8.314 is fixed."""
         return ""
 
     def _generate_standard_prompt(
-        self, description: str, domain: str, variable_names: List[str], metadata: Dict
+        self, description: str, domain: str, variable_names: list[str], metadata: dict
     ) -> str:
         """Generate standard prompt."""
         var_info = f"\nVariables: {', '.join(variable_names)}" if variable_names else ""
@@ -1232,7 +1231,7 @@ CRITICAL REQUIREMENTS:
 - Ensure operations work element-wise on numpy arrays
 - If the task involves a probability density or distribution, include the FULL normalization constant (e.g. 1/(sigma*sqrt(2*pi)) for Gaussian)"""
 
-    def _parse_response(self, content: str) -> Dict[str, str]:
+    def _parse_response(self, content: str) -> dict[str, str]:
         """Parse LLM response."""
         parsed = {}
 
@@ -1269,12 +1268,12 @@ CRITICAL REQUIREMENTS:
 
     def test_formula_accuracy(
         self,
-        formula_dict: Dict,
+        formula_dict: dict,
         X: np.ndarray,
         y_true: np.ndarray,
         var_names,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Test formula accuracy with FIXED evaluation logic."""
         try:
             python_code = formula_dict.get("python_code", "")
@@ -1424,7 +1423,7 @@ CRITICAL REQUIREMENTS:
 
 
 def run_comprehensive_test(
-    domains: List[str] = None, num_samples: int = 100, verbose: bool = False
+    domains: list[str] = None, num_samples: int = 100, verbose: bool = False
 ):
     """Run comprehensive test."""
     protocol = DeFiExperimentProtocol()

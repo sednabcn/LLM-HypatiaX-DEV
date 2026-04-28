@@ -51,10 +51,7 @@ import platform
 import shutil
 import subprocess
 import sys
-import time
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # ── Canonical paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent

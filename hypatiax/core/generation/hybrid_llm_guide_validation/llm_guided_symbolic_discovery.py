@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from dotenv import load_dotenv
@@ -364,8 +364,8 @@ class ExternalProtocolLoader:
 
     @staticmethod
     def load_protocol(
-        protocol_name: str, protocol_path: Optional[str] = None
-    ) -> Optional[object]:
+        protocol_name: str, protocol_path: str | None = None
+    ) -> object | None:
         """Load protocol class from file."""
         protocol_files = {
             "A": "experiment_protocol_all_18_a.py",
@@ -439,8 +439,8 @@ class ExternalProtocolLoader:
 
     @staticmethod
     def convert_protocol_to_test_cases(
-        protocol_instance, domains: Optional[List[str]] = None
-    ) -> Dict[str, Dict]:
+        protocol_instance, domains: list[str] | None = None
+    ) -> dict[str, dict]:
         """Convert protocol instance to test cases dictionary."""
         if not protocol_instance:
             return {}
@@ -522,7 +522,7 @@ HAS_PROTOCOL_LOADER = True
 class SessionManager:
     """Manages test sessions with checkpointing."""
 
-    def __init__(self, session_id: Optional[str] = None):
+    def __init__(self, session_id: str | None = None):
         self.session_id = (
             session_id or f"llm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
@@ -536,7 +536,7 @@ class SessionManager:
     def _load_checkpoint(self):
         if self.checkpoint_file.exists():
             try:
-                with open(self.checkpoint_file, "r") as f:
+                with open(self.checkpoint_file) as f:
                     data = json.load(f)
                     self.completed_tests = set(data.get("completed", []))
                     self.failed_tests = set(data.get("failed", []))
@@ -565,7 +565,7 @@ class SessionManager:
     def is_completed(self, test_name: str) -> bool:
         return test_name in self.completed_tests
 
-    def save_test_result(self, test_name: str, result: Dict, passed: bool):
+    def save_test_result(self, test_name: str, result: dict, passed: bool):
         """Save test result with proper JSON serialization."""
         test_file = self.session_dir / f"{test_name}.json"
 
@@ -604,18 +604,18 @@ class SessionManager:
                 self.failed_tests.add(test_name)
             self._save_checkpoint()
 
-    def load_all_results(self) -> Dict[str, Dict]:
+    def load_all_results(self) -> dict[str, dict]:
         results = {}
         for f in self.session_dir.glob("*.json"):
             if f.name not in ["checkpoint.json", "summary.json"]:
                 try:
-                    with open(f, "r") as file:
+                    with open(f) as file:
                         results[f.stem] = json.load(file)
                 except Exception as e:
                     print(f"⚠️  Failed to load {f.name}: {e}")
         return results
 
-    def get_pending_tests(self, all_tests: List[str]) -> List[str]:
+    def get_pending_tests(self, all_tests: list[str]) -> list[str]:
         return [t for t in all_tests if t not in self.completed_tests]
 
 
@@ -634,16 +634,16 @@ class DataPatterns:
     is_periodic: bool
     has_interactions: bool
 
-    correlations: Dict[str, float]
-    polynomial_degree: Optional[int]
-    power_exponents: Dict[str, float]
+    correlations: dict[str, float]
+    polynomial_degree: int | None
+    power_exponents: dict[str, float]
 
-    y_range: Tuple[float, float]
+    y_range: tuple[float, float]
     y_scale: str
     symmetry: str
     estimated_complexity: str
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Convert to dictionary for LLM prompt."""
         return {
             "structure": {
@@ -678,7 +678,7 @@ class DataPatternAnalyzer:
         self.threshold_nonlinear = threshold_nonlinear
 
     def analyze(
-        self, X: np.ndarray, y: np.ndarray, variable_names: List[str]
+        self, X: np.ndarray, y: np.ndarray, variable_names: list[str]
     ) -> DataPatterns:
         """Comprehensive pattern analysis."""
 
@@ -735,7 +735,7 @@ class DataPatternAnalyzer:
 
     def _test_polynomial(
         self, X: np.ndarray, y: np.ndarray
-    ) -> Tuple[bool, Optional[int]]:
+    ) -> tuple[bool, int | None]:
         from sklearn.linear_model import LinearRegression
         from sklearn.preprocessing import PolynomialFeatures
 
@@ -756,8 +756,8 @@ class DataPatternAnalyzer:
         )
 
     def _test_power_law(
-        self, X: np.ndarray, y: np.ndarray, variable_names: List[str]
-    ) -> Tuple[bool, Dict[str, float]]:
+        self, X: np.ndarray, y: np.ndarray, variable_names: list[str]
+    ) -> tuple[bool, dict[str, float]]:
         exponents = {}
         for i, var in enumerate(variable_names):
             x_col = X[:, i]
@@ -878,20 +878,20 @@ class EquationHypothesis:
     reasoning: str
     source: str = "llm"
 
-    fitted_equation: Optional[str] = None
-    coefficients: Optional[Dict[str, float]] = None
-    r2_score: Optional[float] = None
+    fitted_equation: str | None = None
+    coefficients: dict[str, float] | None = None
+    r2_score: float | None = None
 
-    validation_score: Optional[float] = None
-    validation_passed: Optional[bool] = None
-    dimensional_check: Optional[Dict] = None
+    validation_score: float | None = None
+    validation_passed: bool | None = None
+    dimensional_check: dict | None = None
 
 
 class LLMHypothesisGenerator:
     """Generates equation hypotheses using LLM."""
 
     def __init__(
-        self, config: Optional[LLMConfig] = None, api_key: Optional[str] = None
+        self, config: LLMConfig | None = None, api_key: str | None = None
     ):
         load_dotenv()
         self.config = config or LLMConfig()
@@ -928,12 +928,12 @@ class LLMHypothesisGenerator:
     def generate_hypotheses(
         self,
         domain: str,
-        variables: List[str],
-        variable_descriptions: Dict[str, str],
+        variables: list[str],
+        variable_descriptions: dict[str, str],
         description: str,
         patterns: DataPatterns,
         n_candidates: int = 5,
-    ) -> List[EquationHypothesis]:
+    ) -> list[EquationHypothesis]:
         """Generate equation hypotheses using LLM."""
 
         prompt = self._build_prompt(
@@ -951,8 +951,8 @@ class LLMHypothesisGenerator:
     def _build_prompt(
         self,
         domain: str,
-        variables: List[str],
-        variable_descriptions: Dict[str, str],
+        variables: list[str],
+        variable_descriptions: dict[str, str],
         description: str,
         patterns: DataPatterns,
         n_candidates: int,
@@ -1022,7 +1022,7 @@ JSON ARRAY:"""
         )
         return message.content[0].text
 
-    def _parse_response(self, response: str) -> List[EquationHypothesis]:
+    def _parse_response(self, response: str) -> list[EquationHypothesis]:
         """Parse LLM response into hypotheses."""
         try:
             if "```json" in response:
@@ -1074,10 +1074,10 @@ class HypothesisVerifier:
         hypothesis: EquationHypothesis,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-        variable_units: Optional[Dict[str, str]] = None,
-        domain: Optional[str] = None,
-        target_var: Optional[str] = None,
+        variable_names: list[str],
+        variable_units: dict[str, str] | None = None,
+        domain: str | None = None,
+        target_var: str | None = None,
     ) -> EquationHypothesis:
         """Verify hypothesis by fitting coefficients and validating."""
 
@@ -1130,8 +1130,8 @@ class HypothesisVerifier:
             return hypothesis
 
     def _fit_equation(
-        self, equation: str, X: np.ndarray, y: np.ndarray, variable_names: List[str]
-    ) -> Tuple[str, Dict, float]:
+        self, equation: str, X: np.ndarray, y: np.ndarray, variable_names: list[str]
+    ) -> tuple[str, dict, float]:
         """Fit equation coefficients - receives ALREADY NORMALIZED expression."""
         expr = equation  # Already normalized by verify()
 
@@ -1150,10 +1150,10 @@ class HypothesisVerifier:
     def _validate_equation(
         self,
         equation: str,
-        variable_names: List[str],
-        variable_units: Dict[str, str],
-        domain: Optional[str],
-    ) -> Dict:
+        variable_names: list[str],
+        variable_units: dict[str, str],
+        domain: str | None,
+    ) -> dict:
         """Validate equation using EnsembleValidator - receives ALREADY NORMALIZED expression."""
         try:
             # Create variable definitions for the validator
@@ -1183,8 +1183,8 @@ class LLMGuidedDiscovery:
 
     def __init__(
         self,
-        config: Optional[LLMConfig] = None,
-        api_key: Optional[str] = None,
+        config: LLMConfig | None = None,
+        api_key: str | None = None,
         fallback_to_pysr: bool = False,
     ):
         """
@@ -1206,16 +1206,16 @@ class LLMGuidedDiscovery:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
+        variable_names: list[str],
         domain: str,
         description: str,
-        variable_descriptions: Optional[Dict[str, str]] = None,
-        variable_units: Optional[Dict[str, str]] = None,
-        n_hypotheses: Optional[int] = None,
+        variable_descriptions: dict[str, str] | None = None,
+        variable_units: dict[str, str] | None = None,
+        n_hypotheses: int | None = None,
         success_threshold: float = 0.95,
         validation_threshold: float = 70.0,
         verbose: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Discover equation using LLM-guided approach."""
 
         # Use config default if not specified
@@ -1349,7 +1349,7 @@ class LLMGuidedDiscovery:
 # ============================================================================
 
 
-def print_results_table(results: Dict[str, Dict], test_cases: Dict[str, Dict]):
+def print_results_table(results: dict[str, dict], test_cases: dict[str, dict]):
     """Print comprehensive results table matching suite format."""
     print(f"\n{'=' * 120}")
     print("LLM-GUIDED DISCOVERY RESULTS".center(120))
@@ -1421,12 +1421,12 @@ def print_results_table(results: Dict[str, Dict], test_cases: Dict[str, Dict]):
 
 def run_single_test_llm(
     test_name: str,
-    test_cases: Dict,
-    api_key: Optional[str] = None,
-    config: Optional[LLMConfig] = None,
+    test_cases: dict,
+    api_key: str | None = None,
+    config: LLMConfig | None = None,
     verbose: bool = True,
-    session: Optional[SessionManager] = None,
-) -> Dict:
+    session: SessionManager | None = None,
+) -> dict:
     """Run single test with LLM-guided discovery."""
 
     test_config = test_cases[test_name]
@@ -1491,11 +1491,11 @@ def run_single_test_llm(
 
 def run_protocol_suite(
     protocol_name: str,
-    api_key: Optional[str] = None,
-    config: Optional[LLMConfig] = None,
+    api_key: str | None = None,
+    config: LLMConfig | None = None,
     resume: bool = False,
-    session_id: Optional[str] = None,
-) -> Dict[str, Dict]:
+    session_id: str | None = None,
+) -> dict[str, dict]:
     """Run full protocol suite with LLM-guided discovery."""
 
     if not HAS_PROTOCOL_LOADER:
@@ -1514,7 +1514,7 @@ def run_protocol_suite(
 
     # Session management
     if resume and Path(RESULTS_DIR / "current_session.json").exists():
-        with open(RESULTS_DIR / "current_session.json", "r") as f:
+        with open(RESULTS_DIR / "current_session.json") as f:
             session_id = json.load(f).get("session_id")
 
     session = SessionManager(session_id)
@@ -1579,16 +1579,16 @@ def main():
 Examples:
   # Run Protocol B with LLM-guided discovery
   python llm_guided_symbolic_discovery_v9.py --protocol B --batch
-  
+
   # Resume interrupted run
   python llm_guided_symbolic_discovery_v9.py --protocol ALL --batch --resume
-  
+
   # Use custom API key
   python llm_guided_symbolic_discovery_v9.py --protocol A --batch --api-key YOUR_KEY
-  
+
   # Adjust LLM parameters
   python llm_guided_symbolic_discovery_v9.py --protocol B --batch --temperature 0.5
-  
+
   # Generate more hypothesis candidates (default: 5)
   python llm_guided_symbolic_discovery_v9.py --protocol B --batch --niterations 10
 

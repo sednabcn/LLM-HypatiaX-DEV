@@ -59,8 +59,9 @@ Usage
 
 import argparse
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -88,7 +89,7 @@ except ImportError:
 # Utilities
 # =============================================================================
 
-def iterate_cases(data) -> List[Tuple[str, Dict]]:
+def iterate_cases(data) -> list[tuple[str, dict]]:
     if isinstance(data, dict):
         cases = data.get("cases", data)
         if isinstance(cases, list):
@@ -119,8 +120,8 @@ def safe_float(x) -> float:
 
 def _resolve_symbol_map(
     free_syms: set,
-    var_names: List[str],
-) -> Dict[str, str]:
+    var_names: list[str],
+) -> dict[str, str]:
     """
     Build a bijection from formula free-symbol names to var_ranges keys.
 
@@ -138,9 +139,9 @@ def _resolve_symbol_map(
     """
     remaining_syms = [str(s) for s in free_syms]
     remaining_vars = list(var_names)
-    mapping: Dict[str, str] = {}
+    mapping: dict[str, str] = {}
 
-    def pick(sym: str, candidates: List[str]) -> None:
+    def pick(sym: str, candidates: list[str]) -> None:
         best = min(candidates, key=len)
         mapping[sym] = best
         remaining_syms.remove(sym)
@@ -191,7 +192,7 @@ def _resolve_symbol_map(
                     pick(sym, c)
 
     # 7. Finance aliases
-    _ALIASES: Dict[str, List[str]] = {
+    _ALIASES: dict[str, list[str]] = {
         "rho":   ["corr"],
         "\u03c1": ["corr"],
         "sigma": ["vol", "implied"],
@@ -242,10 +243,9 @@ def _preprocess_formula(expr_str: str) -> str:
 
 def _make_sympy_callable(
     expr_str: str,
-    var_names: List[str],
-    constants: Optional[Dict[str, float]] = None,
+    var_names: list[str],
+    constants: dict[str, float] | None = None,
 ) -> Callable:
-    import re as _re
 
     from scipy.stats import norm as _scipy_norm
 
@@ -270,7 +270,7 @@ def _make_sympy_callable(
     sym_to_var  = _resolve_symbol_map(free_syms, var_names)
     unresolved  = {str(s) for s in free_syms} - set(sym_to_var)
 
-    _DEFI_CONSTANT_DEFAULTS: Dict[str, float] = {
+    _DEFI_CONSTANT_DEFAULTS: dict[str, float] = {
         "K":  100.0,
         "r":  0.05,
         "n":  12.0,
@@ -329,7 +329,7 @@ def _make_sympy_callable(
 # Mode A / B / C evaluation
 # =============================================================================
 
-def _evaluate_mode_a(case_data: Dict[str, Any], n_samples: int) -> float:
+def _evaluate_mode_a(case_data: dict[str, Any], n_samples: int) -> float:
     if not _LOCAL_MODULES:
         print("  [Mode A] extrapolation_generator / evaluate_extrapolation not found - skipping.")
         return np.nan
@@ -357,8 +357,8 @@ def _evaluate_mode_a(case_data: Dict[str, Any], n_samples: int) -> float:
         print(f"  [Mode A] ground-truth sympy parse error: {exc}")
         return np.nan
 
-    _globals: Dict = {"np": np, "numpy": np}
-    _locals:  Dict = {}
+    _globals: dict = {"np": np, "numpy": np}
+    _locals:  dict = {}
     try:
         exec(pred_formula, _globals, _locals)  # noqa: S102
         func_pred_raw = next((v for v in _locals.values() if callable(v)), None)
@@ -399,7 +399,7 @@ def _evaluate_mode_a(case_data: Dict[str, Any], n_samples: int) -> float:
     return float(_eval_model(func_true, func_pred, data))
 
 
-def _evaluate_mode_b(case_data: Dict[str, Any]) -> float:
+def _evaluate_mode_b(case_data: dict[str, Any]) -> float:
     if "y_pred" not in case_data or "y_true" not in case_data:
         return np.nan
     y_true = np.asarray(case_data["y_true"], dtype=float)
@@ -409,16 +409,16 @@ def _evaluate_mode_b(case_data: Dict[str, Any]) -> float:
     return float(r2_score(y_true, y_pred))
 
 
-def _evaluate_mode_c(case_data: Dict[str, Any]) -> float:
+def _evaluate_mode_c(case_data: dict[str, Any]) -> float:
     res = (case_data.get("results") or {})
     llm_res = res.get("pure_llm") or res.get("llm_only") or res.get("llm") or {}
     return safe_float(llm_res.get("test_r2"))
 
 
 def evaluate_case(
-    case_data: Dict[str, Any],
+    case_data: dict[str, Any],
     n_samples: int,
-) -> Tuple[float, str]:
+) -> tuple[float, str]:
     if (case_data.get("formula")
             and case_data.get("predicted_formula")
             and case_data.get("var_ranges")):
@@ -466,7 +466,7 @@ def build_extrapolation_df(data, n_samples: int) -> pd.DataFrame:
 
 def merge_with_instability(
     extrap_df: pd.DataFrame,
-    ia_path: Optional[str],
+    ia_path: str | None,
 ) -> pd.DataFrame:
     if ia_path is None or not Path(ia_path).exists():
         print("  Warning: instability_analysis.csv not provided / not found.")
@@ -646,7 +646,7 @@ def main():
             print("\nHigh-instability cases  (ii > 0.05):")
             print(hi[["case", "regime", "difficulty", "ii", "extrapolation_r2", "success", "failure"]])
 
-    if not args.no-plot:
+    if not args.no_plot:
         print("\nGenerating plot ...")
         plot_instability_vs_extrapolation(merged, args.plot)
 

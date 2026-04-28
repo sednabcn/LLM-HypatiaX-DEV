@@ -35,7 +35,7 @@ import os
 import re
 import time
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -72,18 +72,18 @@ def _get_anthropic():
 # ===========================================================================
 
 def get_llm_prior(
-    eq: Dict[str, Any],
+    eq: dict[str, Any],
     X_train: np.ndarray,
     y_train: np.ndarray,
     *,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     n_candidates: int = 5,
     temperature: float = 0.25,
     model: str = "claude-sonnet-4-20250514",
     max_tokens: int = 1024,
     timeout: float = 60.0,
     verbose: bool = True,
-) -> List[str]:
+) -> list[str]:
     """Return a list of candidate expressions for ``eq`` ordered by LLM confidence.
 
     Parameters
@@ -185,10 +185,10 @@ def get_llm_prior(
 def _summarise_patterns(
     X: np.ndarray,
     y: np.ndarray,
-    var_names: List[str],
-) -> Dict[str, Any]:
+    var_names: list[str],
+) -> dict[str, Any]:
     """Compute lightweight statistics that fit in a short prompt section."""
-    summary: Dict[str, Any] = {}
+    summary: dict[str, Any] = {}
 
     # Per-variable correlations with target
     corrs = {}
@@ -242,8 +242,8 @@ def _summarise_patterns(
 
 
 def _build_prompt(
-    eq: Dict[str, Any],
-    patterns: Dict[str, Any],
+    eq: dict[str, Any],
+    patterns: dict[str, Any],
     n_candidates: int,
 ) -> str:
     var_names = eq["vars"]
@@ -297,7 +297,7 @@ Example output for a hypothetical problem with variables [x]:
 JSON array (no preamble, no markdown fences):"""
 
 
-def _parse_response(raw: str, var_names: List[str]) -> List[str]:
+def _parse_response(raw: str, var_names: list[str]) -> list[str]:
     """Extract and validate expressions from the LLM response.
 
     Returns a list of syntactically valid, variable-safe expression strings.
@@ -326,7 +326,7 @@ def _parse_response(raw: str, var_names: List[str]) -> List[str]:
     # Sort by confidence descending
     candidates.sort(key=lambda c: float(c.get("confidence", 0)), reverse=True)
 
-    valid_exprs: List[str] = []
+    valid_exprs: list[str] = []
     allowed_names = set(var_names) | {
         "np", "sin", "cos", "log", "exp", "sqrt", "abs",
         "True", "False", "None",

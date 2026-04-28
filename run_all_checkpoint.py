@@ -140,7 +140,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 # ── Load API key (env → Kaggle → .env → Colab) ────────────────────────────────
 # FIX-INIT: importing hypatiax.config_secrets at module level triggers hypatiax/__init__.py,
@@ -159,23 +158,23 @@ from typing import Optional
 def load_repro_config() -> dict:
     """Load configuration from repro.yaml, with environment variable overrides."""
     import yaml
-    
+
     config_path = REPO_ROOT / "config" / "repro.yaml"
     if not config_path.exists():
         config_path = REPO_ROOT / "repro.yaml"  # fallback to repo root
-    
+
     if not config_path.exists():
         print("  ⚠ repro.yaml not found — using defaults")
         return {}
-    
+
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             config = yaml.safe_load(f)
         return config or {}
     except Exception as e:
         print(f"  ⚠ Failed to load repro.yaml: {e}")
         return {}
-    
+
 def _load_api_key() -> None:
     """Load ANTHROPIC_API_KEY via hypatiax.config_secrets, or fall back to .env parsing."""
     import importlib.util as _ilu
@@ -859,7 +858,7 @@ class StepResult:
     label: str
     status: str          # "pass" | "fail" | "skip" | "resume-skip"
     elapsed: float = 0.0
-    log_path: Optional[Path] = None
+    log_path: Path | None = None
     returncode: int = 0
 
 
@@ -883,7 +882,7 @@ def run_step(step: Step, env: dict) -> StepResult:
     print(f"│    cmd: {' '.join(str(x) for x in step.cmd)}")
 
     t0 = time.time()
-    proc: Optional[subprocess.Popen] = None
+    proc: subprocess.Popen | None = None
     try:
         with open(log_path, "w") as log_fh:
             proc = subprocess.Popen(
@@ -1229,7 +1228,7 @@ def main() -> None:
         # Check repro.yaml first
         pysr_timeout = DEFAULT_PYSR_TIMEOUT
         method_timeout = DEFAULT_METHOD_TIMEOUT
-        
+
         # Then environment variable override
         env_pysr = os.environ.get("PYSR_TIMEOUT")
         if env_pysr:
@@ -1237,7 +1236,7 @@ def main() -> None:
             # FIX: use repro.yaml method_seconds (900) rather than min(pysr*3, 1800)
             method_timeout = DEFAULT_METHOD_TIMEOUT
             print(f"  ⚠ PYSR_TIMEOUT={pysr_timeout}s from env (repro.yaml wants {DEFAULT_PYSR_TIMEOUT}s)")
-        
+
         env["PYSR_TIMEOUT"] = str(pysr_timeout)
         env["METHOD_TIMEOUT"] = str(method_timeout)
         print(f"  PYSR_TIMEOUT={pysr_timeout}s  (paper-quality: 1100s)")
@@ -1273,7 +1272,7 @@ def main() -> None:
     if args.skip_paper:
         print("  --skip-paper: Phase 4-B notebook steps will be skipped")
 
-    
+
     # ── --one-equation: smoke-test mode ───────────────────────────────────
     if args.one_equation:
         # Tell every experiment script to run only 1 equation/task.

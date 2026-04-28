@@ -23,7 +23,9 @@ from sklearn.metrics import r2_score
 
 # Import your LLM baseline and NN baseline implementations
 from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
-from hypatiax.core.training.baseline_neural_network_defi_improved import NeuralNetworkBaseline
+from hypatiax.core.training.baseline_neural_network_defi_improved import (
+    NeuralNetworkBaseline,
+)
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
 

@@ -26,7 +26,6 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -161,11 +160,11 @@ class ConsolidatedHybridSystem:
         self,
         description: str,
         domain: str,
-        variable_names: List[str],
-        metadata: Dict,
-        characteristics: Dict = None,
+        variable_names: list[str],
+        metadata: dict,
+        characteristics: dict = None,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Generate formula using LLM"""
 
         cache_key = f"{description}|{domain}|{','.join(variable_names)}"
@@ -224,8 +223,8 @@ class ConsolidatedHybridSystem:
             return {"error": str(e)}
 
     def _get_specialized_prompt(
-        self, description: str, domain: str, variable_names: List[str], metadata: Dict
-    ) -> Optional[str]:
+        self, description: str, domain: str, variable_names: list[str], metadata: dict
+    ) -> str | None:
         """Get specialized prompt for known formulas"""
         desc_lower = description.lower()
         var_list = ", ".join(variable_names)
@@ -322,9 +321,9 @@ Parametric VaR at 95% confidence.
         self,
         description: str,
         domain: str,
-        variable_names: List[str],
-        metadata: Dict,
-        characteristics: Dict,
+        variable_names: list[str],
+        metadata: dict,
+        characteristics: dict,
     ) -> str:
         """Get standard prompt with enhancements"""
         var_info = f"\nVariables (in order): {', '.join(variable_names)}"
@@ -363,7 +362,7 @@ EXPLANATION:
 
     def _parse_llm_response(
         self, content: str, verbose: bool = False
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Parse LLM response"""
         parsed = {}
 
@@ -420,12 +419,12 @@ EXPLANATION:
 
     def evaluate_llm_formula(
         self,
-        formula_dict: Dict,
+        formula_dict: dict,
         X: np.ndarray,
         y_true: np.ndarray,
-        var_names: List[str],
+        var_names: list[str],
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Evaluate LLM formula"""
         try:
             code = formula_dict.get("python_code", "")
@@ -505,7 +504,7 @@ EXPLANATION:
         is_extrapolation: bool = False,
         epochs: int = 500,
         verbose: bool = False,
-    ) -> Tuple:
+    ) -> tuple:
         """Train neural network"""
 
         test_size = 0.3 if is_extrapolation else 0.2
@@ -609,8 +608,8 @@ EXPLANATION:
     # ========================================================================
 
     def detect_formula_characteristics(
-        self, X: np.ndarray, y: np.ndarray, var_names: List[str]
-    ) -> Dict:
+        self, X: np.ndarray, y: np.ndarray, var_names: list[str]
+    ) -> dict:
         """Detect mathematical patterns"""
         characteristics = {
             "is_linear": False,
@@ -663,10 +662,10 @@ EXPLANATION:
         domain: str,
         X: np.ndarray,
         y_true: np.ndarray,
-        var_names: List[str],
-        metadata: Dict,
+        var_names: list[str],
+        metadata: dict,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Main hybrid prediction with extrapolation-aware logic"""
 
         is_extrapolation = metadata.get("extrapolation_test", False)
@@ -825,7 +824,7 @@ class ResultsTableGenerator:
     """Generate comprehensive results tables"""
 
     @staticmethod
-    def generate_observations(result: Dict) -> str:
+    def generate_observations(result: dict) -> str:
         """Generate intelligent observations"""
         observations = []
 
@@ -869,7 +868,7 @@ class ResultsTableGenerator:
         return " | ".join(observations)
 
     @staticmethod
-    def generate_table(results: List[Dict], title: str = "Test Results") -> str:
+    def generate_table(results: list[dict], title: str = "Test Results") -> str:
         """Generate formatted table"""
         table_data = []
         for i, r in enumerate(results, 1):
@@ -895,7 +894,7 @@ class ResultsTableGenerator:
         return f"\n{'='*130}\n{title.center(130)}\n{'='*130}\n{table}"
 
     @staticmethod
-    def generate_summary_table(results: List[Dict]) -> str:
+    def generate_summary_table(results: list[dict]) -> str:
         """Generate domain summary"""
         by_domain = defaultdict(
             lambda: {
@@ -959,7 +958,7 @@ class ResultsTableGenerator:
 
 
 def run_full_test(
-    domains: List[str] = None, num_samples: int = 100, verbose: bool = False
+    domains: list[str] = None, num_samples: int = 100, verbose: bool = False
 ):
     """Run full test suite with tables"""
 

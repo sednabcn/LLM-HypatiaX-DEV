@@ -19,14 +19,12 @@ Options:
 
 import argparse
 import json
-import os
-import re
 import shutil
 import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # ============================================================================
 # Configuration
@@ -105,16 +103,16 @@ def find_checkpoint() -> Path:
     return Path("logs/pipeline_checkpoint.json")
 
 
-def is_failed(value: Any, min_r2: float = 0.0, max_rmse: float = float("inf")) -> Tuple[bool, str]:
+def is_failed(value: Any, min_r2: float = 0.0, max_rmse: float = float("inf")) -> tuple[bool, str]:
     """
     Check if a result value indicates failure.
-    
+
     Returns:
         (is_failed, reason)
     """
     if value is None:
         return True, "None value"
-    
+
     if isinstance(value, (int, float)):
         if not np.isfinite(value):
             return True, f"Non-finite: {value}"
@@ -125,14 +123,14 @@ def is_failed(value: Any, min_r2: float = 0.0, max_rmse: float = float("inf")) -
         if value > max_rmse:
             return True, f"RMSE={value:.4f} > {max_rmse}"
         return False, ""
-    
+
     if isinstance(value, str):
         value_low = value.lower()
         for pattern in FAILURE_PATTERNS:
             if pattern.lower() in value_low:
                 return True, f"String pattern: {pattern}"
         return False, ""
-    
+
     return False, ""
 
 
@@ -141,57 +139,57 @@ def scan_result_file(
     min_r2: float = 0.0,
     max_rmse: float = float("inf"),
     verbose: bool = False
-) -> Tuple[List[Dict], Dict]:
+) -> tuple[list[dict], dict]:
     """
     Scan a single result JSON file for failures.
-    
+
     Returns:
         (failed_entries, summary_stats)
     """
     failed_entries = []
     stats = {"total": 0, "failed": 0, "file": str(filepath)}
-    
+
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
         stats["error"] = str(e)
         return [], stats
-    
+
     def _scan_dict(obj, path: str = "", experiment: str = "", domain: str = ""):
         nonlocal stats
-        
+
         if isinstance(obj, dict):
             # Check if this dict contains result fields
             has_r2 = any(k in obj for k in ["r2", "r2_score", "train_r2", "extrap_r2_far"])
             has_rmse = any(k in obj for k in ["rmse", "train_rmse", "extrap_rmse_far"])
             has_expr = "expression" in obj or "best_expression" in obj or "formula" in obj
-            
+
             if has_r2 or has_rmse or has_expr:
                 stats["total"] += 1
-                
+
                 # Extract identifiers
                 eq_name = obj.get("equation_name") or obj.get("name") or obj.get("equation") or path
                 cond = obj.get("condition") or obj.get("llm_mode") or "unknown"
-                
+
                 # Check R² fields
                 r2_fields = ["r2", "r2_score", "train_r2", "extrap_r2_near", "extrap_r2_medium", "extrap_r2_far"]
                 rmse_fields = ["rmse", "train_rmse", "extrap_rmse_near", "extrap_rmse_medium", "extrap_rmse_far"]
-                
+
                 failed_reasons = []
-                
+
                 for field in r2_fields:
                     if field in obj:
                         is_bad, reason = is_failed(obj[field], min_r2=min_r2)
                         if is_bad:
                             failed_reasons.append(f"{field}={obj[field]} ({reason})")
-                
+
                 for field in rmse_fields:
                     if field in obj:
                         is_bad, reason = is_failed(obj[field], max_rmse=max_rmse)
                         if is_bad:
                             failed_reasons.append(f"{field}={obj[field]} ({reason})")
-                
+
                 # Check expression string
                 for expr_field in ["expression", "best_expression", "formula", "final_formula"]:
                     if expr_field in obj and isinstance(obj[expr_field], str):
@@ -200,21 +198,21 @@ def scan_result_file(
                             failed_reasons.append(f"{expr_field}={expr}")
                         elif "inf" in expr or "nan" in expr:
                             failed_reasons.append(f"{expr_field} contains inf/nan")
-                
+
                 # Check timeout flag
                 if obj.get("timed_out") or obj.get("timeout"):
                     failed_reasons.append("timeout=True")
-                
+
                 if obj.get("success") is False:
                     failed_reasons.append("success=False")
-                
+
                 if obj.get("excluded_from_timing"):
                     failed_reasons.append("excluded_from_timing=True")
-                
+
                 # Check error field
                 if obj.get("error") and str(obj["error"]).strip():
                     failed_reasons.append(f"error={str(obj['error'])[:100]}")
-                
+
                 if failed_reasons:
                     stats["failed"] += 1
                     failed_entries.append({
@@ -232,19 +230,19 @@ def scan_result_file(
                         print(f"  ✗ FAIL: {eq_name} [{cond}] - {', '.join(failed_reasons[:2])}")
                 elif verbose:
                     print(f"  ✓ PASS: {eq_name} [{cond}]")
-            
+
             # Recurse
             for k, v in obj.items():
                 new_path = f"{path}.{k}" if path else k
                 new_experiment = experiment or k
                 _scan_dict(v, new_path, new_experiment, domain)
-        
+
         elif isinstance(obj, list):
             for i, item in enumerate(obj):
                 _scan_dict(item, f"{path}[{i}]", experiment, domain)
-    
+
     _scan_dict(data)
-    
+
     return failed_entries, stats
 
 
@@ -253,28 +251,28 @@ def scan_all_results(
     min_r2: float = 0.0,
     max_rmse: float = float("inf"),
     verbose: bool = False
-) -> Tuple[List[Dict], Dict]:
+) -> tuple[list[dict], dict]:
     """Scan all JSON files in results directory."""
     all_failed = []
     total_stats = {"files_scanned": 0, "total_entries": 0, "total_failed": 0}
-    
+
     json_files = list(results_dir.rglob("*.json"))
     print(f"Scanning {len(json_files)} JSON files in {results_dir}...")
-    
+
     for jf in json_files:
         # Skip checkpoint files and lock files
         if "checkpoint" in jf.name or jf.name.startswith("."):
             continue
-        
+
         failed, stats = scan_result_file(jf, min_r2, max_rmse, verbose)
         all_failed.extend(failed)
         total_stats["files_scanned"] += 1
         total_stats["total_entries"] += stats["total"]
         total_stats["total_failed"] += stats["failed"]
-        
+
         if verbose and failed:
             print(f"  → {jf.name}: {len(failed)}/{stats['total']} failed")
-    
+
     return all_failed, total_stats
 
 
@@ -282,17 +280,17 @@ def scan_all_results(
 # Checkpoint Cleaner
 # ============================================================================
 
-def identify_step_from_failed_entry(entry: Dict) -> Optional[str]:
+def identify_step_from_failed_entry(entry: dict) -> str | None:
     """
     Determine which experiment step a failed entry belongs to.
     """
     filepath = Path(entry["file"])
     file_stem = filepath.stem.lower()
     file_parent = str(filepath.parent).lower()
-    
+
     equation = entry.get("equation", "").lower()
     entry.get("condition", "").lower()
-    
+
     # Check by filename
     for step, patterns in STEP_SEARCH_PATTERNS.items():
         for pattern in patterns:
@@ -300,7 +298,7 @@ def identify_step_from_failed_entry(entry: Dict) -> Optional[str]:
                 return step
             if pattern in equation:
                 return step
-    
+
     # Default fallback: heuristic
     if "feynman" in file_stem or "i." in equation or "ii." in equation:
         return "exp2"
@@ -316,44 +314,44 @@ def identify_step_from_failed_entry(entry: Dict) -> Optional[str]:
         return "suppA"
     if "extrap" in file_stem:
         return "extrap"
-    
+
     return "exp1"  # Default to exp1
 
 
 def clean_checkpoint(
     checkpoint_path: Path,
-    failed_entries: List[Dict],
+    failed_entries: list[dict],
     dry_run: bool = False,
     verbose: bool = False
-) -> Dict:
+) -> dict:
     """
     Remove failed entries from checkpoint so they can be re-run.
-    
+
     Returns:
         Stats dict with removed count and backup path
     """
     if not checkpoint_path.exists():
         print(f"⚠ Checkpoint not found: {checkpoint_path}")
         return {"removed": 0, "backup": None}
-    
-    with open(checkpoint_path, "r") as f:
+
+    with open(checkpoint_path) as f:
         checkpoint = json.load(f)
-    
+
     checkpoint.copy()
     removed_count = 0
     removed_steps = defaultdict(list)
-    
+
     # Group failed entries by step
     failed_by_step = defaultdict(list)
     for entry in failed_entries:
         step = identify_step_from_failed_entry(entry)
         failed_by_step[step].append(entry)
-    
+
     # For each failed step, mark checkpoint entries as incomplete
     for step, entries in failed_by_step.items():
         if step not in checkpoint:
             continue
-        
+
         # If the checkpoint has this step as 'pass', change to 'fail'
         if checkpoint.get(step) == "pass":
             if dry_run:
@@ -362,7 +360,7 @@ def clean_checkpoint(
                 checkpoint[step] = "fail"
                 removed_count += 1
                 removed_steps[step].append("step_marked_fail")
-        
+
         # Also handle nested experiment results if present
         for entry in entries:
             eq_name = entry.get("equation")
@@ -375,20 +373,20 @@ def clean_checkpoint(
                         del checkpoint[step][eq_name]
                         removed_count += 1
                         removed_steps[step].append(eq_name)
-    
+
     if not dry_run and removed_count > 0:
         # Create backup
         backup_path = checkpoint_path.with_suffix(f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         shutil.copy(checkpoint_path, backup_path)
         print(f"📁 Backup saved: {backup_path}")
-        
+
         # Write cleaned checkpoint
         with open(checkpoint_path, "w") as f:
             json.dump(checkpoint, f, indent=2)
         print(f"✓ Checkpoint cleaned: {removed_count} entries removed/modified")
     else:
         print(f"  No checkpoint modifications (dry_run={dry_run}, removed={removed_count})")
-    
+
     return {
         "removed": removed_count,
         "removed_steps": dict(removed_steps),
@@ -401,7 +399,7 @@ def clean_checkpoint(
 # ============================================================================
 
 def generate_recover_script(
-    failed_entries: List[Dict],
+    failed_entries: list[dict],
     output_path: Path,
     checkpoint_path: Path,
 ) -> Path:
@@ -413,7 +411,7 @@ def generate_recover_script(
     for entry in failed_entries:
         step = identify_step_from_failed_entry(entry)
         step_entries[step].append(entry)
-    
+
     lines = [
         "#!/bin/bash",
         "# Auto-generated recover script",
@@ -426,7 +424,7 @@ def generate_recover_script(
         "echo \"=== Re-running failed experiments ===\"",
         "",
     ]
-    
+
     # Add commands for each step
     for step, entries in step_entries.items():
         lines.append("")
@@ -436,7 +434,7 @@ def generate_recover_script(
         lines.append("\"")
         lines.append(f"python3 run_all_checkpoint.py --resume --only {step}")
         lines.append("")
-    
+
     lines.extend([
         "",
         "echo \"=== Recovery complete ===\"",
@@ -444,7 +442,7 @@ def generate_recover_script(
         "# Verify results",
         "python3 run_all_checkpoint.py --verify-only",
     ])
-    
+
     # Also generate JSON manifest
     manifest = {
         "timestamp": datetime.now().isoformat(),
@@ -465,22 +463,22 @@ def generate_recover_script(
         "checkpoint_cleaned": str(checkpoint_path),
         "recovery_command": "bash recover_failed.sh",
     }
-    
+
     manifest_path = output_path.with_suffix(".json")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    
+
     # Write shell script
     script_path = output_path
     with open(script_path, "w") as f:
         f.write("\n".join(lines))
-    
+
     # Make executable
     script_path.chmod(0o755)
-    
+
     print(f"✓ Recovery script: {script_path}")
     print(f"✓ Manifest: {manifest_path}")
-    
+
     return script_path
 
 
@@ -504,13 +502,13 @@ def main():
     parser.add_argument("--min-r2", type=float, default=0.0, help="Minimum acceptable R²")
     parser.add_argument("--max-rmse", type=float, default=float("inf"), help="Maximum acceptable RMSE")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    
+
     args = parser.parse_args()
-    
+
     # If no action specified, run full recovery
     if not (args.scan or args.clean or args.recover):
         args.recover = True
-    
+
     # Auto-detect paths
     try:
         results_dir = Path(args.results_dir) if args.results_dir else find_results_dir()
@@ -518,7 +516,7 @@ def main():
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
-    
+
     print("=" * 68)
     print("FAILED EXPERIMENT RECOVERY TOOL")
     print("=" * 68)
@@ -528,19 +526,19 @@ def main():
     print(f"Max RMSE:    {args.max_rmse}")
     print(f"Dry run:     {args.dry_run}")
     print("=" * 68)
-    
+
     # Step 1: Scan
     if args.scan or args.recover:
         print("\n🔍 Scanning results for failures...")
         failed_entries, stats = scan_all_results(
             results_dir, args.min_r2, args.max_rmse, args.verbose
         )
-        
+
         print("\n📊 Scan results:")
         print(f"   Files scanned : {stats['files_scanned']}")
         print(f"   Total entries : {stats['total_entries']}")
         print(f"   Failed entries: {stats['total_failed']} ({stats['total_failed']/max(1,stats['total_entries'])*100:.1f}%)")
-        
+
         if failed_entries:
             print("\n❌ Failed experiments by type:")
             reasons_count = defaultdict(int)
@@ -549,10 +547,10 @@ def main():
                     # Extract short reason
                     short = r.split("(")[0].strip()
                     reasons_count[short] += 1
-            
+
             for reason, count in sorted(reasons_count.items(), key=lambda x: -x[1])[:10]:
                 print(f"   {reason}: {count}")
-            
+
             if args.verbose:
                 print("\n📋 Failed entries detail:")
                 for e in failed_entries[:20]:
@@ -563,7 +561,7 @@ def main():
             print("\n✅ No failed experiments found!")
             if not args.recover:
                 sys.exit(0)
-    
+
     # Step 2: Clean checkpoint
     if (args.clean or args.recover) and failed_entries:
         print("\n🧹 Cleaning checkpoint...")
@@ -573,7 +571,7 @@ def main():
         print(f"   Removed: {clean_result['removed']} entries")
         if clean_result.get("backup"):
             print(f"   Backup: {clean_result['backup']}")
-    
+
     # Step 3: Generate recover script
     if args.recover and failed_entries and not args.dry_run:
         print("\n📝 Generating recovery script...")
@@ -581,16 +579,16 @@ def main():
         script_path = generate_recover_script(
             failed_entries, output_path, checkpoint_path
         )
-        
+
         print("\n🚀 To recover failed experiments:")
         print(f"   bash {script_path}")
         print("\n   Or manually:")
         for step in set(identify_step_from_failed_entry(e) for e in failed_entries):
             print(f"   python3 run_all_checkpoint.py --resume --only {step}")
-    
+
     elif args.recover and not failed_entries:
         print("\n✅ No failures to recover!")
-    
+
     print("\n" + "=" * 68)
     print("RECOVERY PREP COMPLETE")
     print("=" * 68)

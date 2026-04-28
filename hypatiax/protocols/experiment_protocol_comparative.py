@@ -34,7 +34,6 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
         _sys.path.insert(0, _p)
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -43,7 +42,7 @@ class ComparativeExperimentProtocol:
     """Experiment protocol optimized for comparative testing"""
 
     @staticmethod
-    def get_all_domains() -> List[str]:
+    def get_all_domains() -> list[str]:
         """Return list of all domains"""
         return [
             "chemistry",
@@ -54,19 +53,19 @@ class ComparativeExperimentProtocol:
         ]
 
     @staticmethod
-    def get_scientific_domains() -> List[str]:
+    def get_scientific_domains() -> list[str]:
         """Return scientific domains only"""
         return ["chemistry", "biology", "physics"]
 
     @staticmethod
-    def get_defi_domains() -> List[str]:
+    def get_defi_domains() -> list[str]:
         """Return DeFi domains only"""
         return ["defi_amm", "defi_risk"]
 
     @staticmethod
     def load_test_data(
         domain: str, num_samples: int = 200
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Load test data for a domain
 

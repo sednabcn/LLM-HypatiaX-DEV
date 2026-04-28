@@ -18,7 +18,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1 — LOW-LEVEL SUBPROCESS HELPERS
@@ -32,8 +31,8 @@ def ensure_dir(path: Path) -> Path:
 
 def run(
     cmd: list[str],
-    env: Optional[dict] = None,
-    cwd: Optional[Path] = None,
+    env: dict | None = None,
+    cwd: Path | None = None,
     check: bool = True,
     capture: bool = True,
 ) -> subprocess.CompletedProcess:

@@ -76,7 +76,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -96,13 +95,13 @@ _RESULTS_DIR = _PKG_ROOT / "data/results/comparison_results"
 _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Default sample sizes (training points per equation)
-_DEFAULT_SAMPLE_SIZES: List[int] = [50, 100, 200, 500, 750, 1000]
+_DEFAULT_SAMPLE_SIZES: list[int] = [50, 100, 200, 500, 750, 1000]
 
 # Top-two methods from protocol_core_noisy_20260313_094752.json:
 #   3 -> EnhancedHybridSystemDeFi (core)       median R2=0.9999998  wins=19/30
 #   4 -> HybridSystemLLMNN all-domains (core)  median R2=0.9999998  wins=11/30
 # n=200 already completed — merge it via --existing-results.
-_DEFAULT_METHODS: List[int] = [3, 4]
+_DEFAULT_METHODS: list[int] = [3, 4]
 
 
 # ============================================================================
@@ -136,7 +135,7 @@ class _TeeLogger:
 # RESULT HELPERS
 # ============================================================================
 
-def _find_result_written_after(mode: str, t_start: float) -> Optional[Path]:
+def _find_result_written_after(mode: str, t_start: float) -> Path | None:
     """Return the newest result JSON for mode whose mtime >= t_start."""
     candidates = [
         p for p in _RESULTS_DIR.glob(f"protocol_core_{mode}_*.json")
@@ -147,7 +146,7 @@ def _find_result_written_after(mode: str, t_start: float) -> Optional[Path]:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def _find_latest_result(mode: str) -> Optional[Path]:
+def _find_latest_result(mode: str) -> Path | None:
     """Return the most-recently-modified JSON for protocol_core_{mode}_*.json."""
     pattern    = f"protocol_core_{mode}_*.json"
     candidates = sorted(
@@ -158,9 +157,9 @@ def _find_latest_result(mode: str) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
-def _extract_per_test(data: Dict) -> Dict[str, Dict]:
+def _extract_per_test(data: dict) -> dict[str, dict]:
     """Return {equation_name: {method_name: result_dict}}."""
-    out: Dict[str, Dict] = {}
+    out: dict[str, dict] = {}
     for test in data.get("tests", []):
         eq_name = (
             test.get("metadata", {}).get("equation_name", "")
@@ -171,7 +170,7 @@ def _extract_per_test(data: Dict) -> Dict[str, Dict]:
     return out
 
 
-def _load_results(path: Path) -> Dict:
+def _load_results(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
 
@@ -184,7 +183,7 @@ def _build_runner_cmd(
     n_samples:  int,
     args:       argparse.Namespace,
     runner:     Path,
-) -> List[str]:
+) -> list[str]:
     """Build the subprocess command for one sample-size configuration."""
     cmd = [sys.executable, str(runner)]
 
@@ -242,7 +241,7 @@ def _run_sample_size(
     n_samples:  int,
     args:       argparse.Namespace,
     runner:     Path,
-) -> Optional[Path]:
+) -> Path | None:
     """
     Run the inner benchmark for one training-set size.
 
@@ -328,11 +327,11 @@ def _run_sample_size(
 # ============================================================================
 
 def _aggregate_results(
-    sample_sizes:    List[int],
-    result_paths:    Dict[int, Optional[Path]],
+    sample_sizes:    list[int],
+    result_paths:    dict[int, Path | None],
     noiseless:       bool,
-    args_thresholds: Dict = {},
-) -> Dict:
+    args_thresholds: dict = {},
+) -> dict:
     """
     Build a unified cross-n comparison object.
 
@@ -365,7 +364,7 @@ def _aggregate_results(
     }
     """
     all_methods: set = set()
-    loaded: Dict[int, Optional[Dict]] = {}
+    loaded: dict[int, dict | None] = {}
 
     for n in sample_sizes:
         path = result_paths.get(n)
@@ -403,7 +402,7 @@ def _aggregate_results(
             1000: args_thresholds.get(1000, 0.995),
         }
 
-    per_n_data: Dict[str, Optional[Dict]] = {}
+    per_n_data: dict[str, dict | None] = {}
     for n in sample_sizes:
         n_str     = str(n)
         data      = loaded.get(n)
@@ -418,10 +417,10 @@ def _aggregate_results(
         )
 
         per_eq = _extract_per_test(data)
-        method_summary: Dict[str, Dict] = {}
+        method_summary: dict[str, dict] = {}
 
         for method in all_methods_sorted:
-            r2_vals:   List[float] = []
+            r2_vals:   list[float] = []
             n_success  = 0
             n_total    = 0
             n_recovery = 0
@@ -471,10 +470,10 @@ def _aggregate_results(
     # min_n_above_threshold: smallest n where recovery_rate >= 0.5 (majority of eqs recovered)
     _efficiency_target = 0.5
 
-    data_efficiency: Dict[str, Dict] = {}
+    data_efficiency: dict[str, dict] = {}
     for method in all_methods_sorted:
-        curve: Dict[str, Optional[float]] = {}
-        min_n: Optional[int] = None
+        curve: dict[str, float | None] = {}
+        min_n: int | None = None
         for n in sample_sizes:
             n_str = str(n)
             pnd   = per_n_data.get(n_str)
@@ -506,7 +505,7 @@ def _aggregate_results(
 # REPORTING
 # ============================================================================
 
-def _print_sample_complexity_table(agg: Dict) -> None:
+def _print_sample_complexity_table(agg: dict) -> None:
     """Pretty-print the cross-n comparison tables to stdout."""
     methods      = agg["methods"]
     sample_sizes = agg["sample_sizes"]
@@ -588,7 +587,7 @@ def _print_sample_complexity_table(agg: Dict) -> None:
     print(f"{'='*100}\n")
 
 
-def _save_complexity_json(agg: Dict, ts: str) -> Path:
+def _save_complexity_json(agg: dict, ts: str) -> Path:
     path = _RESULTS_DIR / f"sample_complexity_{ts}.json"
     with open(path, "w") as f:
         json.dump(agg, f, indent=2, default=str)
@@ -596,7 +595,7 @@ def _save_complexity_json(agg: Dict, ts: str) -> Path:
     return path
 
 
-def _save_complexity_csv(agg: Dict, ts: str) -> Path:
+def _save_complexity_csv(agg: dict, ts: str) -> Path:
     """
     Two-section flat CSV:
     Section 1 — per (method, n) aggregate metrics.
@@ -832,7 +831,7 @@ def main() -> None:
         sys.exit(1)
 
     # Parse --existing-results tokens
-    existing_map: Dict[int, Path] = {}
+    existing_map: dict[int, Path] = {}
     for token in getattr(args, "existing_results", []):
         try:
             n_s, path_s = token.split(":", 1)
@@ -886,7 +885,7 @@ def main() -> None:
     print(f"{'='*80}\n")
 
     ts            = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_paths: Dict[int, Optional[Path]] = dict(existing_map)
+    result_paths: dict[int, Path | None] = dict(existing_map)
     sweep_start   = time.time()
 
     # ── SWEEP LOOP ────────────────────────────────────────────────────────────
@@ -914,7 +913,7 @@ def main() -> None:
     print(f"{'='*80}")
 
     # Build per-n threshold map
-    args_thresholds: Dict = {}
+    args_thresholds: dict = {}
     for token in getattr(args, "threshold_per_n", []):
         try:
             n_str, v = token.split(":")

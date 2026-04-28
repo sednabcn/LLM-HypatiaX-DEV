@@ -24,7 +24,6 @@ Supported domains: 'defi', 'risk', 'finance', 'esg'
 
 import random
 from collections import deque
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -41,7 +40,7 @@ class DomainValidator:
     Checks that formulas satisfy domain-specific rules (DeFi, Risk, Finance, ESG).
     """
 
-    def __init__(self, domain: str, max_history: Optional[int] = 1000):
+    def __init__(self, domain: str, max_history: int | None = 1000):
         """
         Initialize the domain validator.
 
@@ -58,7 +57,7 @@ class DomainValidator:
         else:
             self.validation_history = []
 
-    def _load_constraints(self) -> Dict:
+    def _load_constraints(self) -> dict:
         """
         Load domain-specific constraints.
 
@@ -162,9 +161,9 @@ class DomainValidator:
     def validate(
         self,
         expression_str: str,
-        variable_definitions: Dict[str, str],
-        test_data: Optional[Dict[str, np.ndarray]] = None,
-    ) -> Dict:
+        variable_definitions: dict[str, str],
+        test_data: dict[str, np.ndarray] | None = None,
+    ) -> dict:
         """
         Validate domain-specific constraints.
 
@@ -232,9 +231,9 @@ class DomainValidator:
     def _check_positive_variables(
         self,
         expression_str: str,
-        test_data: Optional[Dict[str, np.ndarray]],
-        result: Dict,
-    ) -> Dict:
+        test_data: dict[str, np.ndarray] | None,
+        result: dict,
+    ) -> dict:
         """Check that variables that must be positive are indeed positive."""
         positive_vars = self.constraints.get("positive_variables", [])
 
@@ -260,9 +259,9 @@ class DomainValidator:
     def _check_strictly_positive_variables(
         self,
         expression_str: str,
-        test_data: Optional[Dict[str, np.ndarray]],
-        result: Dict,
-    ) -> Dict:
+        test_data: dict[str, np.ndarray] | None,
+        result: dict,
+    ) -> dict:
         """
         WEEK 2 NEW: Check variables that must be strictly positive (> 0, not >= 0).
 
@@ -308,9 +307,9 @@ class DomainValidator:
     def _check_bounded_variables(
         self,
         expression_str: str,
-        test_data: Optional[Dict[str, np.ndarray]],
-        result: Dict,
-    ) -> Dict:
+        test_data: dict[str, np.ndarray] | None,
+        result: dict,
+    ) -> dict:
         """
         Check that bounded variables are within their valid ranges.
 
@@ -370,9 +369,9 @@ class DomainValidator:
     def _check_probability_variables(
         self,
         expression_str: str,
-        test_data: Optional[Dict[str, np.ndarray]],
-        result: Dict,
-    ) -> Dict:
+        test_data: dict[str, np.ndarray] | None,
+        result: dict,
+    ) -> dict:
         """Check that probability variables are in [0, 1]."""
         prob_vars = self.constraints.get("probability_variables", [])
 
@@ -400,10 +399,10 @@ class DomainValidator:
     def _check_special_rules(
         self,
         expression_str: str,
-        variable_definitions: Dict[str, str],
-        test_data: Optional[Dict[str, np.ndarray]],
-        result: Dict,
-    ) -> Dict:
+        variable_definitions: dict[str, str],
+        test_data: dict[str, np.ndarray] | None,
+        result: dict,
+    ) -> dict:
         """
         Check domain-specific special rules.
 
@@ -440,8 +439,8 @@ class DomainValidator:
     # Special rule implementations
 
     def _check_constant_product(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """Check DeFi constant product invariant."""
         if "reserve" in expr_str.lower() and test_data:
             result["constraints_checked"].append("constant_product")
@@ -451,8 +450,8 @@ class DomainValidator:
         return result
 
     def _check_no_negative_slippage(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """Check that slippage is non-negative."""
         if "slippage" in expr_str.lower():
             result["constraints_checked"].append("no_negative_slippage")
@@ -463,8 +462,8 @@ class DomainValidator:
         return result
 
     def _check_ratio_positivity(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """
         WEEK 2 NEW: Check that ratio variables are strictly positive.
 
@@ -502,8 +501,8 @@ class DomainValidator:
         return result
 
     def _check_price_positivity(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """
         WEEK 2 NEW: Check that price variables are strictly positive.
 
@@ -535,7 +534,7 @@ class DomainValidator:
 
         return result
 
-    def _check_division_protection(self, expr_str: str, result: Dict) -> Dict:
+    def _check_division_protection(self, expr_str: str, result: dict) -> dict:
         """
         WEEK 2 NEW: Check for epsilon protection in divisions.
 
@@ -565,8 +564,8 @@ class DomainValidator:
         return result
 
     def _check_var_positive(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """Check that VaR (Value at Risk) is positive."""
         if "var" in expr_str.lower():
             result["constraints_checked"].append("var_positive")
@@ -574,8 +573,8 @@ class DomainValidator:
         return result
 
     def _check_confidence_valid(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """Check that confidence level is valid."""
         if "confidence" in expr_str.lower():
             result["constraints_checked"].append("confidence_valid")
@@ -588,7 +587,7 @@ class DomainValidator:
                     result["score"] -= 20
         return result
 
-    def _check_weights_sum(self, expr_str: str, var_defs: Dict, result: Dict) -> Dict:
+    def _check_weights_sum(self, expr_str: str, var_defs: dict, result: dict) -> dict:
         """Check that weight variables sum to 1."""
         weight_vars = [v for v in var_defs if "weight" in v.lower()]
         if weight_vars:
@@ -597,8 +596,8 @@ class DomainValidator:
         return result
 
     def _check_score_range(
-        self, expr_str: str, test_data: Optional[Dict], result: Dict
-    ) -> Dict:
+        self, expr_str: str, test_data: dict | None, result: dict
+    ) -> dict:
         """Check that scores are in valid range."""
         if "score" in expr_str.lower():
             result["constraints_checked"].append("score_range")
@@ -621,14 +620,14 @@ class DomainValidator:
         else:
             self.validation_history = []
 
-    def get_history(self, limit: Optional[int] = None) -> List[Dict]:
+    def get_history(self, limit: int | None = None) -> list[dict]:
         """Get validation history."""
         history_list = list(self.validation_history)
         if limit is not None:
             return history_list[-limit:]
         return history_list
 
-    def get_statistics(self) -> Dict:
+    def get_statistics(self) -> dict:
         """Get statistics about validation history."""
         if not self.validation_history:
             return {

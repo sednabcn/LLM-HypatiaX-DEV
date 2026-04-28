@@ -42,7 +42,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from dotenv import load_dotenv
@@ -90,7 +90,9 @@ except ImportError:
 
 # Import DeFi Protocol
 try:
-    from hypatiax.protocols.experiment_protocol_defi_20 import DeFiExperimentProtocolExtended
+    from hypatiax.protocols.experiment_protocol_defi_20 import (
+        DeFiExperimentProtocolExtended,
+    )
 
     print("✅ Loaded DeFi Protocol v3.0")
 except ImportError:
@@ -129,8 +131,8 @@ def convert_to_json_serializable(obj):
 
 
 def convert_defi_protocol_to_test_cases(
-    protocol: DeFiExperimentProtocolExtended, domains: Optional[List[str]] = None
-) -> Dict[str, Dict]:
+    protocol: DeFiExperimentProtocolExtended, domains: list[str] | None = None
+) -> dict[str, dict]:
     """Convert DeFi protocol to test cases dictionary."""
 
     test_cases = {}
@@ -213,7 +215,7 @@ def convert_defi_protocol_to_test_cases(
 class SessionManager:
     """Manages test sessions with checkpointing and complete results export."""
 
-    def __init__(self, session_id: Optional[str] = None):
+    def __init__(self, session_id: str | None = None):
         self.session_id = (
             session_id or f"llm_defi_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
@@ -227,7 +229,7 @@ class SessionManager:
     def _load_checkpoint(self):
         if self.checkpoint_file.exists():
             try:
-                with open(self.checkpoint_file, "r") as f:
+                with open(self.checkpoint_file) as f:
                     data = json.load(f)
                     self.completed_tests = set(data.get("completed", []))
                     self.failed_tests = set(data.get("failed", []))
@@ -256,7 +258,7 @@ class SessionManager:
     def is_completed(self, test_name: str) -> bool:
         return test_name in self.completed_tests
 
-    def save_test_result(self, test_name: str, result: Dict, passed: bool):
+    def save_test_result(self, test_name: str, result: dict, passed: bool):
         """Save test result with proper JSON serialization."""
         test_file = self.session_dir / f"{test_name}.json"
 
@@ -289,7 +291,7 @@ class SessionManager:
                 self.failed_tests.add(test_name)
             self._save_checkpoint()
 
-    def load_all_results(self) -> Dict[str, Dict]:
+    def load_all_results(self) -> dict[str, dict]:
         results = {}
         for f in self.session_dir.glob("*.json"):
             if f.name not in [
@@ -298,16 +300,16 @@ class SessionManager:
                 "complete_results.json",
             ]:
                 try:
-                    with open(f, "r") as file:
+                    with open(f) as file:
                         results[f.stem] = json.load(file)
                 except Exception as e:
                     print(f"⚠️  Failed to load {f.name}: {e}")
         return results
 
-    def get_pending_tests(self, all_tests: List[str]) -> List[str]:
+    def get_pending_tests(self, all_tests: list[str]) -> list[str]:
         return [t for t in all_tests if t not in self.completed_tests]
 
-    def save_summary(self, summary: Dict):
+    def save_summary(self, summary: dict):
         """Save summary with complete JSON export."""
         # Save standard summary
         summary_file = self.session_dir / "summary.json"
@@ -323,7 +325,7 @@ class SessionManager:
         print(f"📦 Complete results: {complete_file}")
         print(f"   Size: {complete_file.stat().st_size / 1024:.1f} KB")
 
-    def _generate_complete_export(self, summary: Dict) -> Dict:
+    def _generate_complete_export(self, summary: dict) -> dict:
         """Generate complete JSON export with all test outputs."""
         all_results = self.load_all_results()
 
@@ -393,7 +395,7 @@ class IntegratedLLMDiscoveryDeFi:
     def __init__(
         self,
         llm_mode: str = "hybrid",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         niterations: int = 50,
     ):
         """Initialize integrated LLM discovery for DeFi."""
@@ -421,13 +423,13 @@ class IntegratedLLMDiscoveryDeFi:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
+        variable_names: list[str],
         domain: str,
         description: str,
-        variable_descriptions: Optional[Dict[str, str]] = None,
-        variable_units: Optional[Dict[str, str]] = None,
+        variable_descriptions: dict[str, str] | None = None,
+        variable_units: dict[str, str] | None = None,
         verbose: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Discover equation using integrated engine."""
 
         if verbose:
@@ -562,13 +564,13 @@ class IntegratedLLMDiscoveryDeFi:
 
 def run_single_test_llm(
     test_name: str,
-    test_cases: Dict,
+    test_cases: dict,
     llm_mode: str = "hybrid",
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     niterations: int = 50,
     verbose: bool = True,
-    session: Optional[SessionManager] = None,
-) -> Dict:
+    session: SessionManager | None = None,
+) -> dict:
     """Run single test with integrated LLM-guided discovery."""
 
     test_config = test_cases[test_name]
@@ -643,11 +645,11 @@ def run_single_test_llm(
 
 def run_single_test_by_name(
     test_name: str,
-    test_cases: Dict,
+    test_cases: dict,
     llm_mode: str = "hybrid",
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     niterations: int = 50,
-) -> Dict:
+) -> dict:
     """Run a single named test."""
 
     # Find matching tests
@@ -684,18 +686,18 @@ def run_single_test_by_name(
 
 
 def run_defi_suite(
-    test_cases: Dict,
+    test_cases: dict,
     llm_mode: str = "hybrid",
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     niterations: int = 50,
     resume: bool = False,
-    session_id: Optional[str] = None,
-) -> Dict[str, Dict]:
+    session_id: str | None = None,
+) -> dict[str, dict]:
     """Run full DeFi suite with integrated LLM-guided discovery."""
 
     # Session management
     if resume and Path(RESULTS_DIR / "current_session.json").exists():
-        with open(RESULTS_DIR / "current_session.json", "r") as f:
+        with open(RESULTS_DIR / "current_session.json") as f:
             session_id = json.load(f).get("session_id")
 
     session = SessionManager(session_id)
@@ -763,8 +765,8 @@ def run_defi_suite(
 
 
 def generate_summary(
-    results: Dict[str, Dict], test_cases: Dict, llm_mode: str, niterations: int
-) -> Dict:
+    results: dict[str, dict], test_cases: dict, llm_mode: str, niterations: int
+) -> dict:
     """Generate comprehensive summary with statistics."""
 
     summary = {
@@ -848,7 +850,7 @@ def generate_summary(
     return summary
 
 
-def print_results_table(results: Dict[str, Dict], test_cases: Dict):
+def print_results_table(results: dict[str, dict], test_cases: dict):
     """Print detailed results table."""
     print(f"\n{'='*120}")
     print("LLM-GUIDED DISCOVERY - DEFI RESULTS".center(120))

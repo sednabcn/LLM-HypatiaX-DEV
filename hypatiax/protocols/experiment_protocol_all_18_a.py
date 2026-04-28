@@ -22,7 +22,6 @@ del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
 import json
 import os
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -31,7 +30,7 @@ class ExperimentProtocolA:
     """18 test cases from mechanics, thermodynamics, EM, fluids, optics, quantum."""
 
     @staticmethod
-    def get_all_domains() -> List[str]:
+    def get_all_domains() -> list[str]:
         """Return list of all experimental domains."""
         return [
             "mechanics",
@@ -45,7 +44,7 @@ class ExperimentProtocolA:
     @staticmethod
     def load_test_data(
         domain: str, num_samples: int = 300
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Load test data for Protocol A (18 physics/engineering cases).
 

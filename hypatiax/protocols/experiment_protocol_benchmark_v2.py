@@ -83,12 +83,11 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
         _sys.path.insert(0, _p)
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
-import json
 import random
 import warnings
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -117,7 +116,7 @@ except ImportError:
     )
 
 try:
-    import pysr  # pip install pysr
+    import pysr  # pip install pysr  # noqa: F401
 
     PYSR_AVAILABLE = True
 except ImportError:
@@ -168,7 +167,7 @@ class CompetitorMethod:
 # Ordered by architectural proximity to HypatiaX (most similar first).
 # ---------------------------------------------------------------------------
 
-COMPETITOR_REGISTRY: List[CompetitorMethod] = [
+COMPETITOR_REGISTRY: list[CompetitorMethod] = [
     # ── PRIORITY 1: MUST COMPARE ─────────────────────────────────────────
     CompetitorMethod(
         key="snip",
@@ -386,7 +385,7 @@ COMPETITOR_REGISTRY: List[CompetitorMethod] = [
 ]
 
 # Quick lookup by key
-COMPETITORS: Dict[str, CompetitorMethod] = {c.key: c for c in COMPETITOR_REGISTRY}
+COMPETITORS: dict[str, CompetitorMethod] = {c.key: c for c in COMPETITOR_REGISTRY}
 
 
 # ============================================================================
@@ -406,9 +405,9 @@ class FeynmanEquation:
     feynman_id: str          # e.g. "I.12.1"
     description: str         # Human-readable description
     ground_truth: str        # Analytical formula string
-    variable_names: List[str]
-    variable_ranges: Dict[str, Tuple[float, float]]
-    constants: Dict[str, float]
+    variable_names: list[str]
+    variable_ranges: dict[str, tuple[float, float]]
+    constants: dict[str, float]
     n_variables: int
     operator_depth: int      # Approximate expression tree depth
     difficulty: str          # easy / medium / hard
@@ -416,14 +415,14 @@ class FeynmanEquation:
     series: str              # I, II, or III (Feynman series)
     extrapolation_test: bool
     pmlb_dataset_name: str   # Dataset name in pmlb (if available)
-    fn: Optional[Callable] = field(default=None, repr=False)
+    fn: Callable | None = field(default=None, repr=False)
 
     def generate(
         self,
         num_samples: int = 200,
         noise_level: float = 0.0,
         seed: int = 42,
-    ) -> Tuple[str, np.ndarray, np.ndarray, List[str], Dict]:
+    ) -> tuple[str, np.ndarray, np.ndarray, list[str], dict]:
         """
         Generate (description, X, y, variable_names, metadata) tuple.
 
@@ -491,7 +490,7 @@ class FeynmanEquation:
 # Reference: Table 1 in Udrescu & Tegmark (2020), Science Advances.
 # ---------------------------------------------------------------------------
 
-def _build_feynman_equations() -> List[FeynmanEquation]:
+def _build_feynman_equations() -> list[FeynmanEquation]:
     eqs = []
 
     # ── SERIES I: CLASSICAL MECHANICS & THERMODYNAMICS ───────────────────
@@ -968,8 +967,8 @@ def _build_feynman_equations() -> List[FeynmanEquation]:
     return eqs
 
 
-FEYNMAN_EQUATIONS: List[FeynmanEquation] = _build_feynman_equations()
-FEYNMAN_BY_ID: Dict[str, FeynmanEquation] = {eq.feynman_id: eq for eq in FEYNMAN_EQUATIONS}
+FEYNMAN_EQUATIONS: list[FeynmanEquation] = _build_feynman_equations()
+FEYNMAN_BY_ID: dict[str, FeynmanEquation] = {eq.feynman_id: eq for eq in FEYNMAN_EQUATIONS}
 
 
 # ============================================================================
@@ -989,7 +988,7 @@ class SRBenchDataset:
     notes: str
 
 
-SRBENCH_SUBSET: List[SRBenchDataset] = [
+SRBENCH_SUBSET: list[SRBenchDataset] = [
     # Biology / ecology
     SRBenchDataset("505_tecator",         "Near-infrared spectra to fat content",         "biology",       124, "hard",   "High-dimensional; test feature selection robustness"),
     SRBenchDataset("537_houses",          "California housing price model",                "economics",     8,   "medium", "Non-linear interactions; widely used benchmark"),
@@ -1067,7 +1066,7 @@ class BenchmarkProtocol:
         num_samples: int = 200,
         noise_level: float = NOISE_LEVEL_DEFAULT,
         seed: int = 42,
-        feynman_series: Optional[str] = None,
+        feynman_series: str | None = None,
         crossover_only: bool = False,
         noiseless: bool = False,
     ) -> None:
@@ -1108,24 +1107,24 @@ class BenchmarkProtocol:
 
         # Pre-build the active equation / dataset lists once so get_all_domains
         # and load_test_data are O(1) lookups.
-        self._feynman_eqs: List[FeynmanEquation] = []
+        self._feynman_eqs: list[FeynmanEquation] = []
         if benchmark in ("feynman", "both"):
             self._feynman_eqs = self.get_feynman_equations(
                 series=feynman_series,
                 crossover_only=crossover_only,
             )
 
-        self._srbench_datasets: List[SRBenchDataset] = []
+        self._srbench_datasets: list[SRBenchDataset] = []
         if benchmark in ("srbench", "both"):
             self._srbench_datasets = list(SRBENCH_SUBSET)
 
         # Domain → list-of-equations / datasets map (built lazily by
         # _build_domain_map if callers use the runner interface).
-        self._domain_map: Optional[Dict[str, List]] = None
+        self._domain_map: dict[str, list] | None = None
 
     # ── internal helpers ──────────────────────────────────────────────────
 
-    def _build_domain_map(self) -> Dict[str, List]:
+    def _build_domain_map(self) -> dict[str, list]:
         """
         Build {domain_key: [items]} mapping used by load_test_data().
 
@@ -1133,7 +1132,7 @@ class BenchmarkProtocol:
         under keys of the form "feynman_<sub-domain>" (e.g. "feynman_mechanics").
         SRBench datasets are grouped by their domain field (e.g. "chemistry").
         """
-        domain_map: Dict[str, List] = {}
+        domain_map: dict[str, list] = {}
 
         for eq in self._feynman_eqs:
             key = f"{self._FEYNMAN_PREFIX}{eq.domain}"
@@ -1145,14 +1144,14 @@ class BenchmarkProtocol:
         return domain_map
 
     @property
-    def _domains(self) -> Dict[str, List]:
+    def _domains(self) -> dict[str, list]:
         if self._domain_map is None:
             self._domain_map = self._build_domain_map()
         return self._domain_map
 
     # ── Public runner interface ───────────────────────────────────────────
 
-    def get_all_domains(self) -> List[str]:
+    def get_all_domains(self) -> list[str]:
         """
         Return all domain keys that this protocol exposes.
 
@@ -1171,10 +1170,10 @@ class BenchmarkProtocol:
     def load_test_data(
         self,
         domain: str,
-        num_samples: Optional[int] = None,
-        noise_level: Optional[float] = None,
-        seed: Optional[int] = None,
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+        num_samples: int | None = None,
+        noise_level: float | None = None,
+        seed: int | None = None,
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Load test cases for *domain* — the primary runner-facing method.
 
@@ -1214,7 +1213,7 @@ class BenchmarkProtocol:
         s = seed if seed is not None else self.seed
 
         items = self._domains[domain]
-        results: List[Tuple] = []
+        results: list[tuple] = []
 
         if domain.startswith(self._FEYNMAN_PREFIX):
             # Feynman equations — generate analytically
@@ -1234,10 +1233,10 @@ class BenchmarkProtocol:
 
     @staticmethod
     def get_feynman_equations(
-        series: Optional[str] = None,
+        series: str | None = None,
         max_variables: int = 4,
         crossover_only: bool = False,
-    ) -> List[FeynmanEquation]:
+    ) -> list[FeynmanEquation]:
         """
         Return the Feynman equation subset, optionally filtered.
 
@@ -1257,11 +1256,11 @@ class BenchmarkProtocol:
 
     @staticmethod
     def load_feynman_test_data(
-        feynman_ids: Optional[List[str]] = None,
+        feynman_ids: list[str] | None = None,
         num_samples: int = 200,
         noise_level: float = NOISE_LEVEL_DEFAULT,
         seed: int = 42,
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Generate test data for the Feynman benchmark subset.
 
@@ -1289,9 +1288,9 @@ class BenchmarkProtocol:
 
     @staticmethod
     def load_srbench_test_data(
-        dataset_names: Optional[List[str]] = None,
+        dataset_names: list[str] | None = None,
         num_samples: int = 200,
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Load SRBench datasets via pmlb.
 
@@ -1365,9 +1364,9 @@ class BenchmarkProtocol:
 
     @staticmethod
     def generate_experiment_report(
-        results: List[Dict],
+        results: list[dict],
         threshold: float = RECOVERY_THRESHOLD_RELAXED,
-    ) -> Dict:
+    ) -> dict:
         """
         Generate benchmark comparison report.
 
@@ -1388,9 +1387,9 @@ class BenchmarkProtocol:
 
         r2_all = [r["evaluation"]["r2"] for r in results if "r2" in r.get("evaluation", {})]
 
-        by_domain: Dict[str, Dict] = {}
-        by_benchmark: Dict[str, Dict] = {}
-        by_competitor: Dict[str, Dict] = {}
+        by_domain: dict[str, dict] = {}
+        by_benchmark: dict[str, dict] = {}
+        by_competitor: dict[str, dict] = {}
 
         for r in results:
             meta = r.get("metadata", {})
@@ -1409,7 +1408,7 @@ class BenchmarkProtocol:
                 if r2 is not None:
                     bucket[key]["r2_scores"].append(r2)
 
-        def _summarise(bucket: Dict) -> Dict:
+        def _summarise(bucket: dict) -> dict:
             out = {}
             for key, val in bucket.items():
                 scores = val["r2_scores"]
@@ -1450,7 +1449,7 @@ class BenchmarkProtocol:
         return COMPETITORS[key]
 
     @staticmethod
-    def get_competitors_by_priority(priority: int = 1) -> List[CompetitorMethod]:
+    def get_competitors_by_priority(priority: int = 1) -> list[CompetitorMethod]:
         """Return all competitors at or above the given priority level."""
         return [c for c in COMPETITOR_REGISTRY if c.priority <= priority]
 
@@ -1503,7 +1502,7 @@ class BenchmarkProtocol:
 
         print("\n  FEYNMAN SR BENCHMARK  (30 equations)")
         print("  " + "-" * 60)
-        by_series: Dict[str, List] = {}
+        by_series: dict[str, list] = {}
         for eq in FEYNMAN_EQUATIONS:
             by_series.setdefault(eq.series, []).append(eq)
 

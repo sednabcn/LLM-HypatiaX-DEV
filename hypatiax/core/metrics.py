@@ -26,8 +26,8 @@ for cross-validation of R² but is never required at import time.
 from __future__ import annotations
 
 import math
-import warnings
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 import numpy as np
 

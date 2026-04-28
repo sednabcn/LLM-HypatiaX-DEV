@@ -52,8 +52,8 @@ import os
 import sys
 import tempfile
 import time
+import unittest
 from pathlib import Path
-from typing import Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -85,11 +85,11 @@ SC = _import_from_path(
 # ===========================================================================
 
 def _make_result_payload(
-    method_names: List[str],
-    equations:    List[str],
-    r2_map:       Optional[Dict[str, Dict[str, float]]] = None,
+    method_names: list[str],
+    equations:    list[str],
+    r2_map:       dict[str, dict[str, float]] | None = None,
     noiseless:    bool = False,
-) -> Dict:
+) -> dict:
     """
     Build a minimal result JSON payload in the format written by
     run_comparative_suite_benchmark_v2.py.
@@ -230,7 +230,7 @@ def sc_args():
 # HELPERS
 # ===========================================================================
 
-def _write_json(path: Path, payload: Dict) -> Path:
+def _write_json(path: Path, payload: dict) -> Path:
     with open(path, "w") as f:
         json.dump(payload, f)
     return path
@@ -242,9 +242,9 @@ _result_file_counter = 0   # module-level counter — ensures unique filenames
 def _make_result_file(
     tmp_path:     Path,
     mode:         str,
-    methods:      List[str],
-    equations:    List[str],
-    r2_map:       Optional[Dict] = None,
+    methods:      list[str],
+    equations:    list[str],
+    r2_map:       dict | None = None,
 ) -> Path:
     global _result_file_counter
     _result_file_counter += 1
@@ -1568,7 +1568,7 @@ class TestFindResultWrittenAfter:
 
 class TestCatastrophicFailureDetection:
 
-    def _make_payload_with_low_r2(self, method_r2_map: dict, equations: List[str]) -> Dict:
+    def _make_payload_with_low_r2(self, method_r2_map: dict, equations: list[str]) -> dict:
         """Build a payload where method_r2_map = {method: r2} for all equations."""
         tests = []
         for eq in equations:
@@ -1755,13 +1755,13 @@ _NEWTON_M3_R2_BY_N     = {n: 1.0000 for n in _NEWTON_M4_R2_BY_N}
 # ── Fixture builders ──────────────────────────────────────────────────────────
 
 def _make_result(r2: float, success: bool = True,
-                 rmse: float = 0.05, time: float = 11.0) -> Dict:
+                 rmse: float = 0.05, time: float = 11.0) -> dict:
     return {"r2": r2, "rmse": rmse, "success": success,
             "time": time, "error": None,
             "metadata": {"decision": "llm", "nn_applied": True}}
 
 
-def _make_test(description: str, results: Dict) -> Dict:
+def _make_test(description: str, results: dict) -> dict:
     return {
         "description": description,
         "domain": "mechanics",
@@ -1770,7 +1770,7 @@ def _make_test(description: str, results: Dict) -> Dict:
     }
 
 
-def _make_noise_sweep_data(sigma: float) -> Dict:
+def _make_noise_sweep_data(sigma: float) -> dict:
     """Build a minimal noise sweep JSON for one sigma level."""
     newton_test = _make_test(_NEWTON_EQ, {
         _M3: _make_result(_NEWTON_M3_R2_BY_SIGMA[sigma], time=25.0),
@@ -1794,7 +1794,7 @@ def _make_noise_sweep_data(sigma: float) -> Dict:
     }
 
 
-def _make_sc_data(n_samples: int) -> Dict:
+def _make_sc_data(n_samples: int) -> dict:
     """Build a minimal SC sweep JSON for one n value."""
     newton_test = _make_test(_NEWTON_EQ, {
         _M3: _make_result(_NEWTON_M3_R2_BY_N[n_samples], time=25.0),

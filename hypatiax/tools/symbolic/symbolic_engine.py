@@ -78,19 +78,17 @@ import re
 import time
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import ClassVar
 
 import numpy as np
 import sympy as sp
-from scipy import stats
 
 # NOTE: PySRRegressor is intentionally NOT imported at module level.
 # Importing pysr triggers juliacall initialisation immediately, which
 # segfaults when PyTorch is already loaded in the same process.
 # The lazy import is inside SymbolicEngine.discover() — by that point
 # the env var above has been set and juliacall configures itself correctly.
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 # ---------------------------------------------------------------------------
@@ -182,7 +180,7 @@ class VariableNameValidator:
         )
 
     @staticmethod
-    def sanitize_name(name: str, existing_names: List[str] = None) -> str:
+    def sanitize_name(name: str, existing_names: list[str] = None) -> str:
         """
         Sanitize a single variable name.
 
@@ -221,7 +219,7 @@ class VariableNameValidator:
         return name
 
     @staticmethod
-    def sanitize_names(names: List[str]) -> Tuple[List[str], Dict[str, str]]:
+    def sanitize_names(names: list[str]) -> tuple[list[str], dict[str, str]]:
         """
         Sanitize a list of variable names.
 
@@ -250,7 +248,7 @@ class VariableNameValidator:
         return sanitized, mapping
 
     @staticmethod
-    def update_expression(expression: str, mapping: Dict[str, str]) -> str:
+    def update_expression(expression: str, mapping: dict[str, str]) -> str:
         """
         Update expression with sanitized variable names.
 
@@ -279,7 +277,7 @@ class VariableNameValidator:
 # ============================================================================
 
 
-def detect_collapsed_constants(expression: str, variable_names: List[str]) -> List[str]:
+def detect_collapsed_constants(expression: str, variable_names: list[str]) -> list[str]:
     """
     Detect if physical constants have collapsed into the expression.
 
@@ -359,21 +357,21 @@ class DiscoveryConfig:
                                    # (3000 individuals) added ~3× wall-time per
                                    # iteration with no proportional R² gain on
                                    # Feynman equations.
-    binary_operators: List[str] = field(default_factory=lambda: ["+", "-", "*", "/"])
-    unary_operators: List[str] = field(default_factory=lambda: ["sqrt"])
+    binary_operators: list[str] = field(default_factory=lambda: ["+", "-", "*", "/"])
+    unary_operators: list[str] = field(default_factory=lambda: ["sqrt"])
     # sqrt is universally needed (e.g. double-slit: 2√(I₁I₂)cos(δ), RMS,
     # Euclidean distance).  It is safe for PySR — Julia's sqrt() returns NaN
     # for negative inputs rather than throwing, so evolution continues cleanly.
     # Additional operators (sin, cos, safe_asin …) are injected per-domain.
-    constraints: Dict = field(default_factory=dict)
+    constraints: dict = field(default_factory=dict)
     maxsize: int = 30          # max expression tree size; raise for deep compositions
-    maxdepth: Optional[int] = None  # max tree depth (None = PySR default, unlimited).
+    maxdepth: int | None = None  # max tree depth (None = PySR default, unlimited).
                                     # Ported from core engine. Distinct from maxsize:
                                     # maxsize caps node count, maxdepth caps nesting level.
                                     # Set e.g. 12 to prevent pathologically deep trees.
     # Per-operator complexity overrides — set low values to make operators "cheaper"
     # so PySR favours them in the search.  Empty dict = PySR defaults (all cost 1).
-    complexity_of_operators: Dict = field(default_factory=dict)
+    complexity_of_operators: dict = field(default_factory=dict)
     enable_auto_configuration: bool = True
     auto_config_correlation_threshold: float = 0.2
     enable_smart_discovery: bool = False
@@ -392,7 +390,7 @@ class DiscoveryConfig:
     # Passing the old 2-arg string causes a Julia MethodError at fit() time
     # after ~180s of Julia init, silently returning DISCOVERY_FAILED.
     # Fix: default to None so PySR uses its built-in MSE loss (always correct).
-    loss: Optional[str] = None
+    loss: str | None = None
 
     # ── Progress display ──────────────────────────────────────────────────────
     # Ported from core engine (which hardcodes progress=True).
@@ -422,7 +420,7 @@ class DiscoveryConfig:
     # Julia source strings for the three compositions — injected as a *list* of
     # definition strings via PySRRegressor(define_operators=[...]).
     # Keys are the operator names; values are valid Julia function definitions.
-    _TRANSCENDENTAL_OPS: ClassVar[Dict[str, str]] = {
+    _TRANSCENDENTAL_OPS: ClassVar[dict[str, str]] = {
         # Use oftype(x, 1) instead of 1.0 so clamp bounds are always the same
         # type as the input (Float32 in PySR).  The literal 1.0 is Float64 in
         # Julia, causing clamp to upcast its result to Float64 — which fails
@@ -454,7 +452,7 @@ class LLMConfig:
     temperature: float = 0.3
     n_candidates: int = 3  # Number of hypotheses to generate
     enabled: bool = False
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
 
 @dataclass
@@ -464,8 +462,8 @@ class EquationHypothesis:
     equation: str
     confidence: float
     reasoning: str
-    r2_score: Optional[float] = None
-    validation_score: Optional[float] = None
+    r2_score: float | None = None
+    validation_score: float | None = None
 
 
 # ============================================================================
@@ -506,12 +504,12 @@ class IntegratedLLMEngine:
     def generate_hypotheses(
         self,
         domain: str,
-        variables: List[str],
+        variables: list[str],
         description: str,
-        data_patterns: Dict,
+        data_patterns: dict,
         n_candidates: int = None,
         caller_id: str = "",
-    ) -> List[EquationHypothesis]:
+    ) -> list[EquationHypothesis]:
         """Generate equation hypotheses using LLM.
 
         Args:
@@ -545,9 +543,9 @@ class IntegratedLLMEngine:
     def _build_prompt(
         self,
         domain: str,
-        variables: List[str],
+        variables: list[str],
         description: str,
-        patterns: Dict,
+        patterns: dict,
         n_candidates: int,
         caller_id: str = "",
     ) -> str:
@@ -612,7 +610,7 @@ JSON ARRAY:"""
         )
         return message.content[0].text
 
-    def _parse_response(self, response: str) -> List[EquationHypothesis]:
+    def _parse_response(self, response: str) -> list[EquationHypothesis]:
         """Parse LLM response into hypotheses."""
         try:
             # Extract JSON from response
@@ -661,7 +659,7 @@ JSON ARRAY:"""
 class DataPatternAnalyzer:
     """Lightweight pattern analysis for LLM context."""
 
-    def analyze(self, X: np.ndarray, y: np.ndarray, variable_names: List[str]) -> Dict:
+    def analyze(self, X: np.ndarray, y: np.ndarray, variable_names: list[str]) -> dict:
         """Analyze data patterns."""
 
         patterns = {
@@ -740,8 +738,8 @@ class SymbolicEngine:
 
     @staticmethod
     def validate_variable_names(
-        variable_names: List[str], auto_fix: bool = True, verbose: bool = False
-    ) -> Tuple[List[str], Dict[str, str]]:
+        variable_names: list[str], auto_fix: bool = True, verbose: bool = False
+    ) -> tuple[list[str], dict[str, str]]:
         """
         Validate and optionally sanitize variable names for PySR compatibility.
 
@@ -779,12 +777,12 @@ class SymbolicEngine:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str] = None,
+        variable_names: list[str] = None,
         equation_name: str = None,
         random_state: int = 42,
         auto_sanitize: bool = True,
         **kwargs,
-    ) -> Dict:
+    ) -> dict:
         """
         Discover symbolic equation from data with automatic variable name validation.
 
@@ -820,7 +818,7 @@ class SymbolicEngine:
         # the result dict.  The benchmark runner discards subprocess stdout;
         # the trace in the JSON result is the only reliable diagnostic channel
         # back to the parent process.
-        _trace: List[str] = [
+        _trace: list[str] = [
             f"domain={self.domain!r}",
             f"eq={equation_name!r}",
             f"vars={safe_names}",
@@ -839,8 +837,8 @@ class SymbolicEngine:
             # Configure PySR with safe names
             # ── Build unary operator list, injecting transcendental compositions ──
             active_unary = list(self.config.unary_operators)
-            extra_sympy: Dict = {}
-            define_ops: List[str] = []
+            extra_sympy: dict = {}
+            define_ops: list[str] = []
 
             if self.config.use_transcendental_compositions:
                 # Strategy: inject safe_asin/safe_acos (clamped inverse trig) and
@@ -1199,7 +1197,7 @@ class SymbolicEngine:
                 else:
                     # Older PySR: replace short names with full Julia body strings
                     # in unary_operators.  Build a name→body lookup from define_ops.
-                    _body_map: Dict[str, str] = {}
+                    _body_map: dict[str, str] = {}
                     for _body in define_ops:
                         # Julia definition format: "fname(x) = ..."
                         _fname = _body.split("(")[0].strip()
@@ -1278,7 +1276,7 @@ class SymbolicEngine:
             # is annotated to record that it is in the normalised-X space when
             # X-scaling is applied.
             _x_col_scales = np.ones(X.shape[1])
-            _x_scaled_cols: List[Tuple[int, str, float]] = []  # (col_idx, name, scale)
+            _x_scaled_cols: list[tuple[int, str, float]] = []  # (col_idx, name, scale)
             for _xi in range(X.shape[1]):
                 _col = X[:, _xi]
                 _col_scale = max(float(np.abs(np.mean(_col))), float(np.std(_col)))
@@ -1337,8 +1335,8 @@ class SymbolicEngine:
                     if float(np.min(_X_fit[:, i])) > 0.0
                 ]
                 if len(_pos_idx) >= 2:
-                    _gm_cols: List[np.ndarray] = []
-                    _gm_names: List[str] = []
+                    _gm_cols: list[np.ndarray] = []
+                    _gm_names: list[str] = []
                     for _pi in range(len(_pos_idx)):
                         for _qi in range(_pi + 1, len(_pos_idx)):
                             _ci, _cj = _pos_idx[_pi], _pos_idx[_qi]
@@ -1382,8 +1380,8 @@ class SymbolicEngine:
                     if float(np.min(_X_fit[:, i])) > 0.0
                 ]
                 if len(_pos_idx_exp) >= 2:
-                    _ratio_cols: List[np.ndarray] = []
-                    _ratio_names: List[str] = []
+                    _ratio_cols: list[np.ndarray] = []
+                    _ratio_names: list[str] = []
                     # Cap at 10 ratio pairs: beyond this the search space blows
                     # up (O(n²) new columns) while marginal benefit drops.
                     # Prioritise pairs where numerator/denominator differ most
@@ -1434,7 +1432,6 @@ class SymbolicEngine:
             _base_populations = 10   # matches DiscoveryConfig default
             _actual_populations = pysr_kwargs["populations"]
             if _actual_populations > _base_populations:
-                import math as _math2
                 _pop_scale = _base_populations / _actual_populations
                 _pop_adjusted_iters = max(5, int(pysr_kwargs["niterations"] * _pop_scale))
                 if _pop_adjusted_iters < pysr_kwargs["niterations"]:
@@ -1645,9 +1642,9 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
     def __init__(
         self,
-        config: Optional[DiscoveryConfig] = None,  # Optional: defaults to DiscoveryConfig()
+        config: DiscoveryConfig | None = None,  # Optional: defaults to DiscoveryConfig()
         domain: str = "general",
-        llm_config: Optional[LLMConfig] = None,
+        llm_config: LLMConfig | None = None,
         llm_mode: str = "none",  # none, seed, hybrid, fallback
     ):
         """
@@ -1689,12 +1686,12 @@ class SymbolicEngineWithLLM(SymbolicEngine):
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str] = None,
+        variable_names: list[str] = None,
         equation_name: str = None,
         random_state: int = 42,
         auto_sanitize: bool = True,
         **kwargs,
-    ) -> Dict:
+    ) -> dict:
         """
         Enhanced discovery with LLM guidance and automatic variable name validation.
 
@@ -1768,7 +1765,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
     def _discover_with_llm_seed(
         self, X, y, variable_names, equation_name, random_state, auto_sanitize, **kwargs
-    ) -> Dict:
+    ) -> dict:
         """Use LLM to configure PySR operators."""
         print("\n[LLM SEED MODE] Using LLM to configure PySR...")
 
@@ -1815,7 +1812,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
     def _discover_hybrid(
         self, X, y, variable_names, equation_name, random_state, auto_sanitize, **kwargs
-    ) -> Dict:
+    ) -> dict:
         """Try LLM first, refine with PySR if needed."""
         print("\n[HYBRID MODE] LLM first, PySR refinement...")
 
@@ -1937,7 +1934,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
     def _discover_with_fallback(
         self, X, y, variable_names, equation_name, random_state, auto_sanitize, **kwargs
-    ) -> Dict:
+    ) -> dict:
         """Try PySR first, fallback to LLM if it fails."""
         print("\n[FALLBACK MODE] PySR first, LLM backup...")
 
@@ -2010,10 +2007,10 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
     def _evaluate_hypotheses(
         self,
-        hypotheses: List[EquationHypothesis],
+        hypotheses: list[EquationHypothesis],
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
+        variable_names: list[str],
     ) -> EquationHypothesis:
         """Evaluate LLM hypotheses against data."""
 
@@ -2030,7 +2027,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
         return hypotheses[0]
 
     def _predict_from_equation(
-        self, equation: str, X: np.ndarray, variable_names: List[str]
+        self, equation: str, X: np.ndarray, variable_names: list[str]
     ) -> np.ndarray:
         """Evaluate equation on data."""
 
@@ -2078,12 +2075,12 @@ class SymbolicEngineWithLLM(SymbolicEngine):
         self,
         X: np.ndarray,
         y: np.ndarray,
-        var_names: List[str],
+        var_names: list[str],
         description: str = "",
-        metadata: Optional[Dict] = None,
+        metadata: dict | None = None,
         max_iterations: int = 5,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Adapter method called by run_comparative_suite_benchmark.IntegratedLLMDiscovery.
 
@@ -2164,7 +2161,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 "trace": [f"discover_formula_exception={type(exc).__name__}:{str(exc)[:150]}"],
             }
 
-    def _extract_operators_from_equation(self, equation: str) -> Dict:
+    def _extract_operators_from_equation(self, equation: str) -> dict:
         """Extract operators used in an equation."""
 
         binary_ops = set()
@@ -2238,7 +2235,7 @@ class EquationTools:
     """
 
     @staticmethod
-    def compile_equation(expr: str, variables: List[str]):
+    def compile_equation(expr: str, variables: list[str]):
         """
         Compile an expression string into a vectorised callable.
 
@@ -2308,10 +2305,10 @@ class BayesianRanker:
 
     def rank(
         self,
-        equations: List[Dict],
+        equations: list[dict],
         X: np.ndarray,
         y: np.ndarray,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Rank a list of equation dicts by Bayesian posterior.
 
@@ -2346,8 +2343,8 @@ class BayesianRanker:
         equations_df,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-    ) -> List[Dict]:
+        variable_names: list[str],
+    ) -> list[dict]:
         """
         Convenience wrapper: rank directly from a PySR equations_ DataFrame.
 
@@ -2462,7 +2459,7 @@ class DimensionalValidator:
                         simplify check itself but stored for downstream use.
     """
 
-    def __init__(self, variable_units: Dict[str, str]):
+    def __init__(self, variable_units: dict[str, str]):
         self.variable_units = variable_units
 
     def validate(self, expr) -> bool:
@@ -2487,7 +2484,7 @@ class SymbolicSearch:
     OPERATORS_BINARY = ["+", "-", "*", "/"]
     OPERATORS_UNARY = ["sin", "cos", "exp", "log"]
 
-    def __init__(self, variables: List[str], max_depth: int = 3):
+    def __init__(self, variables: list[str], max_depth: int = 3):
         self.variables = variables
         self.max_depth = max_depth
 
@@ -2569,8 +2566,8 @@ class SymbolicTreeEngine:
         expr: ExpressionNode,
         X: np.ndarray,
         y: np.ndarray,
-        variables: List[str],
-    ) -> Optional[Dict]:
+        variables: list[str],
+    ) -> dict | None:
         """Evaluate a single expression tree; return None on any error."""
         try:
             sym_expr = expr.to_sympy()
@@ -2605,9 +2602,9 @@ class SymbolicTreeEngine:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variables: List[str],
+        variables: list[str],
         verbose: bool = True,
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """
         Run the iterative random-tree search.
 
@@ -2615,7 +2612,7 @@ class SymbolicTreeEngine:
         expression was found across all iterations.
         """
         generator = SymbolicSearch(variables, self.max_depth)
-        best: Optional[Dict] = None
+        best: dict | None = None
 
         for iteration in range(self.iterations):
             population = []
@@ -2649,14 +2646,14 @@ class SymbolicTreeEngine:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-        variable_units: Optional[Dict[str, str]] = None,
-        variable_descriptions: Optional[Dict[str, str]] = None,
-        description: Optional[str] = None,
-        equation_name: Optional[str] = None,
+        variable_names: list[str],
+        variable_units: dict[str, str] | None = None,
+        variable_descriptions: dict[str, str] | None = None,
+        description: str | None = None,
+        equation_name: str | None = None,
         show_formatted: bool = True,
         verbose: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """
         Full discovery → dimensional validation → formatted output pipeline.
 

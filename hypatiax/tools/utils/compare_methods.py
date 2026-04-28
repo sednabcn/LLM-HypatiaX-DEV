@@ -6,14 +6,14 @@ import pandas as pd
 
 def load_results():
     # Load hybrid results
-    with open("data/defi_batch1.json", "r") as f:
+    with open("data/defi_batch1.json") as f:
         hybrid_results = json.load(f)
 
     # Load baselines
-    with open("results/baseline_pure_llm.json", "r") as f:
+    with open("results/baseline_pure_llm.json") as f:
         llm_results = json.load(f)
 
-    with open("results/baseline_neural_network.json", "r") as f:
+    with open("results/baseline_neural_network.json") as f:
         nn_results = json.load(f)
 
     return hybrid_results, llm_results, nn_results

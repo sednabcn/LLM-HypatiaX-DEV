@@ -7,11 +7,9 @@ This is a minimal script to fix the broken PDF files.
 Run this in your paper directory where the JSON data files are located.
 """
 
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 
 def regenerate_figure_5systems():

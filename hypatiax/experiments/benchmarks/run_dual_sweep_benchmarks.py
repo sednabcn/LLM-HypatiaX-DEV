@@ -126,7 +126,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 # ---------------------------------------------------------------------------
 # Paths — script lives at hypatiax/experiments/benchmarks/
@@ -205,7 +204,7 @@ def _finalize_registry(save_dir: Path, ts: str, noise_ok: bool, sc_ok: bool) -> 
 # RESUME — read the last registry to decide what still needs to run
 # ============================================================================
 
-def _find_latest_registry(save_dir: Path) -> Optional[Path]:
+def _find_latest_registry(save_dir: Path) -> Path | None:
     """Return the most-recently-modified registry JSON in save_dir."""
     candidates = sorted(
         save_dir.glob("dual_sweep_*_registry.json"),
@@ -273,7 +272,7 @@ def _load_resume_state(
 # EXISTING-RESULT AUTO-DETECTION
 # ============================================================================
 
-def _find_latest(pattern: str) -> Optional[Path]:
+def _find_latest(pattern: str) -> Path | None:
     """Return the most-recently-modified JSON matching *pattern* in _RESULTS_DIR."""
     candidates = sorted(
         _RESULTS_DIR.glob(pattern),
@@ -284,11 +283,11 @@ def _find_latest(pattern: str) -> Optional[Path]:
 
 
 def _resolve_existing_noise(
-    noise_levels:   List[float],
-    noiseless_json: Optional[str],
-    sig0005_json:   Optional[str],
+    noise_levels:   list[float],
+    noiseless_json: str | None,
+    sig0005_json:   str | None,
     no_existing:    bool,
-) -> List[str]:
+) -> list[str]:
     """
     Return ``sigma:path`` pairs for any σ values that already have results on
     disk.  Only examines σ=0 and σ=0.005 since those are the pre-existing
@@ -297,7 +296,7 @@ def _resolve_existing_noise(
     if no_existing:
         return []
 
-    pairs: List[str] = []
+    pairs: list[str] = []
 
     if 0.0 in noise_levels:
         path = Path(noiseless_json) if noiseless_json else _find_latest("protocol_core_noiseless_*.json")
@@ -319,10 +318,10 @@ def _resolve_existing_noise(
 
 
 def _resolve_existing_sc(
-    sample_sizes: List[int],
-    n200_json:    Optional[str],
+    sample_sizes: list[int],
+    n200_json:    str | None,
     no_existing:  bool,
-) -> List[str]:
+) -> list[str]:
     """
     Return ``n:path`` pairs for any sample sizes that already have results on
     disk.  Only examines n=200 (the standard baseline run).
@@ -330,7 +329,7 @@ def _resolve_existing_sc(
     if no_existing:
         return []
 
-    pairs: List[str] = []
+    pairs: list[str] = []
 
     if 200 in sample_sizes:
         path = Path(n200_json) if n200_json else _find_latest("protocol_core_noisy_*.json")
@@ -349,10 +348,10 @@ def _resolve_existing_sc(
 
 def _build_noise_cmd(
     args:     argparse.Namespace,
-    existing: List[str],
+    existing: list[str],
     ts:       str,
     log_file: Path,
-) -> List[str]:
+) -> list[str]:
     # Forwards every flag the child script accepts.
     # Per-sigma threshold/noiseless injection is handled INSIDE
     # run_noise_sweep_benchmark.py — it loops over noise_levels itself.
@@ -396,10 +395,10 @@ def _build_noise_cmd(
 
 def _build_sc_cmd(
     args:     argparse.Namespace,
-    existing: List[str],
+    existing: list[str],
     ts:       str,
     log_file: Path,
-) -> List[str]:
+) -> list[str]:
     # Forwards every flag the child script accepts.
     # Per-n --samples injection is handled INSIDE
     # run_sample_complexity_benchmark.py — it loops over sample_sizes itself.
@@ -451,7 +450,7 @@ def _build_sc_cmd(
 
 def _run_sweep(
     label:     str,
-    cmd:       List[str],
+    cmd:       list[str],
     dry_run:   bool,
     fail_fast: bool,
 ) -> bool:

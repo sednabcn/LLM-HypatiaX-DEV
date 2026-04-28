@@ -35,7 +35,7 @@ def load_merged_data():
         print("\nRun unified_analysis_script.py first to create the merged data!")
         return None
 
-    with open(merged_file, "r") as f:
+    with open(merged_file) as f:
         data = json.load(f)
 
     print(f"✅ Loaded: {merged_file.name}")

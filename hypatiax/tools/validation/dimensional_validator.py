@@ -32,9 +32,8 @@ Dependencies
 
 import logging
 import random
-import re
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import sympy as sp
@@ -55,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 def safe_sympify(
     expression_str: str,
-    variable_names: Optional[List[str]] = None,
+    variable_names: list[str] | None = None,
 ) -> sp.Expr:
     """Parse *expression_str* into a SymPy expression with Pint isolation.
 
@@ -77,7 +76,7 @@ def safe_sympify(
     if not isinstance(expression_str, str):
         expression_str = str(expression_str)
 
-    local_dict: Dict[str, Any] = {}
+    local_dict: dict[str, Any] = {}
     if variable_names:
         for var in variable_names:
             local_dict[var] = sp.Symbol(var, real=True)
@@ -164,7 +163,7 @@ class DimensionalValidator:
     MAX_SAFE_EXPONENT = 100
     EPSILON = 1e-10
 
-    def __init__(self, max_history: Optional[int] = 1000) -> None:
+    def __init__(self, max_history: int | None = 1000) -> None:
         """Initialise the validator with a Pint unit registry.
 
         Args:
@@ -196,10 +195,10 @@ class DimensionalValidator:
     def validate(
         self,
         expression_str: str,
-        variable_units: Dict[str, str],
-        variable_bounds: Optional[Dict[str, tuple]] = None,
-        constant_info: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, Any]:
+        variable_units: dict[str, str],
+        variable_bounds: dict[str, tuple] | None = None,
+        constant_info: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
         """Validate dimensional consistency of *expression_str*.
 
         Args:
@@ -227,7 +226,7 @@ class DimensionalValidator:
             - ``overflow_risks`` (list)
             - ``simplified_expression`` (str | None)
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "valid": True,
             "score": 100.0,
             "errors": [],
@@ -250,7 +249,7 @@ class DimensionalValidator:
 
         try:
             # --- 1. Parse variable units --------------------------------
-            var_units_map: Dict[str, Any] = {}
+            var_units_map: dict[str, Any] = {}
             for var_name, unit_str in variable_units.items():
                 try:
                     normalised = str(unit_str).strip().lower()
@@ -349,8 +348,8 @@ class DimensionalValidator:
     def _infer_units_correctly(
         self,
         expr: sp.Expr,
-        var_units_map: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        var_units_map: dict[str, Any],
+    ) -> dict[str, Any]:
         """Walk the SymPy expression tree and infer the output unit.
 
         This is the core of the dimensional validator.  It handles addition,
@@ -361,7 +360,7 @@ class DimensionalValidator:
             Dict with keys ``unit_str``, ``consistent`` (bool), ``errors``,
             ``warnings``, and ``penalty`` (float).
         """
-        infer_result: Dict[str, Any] = {
+        infer_result: dict[str, Any] = {
             "unit_str": None,
             "consistent": True,
             "errors": [],
@@ -527,7 +526,7 @@ class DimensionalValidator:
     def _is_ratio_with_same_units(
         self,
         expr: sp.Expr,
-        var_units_map: Dict[str, Any],
+        var_units_map: dict[str, Any],
     ) -> bool:
         """Return True if *expr* is a ratio A/B where A and B share units.
 
@@ -577,9 +576,9 @@ class DimensionalValidator:
     def _check_numerical_stability(
         self,
         expr: sp.Expr,
-        var_units_map: Dict[str, Any],
-        variable_bounds: Optional[Dict[str, tuple]],
-    ) -> Dict[str, Any]:
+        var_units_map: dict[str, Any],
+        variable_bounds: dict[str, tuple] | None,
+    ) -> dict[str, Any]:
         """Scan the expression tree for numerical stability risks.
 
         Checks performed:
@@ -594,7 +593,7 @@ class DimensionalValidator:
             Dict with keys ``stable`` (bool), ``issues``, ``warnings``,
             ``errors``, and ``penalty`` (float).
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "stable": True,
             "issues": [],
             "warnings": [],
@@ -667,11 +666,11 @@ class DimensionalValidator:
     # History management
     # ------------------------------------------------------------------
 
-    def _add_to_history(self, result: Dict[str, Any]) -> None:
+    def _add_to_history(self, result: dict[str, Any]) -> None:
         """Append *result* to the bounded validation history."""
         self.validation_history.append(result)
 
-    def get_validation_history(self) -> List[Dict[str, Any]]:
+    def get_validation_history(self) -> list[dict[str, Any]]:
         """Return a snapshot of the validation history as a plain list."""
         return list(self.validation_history)
 
@@ -689,10 +688,10 @@ class DimensionalValidator:
 
 def validate_expression(
     expression_str: str,
-    variable_units: Dict[str, str],
-    variable_bounds: Optional[Dict[str, tuple]] = None,
-    constant_info: Optional[Dict[str, float]] = None,
-) -> Dict[str, Any]:
+    variable_units: dict[str, str],
+    variable_bounds: dict[str, tuple] | None = None,
+    constant_info: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """Convenience wrapper: create a one-shot DimensionalValidator and validate.
 
     Args:

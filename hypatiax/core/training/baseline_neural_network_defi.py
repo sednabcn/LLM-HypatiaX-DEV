@@ -9,7 +9,6 @@ Neural network baseline for DeFi and Risk Management (updated)
 import json
 import os
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -48,7 +47,7 @@ class NeuralNetworkBaseline:
         hidden_dims=[64, 32],
         learning_rate=0.001,
         epochs=200,
-        device: Optional[str] = None,
+        device: str | None = None,
     ):
         """
         Initialize Neural Network baseline.
@@ -98,11 +97,11 @@ class NeuralNetworkBaseline:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        metadata: Optional[Dict] = None,
+        metadata: dict | None = None,
         is_extrapolation: bool = False,
-        epochs: Optional[int] = None,
+        epochs: int | None = None,
         verbose: bool = False,
-    ) -> Tuple[nn.Module, Dict, StandardScaler, StandardScaler]:
+    ) -> tuple[nn.Module, dict, StandardScaler, StandardScaler]:
         """
         Train NN and return (model, metrics, scaler_X, scaler_y).
         This method is intended for integration with hybrid system which expects this shape.
@@ -180,9 +179,9 @@ class NeuralNetworkBaseline:
         X: np.ndarray,
         y: np.ndarray,
         description: str,
-        metadata: Optional[Dict] = None,
+        metadata: dict | None = None,
         verbose: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """
         Train and evaluate NN and return a comprehensive result dict (for reporting).
         Keeps backward compatibility with previous API.

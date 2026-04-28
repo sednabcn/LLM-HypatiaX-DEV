@@ -10,7 +10,6 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 from anthropic import Anthropic
@@ -39,16 +38,16 @@ class PureLLMBaseline:
         self.model = model
         self.results = []
         # small in-memory cache to avoid repeated API calls for same prompt
-        self._cache: Dict[str, Dict] = {}
+        self._cache: dict[str, dict] = {}
 
     def generate_formula(
         self,
         description: str,
         domain: str,
-        variable_names: Optional[List[str]] = None,
-        metadata: Optional[Dict] = None,
+        variable_names: list[str] | None = None,
+        metadata: dict | None = None,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Generate a mathematical formula using LLM and return structured result.
 
@@ -141,8 +140,8 @@ class PureLLMBaseline:
         self,
         description: str,
         domain: str,
-        variable_names: List[str],
-        metadata: Optional[Dict],
+        variable_names: list[str],
+        metadata: dict | None,
     ) -> str:
         var_info = ""
         if variable_names:
@@ -181,8 +180,8 @@ Do NOT output anything else."""
         self,
         description: str,
         domain: str,
-        variable_names: List[str],
-        metadata: Optional[Dict],
+        variable_names: list[str],
+        metadata: dict | None,
     ) -> str:
         # Mirror the stronger, exact prompts used in tests (Kelly, Liquidation, IL, ES)
         var_list = ", ".join(variable_names) if variable_names else ""
@@ -274,7 +273,7 @@ Portfolio expected shortfall for two positions with correlation adjustment.
             description, domain, variable_names, metadata
         )
 
-    def _parse_response(self, content: str, verbose: bool = False) -> Dict[str, str]:
+    def _parse_response(self, content: str, verbose: bool = False) -> dict[str, str]:
         """
         Extract FORMULA, LATEX, PYTHON, VARIABLES, ASSUMPTIONS, EXPLANATION sections.
         Robust multiple-strategy extraction; cleans python code for execution.
@@ -365,11 +364,11 @@ Portfolio expected shortfall for two positions with correlation adjustment.
 
     def test_formula_accuracy(
         self,
-        formula_dict: Dict,
+        formula_dict: dict,
         X: np.ndarray,
         y_true: np.ndarray,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Attempt to execute python_code in formula_dict against X and compare to y_true.
         Returns metrics dict or error info.

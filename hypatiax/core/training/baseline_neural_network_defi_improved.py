@@ -20,7 +20,6 @@ Expected improvements:
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -660,10 +659,10 @@ def compare_with_llm_baseline(nn_report_file, llm_report_file):
         llm_report_file: Path to LLM report JSON
     """
 
-    with open(nn_report_file, "r") as f:
+    with open(nn_report_file) as f:
         nn_report = json.load(f)
 
-    with open(llm_report_file, "r") as f:
+    with open(llm_report_file) as f:
         llm_report = json.load(f)
 
     print("\n" + "=" * 80)

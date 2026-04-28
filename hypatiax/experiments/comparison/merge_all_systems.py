@@ -14,8 +14,6 @@ Date: January 2026
 
 import json
 import random
-from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -61,24 +59,24 @@ class ComprehensiveSystemMerger:
         print("=" * 80)
 
         # Load extrapolation data
-        with open(self.extrap_file, "r") as f:
+        with open(self.extrap_file) as f:
             self.extrap_data = json.load(f)
         print(f"✅ Loaded: {self.extrap_file}")
         print(f"   Tests: {self.extrap_data['total_tests']}")
 
         # Load interpolation data
-        with open(self.interp_file, "r") as f:
+        with open(self.interp_file) as f:
             self.interp_data = json.load(f)
         print(f"✅ Loaded: {self.interp_file}")
         print(f"   Tests: {self.interp_data['total_tests']}")
 
         # Load Systems 2 & 3 data
-        with open(self.systems_23_file, "r") as f:
+        with open(self.systems_23_file) as f:
             self.systems_23_data = json.load(f)
         print(f"✅ Loaded: {self.systems_23_file}")
         print(f"   Tests: {self.systems_23_data['total_tests']}")
 
-    def merge_data(self) -> Dict:
+    def merge_data(self) -> dict:
         """
         Merge all data sources into unified structure.
 
@@ -237,7 +235,7 @@ class ComprehensiveSystemMerger:
         return mapping.get(method_name, method_name)
 
     def save_merged_data(
-        self, unified: Dict, output_file: str = "all_systems_comprehensive.json"
+        self, unified: dict, output_file: str = "all_systems_comprehensive.json"
     ):
         """
         Save merged data to file.
@@ -251,7 +249,7 @@ class ComprehensiveSystemMerger:
 
         print(f"\n✅ Saved merged data: {output_file}")
 
-    def create_summary_table(self, unified: Dict) -> pd.DataFrame:
+    def create_summary_table(self, unified: dict) -> pd.DataFrame:
         """
         Create summary table showing data availability.
 
@@ -286,7 +284,7 @@ class ComprehensiveSystemMerger:
 
         return pd.DataFrame(rows)
 
-    def identify_common_tests(self, unified: Dict) -> List[str]:
+    def identify_common_tests(self, unified: dict) -> list[str]:
         """
         Identify tests that have ALL 5 systems tested.
 

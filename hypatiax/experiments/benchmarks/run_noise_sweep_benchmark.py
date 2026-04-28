@@ -80,7 +80,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -100,12 +99,12 @@ _RESULTS_DIR = _PKG_ROOT / "data/results/comparison_results"
 _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Default noise levels: sigma=0% and sigma=0.5% already completed.
-_DEFAULT_NOISE_LEVELS: List[float] = [0.01, 0.05, 0.10]
+_DEFAULT_NOISE_LEVELS: list[float] = [0.01, 0.05, 0.10]
 
 # Top-two methods from protocol_core_noisy_20260313_094752.json:
 #   3 -> EnhancedHybridSystemDeFi (core)       median R2=0.9999998  wins=18/30
 #   4 -> HybridSystemLLMNN all-domains (core)  median R2=0.9999998  wins=11/30
-_DEFAULT_METHODS: List[int] = [3, 4]
+_DEFAULT_METHODS: list[int] = [3, 4]
 
 # R2 below this triggers a catastrophic-failure flag in the report
 _CATASTROPHIC_R2_THRESHOLD: float = 0.90
@@ -142,7 +141,7 @@ class _TeeLogger:
 # RESULT HELPERS
 # ============================================================================
 
-def _find_result_written_after(mode: str, t_start: float) -> Optional[Path]:
+def _find_result_written_after(mode: str, t_start: float) -> Path | None:
     """
     Return the newest result JSON for *mode* whose mtime is >= t_start.
 
@@ -159,7 +158,7 @@ def _find_result_written_after(mode: str, t_start: float) -> Optional[Path]:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def _find_latest_result(mode: str) -> Optional[Path]:
+def _find_latest_result(mode: str) -> Path | None:
     """Return the most-recently-modified JSON for protocol_core_{mode}_*.json."""
     candidates = sorted(
         _RESULTS_DIR.glob(f"protocol_core_{mode}_*.json"),
@@ -169,9 +168,9 @@ def _find_latest_result(mode: str) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
-def _extract_per_test(data: Dict) -> Dict[str, Dict]:
+def _extract_per_test(data: dict) -> dict[str, dict]:
     """Return {equation_name: {method_name: result_dict}}."""
-    out: Dict[str, Dict] = {}
+    out: dict[str, dict] = {}
     for test in data.get("tests", []):
         eq_name = (
             test.get("metadata", {}).get("equation_name", "")
@@ -182,7 +181,7 @@ def _extract_per_test(data: Dict) -> Dict[str, Dict]:
     return out
 
 
-def _load_results(path: Path) -> Dict:
+def _load_results(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
 
@@ -195,7 +194,7 @@ def _build_runner_cmd(
     noise_level: float,
     args:        argparse.Namespace,
     runner:      Path,
-) -> Tuple[List[str], str]:
+) -> tuple[list[str], str]:
     """
     Build the subprocess command for one noise level.
 
@@ -277,7 +276,7 @@ def _run_noise_level(
     noise_level: float,
     args:        argparse.Namespace,
     runner:      Path,
-) -> Optional[Path]:
+) -> Path | None:
     """
     Run the inner benchmark for one noise level and return the result JSON path.
 
@@ -329,10 +328,10 @@ def _run_noise_level(
 # ============================================================================
 
 def _aggregate_results(
-    noise_levels:    List[float],
-    result_paths:    Dict[float, Optional[Path]],
-    args_thresholds: Dict = {},
-) -> Dict:
+    noise_levels:    list[float],
+    result_paths:    dict[float, Path | None],
+    args_thresholds: dict = {},
+) -> dict:
     """
     Build a unified cross-noise comparison object.
 
@@ -345,7 +344,7 @@ def _aggregate_results(
     cross_noise_summary: {method: {sigma_str: {median_r2, recovery_rate,
                                                std_r2, n_catastrophic}}}
     """
-    loaded: Dict[float, Optional[Dict]] = {}
+    loaded: dict[float, dict | None] = {}
     all_methods: set = set()
 
     for sigma in noise_levels:
@@ -364,7 +363,7 @@ def _aggregate_results(
             all_methods.update(eq_methods.keys())
 
     all_methods_sorted = sorted(all_methods)
-    per_noise_data: Dict[str, Optional[Dict]] = {}
+    per_noise_data: dict[str, dict | None] = {}
 
     for sigma in noise_levels:
         sigma_str = f"{sigma:.4f}"
@@ -383,11 +382,11 @@ def _aggregate_results(
             0.10:  args_thresholds.get(0.10,  0.900),     # σ=10%
         }
         threshold = _sigma_thresholds.get(sigma, args_thresholds.get(sigma, 0.995))
-        method_summary: Dict[str, Dict] = {}
-        catastrophic_failures: List[Dict] = []
+        method_summary: dict[str, dict] = {}
+        catastrophic_failures: list[dict] = []
 
         for method in all_methods_sorted:
-            r2_vals: List[float] = []
+            r2_vals: list[float] = []
             n_success = n_total = n_recovery = n_catastrophic = 0
 
             for eq_name, eq_results in per_eq.items():
@@ -443,7 +442,7 @@ def _aggregate_results(
         }
 
     # Cross-noise summary
-    cross_noise: Dict[str, Dict] = {}
+    cross_noise: dict[str, dict] = {}
     for method in all_methods_sorted:
         cross_noise[method] = {}
         for sigma in noise_levels:
@@ -473,7 +472,7 @@ def _aggregate_results(
 # REPORTING
 # ============================================================================
 
-def _print_noise_sweep_table(agg: Dict) -> None:
+def _print_noise_sweep_table(agg: dict) -> None:
     """Pretty-print cross-noise comparison tables and flag catastrophic failures."""
     methods      = agg["methods"]
     noise_levels = agg["noise_levels"]
@@ -536,7 +535,7 @@ def _print_noise_sweep_table(agg: Dict) -> None:
 
     if all_cats:
         print(f"\n{'='*100}")
-        print("  CATASTROPHIC FAILURES  (R2 < {:.2f})".format(_CATASTROPHIC_R2_THRESHOLD).center(100))
+        print(f"  CATASTROPHIC FAILURES  (R2 < {_CATASTROPHIC_R2_THRESHOLD:.2f})".center(100))
         print(f"{'='*100}")
         print(f"  {'sigma':>8}  {'Method':<44}  {'Equation':<38}  {'R2':>8}")
         print("  " + "-" * 96)
@@ -552,7 +551,7 @@ def _print_noise_sweep_table(agg: Dict) -> None:
     print(f"{'='*100}\n")
 
 
-def _save_sweep_json(agg: Dict, ts: str) -> Path:
+def _save_sweep_json(agg: dict, ts: str) -> Path:
     path = _RESULTS_DIR / f"noise_sweep_{ts}.json"
     with open(path, "w") as f:
         json.dump(agg, f, indent=2, default=str)
@@ -560,7 +559,7 @@ def _save_sweep_json(agg: Dict, ts: str) -> Path:
     return path
 
 
-def _save_sweep_csv(agg: Dict, ts: str) -> Path:
+def _save_sweep_csv(agg: dict, ts: str) -> Path:
     """
     Two-section CSV:
       section=aggregate    : one row per (method, sigma) -- summary stats
@@ -705,7 +704,7 @@ def main() -> None:
         sys.exit(1)
 
     # Parse --existing-results tokens
-    existing_map: Dict[float, Path] = {}
+    existing_map: dict[float, Path] = {}
     for token in args.existing_results:
         try:
             sigma_s, path_s = token.split(":", 1)
@@ -742,7 +741,7 @@ def main() -> None:
     print(f"{'='*80}\n")
 
     ts            = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_paths: Dict[float, Optional[Path]] = dict(existing_map)
+    result_paths: dict[float, Path | None] = dict(existing_map)
     sweep_start   = time.time()
 
     for i, sigma in enumerate(sigmas_to_run, 1):
@@ -766,7 +765,7 @@ def main() -> None:
     print(f"{'='*80}")
 
     # Build per-sigma threshold map
-    args_thresholds: Dict = {
+    args_thresholds: dict = {
         0.0:   args.threshold_noiseless,           # 0.999999
         0.005: getattr(args, "threshold_sig0005", 0.995),
         0.01:  getattr(args, "threshold_sig001",  0.990),

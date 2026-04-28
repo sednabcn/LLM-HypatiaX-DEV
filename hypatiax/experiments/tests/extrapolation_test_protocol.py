@@ -12,9 +12,9 @@ Usage:
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -40,7 +40,7 @@ REGIMES = [
 class ExtrapolationTestProtocol:
     """Protocol for systematic extrapolation testing"""
 
-    def __init__(self, base_range: Tuple[float, float] = (0.1, 1.0)):
+    def __init__(self, base_range: tuple[float, float] = (0.1, 1.0)):
         """
         Initialize protocol
 
@@ -56,7 +56,7 @@ class ExtrapolationTestProtocol:
         n_samples: int = 200,
         noise_level: float = 0.05,
         seed: int = 42,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Generate training data within base range
 
@@ -89,7 +89,7 @@ class ExtrapolationTestProtocol:
         regime: ExtrapolationRegime,
         n_samples: int = 100,
         seed: int = 42,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Generate test data in extrapolation regime
 
@@ -146,7 +146,7 @@ class ExtrapolationTestProtocol:
         n_test: int = 100,
         noise_level: float = 0.05,
         verbose: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """
         Test a method's extrapolation capability
 
@@ -243,9 +243,9 @@ class ExtrapolationTestProtocol:
 
     def plot_extrapolation_results(
         self,
-        results_list: List[Dict],
+        results_list: list[dict],
         ground_truth: Callable,
-        save_path: Optional[Path] = None,
+        save_path: Path | None = None,
     ):
         """
         Plot extrapolation performance comparison

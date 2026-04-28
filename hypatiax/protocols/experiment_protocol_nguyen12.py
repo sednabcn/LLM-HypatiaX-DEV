@@ -69,8 +69,8 @@ del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 import os
 import random
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -90,7 +90,7 @@ np.random.seed(_MODULE_SEED)
 # Optional heavy imports — gracefully degrade for documentation-only use
 # ---------------------------------------------------------------------------
 try:
-    import pysr  # pip install pysr
+    import pysr  # pip install pysr  # noqa: F401
     PYSR_AVAILABLE = True
 except ImportError:
     PYSR_AVAILABLE = False
@@ -133,15 +133,15 @@ class NguyenEquation:
     description: str
     ground_truth: str
     formula_hint: str
-    variable_names: List[str]
-    variable_ranges: Dict[str, Tuple[float, float]]
-    extrap_ranges: Dict[str, Tuple[float, float]]
+    variable_names: list[str]
+    variable_ranges: dict[str, tuple[float, float]]
+    extrap_ranges: dict[str, tuple[float, float]]
     n_variables: int
     difficulty: str
     category: str
     extrapolation_test: bool
     positive_domain: bool
-    fn: Optional[Callable] = field(default=None, repr=False)
+    fn: Callable | None = field(default=None, repr=False)
 
     def generate(
         self,
@@ -149,7 +149,7 @@ class NguyenEquation:
         noise_level: float = 0.0,
         seed: int = 42,
         split: float = 0.2,
-    ) -> Tuple[str, np.ndarray, np.ndarray, List[str], Dict]:
+    ) -> tuple[str, np.ndarray, np.ndarray, list[str], dict]:
         """
         Generate ``(description, X_train, y_train, variable_names, metadata)``
         tuple compatible with the HypatiaX runner interface.
@@ -248,8 +248,8 @@ class NguyenEquation:
 # Helper: build the 12 equations
 # ---------------------------------------------------------------------------
 
-def _build_nguyen_equations() -> List[NguyenEquation]:
-    eqs: List[NguyenEquation] = []
+def _build_nguyen_equations() -> list[NguyenEquation]:
+    eqs: list[NguyenEquation] = []
 
     # ── UNIVARIATE POLYNOMIALS ─────────────────────────────────────────────
 
@@ -467,8 +467,8 @@ def _build_nguyen_equations() -> List[NguyenEquation]:
     return eqs
 
 
-NGUYEN_EQUATIONS: List[NguyenEquation] = _build_nguyen_equations()
-NGUYEN_BY_ID: Dict[str, NguyenEquation] = {eq.nguyen_id: eq for eq in NGUYEN_EQUATIONS}
+NGUYEN_EQUATIONS: list[NguyenEquation] = _build_nguyen_equations()
+NGUYEN_BY_ID: dict[str, NguyenEquation] = {eq.nguyen_id: eq for eq in NGUYEN_EQUATIONS}
 
 
 # ============================================================================
@@ -506,7 +506,7 @@ class NguYenProtocol:
     NOISE_LEVEL_NOISELESS: float = 0.0
 
     # Published results from exp3_nguyen12_hybrid50v.json (seed 42)
-    EXP3_RESULTS: Dict[str, Dict] = {
+    EXP3_RESULTS: dict[str, dict] = {
         "N1":  {"H_train": 0.9999256, "H_extrap": 0.9998852, "P_train": 0.9999104, "P_extrap": 0.9999994, "NN_extrap": -0.7837},
         "N2":  {"H_train": 0.9999249, "H_extrap": 0.9999858, "P_train": 0.9999112, "P_extrap": 0.9999999, "NN_extrap": -0.9019},
         "N3":  {"H_train": 0.9999138, "H_extrap": 0.9976055, "P_train": 0.9998861, "P_extrap": -426.225, "NN_extrap": -0.9126},
@@ -521,19 +521,19 @@ class NguYenProtocol:
         "N12": {"H_train": 0.9994111, "H_extrap": -1.0537,   "P_train": 0.9986729, "P_extrap": -1.0556,   "NN_extrap": -1.1980},
     }
 
-    _CATEGORY_DOMAIN_MAP: Dict[str, str] = {
+    _CATEGORY_DOMAIN_MAP: dict[str, str] = {
         "polynomial":    "nguyen_polynomial",
         "transcendental": "nguyen_transcendental",
         "bivariate":     "nguyen_bivariate",
     }
-    _DOMAIN_CATEGORY_MAP: Dict[str, str] = {v: k for k, v in _CATEGORY_DOMAIN_MAP.items()}
+    _DOMAIN_CATEGORY_MAP: dict[str, str] = {v: k for k, v in _CATEGORY_DOMAIN_MAP.items()}
 
     def __init__(
         self,
         num_samples: int = 200,
         noise_level: float = NOISE_LEVEL_DEFAULT,
         seed: int = 42,
-        category: Optional[str] = None,
+        category: str | None = None,
         extrap_only: bool = False,
         noiseless: bool = False,
     ) -> None:
@@ -557,7 +557,7 @@ class NguYenProtocol:
         self.category = category
         self.extrap_only = extrap_only
 
-        self._equations: List[NguyenEquation] = self._filter(
+        self._equations: list[NguyenEquation] = self._filter(
             category=category, extrap_only=extrap_only
         )
 
@@ -565,9 +565,9 @@ class NguYenProtocol:
 
     @staticmethod
     def _filter(
-        category: Optional[str] = None,
+        category: str | None = None,
         extrap_only: bool = False,
-    ) -> List[NguyenEquation]:
+    ) -> list[NguyenEquation]:
         eqs = NGUYEN_EQUATIONS
         if category is not None:
             eqs = [e for e in eqs if e.category == category]
@@ -577,7 +577,7 @@ class NguYenProtocol:
 
     # ── Runner interface (mirrors BenchmarkProtocol) ──────────────────────
 
-    def get_all_domains(self) -> List[str]:
+    def get_all_domains(self) -> list[str]:
         """
         Return domain keys exposed by this protocol.
 
@@ -590,10 +590,10 @@ class NguYenProtocol:
     def load_test_data(
         self,
         domain: str,
-        num_samples: Optional[int] = None,
-        noise_level: Optional[float] = None,
-        seed: Optional[int] = None,
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+        num_samples: int | None = None,
+        noise_level: float | None = None,
+        seed: int | None = None,
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Load test cases for *domain*.
 
@@ -659,7 +659,7 @@ class NguYenProtocol:
         num_samples: int = 200,
         noise_level: float = 0.0,
         seed: int = 42,
-    ) -> Tuple[str, np.ndarray, np.ndarray, List[str], Dict]:
+    ) -> tuple[str, np.ndarray, np.ndarray, list[str], dict]:
         """Load data for a single equation by ID."""
         eq = NguYenProtocol.get_equation(nguyen_id)
         return eq.generate(num_samples, noise_level, seed)
@@ -669,7 +669,7 @@ class NguYenProtocol:
         num_samples: int = 200,
         noise_level: float = 0.0,
         seed: int = 42,
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """Load data for all 12 Nguyen equations."""
         return [
             eq.generate(num_samples, noise_level, seed=seed + i * 7)
@@ -680,9 +680,9 @@ class NguYenProtocol:
 
     @staticmethod
     def generate_experiment_report(
-        results: List[Dict],
+        results: list[dict],
         threshold: float = RECOVERY_THRESHOLD_STRICT,
-    ) -> Dict:
+    ) -> dict:
         """
         Generate benchmark comparison report.
 
@@ -708,8 +708,8 @@ class NguYenProtocol:
             if "r2" in r.get("evaluation", {})
         ]
 
-        by_category: Dict[str, Dict] = {}
-        by_system: Dict[str, Dict] = {}
+        by_category: dict[str, dict] = {}
+        by_system: dict[str, dict] = {}
 
         for r in results:
             meta     = r.get("metadata", {})
@@ -727,7 +727,7 @@ class NguYenProtocol:
                 if r2 is not None:
                     bucket[key]["r2_scores"].append(r2)
 
-        def _summarise(bucket: Dict) -> Dict:
+        def _summarise(bucket: dict) -> dict:
             out = {}
             for key, val in bucket.items():
                 scores = val["r2_scores"]
@@ -768,7 +768,7 @@ class NguYenProtocol:
         print("  HypatiaX Experiment 3 — Source: exp3_nguyen12_hybrid50v.json")
         print("=" * 80)
 
-        by_cat: Dict[str, List[NguyenEquation]] = {}
+        by_cat: dict[str, list[NguyenEquation]] = {}
         for eq in NGUYEN_EQUATIONS:
             by_cat.setdefault(eq.category, []).append(eq)
 

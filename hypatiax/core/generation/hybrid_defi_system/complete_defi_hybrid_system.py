@@ -90,7 +90,6 @@ import json
 import random
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -102,7 +101,9 @@ np.random.seed(42)
 # Add project root to path — must precede hypatiax imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem  # noqa: E402
+from hypatiax.tools.symbolic.hybrid_system_v50_2 import (
+    HybridDiscoverySystem,  # noqa: E402
+)
 
 # ============================================================================
 # DEFI FORMULA TEST CASES
@@ -235,8 +236,8 @@ def add_epsilon_guard(expression: str, epsilon: float = 1e-10) -> str:
 
 
 def validate_defi_constraints(
-    formula: str, variables: Dict[str, float], strict: bool = True
-) -> Dict[str, any]:
+    formula: str, variables: dict[str, float], strict: bool = True
+) -> dict[str, any]:
     """
     Validate DeFi-specific constraints before computation.
 
@@ -305,7 +306,7 @@ def print_subheader(title: str, width: int = 80):
     print("-" * width)
 
 
-def print_validation_details(result: Dict, verbose: bool = True):
+def print_validation_details(result: dict, verbose: bool = True):
     """Print detailed validation breakdown"""
 
     if "validation" not in result:
@@ -404,7 +405,7 @@ def print_validation_details(result: Dict, verbose: bool = True):
             print(f"   {i}. {rec}")
 
 
-def print_interpretation(result: Dict, verbose: bool = True):
+def print_interpretation(result: dict, verbose: bool = True):
     """Print LLM interpretation details"""
 
     if "interpretation" not in result or not result["interpretation"]:
@@ -455,7 +456,7 @@ def print_interpretation(result: Dict, verbose: bool = True):
             print(f"   {i}. {limitation}")
 
 
-def print_discovery_summary(result: Dict):
+def print_discovery_summary(result: dict):
     """Print discovery results summary"""
 
     if "discovery" not in result:
@@ -488,7 +489,7 @@ def run_single_test(
     use_llm: bool = True,
     verbose: bool = True,
     primary_llm: str = "anthropic",
-) -> Dict:
+) -> dict:
     """Run complete hybrid workflow for a single test case"""
 
     if test_case_name not in DEFI_TEST_CASES:
@@ -614,11 +615,11 @@ def run_single_test(
 
 
 def run_batch_tests(
-    test_cases: Optional[List[str]] = None,
+    test_cases: list[str] | None = None,
     n_samples: int = 200,
     use_llm: bool = False,  # Disable LLM for batch to save API calls
     primary_llm: str = "anthropic",
-) -> Dict:
+) -> dict:
     """Run multiple test cases and generate summary report"""
 
     if test_cases is None:
@@ -683,7 +684,7 @@ def run_batch_tests(
 
 
 def compare_results(
-    results_list: List[Dict], comparison_type: str = "validation"
+    results_list: list[dict], comparison_type: str = "validation"
 ) -> None:
     """
     Compare multiple test results across different dimensions.
@@ -756,8 +757,8 @@ def compare_results(
 
 
 def rank_results(
-    results_list: List[Dict], sort_by: str = "validation_score"
-) -> List[Dict]:
+    results_list: list[dict], sort_by: str = "validation_score"
+) -> list[dict]:
     """
     Rank results by specified metric.
 
@@ -821,7 +822,7 @@ def rank_results(
     return ranked
 
 
-def generate_comparison_matrix(results_list: List[Dict]) -> pd.DataFrame:
+def generate_comparison_matrix(results_list: list[dict]) -> pd.DataFrame:
     """
     Generate comprehensive comparison matrix.
 
@@ -894,7 +895,7 @@ def generate_comparison_matrix(results_list: List[Dict]) -> pd.DataFrame:
 
 
 def export_comparison(
-    results_list: List[Dict], filepath: str, format: str = "json"
+    results_list: list[dict], filepath: str, format: str = "json"
 ) -> None:
     """
     Export comparison results to file.

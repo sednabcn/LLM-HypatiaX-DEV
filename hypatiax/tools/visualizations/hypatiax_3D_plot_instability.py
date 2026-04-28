@@ -421,8 +421,6 @@ def plot_3d_surface(rows: list, out_dir: Path, fmt: list,
       - II = 0.10  (Regime C-Collapse threshold)
       - mean R² = 0.99  (Regime A lower boundary)
     """
-    from matplotlib.colors import to_rgba
-    from scipy.interpolate import RBFInterpolator
 
     # ── Grid ──────────────────────────────────────────────────────────────────
     NX, NY      = 55, 40

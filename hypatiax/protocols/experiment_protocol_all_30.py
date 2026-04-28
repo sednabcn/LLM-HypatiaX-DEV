@@ -35,7 +35,6 @@ del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
 import json
 import os
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -44,7 +43,7 @@ class ExperimentProtocolAll:
     """Complete protocol with all 30 test cases - v2.2 BEST OF BOTH"""
 
     @staticmethod
-    def get_all_domains() -> List[str]:
+    def get_all_domains() -> list[str]:
         """Return list of all experimental domains."""
         return [
             # Protocol A domains (Physics/Engineering)
@@ -64,7 +63,7 @@ class ExperimentProtocolAll:
     @staticmethod
     def load_test_data(
         domain: str, num_samples: int = 300
-    ) -> List[Tuple[str, np.ndarray, np.ndarray, List[str], Dict]]:
+    ) -> list[tuple[str, np.ndarray, np.ndarray, list[str], dict]]:
         """
         Load test data for all 30 test cases.
 
@@ -1264,7 +1263,7 @@ class ExperimentProtocolAll:
         return descriptions.get(domain, "Unknown domain")
 
     @staticmethod
-    def get_protocol_statistics() -> Dict:
+    def get_protocol_statistics() -> dict:
         """Get comprehensive protocol statistics."""
         return {
             "version": "2.2",

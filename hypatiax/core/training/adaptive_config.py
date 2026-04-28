@@ -37,8 +37,7 @@ metadata["extrapolation_test"]   → weight_decay↑ (stronger regularisation)
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -140,7 +139,7 @@ class CaseSignals:
     y_pole_shaped: bool       # distribution consistent with a divergent pole
 
     # ── Input distribution ────────────────────────────────────────────────
-    log_X_cols:    List[int]  # columns to log-transform a priori
+    log_X_cols:    list[int]  # columns to log-transform a priori
 
     # ── Metadata ──────────────────────────────────────────────────────────
     difficulty:          str    # "easy" | "medium" | "hard" | "expert" | ""
@@ -156,8 +155,8 @@ class CaseSignals:
         cls,
         X: np.ndarray,
         y: np.ndarray,
-        metadata: Optional[dict] = None,
-    ) -> "CaseSignals":
+        metadata: dict | None = None,
+    ) -> CaseSignals:
         """Compute all signals from raw data.  Zero side-effects."""
         meta   = metadata or {}
         n_samp, n_vars = X.shape
@@ -253,12 +252,12 @@ class SolverConfig:
 
     # ── Architecture ──────────────────────────────────────────────────────
     input_dim:     int
-    hidden_dims:   Tuple[int, ...]
+    hidden_dims:   tuple[int, ...]
 
     # ── Preprocessing ─────────────────────────────────────────────────────
     use_log_y:     bool
     y_sign:        float
-    log_X_cols:    Tuple[int, ...]
+    log_X_cols:    tuple[int, ...]
 
     # ── Optimiser ─────────────────────────────────────────────────────────
     optimizer_cls: str         # "AdamW" | "Adam"
@@ -282,7 +281,7 @@ class SolverConfig:
     budget_lin_secs:   float   # wall-clock for linear fallback phase
 
     # ── Human-readable rationale ──────────────────────────────────────────
-    rationale: Tuple[str, ...]  # ordered list of decisions and their reasons
+    rationale: tuple[str, ...]  # ordered list of decisions and their reasons
 
     # ------------------------------------------------------------------
     # Factory helpers — create PyTorch objects from the frozen config.
@@ -290,14 +289,14 @@ class SolverConfig:
     # usable in environments without PyTorch (e.g. analysis scripts).
     # ------------------------------------------------------------------
 
-    def make_optimizer(self, model) -> "torch.optim.Optimizer":
+    def make_optimizer(self, model) -> torch.optim.Optimizer:
         if not TORCH_AVAILABLE:
             raise RuntimeError("torch not available")
         if self.optimizer_cls == "AdamW":
             return optim.AdamW(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optim.Adam(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
-    def make_scheduler(self, optimizer) -> "torch.optim.lr_scheduler._LRScheduler":
+    def make_scheduler(self, optimizer) -> torch.optim.lr_scheduler._LRScheduler:
         if not TORCH_AVAILABLE:
             raise RuntimeError("torch not available")
         if self.scheduler_cls == "CosineAnnealingWarmRestarts":
@@ -502,9 +501,9 @@ class CaseProfile:
         cls,
         X: np.ndarray,
         y: np.ndarray,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
         budget_secs: float = 90.0,
-    ) -> "CaseProfile":
+    ) -> CaseProfile:
         """Convenience constructor — computes signals then wraps in a CaseProfile."""
         sig = CaseSignals.from_data(X, y, metadata)
         return cls(signals=sig, budget_secs=budget_secs)
@@ -520,7 +519,7 @@ def train_with_config(
     cfg: SolverConfig,
     ImprovedNN,                     # your nn.Module class
     verbose: bool = False,
-) -> Tuple[object, float, float]:
+) -> tuple[object, float, float]:
     """
     Reference training loop that consumes a SolverConfig uniformly.
 
@@ -651,7 +650,7 @@ def train_with_config(
 def resolve(
     X: np.ndarray,
     y: np.ndarray,
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
     budget_secs: float = 90.0,
     verbose: bool = False,
 ) -> SolverConfig:

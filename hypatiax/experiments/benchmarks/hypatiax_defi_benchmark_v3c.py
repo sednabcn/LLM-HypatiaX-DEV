@@ -106,9 +106,7 @@ import json
 import math as _math
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 # ── third-party ───────────────────────────────────────────────────────────────
 import numpy as np
@@ -168,7 +166,7 @@ FINAL_OUTPUT    = RESULTS_DIR / "hypatiax_defi_benchmark_v3_results.json"
 
 class _MLP(nn.Module):
     """Small MLP: LayerNorm + SiLU, no Dropout (too few training samples)."""
-    def __init__(self, in_dim: int, hidden: List[int] = None):
+    def __init__(self, in_dim: int, hidden: list[int] = None):
         super().__init__()
         hidden = hidden or [128, 64, 32]
         layers, prev = [], in_dim
@@ -196,10 +194,10 @@ def _train_and_eval_nn(
     X_train: np.ndarray, y_train: np.ndarray,
     X_test:  np.ndarray, y_test:  np.ndarray,
     epochs: int = 300,
-    hidden: List[int] = None,
+    hidden: list[int] = None,
     seed: int = _NN_SEED,
     max_time_s: float = _NN_MAX_TIME_S,
-) -> Dict:
+) -> dict:
     """
     Train a small MLP on (X_train, y_train) and evaluate on both splits.
     Returns dict: train_r2, test_r2, success, y_pred_train, y_pred_test.
@@ -299,7 +297,7 @@ _EXEC_GLOBALS = {
 
 
 def _execute_formula(llm_code: str, X: np.ndarray,
-                     constants: dict = None) -> Optional[np.ndarray]:
+                     constants: dict = None) -> np.ndarray | None:
     """
     Fix 5 — unified formula execution.
     ALL LLM formula calls go through this function.
@@ -340,7 +338,7 @@ def _execute_formula(llm_code: str, X: np.ndarray,
         return None
 
 
-def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
+def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     """
     FIX 9: Robust metric suite beyond R² alone.
     Returns r2, mae, rmse, mape.  All values are floats.
@@ -360,7 +358,7 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
 def _eval_formula_r2(
     llm_code: str, X: np.ndarray, y_true: np.ndarray,
     constants: dict = None,
-) -> Tuple[float, bool]:
+) -> tuple[float, bool]:
     """
     Fix 5 — evaluate LLM formula and return (r2, success).
     Returns (nan, False) on any failure.
@@ -476,8 +474,8 @@ def _ensemble_llm_nn(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _generate_llm_formula(
-    description: str, domain: str, var_names: List[str], metadata: Dict
-) -> Dict:
+    description: str, domain: str, var_names: list[str], metadata: dict
+) -> dict:
     """
     Call the Anthropic API to generate a Python formula function.
     Returns dict with keys: python_code, formula, success, error.
@@ -551,8 +549,8 @@ def _hybrid_predict_and_eval(
     description: str, domain: str,
     X_train: np.ndarray, y_train: np.ndarray,
     X_test:  np.ndarray, y_test:  np.ndarray,
-    var_names: List[str], metadata: Dict,
-) -> Dict:
+    var_names: list[str], metadata: dict,
+) -> dict:
     """
     Full hybrid pipeline for one test case.
     Returns dict: train_r2, test_r2, decision, success.
@@ -707,8 +705,8 @@ def _hybrid_predict_and_eval(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _aggressive_split(
-    X: np.ndarray, y: np.ndarray, config: Dict
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    X: np.ndarray, y: np.ndarray, config: dict
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Train on lower 40% of primary variable; test on upper 60%.
     Falls back to index-based split when array is too small.
@@ -738,7 +736,7 @@ def _aggressive_split(
 # SECTION 7 — Test catalogue (74 cases, 0 intractable)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_test_cases() -> List[Dict]:
+def _get_test_cases() -> list[dict]:
     """
     Return the 74-case catalogue (all tractable).
     """
@@ -832,7 +830,7 @@ def _get_test_cases() -> List[Dict]:
 # SECTION 8 — Checkpoint helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_checkpoint() -> Tuple[List, int]:
+def _load_checkpoint() -> tuple[list, int]:
     if not CHECKPOINT_FILE.exists():
         return [], 0
     try:
@@ -849,7 +847,7 @@ def _load_checkpoint() -> Tuple[List, int]:
         return [], 0
 
 
-def _save_checkpoint(results: List):
+def _save_checkpoint(results: list):
     def _default(obj):
         if isinstance(obj, (np.integer,)):         return int(obj)
         if isinstance(obj, (np.floating, float)):
@@ -861,7 +859,7 @@ def _save_checkpoint(results: List):
     CHECKPOINT_FILE.write_text(json.dumps(results, indent=2, default=_default))
 
 
-def _save_final(results: List):
+def _save_final(results: list):
     def _default(obj):
         if isinstance(obj, (np.integer,)):         return int(obj)
         if isinstance(obj, (np.floating, float)):
@@ -884,7 +882,7 @@ _INTRACTABLE_NAMES = {
 _STANDARD_TOTAL = len(_get_test_cases()) - len(_INTRACTABLE_NAMES)  # = 66 + adjustments
 
 
-def _generate_report(results: List):
+def _generate_report(results: list):
     CLIP_LO    = -10.0
     standard   = [r for r in results if r["equation_id"] not in _INTRACTABLE_NAMES]
     intractable = [r for r in results if r["equation_id"] in _INTRACTABLE_NAMES]

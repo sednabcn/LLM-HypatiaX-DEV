@@ -36,8 +36,6 @@ COMPLETE FEATURE SET:
 """
 
 import random
-import warnings
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import sympy as sp
@@ -105,7 +103,7 @@ class PhysicsAwareRegressor:
         soft_dimensional_penalty: bool = True,
         verbose: bool = False,
         # ── NEW v11.2: noise-awareness ───────────────────────────────────
-        noise_level: Optional[float] = None,
+        noise_level: float | None = None,
     ):
         """
         Parameters
@@ -121,7 +119,7 @@ class PhysicsAwareRegressor:
         # preset and letting explicit constructor arguments win over them.
         # We detect "explicit" by comparing to each parameter's default value;
         # if the caller passed a different value it wins unconditionally.
-        self.noise_level: Optional[float] = noise_level
+        self.noise_level: float | None = noise_level
         self.noiseless: bool = (noise_level is not None and noise_level == 0.0)
 
         if noise_level is not None:
@@ -171,10 +169,10 @@ class PhysicsAwareRegressor:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-        noise_level: Optional[float] = None,
-        variable_units: Optional[Dict[str, str]] = None,
-        variable_descriptions: Optional[Dict[str, str]] = None,
+        variable_names: list[str],
+        noise_level: float | None = None,
+        variable_units: dict[str, str] | None = None,
+        variable_descriptions: dict[str, str] | None = None,
     ) -> "PhysicsAwareRegressor":
         """Fit with automatic noise-adaptive strategy selection.
 
@@ -241,10 +239,10 @@ class PhysicsAwareRegressor:
         X: np.ndarray,
         y_noisy: np.ndarray,
         y_noiseless: np.ndarray,
-        variable_names: List[str],
+        variable_names: list[str],
         domain: str = "general",
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Fit one regressor per noise condition and return a comparison dict.
 
         Parameters
@@ -286,13 +284,13 @@ class PhysicsAwareRegressor:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        variable_names: List[str],
-        variable_units: Optional[Dict[str, str]] = None,
-        variable_descriptions: Optional[Dict[str, str]] = None,
+        variable_names: list[str],
+        variable_units: dict[str, str] | None = None,
+        variable_descriptions: dict[str, str] | None = None,
         validation_split: float = 0.0,
         early_stopping_rounds: int = 15,
         # Internal: L2 strength forwarded by fit_noise_aware()
-        _l2_alpha_override: Optional[float] = None,
+        _l2_alpha_override: float | None = None,
     ):
         """
         Fit symbolic regression with domain-aware templates and optional validation.
@@ -440,8 +438,8 @@ class PhysicsAwareRegressor:
         return self
 
     def cross_validate(
-        self, X: np.ndarray, y: np.ndarray, variable_names: List[str], n_folds: int = 5
-    ) -> Dict[str, float]:
+        self, X: np.ndarray, y: np.ndarray, variable_names: list[str], n_folds: int = 5
+    ) -> dict[str, float]:
         """
         Perform k-fold cross-validation.
 

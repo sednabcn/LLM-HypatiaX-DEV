@@ -27,7 +27,7 @@ def set_global_seed(seed: int = 42) -> None:
 
     # PySR (only if installed)
     try:
-        import pysr
+        import pysr  # noqa: F401
         os.environ["JULIA_SEED"] = str(seed)
     except ImportError:
         pass

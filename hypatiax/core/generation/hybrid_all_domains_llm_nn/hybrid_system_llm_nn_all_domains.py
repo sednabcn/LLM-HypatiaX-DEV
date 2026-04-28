@@ -11,7 +11,6 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -91,9 +90,9 @@ class HybridSystemAllDomains:
             self._llm_baseline = None
 
     def generate_llm_formula(
-        self, description: str, domain: str, variable_names: List[str], metadata: Dict,
+        self, description: str, domain: str, variable_names: list[str], metadata: dict,
         X: "np.ndarray | None" = None, y: "np.ndarray | None" = None,
-    ) -> Dict:
+    ) -> dict:
         """Generate formula using LLM.
 
         Delegates to PureLLMBaseline when available so the hybrid benefits from
@@ -164,7 +163,7 @@ class HybridSystemAllDomains:
 
 
     def _generate_prompt(
-        self, description: str, domain: str, variable_names: List[str], metadata: Dict
+        self, description: str, domain: str, variable_names: list[str], metadata: dict
     ) -> str:
         """Generate prompt for LLM.
 
@@ -219,7 +218,7 @@ EXPLANATION:
 
 NO markdown code blocks, individual parameters NOT dict."""
 
-    def _parse_response(self, content: str) -> Dict[str, str]:
+    def _parse_response(self, content: str) -> dict[str, str]:
         """Parse LLM response with improved error handling"""
         parsed = {}
 
@@ -249,7 +248,7 @@ NO markdown code blocks, individual parameters NOT dict."""
 
     def train_nn(
         self, X: np.ndarray, y: np.ndarray, epochs: int = 1000
-    ) -> Tuple[nn.Module, Dict]:
+    ) -> tuple[nn.Module, dict]:
         """Train neural network with improved architecture.
 
         KEY FIXES vs original:
@@ -396,11 +395,11 @@ NO markdown code blocks, individual parameters NOT dict."""
 
     def evaluate_llm_formula(
         self,
-        formula_dict: Dict,
+        formula_dict: dict,
         X: np.ndarray,
         y_true: np.ndarray,
-        var_names: List[str],
-    ) -> Dict:
+        var_names: list[str],
+    ) -> dict:
         """Evaluate LLM formula with better error handling"""
         try:
             code = formula_dict.get("python_code", "")
@@ -540,7 +539,7 @@ NO markdown code blocks, individual parameters NOT dict."""
             f"(func params={param_names}, data vars={var_names})"
         )
 
-    def _get_llm_predictions(self, formula_dict: Dict, X: np.ndarray, var_names: List[str]) -> Optional[np.ndarray]:
+    def _get_llm_predictions(self, formula_dict: dict, X: np.ndarray, var_names: list[str]) -> np.ndarray | None:
         """Re-run the LLM formula to obtain raw predictions for blending."""
         try:
             import math as _math
@@ -559,7 +558,7 @@ NO markdown code blocks, individual parameters NOT dict."""
                 "arctan": np.arctan, "arctan2": np.arctan2,
                 "abs": np.abs, "tanh": np.tanh, "sinh": np.sinh, "cosh": np.cosh,
             }
-            local_vars: Dict = {}
+            local_vars: dict = {}
             with _warnings.catch_warnings():
                 _warnings.simplefilter("ignore")
                 exec(code, _exec_ns, local_vars)
@@ -574,7 +573,7 @@ NO markdown code blocks, individual parameters NOT dict."""
         except Exception:
             return None
 
-    def _get_nn_predictions(self, nn_model, X: np.ndarray) -> Optional[np.ndarray]:
+    def _get_nn_predictions(self, nn_model, X: np.ndarray) -> np.ndarray | None:
         """Run trained NN on full dataset for blending, in original y-scale."""
         if nn_model is None:
             return None
@@ -603,10 +602,10 @@ NO markdown code blocks, individual parameters NOT dict."""
         domain: str,
         X: np.ndarray,
         y_true: np.ndarray,
-        var_names: List[str],
-        metadata: Dict,
+        var_names: list[str],
+        metadata: dict,
         verbose: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Hybrid prediction with enhanced decision logic"""
 
         if verbose:
@@ -781,7 +780,7 @@ NO markdown code blocks, individual parameters NOT dict."""
             json.dump(self.results, f, indent=2)
         print(f"✅ Results saved: {filepath}")
 
-    def print_results_table(self, results: List[Dict]):
+    def print_results_table(self, results: list[dict]):
         """Print comprehensive results table"""
         print("\n" + "=" * 140)
         print("DETAILED RESULTS TABLE".center(140))
@@ -817,7 +816,7 @@ NO markdown code blocks, individual parameters NOT dict."""
 
 
 def run_hybrid_test_all_domains(
-    domains: List[str] = None, num_samples: int = 100, verbose: bool = False
+    domains: list[str] = None, num_samples: int = 100, verbose: bool = False
 ):
     """Run hybrid system test on all scientific domains with results table"""
 

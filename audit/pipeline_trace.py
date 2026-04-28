@@ -43,7 +43,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # ── ANSI colours ──────────────────────────────────────────────────────────────
 _NO_COLOUR = not sys.stdout.isatty() or os.environ.get("NO_COLOR")

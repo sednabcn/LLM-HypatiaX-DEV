@@ -31,14 +31,7 @@ Or run standalone:
 
 from __future__ import annotations
 
-import json
-import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
-from typing import Dict, List, Optional
-from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 
@@ -74,13 +67,13 @@ _NEWTON_M3_R2_BY_N     = {n: 1.0000 for n in _NEWTON_M4_R2_BY_N}
 # ── Fixture builders ──────────────────────────────────────────────────────────
 
 def _make_result(r2: float, success: bool = True,
-                 rmse: float = 0.05, time: float = 11.0) -> Dict:
+                 rmse: float = 0.05, time: float = 11.0) -> dict:
     return {"r2": r2, "rmse": rmse, "success": success,
             "time": time, "error": None,
             "metadata": {"decision": "llm", "nn_applied": True}}
 
 
-def _make_test(description: str, results: Dict) -> Dict:
+def _make_test(description: str, results: dict) -> dict:
     return {
         "description": description,
         "domain": "mechanics",
@@ -89,7 +82,7 @@ def _make_test(description: str, results: Dict) -> Dict:
     }
 
 
-def _make_noise_sweep_data(sigma: float) -> Dict:
+def _make_noise_sweep_data(sigma: float) -> dict:
     """Build a minimal noise sweep JSON for one sigma level."""
     newton_test = _make_test(_NEWTON_EQ, {
         _M3: _make_result(_NEWTON_M3_R2_BY_SIGMA[sigma], time=25.0),
@@ -113,7 +106,7 @@ def _make_noise_sweep_data(sigma: float) -> Dict:
     }
 
 
-def _make_sc_data(n_samples: int) -> Dict:
+def _make_sc_data(n_samples: int) -> dict:
     """Build a minimal SC sweep JSON for one n value."""
     newton_test = _make_test(_NEWTON_EQ, {
         _M3: _make_result(_NEWTON_M3_R2_BY_N[n_samples], time=25.0),

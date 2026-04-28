@@ -14,13 +14,10 @@ Solves the Bernoulli problem!
 """
 
 import random
-import warnings
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.preprocessing import PolynomialFeatures
 
 # ---------------------------------------------------------------------------
 # Module-level reproducibility seeds.
@@ -35,11 +32,11 @@ class StructureAnalysis:
 
     is_additive: bool
     is_multiplicative: bool
-    term_forms: Dict[str, str]  # var_name -> 'linear', 'quadratic', etc.
-    interactions: List[Tuple[int, int]]  # Variable index pairs
-    physical_constants: Dict[str, float]  # Detected constants
+    term_forms: dict[str, str]  # var_name -> 'linear', 'quadratic', etc.
+    interactions: list[tuple[int, int]]  # Variable index pairs
+    physical_constants: dict[str, float]  # Detected constants
     confidence: float
-    patterns: List[str]
+    patterns: list[str]
 
 
 class SmartStructureDetector:
@@ -62,7 +59,7 @@ class SmartStructureDetector:
         self.constant_tolerance = constant_tolerance
 
     def analyze_structure(
-        self, X: np.ndarray, y: np.ndarray, var_names: List[str]
+        self, X: np.ndarray, y: np.ndarray, var_names: list[str]
     ) -> StructureAnalysis:
         """
         Main entry point: Analyze data structure.
@@ -191,8 +188,8 @@ class SmartStructureDetector:
             return False
 
     def _detect_term_forms(
-        self, X: np.ndarray, y: np.ndarray, var_names: List[str]
-    ) -> Dict[str, str]:
+        self, X: np.ndarray, y: np.ndarray, var_names: list[str]
+    ) -> dict[str, str]:
         """
         Detect functional form for each variable.
 
@@ -255,9 +252,9 @@ class SmartStructureDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        var_names: List[str],
-        term_forms: Dict[str, str],
-    ) -> List[Tuple[int, int]]:
+        var_names: list[str],
+        term_forms: dict[str, str],
+    ) -> list[tuple[int, int]]:
         """
         Detect multiplicative interactions between variables.
 
@@ -332,9 +329,9 @@ class SmartStructureDetector:
         self,
         X: np.ndarray,
         y: np.ndarray,
-        term_forms: Dict[str, str],
-        interactions: List[Tuple[int, int]],
-    ) -> Dict[str, float]:
+        term_forms: dict[str, str],
+        interactions: list[tuple[int, int]],
+    ) -> dict[str, float]:
         """
         Extract physical constants like 0.5 for kinetic energy, 9.81 for gravity.
 
@@ -397,8 +394,8 @@ class SmartStructureDetector:
         self,
         is_additive: bool,
         is_multiplicative: bool,
-        term_forms: Dict[str, str],
-        interactions: List[Tuple[int, int]],
+        term_forms: dict[str, str],
+        interactions: list[tuple[int, int]],
     ) -> float:
         """Calculate confidence in structure detection."""
         confidence = 0.5  # Base confidence
@@ -431,7 +428,7 @@ class IntelligentEquationBuilder:
     def __init__(self, structure: StructureAnalysis):
         self.structure = structure
 
-    def generate_pysr_config(self, base_config: Dict) -> Dict:
+    def generate_pysr_config(self, base_config: dict) -> dict:
         """
         Generate PySR configuration based on discovered structure.
 
@@ -486,8 +483,8 @@ class IntelligentEquationBuilder:
         return config
 
     def build_feature_matrix(
-        self, X: np.ndarray, var_names: List[str]
-    ) -> Tuple[np.ndarray, List[str]]:
+        self, X: np.ndarray, var_names: list[str]
+    ) -> tuple[np.ndarray, list[str]]:
         """
         Build enhanced feature matrix with detected terms.
 

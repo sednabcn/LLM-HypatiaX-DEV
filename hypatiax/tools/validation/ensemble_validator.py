@@ -43,7 +43,7 @@ import logging
 import random
 import re
 from collections import deque
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 import sympy as sp
@@ -66,8 +66,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def extract_clean_expression_string(
-    expression_input: Union[str, sp.Expr, object],
-    variable_names: Optional[List[str]] = None,
+    expression_input: str | sp.Expr | object,
+    variable_names: list[str] | None = None,
 ) -> str:
     """Return a clean Python-syntax string from any expression representation.
 
@@ -121,7 +121,7 @@ def extract_clean_expression_string(
 
 def safe_sympify(
     expression_str: str,
-    variable_names: Optional[List[str]] = None,
+    variable_names: list[str] | None = None,
 ) -> sp.Expr:
     """Parse *expression_str* into a SymPy expression with Pint isolation.
 
@@ -143,7 +143,7 @@ def safe_sympify(
     """
     expression_str = extract_clean_expression_string(expression_str, variable_names)
 
-    local_dict: Dict[str, object] = {}
+    local_dict: dict[str, object] = {}
     if variable_names:
         for var in variable_names:
             local_dict[var] = sp.Symbol(var, real=True)
@@ -201,8 +201,8 @@ def safe_sympify(
 
 
 def clean_expression_string(
-    expression_str: Union[str, sp.Expr, object],
-    variable_names: Optional[List[str]] = None,
+    expression_str: str | sp.Expr | object,
+    variable_names: list[str] | None = None,
 ) -> str:
     """Aggressively clean *expression_str* of Pint/SymPy artefacts.
 
@@ -367,8 +367,8 @@ class EnsembleValidator:
     def __init__(
         self,
         domain: str = "general",
-        max_history: Optional[int] = 1000,
-        weights: Optional[Dict[str, float]] = None,
+        max_history: int | None = 1000,
+        weights: dict[str, float] | None = None,
         strict_mode: bool = False,
     ) -> None:
         self.domain = domain
@@ -394,12 +394,12 @@ class EnsembleValidator:
 
     def validate_complete(
         self,
-        expression_str: Union[str, sp.Expr, object],
-        variable_definitions: Dict[str, str],
-        variable_units: Dict[str, str],
-        test_data: Optional[Dict[str, np.ndarray]] = None,
+        expression_str: str | sp.Expr | object,
+        variable_definitions: dict[str, str],
+        variable_units: dict[str, str],
+        test_data: dict[str, np.ndarray] | None = None,
         from_latex: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """Run the full four-layer validation pipeline on *expression_str*.
 
         Args:
@@ -627,7 +627,7 @@ class EnsembleValidator:
     # Internal — null result
     # ------------------------------------------------------------------
 
-    def _null_expression_result(self) -> Dict:
+    def _null_expression_result(self) -> dict:
         """Return a fully-structured rejection result for a None expression."""
         return {
             "valid": False,
@@ -660,16 +660,16 @@ class EnsembleValidator:
 
     def _detect_edge_cases(
         self,
-        symbolic: Dict,
-        dimensional: Dict,
-        domain: Dict,
-        numerical: Dict,
-    ) -> List[str]:
+        symbolic: dict,
+        dimensional: dict,
+        domain: dict,
+        numerical: dict,
+    ) -> list[str]:
         """Collect labelled edge-case strings from all four layer results.
 
         Labels:  ``CRITICAL``, ``DIMENSIONAL``, ``DOMAIN``, ``WARNING``.
         """
-        edge_cases: List[str] = []
+        edge_cases: list[str] = []
 
         sym_errors = str(symbolic.get("errors", [])).lower()
         if "division by zero" in sym_errors or "divide by zero" in sym_errors:
@@ -710,8 +710,8 @@ class EnsembleValidator:
     def _apply_penalties(
         self,
         base_score: float,
-        edge_cases: List[str],
-        dimensional_result: Dict,
+        edge_cases: list[str],
+        dimensional_result: dict,
     ) -> tuple:
         """Deduct structured penalties from *base_score*.
 
@@ -753,10 +753,10 @@ class EnsembleValidator:
     def _check_acceptance_criteria(
         self,
         total_score: float,
-        symbolic: Dict,
-        dimensional: Dict,
-        domain: Dict,
-        edge_cases: List[str],
+        symbolic: dict,
+        dimensional: dict,
+        domain: dict,
+        edge_cases: list[str],
     ) -> bool:
         """Return True if the expression meets all acceptance criteria.
 
@@ -805,10 +805,10 @@ class EnsembleValidator:
     def _numerical_validation(
         self,
         expression_str: str,
-        test_data: Optional[Dict[str, np.ndarray]],
-        sympy_expr: Optional[sp.Expr],
-        var_names: List[str],
-    ) -> Dict:
+        test_data: dict[str, np.ndarray] | None,
+        sympy_expr: sp.Expr | None,
+        var_names: list[str],
+    ) -> dict:
         """Evaluate the expression on *test_data* and check for NaN/Inf/overflow.
 
         Args:
@@ -820,7 +820,7 @@ class EnsembleValidator:
         Returns:
             Dict with keys ``score`` (float), ``errors``, ``warnings``.
         """
-        result: Dict = {"score": 100.0, "errors": [], "warnings": []}
+        result: dict = {"score": 100.0, "errors": [], "warnings": []}
 
         if not test_data:
             return result
@@ -856,7 +856,6 @@ class EnsembleValidator:
                 # in the local_dict above, so SymPy knows them as asin/acos.
                 # arcsin/arccos are added as explicit aliases in case the
                 # expression string was normalised but SymPy kept the name.
-                import math as _math_lbd
 
                 import numpy as _np_lbd
                 _lambdify_modules = [
@@ -880,7 +879,7 @@ class EnsembleValidator:
                 return result
 
             n_samples = len(next(iter(test_data.values())))
-            outputs: List[float] = []
+            outputs: list[float] = []
 
             for i in range(min(n_samples, 100)):
                 try:
@@ -948,14 +947,14 @@ class EnsembleValidator:
 
     def _generate_recommendations(
         self,
-        symbolic: Dict,
-        dimensional: Dict,
-        domain: Dict,
-        numerical: Dict,
-        edge_cases: List[str],
-    ) -> List[str]:
+        symbolic: dict,
+        dimensional: dict,
+        domain: dict,
+        numerical: dict,
+        edge_cases: list[str],
+    ) -> list[str]:
         """Generate a prioritised list of human-readable recommendations."""
-        recs: List[str] = []
+        recs: list[str] = []
         critical = [e for e in edge_cases if "CRITICAL" in e]
 
         if critical:
@@ -987,12 +986,12 @@ class EnsembleValidator:
         self.dimensional_validator.clear_history()
         self.domain_validator.clear_history()
 
-    def get_history(self, limit: Optional[int] = None) -> List[Dict]:
+    def get_history(self, limit: int | None = None) -> list[dict]:
         """Return the validation history, newest-last, optionally limited."""
         history = list(self.validation_history)
         return history[-limit:] if limit else history
 
-    def get_statistics(self) -> Dict:
+    def get_statistics(self) -> dict:
         """Return aggregate statistics across all completed validations."""
         if not self.validation_history:
             return {
@@ -1019,7 +1018,7 @@ class EnsembleValidator:
             "threshold_used":       self.VALIDATION_THRESHOLDS["minimum_total_score"],
         }
 
-    def get_weakest_layer(self) -> Optional[str]:
+    def get_weakest_layer(self) -> str | None:
         """Return the name of the layer with the lowest average score."""
         stats = self.get_statistics()
         if not stats["average_layer_scores"]:

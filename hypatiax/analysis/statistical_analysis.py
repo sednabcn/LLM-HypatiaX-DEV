@@ -71,7 +71,6 @@ import random
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 # ── Third-party ───────────────────────────────────────────────────────────────
 import matplotlib.pyplot as plt
@@ -101,7 +100,7 @@ plt.rcParams.update({
 sns.set_style("whitegrid")
 
 # ── Hardcoded reference data (demo / fallback mode) ───────────────────────────
-REFERENCE_DATA: Dict[str, Dict[str, List[float]]] = {
+REFERENCE_DATA: dict[str, dict[str, list[float]]] = {
     "Hybrid_v50_2": {
         "near":   [0.0] * 14,
         "medium": [0.0] * 14,
@@ -247,8 +246,8 @@ def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
 # ── Core Mann-Whitney wrapper (generic, dict-returning) ───────────────────────
 
 def mann_whitney_u(
-    hybrid_scores: List[float],
-    pysr_scores: List[float],
+    hybrid_scores: list[float],
+    pysr_scores: list[float],
     alternative: str = "greater",
 ) -> dict:
     """
@@ -286,7 +285,7 @@ def mann_whitney_u(
     }
 
 
-def mann_whitney_less(a: List[float], b: List[float]) -> Tuple[float, float]:
+def mann_whitney_less(a: list[float], b: list[float]) -> tuple[float, float]:
     """
     One-tailed Mann-Whitney U: H1 — errors in *a* < errors in *b*.
 
@@ -304,7 +303,7 @@ def mann_whitney_less(a: List[float], b: List[float]) -> Tuple[float, float]:
 
 # ── Effect size & CI helpers ──────────────────────────────────────────────────
 
-def cohens_d(a: List[float], b: List[float]) -> float:
+def cohens_d(a: list[float], b: list[float]) -> float:
     """
     Effect size Cohen's d  (positive → b > a).
     Returns float('inf') when the pooled standard deviation is zero.
@@ -315,10 +314,10 @@ def cohens_d(a: List[float], b: List[float]) -> float:
 
 
 def confidence_interval_diff(
-    a: List[float],
-    b: List[float],
+    a: list[float],
+    b: list[float],
     alpha: float = 0.05,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     95 % CI for mean(b) − mean(a) using Welch's approximation.
 
@@ -339,7 +338,7 @@ def confidence_interval_diff(
 
 # ── Descriptive statistics ────────────────────────────────────────────────────
 
-def descriptive_stats(errors: List[float]) -> Dict:
+def descriptive_stats(errors: list[float]) -> dict:
     """Return summary statistics for a list of error / score values."""
     arr = np.array(errors)
     return {
@@ -374,7 +373,7 @@ def effect_label(d: float) -> str:
 
 # ── Batch / summary helpers (module API) ──────────────────────────────────────
 
-def _na_fraction(scores: List) -> float:
+def _na_fraction(scores: list) -> float:
     """Return the fraction of scores that are None / NaN."""
     total = len(scores)
     if total == 0:
@@ -387,11 +386,11 @@ def _na_fraction(scores: List) -> float:
 
 
 def summarise_results(
-    results: List[dict],
+    results: list[dict],
     hybrid_key: str   = "hybrid_r2",
     pysr_key:   str   = "pysr_r2",
     threshold:  float = 0.99,
-    out_path:   Optional[Path] = None,
+    out_path:   Path | None = None,
 ) -> dict:
     """
     Given a list of per-equation result dicts, compute:
@@ -454,14 +453,14 @@ def summarise_results(
 
 
 def batch_r2(
-    y_true_list: List[np.ndarray],
-    y_pred_list: List[np.ndarray],
-) -> List[float]:
+    y_true_list: list[np.ndarray],
+    y_pred_list: list[np.ndarray],
+) -> list[float]:
     """Return a list of R² scores, one per (y_true, y_pred) pair."""
     return [compute_r2(yt, yp) for yt, yp in zip(y_true_list, y_pred_list)]
 
 
-def results_to_dataframe(results: List[dict]) -> pd.DataFrame:
+def results_to_dataframe(results: list[dict]) -> pd.DataFrame:
     """Convert a list of per-equation result dicts to a tidy DataFrame."""
     return pd.DataFrame(results)
 
@@ -681,7 +680,7 @@ class UnifiedAnalyzer:
     runs all statistical tests, generates publication-quality outputs.
     """
 
-    METHODS: List[str] = [
+    METHODS: list[str] = [
         "Pure LLM",
         "Neural Network",
         "Hybrid System v50_2",
@@ -690,7 +689,7 @@ class UnifiedAnalyzer:
     ]
 
     # Normalise all known method-name variants to internal keys.
-    METHOD_MAP: Dict[str, str] = {
+    METHOD_MAP: dict[str, str] = {
         "Pure LLM":              "Pure_LLM",
         "Neural Network":        "Neural_Network",
         "Hybrid System v50_2":   "Hybrid_v50_2",
@@ -704,7 +703,7 @@ class UnifiedAnalyzer:
         extrap_path:    Path,
         interp_path:    Path,
         systems23_path: Path,
-        systems2_path:  Optional[Path],
+        systems2_path:  Path | None,
         output_dir:     Path,
     ) -> None:
         self.extrap_path    = extrap_path
@@ -713,8 +712,8 @@ class UnifiedAnalyzer:
         self.systems2_path  = systems2_path
         self.output_dir     = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.data:    Optional[dict] = None
-        self.results: Optional[dict] = None
+        self.data:    dict | None = None
+        self.results: dict | None = None
 
     # ── File helpers ──────────────────────────────────────────────────────
 
@@ -741,7 +740,7 @@ class UnifiedAnalyzer:
 
     @staticmethod
     def _load_json(path: Path) -> dict:
-        with open(path, "r") as f:
+        with open(path) as f:
             return json.load(f)
 
     # ── Step 1: merge ─────────────────────────────────────────────────────
@@ -765,7 +764,7 @@ class UnifiedAnalyzer:
             "methods":   self.METHODS,
             "tests":     [],
         }
-        test_map: Dict[str, dict] = {}
+        test_map: dict[str, dict] = {}
 
         # — extrapolation data (Pure LLM, Neural Net, Hybrid v50_2)
         print("\nProcessing extrapolation data…")

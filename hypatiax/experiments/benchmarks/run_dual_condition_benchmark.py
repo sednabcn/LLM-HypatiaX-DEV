@@ -62,7 +62,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -131,7 +130,7 @@ def _build_runner_cmd(
     condition: str,          # "noisy" | "noiseless"
     args: argparse.Namespace,
     runner_script: Path,
-) -> List[str]:
+) -> list[str]:
     """Build the subprocess command for one benchmark pass.
 
     Design rule: parameters that have project-wide recommended values
@@ -197,7 +196,7 @@ def _build_runner_cmd(
     return cmd
 
 
-def _find_latest_result(condition: str) -> Optional[Path]:
+def _find_latest_result(condition: str) -> Path | None:
     """Return the most-recently-created result JSON for a given condition."""
     pattern = f"protocol_core_{condition}_*.json"
     candidates = sorted(
@@ -243,7 +242,7 @@ class _FailureScanner:
 
     def __init__(self):
         self.in_table: bool = False
-        self.failure: Optional[Dict] = None
+        self.failure: dict | None = None
         self._equation: str = "unknown"
 
     def check(self, line: str) -> bool:
@@ -310,7 +309,7 @@ def _run_condition(
     condition: str,
     args: argparse.Namespace,
     runner_script: Path,
-) -> Optional[Path]:
+) -> Path | None:
     """Run one benchmark pass and return the path to the saved JSON result.
 
     Fail-fast behaviour (enabled with --fail-fast)
@@ -445,7 +444,7 @@ _FAIL_STATUSES = frozenset({
 })
 
 
-def _scan_for_failures(json_path: Path) -> List[Dict]:
+def _scan_for_failures(json_path: Path) -> list[dict]:
     """Parse a result JSON and return one entry per failed method.
 
     Returns a list of dicts::
@@ -459,7 +458,7 @@ def _scan_for_failures(json_path: Path) -> List[Dict]:
 
     An empty list means no failures were detected.
     """
-    failures: List[Dict] = []
+    failures: list[dict] = []
     try:
         with open(json_path) as f:
             data = json.load(f)
@@ -523,7 +522,7 @@ def _scan_for_failures(json_path: Path) -> List[Dict]:
     return failures
 
 
-def _print_failures(failures: List[Dict], condition: str) -> None:
+def _print_failures(failures: list[dict], condition: str) -> None:
     """Print a formatted failure table to stdout."""
     print(f"\n{'='*80}")
     print(f"  ❌  FAILURES DETECTED IN {condition.upper()} PASS  ({len(failures)} total)".center(80))
@@ -539,14 +538,14 @@ def _print_failures(failures: List[Dict], condition: str) -> None:
 # COMPARISON REPORT
 # ============================================================================
 
-def _load_results(path: Path) -> Dict:
+def _load_results(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
 
 
-def _extract_per_test(data: Dict) -> Dict[str, Dict]:
+def _extract_per_test(data: dict) -> dict[str, dict]:
     """Return {equation_name: {method_name: {r2, rmse, success, ...}}}."""
-    out: Dict[str, Dict] = {}
+    out: dict[str, dict] = {}
     for test in data.get("tests", []):
         eq_name = (
             test.get("description", "")
@@ -564,9 +563,9 @@ def _extract_per_test(data: Dict) -> Dict[str, Dict]:
 
 
 def _build_comparison(
-    noisy_data: Dict,
-    noiseless_data: Dict,
-) -> Dict:
+    noisy_data: dict,
+    noiseless_data: dict,
+) -> dict:
     """Build a unified comparison object."""
     noisy_tests     = _extract_per_test(noisy_data)
     noiseless_tests = _extract_per_test(noiseless_data)
@@ -650,7 +649,7 @@ def _build_comparison(
     return comparison
 
 
-def _print_comparison_table(comparison: Dict) -> None:
+def _print_comparison_table(comparison: dict) -> None:
     """Pretty-print a dual-condition comparison table to stdout."""
     methods = list(comparison["method_summary"].keys())
     if not methods:
@@ -706,7 +705,7 @@ def _print_comparison_table(comparison: Dict) -> None:
     print()
 
 
-def _save_comparison(comparison: Dict, ts: str) -> Path:
+def _save_comparison(comparison: dict, ts: str) -> Path:
     path = _RESULTS_DIR / f"dual_condition_comparison_{ts}.json"
     with open(path, "w") as f:
         json.dump(comparison, f, indent=2, default=str)
@@ -714,7 +713,7 @@ def _save_comparison(comparison: Dict, ts: str) -> Path:
     return path
 
 
-def _save_csv(comparison: Dict, ts: str) -> Path:
+def _save_csv(comparison: dict, ts: str) -> Path:
     """Save a flat CSV with one row per (equation, method) pair."""
     path = _RESULTS_DIR / f"dual_condition_summary_{ts}.csv"
     fieldnames = [
@@ -890,8 +889,8 @@ def main() -> None:
     print(f"{'='*80}\n")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    noisy_path     : Optional[Path] = None
-    noiseless_path : Optional[Path] = None
+    noisy_path     : Path | None = None
+    noiseless_path : Path | None = None
 
     # ── --compare-existing shortcut ───────────────────────────────────────
     if args.compare_existing:
