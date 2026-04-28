@@ -231,7 +231,7 @@ class ExperimentProtocolA:
             )
 
             # 2. Ohm's Law
-            idx = np.random.uniform(0.1, 10, num_samples)
+            _idx = np.random.uniform(0.1, 10, num_samples)
             R = np.random.uniform(1, 1000, num_samples)
             X = np.column_stack([I, R])
             y = I * R

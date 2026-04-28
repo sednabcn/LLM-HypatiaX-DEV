@@ -1256,7 +1256,7 @@ class EnhancedExtrapolationTest:
                             CLIP_LO, 1.0)
                 return float(np.median(v)) if len(v) else float("nan")
 
-            ln, n_m, h = _med("pure_llm"), _med("neural_network"), _med("hybrid")
+            _ln, n_m, h = _med("pure_llm"), _med("neural_network"), _med("hybrid")
             def na(x):
                 return f"{x:.4f}" if not np.isnan(x) else "nan"
             print(f"  {diff.upper():6s} (n={len(sub):2d}): "
