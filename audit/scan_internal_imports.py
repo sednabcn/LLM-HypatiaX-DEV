@@ -41,7 +41,6 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Iterator
 
-
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SCAN_ROOTS: list[str] = [

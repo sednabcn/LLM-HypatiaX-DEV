@@ -41,9 +41,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from dotenv import load_dotenv
 from scipy import stats
 from sklearn.metrics import r2_score
-from dotenv import load_dotenv
 
 # Reproducibility seeds (added for JMLR submission)
 random.seed(42)
@@ -736,8 +736,8 @@ class DataPatternAnalyzer:
     def _test_polynomial(
         self, X: np.ndarray, y: np.ndarray
     ) -> Tuple[bool, Optional[int]]:
-        from sklearn.preprocessing import PolynomialFeatures
         from sklearn.linear_model import LinearRegression
+        from sklearn.preprocessing import PolynomialFeatures
 
         best_r2, best_degree = 0, None
         for degree in [2, 3, 4]:

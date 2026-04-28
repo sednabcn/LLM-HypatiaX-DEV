@@ -61,14 +61,14 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # ============================================================================
 
 try:
+    from hypatiax.tools.symbolic.hybrid_system_v50_2 import (
+        DiscoveryMode,
+        HybridDiscoverySystem,
+    )
     from hypatiax.tools.symbolic.symbolic_engine import (
         DiscoveryConfig,
         LLMConfig,
         SymbolicEngineWithLLM,
-    )
-    from hypatiax.tools.symbolic.hybrid_system_v50_2 import (
-        DiscoveryMode,
-        HybridDiscoverySystem,
     )
 
     HAS_INTEGRATED_ENGINE = True
@@ -79,7 +79,9 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from hypatiax.tools.validation.ensemble_validator import EnsembleValidator as _EnsembleValidator  # noqa: F401
+    from hypatiax.tools.validation.ensemble_validator import (
+        EnsembleValidator as _EnsembleValidator,  # noqa: F401
+    )
 
     HAS_VALIDATOR = True
 except ImportError:

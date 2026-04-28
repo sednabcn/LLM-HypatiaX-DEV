@@ -8,8 +8,8 @@ Original file is located at
 
 # HypatiaX — Experiment 1: LLM Ablation (exp1_ablation)
 
-**Paper section:** §10.6 Ablation: PySR-only vs. HypatiaX (Core-15)  
-**JMLR path:** `jmlr-source-last/ablation/`  
+**Paper section:** §10.6 Ablation: PySR-only vs. HypatiaX (Core-15)
+**JMLR path:** `jmlr-source-last/ablation/`
 **Engine:** `hybrid_system_v50_2.py` (v5.1 — `hypatia` condition now wired through `HybridDiscoverySystem`; FIX-A…FIX-D + FIX-POW active)
 
 ---
@@ -27,24 +27,34 @@ Original file is located at
 | 6 — Instability stats | `exp1_instability_stats.json`, `instability_extrapolation_v2.csv` | §10.9 |
 | 7 — Provenance stamp | `provenance_map.json` entry | unified_run_and_fix Step 2 |
 
-> **Critical pre-conditions checked in Cell 0:**  
-> - API key loaded from Kaggle Secrets (not hardcoded)  
-> - `populations=30` (paper-quality; original notebook used 2)  
+> **Critical pre-conditions checked in Cell 0:**
+> - API key loaded from Kaggle Secrets (not hardcoded)
+> - `populations=30` (paper-quality; original notebook used 2)
 > - Checkpoint keyed on `eq_id` (not `name`) to survive duplicate-name bug
 
 ## 0 · Setup
 """
 
-import os, sys, re, time, json, inspect, signal, warnings
+import inspect
+import json
+import os
+import re
+import signal
+import sys
+import time
+import warnings
 from pathlib import Path
+
 import numpy as np
 from sklearn.model_selection import train_test_split
+
 warnings.filterwarnings("ignore")
 
 # ── Reproducibility ──────────────────────────────────────────────────────────
 # Read seed from env so run_all.py --seed N propagates end-to-end.
 # Falls back to 42 (paper default) when run directly without env setup.
 import random
+
 _GLOBAL_SEED = int(os.environ.get("PYSR_SEED", os.environ.get("NN_SEED", 42)))
 random.seed(_GLOBAL_SEED)
 np.random.seed(_GLOBAL_SEED)
@@ -149,7 +159,9 @@ else:
 """## 0b · Julia & PySR install (Kaggle)"""
 
 # Run only when PySR is not yet installed (Kaggle ephemeral environment).
-import subprocess, sys
+import subprocess
+import sys
+
 
 def _pip(*args):
     subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *args], check=True)
@@ -605,7 +617,8 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
             }
         except Exception as e:
             print(f"  [hypatia] ERROR: {e}")
-            import traceback; traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             return {
                 "condition": condition, "success": False, "timed_out": False,
                 "excluded_from_timing": False, "error": str(e),
@@ -755,7 +768,8 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
             eqs_df     = model.equations_
             complexity = int(eqs_df.loc[eqs_df["loss"].idxmin(), "complexity"])
     except Exception as e:
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         train_r2 = train_rmse = None
         extrap_r2   = {r: None for r, _ in EXTRAP_REGIMES}
         extrap_rmse = {r: None for r, _ in EXTRAP_REGIMES}
@@ -786,7 +800,7 @@ print("✅ run_condition ready — hypatia → HybridDiscoverySystem v5.1 | pysr
 
 """## 4 · Run experiment
 
-> **Checkpoint key:** `{eq_id}_{condition}` — survives any equation renames.  
+> **Checkpoint key:** `{eq_id}_{condition}` — survives any equation renames.
 > Resume by re-running this cell; already-done entries are skipped.
 """
 
@@ -1033,6 +1047,7 @@ else:
 
 # ── Instability index: std(far_R2) across seeds ───────────────────────────────
 import csv
+
 pv_stats = {}
 for cond, runs in seed_results.items():
     vals = [r["far_r2"] for r in runs if r["far_r2"] is not None and np.isfinite(r["far_r2"])]
@@ -1140,8 +1155,9 @@ print("\n✅ exp1_ablation.ipynb complete — all outputs written.")
 
 # On Kaggle: files written to the working directory are automatically
 # available in the Output panel. To download individually:
-from IPython.display import FileLink, display
 import os
+
+from IPython.display import FileLink, display
 
 output_files = [
     RESULTS_PATH, CKPT_PATH, TEX_PATH,

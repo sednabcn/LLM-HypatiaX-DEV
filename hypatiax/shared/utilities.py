@@ -1,5 +1,8 @@
 
-import json, hashlib, os
+import hashlib
+import json
+import os
+
 
 def hash_dict(d):
     return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()

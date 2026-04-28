@@ -136,8 +136,11 @@ for _ep in [
 
 # ── reproducibility ───────────────────────────────────────────────────────────
 SEED = 42
+
+import random
 import time
-import random; random.seed(SEED)
+
+random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 try:
@@ -1122,7 +1125,9 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
             # ── Pure LLM ────────────────────────────────────────────────────
             try:
                 _t0_llm = time.time()
-                from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
+                from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
+                    PureLLMBaseline,
+                )
                 llm_base  = PureLLMBaseline()
                 llm_res   = llm_base.generate_formula(desc, tc["domain"],
                                                       var_names, metadata)

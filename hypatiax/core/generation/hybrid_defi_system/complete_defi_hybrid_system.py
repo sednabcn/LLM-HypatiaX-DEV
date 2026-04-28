@@ -104,7 +104,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem  # noqa: E402
 
-
 # ============================================================================
 # DEFI FORMULA TEST CASES
 # ============================================================================

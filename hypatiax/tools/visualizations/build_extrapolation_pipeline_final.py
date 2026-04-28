@@ -77,8 +77,8 @@ except ImportError:
     _PLOT_AVAILABLE = False
 
 try:
-    from extrapolation_generator import generate_data as _gen_data
     from evaluate_extrapolation import evaluate_model as _eval_model
+    from extrapolation_generator import generate_data as _gen_data
     _LOCAL_MODULES = True
 except ImportError:
     _LOCAL_MODULES = False
@@ -246,6 +246,7 @@ def _make_sympy_callable(
     constants: Optional[Dict[str, float]] = None,
 ) -> Callable:
     import re as _re
+
     from scipy.stats import norm as _scipy_norm
 
     expr_str = _preprocess_formula(expr_str)

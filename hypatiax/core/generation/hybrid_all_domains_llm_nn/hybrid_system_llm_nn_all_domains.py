@@ -4,19 +4,20 @@ Combines LLM symbolic reasoning with Neural Network learning
 Now includes comprehensive results table and error fixes
 """
 
+import inspect
 import json
 import os
+import re
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple, Optional
-from datetime import datetime
-from pathlib import Path
-from dotenv import load_dotenv
 from anthropic import Anthropic
-import re
-import inspect
+from dotenv import load_dotenv
 
 # Load environment - try multiple locations
 env_paths = [
@@ -82,7 +83,9 @@ class HybridSystemAllDomains:
         # and all prompt fixes (variant guard, max_tokens, etc.) without
         # reimplementing them here.
         try:
-            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline as _PureLLMBaseline
+            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
+                PureLLMBaseline as _PureLLMBaseline,
+            )
             self._llm_baseline = _PureLLMBaseline(model=model)
         except Exception:
             self._llm_baseline = None

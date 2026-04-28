@@ -8,8 +8,8 @@ and gitpython==3.1.47), keeps the last occurrence and comments out
 the earlier conflicting lines.
 """
 
-import re
 import pathlib
+import re
 import sys
 
 req_path = pathlib.Path("requirements.txt")

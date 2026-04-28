@@ -56,6 +56,7 @@ import csv
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -64,7 +65,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
-import re
+
 # ---------------------------------------------------------------------------
 # Reproducibility
 # ---------------------------------------------------------------------------

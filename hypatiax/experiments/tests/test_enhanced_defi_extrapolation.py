@@ -25,12 +25,13 @@ Fixes vs the 20-case version
 """
 
 import json
-import numpy as np
-from datetime import datetime
-from scipy import stats
-from pathlib import Path
 import sys
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 import torch
+from scipy import stats
 from sklearn.preprocessing import StandardScaler
 
 # Add project root (4 levels up from this file's directory)
@@ -146,6 +147,7 @@ class EnhancedExtrapolationTest:
         """
         import torch
         from sklearn.preprocessing import StandardScaler
+
         from hypatiax.core.training.baseline_neural_network_defi_improved import ImprovedNN
 
         n = len(X_train)
@@ -821,8 +823,8 @@ class EnhancedExtrapolationTest:
                     # possible, so re-run the formula to get actual y_pred values.
                     try:
                         from hypatiax.experiments.tests.hybrid_ensemble_system_defi_domain import (
-                            execute_python_code_get_predictions,
                             ensemble_llm_nn,
+                            execute_python_code_get_predictions,
                         )
                         llm_pred = execute_python_code_get_predictions(llm_code, X_test)
                         nn_pred  = nn_m["y_pred_test"]

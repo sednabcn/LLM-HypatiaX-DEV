@@ -1,6 +1,6 @@
 
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
 
 INPUT_CSV = "hypatiax/data/figures/instability_extrapolation.csv"

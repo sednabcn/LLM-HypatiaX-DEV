@@ -1,7 +1,7 @@
 import argparse
 import os as _os
-import sys as _sys
 import pathlib as _pathlib
+import sys as _sys
 
 # ── sys.path bootstrap: ensures hypatiax.* imports resolve ────────────────
 _PROTO_DIR = _pathlib.Path(__file__).resolve().parent

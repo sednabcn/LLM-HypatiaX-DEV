@@ -12,10 +12,11 @@ Requires:
 """
 
 import json
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
 
 # Set publication quality
 plt.rcParams["figure.dpi"] = 150

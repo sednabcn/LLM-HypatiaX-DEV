@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 experiment_protocol_benchmark.py
 =================================
@@ -85,7 +86,7 @@ del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 import json
 import random
 import warnings
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 

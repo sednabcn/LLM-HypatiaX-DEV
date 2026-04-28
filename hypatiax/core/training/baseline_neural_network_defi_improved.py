@@ -19,14 +19,15 @@ Expected improvements:
 
 import json
 import os
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from datetime import datetime
-from pathlib import Path
 
 # Import experiment protocol
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol

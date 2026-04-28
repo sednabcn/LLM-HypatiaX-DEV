@@ -36,13 +36,13 @@ COMPLETE FEATURE SET:
 """
 
 import random
+import warnings
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from typing import Dict, List, Optional, Tuple
 import sympy as sp
 from sklearn.metrics import r2_score
-from sklearn.model_selection import train_test_split, KFold
-import warnings
+from sklearn.model_selection import KFold, train_test_split
 
 # ---------------------------------------------------------------------------
 # Module-level reproducibility seeds.

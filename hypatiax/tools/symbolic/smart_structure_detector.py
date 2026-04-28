@@ -15,11 +15,12 @@ Solves the Bernoulli problem!
 
 import random
 import warnings
-from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.preprocessing import PolynomialFeatures
-from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Module-level reproducibility seeds.

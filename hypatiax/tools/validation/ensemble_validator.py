@@ -856,8 +856,9 @@ class EnsembleValidator:
                 # in the local_dict above, so SymPy knows them as asin/acos.
                 # arcsin/arccos are added as explicit aliases in case the
                 # expression string was normalised but SymPy kept the name.
-                import numpy as _np_lbd
                 import math as _math_lbd
+
+                import numpy as _np_lbd
                 _lambdify_modules = [
                     {
                         "safe_asin":   lambda x: _np_lbd.arcsin(_np_lbd.clip(x, -1, 1)),

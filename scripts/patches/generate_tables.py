@@ -15,8 +15,8 @@ Tables generated:
 import json
 import os
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 ROOT       = Path(__file__).parent.parent
 PATCHED    = ROOT / "hypatiax" / "data" / "patched"

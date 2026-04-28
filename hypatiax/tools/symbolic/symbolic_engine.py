@@ -66,23 +66,25 @@ Version: unified (v21 + v22 + v23)
 # via a subprocess.
 # ---------------------------------------------------------------------------
 import os
+
 os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
 
 MAX_COMPLEXITY = int(os.getenv("MAX_COMPLEXITY", 30))
 
-import warnings
-import re
 import json
-import time
-from dataclasses import dataclass, field
-from typing import ClassVar, Dict, List, Optional, Tuple, Any
-from datetime import datetime
-
-import random
 import math
+import random
+import re
+import time
+import warnings
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 import numpy as np
 import sympy as sp
+from scipy import stats
+
 # NOTE: PySRRegressor is intentionally NOT imported at module level.
 # Importing pysr triggers juliacall initialisation immediately, which
 # segfaults when PyTorch is already loaded in the same process.
@@ -90,7 +92,6 @@ import sympy as sp
 # the env var above has been set and juliacall configures itself correctly.
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import r2_score
-from scipy import stats
 
 # ---------------------------------------------------------------------------
 # Module-level reproducibility seeds.
@@ -1076,7 +1077,9 @@ class SymbolicEngine:
             # any search runs (confirmed root cause via [SE-TRACE] on 2026-03-08:
             # "equation_file is not a valid keyword argument … did you mean
             # temp_equation_file").
-            import tempfile as _tf, os as _os2, inspect as _inspect_ef
+            import inspect as _inspect_ef
+            import os as _os2
+            import tempfile as _tf
             _eq_tmpfile = _tf.NamedTemporaryFile(
                 suffix=".csv", prefix="pysr_hof_", delete=False
             )
@@ -1227,7 +1230,8 @@ class SymbolicEngine:
                 self.model = PySRRegressor(**pysr_kwargs)
                 print(f"   [PySR] PySRRegressor constructed OK", flush=True)
             except Exception as _init_exc:
-                import traceback as _tb2, sys as _sys2
+                import sys as _sys2
+                import traceback as _tb2
                 _init_tb = _tb2.format_exc()
                 print(f"   [PySR] PySRRegressor.__init__ FAILED: {_init_exc}", flush=True)
                 print(_init_tb, flush=True)
@@ -1595,8 +1599,8 @@ class SymbolicEngine:
             return _result
 
         except Exception as e:
-            import traceback as _tb
             import sys as _sys
+            import traceback as _tb
             _full_tb = _tb.format_exc()
             _err_msg = (
                 f"\n{'='*70}\n"

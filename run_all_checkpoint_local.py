@@ -245,6 +245,7 @@ if _REQUIREMENTS.exists():
 # validate_code.py and audit notebooks expect tex files in paper/.
 # If the repo was published with them at root, copy them across automatically.
 import shutil as _shutil
+
 _PAPER_DIR = REPO_ROOT / "paper"
 _TEX_PATTERNS = [
     "jmlr_paper*.tex",               # main paper (underscore variant)

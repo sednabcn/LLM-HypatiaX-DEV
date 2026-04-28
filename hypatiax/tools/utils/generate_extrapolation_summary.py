@@ -14,10 +14,11 @@ Usage:
 """
 
 import argparse
-import json
 import glob
+import json
 from pathlib import Path
 from typing import Dict, List
+
 import numpy as np
 
 

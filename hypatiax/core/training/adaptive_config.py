@@ -533,8 +533,8 @@ def train_with_config(
     """
     if not TORCH_AVAILABLE:
         raise RuntimeError("torch is required to train")
-    from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
 
     best_model, best_r2, best_train_loss = None, float("-inf"), float("inf")
 

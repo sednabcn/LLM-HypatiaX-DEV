@@ -35,20 +35,23 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
         _sys.path.insert(0, _p)
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
-import numpy as np
-from typing import List, Tuple, Dict, Optional
 import json
 import os
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 # ── Reproducibility ──────────────────────────────────────────────────────────
 SEED = 42  # Fixed for reproducibility — matches paper
 import random
+
 random.seed(SEED)
 np.random.seed(SEED)
 try:
-    import torch; torch.manual_seed(SEED)
+    import torch
+    torch.manual_seed(SEED)
     torch.use_deterministic_algorithms(True)
 except ImportError:
     pass

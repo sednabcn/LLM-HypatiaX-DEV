@@ -29,7 +29,7 @@ Original file is located at
 
 ---
 
-> **Offline mode:** Set `RERUN_STRATEGY = 'skip'` in §0.  
+> **Offline mode:** Set `RERUN_STRATEGY = 'skip'` in §0.
 > §1, §2, §4, §5, §6 all work from existing JSON files without running the benchmark.
 """
 
@@ -37,14 +37,22 @@ Original file is located at
 ## §0 — Environment & Configuration
 """
 
-import sys, os, json, time, random, warnings, copy
-from pathlib import Path
+import copy
+import json
+import os
+import random
+import sys
+import time
+import warnings
 from datetime import datetime, timezone
+from pathlib import Path
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.ticker as mticker
+
 warnings.filterwarnings('ignore')
 
 # ── Timeout defaults (must be set before importing benchmark modules) ─────────
@@ -250,7 +258,7 @@ if df_v3c3 is not None:
 """---
 ## §2 — Seed Sweep Analysis
 
-Builds comparison DataFrames and plots far-R² by seed for both methods.  
+Builds comparison DataFrames and plots far-R² by seed for both methods.
 Confirms seed 42 = −882.9 and seed 99 = 1.000.
 
 """
@@ -360,13 +368,20 @@ defi_sweep_results = []
 
 if RERUN_STRATEGY in ('A', 'B'):
     try:
-        from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
-        from hypatiax_defi_benchmark_kaggle_v3c3_2_fixed import (
-            _hybrid_predict_and_eval, _eval_formula_r2, _execute_formula,
-            _run_case_full, _build_header, _save_checkpoint, _save_final,
-            CHECKPOINT_FILE, FINAL_OUTPUT,
-        )
         import torch
+        from hypatiax_defi_benchmark_kaggle_v3c3_2_fixed import (
+            CHECKPOINT_FILE,
+            FINAL_OUTPUT,
+            _build_header,
+            _eval_formula_r2,
+            _execute_formula,
+            _hybrid_predict_and_eval,
+            _run_case_full,
+            _save_checkpoint,
+            _save_final,
+        )
+
+        from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
         HYPATIA_AVAILABLE = True
         print('HypatiaX infrastructure imported successfully')
     except ImportError as e:
@@ -458,6 +473,7 @@ if RERUN_STRATEGY == 'A' and HYPATIA_AVAILABLE:
 # ── 3e: Strategy B — full 74-case benchmark ──────────────────────────────────
 if RERUN_STRATEGY == 'B' and HYPATIA_AVAILABLE:
     import argparse
+
     from hypatiax_defi_benchmark_kaggle_v3c3_2_fixed import run_benchmark
 
     RESUME = False   # <- Set True to resume from checkpoint
@@ -480,7 +496,7 @@ elif RERUN_STRATEGY == 'B' and not HYPATIA_AVAILABLE:
 """---
 ## §4 — Trace R²=1.000 Origin
 
-Deep-scans all JSON files under `PROJECT_ROOT` for Portfolio Variance entries with R² > 0.99.  
+Deep-scans all JSON files under `PROJECT_ROOT` for Portfolio Variance entries with R² > 0.99.
 Cross-references with the seed sweep to confirm seed 99 is the only HypatiaX success seed.
 
 """
@@ -573,7 +589,7 @@ if SWEEP_JSON_ORIGINAL.exists():
 """---
 ## §5 — Validate Results & Compare v3c3 vs v3c2
 
-Injects any fresh Strategy A result, diffs v3c3 against v3c2 (flags |delta| > 0.1),  
+Injects any fresh Strategy A result, diffs v3c3 against v3c2 (flags |delta| > 0.1),
 and plots the R² distribution for the current run.
 
 """

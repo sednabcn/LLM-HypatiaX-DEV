@@ -1,5 +1,6 @@
 
-import os, json
+import json
+import os
 
 root = "hypatiax/data/results"
 

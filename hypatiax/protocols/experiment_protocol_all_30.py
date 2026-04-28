@@ -33,10 +33,11 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
         _sys.path.insert(0, _p)
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
-import numpy as np
-from typing import List, Tuple, Dict
 import json
 import os
+from typing import Dict, List, Tuple
+
+import numpy as np
 
 
 class ExperimentProtocolAll:

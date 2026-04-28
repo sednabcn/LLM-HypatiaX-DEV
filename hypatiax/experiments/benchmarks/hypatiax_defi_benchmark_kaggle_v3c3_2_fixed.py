@@ -21,9 +21,9 @@ Original file is located at
 | B6 | 🎯 **Options Delta outlier (R²=−19.5)** — moneyness & implied_vol both linspace → perfectly correlated, collinear test set | Variables now sampled independently via `np.random.default_rng` |
 | B7 | 📝 Result JSON missing `decision`, `llm_error`, `llm_success` fields | All three added to every case output |
 
-Previous results (for comparison):  
-- **Mar 31**: mean test R² = **−0.38** | Failed cases = 50/99  
-- **Apr 09**: mean test R² = **−0.29** | Failed cases = 50/99  
+Previous results (for comparison):
+- **Mar 31**: mean test R² = **−0.38** | Failed cases = 50/99
+- **Apr 09**: mean test R² = **−0.29** | Failed cases = 50/99
 Both runs were **pure-NN** (B4 — LLM never activated). Version 2 fixes this.
 """
 
@@ -48,9 +48,9 @@ print(f"ANTHROPIC_API_KEY set: {bool(os.environ.get('ANTHROPIC_API_KEY'))}")
 import argparse
 import json
 import math as _math
+import random
 import sys
 import time
-import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -99,9 +99,10 @@ experiment_protocol_defi.py - ENHANCED
 Fixes for Kelly criterion, better test case generation, improved metadata
 """
 
-import numpy as np
-from typing import List, Tuple, Dict, Optional
 import json
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 
 class DeFiExperimentProtocol:
@@ -2856,6 +2857,7 @@ print("run_benchmark defined")
 #   verify_fix5 = False  → reserved, leave False
 #
 import types
+
 args = types.SimpleNamespace(
     resume      = False,
     report_only = False,

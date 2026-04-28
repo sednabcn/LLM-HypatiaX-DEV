@@ -13,19 +13,20 @@ Tested on:
 - DeFi domain (specialized financial formulas)
 """
 
+import inspect
 import json
 import os
+import re
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple, Optional
-from datetime import datetime
-from pathlib import Path
-from dotenv import load_dotenv
 from anthropic import Anthropic
-import re
-import inspect
+from dotenv import load_dotenv
 
 # PySR imports
 try:
@@ -114,7 +115,7 @@ class ComparativeTestSuite:
             if not api_key:
                 raise ValueError(
                     "ANTHROPIC_API_KEY not set. Please ensure it's in your .env file.\n"
-                    f"Checked locations:\n" + 
+                    f"Checked locations:\n" +
                     "\n".join([f"  - {p}" for p in env_paths]) +
                     f"\n\n💡 Your .env is at: {Path.cwd() / 'hypatiax' / '.env'}\n" +
                     "   Make sure it contains: ANTHROPIC_API_KEY=sk-ant-..."
@@ -130,7 +131,7 @@ class ComparativeTestSuite:
     # ========================================================================
     
     def method_llm_guided_pysr(
-        self, description: str, X: np.ndarray, y: np.ndarray, 
+        self, description: str, X: np.ndarray, y: np.ndarray,
         var_names: List[str], metadata: Dict, verbose: bool = False
     ) -> Dict:
         """
@@ -195,9 +196,9 @@ class ComparativeTestSuite:
             # Check for invalid predictions
             if not np.all(np.isfinite(y_pred)):
                 return {
-                    "method": "llm_guided_pysr", 
-                    "error": "Non-finite predictions", 
-                    "r2": 0.0, 
+                    "method": "llm_guided_pysr",
+                    "error": "Non-finite predictions",
+                    "r2": 0.0,
                     "success": False
                 }
             
@@ -270,9 +271,9 @@ class ComparativeTestSuite:
             # Check for invalid predictions
             if not np.all(np.isfinite(y_pred)):
                 return {
-                    "method": "pysr_validation", 
-                    "error": "Non-finite predictions", 
-                    "r2": 0.0, 
+                    "method": "pysr_validation",
+                    "error": "Non-finite predictions",
+                    "r2": 0.0,
                     "success": False
                 }
             
@@ -1045,9 +1046,9 @@ Examples:
         """
     )
     
-    parser.add_argument('--samples', type=int, default=200, 
+    parser.add_argument('--samples', type=int, default=200,
                         help='Number of data samples to generate (default: 200)')
-    parser.add_argument('--verbose', action='store_true', 
+    parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output')
     parser.add_argument('--domain', type=str,
                         default='all',

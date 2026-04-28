@@ -8,12 +8,12 @@ Produces minimal field-level patches in patches/generated/.
 Usage:
     python scripts/generate_patches.py [--dry-run]
 """
+import argparse
 import json
 import os
 import sys
-import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 ROOT       = Path(__file__).parent.parent
 RAW_DIR    = ROOT / "hypatiax" / "data" / "results"

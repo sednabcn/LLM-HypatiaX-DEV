@@ -39,18 +39,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
-import json
-import os
-import sys
-import time
-import tempfile
-from pathlib import Path
-from typing import Dict, List, Optional
-from unittest.mock import MagicMock, patch
-
-import numpy as np
-import pytest
 
 # ---------------------------------------------------------------------------
 # Import the two modules under test using their absolute file paths.
@@ -58,6 +46,19 @@ import pytest
 # are resolved relative to THIS file regardless of where pytest is invoked from.
 # ---------------------------------------------------------------------------
 import importlib.util
+import io
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Dict, List, Optional
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
+
 
 def _import_from_path(module_name: str, filepath: Path):
     """Import a module from an absolute file path and register it in sys.modules."""

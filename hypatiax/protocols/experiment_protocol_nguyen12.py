@@ -67,8 +67,8 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
 del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
 import os
-import warnings
 import random
+import warnings
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 

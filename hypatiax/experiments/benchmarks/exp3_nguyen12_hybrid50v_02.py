@@ -28,12 +28,12 @@ Usage
     python3 exp3_nguyen12_hybrid50v_02.py --seed 777  # stability check
 """
 
-import sys
-import os
-import pathlib
 import argparse
 import importlib
+import os
+import pathlib
 import random
+import sys
 
 import numpy as np
 
@@ -353,7 +353,8 @@ def run(seed: int = 42):
         _ipy = None
     if _ipy is not None:
         import base64
-        from IPython.display import display, HTML
+
+        from IPython.display import HTML, display
         _jpath = pathlib.Path(OUTPUT_JSON)
         if _jpath.exists():
             _data = base64.b64encode(_jpath.read_bytes()).decode()

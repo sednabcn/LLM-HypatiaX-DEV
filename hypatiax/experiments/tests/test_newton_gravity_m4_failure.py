@@ -38,7 +38,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 

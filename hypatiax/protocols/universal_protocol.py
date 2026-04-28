@@ -1,4 +1,6 @@
-import json, os, time
+import json
+import os
+import time
 
 # ── hash_dict: try all known locations, inline fallback last ──────────────
 # Priority:
@@ -19,7 +21,8 @@ except ImportError:
             try:
                 from shared.utilities import hash_dict
             except ImportError:
-                import hashlib as _hl, json as _json
+                import hashlib as _hl
+                import json as _json
                 def hash_dict(d: dict) -> str:
                     return _hl.sha256(
                         _json.dumps(d, sort_keys=True).encode()

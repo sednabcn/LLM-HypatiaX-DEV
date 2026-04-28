@@ -122,6 +122,7 @@ load_dotenv(_env_path)
 # Previous versions only imported the base class, making LLM guidance
 # unreachable regardless of what use_llm was set to.
 # ---------------------------------------------------------------------------
+from hypatiax.tools.symbolic.physics_aware_regressor import PhysicsAwareRegressor
 from hypatiax.tools.symbolic.symbolic_engine import (
     DiscoveryConfig,
     LLMConfig,
@@ -129,7 +130,6 @@ from hypatiax.tools.symbolic.symbolic_engine import (
     SymbolicEngineWithLLM,
     detect_collapsed_constants,
 )
-from hypatiax.tools.symbolic.physics_aware_regressor import PhysicsAwareRegressor
 from hypatiax.tools.validation.ensemble_validator import EnsembleValidator
 
 

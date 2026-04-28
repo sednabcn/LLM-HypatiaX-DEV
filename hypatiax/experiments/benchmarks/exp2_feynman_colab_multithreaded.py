@@ -20,8 +20,8 @@ Upgraded from `parallelism='serial'` to **`parallelism='multithreading'`** for ~
 | Parallelism | **multithreading** (Julia shared-memory, safe on Colab) |
 | Runtime estimate | ~1-2 days on T4 (was 2-3 days serial) |
 
-> **Setup order:** Run Cell 1 FIRST (sets `JULIA_NUM_THREADS`), then Cell 2 (installs PySR).  
-> Installing PySR before Cell 1 means Julia defaults to 1 thread.  
+> **Setup order:** Run Cell 1 FIRST (sets `JULIA_NUM_THREADS`), then Cell 2 (installs PySR).
+> Installing PySR before Cell 1 means Julia defaults to 1 thread.
 
 > **API key:** Use Colab Secrets (left sidebar key icon). Never hardcode keys in notebooks.
 
@@ -32,7 +32,9 @@ Upgraded from `parallelism='serial'` to **`parallelism='multithreading'`** for ~
 
 # CELL 1 -- Run this BEFORE installing PySR
 # JULIA_NUM_THREADS must be set before Julia initialises.
-import os, multiprocessing
+import multiprocessing
+import os
+
 n_cores = multiprocessing.cpu_count()
 print(f'Colab CPU cores available: {n_cores}')
 os.environ['JULIA_NUM_THREADS'] = str(n_cores)
@@ -43,7 +45,10 @@ print('Next: run Cell 2 to install PySR.')
 """## 2 · Install dependencies"""
 
 # deps managed by pipeline (removed Jupyter magic)
-import pysr, subprocess
+import subprocess
+
+import pysr
+
 print(f'PySR version: {pysr.__version__}')
 result = subprocess.run(['julia', '-e', 'println(Threads.nthreads())'],
                         capture_output=True, text=True, timeout=60)
@@ -56,12 +61,18 @@ else:
 
 """## 3 · Imports"""
 
-import os, time, json, warnings, inspect
+import inspect
+import json
+import os
+import time
+import warnings
+
 import numpy as np
+from scipy import stats as scipy_stats
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
-from scipy import stats as scipy_stats
+
 warnings.filterwarnings('ignore')
 try:
     from pysr import PySRRegressor
@@ -80,6 +91,7 @@ Left sidebar → key icon → add `ANTHROPIC_API_KEY` → enable for this notebo
 # Use Colab Secrets (left sidebar key icon) -- avoids hardcoding keys.
 # Add secret: ANTHROPIC_API_KEY
 import os
+
 try:
     from google.colab import userdata
     ANTHROPIC_API_KEY = userdata.get('ANTHROPIC_API_KEY')
@@ -449,7 +461,7 @@ print('NN baseline defined')
 
 """## 9 · HypatiaX (PySR) — multithreading
 
-> Key change: `parallelism='multithreading'` instead of `'serial'`.  
+> Key change: `parallelism='multithreading'` instead of `'serial'`.
 > Requires `JULIA_NUM_THREADS` set in Cell 1 before import.
 """
 
@@ -521,7 +533,7 @@ print('HypatiaX (PySR multithreading) wrapper defined')
 
 """## 10 · Main loop — run all 30 equations
 
-Checkpointed to Google Drive after every equation.  
+Checkpointed to Google Drive after every equation.
 Re-run after disconnect — completed equations are skipped automatically.
 """
 
@@ -794,10 +806,14 @@ print(f'\nLaTeX table saved → {tex_path}')
 | `expressions.txt` | Best symbolic expressions |
 """
 
-import os, json, zipfile, shutil
+import json
+import os
+import shutil
+import zipfile
 from datetime import datetime
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 from scipy import stats as scipy_stats
 
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1046,6 +1062,7 @@ with open(report_path, 'w', encoding='utf-8') as f:
 print(f'[7/7] report.html        {os.path.getsize(report_path):,} bytes')
 
 import zipfile
+
 zip_path = EXPORT_DIR + '.zip'
 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
     for fname in os.listdir(EXPORT_DIR):
@@ -1056,6 +1073,7 @@ for fname in sorted(os.listdir(EXPORT_DIR)):
     sz = os.path.getsize(os.path.join(EXPORT_DIR, fname))
     print(f'  {fname:<30} {sz:>8,} bytes')
 from google.colab import files
+
 print(f'Downloading {zip_path} ...')
 files.download(zip_path)
 if __name__ == "__main__":

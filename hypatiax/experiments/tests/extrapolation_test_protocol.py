@@ -11,12 +11,13 @@ Usage:
     python extrapolation_test_protocol.py --method all --domain chemistry --plot
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Callable, Optional
+import json
 from dataclasses import dataclass
 from pathlib import Path
-import json
+from typing import Callable, Dict, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 @dataclass

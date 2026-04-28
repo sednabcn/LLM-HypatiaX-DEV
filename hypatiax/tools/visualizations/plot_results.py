@@ -4,9 +4,10 @@ Generate plots for the paper
 """
 
 import json
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
 
 # Setup paths
 DATA_DIR = Path(__file__).parent.parent / "data"

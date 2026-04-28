@@ -31,7 +31,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_map(map_path: Path) -> dict:

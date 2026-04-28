@@ -9,12 +9,13 @@ Author: Ruperto Bonet Chaple
 Date: January 2026
 """
 
+import glob
 import json
-import numpy as np
-import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional
-import glob
+
+import numpy as np
+import pandas as pd
 
 
 class SystemDataExtractor:

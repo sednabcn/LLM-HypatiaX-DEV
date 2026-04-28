@@ -13,15 +13,15 @@ import argparse
 import json
 import os
 import re
-import numpy as np
-import torch
-import torch.nn as nn
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from dotenv import load_dotenv
+import numpy as np
+import torch
+import torch.nn as nn
 from anthropic import Anthropic
+from dotenv import load_dotenv
 
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
@@ -337,8 +337,8 @@ def fit_formula_params(
     Returns (fitted_code, r2_on_train).
     """
     try:
-        from scipy.optimize import curve_fit as _curve_fit, \
-                                   differential_evolution as _de
+        from scipy.optimize import curve_fit as _curve_fit
+        from scipy.optimize import differential_evolution as _de
     except ImportError:
         preds = _safe_exec_formula(python_code, X_train, variable_names)
         r2 = r2_score(y_train, preds) if (preds is not None
@@ -896,7 +896,7 @@ Expected Shortfall at 95% confidence for normal returns (ES multiplier = 2.063).
             scaler_X
             scaler_y
             evaluation {r2, mse, mae}
-        """ 
+        """
 
         # =====================================================
         # 1️⃣  STAGE 1 — LLM symbolic structure discovery

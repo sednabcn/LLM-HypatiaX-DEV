@@ -1,6 +1,9 @@
 
-import json, os
+import json
+import os
+
 import matplotlib.pyplot as plt
+
 
 def generate():
     os.makedirs("figures_out", exist_ok=True)

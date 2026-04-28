@@ -60,14 +60,14 @@ Usage
 """
 
 import concurrent.futures as _cf
-import ctypes          # for _kill_thread (hard timeout enforcement)
-import threading as _threading
+import ctypes  # for _kill_thread (hard timeout enforcement)
 import inspect
 import json
 import os
 import random
 import re
 import sys
+import threading as _threading
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -103,6 +103,7 @@ _METHOD_TIMEOUT_SECS: int = int(os.environ.get("METHOD_TIMEOUT", 900))
 os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
 
 import logging as _logging
+
 # Suppress httpx/httpcore/anthropic HTTP INFO messages completely.
 # propagate=False prevents records reaching the root logger's StreamHandler
 # even if an imported library has called basicConfig(level=INFO).
@@ -162,8 +163,8 @@ except ImportError:
 try:
     import torch
     import torch.nn as nn
-    from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
@@ -2142,7 +2143,9 @@ def _run_pysr_in_subprocess(
     -------
     Result dict (always contains at least {"success": bool}).
     """
-    import pickle, base64, subprocess
+    import base64
+    import pickle
+    import subprocess
 
     if timeout is None:
         timeout = _PYSR_TIMEOUT

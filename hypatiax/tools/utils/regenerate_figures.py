@@ -8,9 +8,10 @@ Run this in your paper directory where the JSON data files are located.
 """
 
 import json
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def regenerate_figure_5systems():

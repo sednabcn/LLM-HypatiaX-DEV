@@ -13,8 +13,8 @@ Exit 0 = all good, Exit 1 = blocking issues found.
 """
 import re
 import sys
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
