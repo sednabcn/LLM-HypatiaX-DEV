@@ -61,6 +61,7 @@ Usage
 
 import ctypes as _ctypes
 
+
 def _kill_thread(tid):
     # Raise SystemExit in a thread by id (best-effort)
     return _ctypes.pythonapi.PyThreadState_SetAsyncExc(
