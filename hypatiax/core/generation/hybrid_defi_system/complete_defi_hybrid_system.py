@@ -244,7 +244,8 @@ def validate_defi_constraints(
     Args:
         formula: Formula string (for context)
         variables: Variable name -> value mapping
-        strict: If True, raise errors; if False, return warnings
+        strict: If True, raise errors
+        if False, return warnings
 
     Returns:
         Dict with 'valid', 'errors', 'warnings'

@@ -9,7 +9,8 @@ Original file is located at
 
 **Paper section:** §10.6 Ablation: PySR-only vs. HypatiaX (Core-15)
 **JMLR path:** `jmlr-source-last/ablation/`
-**Engine:** `hybrid_system_v50_2.py` (v5.1 — `hypatia` condition now wired through `HybridDiscoverySystem`; FIX-A…FIX-D + FIX-POW active)
+**Engine:** `hybrid_system_v50_2.py` (v5.1 — `hypatia` condition now wired through `HybridDiscoverySystem`
+FIX-A…FIX-D + FIX-POW active)
 
 ---
 
@@ -28,7 +29,8 @@ Original file is located at
 
 > **Critical pre-conditions checked in Cell 0:**
 > - API key loaded from Kaggle Secrets (not hardcoded)
-> - `populations=30` (paper-quality; original notebook used 2)
+> - `populations=30` (paper-quality
+original notebook used 2)
 > - Checkpoint keyed on `eq_id` (not `name`) to survive duplicate-name bug
 
 ## 0 · Setup
@@ -325,9 +327,12 @@ class VariableNameSanitizer:
                 safe = f"var_{v}"
                 c = 1
                 while safe in out or safe in names:
-                    safe = f"var_{v}{c}"; c += 1
-                self.fwd[v] = safe; self.rev[safe] = v
-                out.append(safe); conflict = True
+                    safe = f"var_{v}{c}"
+                    c += 1
+                self.fwd[v] = safe
+                self.rev[safe] = v
+                out.append(safe)
+                conflict = True
             else:
                 out.append(v)
         return out, conflict
@@ -363,15 +368,19 @@ def generate_extrap_data(eq, regime="medium", N=100, seed=42):
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 def _safe_r2(y_true, y_pred):
-    if not np.all(np.isfinite(y_pred)): return float("-inf")
-    if len(y_true) < 2: return float("nan")
+    if not np.all(np.isfinite(y_pred)):
+        return float("-inf")
+    if len(y_true) < 2:
+        return float("nan")
     ss_res = np.sum((y_true - y_pred)**2)
     ss_tot = np.sum((y_true - np.mean(y_true))**2)
-    if ss_tot < 1e-10: return 1.0 if ss_res < 1e-10 else float("-inf")
+    if ss_tot < 1e-10:
+        return 1.0 if ss_res < 1e-10 else float("-inf")
     return float(1 - ss_res / ss_tot)
 
 def _safe_rmse(y_true, y_pred):
-    if not np.all(np.isfinite(y_pred)) or len(y_true) == 0: return float("inf")
+    if not np.all(np.isfinite(y_pred)) or len(y_true) == 0:
+        return float("inf")
     return float(np.sqrt(np.mean((y_true - y_pred)**2)))
 
 # ── PySR builder — populations=POPULATIONS (30 for paper quality) ────────────
@@ -403,7 +412,8 @@ def make_pysr(warm_start_expr=None, seed=42, niterations=NITERATIONS,
     if "parallelism" in valid:
         kwargs["parallelism"] = "serial"
     else:
-        kwargs["procs"] = 0; kwargs["multithreading"] = False
+        kwargs["procs"] = 0
+        kwargs["multithreading"] = False
     if "timeout_in_seconds" in valid:
         kwargs["timeout_in_seconds"] = effective_timeout
     if "tournament_selection_n" in valid:
@@ -411,10 +421,13 @@ def make_pysr(warm_start_expr=None, seed=42, niterations=NITERATIONS,
     if "crossover_probability" in valid:
         kwargs["crossover_probability"] = 0.9
     if "batching" in valid:
-        kwargs["batching"] = True; kwargs["batch_size"] = 50
+        kwargs["batching"] = True
+        kwargs["batch_size"] = 50
     if warm_start_expr is not None:
-        if "warm_start" in valid: kwargs["warm_start"] = True
-        if "initial_expressions" in valid: kwargs["initial_expressions"] = [warm_start_expr]
+        if "warm_start" in valid:
+            kwargs["warm_start"] = True
+        if "initial_expressions" in valid:
+            kwargs["initial_expressions"] = [warm_start_expr]
     return PySRRegressor(**kwargs)
 
 # ── LLM proposal ──────────────────────────────────────────────────────────────
@@ -425,9 +438,11 @@ _ANTHROPIC_CLIENT = None
 
 def _get_anthropic_client():
     global _ANTHROPIC_CLIENT
-    if _ANTHROPIC_CLIENT is not None: return _ANTHROPIC_CLIENT
+    if _ANTHROPIC_CLIENT is not None:
+        return _ANTHROPIC_CLIENT
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key: raise ValueError("ANTHROPIC_API_KEY not set")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
     _ANTHROPIC_CLIENT = Anthropic(api_key=api_key)
     return _ANTHROPIC_CLIENT
 
@@ -470,7 +485,8 @@ class _Timeout:
             signal.alarm(self.seconds)
         return self
     def __exit__(self, *args):
-        if self._ok: signal.alarm(0)
+        if self._ok:
+            signal.alarm(0)
 
 # =============================================================================
 # FIX-WALLCLOCK v2: Wall-clock = PySR search budget + fixed post-processing budget.
@@ -505,17 +521,21 @@ print(f"   Wall-clock (pysr_only): {PYSR_ONLY_WALL_CLOCK}s  "
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 def load_checkpoint(path):
     try:
-        with open(path) as f: data = json.load(f)
+        with open(path) as f:
+            data = json.load(f)
         n = sum(1 for v in data.values() if isinstance(v, dict))
         print(f"📂 Checkpoint: {n} equations already done  ({path})")
         return data
-    except FileNotFoundError: return {}
+    except FileNotFoundError:
+        return {}
     except Exception as e:
-        print(f"⚠️  Checkpoint unreadable ({e}) — starting fresh"); return {}
+        print(f"⚠️  Checkpoint unreadable ({e}) — starting fresh")
+        return {}
 
 def save_checkpoint(path, results):
     tmp = str(path) + ".tmp"
-    with open(tmp, "w") as f: json.dump(results, f, indent=2)
+    with open(tmp, "w") as f:
+        json.dump(results, f, indent=2)
     os.replace(tmp, path)
 
 print("✅ Helpers ready")
@@ -673,9 +693,12 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
                 extrap_rmse[regime_name] = None
 
         def _f(v):
-            if v is None: return "N/A"
-            try: return f"{float(v):.4f}" if np.isfinite(float(v)) else "N/A"
-            except Exception: return "N/A"
+            if v is None:
+                return "N/A"
+            try:
+                return f"{float(v):.4f}" if np.isfinite(float(v)) else "N/A"
+            except Exception:
+                return "N/A"
         print(f"  [hypatia] {best_expr_raw[:55]}  R2={_f(train_r2)}  "
               f"extrap(near={_f(extrap_r2.get('near'))} "
               f"med={_f(extrap_r2.get('medium'))} "
@@ -771,7 +794,8 @@ def run_condition(eq, condition, seed=42, niterations=NITERATIONS,
         train_r2 = train_rmse = None
         extrap_r2   = {r: None for r, _ in EXTRAP_REGIMES}
         extrap_rmse = {r: None for r, _ in EXTRAP_REGIMES}
-        best_expr = "evaluation_error"; complexity = None
+        best_expr = "evaluation_error"
+        complexity = None
 
     total_time = sr_time + llm_time
     def _f(v): return f"{v:.4f}" if v is not None and np.isfinite(v) else "N/A"
@@ -799,7 +823,8 @@ print("✅ run_condition ready — hypatia → HybridDiscoverySystem v5.1 | pysr
 """## 4 · Run experiment
 
 > **Checkpoint key:** `{eq_id}_{condition}` — survives any equation renames.
-> Resume by re-running this cell; already-done entries are skipped.
+> Resume by re-running this cell
+already-done entries are skipped.
 """
 
 # Load checkpoint — keyed by eq_id (int) not name
@@ -874,12 +899,17 @@ for eq_idx, eq in enumerate(CORE_15):
     h   = res.get("hypatia",   {}) or {}
 
     def _f(v): return f"{v:7.4f}" if v is not None and np.isfinite(float(v) if v else 0) else "    N/A"
-    pn = p.get("extrap_r2_near"); pm = p.get("extrap_r2_medium"); pf = p.get("extrap_r2_far")
-    hn = h.get("extrap_r2_near"); hm = h.get("extrap_r2_medium"); hf = h.get("extrap_r2_far")
+    pn = p.get("extrap_r2_near")
+    pm = p.get("extrap_r2_medium")
+    pf = p.get("extrap_r2_far")
+    hn = h.get("extrap_r2_near")
+    hm = h.get("extrap_r2_medium")
+    hf = h.get("extrap_r2_far")
 
     print(f"{eq['name']:25s}  {_f(pn)} {_f(hn)}  {_f(pm)} {_f(hm)}  {_f(pf)} {_f(hf)}")
     if pf is not None and hf is not None:
-        P_far_all.append(pf); H_far_all.append(hf)
+        P_far_all.append(pf)
+        H_far_all.append(hf)
 
 print("─" * 80)
 print(f"{'Mean (far OOD)':25s}  {'':>7} {'':>7}  {'':>7} {'':>7}  "
@@ -907,7 +937,8 @@ for eq_idx, eq in enumerate(CORE_15):
     pf  = p.get("extrap_r2_far")
     hf  = h.get("extrap_r2_far")
     if pf is not None and hf is not None and np.isfinite(float(pf)) and np.isfinite(float(hf)):
-        P_far.append(float(pf)); H_far.append(float(hf))
+        P_far.append(float(pf))
+        H_far.append(float(hf))
         pairs.append((eq["name"], res.get("domain","—"),
                       p.get("extrap_r2_near"), h.get("extrap_r2_near"),
                       p.get("extrap_r2_medium"), h.get("extrap_r2_medium"),
@@ -950,10 +981,12 @@ with open(RESULTS_PATH) as f:
     all_results = json.load(f)
 
 def _fmt(v, d=4):
-    if v is None: return "---"
+    if v is None:
+        return "---"
     try:
         fv = float(v)
-        if not np.isfinite(fv): return "---"
+        if not np.isfinite(fv):
+            return "---"
         return f"{fv:.{d}f}"
     except (TypeError, ValueError):
         return "---"
@@ -994,7 +1027,8 @@ lines.append(r"\end{tabular}%")
 lines.append(r"}")  # close resizebox
 lines.append(r"\begin{flushleft}")
 lines.append(r"{\footnotesize "
-             r"$\dag$~Wall-clock timeout; result excluded from timing statistics. "
+             r"$\dag$~Wall-clock timeout
+             result excluded from timing statistics. "
              r"Michaelis-Menten HypatiaX far-$R^2 = -634.5989$ reflects saturation "
              r"function failure under extreme extrapolation (known failure mode). "
              + f"All runs: populations={POPULATIONS}, seed={SEED}, v5.1 engine."
@@ -1007,7 +1041,8 @@ with open(TEX_PATH, "w") as f:
     f.write(latex_str)
 print(f"✅ Table 5 LaTeX saved: {TEX_PATH}")
 print("\nFirst 20 lines:")
-for ln in lines[:20]: print(" ", ln)
+for ln in lines[:20]:
+    print(" ", ln)
 
 """## 8 · Instability stats for §10.9
 
@@ -1023,7 +1058,8 @@ if _one_eq or (_n_core15 is not None and int(_n_core15) < len(CORE_15)):
 else:
     PV_EQ   = next(e for e in CORE_15 if e["name"] == "Portfolio Variance")
     SEEDS_5 = [42, 123, 777, 2024, 99]
-    N_ITER_SWEEP = 300   # fast; change to 1000 for paper-final run
+    N_ITER_SWEEP = 300   # fast
+    change to 1000 for paper-final run
 
     print("Portfolio Variance — 5-seed stability sweep")
     print(f"Seeds : {SEEDS_5}  |  iterations: {N_ITER_SWEEP}")
@@ -1135,7 +1171,8 @@ provenance = {
         "FIX-POP: populations=30 (was 2 in original notebook)",
         "FIX-APIKEY: Kaggle Secrets only — no hardcoded sk-ant key",
         "FIX-WIRE: hypatia condition now routes through HybridDiscoverySystem (was bypassed)",
-        "FIX-WALLCLOCK v3: per-condition wall-clocks. hypatia=_HYPATIA_MAX_RETRIES(3)*PYSR_TIMEOUT(1100)+300=3600s; "
+        "FIX-WALLCLOCK v3: per-condition wall-clocks. hypatia=_HYPATIA_MAX_RETRIES(3)*PYSR_TIMEOUT(1100)+300=3600s
+        "
         "pysr_only=PYSR_TIMEOUT(1100)+300=1400s. v2's shared 1700s caused SIGALRM inside Julia on attempt 2 "
         "(attempt 1 used ~1149s leaving only ~551s for attempt 2's 1100s run).",
     ],
@@ -1167,8 +1204,10 @@ for p in output_files:
     if os.path.exists(p):
         size = os.path.getsize(p)
         print(f"  ✅ {Path(p).name}  ({size:,} bytes)")
-        try: display(FileLink(str(p)))
-        except Exception: pass
+        try:
+            display(FileLink(str(p)))
+        except Exception:
+            pass
     else:
         print(f"  ⚠️  {Path(p).name}  — not yet generated")
 if __name__ == "__main__":
