@@ -44,16 +44,14 @@ Prerequisites:
     pip install -r requirements.txt
 
 Changelog v4.9 (2026-05-01):
-    EXP2-SPLIT: exp2 is now three sequential steps:
-               exp2_sym  — run_exp2_symbolic_engine.py  (Method 5, PySR, resumable)
-               exp2_hyb  — run_exp2_hybrid_system.py    (Method 6, PySR, resumable)
-               exp2      — run_comparative_suite_benchmark_injected.py
-                           runs Methods 1-4 live + injects pre-computed 5+6 results.
-               Each step has its own checkpoint; a SIGKILL on method-5 never wipes
-               method-6 progress.  Pipeline checkpoint migration: if the old
-               'exp2: fail' entry exists, exp2_sym and exp2_hyb are treated as
-               not-yet-run (both will start from scratch unless their own checkpoints
-               exist in logs/).  Pass threshold: ≥9/30 equations solved.
+    EXP2-REDESIGN: Replaced monolithic exp2 subprocess (experiment_protocol_feynman_exp2.py)
+               with per-equation isolated runner (run_exp2_feynman).  Each of the 30
+               Feynman equations now spawns its own fresh Python+Julia subprocess, with
+               per-equation JSON results, wall-clock watchdog, and per-equation checkpoint
+               (logs/exp2_eq_checkpoint.json).  Step passes if ≥9/30 equations are solved
+               (EXP2_PASS_THRESHOLD=9).  Fully compatible with --resume, --one-equation,
+               and CI's N_FEYNMAN_TASKS=30 + PYSR_TIMEOUT=1100 environment.
+               Ports all code from run_all_checkpoint.py (redesign file).
 
 Changelog v4.8 (2026-04-23):
     FIX-EXP1B-ARGS: exp1b Step no longer passes --task/--seeds to
@@ -681,63 +679,19 @@ def run_exp2_feynman(env: dict, args, log_fh) -> bool:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                # FIX: put the child in its own process group so os.killpg()
-                # sends SIGKILL to the Python worker AND all Julia children it
-                # spawned — previously proc.kill() only killed the Python wrapper
-                # while Julia processes kept the pipe open for hours.
-                preexec_fn=os.setsid,
             )
-            # Stream output with a thread-based wall-clock watchdog.
-            # FIX: the old `for line in proc.stdout:` loop is a BLOCKING iterator —
-            # the deadline check only fires BETWEEN lines.  If Julia is silent for
-            # hours (serial mode with 30 populations and verbosity=0) the deadline
-            # is never checked and the subprocess runs until Julia decides to stop.
-            # Root cause of the observed 5344s / 89-minute hang for I.6.2a.
-            #
-            # Fix: a reader thread drains stdout into a queue; the main thread
-            # checks the deadline every ≤5 s regardless of subprocess output.
-            import queue as _queue
-            import threading as _threading
-
+            # Stream output with a wall-clock watchdog
             assert proc.stdout is not None
-            _line_q: _queue.Queue = _queue.Queue()
-
-            def _stdout_reader(stream, q):
-                try:
-                    for line in stream:
-                        q.put(line)
-                finally:
-                    q.put(None)  # sentinel — stdout closed
-
-            _reader_thread = _threading.Thread(
-                target=_stdout_reader, args=(proc.stdout, _line_q), daemon=True
-            )
-            _reader_thread.start()
-
-            timed_out = False
-            while True:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    _log(f"\n  ⏱  [{eq_name}] wall-clock limit reached "
-                         f"({kill_deadline}s) — killing subprocess")
-                    try:
-                        # Kill the entire process group so Julia children
-                        # also receive SIGKILL (not just the Python worker).
-                        import signal as _signal
-                        os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
-                    except Exception:
-                        proc.kill()   # fallback if process group not available
-                    timed_out = True
-                    break
-                try:
-                    line = _line_q.get(timeout=min(remaining, 5.0))
-                except _queue.Empty:
-                    continue   # wake up to re-check deadline
-                if line is None:
-                    break      # subprocess closed stdout — done normally
+            deadline = time.time() + kill_deadline
+            for line in proc.stdout:
                 log_fh.write(line)
                 log_fh.flush()
                 print(f"│  {line}", end="")
+                if time.time() > deadline:
+                    _log(f"\n  ⏱  [{eq_name}] wall-clock limit reached "
+                         f"({kill_deadline}s) — killing subprocess")
+                    proc.kill()
+                    break
             proc.wait(timeout=30)
             elapsed = time.time() - t0
 
@@ -1009,72 +963,18 @@ STEPS: list[Step] = [
              "DEFI_SEEDS": "42,99,123,777,2024",
          }),
 
-    # §10.7: 30-equation multi-domain comparison benchmark.
-    # Calls run_comparative_suite_benchmark_v2.py with --protocol all30 so it
-    # loads ExperimentProtocolAll (experiment_protocol_all_30.py) instead of
-    # the Feynman-only BenchmarkProtocol. This runs all 6 comparison methods
-    # (PureLLM, NN, HybridDeFi, HybridAllDomains, SymbolicEngine, HybridV50_2)
-    # across all 30 multi-domain equations, producing the comparison table used
-    # in §10.7.
-    #
-    # FIX-EXP2: was inline_runner=True calling run_exp2_feynman() which only
-    # ran SymbolicEngine.discover() and skipped all baseline comparison methods,
-    # making the §10.7 comparison table impossible to reproduce.
-    # ── exp2 split into three sequential steps ────────────────────────────
-    # Method 5 (SymbolicEngineWithLLM) and Method 6 (HybridDiscoverySystem)
-    # each run in their own isolated process with their own checkpoint so a
-    # SIGKILL / OOM on one never wipes the other.  The final injected step
-    # runs only the four fast methods (1-4, no Julia) and merges the pre-
-    # computed Method-5/6 results into the combined output JSON.
-    #
-    # Resume:  python3 run_all_checkpoint.py --resume
-    #   → exp2_sym  skips if logs/exp2_symbolic_engine_checkpoint.json done
-    #   → exp2_hyb  skips if logs/exp2_hybrid_system_checkpoint.json done
-    #   → exp2      skips if logs/pipeline_checkpoint.json marks it pass
-    #
-    # Run individually:
-    #   python3 hypatiax/experiments/benchmarks/run_exp2_symbolic_engine.py --resume
-    #   python3 hypatiax/experiments/benchmarks/run_exp2_hybrid_system.py   --resume
-    #   python3 hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_injected.py --resume
-    Step("exp2_sym",
-         "Exp 2 · Method 5 — SymbolicEngineWithLLM  (§10.7)",
-         [sys.executable,
-          "hypatiax/experiments/benchmarks/run_exp2_symbolic_engine.py",
-          "--resume",
-          "--samples", "200",
-         ],
-         phase="1 · Core experiments",
-         slow=True,
-         inline_runner=False,
-         expected="≥9/30 solved  [wall time 4–8 h, resumable]",
-         result_glob=None),
-
-    Step("exp2_hyb",
-         "Exp 2 · Method 6 — HybridDiscoverySystem v50_2  (§10.7)",
-         [sys.executable,
-          "hypatiax/experiments/benchmarks/run_exp2_hybrid_system.py",
-          "--resume",
-          "--samples", "200",
-         ],
-         phase="1 · Core experiments",
-         slow=True,
-         inline_runner=False,
-         expected="≥9/30 solved  [wall time 4–8 h, resumable]",
-         result_glob=None),
-
+    # §10.7: per-equation isolated runner (EXP2 REDESIGN — see run_exp2_feynman above).
+    # Each of the 30 Feynman equations runs in its own fresh subprocess so a single
+    # OOM/segfault/Julia crash does not kill all 30.  inline_runner=True causes
+    # run_step() to call run_exp2_feynman() instead of Popen.
     Step("exp2",
-         "Exp 2 · Methods 1-4 + inject 5+6  (§10.7 combined)",
-         [sys.executable,
-          "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_injected.py",
-          "--resume",
-          "--checkpoint-name", "exp2_all30_injected_checkpoint",
-          "--samples", "200",
-         ],
+         "Exp 2 · Feynman 30-equation extrapolation (§10.7, per-eq isolation)",
+         cmd=[],   # unused when inline_runner=True
          phase="1 · Core experiments",
-         slow=False,
-         inline_runner=False,
-         expected="9/30 (30%)  [fast: <30 min after method-5/6 checkpoints ready]",
-         result_glob="comparison_results/**/*.json"),
+         slow=True,
+         inline_runner=True,
+         expected="9/30 (30%)  [Kaggle 4-vCPU primary · wall time 4–8 h]",
+         result_glob="comparison_results/feynman-tests/**/*.json"),
 
     # §10.8 primary: SEED=42, source exp3_nguyen12_hybrid50v_02.py logic
     # FIX-EXP3: use sys.executable so the protocol wrapper runs in the active venv
@@ -2066,94 +1966,44 @@ def main() -> None:
     # ── Load checkpoint state ──────────────────────────────────────────────
     checkpoint_state: dict[str, str] = {}
     if args.resume:
-        # Re-read both sources so repo-root entries are never lost
-        _root_cp = REPO_ROOT / "pipeline_checkpoint.json"
-        for _cp_path in [_root_cp, CHECKPOINT]:
-            if _cp_path.exists():
-                try:
-                    _disk = json.loads(_cp_path.read_text())
-                    for _k, _v in _disk.items():
-                        if checkpoint_state.get(_k) != "pass":
-                            checkpoint_state[_k] = _v
-                except Exception:
-                    pass
-        # exp2 key migration: old "exp2: pass" → mark all three new steps pass
-        if checkpoint_state.get("exp2") == "pass":
-            for _sid in ("exp2_sym", "exp2_hyb", "exp2"):
-                checkpoint_state.setdefault(_sid, "pass")
-        if checkpoint_state.get("exp2") == "fail":
-            checkpoint_state.pop("exp2", None)
-        # Persist merged state immediately
-        save_checkpoint(checkpoint_state)
-
-        # ── Print clean pipeline status table, then jump to pending work ──
-        _col = {"pass": "✓", "fail": "✗", "skip": "─"}
-        _pending = [s for s in STEPS if checkpoint_state.get(s.id) != "pass"]
-        _done    = [s for s in STEPS if checkpoint_state.get(s.id) == "pass"]
-        print()
-        print("  ┌─ Pipeline status (" + f"{len(_done)}/{len(STEPS)} done) ──────────────────────────────────────────")
-        _cur_phase = ""
-        for _s in STEPS:
-            if _s.phase != _cur_phase:
-                print(f"  │  Phase {_s.phase}")
-                _cur_phase = _s.phase
-            _st  = checkpoint_state.get(_s.id, "todo")
-            _ico = {"pass": "✓", "fail": "✗", "todo": "·"}.get(_st, "·")
-            _tag = f"[{_st}]" if _st in ("fail",) else ""
-            print(f"  │    {_ico}  {_s.id:<30}  {_tag}")
-        if _pending:
-            print(f"  └─ Next: [{_pending[0].id}]  {_pending[0].label}")
+        checkpoint_state = load_checkpoint()
+        if checkpoint_state:
+            n_prev = sum(1 for v in checkpoint_state.values() if v == "pass")
+            print(f"\n  ── Resuming: {n_prev} step(s) already passed in checkpoint")
+            if args.from_step:
+                print(f"  ── --from {args.from_step}: force-rerun from here onwards")
         else:
-            print("  └─ All steps done.")
-        print()
-        if args.from_step:
-            print(f"  ── --from {args.from_step}: force-rerun from here onwards")
-        if not checkpoint_state:
-            print("  ── No checkpoint found — running full pipeline")
+            print("\n  ── No checkpoint found — running full pipeline")
 
     # ── Run pipeline ───────────────────────────────────────────────────────
     results: list[StepResult] = []
     current_phase = ""
     t_total = time.time()
     # once we reach --from step, all subsequent steps run regardless of checkpoint
-    # FIX: must start as False so resume-skip fires on already-passed steps when
-    # no --from is given.  With the old `args.from_step is None` initialisation,
-    # past_from was True from the start, making `not past_from` always False and
-    # therefore the resume-skip branch never triggered — every step re-ran.
-    past_from = False
+    past_from = args.from_step is None
 
     try:
         for step in STEPS:
+            if step.phase != current_phase:
+                banner(f"Phase {step.phase}")
+                current_phase = step.phase
+
             if args.from_step and step.id == args.from_step:
                 past_from = True
 
             # --only filter
             if args.only and step.id != args.only:
                 results.append(StepResult(step.id, step.label, "skip"))
+                print(f"  ── skip [{step.id}]  (--only {args.only})")
                 continue
 
-            # --resume: re-read checkpoint before every skip check (belt-and-suspenders)
-            if args.resume and not past_from:
-                for _cp_path in [REPO_ROOT / "pipeline_checkpoint.json", CHECKPOINT]:
-                    if _cp_path.exists():
-                        try:
-                            for _k, _v in json.loads(_cp_path.read_text()).items():
-                                if checkpoint_state.get(_k) != "pass":
-                                    checkpoint_state[_k] = _v
-                        except Exception:
-                            pass
-
-            # --resume: silently skip steps that already passed
+            # --resume: skip steps that already passed, unless we're past --from
             if (args.resume
                     and checkpoint_state.get(step.id) == "pass"
                     and not past_from):
                 results.append(StepResult(step.id, step.label, "resume-skip"))
+                print(f"  ↩  skip [{step.id}]  (checkpoint: already passed)")
                 continue
-
-            # Only print phase banner when we actually run a step
-            if step.phase != current_phase:
-                banner(f"Phase {step.phase}")
-                current_phase = step.phase
 
             # --skip-slow filter
             if args.skip_slow and step.slow:

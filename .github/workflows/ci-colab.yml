@@ -194,6 +194,11 @@ jobs:
       #       REPO = Path(os.environ['REPO_ROOT_PATH'])
       #     and the clone + Drive-mount blocks are skipped (repo is already checked out).
       #
+      #   Cell 3  (env-detection block) — the else-branch sets:
+      #       REPO = pathlib.Path('..') / GITHUB_REPO   ← note pathlib.Path not Path
+      #     same problem, different alias.  Patched to:
+      #       REPO = pathlib.Path(os.environ['REPO_ROOT_PATH'])
+      #
       #   Cell 16 (0-A Clone cell) — the else-branch sets:
       #       src = Path.cwd().parent / GITHUB_REPO
       #     same problem.  Patched to:
@@ -262,6 +267,14 @@ jobs:
               "    REPO = Path(os.environ.get('REPO_ROOT_PATH', os.getcwd()))"
           )
 
+          # ── Cell 3 fix: environment-detection block ───────────────────────
+          # Uses pathlib.Path('..') / GITHUB_REPO (note: pathlib.Path not Path).
+          CELL3_OLD = "    REPO       = pathlib.Path('..') / GITHUB_REPO"
+          CELL3_NEW = (
+              "    # [CI] notebook lives inside the repo — use REPO_ROOT_PATH\n"
+              "    REPO       = pathlib.Path(os.environ.get('REPO_ROOT_PATH', os.getcwd()))"
+          )
+
           # ── Cell 16 fix: 0-A Clone cell ───────────────────────────────────
           # Replace the wrong else-branch that sets src = Path.cwd().parent / GITHUB_REPO
           CELL16_OLD = "    src = Path.cwd().parent / GITHUB_REPO   # local: sibling of notebook directory"
@@ -291,6 +304,11 @@ jobs:
                   # will never fire — no further surgery needed.
                   print('[CI patcher] Cell 1 (Restore Session): REPO path fixed')
 
+              # Fix Cell 3 (env-detection block) — pathlib.Path('..') variant
+              if CELL3_OLD in src_text:
+                  cell['source'] = src_text.replace(CELL3_OLD, CELL3_NEW)
+                  print('[CI patcher] Cell 3 (env-detection): REPO path fixed')
+
               # Fix Cell 16 (0-A Clone) — wrong else-branch src path
               if CELL16_OLD in src_text:
                   cell['source'] = src_text.replace(CELL16_OLD, CELL16_NEW)
@@ -318,6 +336,7 @@ jobs:
               # These strings must NOT appear after patching
               bad = [
                   "Path('..') / GITHUB_REPO",
+                  "pathlib.Path('..') / GITHUB_REPO",
                   "Path.cwd().parent / GITHUB_REPO",
                   "drive.mount",
               ]

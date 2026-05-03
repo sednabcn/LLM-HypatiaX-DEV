@@ -82,8 +82,6 @@ import warnings
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-import logging
-import subprocess
 import numpy as np
 import sympy as sp
 
@@ -115,68 +113,12 @@ except ImportError:
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
-# Lazy loading for PySR
-try:
-    from pysr import PySR
-except ImportError:
-    PySR = None
 
-# Memory logging function
+
 def _log_rss(label: str):
     rss = psutil.Process(os.getpid()).memory_info().rss / 1e9
     print(f"   [MEM] {label}: RSS={rss:.2f} GB", flush=True)
 
-
-
-import sys  # needed for llm_cleanup and subprocess helpers
-
-# LLM cleanup mechanism
-def llm_cleanup():
-    """Force-exit the current process (last-resort OOM escape hatch)."""
-    if sys.platform == 'linux':
-        subprocess.call(['kill', '-9', str(os.getpid())])
-
-# Timeout guards
-class TimeoutGuard:
-    def __init__(self, timeout):
-        self.timeout = timeout
-        self.start_time = time.time()
-
-    def check_timeout(self):
-        if time.time() - self.start_time > self.timeout:
-            raise TimeoutError('Operation timed out')
-
-# Subprocess support pattern
-def run_subprocess(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
-    return stdout, stderr
-
-# Memory check guards
-def check_memory_threshold(threshold_gb: float):
-    """Kill process if RSS exceeds threshold_gb. Last-resort OOM guard."""
-    rss_gb = psutil.Process(os.getpid()).memory_info().rss / 1e9
-    _log_rss("check_memory_threshold")
-    if rss_gb > threshold_gb:
-        print(f"   ⚠ RSS {rss_gb:.2f} GB > threshold {threshold_gb:.2f} GB — triggering cleanup", flush=True)
-        llm_cleanup()
-
-
-def check_memory_ok(min_free_gb: float = 4.0) -> bool:
-    """Return False (and log a warning) when available RAM < min_free_gb.
-
-    Call this before each case in the outer loop to avoid an OOM-kill.
-    Returns True when there is enough memory to proceed safely.
-    """
-    vm = psutil.virtual_memory()
-    free_gb = vm.available / 1e9
-    if free_gb < min_free_gb:
-        print(
-            f"   ⚠ LOW MEMORY: {free_gb:.1f} GB free < {min_free_gb} GB — skipping case",
-            flush=True,
-        )
-        return False
-    return True
 # ============================================================================  
 # START
 # ============================================================================
@@ -1174,14 +1116,11 @@ class SymbolicEngine:
                 parsimony=self.config.parsimony,
                 maxsize=self.config.maxsize,
                 random_state=random_state,
-                # FIX (parallelism): deterministic=True forces parallelism="serial"
-                # which runs all populations sequentially.  With POPULATIONS=30 this
-                # meant 30 sequential tournament rounds → wall-clock ≫ timeout.
-                # Switching to "multithreading" lets Julia use all CPU cores so all
-                # populations run concurrently; wall-time ≈ single-population time.
-                # Reproducibility is sacrificed but that is acceptable in a benchmark
-                # where per-equation isolation already gives stable results.
-                parallelism="multithreading",
+                # Ported from core engine: deterministic=True makes random_state
+                # actually reproduce results (without it PySR ignores the seed for
+                # parallelised runs and emits a UserWarning in benchmark logs).
+                deterministic=True,
+                parallelism="serial",   # required companion to deterministic=True
                 verbosity=0,
                 progress=self.config.show_progress,
                 # Unique file per run — prevents PySR from reloading a cached
@@ -1249,21 +1188,6 @@ class SymbolicEngine:
             # call.  This prevents the 5-retry loop in HybridDiscoverySystem
             # from multiplying a slow PySR run into a full benchmark timeout.
             _timeout = int(os.environ.get("PYSR_TIMEOUT", self.config.pysr_timeout or 0))
-            # ── proc_timeout budget cap (Fix: Step 4 from diagnosis) ──────────
-            # If a proc_timeout is set (e.g. via env var PROC_TIMEOUT), ensure
-            # pysr_timeout stays at least 60s + llm_overhead_secs short of it so
-            # LLM post-processing doesn't blow past the wall-clock limit.
-            _proc_timeout = int(os.environ.get("PROC_TIMEOUT", 0))
-            _llm_overhead = int(os.environ.get("LLM_OVERHEAD_SECS", 120))
-            if _proc_timeout > 0 and _timeout > 0:
-                _budget_for_pysr = _proc_timeout - _llm_overhead - 60  # 60s safety margin
-                if _budget_for_pysr > 0 and _timeout > _budget_for_pysr:
-                    print(
-                        f"   [TIMEOUT-CAP] pysr_timeout {_timeout}s → {_budget_for_pysr}s "
-                        f"(proc_timeout={_proc_timeout}s - llm_overhead={_llm_overhead}s - 60s margin)",
-                        flush=True,
-                    )
-                    _timeout = _budget_for_pysr
             if _timeout > 0:
                 pysr_kwargs["timeout_in_seconds"] = _timeout
 
@@ -1317,6 +1241,8 @@ class SymbolicEngine:
                 print("   [PySR] define_operators = NOT SET (old PySR path)", flush=True)
 
             try:
+                gc.collect()
+                _log_rss("before_pysr")
                 self.model = PySRRegressor(**pysr_kwargs)
                 print("   [PySR] PySRRegressor constructed OK", flush=True)
             except Exception as _init_exc:
@@ -1512,15 +1438,18 @@ class SymbolicEngine:
             else:
                 _trace.append("ratio_features=skipped")
 
-            # ── Population-aware iteration scaling (serial mode only) ──────────
-            # In "serial" parallelism, total wall-time ∝ populations × niterations.
-            # In "multithreading", populations run concurrently so wall-time ∝
-            # niterations alone — POP-SCALE would hurt quality for no benefit.
-            # Guard: only scale when parallelism is "serial".
-            _active_parallelism = pysr_kwargs.get("parallelism", "multithreading")
+            # ── Population-aware iteration scaling ───────────────────────────
+            # Total evaluations = populations × population_size × niterations.
+            # A baseline budget of populations=10 × 33 × 25 = 8,250 evals fits
+            # comfortably in pysr_timeout.  When populations is raised (e.g. to
+            # 30 for deeper scratch searches), we scale niterations down
+            # proportionally so total evals stay ≤ the baseline.
+            #
+            # Formula: adjusted = max(5, floor(base_iters * 10 / populations))
+            # where 10 is the default populations value (the "baseline").
             _base_populations = 10   # matches DiscoveryConfig default
             _actual_populations = pysr_kwargs["populations"]
-            if _active_parallelism == "serial" and _actual_populations > _base_populations:
+            if _actual_populations > _base_populations:
                 _pop_scale = _base_populations / _actual_populations
                 _pop_adjusted_iters = max(5, int(pysr_kwargs["niterations"] * _pop_scale))
                 if _pop_adjusted_iters < pysr_kwargs["niterations"]:
@@ -1532,13 +1461,6 @@ class SymbolicEngine:
                     )
                     _trace.append(f"pop_scale={_pop_scale:.2f}({pysr_kwargs['niterations']}→{_pop_adjusted_iters})")
                     pysr_kwargs["niterations"] = _pop_adjusted_iters
-            elif _actual_populations > _base_populations:
-                print(
-                    f"   [POP-SCALE] populations={_actual_populations}  parallelism={_active_parallelism!r} "
-                    f"→ niterations unchanged (populations run concurrently, no scaling needed)",
-                    flush=True,
-                )
-                _trace.append(f"pop_scale=skipped(multithreading,pops={_actual_populations})")
 
             # ── Feature-count adaptive iteration scaling ─────────────────────
             # When GM or ratio augmentation adds many columns (e.g. 6 vars →
@@ -1565,9 +1487,7 @@ class SymbolicEngine:
                     pysr_kwargs["niterations"] = _adjusted_iters
 
             # Fit model with safe variable names
-            _log_rss("before PySR")
             self.model.fit(_X_fit, _y_fit, variable_names=safe_names)
-            _log_rss("after PySR")
 
             # Get best equation — scan the full Pareto front for highest R²
             # rather than using get_best() which picks by loss×complexity and
@@ -1576,36 +1496,26 @@ class SymbolicEngine:
                 eqs = self.model.equations_
                 best_r2 = -np.inf
                 best_idx = 0
-                # FIX (double-predict): cache r2 per equation here so the
-                # Pareto-trace block below can reuse them without a second
-                # round of Julia predict() calls (previously called model.predict
-                # twice per equation — once in this loop, once in _pareto_r2s).
-                _cached_r2: dict[int, float] = {}
                 for idx in range(len(eqs)):
                     try:
                         y_pred_i = self.model.predict(_X_fit, index=idx) * _y_std
                         r2_i = r2_score(y, y_pred_i)
-                        _cached_r2[idx] = r2_i
                         if r2_i > best_r2:
                             best_r2 = r2_i
                             best_idx = idx
                     except Exception:
                         pass
 
-                # FIX (indentation bug): these three lines were erroneously
-                # INSIDE the for-loop above, causing best_eq_raw / best_eq /
-                # expression to be recomputed on every iteration (using the
-                # intermediate best_idx) instead of once after the loop completes.
-                best_eq_raw = eqs.iloc[best_idx] if hasattr(eqs, "iloc") else eqs[best_idx]
-                if hasattr(best_eq_raw, "equation"):
-                    # SimpleNamespace (mock) — attribute access
-                    best_eq = {
-                        "equation": str(best_eq_raw.equation),
-                        "complexity": getattr(best_eq_raw, "complexity", len(str(best_eq_raw.equation))),
-                    }
-                else:
-                    best_eq = best_eq_raw
-                expression = str(best_eq["equation"])
+                    best_eq_raw = eqs.iloc[best_idx] if hasattr(eqs, "iloc") else eqs[best_idx]
+                    if hasattr(best_eq_raw, "equation"):
+                        # SimpleNamespace (mock) — attribute access
+                        best_eq = {
+                            "equation": str(best_eq_raw.equation),
+                            "complexity": getattr(best_eq_raw, "complexity", len(str(best_eq_raw.equation))),
+                        }
+                    else:
+                        best_eq = best_eq_raw
+                    expression = str(best_eq["equation"])
 
                 # ── Complexity gate ───────────────────────────────────────────
                 # Reject equations that exceed MAX_COMPLEXITY; treat as if no
@@ -1635,13 +1545,16 @@ class SymbolicEngine:
                     }
                 else:
                     # ── Pareto front trace ────────────────────────────────────
-                    # Reuse _cached_r2 from the loop above — no second predict().
+                    # Dump all equations in the Pareto front so we can see what PySR
+                    # actually found, even if R² is low.  Top 5 by R² only.
                     _pareto_r2s = []
-                    for _pi, _pr2 in _cached_r2.items():
+                    for _pi in range(len(eqs)):
                         try:
+                            _pr2 = r2_score(y, self.model.predict(_X_fit, index=_pi) * _y_std)
                             _pareto_r2s.append((_pi, str(eqs.iloc[_pi]["equation"]), round(_pr2, 4)))
                         except Exception:
                             pass
+                    _pareto_r2s.sort(key=lambda x: x[1], reverse=False)
                     _top5 = sorted(_pareto_r2s, key=lambda x: x[2], reverse=True)[:5]
                     _trace.append(f"pareto_top5={_top5}")
                     _trace.append(f"best_r2={best_r2:.4f}")
@@ -1835,7 +1748,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             )
 
         elif self.llm_mode == "seed":
-            result = self._discover_with_llm_seed(
+            return self._discover_with_llm_seed(
                 X,
                 y,
                 variable_names,
@@ -1846,7 +1759,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             )
 
         elif self.llm_mode == "hybrid":
-            result = self._discover_hybrid(
+            return self._discover_hybrid(
                 X,
                 y,
                 variable_names,
@@ -1857,7 +1770,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             )
 
         elif self.llm_mode == "fallback":
-            result = self._discover_with_fallback(
+            return self._discover_with_fallback(
                 X,
                 y,
                 variable_names,
@@ -1869,7 +1782,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
         else:
             print(f"⚠️  Unknown LLM mode: {self.llm_mode}, using pure PySR")
-            result = super().discover(
+            return super().discover(
                 X,
                 y,
                 variable_names,
@@ -1878,17 +1791,6 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 auto_sanitize=auto_sanitize,
                 **kwargs,
             )
-
-        # ── Fix: LLM history memory leak (Step 3 from diagnosis) ─────────────
-        # IntegratedLLMEngine accumulates API response objects across calls.
-        # After each case, drop the engine so Python can GC the response history.
-        # A fresh engine will be created on the next SymbolicEngineWithLLM init.
-        if hasattr(self, 'llm_engine') and self.llm_engine is not None:
-            self.llm_engine = None
-        self.model = None  # release PySR/Julia model RSS too
-        gc.collect()
-
-        return result
 
     def _discover_with_llm_seed(
         self, X, y, variable_names, equation_name, random_state, auto_sanitize, **kwargs

@@ -1174,14 +1174,11 @@ class SymbolicEngine:
                 parsimony=self.config.parsimony,
                 maxsize=self.config.maxsize,
                 random_state=random_state,
-                # FIX (parallelism): deterministic=True forces parallelism="serial"
-                # which runs all populations sequentially.  With POPULATIONS=30 this
-                # meant 30 sequential tournament rounds → wall-clock ≫ timeout.
-                # Switching to "multithreading" lets Julia use all CPU cores so all
-                # populations run concurrently; wall-time ≈ single-population time.
-                # Reproducibility is sacrificed but that is acceptable in a benchmark
-                # where per-equation isolation already gives stable results.
-                parallelism="multithreading",
+                # Ported from core engine: deterministic=True makes random_state
+                # actually reproduce results (without it PySR ignores the seed for
+                # parallelised runs and emits a UserWarning in benchmark logs).
+                deterministic=True,
+                parallelism="serial",   # required companion to deterministic=True
                 verbosity=0,
                 progress=self.config.show_progress,
                 # Unique file per run — prevents PySR from reloading a cached
@@ -1512,15 +1509,18 @@ class SymbolicEngine:
             else:
                 _trace.append("ratio_features=skipped")
 
-            # ── Population-aware iteration scaling (serial mode only) ──────────
-            # In "serial" parallelism, total wall-time ∝ populations × niterations.
-            # In "multithreading", populations run concurrently so wall-time ∝
-            # niterations alone — POP-SCALE would hurt quality for no benefit.
-            # Guard: only scale when parallelism is "serial".
-            _active_parallelism = pysr_kwargs.get("parallelism", "multithreading")
+            # ── Population-aware iteration scaling ───────────────────────────
+            # Total evaluations = populations × population_size × niterations.
+            # A baseline budget of populations=10 × 33 × 25 = 8,250 evals fits
+            # comfortably in pysr_timeout.  When populations is raised (e.g. to
+            # 30 for deeper scratch searches), we scale niterations down
+            # proportionally so total evals stay ≤ the baseline.
+            #
+            # Formula: adjusted = max(5, floor(base_iters * 10 / populations))
+            # where 10 is the default populations value (the "baseline").
             _base_populations = 10   # matches DiscoveryConfig default
             _actual_populations = pysr_kwargs["populations"]
-            if _active_parallelism == "serial" and _actual_populations > _base_populations:
+            if _actual_populations > _base_populations:
                 _pop_scale = _base_populations / _actual_populations
                 _pop_adjusted_iters = max(5, int(pysr_kwargs["niterations"] * _pop_scale))
                 if _pop_adjusted_iters < pysr_kwargs["niterations"]:
@@ -1532,13 +1532,6 @@ class SymbolicEngine:
                     )
                     _trace.append(f"pop_scale={_pop_scale:.2f}({pysr_kwargs['niterations']}→{_pop_adjusted_iters})")
                     pysr_kwargs["niterations"] = _pop_adjusted_iters
-            elif _actual_populations > _base_populations:
-                print(
-                    f"   [POP-SCALE] populations={_actual_populations}  parallelism={_active_parallelism!r} "
-                    f"→ niterations unchanged (populations run concurrently, no scaling needed)",
-                    flush=True,
-                )
-                _trace.append(f"pop_scale=skipped(multithreading,pops={_actual_populations})")
 
             # ── Feature-count adaptive iteration scaling ─────────────────────
             # When GM or ratio augmentation adds many columns (e.g. 6 vars →
@@ -1576,36 +1569,26 @@ class SymbolicEngine:
                 eqs = self.model.equations_
                 best_r2 = -np.inf
                 best_idx = 0
-                # FIX (double-predict): cache r2 per equation here so the
-                # Pareto-trace block below can reuse them without a second
-                # round of Julia predict() calls (previously called model.predict
-                # twice per equation — once in this loop, once in _pareto_r2s).
-                _cached_r2: dict[int, float] = {}
                 for idx in range(len(eqs)):
                     try:
                         y_pred_i = self.model.predict(_X_fit, index=idx) * _y_std
                         r2_i = r2_score(y, y_pred_i)
-                        _cached_r2[idx] = r2_i
                         if r2_i > best_r2:
                             best_r2 = r2_i
                             best_idx = idx
                     except Exception:
                         pass
 
-                # FIX (indentation bug): these three lines were erroneously
-                # INSIDE the for-loop above, causing best_eq_raw / best_eq /
-                # expression to be recomputed on every iteration (using the
-                # intermediate best_idx) instead of once after the loop completes.
-                best_eq_raw = eqs.iloc[best_idx] if hasattr(eqs, "iloc") else eqs[best_idx]
-                if hasattr(best_eq_raw, "equation"):
-                    # SimpleNamespace (mock) — attribute access
-                    best_eq = {
-                        "equation": str(best_eq_raw.equation),
-                        "complexity": getattr(best_eq_raw, "complexity", len(str(best_eq_raw.equation))),
-                    }
-                else:
-                    best_eq = best_eq_raw
-                expression = str(best_eq["equation"])
+                    best_eq_raw = eqs.iloc[best_idx] if hasattr(eqs, "iloc") else eqs[best_idx]
+                    if hasattr(best_eq_raw, "equation"):
+                        # SimpleNamespace (mock) — attribute access
+                        best_eq = {
+                            "equation": str(best_eq_raw.equation),
+                            "complexity": getattr(best_eq_raw, "complexity", len(str(best_eq_raw.equation))),
+                        }
+                    else:
+                        best_eq = best_eq_raw
+                    expression = str(best_eq["equation"])
 
                 # ── Complexity gate ───────────────────────────────────────────
                 # Reject equations that exceed MAX_COMPLEXITY; treat as if no
@@ -1635,13 +1618,16 @@ class SymbolicEngine:
                     }
                 else:
                     # ── Pareto front trace ────────────────────────────────────
-                    # Reuse _cached_r2 from the loop above — no second predict().
+                    # Dump all equations in the Pareto front so we can see what PySR
+                    # actually found, even if R² is low.  Top 5 by R² only.
                     _pareto_r2s = []
-                    for _pi, _pr2 in _cached_r2.items():
+                    for _pi in range(len(eqs)):
                         try:
+                            _pr2 = r2_score(y, self.model.predict(_X_fit, index=_pi) * _y_std)
                             _pareto_r2s.append((_pi, str(eqs.iloc[_pi]["equation"]), round(_pr2, 4)))
                         except Exception:
                             pass
+                    _pareto_r2s.sort(key=lambda x: x[1], reverse=False)
                     _top5 = sorted(_pareto_r2s, key=lambda x: x[2], reverse=True)[:5]
                     _trace.append(f"pareto_top5={_top5}")
                     _trace.append(f"best_r2={best_r2:.4f}")

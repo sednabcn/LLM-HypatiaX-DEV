@@ -1049,18 +1049,18 @@ for ln in lines[:20]:
 Computes per-equation instability index from the Core-15 multi-seed variance, then writes CSV for Spearman ρ=−0.70 claim.
 """
 
-# ── C4: Portfolio Variance 5-seed sweep ──────────────────────────────────────
+# ── C4: Portfolio Std Dev 5-seed sweep ───────────────────────────────────────
 # Skip in smoke-test mode — this sweep runs 5 seeds × 2 conditions independently
 # of the main Core-15 loop and must respect ONE_EQUATION / N_CORE15_TASKS.
 if _one_eq or (_n_core15 is not None and int(_n_core15) < len(CORE_15)):
-    print("⚠  Smoke-test mode: skipping Portfolio Variance 5-seed sweep")
+    print("⚠  Smoke-test mode: skipping Portfolio Std Dev 5-seed sweep")
     seed_results = {}
 else:
-    PV_EQ   = next(e for e in CORE_15 if e["name"] == "Portfolio Variance")
+    PV_EQ   = next(e for e in CORE_15 if e["name"] == "Portfolio Std Dev")
     SEEDS_5 = [42, 123, 777, 2024, 99]
     N_ITER_SWEEP = 300   # fast; change to 1000 for paper-final run
 
-    print("Portfolio Variance — 5-seed stability sweep")
+    print("Portfolio Std Dev — 5-seed stability sweep")
     print(f"Seeds : {SEEDS_5}  |  iterations: {N_ITER_SWEEP}")
     print("=" * 65)
 

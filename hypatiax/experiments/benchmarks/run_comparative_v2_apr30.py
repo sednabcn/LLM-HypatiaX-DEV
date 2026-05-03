@@ -57,12 +57,6 @@ Usage
 
   # Increase sample count
   python run_protocol_benchmark_core.py --samples 500
-
-  # Resume an interrupted run (skips already-completed equations)
-  python run_protocol_benchmark_core.py --resume
-
-  # Override PySR timeout (default: 300s — same as run_all_checkpoint.py)
-  python run_protocol_benchmark_core.py --pysr-timeout 1100
 """
 
 import ctypes as _ctypes
@@ -75,7 +69,6 @@ def _kill_thread(tid):
     )
 
 import concurrent.futures as _cf
-import gc
 import json
 import os
 import random
@@ -134,10 +127,7 @@ random.seed(42)
 np.random.seed(42)
 
 # PySR subprocess timeout — overridden by --pysr-timeout at runtime.
-# FIX-WALLCLOCK: read from PYSR_TIMEOUT env var.
-# FIX-TIMEOUT: default lowered 1100 → 300 to match run_all_checkpoint.py fix.
-# Easy equations solve in <30s; hard ones fail fast. Full suite completes in ~2h
-# on 4-vCPU vs never with 1100s (every equation killed before result JSON written).
+# FIX-WALLCLOCK: read from PYSR_TIMEOUT env var (repro.yaml: 1100s).
 _PYSR_TIMEOUT: int = int(os.environ.get("PYSR_TIMEOUT", 1100))
 
 # ---------------------------------------------------------------------------
@@ -1255,18 +1245,6 @@ class ImprovedNNMethod(BaseMethod):
                 rmse=rmse_final,
                 formula=f"ImprovedNN({X.shape[1]}→{'→'.join(str(h) for h in hidden)}→1,{space_tag})",
             )
-
-            # ── MEM-FIX: explicitly delete torch objects so GC can reclaim
-            # them immediately instead of waiting until the next equation.
-            # Without this, 30 equations × model + tensors accumulate in RAM.
-            try:
-                del model, optimizer, scheduler, X_t, y_t
-                if _lin_model is not None:
-                    del _lin_model, _lin_scaler_X, _lin_scaler_y
-                gc.collect()
-            except Exception:
-                pass
-
             return single_result
 
         except Exception as exc:
@@ -2217,33 +2195,8 @@ def _run_pysr_in_subprocess(
         try:
             stdout_bytes, stderr_bytes = proc.communicate(input=encoded, timeout=timeout)
         except subprocess.TimeoutExpired:
-            # ── FIX: drain communicate() with a hard timeout ─────────────
-            # ROOT CAUSE of test-2 28064s runaway:
-            # proc.kill() sends SIGKILL to the Python subprocess, but
-            # juliacall embeds Julia as a C extension whose native threads
-            # survive the Python interpreter death and keep the stdout/stderr
-            # pipes open.  The bare proc.communicate() drain then blocks
-            # indefinitely until Julia's BFGS refinement finishes naturally.
-            # Fix: use os.killpg to kill the entire process GROUP (Python +
-            # any Julia worker processes), then drain with a 30s timeout.
-            # If the drain still hangs after 30s, close the pipes by force.
-            import signal as _signal
-            try:
-                import os as _os
-                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
-            except Exception:
-                proc.kill()  # fallback: single-process kill
-            try:
-                _, stderr_bytes = proc.communicate(timeout=30)
-            except subprocess.TimeoutExpired:
-                # Pipes still open after 30s — close them by force
-                if proc.stdout:
-                    proc.stdout.close()
-                if proc.stderr:
-                    proc.stderr.close()
-                stderr_bytes = b""
-            except Exception:
-                stderr_bytes = b""
+            proc.kill()
+            _, stderr_bytes = proc.communicate()
             stderr_tail = (
                 stderr_bytes.decode(errors="replace")[-300:] if stderr_bytes else ""
             )
@@ -3320,18 +3273,6 @@ Examples
         help="Which published SR benchmark to use (default: feynman)",
     )
     parser.add_argument(
-        "--protocol",
-        choices=["feynman", "all30"],
-        default="feynman",
-        dest="protocol",
-        help=(
-            "Which experiment protocol to load (default: feynman = "
-            "experiment_protocol_benchmark_v2.py / BenchmarkProtocol). "
-            "Use 'all30' to load experiment_protocol_all_30.py / "
-            "ExperimentProtocolAll — the 30 multi-domain equations used by exp2."
-        ),
-    )
-    parser.add_argument(
         "--domain", type=str, default="all_domains",
         help="Domain filter — short name ('mechanics') or full key ('feynman_mechanics')",
     )
@@ -3501,72 +3442,46 @@ Examples
     global _METHOD_TIMEOUT_SECS
     _METHOD_TIMEOUT_SECS = args.method_timeout
 
-    # ── Load protocol ────────────────────────────────────────────────────────
-    # --protocol feynman (default): BenchmarkProtocol from experiment_protocol_benchmark_v2.py
-    # --protocol all30            : ExperimentProtocolAll from experiment_protocol_all_30.py
-    #
-    # Both classes expose the same interface:
-    #   protocol.get_all_domains()            → list[str]
-    #   protocol.load_test_data(domain, ...)  → list[tuple]
-    # so the rest of the script works unchanged regardless of which is loaded.
-    _protocol_choice = getattr(args, "protocol", "feynman")
+    # ── Load BenchmarkProtocol ──────────────────────────────────────────────
+    try:
+        from hypatiax.protocols.experiment_protocol_benchmark_v2 import (
+            BenchmarkProtocol,
+        )
+        _noiseless = getattr(args, "noiseless", False)
+        _threshold = getattr(args, "threshold", None)
+        if _threshold is None:
+            _threshold = 0.9999 if _noiseless else 0.995
 
-    if _protocol_choice == "all30":
-        # exp2 multi-domain 30-equation comparison
-        try:
-            from hypatiax.protocols.experiment_protocol_all_30 import (
-                ExperimentProtocolAll,
-            )
-            protocol = ExperimentProtocolAll()
-            _noiseless = False     # all30 protocol has no noiseless variant
-            _threshold = 0.995
-            print("✅ ExperimentProtocolAll loaded  (protocol=all30, 30 multi-domain equations)")
-            print()
-        except ImportError as _e:
-            print(f"❌  experiment_protocol_all_30.py not found: {_e}")
-            print("    Expected at: hypatiax/protocols/experiment_protocol_all_30.py")
-            sys.exit(1)
-    else:
-        # default: Feynman BenchmarkProtocol
-        try:
-            from hypatiax.protocols.experiment_protocol_benchmark_v2 import (
-                BenchmarkProtocol,
-            )
-            _noiseless = getattr(args, "noiseless", False)
-            _threshold = getattr(args, "threshold", None)
-            if _threshold is None:
-                _threshold = 0.9999 if _noiseless else 0.995
-
-            protocol = BenchmarkProtocol(
-                benchmark=args.benchmark,
-                num_samples=args.samples,
-                seed=42,
-                feynman_series=args.series,
-                noiseless=_noiseless,
-            )
-            print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
-            print()
-            if _noiseless:
-                print("=" * 70)
-                print("  NOISELESS MODE  —  noise_level = 0.0")
-                print(f"  R² threshold    :  {_threshold}")
-                print("  Comparable to   :  NeSymReS (59.4%)  AI Feynman (79.3%)")
-                print("                     TPSR (56.0%)       DSR (32.0%)")
-                print("  Output file     :  protocol_core_noiseless_TIMESTAMP.json")
-                print("=" * 70)
-            else:
-                print("=" * 70)
-                print("  NOISY MODE  —  noise_level = 0.05")
-                print(f"  R² threshold    :  {_threshold}  (practical)")
-                print("  R² ceiling      :  ~0.9982  (noise floor)")
-                print("  NOT comparable to published noiseless figures.")
-                print("  Use --noiseless --threshold 0.9999 for literature comparison.")
-                print("=" * 70)
-            print()
-        except ImportError:
-            print("❌  experiment_protocol_benchmark_v2.py not found.")
-            print("    Expected at: hypatiax/protocols/experiment_protocol_benchmark_v2.py")
-            sys.exit(1)
+        protocol = BenchmarkProtocol(
+            benchmark=args.benchmark,
+            num_samples=args.samples,
+            seed=42,
+            feynman_series=args.series,
+            noiseless=_noiseless,
+        )
+        print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
+        print()
+        if _noiseless:
+            print("=" * 70)
+            print("  NOISELESS MODE  —  noise_level = 0.0")
+            print(f"  R² threshold    :  {_threshold}")
+            print("  Comparable to   :  NeSymReS (59.4%)  AI Feynman (79.3%)")
+            print("                     TPSR (56.0%)       DSR (32.0%)")
+            print("  Output file     :  protocol_core_noiseless_TIMESTAMP.json")
+            print("=" * 70)
+        else:
+            print("=" * 70)
+            print("  NOISY MODE  —  noise_level = 0.05")
+            print(f"  R² threshold    :  {_threshold}  (practical)")
+            print("  R² ceiling      :  ~0.9982  (noise floor)")
+            print("  NOT comparable to published noiseless figures.")
+            print("  Use --noiseless --threshold 0.9999 for literature comparison.")
+            print("=" * 70)
+        print()
+    except ImportError:
+        print("❌  experiment_protocol_benchmark_v2.py not found.")
+        print("    Expected at: hypatiax/protocols/experiment_protocol_benchmark_v2.py")
+        sys.exit(1)
 
     # ── Build suite ─────────────────────────────────────────────────────────
     # --skip-pysr: exclude methods 5 (SymbolicEngine) and 6 (HybridV40).
@@ -3607,28 +3522,17 @@ Examples
         print("ℹ️  --use-transcendental-compositions: asin_of_sin / acos_of_cos / atan_of_tan enabled")
 
     # ── Collect test cases (same logic as run_comparative_suite_benchmark) ──
-    # MEM-FIX: store only lightweight metadata tuples (no X/y arrays) in
-    # all_tests so 30 datasets are NOT all in RAM simultaneously.
-    # Each tuple is (desc, var_names, meta, domain).
-    # X and y are loaded lazily inside the main loop via _load_eq_data().
-    all_tests: list[tuple] = []   # (desc, var_names, meta, domain) — no X/y
+    all_tests: list[tuple] = []
     _equation_indices = getattr(args, "equations", None)  # 1-based list or None
-
-    def _iter_protocol(domain_filter=None):
-        """Yield (desc, X, y, var_names, meta, domain) from the protocol."""
-        domains = [domain_filter] if domain_filter else protocol.get_all_domains()
-        for dom in domains:
-            for case in protocol.load_test_data(dom, num_samples=args.samples):
-                desc, X, y, var_names, meta = case
-                yield desc, X, y, var_names, meta, dom
 
     if args.test:
         print(f"\n🔍 Searching for: '{args.test}'")
-        for desc, X, y, var_names, meta, domain in _iter_protocol():
-            if args.test.lower() in meta["equation_name"].lower():
-                all_tests.append((desc, var_names, meta, domain))
-                # Keep X/y only for this single test — stored temporarily
-                _single_test_data = {meta["equation_name"]: (X, y)}
+        for domain in protocol.get_all_domains():
+            for desc, X, y, var_names, meta in protocol.load_test_data(domain, num_samples=args.samples):
+                if args.test.lower() in meta["equation_name"].lower():
+                    all_tests.append((desc, X, y, var_names, meta, domain))
+                    break
+            if all_tests:
                 break
         if not all_tests:
             print(f"❌  '{args.test}' not found. Available equations:")
@@ -3636,12 +3540,13 @@ Examples
                 for _, _, _, _, meta in protocol.load_test_data(domain, num_samples=10):
                     print(f"   • {meta['equation_name']}")
             sys.exit(1)
+
     else:
-        _single_test_data = {}
+        # Load all domains or a specific one
         if args.domain == "all_domains":
-            for desc, X, y, var_names, meta, domain in _iter_protocol():
-                all_tests.append((desc, var_names, meta, domain))
-                del X, y   # don't hold all 30 datasets in RAM
+            for domain in protocol.get_all_domains():
+                for case in protocol.load_test_data(domain, num_samples=args.samples):
+                    all_tests.append((*case, domain))
         else:
             available = protocol.get_all_domains()
             resolved  = args.domain
@@ -3654,9 +3559,8 @@ Examples
                 else:
                     print(f"❌  Unknown domain '{args.domain}'.  Available: {', '.join(available)}")
                     sys.exit(1)
-            for desc, X, y, var_names, meta, _ in _iter_protocol(resolved):
-                all_tests.append((desc, var_names, meta, resolved))
-                del X, y
+            for case in protocol.load_test_data(resolved, num_samples=args.samples):
+                all_tests.append((*case, resolved))
 
     # ── --equations: filter to specific 1-based indices ─────────────────────
     if _equation_indices:
@@ -3753,10 +3657,7 @@ Examples
 
     # ── Main loop ───────────────────────────────────────────────────────────
     global_done = len(completed_keys)   # tests already done before this run
-    # MEM-FIX: all_tests now stores (desc, var_names, meta, domain) — no X/y.
-    # X and y are reloaded from the protocol lazily, one equation at a time,
-    # so only one dataset is ever in RAM at once (vs 30 previously).
-    for i, (description, var_names, metadata, domain) in enumerate(all_tests, 1):
+    for i, (description, X, y, var_names, metadata, domain) in enumerate(all_tests, 1):
         eq_key = _eq_key(metadata, domain)
 
         # Skip if already completed (resume mode)
@@ -3786,28 +3687,6 @@ Examples
                f"{total_tests - done_before} left")
         pprint(f"{'='*80}")
 
-        # MEM-FIX: lazy-load X/y for this equation only now.
-        # For --test single-equation runs, X/y were captured into _single_test_data.
-        # For all other runs, reload from the protocol on demand.
-        _eq_name = metadata.get("equation_name", description)
-        if _eq_name in _single_test_data:
-            X, y = _single_test_data[_eq_name]
-        else:
-            _loaded = list(protocol.load_test_data(domain, num_samples=args.samples))
-            _match  = next(
-                (case for case in _loaded
-                 if case[4].get("equation_name", case[0]) == _eq_name  # type: ignore[union-attr]
-                 or case[0] == description),
-                None,
-            )
-            if _match is None:
-                pprint(f"  ⚠️  Could not reload X/y for '{_eq_name}' — skipping")
-                global_done += 1
-                completed_keys.append(eq_key)
-                continue
-            _, X, y, _, _ = _match
-            del _loaded, _match  # free the rest immediately
-
         suite.run_test(
             description=description,
             X=X, y=y,
@@ -3816,10 +3695,6 @@ Examples
             domain=domain,
             verbose=not args.quiet,
         )
-
-        # MEM-FIX: release this equation's data arrays immediately after run.
-        del X, y
-        gc.collect()
 
         # Record timing
         _test_elapsed = time.time() - _test_start

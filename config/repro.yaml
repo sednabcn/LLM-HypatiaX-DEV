@@ -32,11 +32,24 @@ pca_train_frac:     0.40
 nn_time_limit:      120
 
 timeouts:
-  pysr_attempt_seconds: 1100
-  method_seconds: 900
-  equation_wall_clock: 1200
-  feynman_pysr_seconds: 1100
-  instability_pysr_seconds: 300
+  # Julia-internal timeout: passed as timeout_in_seconds to PySRRegressor.
+  # Julia honours this between iterations only — not during hall-of-fame refinement.
+  pysr_attempt_seconds:      1100   # → env PYSR_TIMEOUT        → DiscoveryConfig.pysr_timeout
+  feynman_pysr_seconds:      1100   # → env PYSR_TIMEOUT (feynman jobs)
+  instability_pysr_seconds:   300   # → env PYSR_TIMEOUT (instability jobs)
+
+  # Hard wall-clock cap on the entire model.fit() call (thread guard).
+  # fit_wall_timeout > 0 overrides pysr_attempt_seconds + fit_grace_secs.
+  # equation_wall_clock was the original intent for this; now wired via
+  # PYSR_FIT_WALL_TIMEOUT → DiscoveryConfig.fit_wall_timeout.
+  equation_wall_clock:       1200   # kept for reference / paper notation
+  fit_wall_timeout:          1200   # → env PYSR_FIT_WALL_TIMEOUT → DiscoveryConfig.fit_wall_timeout
+  fit_grace_secs:             120   # → env PYSR_FIT_GRACE_SECS  → DiscoveryConfig.fit_grace_secs
+                                    #   (used only when fit_wall_timeout=0)
+  kill_grace_seconds:         300   # → --kill-grace in run_all_checkpoint.py exp2 runner  [NEW]
+
+  # Outer per-method runner budget (enforced by experiment protocol callers).
+  method_seconds:             900   # → env METHOD_TIMEOUT
 
 pysr:
   niterations: 1000
@@ -49,6 +62,11 @@ pysr:
   use_transcendental_compositions: true
   deterministic: true
   parallelism: "multithreading"
+  # Wall-clock guard — mirrors DiscoveryConfig.fit_wall_timeout / fit_grace_secs.
+  # fit_wall_timeout: 0 means derive from pysr_attempt_seconds + fit_grace_secs.
+  # Set to timeouts.fit_wall_timeout above so both stay in sync.
+  fit_wall_timeout: 1200   # → DiscoveryConfig.fit_wall_timeout
+  fit_grace_secs:    120   # → DiscoveryConfig.fit_grace_secs
 
 engine:
   name: "hybrid_system_v50_2"

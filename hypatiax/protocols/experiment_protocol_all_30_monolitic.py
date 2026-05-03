@@ -7,22 +7,12 @@ FIXES in v4.0:
 ✅ All comprehensive metadata and documentation from v2.0
 ✅ Enhanced structure hints for difficult equations
 ✅ Compatible with suite v4.3
-✅ Orchestrator-compatible: ONE_EQUATION / N_CORE15_TASKS / CASE_RANGE env vars
-✅ Writes JSON results to RESULTS_DIR for pipeline verify step
-✅ Exposes run() entry-point for in-process invocation
 
 Focus: All scientific domains with comprehensive coverage
 - Physics/Engineering: 18 tests (mechanics, thermodynamics, EM, fluids, optics, quantum)
 - Multi-Domain: 12 additional tests (chemistry, biology, mathematics, economics)
 
 Total: 30 complete test cases
-
-Env vars honoured (set by run_all_checkpoint.py):
-    ONE_EQUATION        if "1", run only 1 domain (smoke-test mode)
-    N_CORE15_TASKS      max number of domains to run (integer)
-    CASE_RANGE_START    first domain index to run (1-based, inclusive)
-    CASE_RANGE_END      last  domain index to run (1-based, inclusive)
-    REPRO_ROOT          repo root for sys.path bootstrap (default: parent dir)
 
 Author: HypatiaX Team
 Version: 4.0 COMPLETE
@@ -45,9 +35,6 @@ del _os, _pathlib, _sys, _PROTO_DIR, _REPO_ROOT, _p
 
 import json
 import os
-import pathlib
-import sys
-import time
 
 import numpy as np
 
@@ -1334,152 +1321,48 @@ class ExperimentProtocolAll:
         return protocol_doc
 
 
-def run(num_samples: int = 300) -> dict:
-    """
-    Entry point for in-process invocation by run_all_checkpoint.py or other
-    orchestrators.
-
-    Reads orchestrator env vars:
-        ONE_EQUATION     – if "1", run only the first domain (smoke-test)
-        N_CORE15_TASKS   – max number of domains (integer cap)
-        CASE_RANGE_START – first domain index, 1-based inclusive
-        CASE_RANGE_END   – last  domain index, 1-based inclusive
-
-    Writes a consolidated JSON summary to:
-        $REPRO_ROOT/hypatiax/data/results/all30/experiment_protocol_all_30_results.json
-
-    Returns a summary dict; raises on fatal errors.
-    """
+if __name__ == "__main__":
     protocol = ExperimentProtocolAll()
-    all_domains = protocol.get_all_domains()
-
-    # ── Apply orchestrator env-var filters ────────────────────────────────────
-    one_eq   = os.environ.get("ONE_EQUATION", "0") == "1"
-    n_cap    = int(os.environ.get("N_CORE15_TASKS", len(all_domains)))
-    cr_start = int(os.environ.get("CASE_RANGE_START", "1"))
-    cr_end   = int(os.environ.get("CASE_RANGE_END",   str(len(all_domains))))
-
-    # 1-based → 0-based slice
-    domain_slice = all_domains[cr_start - 1 : cr_end]
-    domain_slice = domain_slice[:n_cap]
-    if one_eq:
-        domain_slice = domain_slice[:1]
 
     print("=" * 80)
-    print("EXPERIMENT PROTOCOL ALL v4.0: COMPLETE (BEST OF v2.0 + v2.1)".center(80))
+    print("EXPERIMENT PROTOCOL ALL v2.2: COMPLETE (BEST OF v2.0 + v2.1)".center(80))
     print("=" * 80)
-    print(f"Version: 4.0 | Date: 2026-01-13")
-    if one_eq:
-        print("  ▲▲  SMOKE-TEST MODE  (ONE_EQUATION=1) — running 1 domain only")
-    print(f"  Running {len(domain_slice)}/{len(all_domains)} domain(s): {domain_slice}")
+    print("Version: 2.2 | Date: 2026-01-13")
     print("=" * 80)
 
     total_count = 0
-    difficulty_count: dict[str, int] = {"easy": 0, "medium": 0, "hard": 0}
-    domain_results: list[dict] = []
+    difficulty_count = {"easy": 0, "medium": 0, "hard": 0}
 
-    t0_global = time.perf_counter()
-
-    for domain in domain_slice:
-        t0 = time.perf_counter()
-        test_cases = protocol.load_test_data(domain, num_samples=num_samples)
-        elapsed = time.perf_counter() - t0
-
-        domain_record: dict = {
-            "domain": domain,
-            "description": protocol.get_domain_description(domain),
-            "n_test_cases": len(test_cases),
-            "elapsed_s": round(elapsed, 3),
-            "test_cases": [],
-        }
-
+    for domain in protocol.get_all_domains():
+        test_cases = protocol.load_test_data(domain, num_samples=10)
         if test_cases:
-            print(f"\n{domain.upper()} ({len(test_cases)} tests)  [{elapsed:.2f}s]:")
-            for i, (desc, X, y, var_names, meta) in enumerate(test_cases, 1):
+            print(f"\n{domain.upper()} ({len(test_cases)} tests):")
+            for i, (desc, _, _, vars, meta) in enumerate(test_cases, 1):
                 protocol_label = meta.get("protocol", "?")
                 difficulty = meta["difficulty"]
-                difficulty_count[difficulty] = difficulty_count.get(difficulty, 0) + 1
+                difficulty_count[difficulty] += 1
                 enhanced = "🚀" if meta.get("use_enhanced_config") else "  "
                 quantum_fix = "⚛️" if "quantum_fix_v22" in meta else "  "
                 print(f"  [{protocol_label}] {enhanced}{quantum_fix} {desc}")
                 print(f"      Equation: {meta['equation_name']}")
-                print(f"      Variables: {', '.join(var_names)}")
+                print(f"      Variables: {', '.join(vars)}")
                 print(f"      Difficulty: {difficulty} | Type: {meta['formula_type']}")
-
-                domain_record["test_cases"].append({
-                    "index":        i,
-                    "description":  desc,
-                    "equation_name": meta["equation_name"],
-                    "difficulty":   difficulty,
-                    "formula_type": meta["formula_type"],
-                    "ground_truth": meta["ground_truth"],
-                    "variable_names": var_names,
-                    "protocol":     protocol_label,
-                    "n_samples":    int(X.shape[0]),
-                    "use_enhanced_config": meta.get("use_enhanced_config", False),
-                })
-
             total_count += len(test_cases)
-
-        domain_results.append(domain_record)
-
-    total_elapsed = time.perf_counter() - t0_global
 
     print(f"\n{'=' * 80}")
     print("SUMMARY".center(80))
     print(f"{'=' * 80}")
-    print(f"Total test cases  : {total_count}")
-    print(f"Domains run       : {len(domain_slice)}/{len(all_domains)}")
+    print(f"Total test cases: {total_count}")
     print("Protocol A (Physics/Engineering): 18 tests")
     print("Protocol B (Multi-Domain): 12 tests")
+    print("\nImprovements in v2.2:")
+    print("  ✅ Complete implementation from v2.0 (all domains fully coded)")
+    print("  ✅ Quantum fixes from v2.1 (normalized/eV units)")
+    print("  ✅ All metadata and structure hints preserved")
     print("\nDifficulty distribution:")
     for diff, count in difficulty_count.items():
         print(f"  - {diff.capitalize()}: {count} tests")
-    print(f"\nWall time: {total_elapsed:.2f}s")
+    print(f"\nDomains: {len(protocol.get_all_domains())}")
     print(f"{'=' * 80}")
 
-    # ── Build consolidated result record ──────────────────────────────────────
-    summary = {
-        "experiment":        "all30_multi_domain",
-        "version":           "4.0",
-        "date":              "2026-01-13",
-        "n_domains_run":     len(domain_slice),
-        "n_domains_total":   len(all_domains),
-        "n_test_cases":      total_count,
-        "difficulty":        difficulty_count,
-        "elapsed_s":         round(total_elapsed, 3),
-        "env": {
-            "ONE_EQUATION":     os.environ.get("ONE_EQUATION", "0"),
-            "N_CORE15_TASKS":   os.environ.get("N_CORE15_TASKS", ""),
-            "CASE_RANGE_START": os.environ.get("CASE_RANGE_START", ""),
-            "CASE_RANGE_END":   os.environ.get("CASE_RANGE_END", ""),
-        },
-        "domains": domain_results,
-    }
-
-    # ── Write to RESULTS_DIR ──────────────────────────────────────────────────
-    _repo = pathlib.Path(
-        os.environ.get("REPRO_ROOT", str(pathlib.Path(__file__).resolve().parent.parent))
-    )
-    _results_dir = _repo / "hypatiax" / "data" / "results" / "all30"
-    try:
-        _results_dir.mkdir(parents=True, exist_ok=True)
-        _out = _results_dir / "experiment_protocol_all_30_results.json"
-        _out.write_text(json.dumps(summary, indent=2))
-        print(f"\n  ✅ Results written → {_out}")
-    except Exception as _e:
-        print(f"\n  ⚠  Could not write results to {_results_dir}: {_e}")
-
-    # Also save the human-readable protocol documentation
-    try:
-        protocol.save_protocol_documentation()
-    except Exception as _e:
-        print(f"  ⚠  save_protocol_documentation() failed: {_e}")
-
-    return summary
-
-
-if __name__ == "__main__":
-    _summary = run()
-    # Exit 0 on success; the orchestrator checks returncode.
-    sys.exit(0)
+    protocol.save_protocol_documentation()

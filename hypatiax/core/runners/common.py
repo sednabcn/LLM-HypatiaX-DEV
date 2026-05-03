@@ -108,6 +108,23 @@ def _timeout_args(script_name: str) -> list[str]:
     return ["--pysr-timeout", pysr_timeout, "--method-timeout", method_timeout]
 
 
+def _case_range_env() -> dict:
+    """
+    Forward CASE_RANGE_START / CASE_RANGE_END into the subprocess env so
+    benchmark scripts slice their own case list without any code changes.
+
+    The variables are already set by the CI job (via --case-range N-M parsed
+    by run_all_checkpoint.py).  When running locally without those variables
+    the returned dict is empty and scripts run their full workload as before.
+    """
+    env = {}
+    for key in ("CASE_RANGE_START", "CASE_RANGE_END"):
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    return env
+
+
 def run_task(config: dict) -> dict:
     """
     Look up and execute the benchmark script named by *config["name"]*.
@@ -115,6 +132,10 @@ def run_task(config: dict) -> dict:
     Extra CLI arguments may be passed via *config["args"]* (a list of
     strings).  Scripts that support FAST-mode timeout flags receive them
     automatically from the PYSR_TIMEOUT / METHOD_TIMEOUT env vars.
+
+    Case-range slicing is forwarded automatically via CASE_RANGE_START /
+    CASE_RANGE_END environment variables so benchmark scripts slice their
+    own workload without requiring any per-script code changes.
 
     Returns a dict with keys: status, name, script, returncode (where
     applicable).
@@ -137,11 +158,16 @@ def run_task(config: dict) -> dict:
     fast_args  = [] if config.get("no_timeout_flags") else _timeout_args(str(script_path))
     cmd        = [python(), str(script_path)] + fast_args + extra_args
 
+    # Inject case-range slicing env vars so scripts honour CI job boundaries.
+    # Empty dict when running locally — no behavioural change in that case.
+    env = _case_range_env()
+    if env:
+        print(f"  → case-range: {env.get('CASE_RANGE_START', '1')}-{env.get('CASE_RANGE_END', '?')}")
     print(f"  → running: {' '.join(cmd)}")
 
     # Stream output directly to the terminal (capture=False) so progress
     # from long-running benchmarks is visible in real time.
-    result = run(cmd, check=False, capture=False)
+    result = run(cmd, env=env, check=False, capture=False)
 
     return {
         "status":     "ok" if result.returncode == 0 else "failed",

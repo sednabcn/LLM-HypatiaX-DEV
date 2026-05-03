@@ -43,18 +43,6 @@ Prerequisites:
     export ANTHROPIC_API_KEY="sk-ant-..."
     pip install -r requirements.txt
 
-Changelog v4.9 (2026-05-01):
-    EXP2-SPLIT: exp2 is now three sequential steps:
-               exp2_sym  — run_exp2_symbolic_engine.py  (Method 5, PySR, resumable)
-               exp2_hyb  — run_exp2_hybrid_system.py    (Method 6, PySR, resumable)
-               exp2      — run_comparative_suite_benchmark_injected.py
-                           runs Methods 1-4 live + injects pre-computed 5+6 results.
-               Each step has its own checkpoint; a SIGKILL on method-5 never wipes
-               method-6 progress.  Pipeline checkpoint migration: if the old
-               'exp2: fail' entry exists, exp2_sym and exp2_hyb are treated as
-               not-yet-run (both will start from scratch unless their own checkpoints
-               exist in logs/).  Pass threshold: ≥9/30 equations solved.
-
 Changelog v4.8 (2026-04-23):
     FIX-EXP1B-ARGS: exp1b Step no longer passes --task/--seeds to
                experiment_protocol_defi_v3.py — those flags were silently
@@ -161,7 +149,6 @@ import os
 import shutil
 import subprocess
 import sys
-import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -251,9 +238,6 @@ RESULTS_DIR = REPO_ROOT / "hypatiax" / "data" / "results"
 LOG_DIR     = REPO_ROOT / "logs"
 CHECKPOINT  = LOG_DIR / "pipeline_checkpoint.json"
 
-# Per-equation checkpoint for exp2 (survives across restarts)
-EXP2_EQ_CHECKPOINT = LOG_DIR / "exp2_eq_checkpoint.json"
-
 # ── Strip incompatible deps from requirements.txt (local runs) ────────────────
 # • defi-risk    : private SSH-only repo, unavailable locally
 # • optimum-onnx : ==0.0.3 conflicts with transformers==5.0.0
@@ -296,533 +280,6 @@ _PAPER_STEP_IDS = {"audit-NB-01", "audit-NB-02", "audit-NB-03",
                    "audit-NB-04", "audit-NB-05", "audit-setup"}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  EXP2 REDESIGN: per-equation isolated runner
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Minimum solved equations to call exp2 a pass (paper reports 9/30 = 30%).
-EXP2_PASS_THRESHOLD = 9
-
-# Grace seconds added on top of PYSR_TIMEOUT before we SIGKILL the child.
-EXP2_KILL_GRACE = 300
-
-# Inline driver executed in each child process.  Receives the equation spec
-# as a JSON string via the EXP2_EQUATION_JSON env var.  Writes a result JSON
-# to the path in EXP2_RESULT_PATH env var.  Exit 0 = success, 1 = failure.
-_EXP2_WORKER_SCRIPT = textwrap.dedent("""\
-import json, os, sys, time, pathlib, traceback
-import numpy as np
-
-spec     = json.loads(os.environ["EXP2_EQUATION_JSON"])
-out_path = pathlib.Path(os.environ["EXP2_RESULT_PATH"])
-out_path.parent.mkdir(parents=True, exist_ok=True)
-
-eq_name  = spec["name"]
-seed     = int(os.environ.get("PYSR_SEED", "42"))
-np.random.seed(seed)
-
-# ── Resolve repo root from env (set by the parent pipeline) ──────────────────
-repo_root = os.environ.get("REPRO_ROOT", str(pathlib.Path(__file__).resolve().parent))
-for _p in [repo_root, os.path.join(repo_root, "hypatiax")]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-t0 = time.perf_counter()
-try:
-    from hypatiax.tools.symbolic.symbolic_engine import DiscoveryConfig, SymbolicEngine
-
-    cfg = DiscoveryConfig(
-        pysr_timeout    = int(os.environ.get("PYSR_TIMEOUT",    "1100")),
-        niterations     = int(os.environ.get("N_ITERATIONS",    "1000")),
-        populations     = int(os.environ.get("POPULATIONS",     "30")),
-        population_size = int(os.environ.get("PYSR_POPULATION_SIZE", "33")),
-        parsimony       = float(os.environ.get("PYSR_PARSIMONY", "0.01")),
-        maxsize         = int(os.environ.get("PYSR_MAXSIZE",    "30")),
-        binary_operators = ["+", "-", "*", "/"],
-        unary_operators  = ["exp", "log", "sin", "cos", "sqrt"],
-    )
-
-    # Reconstruct X, y from spec
-    N = spec["n_samples"]
-    rng = np.random.default_rng(seed)
-    # Each variable column: uniform in [lo, hi]
-    cols = []
-    for vname, (lo, hi) in zip(spec["variable_names"], spec["variable_ranges"]):
-        cols.append(rng.uniform(lo, hi, N))
-    X = np.column_stack(cols)
-
-    # Evaluate ground-truth expression to get y
-    local_ns = {v: cols[i] for i, v in enumerate(spec["variable_names"])}
-    local_ns["np"] = np
-    y = eval(spec["numpy_expr"], {"__builtins__": {}}, {**local_ns, "np": np,
-        "exp": np.exp, "log": np.log, "sin": np.sin, "cos": np.cos,
-        "sqrt": np.sqrt, "pi": np.pi})
-
-    engine = SymbolicEngine(cfg, domain="physics")
-    result = engine.discover(X, y, variable_names=spec["variable_names"])
-
-    elapsed = time.perf_counter() - t0
-    expr = result.get("expression", result.get("best_expression", "N/A"))
-    r2   = float(result.get("r2_score", result.get("r2", float("nan"))))
-
-    payload = {
-        "equation":     eq_name,
-        "status":       "ok",
-        "expression":   expr,
-        "r2":           r2,
-        "elapsed_s":    elapsed,
-        "ground_truth": spec["ground_truth"],
-    }
-    out_path.write_text(json.dumps(payload, indent=2))
-    print(f"  ✅ [{eq_name}] R²={r2:.4f}  expr={expr}  ({elapsed:.1f}s)")
-    sys.exit(0)
-
-except Exception:
-    elapsed = time.perf_counter() - t0
-    tb = traceback.format_exc()
-    payload = {
-        "equation":  eq_name,
-        "status":    "error",
-        "error":     tb,
-        "elapsed_s": elapsed,
-    }
-    out_path.write_text(json.dumps(payload, indent=2))
-    print(f"  ❌ [{eq_name}] FAILED after {elapsed:.1f}s:", file=sys.stderr)
-    print(tb, file=sys.stderr)
-    sys.exit(1)
-""")
-
-# ── Feynman equation catalogue (30 equations used in the paper) ───────────────
-# Each entry: name, variable_names, variable_ranges, numpy_expr, ground_truth.
-# Ranges chosen to keep y well-behaved (no div-by-zero, no log(0)).
-FEYNMAN_30 = [
-    # I.6.2a: exp(-θ²/2)/√(2π)
-    {"name": "I.6.2a",  "variable_names": ["theta"],
-     "variable_ranges": [[-3.0, 3.0]],
-     "numpy_expr": "np.exp(-theta**2/2) / np.sqrt(2*np.pi)",
-     "ground_truth": "exp(-theta^2/2)/sqrt(2*pi)"},
-
-    # I.9.18: F / (m*(1/t1 - 1/t2))
-    {"name": "I.9.18",  "variable_names": ["F","m","t1","t2"],
-     "variable_ranges": [[1,10],[1,5],[2,10],[11,20]],
-     "numpy_expr": "F / (m * (1/t1 - 1/t2))",
-     "ground_truth": "F / (m*(1/t1 - 1/t2))"},
-
-    # I.12.1: F1*F2/(4*pi*eps*r²)
-    {"name": "I.12.1",  "variable_names": ["F1","F2","eps","r"],
-     "variable_ranges": [[1,5],[1,5],[0.5,2],[1,10]],
-     "numpy_expr": "F1*F2 / (4*np.pi*eps*r**2)",
-     "ground_truth": "F1*F2/(4*pi*eps*r^2)"},
-
-    # I.12.2: q1*q2/(4*pi*eps*r²)
-    {"name": "I.12.2",  "variable_names": ["q1","q2","eps","r"],
-     "variable_ranges": [[1,5],[1,5],[0.5,2],[1,10]],
-     "numpy_expr": "q1*q2 / (4*np.pi*eps*r**2)",
-     "ground_truth": "q1*q2/(4*pi*eps*r^2)"},
-
-    # I.12.4: q1*r/(4*pi*eps*r³)  simplified as q1/(4*pi*eps*r²)
-    {"name": "I.12.4",  "variable_names": ["q1","eps","r"],
-     "variable_ranges": [[1,5],[0.5,2],[1,10]],
-     "numpy_expr": "q1 / (4*np.pi*eps*r**2)",
-     "ground_truth": "q1/(4*pi*eps*r^2)"},
-
-    # I.15.1: x - u*t / sqrt(1 - u²/c²)
-    {"name": "I.15.1",  "variable_names": ["x","u","t","c"],
-     "variable_ranges": [[1,10],[0.1,0.9],[1,5],[1,1]],
-     "numpy_expr": "(x - u*t) / np.sqrt(1 - u**2/c**2)",
-     "ground_truth": "(x-u*t)/sqrt(1-u^2/c^2)"},
-
-    # I.18.4: m1*r1 / (m1+m2)
-    {"name": "I.18.4",  "variable_names": ["m1","m2","r1"],
-     "variable_ranges": [[1,5],[1,5],[1,10]],
-     "numpy_expr": "m1*r1 / (m1+m2)",
-     "ground_truth": "m1*r1/(m1+m2)"},
-
-    # I.24.6: 1/4 * m*(ω²+ω0²)*x²
-    {"name": "I.24.6",  "variable_names": ["m","omega","omega0","x"],
-     "variable_ranges": [[1,5],[1,5],[1,5],[1,5]],
-     "numpy_expr": "0.25 * m * (omega**2 + omega0**2) * x**2",
-     "ground_truth": "0.25*m*(omega^2+omega0^2)*x^2"},
-
-    # I.26.2: arcsin(n*sin(θ2))
-    {"name": "I.26.2",  "variable_names": ["n","theta2"],
-     "variable_ranges": [[0.5,1.0],[0.1,1.0]],
-     "numpy_expr": "np.arcsin(n * np.sin(theta2))",
-     "ground_truth": "arcsin(n*sin(theta2))"},
-
-    # I.34.8: ω/(1 - v/c)
-    {"name": "I.34.8",  "variable_names": ["omega","v","c"],
-     "variable_ranges": [[1,10],[0.1,0.9],[1,1]],
-     "numpy_expr": "omega / (1 - v/c)",
-     "ground_truth": "omega/(1-v/c)"},
-
-    # I.34.14: ω0/(1-v/c) — same structure, different physics
-    {"name": "I.34.14", "variable_names": ["omega0","v","c"],
-     "variable_ranges": [[1,10],[0.1,0.9],[1,1]],
-     "numpy_expr": "omega0 / (1 - v/c)",
-     "ground_truth": "omega0/(1-v/c)"},
-
-    # I.34.27: h*ω
-    {"name": "I.34.27", "variable_names": ["h","omega"],
-     "variable_ranges": [[0.5,2],[1,10]],
-     "numpy_expr": "h * omega",
-     "ground_truth": "h*omega"},
-
-    # I.37.4: I1+I2+2*sqrt(I1*I2)*cos(delta)
-    {"name": "I.37.4",  "variable_names": ["I1","I2","delta"],
-     "variable_ranges": [[1,5],[1,5],[0,3.14159]],
-     "numpy_expr": "I1 + I2 + 2*np.sqrt(I1*I2)*np.cos(delta)",
-     "ground_truth": "I1+I2+2*sqrt(I1*I2)*cos(delta)"},
-
-    # I.41.16: h*omega³/(pi²*c³*(exp(h*omega/(kb*T))-1))
-    {"name": "I.41.16", "variable_names": ["h","omega","c","kb","T"],
-     "variable_ranges": [[0.5,2],[1,5],[1,3],[0.5,2],[100,1000]],
-     "numpy_expr": "h*omega**3 / (np.pi**2 * c**3 * (np.exp(h*omega/(kb*T)) - 1))",
-     "ground_truth": "h*omega^3/(pi^2*c^3*(exp(h*omega/(kb*T))-1))"},
-
-    # I.43.31: mob*kb*T
-    {"name": "I.43.31", "variable_names": ["mob","kb","T"],
-     "variable_ranges": [[0.5,2],[0.5,2],[100,1000]],
-     "numpy_expr": "mob * kb * T",
-     "ground_truth": "mob*kb*T"},
-
-    # I.43.43: kappa*(T2-T1)*A/d
-    {"name": "I.43.43", "variable_names": ["kappa","T1","T2","A","d"],
-     "variable_ranges": [[0.5,2],[200,500],[501,800],[1,5],[0.1,1]],
-     "numpy_expr": "kappa * (T2-T1) * A / d",
-     "ground_truth": "kappa*(T2-T1)*A/d"},
-
-    # I.50.26: x1 + x2*cos(omega*t)
-    {"name": "I.50.26", "variable_names": ["x1","x2","omega","t"],
-     "variable_ranges": [[1,5],[1,5],[1,5],[0,2]],
-     "numpy_expr": "x1 + x2 * np.cos(omega * t)",
-     "ground_truth": "x1+x2*cos(omega*t)"},
-
-    # II.2.42: kappa*(T2-T1)*A/d  (same as I.43.43 but different physics)
-    {"name": "II.2.42", "variable_names": ["kappa","T1","T2","A","d"],
-     "variable_ranges": [[0.5,2],[200,500],[501,800],[1,5],[0.1,1]],
-     "numpy_expr": "kappa * (T2 - T1) * A / d",
-     "ground_truth": "kappa*(T2-T1)*A/d"},
-
-    # II.11.27: n*alpha/(1-n*alpha/3)
-    {"name": "II.11.27","variable_names": ["n","alpha"],
-     "variable_ranges": [[0.1,0.9],[0.1,1.0]],
-     "numpy_expr": "n*alpha / (1 - n*alpha/3)",
-     "ground_truth": "n*alpha/(1-n*alpha/3)"},
-
-    # II.11.28: 1+n*alpha/(1-n*alpha/3)
-    {"name": "II.11.28","variable_names": ["n","alpha"],
-     "variable_ranges": [[0.1,0.9],[0.1,1.0]],
-     "numpy_expr": "1 + n*alpha / (1 - n*alpha/3)",
-     "ground_truth": "1+n*alpha/(1-n*alpha/3)"},
-
-    # II.34.2a: q*v/(2*pi*r)
-    {"name": "II.34.2a","variable_names": ["q","v","r"],
-     "variable_ranges": [[1,5],[1,10],[1,10]],
-     "numpy_expr": "q*v / (2*np.pi*r)",
-     "ground_truth": "q*v/(2*pi*r)"},
-
-    # II.34.29b: q*h*m/(4*pi*me)
-    {"name": "II.34.29b","variable_names": ["q","h","m","me"],
-     "variable_ranges": [[1,3],[0.5,2],[1,5],[1,5]],
-     "numpy_expr": "q*h*m / (4*np.pi*me)",
-     "ground_truth": "q*h*m/(4*pi*me)"},
-
-    # II.35.18: n0*exp(-m*g*x/(kb*T))
-    {"name": "II.35.18","variable_names": ["n0","m","g","x","kb","T"],
-     "variable_ranges": [[1,5],[0.1,1],[5,15],[0,5],[0.5,2],[200,500]],
-     "numpy_expr": "n0 * np.exp(-m*g*x / (kb*T))",
-     "ground_truth": "n0*exp(-m*g*x/(kb*T))"},
-
-    # II.36.38: mu*Ef/(1+mu*Ef/v)
-    {"name": "II.36.38","variable_names": ["mu","Ef","v"],
-     "variable_ranges": [[0.1,1],[1,10],[10,50]],
-     "numpy_expr": "mu*Ef / (1 + mu*Ef/v)",
-     "ground_truth": "mu*Ef/(1+mu*Ef/v)"},
-
-    # III.4.32: h*omega/(exp(h*omega/(kb*T))-1)
-    {"name": "III.4.32","variable_names": ["h","omega","kb","T"],
-     "variable_ranges": [[0.5,2],[1,5],[0.5,2],[100,1000]],
-     "numpy_expr": "h*omega / (np.exp(h*omega/(kb*T)) - 1)",
-     "ground_truth": "h*omega/(exp(h*omega/(kb*T))-1)"},
-
-    # III.4.33: h*omega*exp(h*omega/(kb*T)) / (kb*T²*(exp(h*omega/(kb*T))-1)²)
-    {"name": "III.4.33","variable_names": ["h","omega","kb","T"],
-     "variable_ranges": [[0.5,2],[1,5],[0.5,2],[100,1000]],
-     "numpy_expr": ("h*omega * np.exp(h*omega/(kb*T)) / "
-                    "(kb * T**2 * (np.exp(h*omega/(kb*T)) - 1)**2)"),
-     "ground_truth": "h*omega*exp(h*omega/(kb*T))/(kb*T^2*(exp(h*omega/(kb*T))-1)^2)"},
-
-    # III.12.4: n*h/(2*pi)
-    {"name": "III.12.4","variable_names": ["n","h"],
-     "variable_ranges": [[1,10],[0.5,2]],
-     "numpy_expr": "n*h / (2*np.pi)",
-     "ground_truth": "n*h/(2*pi)"},
-
-    # III.14.14: I0*(exp(q*V/(kb*T))-1)
-    {"name": "III.14.14","variable_names": ["I0","q","V","kb","T"],
-     "variable_ranges": [[0.1,2],[1,2],[0.1,1],[0.5,2],[200,500]],
-     "numpy_expr": "I0 * (np.exp(q*V/(kb*T)) - 1)",
-     "ground_truth": "I0*(exp(q*V/(kb*T))-1)"},
-
-    # III.19.51: -m*q^4/(2*(4*pi*eps)^2*h^2) * (1/n^2)
-    {"name": "III.19.51","variable_names": ["m","q","eps","h","n"],
-     "variable_ranges": [[0.5,2],[1,2],[0.5,2],[0.5,2],[1,5]],
-     "numpy_expr": ("-m * q**4 / "
-                    "(2 * (4*np.pi*eps)**2 * h**2) / n**2"),
-     "ground_truth": "-m*q^4/(2*(4*pi*eps)^2*h^2*n^2)"},
-
-    # III.21.20: rho*q*Ef/m (simplified)
-    {"name": "III.21.20","variable_names": ["rho","q","Ef","m"],
-     "variable_ranges": [[0.5,2],[1,3],[1,10],[1,5]],
-     "numpy_expr": "rho*q*Ef / m",
-     "ground_truth": "rho*q*Ef/m"},
-]
-
-
-def _load_exp2_eq_checkpoint() -> dict:
-    """Return {equation_name: result_dict} from the per-equation checkpoint."""
-    if EXP2_EQ_CHECKPOINT.exists():
-        try:
-            return json.loads(EXP2_EQ_CHECKPOINT.read_text())
-        except Exception:
-            pass
-    return {}
-
-
-def _save_exp2_eq_checkpoint(state: dict) -> None:
-    EXP2_EQ_CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
-    tmp = EXP2_EQ_CHECKPOINT.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    tmp.replace(EXP2_EQ_CHECKPOINT)
-
-
-def run_exp2_feynman(env: dict, args, log_fh) -> bool:
-    """
-    Per-equation isolated runner for exp2 (Feynman 30-equation extrapolation).
-
-    Returns True if ≥ EXP2_PASS_THRESHOLD equations are solved successfully.
-
-    Design mirrors michael_test.py:
-      - Each equation → its own fresh subprocess (isolated Julia/PySR state)
-      - Subprocess killed after timeout + grace if it hangs
-      - Per-equation JSON result saved immediately on success
-      - Per-equation checkpoint so --resume skips already-solved equations
-    """
-    n_tasks = int(env.get("N_FEYNMAN_TASKS", len(FEYNMAN_30)))
-    equations = FEYNMAN_30[:n_tasks]
-    n_samples = 300  # paper value; michael_test.py default
-
-    pysr_timeout  = int(env.get("PYSR_TIMEOUT", "1100"))
-    kill_grace    = getattr(args, "kill_grace", None) or EXP2_KILL_GRACE
-    kill_deadline = pysr_timeout + kill_grace
-
-    # Output dir for per-equation JSON results
-    out_dir = RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Worker script written to a temp file (avoids shell quoting issues)
-    worker_path = LOG_DIR / "_exp2_worker.py"
-    worker_path.write_text(_EXP2_WORKER_SCRIPT)
-
-    eq_checkpoint = _load_exp2_eq_checkpoint()
-
-    results = []
-    t_total = time.time()
-
-    SEP  = "=" * 68
-    SSEP = "-" * 68
-
-    def _log(msg: str) -> None:
-        print(msg)
-        log_fh.write(msg + "\n")
-        log_fh.flush()
-
-    _log(f"\n{SEP}")
-    _log(f"  exp2 · Feynman {n_tasks}-equation extrapolation (per-equation isolation)")
-    _log(f"  PYSR_TIMEOUT={pysr_timeout}s  kill_grace={kill_grace}s  "
-         f"samples={n_samples}")
-    _log(f"  pass_threshold={EXP2_PASS_THRESHOLD}/{n_tasks}")
-    _log(SEP)
-
-    for idx, spec in enumerate(equations):
-        eq_name = spec["name"]
-
-        # ── Resume: skip already-solved equations ─────────────────────────
-        if eq_name in eq_checkpoint and eq_checkpoint[eq_name].get("status") == "ok":
-            cached = eq_checkpoint[eq_name]
-            _log(f"\n  ↩  [{idx+1}/{n_tasks}] {eq_name}  "
-                 f"(checkpoint: R²={cached.get('r2', '?'):.4f})  — skipping")
-            results.append(cached)
-            continue
-
-        _log(f"\n{SSEP}")
-        _log(f"  [{idx+1}/{n_tasks}] {eq_name}  gt={spec['ground_truth']}")
-        _log(f"  vars={spec['variable_names']}  expr={spec['numpy_expr']}")
-
-        # Augment spec with n_samples
-        run_spec = {**spec, "n_samples": n_samples}
-        result_path = out_dir / f"{eq_name.replace('.', '_')}.json"
-
-        child_env = {
-            **env,
-            "EXP2_EQUATION_JSON": json.dumps(run_spec),
-            "EXP2_RESULT_PATH":   str(result_path),
-        }
-
-        t0 = time.time()
-        proc = None
-        status = "error"
-        try:
-            proc = subprocess.Popen(
-                [sys.executable, str(worker_path)],
-                env=child_env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                # FIX: put the child in its own process group so os.killpg()
-                # sends SIGKILL to the Python worker AND all Julia children it
-                # spawned — previously proc.kill() only killed the Python wrapper
-                # while Julia processes kept the pipe open for hours.
-                preexec_fn=os.setsid,
-            )
-            # Stream output with a thread-based wall-clock watchdog.
-            # FIX: the old `for line in proc.stdout:` loop is a BLOCKING iterator —
-            # the deadline check only fires BETWEEN lines.  If Julia is silent for
-            # hours (serial mode with 30 populations and verbosity=0) the deadline
-            # is never checked and the subprocess runs until Julia decides to stop.
-            # Root cause of the observed 5344s / 89-minute hang for I.6.2a.
-            #
-            # Fix: a reader thread drains stdout into a queue; the main thread
-            # checks the deadline every ≤5 s regardless of subprocess output.
-            import queue as _queue
-            import threading as _threading
-
-            assert proc.stdout is not None
-            _line_q: _queue.Queue = _queue.Queue()
-
-            def _stdout_reader(stream, q):
-                try:
-                    for line in stream:
-                        q.put(line)
-                finally:
-                    q.put(None)  # sentinel — stdout closed
-
-            _reader_thread = _threading.Thread(
-                target=_stdout_reader, args=(proc.stdout, _line_q), daemon=True
-            )
-            _reader_thread.start()
-
-            timed_out = False
-            while True:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    _log(f"\n  ⏱  [{eq_name}] wall-clock limit reached "
-                         f"({kill_deadline}s) — killing subprocess")
-                    try:
-                        # Kill the entire process group so Julia children
-                        # also receive SIGKILL (not just the Python worker).
-                        import signal as _signal
-                        os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
-                    except Exception:
-                        proc.kill()   # fallback if process group not available
-                    timed_out = True
-                    break
-                try:
-                    line = _line_q.get(timeout=min(remaining, 5.0))
-                except _queue.Empty:
-                    continue   # wake up to re-check deadline
-                if line is None:
-                    break      # subprocess closed stdout — done normally
-                log_fh.write(line)
-                log_fh.flush()
-                print(f"│  {line}", end="")
-            proc.wait(timeout=30)
-            elapsed = time.time() - t0
-
-            if result_path.exists():
-                try:
-                    payload = json.loads(result_path.read_text())
-                    status = payload.get("status", "error")
-                except Exception:
-                    status = "error"
-            else:
-                status = "timeout" if elapsed >= kill_deadline - 1 else "error"
-
-        except KeyboardInterrupt:
-            if proc is not None:
-                try:
-                    proc.terminate(); proc.wait(timeout=5)
-                except Exception:
-                    try: proc.kill()
-                    except Exception: pass
-            _log(f"\n  ⚠  [{eq_name}] interrupted — saving checkpoint and re-raising")
-            _save_exp2_eq_checkpoint(eq_checkpoint)
-            raise
-
-        except Exception as exc:
-            elapsed = time.time() - t0
-            _log(f"\n  ❌ [{eq_name}] subprocess error: {exc}")
-            status = "error"
-
-        # ── Record result ─────────────────────────────────────────────────
-        elapsed = time.time() - t0
-        if result_path.exists():
-            try:
-                result = json.loads(result_path.read_text())
-            except Exception:
-                result = {"equation": eq_name, "status": status, "elapsed_s": elapsed}
-        else:
-            result = {"equation": eq_name, "status": status, "elapsed_s": elapsed}
-
-        results.append(result)
-        eq_checkpoint[eq_name] = result
-        _save_exp2_eq_checkpoint(eq_checkpoint)
-
-        sym = "✅" if status == "ok" else ("⏱" if status == "timeout" else "❌")
-        r2_str = f"R²={result.get('r2', float('nan')):.4f}" if status == "ok" else ""
-        _log(f"\n  {sym} [{eq_name}] {status}  {r2_str}  ({elapsed:.0f}s)")
-
-    # ── Summary ───────────────────────────────────────────────────────────
-    total_elapsed = time.time() - t_total
-    solved   = [r for r in results if r.get("status") == "ok"]
-    timeouts = [r for r in results if r.get("status") == "timeout"]
-    errors   = [r for r in results if r.get("status") not in ("ok", "timeout")]
-
-    _log(f"\n{SEP}")
-    _log(f"  exp2 SUMMARY  —  {len(solved)}/{n_tasks} solved  "
-         f"({len(timeouts)} timeouts  {len(errors)} errors)  "
-         f"total {total_elapsed/60:.1f} min")
-    _log(f"  {'#':<4} {'Name':<14} {'Status':<10} {'R²':>8}  Expression")
-    _log("  " + "-" * 60)
-    for i, r in enumerate(results):
-        st  = r.get("status", "?")
-        r2s = f"{r['r2']:.4f}" if st == "ok" and "r2" in r else "—"
-        exp = r.get("expression", r.get("error", ""))[:40]
-        _log(f"  {i+1:<4} {r.get('equation','?'):<14} {st:<10} {r2s:>8}  {exp}")
-
-    # Write consolidated JSON (mirrors experiment_protocol_feynman_exp2.py output)
-    consolidated = {
-        "experiment": "exp2_feynman_30",
-        "n_equations": n_tasks,
-        "n_solved": len(solved),
-        "solve_rate": len(solved) / n_tasks,
-        "results": results,
-    }
-    consolidated_path = (
-        RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2_results.json"
-    )
-    consolidated_path.write_text(json.dumps(consolidated, indent=2))
-    _log(f"\n  Results → {consolidated_path}")
-    _log(SEP)
-
-    passed = len(solved) >= EXP2_PASS_THRESHOLD
-    _log(f"\n  exp2 {'✅ PASS' if passed else '❌ FAIL'}  "
-         f"({len(solved)}/{n_tasks} solved, threshold={EXP2_PASS_THRESHOLD})")
-    return passed
-
-
 # ── Experiment registry ────────────────────────────────────────────────────────
 @dataclass
 class Step:
@@ -835,8 +292,6 @@ class Step:
     env_extra: dict = field(default_factory=dict)
     expected: str = ""                 # human note shown in summary
     result_glob: str = ""              # glob relative to RESULTS_DIR to verify output
-    # New: if True, run_step() calls the in-process runner instead of Popen
-    inline_runner: bool = False
 
 
 STEPS: list[Step] = [
@@ -1009,72 +464,14 @@ STEPS: list[Step] = [
              "DEFI_SEEDS": "42,99,123,777,2024",
          }),
 
-    # §10.7: 30-equation multi-domain comparison benchmark.
-    # Calls run_comparative_suite_benchmark_v2.py with --protocol all30 so it
-    # loads ExperimentProtocolAll (experiment_protocol_all_30.py) instead of
-    # the Feynman-only BenchmarkProtocol. This runs all 6 comparison methods
-    # (PureLLM, NN, HybridDeFi, HybridAllDomains, SymbolicEngine, HybridV50_2)
-    # across all 30 multi-domain equations, producing the comparison table used
-    # in §10.7.
-    #
-    # FIX-EXP2: was inline_runner=True calling run_exp2_feynman() which only
-    # ran SymbolicEngine.discover() and skipped all baseline comparison methods,
-    # making the §10.7 comparison table impossible to reproduce.
-    # ── exp2 split into three sequential steps ────────────────────────────
-    # Method 5 (SymbolicEngineWithLLM) and Method 6 (HybridDiscoverySystem)
-    # each run in their own isolated process with their own checkpoint so a
-    # SIGKILL / OOM on one never wipes the other.  The final injected step
-    # runs only the four fast methods (1-4, no Julia) and merges the pre-
-    # computed Method-5/6 results into the combined output JSON.
-    #
-    # Resume:  python3 run_all_checkpoint.py --resume
-    #   → exp2_sym  skips if logs/exp2_symbolic_engine_checkpoint.json done
-    #   → exp2_hyb  skips if logs/exp2_hybrid_system_checkpoint.json done
-    #   → exp2      skips if logs/pipeline_checkpoint.json marks it pass
-    #
-    # Run individually:
-    #   python3 hypatiax/experiments/benchmarks/run_exp2_symbolic_engine.py --resume
-    #   python3 hypatiax/experiments/benchmarks/run_exp2_hybrid_system.py   --resume
-    #   python3 hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_injected.py --resume
-    Step("exp2_sym",
-         "Exp 2 · Method 5 — SymbolicEngineWithLLM  (§10.7)",
-         [sys.executable,
-          "hypatiax/experiments/benchmarks/run_exp2_symbolic_engine.py",
-          "--resume",
-          "--samples", "200",
-         ],
-         phase="1 · Core experiments",
-         slow=True,
-         inline_runner=False,
-         expected="≥9/30 solved  [wall time 4–8 h, resumable]",
-         result_glob=None),
-
-    Step("exp2_hyb",
-         "Exp 2 · Method 6 — HybridDiscoverySystem v50_2  (§10.7)",
-         [sys.executable,
-          "hypatiax/experiments/benchmarks/run_exp2_hybrid_system.py",
-          "--resume",
-          "--samples", "200",
-         ],
-         phase="1 · Core experiments",
-         slow=True,
-         inline_runner=False,
-         expected="≥9/30 solved  [wall time 4–8 h, resumable]",
-         result_glob=None),
-
+    # §10.7: primary run is Kaggle 4-vCPU; this protocol reproduces that environment
     Step("exp2",
-         "Exp 2 · Methods 1-4 + inject 5+6  (§10.7 combined)",
-         [sys.executable,
-          "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_injected.py",
-          "--resume",
-          "--checkpoint-name", "exp2_all30_injected_checkpoint",
-          "--samples", "200",
-         ],
+         "Exp 2 · Feynman 30-equation extrapolation (§10.7)",
+         [sys.executable, "hypatiax/protocols/experiment_protocol_feynman_exp2.py"],
          phase="1 · Core experiments",
-         slow=False,
-         inline_runner=False,
-         expected="9/30 (30%)  [fast: <30 min after method-5/6 checkpoints ready]",
-         result_glob="comparison_results/**/*.json"),
+         slow=True,
+         expected="9/30 (30%)  [Kaggle 4-vCPU primary · wall time 4–8 h]",
+         result_glob="comparison_results/feynman-tests/**/*.json"),
 
     # §10.8 primary: SEED=42, source exp3_nguyen12_hybrid50v_02.py logic
     # FIX-EXP3: use sys.executable so the protocol wrapper runs in the active venv
@@ -1529,32 +926,6 @@ def run_step(step: Step, env: dict, args) -> StepResult:
         return StepResult(step.id, step.label, "skip")
 
     t0 = time.time()
-
-    # ── Inline runner dispatch (e.g. exp2 per-equation isolated runner) ──
-    if step.inline_runner:
-        log_path = LOG_DIR / f"{step.id}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(log_path, "w") as log_fh:
-                ok = run_exp2_feynman(merged_env, args, log_fh)
-            elapsed = time.time() - t0
-            sym = "✓" if ok else "✗"
-            print(f"\n└─── {sym} {'done' if ok else 'FAILED'}  ({elapsed:.0f}s)"
-                  + (f"  — see {log_path}" if not ok else ""))
-            if ok:
-                archive_step_results(step)
-            return StepResult(step.id, step.label,
-                              "pass" if ok else "fail",
-                              elapsed, log_path, 0 if ok else 1)
-        except KeyboardInterrupt:
-            elapsed = time.time() - t0
-            print(f"\n└─── ✗ INTERRUPTED  ({elapsed:.0f}s) — inline runner killed, checkpoint saved")
-            raise
-        except Exception as exc:
-            elapsed = time.time() - t0
-            print(f"└─── ✗ ERROR: {exc}")
-            return StepResult(step.id, step.label, "fail", elapsed, log_path)
-
     proc: subprocess.Popen | None = None
     try:
         with open(log_path, "w") as log_fh:
@@ -1740,15 +1111,8 @@ def main() -> None:
                              "(e.g. --seed 123). Defaults to 42 when omitted.")
     parser.add_argument("--pysr-timeout", type=int, default=None, metavar="SECS",
                         help="Wall-clock timeout (seconds) passed to PySR via PYSR_TIMEOUT "
-                             "env var. Default: 1100s (paper-quality, from repro.yaml). "
-                             "This is how long PySR searches internally — do NOT lower this "
-                             "to fix timeouts; use --kill-grace instead.")
-    parser.add_argument("--kill-grace", type=int, default=None, metavar="SECS",
-                        help="Extra seconds the exp2 subprocess gets AFTER PYSR_TIMEOUT "
-                             "before being hard-killed. Default: 300s (from repro.yaml "
-                             "timeouts.kill_grace_seconds). Must cover Julia startup + "
-                             "final-generation drain so the worker can write its result JSON. "
-                             "The original 60s caused 0/30 solves — 300s fixes this.")
+                             "env var. Default is 1100s (paper-quality, from repro.yaml). "
+                             "Use e.g. --pysr-timeout 900 on slower hardware.")
     parser.add_argument("--one-equation", action="store_true",
                         help="Smoke-test mode: run exactly 1 equation per experiment. "
                              "Injects ONE_EQUATION=1, N_TASKS_DEFI=1, N_FEYNMAN_TASKS=1, "
@@ -1881,10 +1245,9 @@ def main() -> None:
     _timeout_config = _repro_config.get("timeouts", {})
     _pysr_config = _repro_config.get("pysr", {})
 
-    # Timeout defaults (300s PySR + 300s kill-grace — from repro.yaml)
+    # Timeout defaults (paper-quality: 1100s PySR, 900s method — from repro.yaml)
     DEFAULT_PYSR_TIMEOUT = _timeout_config.get("pysr_attempt_seconds", 1100)
     DEFAULT_METHOD_TIMEOUT = _timeout_config.get("method_seconds", 900)
-    DEFAULT_KILL_GRACE = _timeout_config.get("kill_grace_seconds", 300)
 
     # ── Build environment (mirrors run_all.sh and notebook cell 2) ─────────
     _seed_str = str(args.seed) if args.seed is not None else "42"
@@ -1949,7 +1312,7 @@ def main() -> None:
 
         env["PYSR_TIMEOUT"] = str(pysr_timeout)
         env["METHOD_TIMEOUT"] = str(method_timeout)
-        print(f"  PYSR_TIMEOUT={pysr_timeout}s  (repro.yaml default: 1100s)")
+        print(f"  PYSR_TIMEOUT={pysr_timeout}s  (paper-quality: 1100s)")
         print(f"  METHOD_TIMEOUT={method_timeout}s  (paper-quality: 900s)")
 
     # PySR search parameters from repro.yaml
@@ -2037,9 +1400,9 @@ def main() -> None:
         env["LLM_K_RUNS"]            = "30"     # repro.yaml llm_k_runs (instability + all steps)
         # Timeout: honour explicit --pysr-timeout override, else use paper value
         if args.pysr_timeout is None:
-            env["PYSR_TIMEOUT"]      = "1100"   # timeouts.pysr_attempt_seconds (paper value)
+            env["PYSR_TIMEOUT"]      = "1100"   # timeouts.pysr_attempt_seconds
         env["METHOD_TIMEOUT"]        = "900"    # timeouts.method_seconds
-        env["EQUATION_WALL_CLOCK"]   = "1200"   # timeouts.equation_wall_clock (paper value)
+        env["EQUATION_WALL_CLOCK"]   = "1200"   # timeouts.equation_wall_clock
         print("\n" + "★" * 68)
         print("  ★★  PAPER-QUALITY PROBE  (--one-equation-paper)")
         print("  ★★  1 equation per experiment · ALL values from repro.yaml v3.0")
@@ -2066,94 +1429,44 @@ def main() -> None:
     # ── Load checkpoint state ──────────────────────────────────────────────
     checkpoint_state: dict[str, str] = {}
     if args.resume:
-        # Re-read both sources so repo-root entries are never lost
-        _root_cp = REPO_ROOT / "pipeline_checkpoint.json"
-        for _cp_path in [_root_cp, CHECKPOINT]:
-            if _cp_path.exists():
-                try:
-                    _disk = json.loads(_cp_path.read_text())
-                    for _k, _v in _disk.items():
-                        if checkpoint_state.get(_k) != "pass":
-                            checkpoint_state[_k] = _v
-                except Exception:
-                    pass
-        # exp2 key migration: old "exp2: pass" → mark all three new steps pass
-        if checkpoint_state.get("exp2") == "pass":
-            for _sid in ("exp2_sym", "exp2_hyb", "exp2"):
-                checkpoint_state.setdefault(_sid, "pass")
-        if checkpoint_state.get("exp2") == "fail":
-            checkpoint_state.pop("exp2", None)
-        # Persist merged state immediately
-        save_checkpoint(checkpoint_state)
-
-        # ── Print clean pipeline status table, then jump to pending work ──
-        _col = {"pass": "✓", "fail": "✗", "skip": "─"}
-        _pending = [s for s in STEPS if checkpoint_state.get(s.id) != "pass"]
-        _done    = [s for s in STEPS if checkpoint_state.get(s.id) == "pass"]
-        print()
-        print("  ┌─ Pipeline status (" + f"{len(_done)}/{len(STEPS)} done) ──────────────────────────────────────────")
-        _cur_phase = ""
-        for _s in STEPS:
-            if _s.phase != _cur_phase:
-                print(f"  │  Phase {_s.phase}")
-                _cur_phase = _s.phase
-            _st  = checkpoint_state.get(_s.id, "todo")
-            _ico = {"pass": "✓", "fail": "✗", "todo": "·"}.get(_st, "·")
-            _tag = f"[{_st}]" if _st in ("fail",) else ""
-            print(f"  │    {_ico}  {_s.id:<30}  {_tag}")
-        if _pending:
-            print(f"  └─ Next: [{_pending[0].id}]  {_pending[0].label}")
+        checkpoint_state = load_checkpoint()
+        if checkpoint_state:
+            n_prev = sum(1 for v in checkpoint_state.values() if v == "pass")
+            print(f"\n  ── Resuming: {n_prev} step(s) already passed in checkpoint")
+            if args.from_step:
+                print(f"  ── --from {args.from_step}: force-rerun from here onwards")
         else:
-            print("  └─ All steps done.")
-        print()
-        if args.from_step:
-            print(f"  ── --from {args.from_step}: force-rerun from here onwards")
-        if not checkpoint_state:
-            print("  ── No checkpoint found — running full pipeline")
+            print("\n  ── No checkpoint found — running full pipeline")
 
     # ── Run pipeline ───────────────────────────────────────────────────────
     results: list[StepResult] = []
     current_phase = ""
     t_total = time.time()
     # once we reach --from step, all subsequent steps run regardless of checkpoint
-    # FIX: must start as False so resume-skip fires on already-passed steps when
-    # no --from is given.  With the old `args.from_step is None` initialisation,
-    # past_from was True from the start, making `not past_from` always False and
-    # therefore the resume-skip branch never triggered — every step re-ran.
-    past_from = False
+    past_from = args.from_step is None
 
     try:
         for step in STEPS:
+            if step.phase != current_phase:
+                banner(f"Phase {step.phase}")
+                current_phase = step.phase
+
             if args.from_step and step.id == args.from_step:
                 past_from = True
 
             # --only filter
             if args.only and step.id != args.only:
                 results.append(StepResult(step.id, step.label, "skip"))
+                print(f"  ── skip [{step.id}]  (--only {args.only})")
                 continue
 
-            # --resume: re-read checkpoint before every skip check (belt-and-suspenders)
-            if args.resume and not past_from:
-                for _cp_path in [REPO_ROOT / "pipeline_checkpoint.json", CHECKPOINT]:
-                    if _cp_path.exists():
-                        try:
-                            for _k, _v in json.loads(_cp_path.read_text()).items():
-                                if checkpoint_state.get(_k) != "pass":
-                                    checkpoint_state[_k] = _v
-                        except Exception:
-                            pass
-
-            # --resume: silently skip steps that already passed
+            # --resume: skip steps that already passed, unless we're past --from
             if (args.resume
                     and checkpoint_state.get(step.id) == "pass"
                     and not past_from):
                 results.append(StepResult(step.id, step.label, "resume-skip"))
+                print(f"  ↩  skip [{step.id}]  (checkpoint: already passed)")
                 continue
-
-            # Only print phase banner when we actually run a step
-            if step.phase != current_phase:
-                banner(f"Phase {step.phase}")
-                current_phase = step.phase
 
             # --skip-slow filter
             if args.skip_slow and step.slow:

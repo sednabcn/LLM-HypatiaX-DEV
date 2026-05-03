@@ -31,6 +31,11 @@ Combines all three engine generations into a single file:
   • SymbolicTreeEngine: drop-in alternative engine with discover_validate_interpret()
     that runs the tree search and returns dimensional-validity metadata.
 
+PySR (subprocess)
+   ├─ finishes → use result
+   └─ timeout → KILL
+                  └─ fallback → SymbolicTreeEngine (v23)
+
 Usage quick-reference
 ─────────────────────
   # v21 (default, best performance):
@@ -71,21 +76,20 @@ os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
 
 MAX_COMPLEXITY = int(os.getenv("MAX_COMPLEXITY", 30))
 
-import gc
 import json
 import math
-import psutil
+import multiprocessing as mp
 import random
 import re
+import threading
 import time
 import warnings
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-import logging
-import subprocess
 import numpy as np
 import sympy as sp
+
 
 # NOTE: PySRRegressor is intentionally NOT imported at module level.
 # Importing pysr triggers juliacall initialisation immediately, which
@@ -112,77 +116,7 @@ try:
 except ImportError:
     HAS_ANTHROPIC = False
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-# Lazy loading for PySR
-try:
-    from pysr import PySR
-except ImportError:
-    PySR = None
 
-# Memory logging function
-def _log_rss(label: str):
-    rss = psutil.Process(os.getpid()).memory_info().rss / 1e9
-    print(f"   [MEM] {label}: RSS={rss:.2f} GB", flush=True)
-
-
-
-import sys  # needed for llm_cleanup and subprocess helpers
-
-# LLM cleanup mechanism
-def llm_cleanup():
-    """Force-exit the current process (last-resort OOM escape hatch)."""
-    if sys.platform == 'linux':
-        subprocess.call(['kill', '-9', str(os.getpid())])
-
-# Timeout guards
-class TimeoutGuard:
-    def __init__(self, timeout):
-        self.timeout = timeout
-        self.start_time = time.time()
-
-    def check_timeout(self):
-        if time.time() - self.start_time > self.timeout:
-            raise TimeoutError('Operation timed out')
-
-# Subprocess support pattern
-def run_subprocess(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
-    return stdout, stderr
-
-# Memory check guards
-def check_memory_threshold(threshold_gb: float):
-    """Kill process if RSS exceeds threshold_gb. Last-resort OOM guard."""
-    rss_gb = psutil.Process(os.getpid()).memory_info().rss / 1e9
-    _log_rss("check_memory_threshold")
-    if rss_gb > threshold_gb:
-        print(f"   ⚠ RSS {rss_gb:.2f} GB > threshold {threshold_gb:.2f} GB — triggering cleanup", flush=True)
-        llm_cleanup()
-
-
-def check_memory_ok(min_free_gb: float = 4.0) -> bool:
-    """Return False (and log a warning) when available RAM < min_free_gb.
-
-    Call this before each case in the outer loop to avoid an OOM-kill.
-    Returns True when there is enough memory to proceed safely.
-    """
-    vm = psutil.virtual_memory()
-    free_gb = vm.available / 1e9
-    if free_gb < min_free_gb:
-        print(
-            f"   ⚠ LOW MEMORY: {free_gb:.1f} GB free < {min_free_gb} GB — skipping case",
-            flush=True,
-        )
-        return False
-    return True
-# ============================================================================  
-# START
-# ============================================================================
-
-
-_log_rss("start")
 # ============================================================================
 # VARIABLE NAME VALIDATOR (INTEGRATED)
 # ============================================================================
@@ -484,6 +418,18 @@ class DiscoveryConfig:
     # while leaving the remaining budget for retries.
     # Set to 0 to disable (no timeout, legacy behaviour).
     pysr_timeout: int = 120
+
+    # ── v21+: hard wall-clock guard on model.fit() ───────────────────────────
+    # fit_grace_secs: extra seconds beyond pysr_timeout before the thread-based
+    # wall-clock guard fires.  Gives Julia time to finish its hall-of-fame
+    # refinement pass cleanly without going runaway.
+    # fit_wall_timeout: total wall-clock budget for one fit() call, regardless
+    # of pysr_timeout.  When > 0 it overrides pysr_timeout + fit_grace_secs.
+    # Both are overridable at runtime via env vars (higher priority than config):
+    #   PYSR_FIT_GRACE_SECS   — override fit_grace_secs
+    #   PYSR_FIT_WALL_TIMEOUT — override fit_wall_timeout
+    fit_grace_secs:   int = 120  # grace on top of pysr_timeout (default 120s)
+    fit_wall_timeout: int = 0    # 0 = derive from pysr_timeout + fit_grace_secs
 
     # Transcendental composition support
     # When True, atomic operators for arcsin(sin(x)), arccos(cos(x)), arctan(tan(x))
@@ -880,6 +826,7 @@ class SymbolicEngine:
         )
 
         print("\n[DISCOVERY] Starting symbolic regression...")
+
         print(f"   Variables: {', '.join(safe_names)}")
         print(f"   Samples: {X.shape[0]}")
         print(f"   Iterations: {self.config.niterations}")
@@ -902,6 +849,42 @@ class SymbolicEngine:
             f"parsimony_cfg={self.config.parsimony}",
             f"use_tc={self.config.use_transcendental_compositions}",
         ]
+
+        # FIX: Score-gated early abort.
+        # The adaptive scheduler passes prior_score= when it knows the last attempt
+        # was poor (e.g. score=0.18).  When the score is below the threshold we
+        # immediately fall through to the SymbolicTreeEngine rather than burning
+        # another 870s on an operator set that was already proven wrong.
+        # Threshold env var PYSR_SCORE_ABORT (default 0.15) lets CI tighten it.
+        _prior_score = kwargs.pop("prior_score", None)
+        _score_abort_threshold = float(os.environ.get("PYSR_SCORE_ABORT", 0.15))
+        if _prior_score is not None and _prior_score < _score_abort_threshold:
+            print(
+                f"   [SCORE-ABORT] prior_score={_prior_score:.3f} < {_score_abort_threshold} "
+                f"— skipping PySR, going straight to SymbolicTreeEngine",
+                flush=True,
+            )
+            _trace.append(f"outcome=SCORE_ABORT(prior={_prior_score:.3f})")
+            # Inline the fallback so we have the trace available
+            try:
+                _te = SymbolicTreeEngine(max_depth=4, population_size=200, iterations=30)
+                _tr = _te.discover_validate_interpret(X, y, variable_names=safe_names)
+                return {
+                    "success": True,
+                    "expression": _tr.get("equation", "N/A"),
+                    "r2_score": _tr.get("r2", 0.0),
+                    "complexity": _tr.get("complexity", None),
+                    "variable_names": safe_names,
+                    "original_variable_names": variable_names,
+                    "variable_name_mapping": name_mapping,
+                    "predictions": np.zeros_like(y),
+                    "validation": {"valid": True, "errors": [], "warnings": []},
+                    "method": "SymbolicTreeEngine (score-abort)",
+                    "trace": _trace,
+                }
+            except Exception as _sae:
+                print(f"   [SCORE-ABORT FALLBACK FAILED] {_sae}", flush=True)
+                # Fall through to PySR as last resort
 
         try:
             # Lazy import: keeps juliacall out of the module-level import chain
@@ -1105,11 +1088,59 @@ class SymbolicEngine:
                                 f"— injecting exp/log (exponential relationship detected)",
                                 flush=True,
                             )
+                    else:
+                        # FIX: y has negatives — try log(|y|) instead.
+                        # Covers equations like y = A*exp(x) - B where y can go negative.
+                        _y_abs = np.abs(y)
+                        if np.all(_y_abs > 0):
+                            from sklearn.linear_model import LinearRegression as _LR
+                            _Xs = X - X.mean(axis=0)
+                            _r2_lin = r2_score(y, _LR().fit(_Xs, y).predict(_Xs))
+                            _logy_abs = np.log(_y_abs)
+                            _r2_log_abs = r2_score(
+                                _logy_abs, _LR().fit(_Xs, _logy_abs).predict(_Xs)
+                            )
+                            if _r2_log_abs - _r2_lin > 0.05:
+                                _data_needs_exp = True
+                                print(
+                                    f"   [AUTO-EXP] data heuristic (|y|): "
+                                    f"R²(log|y| ~ X)={_r2_log_abs:.3f} >> R²(y ~ X)={_r2_lin:.3f} "
+                                    f"— injecting exp/log (exponential detected, y has negatives)",
+                                    flush=True,
+                                )
                 except Exception:
                     pass  # heuristic is best-effort; never block PySR
 
+            # FIX: Single-variable low-R² forced operator expansion.
+            # When vars=1 and the linear fit is poor (R² < 0.3), the default
+            # unary_operators=["sqrt"] almost certainly can't express the true
+            # relationship.  The _data_needs_exp heuristic above only fires when
+            # y > 0 everywhere; this guard covers the remaining cases (y with
+            # negatives, trig, power laws, etc.) by injecting the full standard
+            # suite.  We deliberately skip this when use_transcendental_compositions
+            # is True because that mode manages its own operator set.
+            _single_var_low_r2 = False
+            if (
+                X.shape[1] == 1
+                and not self.config.use_transcendental_compositions
+                and not _data_needs_exp
+            ):
+                try:
+                    from sklearn.linear_model import LinearRegression as _LR2
+                    _r2_1v = r2_score(y, _LR2().fit(X, y).predict(X))
+                    if _r2_1v < 0.3:
+                        _single_var_low_r2 = True
+                        print(
+                            f"   [1VAR-EXPAND] single variable, linear R²={_r2_1v:.3f} < 0.3 "
+                            f"— injecting full operator suite (exp, log, sin, cos)",
+                            flush=True,
+                        )
+                        _trace.append(f"1var_expand=True(r2_lin={_r2_1v:.3f})")
+                except Exception:
+                    pass
+
             _needs_exp_log = (
-                (self.domain in _EXP_DOMAINS or _data_needs_exp)
+                (self.domain in _EXP_DOMAINS or _data_needs_exp or _single_var_low_r2)
                 and not self.config.use_transcendental_compositions
             )
             if _needs_exp_log:
@@ -1118,6 +1149,12 @@ class SymbolicEngine:
                     if _eop not in active_unary:
                         active_unary.append(_eop)
                         _injected_explog.append(_eop)
+                # For single-variable low-R² also add trig (covers sin/cos relationships)
+                if _single_var_low_r2:
+                    for _eop in ("sin", "cos"):
+                        if _eop not in active_unary:
+                            active_unary.append(_eop)
+                            _injected_explog.append(_eop)
                 if _injected_explog:
                     print(
                         f"   [AUTO-EXP] domain='{self.domain}' "
@@ -1174,14 +1211,11 @@ class SymbolicEngine:
                 parsimony=self.config.parsimony,
                 maxsize=self.config.maxsize,
                 random_state=random_state,
-                # FIX (parallelism): deterministic=True forces parallelism="serial"
-                # which runs all populations sequentially.  With POPULATIONS=30 this
-                # meant 30 sequential tournament rounds → wall-clock ≫ timeout.
-                # Switching to "multithreading" lets Julia use all CPU cores so all
-                # populations run concurrently; wall-time ≈ single-population time.
-                # Reproducibility is sacrificed but that is acceptable in a benchmark
-                # where per-equation isolation already gives stable results.
-                parallelism="multithreading",
+                # Ported from core engine: deterministic=True makes random_state
+                # actually reproduce results (without it PySR ignores the seed for
+                # parallelised runs and emits a UserWarning in benchmark logs).
+                deterministic=True,
+                parallelism="serial",   # required companion to deterministic=True
                 verbosity=0,
                 progress=self.config.show_progress,
                 # Unique file per run — prevents PySR from reloading a cached
@@ -1249,21 +1283,19 @@ class SymbolicEngine:
             # call.  This prevents the 5-retry loop in HybridDiscoverySystem
             # from multiplying a slow PySR run into a full benchmark timeout.
             _timeout = int(os.environ.get("PYSR_TIMEOUT", self.config.pysr_timeout or 0))
-            # ── proc_timeout budget cap (Fix: Step 4 from diagnosis) ──────────
-            # If a proc_timeout is set (e.g. via env var PROC_TIMEOUT), ensure
-            # pysr_timeout stays at least 60s + llm_overhead_secs short of it so
-            # LLM post-processing doesn't blow past the wall-clock limit.
-            _proc_timeout = int(os.environ.get("PROC_TIMEOUT", 0))
-            _llm_overhead = int(os.environ.get("LLM_OVERHEAD_SECS", 120))
-            if _proc_timeout > 0 and _timeout > 0:
-                _budget_for_pysr = _proc_timeout - _llm_overhead - 60  # 60s safety margin
-                if _budget_for_pysr > 0 and _timeout > _budget_for_pysr:
-                    print(
-                        f"   [TIMEOUT-CAP] pysr_timeout {_timeout}s → {_budget_for_pysr}s "
-                        f"(proc_timeout={_proc_timeout}s - llm_overhead={_llm_overhead}s - 60s margin)",
-                        flush=True,
-                    )
-                    _timeout = _budget_for_pysr
+            # FIX: Hard cap on pysr_timeout.  The adaptive scheduler escalates
+            # aggressively on low-scoring problems (e.g. score=0.18, vars=1) but
+            # more time doesn't help when the operator set is wrong — PySR just
+            # spins silently until the wall limit.  Cap at 300s; anything beyond
+            # that is better spent in the SymbolicTreeEngine fallback.
+            _MAX_PYSR_TIMEOUT = int(os.environ.get("MAX_PYSR_TIMEOUT", 300))
+            if _timeout > _MAX_PYSR_TIMEOUT:
+                print(
+                    f"   [TIMEOUT-CAP] pysr_timeout={_timeout}s > cap={_MAX_PYSR_TIMEOUT}s "
+                    f"— clamping to {_MAX_PYSR_TIMEOUT}s",
+                    flush=True,
+                )
+                _timeout = _MAX_PYSR_TIMEOUT
             if _timeout > 0:
                 pysr_kwargs["timeout_in_seconds"] = _timeout
 
@@ -1512,15 +1544,18 @@ class SymbolicEngine:
             else:
                 _trace.append("ratio_features=skipped")
 
-            # ── Population-aware iteration scaling (serial mode only) ──────────
-            # In "serial" parallelism, total wall-time ∝ populations × niterations.
-            # In "multithreading", populations run concurrently so wall-time ∝
-            # niterations alone — POP-SCALE would hurt quality for no benefit.
-            # Guard: only scale when parallelism is "serial".
-            _active_parallelism = pysr_kwargs.get("parallelism", "multithreading")
+            # ── Population-aware iteration scaling ───────────────────────────
+            # Total evaluations = populations × population_size × niterations.
+            # A baseline budget of populations=10 × 33 × 25 = 8,250 evals fits
+            # comfortably in pysr_timeout.  When populations is raised (e.g. to
+            # 30 for deeper scratch searches), we scale niterations down
+            # proportionally so total evals stay ≤ the baseline.
+            #
+            # Formula: adjusted = max(5, floor(base_iters * 10 / populations))
+            # where 10 is the default populations value (the "baseline").
             _base_populations = 10   # matches DiscoveryConfig default
             _actual_populations = pysr_kwargs["populations"]
-            if _active_parallelism == "serial" and _actual_populations > _base_populations:
+            if _actual_populations > _base_populations:
                 _pop_scale = _base_populations / _actual_populations
                 _pop_adjusted_iters = max(5, int(pysr_kwargs["niterations"] * _pop_scale))
                 if _pop_adjusted_iters < pysr_kwargs["niterations"]:
@@ -1532,13 +1567,6 @@ class SymbolicEngine:
                     )
                     _trace.append(f"pop_scale={_pop_scale:.2f}({pysr_kwargs['niterations']}→{_pop_adjusted_iters})")
                     pysr_kwargs["niterations"] = _pop_adjusted_iters
-            elif _actual_populations > _base_populations:
-                print(
-                    f"   [POP-SCALE] populations={_actual_populations}  parallelism={_active_parallelism!r} "
-                    f"→ niterations unchanged (populations run concurrently, no scaling needed)",
-                    flush=True,
-                )
-                _trace.append(f"pop_scale=skipped(multithreading,pops={_actual_populations})")
 
             # ── Feature-count adaptive iteration scaling ─────────────────────
             # When GM or ratio augmentation adds many columns (e.g. 6 vars →
@@ -1564,10 +1592,160 @@ class SymbolicEngine:
                     _trace.append(f"iter_scale={_iter_scale:.2f}({pysr_kwargs['niterations']}→{_adjusted_iters})")
                     pysr_kwargs["niterations"] = _adjusted_iters
 
-            # Fit model with safe variable names
-            _log_rss("before PySR")
-            self.model.fit(_X_fit, _y_fit, variable_names=safe_names)
-            _log_rss("after PySR")
+            # ── Hard wall-clock guard on model.fit() ─────────────────────────
+            # ROOT CAUSE OF 28 064s RUNAWAY (test 2, Logistic growth):
+            #
+            # PySRRegressor(timeout_in_seconds=N) passes the budget to Julia via
+            # SymbolicRegression.jl's `timeout_in_seconds` option.  Julia honours
+            # it by stopping the search loop — but only BETWEEN iterations.  When
+            # PySR finds a high-R² partial solution it enters a final
+            # "hall-of-fame refinement" phase that ignores the timeout and runs
+            # until Julia's internal convergence criterion is met.  On the
+            # Logistic growth equation this refinement ran for 28 000 s.
+            #
+            # Fix: run fit() in a daemon thread; join it for at most
+            # proc_timeout = pysr_timeout + PYSR_FIT_GRACE_SECS (default 120s).
+            # If the thread is still alive after that the Julia process is not
+            # directly killable from Python, so we raise TimeoutError which
+            # propagates up through _discover_with_retry → catches as a normal
+            # discovery failure → the equation is marked N/A, benchmark continues.
+            #
+            # PYSR_FIT_GRACE_SECS: extra seconds beyond pysr_timeout before we
+            # pull the plug.  120 s is enough for Julia finalisation on fast
+            # equations; raise it if you see legitimate fits being cut off.
+            # Env vars override config (CI can tighten without code changes)
+            _grace = int(os.environ.get(
+                "PYSR_FIT_GRACE_SECS", self.config.fit_grace_secs))
+            _explicit_wall = int(os.environ.get(
+                "PYSR_FIT_WALL_TIMEOUT", self.config.fit_wall_timeout))
+            _wall_limit = (
+                _explicit_wall if _explicit_wall > 0
+                else (_timeout if _timeout > 0 else 3600) + _grace
+            )
+
+            _fit_exc: list[BaseException] = []
+
+        
+            
+            # Worker runs in a SEPARATE PROCESS (not thread)
+            def _fit_worker_process(queue, X, y, names, kwargs):
+                """
+                This function runs inside a child process.
+
+                Why:
+                - PySR uses Julia internally
+                - Julia cannot be safely interrupted from Python threads
+                - A separate process CAN be force-killed
+                
+                Communication:
+                - We return results via a multiprocessing.Queue
+                """
+                
+                os.environ["PYTHON_JULIACALL_HANDLE_SIGNALS"] = "no"
+                os.environ["JULIA_NUM_THREADS"] = "1"   # FIX 3: single-threaded Julia avoids race conditions
+                try:
+                    from pysr import PySRRegressor
+                    
+                    model = PySRRegressor(**kwargs)
+
+                    # Run symbolic regression
+                    model.fit(X, y, variable_names=names)
+
+                    # Send back success result
+                    best_eq = model.get_best()
+
+                    queue.put(("success", best_eq))
+                    
+                    
+                except Exception as e:
+
+                    # Send back error
+                    queue.put(("error", e))
+
+            # ── Shared fallback helper (timeout / JuliaError / retry exhausted) ──
+            def _run_tree_fallback(elapsed: float, reason: str) -> dict:
+                """Switch to SymbolicTreeEngine (v23) when PySR is unavailable."""
+                print(f"   [FALLBACK] {reason} → switching to SymbolicTreeEngine (v23)", flush=True)
+                try:
+                    _te = SymbolicTreeEngine(
+                        max_depth=4,
+                        population_size=200,
+                        iterations=30,
+                    )
+                    _tr = _te.discover_validate_interpret(X, y, variable_names=safe_names)
+                    return {
+                        "success": True,
+                        "equation": _tr.get("equation", "N/A"),
+                        "r2": _tr.get("r2", 0.0),
+                        "complexity": _tr.get("complexity", None),
+                        "method": "SymbolicTreeEngine (fallback)",
+                        "elapsed": elapsed,
+                    }
+                except Exception as _fe:
+                    print(f"   [FALLBACK FAILED] {_fe}", flush=True)
+                    raise RuntimeError(f"PySR ({reason}) + tree fallback both failed") from _fe
+
+            # ── FIX 4: defensive retry — up to 2 attempts ────────────────────
+            _fit_elapsed = 0.0
+            status = None
+            payload = None
+            for _attempt in range(2):
+                # Create fresh communication channel per attempt
+                queue = mp.Queue()
+
+                # Create subprocess
+                proc = mp.Process(
+                    target=_fit_worker_process,
+                    args=(queue, _X_fit, _y_fit, safe_names, pysr_kwargs),
+                )
+
+                _t_fit_start = time.time()
+                proc.start()
+
+                # Wait for completion (WITH TIME LIMIT)
+                proc.join(timeout=_wall_limit)
+                _fit_elapsed = time.time() - _t_fit_start
+
+                # ── HARD TIMEOUT ENFORCEMENT ──
+                if proc.is_alive():
+                    print(f"   [KILL] PySR exceeded {_wall_limit}s — terminating", flush=True)
+                    proc.terminate()
+                    proc.join()
+                    proc.close()
+                    # Timeout is not retriable — go straight to tree fallback
+                    return _run_tree_fallback(_fit_elapsed, "PySR timed out")
+
+                # ── RETRIEVE RESULT ──
+                if queue.empty():
+                    _empty_msg = f"PySR process returned no result (attempt {_attempt + 1}/2)"
+                    if _attempt == 0:
+                        print(f"   [RETRY] {_empty_msg}, retrying...", flush=True)
+                        continue
+                    raise RuntimeError(_empty_msg)
+
+                status, payload = queue.get()
+
+                if status == "error":
+                    # FIX 5: fallback immediately on JuliaError — Julia runtime is
+                    # unstable, retrying the same process will also crash.
+                    if "JuliaError" in str(payload) or "JuliaError" in type(payload).__name__:
+                        return _run_tree_fallback(_fit_elapsed, "Julia crashed (JuliaError)")
+
+                    if _attempt == 0:
+                        print(
+                            f"   [RETRY] PySR failed (attempt 1/2): {payload!r}", flush=True
+                        )
+                        continue
+                    # Second attempt also failed — propagate original error
+                    raise payload
+
+                break  # success — exit retry loop
+
+            # Save trained model
+            self.model = None
+            self.model = payload
+
+            print(f"   [PySR] fit() completed in {_fit_elapsed:.1f}s", flush=True)
 
             # Get best equation — scan the full Pareto front for highest R²
             # rather than using get_best() which picks by loss×complexity and
@@ -1576,43 +1754,23 @@ class SymbolicEngine:
                 eqs = self.model.equations_
                 best_r2 = -np.inf
                 best_idx = 0
-                # FIX (double-predict): cache r2 per equation here so the
-                # Pareto-trace block below can reuse them without a second
-                # round of Julia predict() calls (previously called model.predict
-                # twice per equation — once in this loop, once in _pareto_r2s).
-                _cached_r2: dict[int, float] = {}
                 for idx in range(len(eqs)):
                     try:
                         y_pred_i = self.model.predict(_X_fit, index=idx) * _y_std
                         r2_i = r2_score(y, y_pred_i)
-                        _cached_r2[idx] = r2_i
                         if r2_i > best_r2:
                             best_r2 = r2_i
                             best_idx = idx
                     except Exception:
                         pass
-
-                # FIX (indentation bug): these three lines were erroneously
-                # INSIDE the for-loop above, causing best_eq_raw / best_eq /
-                # expression to be recomputed on every iteration (using the
-                # intermediate best_idx) instead of once after the loop completes.
-                best_eq_raw = eqs.iloc[best_idx] if hasattr(eqs, "iloc") else eqs[best_idx]
-                if hasattr(best_eq_raw, "equation"):
-                    # SimpleNamespace (mock) — attribute access
-                    best_eq = {
-                        "equation": str(best_eq_raw.equation),
-                        "complexity": getattr(best_eq_raw, "complexity", len(str(best_eq_raw.equation))),
-                    }
-                else:
-                    best_eq = best_eq_raw
+                best_eq = eqs.iloc[best_idx]
                 expression = str(best_eq["equation"])
 
                 # ── Complexity gate ───────────────────────────────────────────
                 # Reject equations that exceed MAX_COMPLEXITY; treat as if no
                 # valid equations were found so the caller can retry or fall back.
                 _best_complexity = best_eq.get("complexity", len(expression))
-                
-                if False and _best_complexity > MAX_COMPLEXITY:  # gate disabled for mock-compatib
+                if _best_complexity > MAX_COMPLEXITY:
                     print(
                         f"   ⚠ Rejected: complexity {_best_complexity} > {MAX_COMPLEXITY}",
                         flush=True,
@@ -1635,13 +1793,16 @@ class SymbolicEngine:
                     }
                 else:
                     # ── Pareto front trace ────────────────────────────────────
-                    # Reuse _cached_r2 from the loop above — no second predict().
+                    # Dump all equations in the Pareto front so we can see what PySR
+                    # actually found, even if R² is low.  Top 5 by R² only.
                     _pareto_r2s = []
-                    for _pi, _pr2 in _cached_r2.items():
+                    for _pi in range(len(eqs)):
                         try:
+                            _pr2 = r2_score(y, self.model.predict(_X_fit, index=_pi) * _y_std)
                             _pareto_r2s.append((_pi, str(eqs.iloc[_pi]["equation"]), round(_pr2, 4)))
                         except Exception:
                             pass
+                    _pareto_r2s.sort(key=lambda x: x[1], reverse=False)
                     _top5 = sorted(_pareto_r2s, key=lambda x: x[2], reverse=True)[:5]
                     _trace.append(f"pareto_top5={_top5}")
                     _trace.append(f"best_r2={best_r2:.4f}")
@@ -1674,7 +1835,6 @@ class SymbolicEngine:
 
                     _result = {
                         "expression": expression,
-                        "equation": expression,
                         "r2_score": r2,
                         "complexity": _best_complexity,
                         "variable_names": safe_names,
@@ -1835,7 +1995,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             )
 
         elif self.llm_mode == "seed":
-            result = self._discover_with_llm_seed(
+            return self._discover_with_llm_seed(
                 X,
                 y,
                 variable_names,
@@ -1846,7 +2006,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             )
 
         elif self.llm_mode == "hybrid":
-            result = self._discover_hybrid(
+            return self._discover_hybrid(
                 X,
                 y,
                 variable_names,
@@ -1857,7 +2017,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             )
 
         elif self.llm_mode == "fallback":
-            result = self._discover_with_fallback(
+            return self._discover_with_fallback(
                 X,
                 y,
                 variable_names,
@@ -1869,7 +2029,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
         else:
             print(f"⚠️  Unknown LLM mode: {self.llm_mode}, using pure PySR")
-            result = super().discover(
+            return super().discover(
                 X,
                 y,
                 variable_names,
@@ -1878,17 +2038,6 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 auto_sanitize=auto_sanitize,
                 **kwargs,
             )
-
-        # ── Fix: LLM history memory leak (Step 3 from diagnosis) ─────────────
-        # IntegratedLLMEngine accumulates API response objects across calls.
-        # After each case, drop the engine so Python can GC the response history.
-        # A fresh engine will be created on the next SymbolicEngineWithLLM init.
-        if hasattr(self, 'llm_engine') and self.llm_engine is not None:
-            self.llm_engine = None
-        self.model = None  # release PySR/Julia model RSS too
-        gc.collect()
-
-        return result
 
     def _discover_with_llm_seed(
         self, X, y, variable_names, equation_name, random_state, auto_sanitize, **kwargs
