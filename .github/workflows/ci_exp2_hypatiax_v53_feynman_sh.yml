@@ -167,42 +167,66 @@ jobs:
             "${RESULTS_DIR}/tables"
 
       # ── Checkpoint cache (resume support) ──────────────────────────────────
+      # actions/cache@v5 separates restore and save. Without an explicit save
+      # step the cache is only written on an exact key hit — which never happens
+      # on a first run. The save step below runs after the experiment and writes
+      # the checkpoint regardless of whether restore found anything.
+      #
+      # Key strategy:
+      #   Primary : branch + run_id   → always unique, always saves fresh data
+      #   Fallback: branch prefix     → picks up the most recent run's checkpoint
+      #   Fallback: bare prefix       → cross-branch fallback (e.g. after rename)
       - name: Restore checkpoint cache
-        uses: actions/cache@v5
+        id: checkpoint-restore
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.RESULTS_DIR }}/comparison_results/feynman-tests/exp2/
-          key: feynman-sh-checkpoint-${{ github.ref_name }}
+          key: feynman-sh-checkpoint-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
+            feynman-sh-checkpoint-${{ github.ref_name }}-
             feynman-sh-checkpoint-
 
       # ── exp2_feynman (mirrors run_all.sh STEP 5) ───────────────────────────
-      # Runs the Python script directly — stdout streams live to Actions log.
-      # No notebook kernel buffering, no path-patching step needed.
-      #
-      # run_all.sh command:
-      #   python3 exp2_feynman_colab_multithreaded.py \
-      #     --samples ${FEYNMAN_SAMPLES} \
-      #     --no-llm-cache
-      - name: Run exp2_feynman — Feynman SR benchmark Phase 2
-        # FIX: drop ${{ }} wrapper — if: is already an expression context.
+
+      # Pre-flight: verify the script exists and imports resolve before the
+      # real run. Any crash here surfaces as a clear error, not silent pipe death.
+      - name: Pre-flight — verify script and imports
         if: github.event.inputs.dry_run != 'true'
         working-directory: ${{ env.EXPERIMENTS_DIR }}
-        # FIX: removed trailing backslash from --no-llm-cache line so the
-        # shell redirect (2>&1 | tee) is not passed as a script argument.
-        run: |
-          python3 exp2_feynman_colab_multithreaded.py \
-            --samples ${{ github.event.inputs.feynman_samples || '200' }} \
-            --no-llm-cache \
-            2>&1 | tee "${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log"
         env:
+          PYTHONUNBUFFERED: "1"
           PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
-          # FIX: env.* context is unavailable in step env: blocks; use literal.
+          JULIA_NUM_THREADS: "4"
+        run: |
+          echo "=== working directory ==="
+          pwd
+          echo "=== script present ==="
+          ls -lh exp2_feynman_colab_multithreaded.py
+          echo "=== import check ==="
+          python3 -c "import exp2_feynman_colab_multithreaded; print('imports OK')"
+
+      # Main run.
+      # PYTHONUNBUFFERED=1 — forces Python to flush every print() immediately
+      #                      instead of accumulating an 8 KB pipe buffer.
+      # python3 -u         — belt-and-braces unbuffered flag alongside the env var.
+      - name: Run exp2_feynman — Feynman SR benchmark Phase 2
+        if: github.event.inputs.dry_run != 'true'
+        working-directory: ${{ env.EXPERIMENTS_DIR }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
           JULIA_NUM_THREADS: "4"
           PYSR_POPULATIONS: ${{ github.event.inputs.pysr_populations || '4' }}
           FEYNMAN_TIMEOUT: ${{ github.event.inputs.feynman_timeout || '900' }}
           FEYNMAN_SAMPLES: ${{ github.event.inputs.feynman_samples || '200' }}
           FEYNMAN_NOISELESS_THRESHOLD: "0.9999"
           RESUME: ${{ github.event.inputs.resume || 'true' }}
+        run: |
+          LOG="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log"
+          python3 -u exp2_feynman_colab_multithreaded.py \
+            --samples ${{ github.event.inputs.feynman_samples || '200' }} \
+            --no-llm-cache \
+            2>&1 | tee "$LOG"
 
       - name: Dry-run summary
         # FIX: drop ${{ }} wrapper — if: is already an expression context.
@@ -220,6 +244,16 @@ jobs:
           echo "    FEYNMAN_TIMEOUT=${{ github.event.inputs.feynman_timeout || '900' }}"
           echo "    FEYNMAN_SAMPLES=${{ github.event.inputs.feynman_samples || '200' }}"
           echo "    RESULTS_DIR=${RESULTS_DIR}"
+
+      # ── Save checkpoint cache ───────────────────────────────────────────────
+      # Runs even if the experiment step was skipped (dry-run) or failed
+      # mid-way, so partial progress is preserved for the next resume.
+      - name: Save checkpoint cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.RESULTS_DIR }}/comparison_results/feynman-tests/exp2/
+          key: feynman-sh-checkpoint-${{ github.ref_name }}-${{ github.run_id }}
 
       # ── Artifacts ──────────────────────────────────────────────────────────
       - name: Upload exp2 run log

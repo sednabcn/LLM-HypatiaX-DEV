@@ -87,22 +87,23 @@ _PYSR_VALID_PARAMS = None
 Left sidebar → key icon → add `ANTHROPIC_API_KEY` → enable for this notebook.
 """
 
-# Use Colab Secrets (left sidebar key icon) -- avoids hardcoding keys.
-# Add secret: ANTHROPIC_API_KEY
+# API key — CI/standalone: read from environment variable (set via GitHub secret).
+# Colab: falls back to Colab Secrets if env var not already set.
 import os
 
-try:
-    from google.colab import userdata
-    ANTHROPIC_API_KEY = userdata.get('ANTHROPIC_API_KEY')
-    print('API key loaded from Colab Secrets OK')
-except Exception as e:
-    print(f'Colab Secrets unavailable: {e}')
-    ANTHROPIC_API_KEY = ''  # paste key here only as last resort
-os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY or ''
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+if not ANTHROPIC_API_KEY:
+    try:
+        from google.colab import userdata
+        ANTHROPIC_API_KEY = userdata.get('ANTHROPIC_API_KEY') or ''
+        print('API key loaded from Colab Secrets OK')
+    except Exception:
+        ANTHROPIC_API_KEY = ''
+os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY
 if ANTHROPIC_API_KEY and ANTHROPIC_API_KEY.startswith('sk-ant-'):
-    print('API key set OK')
+    print(f'API key set OK ({len(ANTHROPIC_API_KEY)} chars)')
 else:
-    print('Key missing -- add via Colab Secrets (left sidebar key icon)')
+    print('WARNING: ANTHROPIC_API_KEY missing or invalid — LLM calls will fail')
 
 """## 5 · Run configuration"""
 
@@ -116,8 +117,16 @@ CFG = dict(
     output_json='exp2_feynman_extrap_multithreaded.json',
     nn_only=False,
 )
-MOUNT_DRIVE = True
-if MOUNT_DRIVE:
+# Auto-detect Colab — mount Drive only when running interactively there.
+# On CI / standalone the checkpoint goes to RESULTS_DIR (set by workflow env).
+_ON_COLAB = False
+try:
+    import google.colab  # noqa: F401
+    _ON_COLAB = True
+except ImportError:
+    pass
+
+if _ON_COLAB:
     try:
         from google.colab import drive
         drive.mount('/content/drive')
@@ -125,6 +134,17 @@ if MOUNT_DRIVE:
         print(f"Checkpoints -> {CFG['output_json']}")
     except Exception as e:
         print(f'Drive mount skipped: {e}')
+else:
+    # CI / standalone: honour RESULTS_DIR env var if set
+    _results_dir = os.environ.get('RESULTS_DIR', '')
+    if _results_dir:
+        os.makedirs(os.path.join(_results_dir, 'comparison_results', 'feynman-tests', 'exp2'),
+                    exist_ok=True)
+        CFG['output_json'] = os.path.join(
+            _results_dir, 'comparison_results', 'feynman-tests', 'exp2',
+            CFG['output_json']
+        )
+    print(f"Checkpoints -> {CFG['output_json']}")
 print('Config:', CFG)
 
 """## 6 · 30-equation Feynman dataset
@@ -708,7 +728,15 @@ def colour_result(val):
         return 'background-color: #f8d7da; color: #721c24'
     return ''
 
-df.style.applymap(colour_result, subset=['Result'])
+# Display styled dataframe only inside a Jupyter/Colab kernel
+if _ON_COLAB:
+    try:
+        from IPython.display import display
+        display(df.style.applymap(colour_result, subset=['Result']))
+    except Exception:
+        print(df.to_string())
+else:
+    print(df.to_string())
 
 """## 13 · LaTeX table — ready to paste into §6"""
 
@@ -859,7 +887,7 @@ df_export = pd.DataFrame(rows)
 csv_path = os.path.join(EXPORT_DIR, 'results.csv')
 df_export.to_csv(csv_path, index=False)
 print(f'[2/7] results.csv        {os.path.getsize(csv_path):,} bytes  ({len(df_export)} rows)')
-df_export
+print(df_export.to_string())
 
 # 3 · LaTeX table (latex variable built in cell 12)
 tex_path = os.path.join(EXPORT_DIR, 'table.tex')
@@ -1077,9 +1105,15 @@ print(f'Zip: {zip_path}  ({zip_size:,} bytes)')
 for fname in sorted(os.listdir(EXPORT_DIR)):
     sz = os.path.getsize(os.path.join(EXPORT_DIR, fname))
     print(f'  {fname:<30} {sz:>8,} bytes')
-from google.colab import files
+if _ON_COLAB:
+    try:
+        from google.colab import files
+        print(f'Downloading {zip_path} ...')
+        files.download(zip_path)
+    except Exception as e:
+        print(f'Colab download unavailable: {e}')
+else:
+    print(f'Artifact ready for upload: {zip_path}')
 
-print(f'Downloading {zip_path} ...')
-files.download(zip_path)
-if __name__ == "__main__":
-    pass  # TODO: add entry point
+if __name__ == '__main__':
+    pass  # entry point — all logic runs at module level above
