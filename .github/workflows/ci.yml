@@ -221,17 +221,23 @@ jobs:
         #   W293  — whitespace on blank lines            (symbolic_engine_apr30_1900.py:L1628-1659)
         #   F401  — unused import `threading`            (symbolic_engine_apr30_1900.py:84)
         # ruff --fix handles all three; fix_ruff.sh covers any repo-specific patches.
+        # protocols/ is optional — only passed when the directory exists.
         run: |
           bash .github/scripts/fix_ruff.sh
-          ruff check hypatiax/ scripts/ protocols/ \
+          TARGETS="hypatiax/ scripts/"
+          [ -d protocols ] && TARGETS="$TARGETS protocols/"
+          ruff check $TARGETS \
             --select I,W,F401 \
             --ignore E501,F821,F404,E402,E701,E702,E741,F841 \
             --fix --unsafe-fixes \
             --output-format github || true
 
       - name: ruff
+        # protocols/ is optional — only passed when the directory exists.
         run: |
-          ruff check hypatiax/ scripts/ protocols/ \
+          TARGETS="hypatiax/ scripts/"
+          [ -d protocols ] && TARGETS="$TARGETS protocols/"
+          ruff check $TARGETS \
             --select E,F,W,I --ignore E501,F821,F404,E402,E701,E702,E741,F841 \
             --output-format github
 
@@ -239,9 +245,13 @@ jobs:
         run: |
           python3 - <<'EOF'
           import subprocess, sys, re
+          from pathlib import Path
           KNOWN = {"display", "_kill_thread", "plot"}
           KNOWN_F404 = {"hypatiax/protocols/experiment_protocol_benchmark.py"}
-          r = subprocess.run(["python3","-m","pyflakes","hypatiax/","protocols/","scripts/"],
+          targets = ["hypatiax/", "scripts/"]
+          if Path("protocols").is_dir():
+              targets.append("protocols/")
+          r = subprocess.run(["python3","-m","pyflakes"] + targets,
                              capture_output=True, text=True)
           errs = []
           for line in (r.stdout+r.stderr).splitlines():
