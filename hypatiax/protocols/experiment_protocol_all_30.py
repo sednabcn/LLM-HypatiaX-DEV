@@ -544,7 +544,7 @@ class ExperimentProtocolAll:
                         "difficulty": "easy",
                         "formula_type": "algebraic",
                         "ground_truth": "1/do + 1/di",
-                        "units": {"do": "m", "di": "m", "f": "1/m"},
+                        "units": {"do": "m", "di": "m", "": "1/m"},
                         "variable_descriptions": {
                             "do": "Object distance from lens",
                             "di": "Image distance from lens",
@@ -630,13 +630,13 @@ class ExperimentProtocolAll:
                         "equation_name": "photon_energy",
                         "difficulty": "easy",
                         "formula_type": "linear",
-                        "ground_truth": "4.136e-15 * f",
-                        "original_ground_truth": "h * f",
-                        "units": {"f": "Hz", "E": "eV"},
+                        "ground_truth": "4.136e-15 * ",
+                        "original_ground_truth": "h * ",
+                        "units": {"": "Hz", "E": "eV"},
                         "variable_descriptions": {
-                            "f": "Photon frequency (visible spectrum)",
+                            "": "Photon frequency (visible spectrum)",
                         },
-                        "variable_roles": {"f": "varying"},
+                        "variable_roles": {"": "varying"},
                         "folded_constants": {"h_eV": 4.136e-15},
                         "pysr_fix": "h is constant (zero variance) — dropped, folded into ground_truth",
                         "quantum_fix_v22": "Use eV·s units for better numerical properties",
@@ -1368,7 +1368,7 @@ def run(num_samples: int = 300) -> dict:
     print("=" * 80)
     print("EXPERIMENT PROTOCOL ALL v4.0: COMPLETE (BEST OF v2.0 + v2.1)".center(80))
     print("=" * 80)
-    print(f"Version: 4.0 | Date: 2026-01-13")
+    print("Version: 4.0 | Date: 2026-01-13")
     if one_eq:
         print("  ▲▲  SMOKE-TEST MODE  (ONE_EQUATION=1) — running 1 domain only")
     print(f"  Running {len(domain_slice)}/{len(all_domains)} domain(s): {domain_slice}")

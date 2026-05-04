@@ -74,17 +74,16 @@ MAX_COMPLEXITY = int(os.getenv("MAX_COMPLEXITY", 30))
 import gc
 import json
 import math
-import psutil
 import random
 import re
+import subprocess
 import time
 import warnings
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-import logging
-import subprocess
 import numpy as np
+import psutil
 import sympy as sp
 
 # NOTE: PySRRegressor is intentionally NOT imported at module level.
@@ -129,6 +128,7 @@ def _log_rss(label: str):
 
 
 import sys  # needed for llm_cleanup and subprocess helpers
+
 
 # LLM cleanup mechanism
 def llm_cleanup():
@@ -177,7 +177,7 @@ def check_memory_ok(min_free_gb: float = 4.0) -> bool:
         )
         return False
     return True
-# ============================================================================  
+# ============================================================================
 # START
 # ============================================================================
 
@@ -1611,7 +1611,7 @@ class SymbolicEngine:
                 # Reject equations that exceed MAX_COMPLEXITY; treat as if no
                 # valid equations were found so the caller can retry or fall back.
                 _best_complexity = best_eq.get("complexity", len(expression))
-                
+
                 if False and _best_complexity > MAX_COMPLEXITY:  # gate disabled for mock-compatib
                     print(
                         f"   ⚠ Rejected: complexity {_best_complexity} > {MAX_COMPLEXITY}",
