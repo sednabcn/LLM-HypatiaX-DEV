@@ -1,0 +1,119 @@
+name: Run Hybrid System Benchmark (Full Suite)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/scripts/run_hybrid_benchmark.ipynb'
+      - '.github/workflows/ci_run_hybrid_benchmark.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/scripts/run_hybrid_benchmark.ipynb'
+  schedule:
+    - cron: '30 22 * * *'  # 23:30 BST (UTC+1) = 22:30 UTC — job 2 of 4 (+13 h)
+  workflow_dispatch:
+    inputs:
+      fast_mode:
+        description: 'Fast mode — fewer samples, smoke-test only (true/false)'
+        required: false
+        default: 'false'
+      resume:
+        description: 'Resume from checkpoint (true/false)'
+        required: false
+        default: 'true'
+
+jobs:
+  run-hybrid-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 480    # 8 h ceiling — matches the ~4-8 h runtime estimate
+
+    env:
+      LLM_MODEL: "claude-sonnet-4-20250514"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        # No Julia required — this benchmark is CPU-only / no PySR
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            scikit-learn \
+            scipy \
+            numpy \
+            pandas \
+            anthropic \
+            nbconvert \
+            ipykernel
+
+      # ── Secrets ───────────────────────────────────────────────────────────
+      - name: Set Anthropic API key
+        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_ENV"
+
+      # ── Result cache (resume support) ──────────────────────────────────────
+      - name: Restore results cache
+        uses: actions/cache@v4
+        with:
+          path: hypatiax/data/results/
+          key: hybrid-benchmark-results-${{ github.ref_name }}
+          restore-keys: |
+            hybrid-benchmark-results-
+
+      - name: Create results directory
+        run: mkdir -p hypatiax/data/results
+
+      # ── Notebook execution ─────────────────────────────────────────────────
+      - name: Execute notebook
+        run: |
+          jupyter nbconvert \
+            --to notebook \
+            --execute \
+            --inplace \
+            --ExecutePreprocessor.timeout=-1 \
+            .github/scripts/run_hybrid_benchmark.ipynb
+        env:
+          FAST_MODE: ${{ github.event.inputs.fast_mode || 'false' }}
+          RESUME: ${{ github.event.inputs.resume || 'true' }}
+
+      # ── HTML report export ────────────────────────────────────────────────
+      - name: Export HTML report
+        if: success()
+        run: |
+          jupyter nbconvert \
+            --to html \
+            .github/scripts/run_hybrid_benchmark.ipynb \
+            --output run_hybrid_benchmark_report.html
+
+      # ── Artifacts ─────────────────────────────────────────────────────────
+      - name: Upload executed notebook
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-benchmark-notebook-${{ github.run_id }}
+          path: .github/scripts/run_hybrid_benchmark.ipynb
+          retention-days: 30
+
+      - name: Upload HTML report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-benchmark-report-${{ github.run_id }}
+          path: run_hybrid_benchmark_report.html
+          retention-days: 30
+
+      - name: Upload results JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-benchmark-results-${{ github.run_id }}
+          path: hypatiax/data/results/
+          retention-days: 30

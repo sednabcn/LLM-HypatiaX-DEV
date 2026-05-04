@@ -1,0 +1,139 @@
+name: Exp 3 — HypatiaX v5.3 Nguyen-12 Benchmark
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/scripts/exp3_hypatiax_v53_nguyen12.ipynb'
+      - '.github/workflows/ci_exp3_hypatiax_v53_nguyen12.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/scripts/exp3_hypatiax_v53_nguyen12.ipynb'
+  schedule:
+    - cron: '30 11 * * *'  # 12:30 BST (UTC+1) = 11:30 UTC — job 3 of 4 (+13 h from job 2)
+  workflow_dispatch:
+    inputs:
+      niterations:
+        description: 'PySR niterations (default 1000; use 50 for a smoke-test)'
+        required: false
+        default: '1000'
+      seed:
+        description: 'Random seed'
+        required: false
+        default: '42'
+
+jobs:
+  run-exp3-nguyen12:
+    runs-on: ubuntu-latest
+    timeout-minutes: 720    # generous ceiling for full Nguyen-12 suite with PySR
+
+    env:
+      JULIA_VERSION: "1.11.4"
+      JULIA_MINOR: "1.11"
+      # Threads: ubuntu-latest gives 4 vCPUs
+      JULIA_NUM_THREADS: "4"
+      JULIA_EXCLUSIVE: "0"
+      # Critical: must be set before juliacall import (segfault guard)
+      PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+      LLM_MODEL: "claude-sonnet-4-20250514"
+      RUN_ID: "paper_v3"
+      RUN_VERSION: "3.0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        # Matches the notebook's pip install cell exactly
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            pysr \
+            anthropic \
+            scikit-learn \
+            scipy \
+            sympy \
+            numpy \
+            pandas \
+            matplotlib \
+            nbconvert \
+            ipykernel
+
+      # ── Julia ─────────────────────────────────────────────────────────────
+      - name: Install Julia ${{ env.JULIA_VERSION }}
+        run: |
+          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
+          wget -q "$URL"
+          tar -xzf "$TARBALL"
+          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Julia threads
+        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      # ── Secrets ───────────────────────────────────────────────────────────
+      - name: Set Anthropic API key
+        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_ENV"
+
+      # ── Notebook execution ─────────────────────────────────────────────────
+      # PYTHON_JULIACALL_HANDLE_SIGNALS must already be in env before the kernel
+      # forks — passing it via `env:` here guarantees that ordering.
+      - name: Execute notebook (Nguyen-12 full suite)
+        run: |
+          jupyter nbconvert \
+            --to notebook \
+            --execute \
+            --inplace \
+            --ExecutePreprocessor.timeout=-1 \
+            .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb
+        env:
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+          JULIA_NUM_THREADS: ${{ env.JULIA_NUM_THREADS }}
+          NITERATIONS: ${{ github.event.inputs.niterations || '1000' }}
+          SEED: ${{ github.event.inputs.seed || '42' }}
+
+      # ── Figures & report export ────────────────────────────────────────────
+      - name: Export HTML report with figures
+        if: success()
+        run: |
+          jupyter nbconvert \
+            --to html \
+            .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb \
+            --output exp3_nguyen12_report.html
+
+      # ── Artifacts ─────────────────────────────────────────────────────────
+      - name: Upload executed notebook
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp3-nguyen12-notebook-${{ github.run_id }}
+          path: .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb
+          retention-days: 30
+
+      - name: Upload HTML report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp3-nguyen12-report-${{ github.run_id }}
+          path: exp3_nguyen12_report.html
+          retention-days: 30
+
+      - name: Upload any generated plots or result files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp3-nguyen12-outputs-${{ github.run_id }}
+          path: |
+            *.png
+            *.json
+            *.csv
+          if-no-files-found: ignore
+          retention-days: 30

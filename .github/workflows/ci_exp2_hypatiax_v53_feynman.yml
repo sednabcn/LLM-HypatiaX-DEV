@@ -1,0 +1,145 @@
+name: Exp 2 — HypatiaX v5.3 Feynman Extrapolation (n=30)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/scripts/exp2_hypatiax_v53_feynman.ipynb'
+      - '.github/workflows/ci_exp2_hypatiax_v53_feynman.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/scripts/exp2_hypatiax_v53_feynman.ipynb'
+  schedule:
+    - cron: '30 0 * * *'   # 01:30 BST (UTC+1) = 00:30 UTC — job 4 of 4 (+13 h from job 3)
+  workflow_dispatch:
+    inputs:
+      resume:
+        description: 'Resume from checkpoint (true/false)'
+        required: false
+        default: 'true'
+      pysr_timeout:
+        description: 'PySR timeout in seconds per equation'
+        required: false
+        default: '1100'
+
+jobs:
+  run-exp2-feynman:
+    runs-on: ubuntu-latest
+    # Ceiling: ~12-24 h on 4 vCPUs; GitHub Actions max is 6 h on standard runners.
+    # For the full run use a self-hosted runner and raise this value.
+    # For a smoke-test (one_equation) the 360 min limit is ample.
+    timeout-minutes: 360
+
+    env:
+      JULIA_VERSION: "1.11.4"
+      JULIA_MINOR: "1.11"
+      # ubuntu-latest runners: 4 vCPUs — matches Kaggle CPU notebook
+      JULIA_NUM_THREADS: "4"
+      JULIA_EXCLUSIVE: "0"
+      # Segfault guard: set before any juliacall / pysr import
+      PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+      LLM_MODEL: "claude-sonnet-4-20250514"
+      # parallelism=multithreading — no Distributed workers, immune to
+      # ProcessExitedException (see notebook header for full rationale)
+      PYSR_PARALLELISM: "multithreading"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        # Matches Cell 2 of the notebook exactly
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            pysr \
+            scikit-learn \
+            scipy \
+            numpy \
+            pandas \
+            nbconvert \
+            ipykernel
+
+      # ── Julia ─────────────────────────────────────────────────────────────
+      - name: Install Julia ${{ env.JULIA_VERSION }}
+        run: |
+          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
+          wget -q "$URL"
+          tar -xzf "$TARBALL"
+          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Julia threads
+        # Should print 4 on ubuntu-latest; confirms JULIA_NUM_THREADS was picked up
+        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      # ── Secrets ───────────────────────────────────────────────────────────
+      - name: Set Anthropic API key
+        # Store ANTHROPIC_API_KEY in GitHub repository Settings → Secrets → Actions
+        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_ENV"
+
+      # ── Checkpoint cache (resume support) ─────────────────────────────────
+      - name: Restore checkpoint cache
+        uses: actions/cache@v4
+        with:
+          path: logs/
+          key: feynman-checkpoint-${{ github.ref_name }}
+          restore-keys: |
+            feynman-checkpoint-
+
+      - name: Create log directory
+        run: mkdir -p logs
+
+      # ── Notebook execution ─────────────────────────────────────────────────
+      # PYTHON_JULIACALL_HANDLE_SIGNALS must be in the kernel environment
+      # before juliacall is imported (Cell 2). Passing it via `env:` here
+      # ensures it is set before the notebook kernel forks.
+      - name: Execute notebook (Feynman n=30 equations)
+        run: |
+          jupyter nbconvert \
+            --to notebook \
+            --execute \
+            --inplace \
+            --ExecutePreprocessor.timeout=-1 \
+            .github/scripts/exp2_hypatiax_v53_feynman.ipynb
+        env:
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+          JULIA_NUM_THREADS: ${{ env.JULIA_NUM_THREADS }}
+          PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout || '1100' }}
+          RESUME: ${{ github.event.inputs.resume || 'true' }}
+
+      # ── Artifacts ─────────────────────────────────────────────────────────
+      - name: Upload executed notebook
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp2-feynman-notebook-${{ github.run_id }}
+          path: .github/scripts/exp2_hypatiax_v53_feynman.ipynb
+          retention-days: 30
+
+      - name: Upload logs and checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp2-feynman-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+
+      - name: Upload result files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp2-feynman-results-${{ github.run_id }}
+          path: |
+            *.json
+            *.csv
+          if-no-files-found: ignore
+          retention-days: 30

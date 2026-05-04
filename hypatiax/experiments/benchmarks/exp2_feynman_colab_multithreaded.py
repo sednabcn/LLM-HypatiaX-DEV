@@ -265,12 +265,14 @@ FEYNMAN_30 = [
     },
     # --- Quantum mechanics (3) ---
     {
-        'id': 'I.34.1', 'name': 'Photon energy', 'domain': 'Quantum',
+        'id': 'custom.hbar_omega', 'name': 'Photon energy', 'domain': 'Quantum',
         'vars': ['h_bar', 'omega'],
         'ranges': [(1.055e-34, 1.055e-34), (1e13, 1e16)],
         'extrap_multiplier': 2.0,
         'fn': lambda h_bar, omega: h_bar * omega,
-        'note': 'h_bar fixed; tests symbolic recovery of linear proportionality at UV frequencies',
+        'note': 'E=hbar*omega (photon energy). ID corrected: FSRD I.34.1 is relativistic Doppler; '
+                'this formula matches FSRD I.34.27 but h_bar is fixed as a constant input. '
+                'Relabelled custom.hbar_omega to avoid ID collision.',
     },
     {
         'id': 'II.34.2a', 'name': 'Magnetic moment', 'domain': 'Quantum',
@@ -288,15 +290,19 @@ FEYNMAN_30 = [
     },
     # --- Gravitation (2) ---
     {
-        'id': 'I.12.1', 'name': 'Gravity potential', 'domain': 'Gravitation',
+        'id': 'I.12.1', 'name': 'Gravitational force', 'domain': 'Gravitation',
         'vars': ['m1', 'm2', 'r'],
         'ranges': [(1e10, 1e12), (1e10, 1e12), (1e6, 1e8)],
         'extrap_multiplier': 2.0,
-        'fn': lambda m1, m2, r: -6.674e-11 * m1 * m2 / r,
-        'note': 'G constant spans many orders of magnitude — expected failure',
+        'fn': lambda m1, m2, r: 6.674e-11 * m1 * m2 / r**2,
+        'note': 'FSRD I.12.1 is gravitational FORCE F=Gm1m2/r^2 (fixed from erroneous 1/r potential). '
+                'Large dynamic range — expected hard case for SR.',
     },
     {
-        'id': 'I.50.26b', 'name': 'Orbital period', 'domain': 'Gravitation',
+        'id': 'custom.kepler_period', 'name': 'Orbital period (Kepler)', 'domain': 'Gravitation',
+        # NOTE: I.50.26b does not exist in the FSRD-100 or any official release.
+        # Kepler's 3rd law has no assigned FSRD ID. Relabelled custom.kepler_period.
+        # original (erroneous) id was 'I.50.26b'
         'vars': ['r', 'M'],
         'ranges': [(1e6, 1e9), (1e20, 1e30)],
         'extrap_multiplier': 2.0,
@@ -335,6 +341,7 @@ FEYNMAN_30 = [
     # --- Special relativity (2) ---
     {
         'id': 'I.34.27b', 'name': 'Time dilation', 'domain': 'Relativity',
+        # NOTE: I.34.27b is from the 2022 SRSD extension (Kamienny et al.), not the original FSRD-100.
         'vars': ['t', 'v', 'c'],
         'ranges': [(1.0, 100.0), (0.0, 0.8), (1.0, 1.0)],
         'extrap_multiplier': 1.5,

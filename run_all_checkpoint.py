@@ -33,7 +33,7 @@ Usage:
 
 Step IDs (use with --only / --from):
     Setup   : deps  patches-gen  patches-apply  fixup-init  fixup-tex  validate  validate-paper-config  check-hypatiax-protocols
-    Phase 1 : exp1  exp1b  exp2  exp3  exp3b
+    Phase 1 : exp1  exp1b  exp2_feynman  exp2_sym  exp2_hyb  exp2  exp3  exp3b
     Phase 2 : suppB  suppA  instability  extrap
     Phase 3 : provenance  discover-provenance  scan-imports  verify  hashlock
     Phase 4 : figures  tables
@@ -42,6 +42,15 @@ Step IDs (use with --only / --from):
 Prerequisites:
     export ANTHROPIC_API_KEY="sk-ant-..."
     pip install -r requirements.txt
+
+Changelog v5.0 (2026-05-03):
+    EXP2-FEYNMAN: Added exp2_feynman as a standalone step in Phase 1, placed
+               before exp2_sym/exp2_hyb/exp2 and clearly separated from them.
+               exp2_feynman runs hypatiax/protocols/experiment_protocol_feynman_exp2.py
+               (→ run_protocol → run_task → exp2_feynman_colab_multithreaded.py).
+               Produces per-equation JSON + stats.json/results.csv/table.tex/report.html.
+               Fully independent of the 6-method comparison suite (exp2_sym/hyb/exp2).
+               Respects ONE_EQUATION=1 smoke-test flag via N_FEYNMAN_TASKS=1.
 
 Changelog v4.9 (2026-05-01):
     EXP2-SPLIT: exp2 is now three sequential steps:
@@ -1036,6 +1045,39 @@ STEPS: list[Step] = [
     #   python3 hypatiax/experiments/benchmarks/run_exp2_symbolic_engine.py --resume
     #   python3 hypatiax/experiments/benchmarks/run_exp2_hybrid_system.py   --resume
     #   python3 hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_injected.py --resume
+
+    # ── exp2_feynman: Feynman-30 extrapolation via protocol layer ────────────
+    # This step is SEPARATE from exp2_sym / exp2_hyb / exp2 (the 6-method
+    # comparison suite below).  It runs the full Feynman-30 HypatiaX-vs-NN
+    # extrapolation benchmark through the canonical protocol entry-point:
+    #   hypatiax/protocols/experiment_protocol_feynman_exp2.py
+    # which calls run_protocol({"name": "feynman_exp2"}, run_task), dispatching
+    # to exp2_feynman_colab_multithreaded.py (or the pipeline-mode equivalent).
+    # Produces per-equation JSON + stats.json / results.csv / table.tex / report.html.
+    #
+    # Run individually:
+    #   python3 hypatiax/protocols/experiment_protocol_feynman_exp2.py
+    # One-equation smoke test (--one-equation):
+    #   N_FEYNMAN_TASKS=1 python3 hypatiax/protocols/experiment_protocol_feynman_exp2.py
+    Step("exp2_feynman",
+         "Exp 2 · Feynman-30 extrapolation via protocol layer  (§10.7)",
+         [sys.executable,
+          "hypatiax/protocols/experiment_protocol_feynman_exp2.py",
+         ],
+         phase="1 · Core experiments",
+         slow=True,
+         inline_runner=False,
+         expected="stats.json written; ≥1/30 solved  [~15 min smoke / 8-24 h full]",
+         result_glob="comparison_results/feynman-tests/exp2/*.json",
+         env_extra={
+             "N_FEYNMAN_TASKS": "1" if os.environ.get("ONE_EQUATION") == "1" else
+                                str(int(os.environ.get("N_FEYNMAN_TASKS", "30"))),
+             "PYSR_TIMEOUT":    str(int(os.environ.get("PYSR_TIMEOUT",    "1100"))),
+             "POPULATIONS":     str(int(os.environ.get("POPULATIONS",     "30"))),
+             "N_ITERATIONS":    str(int(os.environ.get("N_ITERATIONS",    "1000"))),
+         }),
+
+    # ── exp2_sym / exp2_hyb / exp2: 6-method comparison suite (below) ────────
     Step("exp2_sym",
          "Exp 2 · Method 5 — SymbolicEngineWithLLM  (§10.7)",
          [sys.executable,

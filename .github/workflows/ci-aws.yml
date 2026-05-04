@@ -1,5 +1,5 @@
 # =============================================================================
-# .github/workflows/ci.yml  —  HypatiaX CI v9
+# .github/workflows/ci-aws.yml  —  HypatiaX CI v9  [AWS EC2 c5.4xlarge self-hosted]
 # =============================================================================
 #
 # WHAT CHANGED FROM v7
@@ -74,7 +74,7 @@
 #        └─ verify  (PRs only, parallel)
 # =============================================================================
 
-name: HypatiaX Reproducibility CI — v9
+name: HypatiaX Reproducibility CI — v9 [AWS]
 
 on:
   push:
@@ -145,7 +145,7 @@ jobs:
 # =============================================================================
   lint:
     name: "Phase 0 · Lint & setup"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -257,7 +257,7 @@ jobs:
 # =============================================================================
   validate-case-registry:
     name: "Validate case registry"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 10
     needs: lint
     steps:
@@ -283,7 +283,7 @@ jobs:
 # =============================================================================
   exp1-cases-01-04:
     name: "exp1 · cases 1-4"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: [lint, validate-case-registry]
     if: |
@@ -366,7 +366,7 @@ jobs:
 
   exp1-cases-05-08:
     name: "exp1 · cases 5-8"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-01-04
     steps:
@@ -424,7 +424,7 @@ jobs:
 
   exp1-cases-09-12:
     name: "exp1 · cases 9-12"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-05-08
     steps:
@@ -485,7 +485,7 @@ jobs:
   # All fit within the 340-min (5 h 40 m) per-job cap with ~20 min headroom.
   exp1-cases-13-28:
     name: "exp1 · cases 13-28"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-09-12
     steps:
@@ -541,7 +541,7 @@ jobs:
 
   exp1-cases-29-44:
     name: "exp1 · cases 29-44"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-13-28
     steps:
@@ -597,7 +597,7 @@ jobs:
 
   exp1-cases-45-59:
     name: "exp1 · cases 45-59"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-29-44
     steps:
@@ -653,7 +653,7 @@ jobs:
 
   exp1-cases-60-74:
     name: "exp1 · cases 60-74"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-45-59
     steps:
@@ -716,7 +716,7 @@ jobs:
 # =============================================================================
   exp1b:
     name: "exp1b · Portfolio seed sweep"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1-cases-60-74
     steps:
@@ -780,7 +780,7 @@ jobs:
 # =============================================================================
   exp2-feynman:
     name: "exp2-feynman · Feynman-30 extrapolation protocol"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp1b
     steps:
@@ -843,7 +843,7 @@ jobs:
 # =============================================================================
   exp2-sym:
     name: "exp2-sym · Symbolic engine benchmark"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp2-feynman
     steps:
@@ -913,7 +913,7 @@ jobs:
 # =============================================================================
   exp2-hyb:
     name: "exp2-hyb · Hybrid system benchmark"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp2-sym
     steps:
@@ -993,7 +993,7 @@ jobs:
 # =============================================================================
   exp2:
     name: "exp2 · 30-eq multi-domain (run_comparative_suite_benchmark_v2)"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp2-hyb
     steps:
@@ -1068,7 +1068,7 @@ jobs:
 # =============================================================================
   exp3:
     name: "exp3 · Nguyen-12 SEED=42"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp2
     steps:
@@ -1129,7 +1129,7 @@ jobs:
 # =============================================================================
   exp3b:
     name: "exp3b · Nguyen-12 stability seeds"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 340
     needs: exp3
     steps:
@@ -1190,7 +1190,7 @@ jobs:
 # =============================================================================
   supp-fast:
     name: "Phase 2 · suppA + extrap"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 120
     needs: exp3b
     steps:
@@ -1256,12 +1256,8 @@ jobs:
 # =============================================================================
   supp-slow:
     name: "Phase 2 · suppB + instability"
-    # NOTE: GitHub-hosted runners cap at 360 min (6 h).  350 min gives 10 min
-    # headroom.  If suppB alone needs 6-12 h use a self-hosted runner — see the
-    # accompanying ci-gcp.yml / ci-aws.yml variants or the SELF_HOSTED_RUNNER
-    # section in docs/ci-infrastructure.md.
-    runs-on: ubuntu-latest
-    timeout-minutes: 350
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
+    timeout-minutes: 720
     needs: supp-fast
     steps:
       - uses: actions/checkout@v4
@@ -1324,7 +1320,7 @@ jobs:
 # =============================================================================
   audit-verify:
     name: "Phase 3 · Provenance + verify + hashlock"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 60
     needs: supp-slow
     steps:
@@ -1401,7 +1397,7 @@ jobs:
 # =============================================================================
   outputs:
     name: "Phase 4 · Figures + tables"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 60
     needs: audit-verify
     steps:
@@ -1470,7 +1466,7 @@ jobs:
 # =============================================================================
   paper-audit:
     name: "Phase 4-B · Paper audit notebooks"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 60
     needs: outputs
     if: ${{ github.event.inputs.skip_paper != 'true' }}
@@ -1541,7 +1537,7 @@ jobs:
 # =============================================================================
   verify:
     name: "Verify cached results (PR)"
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, aws-c5-4xlarge]
     timeout-minutes: 20
     needs: [lint, validate-case-registry]
     if: github.event_name == 'pull_request'

@@ -1,0 +1,123 @@
+name: Run Symbolic Engine v2 (Exp-2 Method 5)
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/scripts/run_sym_engine_v2.ipynb'
+      - '.github/workflows/ci_run_sym_engine_v2.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/scripts/run_sym_engine_v2.ipynb'
+  schedule:
+    - cron: '30 9 * * *'   # 10:30 AM BST (UTC+1) = 09:30 UTC — job 1 of 4
+  workflow_dispatch:
+    inputs:
+      pysr_timeout:
+        description: 'PySR timeout in seconds per equation'
+        required: false
+        default: '1100'
+      one_equation:
+        description: 'Run a single equation only (e.g. "Kinetic") — leave blank for all 30'
+        required: false
+        default: ''
+      resume:
+        description: 'Resume from checkpoint (true/false)'
+        required: false
+        default: 'true'
+
+jobs:
+  run-sym-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440   # 24 h ceiling — matches the ~12-24 h runtime estimate
+
+    env:
+      JULIA_VERSION: "1.11.4"
+      JULIA_MINOR: "1.11"
+      JULIA_NUM_THREADS: "4"   # ubuntu-latest runners have 4 vCPUs
+      JULIA_EXCLUSIVE: "0"
+      PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+      LLM_MODEL: "claude-sonnet-4-20250514"
+      PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout || '1100' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            pysr \
+            scikit-learn \
+            scipy \
+            numpy \
+            pandas \
+            anthropic \
+            nbconvert \
+            ipykernel
+
+      # ── Julia ─────────────────────────────────────────────────────────────
+      - name: Install Julia ${{ env.JULIA_VERSION }}
+        run: |
+          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
+          wget -q "$URL"
+          tar -xzf "$TARBALL"
+          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Julia threads
+        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      # ── Secrets ───────────────────────────────────────────────────────────
+      - name: Set Anthropic API key
+        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_ENV"
+
+      # ── Checkpoint cache (resume support) ─────────────────────────────────
+      - name: Restore checkpoint cache
+        uses: actions/cache@v4
+        with:
+          path: logs/exp2_symbolic_engine_checkpoint.json
+          key: sym-engine-checkpoint-${{ github.ref_name }}
+          restore-keys: |
+            sym-engine-checkpoint-
+
+      - name: Create log directory
+        run: mkdir -p logs
+
+      # ── Notebook execution ─────────────────────────────────────────────────
+      - name: Execute notebook
+        run: |
+          jupyter nbconvert \
+            --to notebook \
+            --execute \
+            --inplace \
+            --ExecutePreprocessor.timeout=-1 \
+            .github/scripts/run_sym_engine_v2.ipynb
+        env:
+          PYSR_TIMEOUT: ${{ env.PYSR_TIMEOUT }}
+
+      # ── Artifacts ─────────────────────────────────────────────────────────
+      - name: Upload executed notebook
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sym-engine-notebook-${{ github.run_id }}
+          path: .github/scripts/run_sym_engine_v2.ipynb
+          retention-days: 30
+
+      - name: Upload logs and checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sym-engine-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
