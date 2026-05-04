@@ -11,7 +11,7 @@ on:
     paths:
       - '.github/scripts/exp3_hypatiax_v53_nguyen12.ipynb'
   schedule:
-    - cron: '30 11 * * *'  # 12:30 BST (UTC+1) = 11:30 UTC — job 3 of 4 (+13 h from job 2)
+    - cron: '30 11 * * *'
   workflow_dispatch:
     inputs:
       niterations:
@@ -23,32 +23,24 @@ on:
         required: false
         default: '42'
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
-
   run-exp3-nguyen12:
     runs-on: ubuntu-latest
-    timeout-minutes: 720    # generous ceiling for full Nguyen-12 suite with PySR
-
+    timeout-minutes: 720
     env:
-      JULIA_VERSION: "1.11.4"
-      JULIA_MINOR: "1.11"
-      # Threads: ubuntu-latest gives 4 vCPUs
+      JULIA_VERSION: "1.12.6"
       JULIA_NUM_THREADS: "4"
-      JULIA_EXCLUSIVE: "0"
-      # Critical: must be set before juliacall import (segfault guard)
       PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
       LLM_MODEL: "claude-sonnet-4-20250514"
       RUN_ID: "paper_v3"
       RUN_VERSION: "3.0"
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      NITERATIONS: ${{ github.event.inputs.niterations || '1000' }}
+      SEED: ${{ github.event.inputs.seed || '42' }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      # ── Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v6
         with:
@@ -56,226 +48,40 @@ jobs:
           cache: 'pip'
 
       - name: Install Python dependencies
-        # Matches the notebook's pip install cell exactly
         run: |
-          python -m pip install --upgrade pip
-          pip install \
-            pysr \
-            anthropic \
-            scikit-learn \
-            scipy \
-            sympy \
-            numpy \
-            pandas \
-            matplotlib \
-            nbconvert \
-            ipykernel
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --no-cache-dir \
+            pysr anthropic scikit-learn scipy sympy numpy pandas matplotlib nbconvert ipykernel
 
-      # ── Julia ─────────────────────────────────────────────────────────────
-      - name: Install Julia ${{ env.JULIA_VERSION }}
-        run: |
-          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
-          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
-          wget -q "$URL"
-          tar -xzf "$TARBALL"
-          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ env.JULIA_VERSION }}
 
       - name: Verify Julia threads
+        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      - name: Patch notebook (fix empty blocks & paths)
+        run: python3 .github/scripts/patch_notebook_nguyen12.py
+
+      - name: Execute notebook
         run: |
-          julia -e 'println("Julia threads: ", Threads.nthreads())'
+          jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=-1 \
+          .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb
 
-      # ── Secrets ───────────────────────────────────────────────────────────
-      - name: Set Anthropic API key
-        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_ENV"
-
-      # ── Notebook pre-flight patch ──────────────────────────────────────────
-      # Fixes two classes of problem before nbconvert executes the notebook:
-      #
-      # A. Empty-body else/try/except/with/for/while blocks (IndentationError)
-      #    Root cause: Cell In[9] line 84 has an `else:` whose body was either
-      #    left empty or contains only a comment, so the next real statement
-      #    (the `if "timeout_in_seconds"…` on line 87) is seen as the else-body
-      #    but at the wrong indent level → IndentationError: expected an
-      #    indented block after 'else' statement on line 84.
-      #    Fix: scan every code cell; for each compound-statement header whose
-      #    next non-blank, non-comment line is at the same or lower indent,
-      #    inject a `    pass` line so the block is syntactically valid.
-      #
-      # B. /kaggle/working path literals → logs/
-      #    Same regex fix applied in ci_exp2; guards OUTPUT_DIR / LOG_DIR /
-      #    WORKING_DIR whether written with or without a trailing slash.
-      - name: Patch notebook (indent fixup + path redirect)
+      - name: Export HTML report
         run: |
-          python3 - <<'EOF'
-          import ast, json, re, textwrap, uuid
-          from pathlib import Path
+          jupyter nbconvert --to html \
+          .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb \
+          --output exp3_nguyen12_report.html
 
-          NB_PATH = Path(".github/scripts/exp3_hypatiax_v53_nguyen12.ipynb")
-          raw = json.loads(NB_PATH.read_text())
-          cells = raw.get("cells", [])
-
-          # ── 1. Fix missing/empty cell IDs ──────────────────────────────────
-          for cell in cells:
-              cid = cell.get("id", "")
-              if not cid or not str(cid).strip():
-                  cell["id"] = uuid.uuid4().hex[:8]
-
-          # ── 2. /kaggle/working → logs/ ──────────────────────────────────────
-          KAGGLE_RE = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
-          def _repl(m):
-              return m.group(1) + "logs/" + m.group(3)
-
-          for cell in cells:
-              if cell.get("cell_type") != "code":
-                  continue
-              src = cell["source"]
-              new_src = [KAGGLE_RE.sub(_repl, line) for line in src]
-              if new_src != src:
-                  cell["source"] = new_src
-
-          # ── 3. Inject logs/ override cell ──────────────────────────────────
-          patch_src = (
-              "import os as _os\n"
-              "_logs = 'logs/'\n"
-              "_os.makedirs(_logs, exist_ok=True)\n"
-              "for _var in ('OUTPUT_DIR', 'WORKING_DIR', 'LOG_DIR'):\n"
-              "    if _var in dir():\n"
-              "        globals()[_var] = globals()[_var].replace('/kaggle/working', _logs.rstrip('/'))\n"
-              "try:\n"
-              "    CFG.update({k: v.replace('/kaggle/working', _logs.rstrip('/'))\n"
-              "                for k, v in CFG.items() if isinstance(v, str) and '/kaggle' in v})\n"
-              "except NameError:\n"
-              "    pass\n"
-          )
-          if not any("_os.makedirs(_logs" in "".join(c.get("source", [])) for c in cells):
-              insert_after = 0
-              for i, cell in enumerate(cells):
-                  if any(kw in "".join(cell.get("source", []))
-                         for kw in ("OUTPUT_DIR", "WORKING_DIR", "LOG_DIR", "CFG", "CHECKPOINT_PATH")):
-                      insert_after = i
-              cells.insert(insert_after + 1, {
-                  "cell_type": "code", "id": uuid.uuid4().hex[:8],
-                  "metadata": {}, "outputs": [],
-                  "source": patch_src.splitlines(keepends=True),
-                  "execution_count": None,
-              })
-
-          # ── 4. Fix empty compound-statement bodies (IndentationError) ──────
-          # Compound headers that require an indented body:
-          COMPOUND_RE = re.compile(
-              r'^(\s*)((?:else|elif\b.*|except(?:\b.*)?|finally|try|with\b.*|'
-              r'for\b.*|while\b.*|if\b.*|def\b.*|class\b.*)\s*:)\s*$'
-          )
-          fixed_indent = 0
-          for cell in cells:
-              if cell.get("cell_type") != "code":
-                  continue
-              src = cell["source"]
-              # Join to lines, preserving final newline state
-              lines = "".join(src).splitlines(keepends=True)
-              new_lines = []
-              i = 0
-              while i < len(lines):
-                  line = lines[i]
-                  m = COMPOUND_RE.match(line.rstrip("\n"))
-                  if m:
-                      indent = m.group(1)
-                      # Look ahead: find next non-blank, non-comment line
-                      j = i + 1
-                      while j < len(lines) and lines[j].strip() in ("", ) or \
-                            (j < len(lines) and lines[j].lstrip().startswith("#")):
-                          j += 1
-                      # If no next line, or next line is at same/lower indent → empty body
-                      if j >= len(lines):
-                          body_indent = ""
-                      else:
-                          body_indent = len(lines[j]) - len(lines[j].lstrip())
-                          body_indent_str = lines[j][:body_indent]
-                      header_indent = len(indent)
-                      if j >= len(lines) or body_indent <= header_indent:
-                          new_lines.append(line)
-                          new_lines.append(indent + "    pass\n")
-                          fixed_indent += 1
-                          i += 1
-                          continue
-                  new_lines.append(line)
-                  i += 1
-              if new_lines != lines:
-                  cell["source"] = new_lines
-
-          # ── 5. Validate each cell parses cleanly, report failures ──────────
-          parse_errors = []
-          for idx, cell in enumerate(cells):
-              if cell.get("cell_type") != "code":
-                  continue
-              src = "".join(cell.get("source", []))
-              if not src.strip():
-                  continue
-              try:
-                  ast.parse(src)
-              except SyntaxError as e:
-                  parse_errors.append(f"  Cell {idx}: {e}")
-
-          raw["cells"] = cells
-          NB_PATH.write_text(json.dumps(raw, indent=1))
-          print(f"Fixed {fixed_indent} empty compound block(s)")
-          if parse_errors:
-              print("WARNING: remaining parse errors after fixup:")
-              for err in parse_errors:
-                  print(err)
-          else:
-              print("All cells parse cleanly ✓")
-          EOF
-
-      # ── Notebook execution ─────────────────────────────────────────────────
-      # PYTHON_JULIACALL_HANDLE_SIGNALS must already be in env before the kernel
-      # forks — passing it via `env:` here guarantees that ordering.
-      - name: Execute notebook (Nguyen-12 full suite)
-        run: |
-          jupyter nbconvert \
-            --to notebook \
-            --execute \
-            --inplace \
-            --ExecutePreprocessor.timeout=-1 \
-            .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb
-        env:
-          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
-          JULIA_NUM_THREADS: ${{ env.JULIA_NUM_THREADS }}
-          NITERATIONS: ${{ github.event.inputs.niterations || '1000' }}
-          SEED: ${{ github.event.inputs.seed || '42' }}
-
-      # ── Figures & report export ────────────────────────────────────────────
-      - name: Export HTML report with figures
-        if: success()
-        run: |
-          jupyter nbconvert \
-            --to html \
-            .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb \
-            --output exp3_nguyen12_report.html
-
-      # ── Artifacts ─────────────────────────────────────────────────────────
-      - name: Upload executed notebook
-        if: always()
-        uses: actions/upload-artifact@v6
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: exp3-nguyen12-notebook-${{ github.run_id }}
-          path: .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb
-          retention-days: 30
-
-      - name: Upload HTML report
-        if: success()
-        uses: actions/upload-artifact@v6
-        with:
-          name: exp3-nguyen12-report-${{ github.run_id }}
-          path: exp3_nguyen12_report.html
-          retention-days: 30
-
-      - name: Upload any generated plots or result files
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: exp3-nguyen12-outputs-${{ github.run_id }}
+          name: exp3-nguyen12-all-${{ github.run_id }}
           path: |
+            .github/scripts/exp3_hypatiax_v53_nguyen12.ipynb
+            exp3_nguyen12_report.html
             *.png
             *.json
             *.csv

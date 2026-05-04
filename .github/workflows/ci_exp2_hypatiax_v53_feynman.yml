@@ -11,7 +11,7 @@ on:
     paths:
       - '.github/scripts/exp2_hypatiax_v53_feynman.ipynb'
   schedule:
-    - cron: '30 0 * * *'   # 01:30 BST (UTC+1) = 00:30 UTC — job 4 of 4 (+13 h from job 3)
+    - cron: '30 0 * * *'
   workflow_dispatch:
     inputs:
       resume:
@@ -23,36 +23,23 @@ on:
         required: false
         default: '1100'
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
-
   run-exp2-feynman:
     runs-on: ubuntu-latest
-    # Ceiling: ~12-24 h on 4 vCPUs; GitHub Actions max is 6 h on standard runners.
-    # For the full run use a self-hosted runner and raise this value.
-    # For a smoke-test (one_equation) the 360 min limit is ample.
     timeout-minutes: 360
-
     env:
-      JULIA_VERSION: "1.11.4"
-      JULIA_MINOR: "1.11"
-      # ubuntu-latest runners: 4 vCPUs — matches Kaggle CPU notebook
+      JULIA_VERSION: "1.12.6"
       JULIA_NUM_THREADS: "4"
-      JULIA_EXCLUSIVE: "0"
-      # Segfault guard: set before any juliacall / pysr import
       PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
       LLM_MODEL: "claude-sonnet-4-20250514"
-      # parallelism=multithreading — no Distributed workers, immune to
-      # ProcessExitedException (see notebook header for full rationale)
       PYSR_PARALLELISM: "multithreading"
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      RESUME: ${{ github.event.inputs.resume || 'true' }}
+      PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout || '1100' }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      # ── Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v6
         with:
@@ -60,38 +47,18 @@ jobs:
           cache: 'pip'
 
       - name: Install Python dependencies
-        # Matches Cell 2 of the notebook exactly
         run: |
-          python -m pip install --upgrade pip
-          pip install \
-            pysr \
-            scikit-learn \
-            scipy \
-            numpy \
-            pandas \
-            nbconvert \
-            ipykernel
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --no-cache-dir pysr scikit-learn scipy numpy pandas nbconvert ipykernel
 
-      # ── Julia ─────────────────────────────────────────────────────────────
-      - name: Install Julia ${{ env.JULIA_VERSION }}
-        run: |
-          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
-          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
-          wget -q "$URL"
-          tar -xzf "$TARBALL"
-          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ env.JULIA_VERSION }}
 
       - name: Verify Julia threads
-        # Should print 4 on ubuntu-latest; confirms JULIA_NUM_THREADS was picked up
-        run: |
-          julia -e 'println("Julia threads: ", Threads.nthreads())'
+        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
 
-      # ── Secrets ───────────────────────────────────────────────────────────
-      - name: Set Anthropic API key
-        # Store ANTHROPIC_API_KEY in GitHub repository Settings → Secrets → Actions
-        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> "$GITHUB_ENV"
-
-      # ── Checkpoint cache (resume support) ─────────────────────────────────
       - name: Restore checkpoint cache
         uses: actions/cache@v5
         with:
@@ -103,142 +70,21 @@ jobs:
       - name: Create log directory
         run: mkdir -p logs
 
-      # ── Notebook execution ─────────────────────────────────────────────────
-      # PYTHON_JULIACALL_HANDLE_SIGNALS must be in the kernel environment
-      # before juliacall is imported (Cell 2). Passing it via `env:` here
-      # ensures it is set before the notebook kernel forks.
-      #
-      # The notebook hardcodes /kaggle/working for all output paths.
-      # The fix step below patches the notebook source before execution:
-      #   1. Fixes any empty cell IDs (nbformat validation requirement)
-      #   2. Replaces ALL /kaggle/working variants (with or without trailing
-      #      slash) using a regex — covers OUTPUT_DIR = '/kaggle/working',
-      #      LOG_DIR = '/kaggle/working/logs', WORKING_DIR = '/kaggle/working/'
-      #      and any other literal form.  The old str.replace("/kaggle/working/")
-      #      missed the no-trailing-slash form and caused:
-      #        PermissionError: [Errno 13] Permission denied: '/kaggle'
-      #   3. Injects a runtime override cell after the last cell that defines
-      #      OUTPUT_DIR / LOG_DIR / WORKING_DIR / CFG / CHECKPOINT_PATH so any
-      #      path assembled dynamically is also redirected to logs/.
-      - name: Fix notebook cell IDs and output paths
+      - name: Patch notebook (fix empty blocks & paths)
+        run: python3 .github/scripts/patch_notebook_feynman.py
+
+      - name: Execute notebook
         run: |
-          python3 - <<'EOF'
-          import json, re, uuid
-          from pathlib import Path
+          jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=-1 \
+          .github/scripts/exp2_hypatiax_v53_feynman.ipynb
 
-          NB_PATH = Path(".github/scripts/exp2_hypatiax_v53_feynman.ipynb")
-          raw = json.loads(NB_PATH.read_text())
-          cells = raw.get("cells", [])
-
-          # 1. Fix missing/empty cell IDs
-          fixed_ids = 0
-          for cell in cells:
-              cid = cell.get("id", "")
-              if not cid or not str(cid).strip():
-                  cell["id"] = uuid.uuid4().hex[:8]
-                  fixed_ids += 1
-
-          # 2. Replace ALL /kaggle/working variants in code cell source lines.
-          #    Matches: '/kaggle/working'  "/kaggle/working/"  /kaggle/working/logs
-          #    The leading delimiter (quote or slash) is preserved so string
-          #    literals stay syntactically valid after substitution.
-          KAGGLE_RE = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
-          def _repl(m):
-              return m.group(1) + "logs/" + m.group(3)
-
-          fixed_literal = 0
-          for cell in cells:
-              if cell.get("cell_type") != "code":
-                  continue
-              src = cell["source"]
-              new_src = [KAGGLE_RE.sub(_repl, line) for line in src]
-              if new_src != src:
-                  cell["source"] = new_src
-                  fixed_literal += 1
-
-          # 3. Inject a safety-net override cell after the last cell that defines
-          #    any of the known path variables or CFG — catches dynamic assembly
-          #    like: LOG_DIR = OUTPUT_DIR + 'logs/'
-          patch_src = (
-              "import os as _os\n"
-              "_logs = 'logs/'\n"
-              "_os.makedirs(_logs, exist_ok=True)\n"
-              "# Redirect any surviving /kaggle/working references\n"
-              "for _var in ('OUTPUT_DIR', 'WORKING_DIR', 'LOG_DIR'):\n"
-              "    if _var in dir():\n"
-              "        globals()[_var] = globals()[_var].replace('/kaggle/working', _logs.rstrip('/'))\n"
-              "try:\n"
-              "    CFG.update({k: v.replace('/kaggle/working', _logs.rstrip('/'))\n"
-              "                for k, v in CFG.items() if isinstance(v, str) and '/kaggle' in v})\n"
-              "except NameError:\n"
-              "    pass\n"
-          )
-
-          already_patched = any(
-              "Redirect any surviving /kaggle" in "".join(c.get("source", []))
-              for c in cells
-          )
-
-          if not already_patched:
-              insert_after = 0
-              for i, cell in enumerate(cells):
-                  src_text = "".join(cell.get("source", []))
-                  if any(kw in src_text for kw in
-                         ("OUTPUT_DIR", "WORKING_DIR", "LOG_DIR", "CFG", "CHECKPOINT_PATH")):
-                      insert_after = i
-              patch_cell = {
-                  "cell_type": "code",
-                  "id": uuid.uuid4().hex[:8],
-                  "metadata": {},
-                  "outputs": [],
-                  "source": patch_src.splitlines(keepends=True),
-                  "execution_count": None,
-              }
-              cells.insert(insert_after + 1, patch_cell)
-              raw["cells"] = cells
-              print(f"  Injected path-override cell after cell {insert_after}")
-
-          NB_PATH.write_text(json.dumps(raw, indent=1))
-          print(f"Fixed {fixed_ids} cell ID(s), {fixed_literal} cell(s) with /kaggle literals")
-          EOF
-
-      - name: Execute notebook (Feynman n=30 equations)
-        run: |
-          jupyter nbconvert \
-            --to notebook \
-            --execute \
-            --inplace \
-            --ExecutePreprocessor.timeout=-1 \
-            .github/scripts/exp2_hypatiax_v53_feynman.ipynb
-        env:
-          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
-          JULIA_NUM_THREADS: ${{ env.JULIA_NUM_THREADS }}
-          PYSR_TIMEOUT: ${{ github.event.inputs.pysr_timeout || '1100' }}
-          RESUME: ${{ github.event.inputs.resume || 'true' }}
-
-      # ── Artifacts ─────────────────────────────────────────────────────────
-      - name: Upload executed notebook
-        if: always()
-        uses: actions/upload-artifact@v6
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: exp2-feynman-notebook-${{ github.run_id }}
-          path: .github/scripts/exp2_hypatiax_v53_feynman.ipynb
-          retention-days: 30
-
-      - name: Upload logs and checkpoint
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: exp2-feynman-logs-${{ github.run_id }}
-          path: logs/
-          retention-days: 30
-
-      - name: Upload result files
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: exp2-feynman-results-${{ github.run_id }}
+          name: exp2-feynman-all-${{ github.run_id }}
           path: |
+            .github/scripts/exp2_hypatiax_v53_feynman.ipynb
+            logs/
             logs/*.json
             logs/*.csv
           if-no-files-found: ignore
