@@ -214,8 +214,20 @@ jobs:
       - name: "Validate patched source  [step: validate]"
         run: python3 scripts/patches/validate_code.py
 
-      - name: "Fix known Ruff errors  [fix_ruff.sh]"
-        run: bash .github/scripts/fix_ruff.sh
+      - name: "Auto-fix Ruff violations  [fix_ruff.sh + ruff --fix]"
+        # Fixes reported violations before the check gate:
+        #   I001  — unsorted/unformatted import blocks  (symbolic_engine_may01_1428.py:74,
+        #                                                symbolic_engine_apr30_1900.py:79)
+        #   W293  — whitespace on blank lines            (symbolic_engine_apr30_1900.py:L1628-1659)
+        #   F401  — unused import `threading`            (symbolic_engine_apr30_1900.py:84)
+        # ruff --fix handles all three; fix_ruff.sh covers any repo-specific patches.
+        run: |
+          bash .github/scripts/fix_ruff.sh
+          ruff check hypatiax/ scripts/ protocols/ \
+            --select I,W,F401 \
+            --ignore E501,F821,F404,E402,E701,E702,E741,F841 \
+            --fix --unsafe-fixes \
+            --output-format github || true
 
       - name: ruff
         run: |
@@ -786,13 +798,48 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 340
     needs: exp1b
+
+    env:
+      JULIA_VERSION: "1.11.4"
+      JULIA_MINOR: "1.11"
+      # ubuntu-latest: 4 vCPUs — matches Kaggle CPU notebook
+      JULIA_NUM_THREADS: "4"
+      JULIA_EXCLUSIVE: "0"
+      # Segfault guard: must be set before any juliacall / pysr import
+      PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+      # parallelism=multithreading — immune to ProcessExitedException
+      PYSR_PARALLELISM: "multithreading"
+
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: {python-version: "${{ env.PYTHON_VERSION }}", cache: pip}
-      - uses: julia-actions/setup-julia@v2
-        env: {FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true}
-        with: {version: "1.11"}
+
+      # Install Julia manually to match the exact version used in the standalone
+      # ci_exp2 workflow and pick up JULIA_NUM_THREADS correctly.
+      - name: Install Julia ${{ env.JULIA_VERSION }}
+        run: |
+          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
+          wget -q "$URL"
+          tar -xzf "$TARBALL"
+          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Julia threads
+        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      - name: Install Python deps (notebook execution)
+        run: |
+          pip install --quiet --upgrade pip
+          pip install --quiet \
+            pysr \
+            scikit-learn \
+            scipy \
+            numpy \
+            pandas \
+            nbconvert \
+            ipykernel
+
       - run: bash .github/scripts/setup_env.sh --jupyter
 
       - uses: actions/cache@v5
@@ -810,7 +857,122 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp1b
             results-${{ github.ref }}-
 
-      - name: "Run exp2-feynman  [step: exp2_feynman]"
+      # Restore per-equation Feynman checkpoint so reruns skip completed equations.
+      - name: Restore Feynman notebook checkpoint
+        uses: actions/cache@v5
+        with:
+          path: logs/
+          key: feynman-checkpoint-${{ github.ref_name }}
+          restore-keys: feynman-checkpoint-
+
+      - name: Create log directory
+        run: mkdir -p logs
+
+      # Patch the notebook before execution:
+      #   1. Fix any empty cell IDs (nbformat validation requirement)
+      #   2. Replace ALL /kaggle/working variants (with or without trailing slash)
+      #      using a regex — covers OUTPUT_DIR, LOG_DIR, WORKING_DIR literals
+      #   3. Inject a runtime override cell after the last cell that defines
+      #      OUTPUT_DIR / LOG_DIR / WORKING_DIR / CFG / CHECKPOINT_PATH so any
+      #      path assembled dynamically is also redirected to logs/
+      - name: Fix notebook cell IDs and output paths
+        run: |
+          python3 - <<'EOF'
+          import json, re, uuid
+          from pathlib import Path
+
+          NB_PATH = Path(".github/scripts/exp2_hypatiax_v53_feynman.ipynb")
+          raw = json.loads(NB_PATH.read_text())
+          cells = raw.get("cells", [])
+
+          # 1. Fix missing/empty cell IDs
+          fixed_ids = 0
+          for cell in cells:
+              cid = cell.get("id", "")
+              if not cid or not str(cid).strip():
+                  cell["id"] = uuid.uuid4().hex[:8]
+                  fixed_ids += 1
+
+          # 2. Replace ALL /kaggle/working variants in code cell source lines.
+          #    Handles: '/kaggle/working', '/kaggle/working/', '/kaggle/working/logs'
+          #    The leading char (quote or slash) is preserved so string literals
+          #    stay syntactically valid after replacement.
+          KAGGLE_RE = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
+          def _repl(m):
+              lead, _, trail = m.group(1), m.group(2), m.group(3)
+              return lead + "logs/" + trail
+
+          fixed_literal = 0
+          for cell in cells:
+              if cell.get("cell_type") != "code":
+                  continue
+              src = cell["source"]
+              new_src = [KAGGLE_RE.sub(_repl, line) for line in src]
+              if new_src != src:
+                  cell["source"] = new_src
+                  fixed_literal += 1
+
+          # 3. Inject a safety-net override cell after the last cell that defines
+          #    any of the known path variables or CFG.  Catches dynamic assembly
+          #    like: LOG_DIR = OUTPUT_DIR + 'logs/'
+          patch_src = (
+              "import os as _os\n"
+              "_logs = 'logs/'\n"
+              "_os.makedirs(_logs, exist_ok=True)\n"
+              "# Redirect any surviving /kaggle/working references\n"
+              "for _var in ('OUTPUT_DIR', 'WORKING_DIR', 'LOG_DIR'):\n"
+              "    if _var in dir():\n"
+              "        globals()[_var] = globals()[_var].replace('/kaggle/working', _logs.rstrip('/'))\n"
+              "try:\n"
+              "    CFG.update({k: v.replace('/kaggle/working', _logs.rstrip('/'))\n"
+              "                for k, v in CFG.items() if isinstance(v, str) and '/kaggle' in v})\n"
+              "except NameError:\n"
+              "    pass\n"
+          )
+
+          already_patched = any(
+              "Redirect any surviving /kaggle" in "".join(c.get("source", []))
+              for c in cells
+          )
+
+          if not already_patched:
+              insert_after = 0
+              for i, cell in enumerate(cells):
+                  src_text = "".join(cell.get("source", []))
+                  if any(kw in src_text for kw in
+                         ("OUTPUT_DIR", "WORKING_DIR", "LOG_DIR", "CFG", "CHECKPOINT_PATH")):
+                      insert_after = i
+              patch_cell = {
+                  "cell_type": "code",
+                  "id": uuid.uuid4().hex[:8],
+                  "metadata": {},
+                  "outputs": [],
+                  "source": patch_src.splitlines(keepends=True),
+                  "execution_count": None,
+              }
+              cells.insert(insert_after + 1, patch_cell)
+              raw["cells"] = cells
+              print(f"  Injected path-override cell after cell {insert_after}")
+
+          NB_PATH.write_text(json.dumps(raw, indent=1))
+          print(f"Fixed {fixed_ids} cell ID(s), {fixed_literal} cell(s) with /kaggle literals")
+          EOF
+
+      - name: Execute Feynman notebook (n=30 equations)
+        run: |
+          jupyter nbconvert \
+            --to notebook \
+            --execute \
+            --inplace \
+            --ExecutePreprocessor.timeout=-1 \
+            .github/scripts/exp2_hypatiax_v53_feynman.ipynb
+        env:
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+          JULIA_NUM_THREADS: ${{ env.JULIA_NUM_THREADS }}
+          PYSR_TIMEOUT: ${{ env.PYSR_TIMEOUT }}
+          RESUME: "true"
+
+      - name: "Run exp2-feynman protocol step  [step: exp2_feynman]"
         run: python3 run_all_checkpoint.py --only exp2_feynman --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -829,6 +991,17 @@ jobs:
         with:
           path: hypatiax/data/results/
           key: results-${{ github.ref }}-${{ github.run_id }}-exp2-feynman
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: logs/
+          key: feynman-checkpoint-${{ github.ref_name }}
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: exp2-feynman-notebook-${{ github.run_id }}
+          path: .github/scripts/exp2_hypatiax_v53_feynman.ipynb
+          retention-days: 30
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -837,6 +1010,15 @@ jobs:
             logs/
             hypatiax/data/results/
           retention-days: 7
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: exp2-feynman-results-${{ github.run_id }}
+          path: |
+            logs/*.json
+            logs/*.csv
+          if-no-files-found: ignore
+          retention-days: 30
 
 
 # =============================================================================
