@@ -100,11 +100,12 @@ jobs:
       - name: Install Python dependencies
         # Matches run_all.sh env_check: pysr, torch, anthropic, sympy, scipy
         # plus scikit-learn, numpy, pandas used by exp2_feynman script directly
+        # FIX: torch installed separately so --index-url applies only to it.
         run: |
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install \
             pysr \
-            torch --index-url https://download.pytorch.org/whl/cpu \
             anthropic \
             sympy \
             scikit-learn \
@@ -121,8 +122,11 @@ jobs:
           tar -xzf "$TARBALL"
           echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
 
+      # FIX: use block scalar (|) so the single quotes inside the julia -e
+      # argument are not interpreted by the YAML parser.
       - name: Verify Julia threads
-        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+        run: |
+          julia -e 'println("Julia threads: ", Threads.nthreads())'
 
       # ── env_check (mirrors run_all.sh STEP 0) ──────────────────────────────
       - name: Environment check (mirrors run_all.sh env_check)
@@ -180,8 +184,11 @@ jobs:
       #     --samples ${FEYNMAN_SAMPLES} \
       #     --no-llm-cache
       - name: Run exp2_feynman — Feynman SR benchmark Phase 2
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        # FIX: drop ${{ }} wrapper — if: is already an expression context.
+        if: github.event.inputs.dry_run != 'true'
         working-directory: ${{ env.EXPERIMENTS_DIR }}
+        # FIX: removed trailing backslash from --no-llm-cache line so the
+        # shell redirect (2>&1 | tee) is not passed as a script argument.
         run: |
           python3 exp2_feynman_colab_multithreaded.py \
             --samples ${{ github.event.inputs.feynman_samples || '200' }} \
@@ -189,7 +196,8 @@ jobs:
             2>&1 | tee "${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log"
         env:
           PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
-          JULIA_NUM_THREADS: ${{ env.JULIA_NUM_THREADS }}
+          # FIX: env.* context is unavailable in step env: blocks; use literal.
+          JULIA_NUM_THREADS: "4"
           PYSR_POPULATIONS: ${{ github.event.inputs.pysr_populations || '4' }}
           FEYNMAN_TIMEOUT: ${{ github.event.inputs.feynman_timeout || '900' }}
           FEYNMAN_SAMPLES: ${{ github.event.inputs.feynman_samples || '200' }}
@@ -197,7 +205,8 @@ jobs:
           RESUME: ${{ github.event.inputs.resume || 'true' }}
 
       - name: Dry-run summary
-        if: ${{ github.event.inputs.dry_run == 'true' }}
+        # FIX: drop ${{ }} wrapper — if: is already an expression context.
+        if: github.event.inputs.dry_run == 'true'
         working-directory: ${{ env.EXPERIMENTS_DIR }}
         run: |
           echo "[dry-run] Would execute:"
