@@ -23,7 +23,10 @@ on:
         required: false
         default: 'true'
 
-jobs:
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+
   run-hybrid-benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 480    # 8 h ceiling — matches the ~4-8 h runtime estimate
@@ -33,11 +36,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ── Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -61,7 +64,7 @@ jobs:
 
       # ── Result cache (resume support) ──────────────────────────────────────
       - name: Restore results cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: hypatiax/data/results/
           key: hybrid-benchmark-results-${{ github.ref_name }}
@@ -96,7 +99,7 @@ jobs:
       # ── Artifacts ─────────────────────────────────────────────────────────
       - name: Upload executed notebook
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: hybrid-benchmark-notebook-${{ github.run_id }}
           path: .github/scripts/run_hybrid_benchmark.ipynb
@@ -104,7 +107,7 @@ jobs:
 
       - name: Upload HTML report
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: hybrid-benchmark-report-${{ github.run_id }}
           path: run_hybrid_benchmark_report.html
@@ -112,7 +115,7 @@ jobs:
 
       - name: Upload results JSON
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: hybrid-benchmark-results-${{ github.run_id }}
           path: hypatiax/data/results/

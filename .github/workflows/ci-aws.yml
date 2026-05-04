@@ -158,21 +158,21 @@ jobs:
       - name: Deduplicate requirements.txt
         run: python3 .github/scripts/dedup_requirements.py
 
-      - name: Install deps  [step: deps]
+      - name: "Install deps  [step: deps]"
         run: |
           pip install --quiet --upgrade pip
           pip install --quiet ruff pyflakes gitpython==3.1.47
           pip install --quiet --upgrade --upgrade-strategy eager -r requirements.txt \
             || echo "::warning ::Some requirements failed — lint continues"
 
-      - name: Apply patches  [steps: patches-gen, patches-apply]
+      - name: "Apply patches  [steps: patches-gen, patches-apply]"
         run: |
           set -euo pipefail
           for s in scripts/patches/generate_patches.py scripts/patches/apply_patches.py; do
             [[ -f "$s" ]] && python3 "$s" || echo "::warning ::$s not found"
           done
 
-      - name: Guard hypatiax/__init__.py  [step: fixup-init]
+      - name: "Guard hypatiax/__init__.py  [step: fixup-init]"
         run: |
           python3 - <<'EOF'
           from pathlib import Path
@@ -192,7 +192,7 @@ jobs:
               print('  ✓ fixup-init: already clean')
           EOF
 
-      - name: Fix .tex bibkeys  [step: fixup-tex]
+      - name: "Fix .tex bibkeys  [step: fixup-tex]"
         run: |
           python3 - <<'EOF'
           import re; from pathlib import Path
@@ -211,7 +211,7 @@ jobs:
               print('  ✓ fixup-tex: already clean')
           EOF
 
-      - name: Validate patched source  [step: validate]
+      - name: "Validate patched source  [step: validate]"
         run: python3 scripts/patches/validate_code.py
 
       - name: ruff
@@ -271,7 +271,7 @@ jobs:
           pip install --quiet --upgrade pip
           pip install --quiet --upgrade --upgrade-strategy eager -r requirements.txt \
             || echo "::warning ::Some requirements failed — validation continues"
-      - name: Validate case registry  [step: check-hypatiax-protocols]
+      - name: "Validate case registry  [step: check-hypatiax-protocols]"
         run: python3 .github/scripts/validate_case_registry.py
 
 
@@ -312,7 +312,7 @@ jobs:
           key: results-${{ github.ref }}-${{ github.run_id }}-exp1-00
           restore-keys: results-${{ github.ref }}-
 
-      - name: Validate paper config  [step: validate-paper-config]
+      - name: "Validate paper config  [step: validate-paper-config]"
         run: python3 validation_paper_config.py
         env:
           PYSR_TIMEOUT: ${{ env.PYSR_TIMEOUT }}
@@ -334,7 +334,7 @@ jobs:
       - name: Preview exp1 cases 1-4 (dry-run)
         run: python3 run_all_checkpoint.py --only exp1 --case-range 1-4 --dry-run
 
-      - name: Run exp1 cases 1-4  [step: exp1, CASE_RANGE_START=1 CASE_RANGE_END=4]
+      - name: "Run exp1 cases 1-4  [step: exp1, CASE_RANGE_START=1 CASE_RANGE_END=4]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 1-4 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -392,7 +392,7 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp1-04
             results-${{ github.ref }}-
 
-      - name: Run exp1 cases 5-8  [step: exp1, CASE_RANGE_START=5 CASE_RANGE_END=8]
+      - name: "Run exp1 cases 5-8  [step: exp1, CASE_RANGE_START=5 CASE_RANGE_END=8]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 5-8 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -450,7 +450,7 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp1-08
             results-${{ github.ref }}-
 
-      - name: Run exp1 cases 9-12  [step: exp1, CASE_RANGE_START=9 CASE_RANGE_END=12]
+      - name: "Run exp1 cases 9-12  [step: exp1, CASE_RANGE_START=9 CASE_RANGE_END=12]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 9-12 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -510,7 +510,7 @@ jobs:
           restore-keys: |
             results-${{ github.ref }}-${{ github.run_id }}-exp1-12
             results-${{ github.ref }}-
-      - name: Run exp1 cases 13-28  [step: exp1, CASE_RANGE_START=13 CASE_RANGE_END=28]
+      - name: "Run exp1 cases 13-28  [step: exp1, CASE_RANGE_START=13 CASE_RANGE_END=28]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 13-28 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -566,7 +566,7 @@ jobs:
           restore-keys: |
             results-${{ github.ref }}-${{ github.run_id }}-exp1-28
             results-${{ github.ref }}-
-      - name: Run exp1 cases 29-44  [step: exp1, CASE_RANGE_START=29 CASE_RANGE_END=44]
+      - name: "Run exp1 cases 29-44  [step: exp1, CASE_RANGE_START=29 CASE_RANGE_END=44]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 29-44 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -622,7 +622,7 @@ jobs:
           restore-keys: |
             results-${{ github.ref }}-${{ github.run_id }}-exp1-44
             results-${{ github.ref }}-
-      - name: Run exp1 cases 45-59  [step: exp1, CASE_RANGE_START=45 CASE_RANGE_END=59]
+      - name: "Run exp1 cases 45-59  [step: exp1, CASE_RANGE_START=45 CASE_RANGE_END=59]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 45-59 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -678,7 +678,7 @@ jobs:
           restore-keys: |
             results-${{ github.ref }}-${{ github.run_id }}-exp1-59
             results-${{ github.ref }}-
-      - name: Run exp1 cases 60-74  [step: exp1, CASE_RANGE_START=60 CASE_RANGE_END=74]
+      - name: "Run exp1 cases 60-74  [step: exp1, CASE_RANGE_START=60 CASE_RANGE_END=74]"
         run: python3 run_all_checkpoint.py --only exp1 --case-range 60-74 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -742,7 +742,7 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp1-74
             ckpt-${{ github.ref }}-
 
-      - name: Run exp1b  [step: exp1b]
+      - name: "Run exp1b  [step: exp1b]"
         run: python3 run_all_checkpoint.py --only exp1b --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -807,7 +807,7 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp1b
             results-${{ github.ref }}-
 
-      - name: Run exp2-feynman  [step: exp2_feynman]
+      - name: "Run exp2-feynman  [step: exp2_feynman]"
         run: python3 run_all_checkpoint.py --only exp2_feynman --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -875,7 +875,7 @@ jobs:
           key: exp2-sym-ckpt-${{ github.ref }}-${{ github.run_id }}
           restore-keys: exp2-sym-ckpt-${{ github.ref }}-
 
-      - name: Run exp2-sym  [step: exp2_sym, --resume]
+      - name: "Run exp2-sym  [step: exp2_sym, --resume]"
         run: python3 run_all_checkpoint.py --only exp2_sym --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -945,7 +945,7 @@ jobs:
           key: exp2-hyb-ckpt-${{ github.ref }}-${{ github.run_id }}
           restore-keys: exp2-hyb-ckpt-${{ github.ref }}-
 
-      - name: Run exp2-hyb  [step: exp2_hyb, --resume]
+      - name: "Run exp2-hyb  [step: exp2_hyb, --resume]"
         run: python3 run_all_checkpoint.py --only exp2_hyb --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1026,7 +1026,7 @@ jobs:
           key: exp2-ckpt-${{ github.ref }}-${{ github.run_id }}
           restore-keys: exp2-ckpt-${{ github.ref }}-
 
-      - name: Run exp2  [step: exp2, run_comparative_suite_benchmark_v2.py --protocol all30 --resume]
+      - name: "Run exp2  [step: exp2, run_comparative_suite_benchmark_v2.py --protocol all30 --resume]"
         # --resume forwarded into run_comparative_suite_benchmark_v2.py so it
         # reloads the checkpoint and skips completed equations.
         run: python3 run_all_checkpoint.py --only exp2 --resume --continue-on-fail
@@ -1094,7 +1094,7 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp2
             results-${{ github.ref }}-
 
-      - name: Run exp3  [step: exp3, --seed 42, N_NGUYEN_TASKS=12]
+      - name: "Run exp3  [step: exp3, --seed 42, N_NGUYEN_TASKS=12]"
         run: python3 run_all_checkpoint.py --only exp3 --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1155,7 +1155,7 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp3
             results-${{ github.ref }}-
 
-      - name: Run exp3b  [step: exp3b, --seeds 99 123 777 2024]
+      - name: "Run exp3b  [step: exp3b, --seeds 99 123 777 2024]"
         run: python3 run_all_checkpoint.py --only exp3b --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1216,14 +1216,14 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-exp3b
             results-${{ github.ref }}-
 
-      - name: Run suppA  [step: suppA]
+      - name: "Run suppA  [step: suppA]"
         run: python3 run_all_checkpoint.py --only suppA --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SKIP_PERF_ANALYSIS: "1"
           HYPATIAX_CORE_OPTIONAL: "1"
 
-      - name: Run extrap  [step: extrap]
+      - name: "Run extrap  [step: extrap]"
         run: python3 run_all_checkpoint.py --only extrap --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1282,12 +1282,12 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-supp-fast
             results-${{ github.ref }}-
 
-      - name: Run suppB  [step: suppB, slow=True]
+      - name: "Run suppB  [step: suppB, slow=True]"
         run: python3 run_all_checkpoint.py --only suppB --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Run instability  [step: instability, slow=True, LLM_K_RUNS=30]
+      - name: "Run instability  [step: instability, slow=True, LLM_K_RUNS=30]"
         run: python3 run_all_checkpoint.py --only instability --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1343,29 +1343,29 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-supp
             results-${{ github.ref }}-
 
-      - name: Run provenance  [step: provenance]
+      - name: "Run provenance  [step: provenance]"
         run: python3 run_all_checkpoint.py --only provenance --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Run discover-provenance  [step: discover-provenance]
+      - name: "Run discover-provenance  [step: discover-provenance]"
         run: python3 run_all_checkpoint.py --only discover-provenance --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Run scan-imports  [step: scan-imports]
+      - name: "Run scan-imports  [step: scan-imports]"
         run: python3 run_all_checkpoint.py --only scan-imports --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Run verify  [step: verify]
+      - name: "Run verify  [step: verify]"
         run: python3 run_all_checkpoint.py --only verify --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PATCHED_DATA_DIR: "${{ github.workspace }}/hypatiax/data/results"
           VERIFY_RESULTS_DIR: "${{ github.workspace }}/hypatiax/data/results"
 
-      - name: Run hashlock  [step: hashlock]
+      - name: "Run hashlock  [step: hashlock]"
         run: python3 run_all_checkpoint.py --only hashlock --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1420,12 +1420,12 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-audit-verify
             results-${{ github.ref }}-
 
-      - name: Run figures  [step: figures]
+      - name: "Run figures  [step: figures]"
         run: python3 run_all_checkpoint.py --only figures --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Run tables  [step: tables]
+      - name: "Run tables  [step: tables]"
         run: python3 run_all_checkpoint.py --only tables --resume --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -1486,36 +1486,36 @@ jobs:
             results-${{ github.ref }}-${{ github.run_id }}-outputs
             results-${{ github.ref }}-
 
-      - name: audit-setup  [step: audit-setup]
+      - name: "audit-setup  [step: audit-setup]"
         run: python3 run_all_checkpoint.py --only audit-setup --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: audit-NB-01 · Citation & Bibliography  [step: audit-NB-01]
+      - name: "audit-NB-01 · Citation & Bibliography  [step: audit-NB-01]"
         continue-on-error: true
         run: python3 run_all_checkpoint.py --only audit-NB-01 --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: audit-NB-02 · Cross-Reference & Label  [step: audit-NB-02]
+      - name: "audit-NB-02 · Cross-Reference & Label  [step: audit-NB-02]"
         continue-on-error: true
         run: python3 run_all_checkpoint.py --only audit-NB-02 --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: audit-NB-03 · Section Structure  [step: audit-NB-03]
+      - name: "audit-NB-03 · Section Structure  [step: audit-NB-03]"
         continue-on-error: true
         run: python3 run_all_checkpoint.py --only audit-NB-03 --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: audit-NB-04 · Numerical Consistency  [step: audit-NB-04]
+      - name: "audit-NB-04 · Numerical Consistency  [step: audit-NB-04]"
         continue-on-error: true
         run: python3 run_all_checkpoint.py --only audit-NB-04 --continue-on-fail
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: audit-NB-05 · Figure & Image Dependencies  [step: audit-NB-05]
+      - name: "audit-NB-05 · Figure & Image Dependencies  [step: audit-NB-05]"
         continue-on-error: true
         run: python3 run_all_checkpoint.py --only audit-NB-05 --continue-on-fail
         env:
@@ -1553,7 +1553,7 @@ jobs:
           restore-keys: |
             results-full-refs/heads/main-
             results-full-
-      - name: Run verify-only  [step: verify, --verify-only]
+      - name: "Run verify-only  [step: verify, --verify-only]"
         run: python3 run_all_checkpoint.py --verify-only
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

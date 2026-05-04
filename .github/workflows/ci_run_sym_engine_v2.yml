@@ -27,7 +27,10 @@ on:
         required: false
         default: 'true'
 
-jobs:
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+
   run-sym-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 1440   # 24 h ceiling — matches the ~12-24 h runtime estimate
@@ -43,11 +46,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ── Python ────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -83,7 +86,7 @@ jobs:
 
       # ── Checkpoint cache (resume support) ─────────────────────────────────
       - name: Restore checkpoint cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: logs/exp2_symbolic_engine_checkpoint.json
           key: sym-engine-checkpoint-${{ github.ref_name }}
@@ -108,7 +111,7 @@ jobs:
       # ── Artifacts ─────────────────────────────────────────────────────────
       - name: Upload executed notebook
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sym-engine-notebook-${{ github.run_id }}
           path: .github/scripts/run_sym_engine_v2.ipynb
@@ -116,7 +119,7 @@ jobs:
 
       - name: Upload logs and checkpoint
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sym-engine-logs-${{ github.run_id }}
           path: logs/
