@@ -25,7 +25,43 @@ on:
 
 jobs:
 
+  # ── Schedule change-detection ──────────────────────────────────────────────
+  # GitHub's `paths:` filter has no effect on `schedule` triggers — the job
+  # would fire every day regardless of whether the notebook changed.
+  # Solution: a lightweight pre-job that checks git history and sets an output
+  # flag. The main job then gates on that flag (or on non-schedule triggers).
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      notebook_changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2   # need HEAD and HEAD~1 to diff
+
+      - name: Detect notebook changes (schedule only)
+        id: diff
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            # push / pull_request / workflow_dispatch: always run
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            # Schedule: only run if the notebook changed in the last 24 h
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- \
+              '.github/scripts/exp3_hypatiax_v53_nguyen12.ipynb' \
+              '.github/workflows/ci_exp3_hypatiax_v53_nguyen12.yml')
+            if [ -n "$CHANGED" ]; then
+              echo "changed=true"  >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "No relevant changes since last commit — skipping scheduled run."
+            fi
+          fi
+
   run-exp3-nguyen12:
+    needs: check-changes
+    # Skip the expensive job when the schedule fires but nothing changed
+    if: needs.check-changes.outputs.notebook_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 720    # generous ceiling for full Nguyen-12 suite with PySR
 
@@ -85,7 +121,7 @@ jobs:
           julia -e 'println("Julia threads: ", Threads.nthreads())'
 
       # ── Notebook pre-flight patch ──────────────────────────────────────────
-      # Fixes two classes of problem before nbconvert executes the notebook:
+      # Fixes three classes of problem before nbconvert executes the notebook:
       #
       # A. Empty-body else/try/except/with/for/while blocks (IndentationError)
       #    Root cause: Cell In[9] line 84 has an `else:` whose body was either
@@ -100,7 +136,17 @@ jobs:
       # B. /kaggle/working path literals → logs/
       #    Same regex fix applied in ci_exp2; guards OUTPUT_DIR / LOG_DIR /
       #    WORKING_DIR whether written with or without a trailing slash.
-      - name: Patch notebook (indent fixup + path redirect)
+      #
+      # C. NameError: PySRRegressor not defined inside SymbolicEngine
+      #    Root cause: The class body references PySRRegressor at definition
+      #    time (e.g. in _get_pysr_valid_params or a class-level expression)
+      #    before the import has executed. Python evaluates class bodies
+      #    immediately — any name used there must already be bound.
+      #    Fix: prepend `from pysr import PySRRegressor` to every cell that
+      #    defines SymbolicEngine but lacks the import, and hoist
+      #    _get_pysr_valid_params() out of the class body into module scope
+      #    so it is never evaluated at class-definition time.
+      - name: Patch notebook (indent fixup + path redirect + PySR import guard)
         run: |
           python3 - <<'EOF'
           import ast, json, re, textwrap, uuid
@@ -157,7 +203,6 @@ jobs:
               })
 
           # ── 4. Fix empty compound-statement bodies (IndentationError) ──────
-          # Compound headers that require an indented body:
           COMPOUND_RE = re.compile(
               r'^(\s*)((?:else|elif\b.*|except(?:\b.*)?|finally|try|with\b.*|'
               r'for\b.*|while\b.*|if\b.*|def\b.*|class\b.*)\s*:)\s*$'
@@ -167,7 +212,6 @@ jobs:
               if cell.get("cell_type") != "code":
                   continue
               src = cell["source"]
-              # Join to lines, preserving final newline state
               lines = "".join(src).splitlines(keepends=True)
               new_lines = []
               i = 0
@@ -176,17 +220,14 @@ jobs:
                   m = COMPOUND_RE.match(line.rstrip("\n"))
                   if m:
                       indent = m.group(1)
-                      # Look ahead: find next non-blank, non-comment line
                       j = i + 1
                       while j < len(lines) and lines[j].strip() in ("", ) or \
                             (j < len(lines) and lines[j].lstrip().startswith("#")):
                           j += 1
-                      # If no next line, or next line is at same/lower indent → empty body
                       if j >= len(lines):
-                          body_indent = ""
+                          body_indent = 0
                       else:
                           body_indent = len(lines[j]) - len(lines[j].lstrip())
-                          body_indent_str = lines[j][:body_indent]
                       header_indent = len(indent)
                       if j >= len(lines) or body_indent <= header_indent:
                           new_lines.append(line)
@@ -198,6 +239,59 @@ jobs:
                   i += 1
               if new_lines != lines:
                   cell["source"] = new_lines
+
+          # ── 4b. Fix NameError: PySRRegressor not defined in SymbolicEngine ──
+          # The class body (or _get_pysr_valid_params inside it) references
+          # PySRRegressor at class-definition time. We fix this by:
+          #   (a) Prepending the import to the cell that defines SymbolicEngine
+          #       if it is missing.
+          #   (b) Hoisting _get_pysr_valid_params to module scope (before the
+          #       class statement) so it is never evaluated inside the class body.
+          PYSR_IMPORT = "from pysr import PySRRegressor\n"
+          HOIST_HELPER = (
+              "\n# --- hoisted by CI patch: called lazily, never at class-definition time ---\n"
+              "_PYSR_VALID_PARAMS_CACHE = None\n"
+              "def _get_pysr_valid_params():\n"
+              "    global _PYSR_VALID_PARAMS_CACHE\n"
+              "    if _PYSR_VALID_PARAMS_CACHE is None:\n"
+              "        import inspect as _inspect\n"
+              "        _PYSR_VALID_PARAMS_CACHE = set(\n"
+              "            _inspect.signature(PySRRegressor.__init__).parameters.keys()\n"
+              "        )\n"
+              "    return _PYSR_VALID_PARAMS_CACHE\n\n"
+          )
+          pysr_fixed = 0
+          for cell in cells:
+              if cell.get("cell_type") != "code":
+                  continue
+              src_str = "".join(cell.get("source", []))
+              if "class SymbolicEngine" not in src_str:
+                  continue
+              changed = False
+              # (a) Ensure the import is present at the top of the cell
+              if "from pysr import PySRRegressor" not in src_str and \
+                 "import PySRRegressor" not in src_str:
+                  src_str = PYSR_IMPORT + src_str
+                  changed = True
+              # (b) If _get_pysr_valid_params is defined INSIDE the class,
+              #     remove it from there and prepend the module-level version.
+              #     Simple heuristic: look for the indented def inside the class.
+              inside_class_def = re.search(
+                  r'([ \t]+def _get_pysr_valid_params\b.*?)(?=\n[ \t]{0,3}\S|\Z)',
+                  src_str, re.DOTALL
+              )
+              if inside_class_def and "def _get_pysr_valid_params" not in \
+                 src_str[:src_str.index("class SymbolicEngine")]:
+                  # Remove the indented version
+                  src_str = src_str[:inside_class_def.start()] + \
+                             src_str[inside_class_def.end():]
+                  # Prepend the module-level version just before the class
+                  class_pos = src_str.index("class SymbolicEngine")
+                  src_str = src_str[:class_pos] + HOIST_HELPER + src_str[class_pos:]
+                  changed = True
+              if changed:
+                  cell["source"] = src_str.splitlines(keepends=True)
+                  pysr_fixed += 1
 
           # ── 5. Validate each cell parses cleanly, report failures ──────────
           parse_errors = []
@@ -215,6 +309,7 @@ jobs:
           raw["cells"] = cells
           NB_PATH.write_text(json.dumps(raw, indent=1))
           print(f"Fixed {fixed_indent} empty compound block(s)")
+          print(f"Fixed {pysr_fixed} SymbolicEngine/PySRRegressor import issue(s)")
           if parse_errors:
               print("WARNING: remaining parse errors after fixup:")
               for err in parse_errors:
