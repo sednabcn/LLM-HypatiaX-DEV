@@ -103,18 +103,15 @@ jobs:
       # before juliacall is imported (Cell 2). Passing it via `env:` here
       # ensures it is set before the notebook kernel forks.
       #
-      # The notebook hardcodes /kaggle/working for all output paths.
+      # The notebook hardcodes absolute paths (/hypatiax/... or /kaggle/working)
+      # that the GitHub Actions runner cannot write to (PermissionError: '/').
       # The fix step below patches the notebook source before execution:
       #   1. Fixes any empty cell IDs (nbformat validation requirement)
-      #   2. Replaces ALL /kaggle/working variants (with or without trailing
-      #      slash) using a regex — covers OUTPUT_DIR = '/kaggle/working',
-      #      LOG_DIR = '/kaggle/working/logs', WORKING_DIR = '/kaggle/working/'
-      #      and any other literal form.  The old str.replace("/kaggle/working/")
-      #      missed the no-trailing-slash form and caused:
-      #        PermissionError: [Errno 13] Permission denied: '/kaggle'
-      #   3. Injects a runtime override cell after the last cell that defines
-      #      OUTPUT_DIR / LOG_DIR / WORKING_DIR / CFG / CHECKPOINT_PATH so any
-      #      path assembled dynamically is also redirected to logs/.
+      #   2. Rewrites ALL /hypatiax/* and /kaggle/working* literals using
+      #      regexes so os.makedirs never tries to write under /.
+      #   3. Injects a runtime override cell that reads OUTPUT_DIR / LOGS_DIR
+      #      from env vars (set in the job env block above) and redirects any
+      #      surviving absolute-path variable before the notebook uses them.
       - name: Fix notebook cell IDs and output paths
         run: |
           python3 - <<'EOF'
@@ -133,20 +130,38 @@ jobs:
                   cell["id"] = uuid.uuid4().hex[:8]
                   fixed_ids += 1
 
-          # 2. Replace ALL /kaggle/working variants in code cell source lines.
-          #    Matches: '/kaggle/working'  "/kaggle/working/"  /kaggle/working/logs
-          #    The leading delimiter (quote or slash) is preserved so string
-          #    literals stay syntactically valid after substitution.
-          KAGGLE_RE = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
-          def _repl(m):
+          # 2. Replace ALL absolute path literals that the runner cannot write to.
+          #    Covers /kaggle/working* and /hypatiax/* — both map to logs/.
+          #    The env vars OUTPUT_DIR / LOGS_DIR are also honoured at runtime
+          #    via the override cell injected in step 3.
+          KAGGLE_RE   = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
+          HYPATIAX_RE = re.compile(
+              r"(['\"])"
+              r"(/hypatiax(?:/data/results|/logs)?/?)"
+              r"(['\"])"
+          )
+          def _repl_kaggle(m):
               return m.group(1) + "logs/" + m.group(3)
+          def _repl_hypatiax(m):
+              # /hypatiax/logs  → logs/
+              # /hypatiax/data/results → logs/results/
+              # /hypatiax      → logs/
+              inner = m.group(2)
+              if "data/results" in inner:
+                  replacement = "logs/results/"
+              elif inner.rstrip("/").endswith("/logs") or inner.rstrip("/") == "/hypatiax/logs":
+                  replacement = "logs/"
+              else:
+                  replacement = "logs/"
+              return m.group(1) + replacement + m.group(3)
 
           fixed_literal = 0
           for cell in cells:
               if cell.get("cell_type") != "code":
                   continue
               src = cell["source"]
-              new_src = [KAGGLE_RE.sub(_repl, line) for line in src]
+              new_src = [KAGGLE_RE.sub(_repl_kaggle, HYPATIAX_RE.sub(_repl_hypatiax, line))
+                         for line in src]
               if new_src != src:
                   cell["source"] = new_src
                   fixed_literal += 1
@@ -154,23 +169,33 @@ jobs:
           # 3. Inject a safety-net override cell after the last cell that defines
           #    any of the known path variables or CFG — catches dynamic assembly
           #    like: LOG_DIR = OUTPUT_DIR + 'logs/'
+          #    Also honours OUTPUT_DIR / LOGS_DIR env vars set by the CI yml so
+          #    any surviving absolute-path variable is redirected at runtime.
           patch_src = (
               "import os as _os\n"
-              "_logs = 'logs/'\n"
+              "_ws   = _os.environ.get('GITHUB_WORKSPACE', '.')\n"
+              "_out  = _os.environ.get('OUTPUT_DIR', _os.path.join(_ws, 'logs', 'results'))\n"
+              "_logs = _os.environ.get('LOGS_DIR',   _os.path.join(_ws, 'logs'))\n"
+              "_os.makedirs(_out,  exist_ok=True)\n"
               "_os.makedirs(_logs, exist_ok=True)\n"
-              "# Redirect any surviving /kaggle/working references\n"
-              "for _var in ('OUTPUT_DIR', 'WORKING_DIR', 'LOG_DIR'):\n"
+              "# Redirect any surviving absolute-path references\n"
+              "for _var, _val in [('OUTPUT_DIR', _out), ('LOGS_DIR', _logs),\n"
+              "                   ('WORKING_DIR', _logs), ('LOG_DIR', _logs)]:\n"
               "    if _var in dir():\n"
-              "        globals()[_var] = globals()[_var].replace('/kaggle/working', _logs.rstrip('/'))\n"
+              "        globals()[_var] = _val\n"
               "try:\n"
-              "    CFG.update({k: v.replace('/kaggle/working', _logs.rstrip('/'))\n"
-              "                for k, v in CFG.items() if isinstance(v, str) and '/kaggle' in v})\n"
+              "    CFG.update({k: v.replace('/hypatiax/data/results', _out)\n"
+              "                     .replace('/hypatiax/logs', _logs)\n"
+              "                     .replace('/hypatiax', _logs)\n"
+              "                     .replace('/kaggle/working', _logs)\n"
+              "                for k, v in CFG.items() if isinstance(v, str)\n"
+              "                and any(p in v for p in ('/hypatiax', '/kaggle'))})\n"
               "except NameError:\n"
               "    pass\n"
           )
 
           already_patched = any(
-              "Redirect any surviving /kaggle" in "".join(c.get("source", []))
+              "Redirect any surviving absolute-path" in "".join(c.get("source", []))
               for c in cells
           )
 
@@ -194,7 +219,7 @@ jobs:
               print(f"  Injected path-override cell after cell {insert_after}")
 
           NB_PATH.write_text(json.dumps(raw, indent=1))
-          print(f"Fixed {fixed_ids} cell ID(s), {fixed_literal} cell(s) with /kaggle literals")
+          print(f"Fixed {fixed_ids} cell ID(s), {fixed_literal} cell(s) with absolute path literals")
           EOF
 
       - name: Execute notebook (Feynman n=30 equations)

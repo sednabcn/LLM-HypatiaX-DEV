@@ -23,6 +23,9 @@ on:
         required: false
         default: '42'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
 
   # ── Schedule change-detection ──────────────────────────────────────────────
@@ -79,6 +82,8 @@ jobs:
       # Passed directly here rather than via a `run: echo … >> $GITHUB_ENV`
       # step to avoid unnecessarily echoing the masked secret in shell logs.
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OUTPUT_DIR: "${{ github.workspace }}/hypatiax/data/results"
+      LOGS_DIR:   "${{ github.workspace }}/hypatiax/logs"
 
     steps:
       - name: Checkout repository
@@ -132,10 +137,11 @@ jobs:
       #    Fix: scan every code cell; for each compound-statement header whose
       #    next non-blank, non-comment line is at the same or lower indent,
       #    inject a `    pass` line so the block is syntactically valid.
-      #
-      # B. /kaggle/working path literals → logs/
-      #    Same regex fix applied in ci_exp2; guards OUTPUT_DIR / LOG_DIR /
-      #    WORKING_DIR whether written with or without a trailing slash.
+      # B. Absolute path literals → logs/
+      #    Covers /hypatiax/data/results, /hypatiax/logs, and /kaggle/working*
+      #    (PermissionError: [Errno 13] Permission denied: '/hypatiax').
+      #    Two regexes rewrite literals in cell source; an injected override
+      #    cell then reads OUTPUT_DIR / LOGS_DIR from env vars at runtime.
       #
       # C. NameError: PySRRegressor not defined inside SymbolicEngine
       #    Root cause: The class body references PySRRegressor at definition
@@ -245,34 +251,63 @@ jobs:
               if not cid or not str(cid).strip():
                   cell["id"] = uuid.uuid4().hex[:8]
 
-          # ── 2. /kaggle/working → logs/ ──────────────────────────────────────
-          KAGGLE_RE = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
-          def _repl(m):
+          # ── 2. Rewrite ALL absolute path literals the runner cannot write to ──
+          #    Covers /kaggle/working* and /hypatiax/* — both redirected to logs/.
+          #    The env vars OUTPUT_DIR / LOGS_DIR are honoured at runtime via
+          #    the override cell injected in step 3.
+          KAGGLE_RE   = re.compile(r"(['\"/])(/kaggle/working/?)(['\"/]?)")
+          HYPATIAX_RE = re.compile(
+              r"(['\"])"
+              r"(/hypatiax(?:/data/results|/logs)?/?)"
+              r"(['\"])"
+          )
+          def _repl_kaggle(m):
               return m.group(1) + "logs/" + m.group(3)
+          def _repl_hypatiax(m):
+              inner = m.group(2)
+              if "data/results" in inner:
+                  replacement = "logs/results/"
+              elif inner.rstrip("/").endswith("/logs"):
+                  replacement = "logs/"
+              else:
+                  replacement = "logs/"
+              return m.group(1) + replacement + m.group(3)
 
           for cell in cells:
               if cell.get("cell_type") != "code":
                   continue
               src = cell["source"]
-              new_src = [KAGGLE_RE.sub(_repl, line) for line in src]
+              new_src = [KAGGLE_RE.sub(_repl_kaggle, HYPATIAX_RE.sub(_repl_hypatiax, line))
+                         for line in src]
               if new_src != src:
                   cell["source"] = new_src
 
-          # ── 3. Inject logs/ override cell ──────────────────────────────────
+          # ── 3. Inject runtime override cell ────────────────────────────────
+          #    Reads OUTPUT_DIR / LOGS_DIR from env vars and redirects any
+          #    surviving absolute-path variable before the notebook uses them.
           patch_src = (
               "import os as _os\n"
-              "_logs = 'logs/'\n"
+              "_ws   = _os.environ.get('GITHUB_WORKSPACE', '.')\n"
+              "_out  = _os.environ.get('OUTPUT_DIR', _os.path.join(_ws, 'logs', 'results'))\n"
+              "_logs = _os.environ.get('LOGS_DIR',   _os.path.join(_ws, 'logs'))\n"
+              "_os.makedirs(_out,  exist_ok=True)\n"
               "_os.makedirs(_logs, exist_ok=True)\n"
-              "for _var in ('OUTPUT_DIR', 'WORKING_DIR', 'LOG_DIR'):\n"
+              "# Redirect any surviving absolute-path references\n"
+              "for _var, _val in [('OUTPUT_DIR', _out), ('LOGS_DIR', _logs),\n"
+              "                   ('WORKING_DIR', _logs), ('LOG_DIR', _logs)]:\n"
               "    if _var in dir():\n"
-              "        globals()[_var] = globals()[_var].replace('/kaggle/working', _logs.rstrip('/'))\n"
+              "        globals()[_var] = _val\n"
               "try:\n"
-              "    CFG.update({k: v.replace('/kaggle/working', _logs.rstrip('/'))\n"
-              "                for k, v in CFG.items() if isinstance(v, str) and '/kaggle' in v})\n"
+              "    CFG.update({k: v.replace('/hypatiax/data/results', _out)\n"
+              "                     .replace('/hypatiax/logs', _logs)\n"
+              "                     .replace('/hypatiax', _logs)\n"
+              "                     .replace('/kaggle/working', _logs)\n"
+              "                for k, v in CFG.items() if isinstance(v, str)\n"
+              "                and any(p in v for p in ('/hypatiax', '/kaggle'))})\n"
               "except NameError:\n"
               "    pass\n"
           )
-          if not any("_os.makedirs(_logs" in "".join(c.get("source", [])) for c in cells):
+          if not any("Redirect any surviving absolute-path" in "".join(c.get("source", [])) for c in cells):
               insert_after = 0
               for i, cell in enumerate(cells):
                   if any(kw in "".join(cell.get("source", []))
