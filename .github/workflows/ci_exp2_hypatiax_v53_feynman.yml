@@ -107,6 +107,43 @@ jobs:
       # PYTHON_JULIACALL_HANDLE_SIGNALS must be in the kernel environment
       # before juliacall is imported (Cell 2). Passing it via `env:` here
       # ensures it is set before the notebook kernel forks.
+      #
+      # OUTPUT_DIR overrides the hardcoded /kaggle/working/ path in CFG so
+      # result files are written to the workspace logs/ directory instead.
+      - name: Fix notebook cell IDs and output paths
+        run: |
+          python3 - <<'EOF'
+          import json, uuid
+          from pathlib import Path
+
+          NB_PATH = Path(".github/scripts/exp2_hypatiax_v53_feynman.ipynb")
+          raw = json.loads(NB_PATH.read_text())
+
+          # Fix any missing/empty cell IDs (nbformat validation requirement)
+          fixed_ids = 0
+          for cell in raw.get("cells", []):
+              cid = cell.get("id", "")
+              if not cid or not str(cid).strip():
+                  cell["id"] = uuid.uuid4().hex[:8]
+                  fixed_ids += 1
+
+          # Patch hardcoded /kaggle/working/ paths to $GITHUB_WORKSPACE/logs/
+          fixed_paths = 0
+          for cell in raw.get("cells", []):
+              if cell.get("cell_type") != "code":
+                  continue
+              src = "".join(cell["source"])
+              if "/kaggle/working/" in src:
+                  cell["source"] = [
+                      line.replace("/kaggle/working/", "logs/")
+                      for line in cell["source"]
+                  ]
+                  fixed_paths += 1
+
+          NB_PATH.write_text(json.dumps(raw, indent=1))
+          print(f"Fixed {fixed_ids} cell ID(s), {fixed_paths} cell(s) with /kaggle/working/ paths")
+          EOF
+
       - name: Execute notebook (Feynman n=30 equations)
         run: |
           jupyter nbconvert \
@@ -144,7 +181,7 @@ jobs:
         with:
           name: exp2-feynman-results-${{ github.run_id }}
           path: |
-            *.json
-            *.csv
+            logs/*.json
+            logs/*.csv
           if-no-files-found: ignore
           retention-days: 30

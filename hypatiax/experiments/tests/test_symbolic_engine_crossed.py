@@ -25,15 +25,6 @@ from __future__ import annotations
 
 import inspect
 import math
-import sys
-import time
-import types
-import warnings
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import numpy as np
-import pytest
-from sklearn.metrics import r2_score
 
 # ---------------------------------------------------------------------------
 # Make sure the crossed engine module is importable.
@@ -41,6 +32,16 @@ from sklearn.metrics import r2_score
 # then fall back to the original hypatiax path.
 # ---------------------------------------------------------------------------
 import pathlib
+import sys
+import time
+import types
+import warnings
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+from sklearn.metrics import r2_score
+
 _here = pathlib.Path(__file__).parent
 sys.path.insert(0, str(_here))  # picks up symbolic_engine_crossed.py
 sys.path.insert(1, str(_here.parent.parent.parent / "tools" / "symbolic"))
@@ -49,24 +50,22 @@ try:
     from symbolic_engine_crossed import (
         BayesianRanker,
         BayesianSearchRanker,
-        DataPatternAnalyzer,
+        DataPatternAnalyzer,  # noqa: F401
         DiscoveryConfig,
         EquationTools,
         SymbolicEngine,
         SymbolicTreeEngine,
-        VariableNameValidator,
+        VariableNameValidator,  # noqa: F401
     )
 except ImportError:
     # Fall back to original module name (for CI that copies only one file)
-    from symbolic_engine import (  # type: ignore[no-redef]
+    from symbolic_engine import (
         BayesianRanker,
         BayesianSearchRanker,
-        DataPatternAnalyzer,
         DiscoveryConfig,
         EquationTools,
         SymbolicEngine,
         SymbolicTreeEngine,
-        VariableNameValidator,
     )
 
 # ---------------------------------------------------------------------------

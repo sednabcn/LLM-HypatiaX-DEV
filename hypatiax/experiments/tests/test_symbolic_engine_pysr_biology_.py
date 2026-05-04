@@ -29,30 +29,27 @@ from __future__ import annotations
 
 import inspect
 import math
-import sys
-import time
-import types
-import warnings
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import numpy as np
-import pytest
-from sklearn.metrics import r2_score
 
 # ---------------------------------------------------------------------------
 # Make sure the engine module is importable
 # ---------------------------------------------------------------------------
 import pathlib
+import sys
+import time
+import types
+import warnings
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+from sklearn.metrics import r2_score
+
 # symbolic_engine.py lives in hypatiax/tools/symbolic/
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent / "tools" / "symbolic"))
-
 from symbolic_engine import (
-    BayesianRanker,
-    DataPatternAnalyzer,
     DiscoveryConfig,
     EquationTools,
     SymbolicEngine,
-    VariableNameValidator,
 )
 
 # ---------------------------------------------------------------------------

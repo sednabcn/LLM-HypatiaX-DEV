@@ -67,6 +67,8 @@ jobs:
             pandas \
             anthropic \
             nbconvert \
+            nbformat \
+            nbclient \
             ipykernel
 
       # ── Julia ─────────────────────────────────────────────────────────────
@@ -99,14 +101,42 @@ jobs:
         run: mkdir -p logs
 
       # ── Notebook execution ─────────────────────────────────────────────────
-      - name: Execute notebook
+      - name: Fix cell IDs and execute notebook
         run: |
-          jupyter nbconvert \
-            --to notebook \
-            --execute \
-            --inplace \
-            --ExecutePreprocessor.timeout=-1 \
-            .github/scripts/run_sym_engine_v2.ipynb
+          python3 - <<'EOF'
+          import json, uuid, os, nbformat, nbclient
+          from pathlib import Path
+
+          NB_PATH = Path(".github/scripts/run_sym_engine_v2.ipynb")
+
+          # 1. Load as raw JSON and patch any missing/empty cell IDs
+          raw = json.loads(NB_PATH.read_text())
+          fixed = 0
+          for cell in raw.get("cells", []):
+              cid = cell.get("id", "")
+              if not cid or not str(cid).strip():
+                  cell["id"] = uuid.uuid4().hex[:8]
+                  fixed += 1
+          print(f"Fixed {fixed} cell(s) with missing/empty id")
+
+          # 2. Write back so nbformat reads a valid notebook
+          NB_PATH.write_text(json.dumps(raw, indent=1))
+
+          # 3. Read with nbformat (validation now passes) and execute via nbclient
+          nb = nbformat.read(str(NB_PATH), as_version=4)
+          timeout = int(os.environ.get("PYSR_TIMEOUT", "1100")) * 60
+          client = nbclient.NotebookClient(
+              nb,
+              timeout=timeout if timeout > 0 else -1,
+              kernel_name="python3",
+              resources={"metadata": {"path": str(NB_PATH.parent)}},
+          )
+          client.execute()
+
+          # 4. Write executed notebook back
+          nbformat.write(nb, str(NB_PATH))
+          print("Notebook executed and saved.")
+          EOF
         env:
           PYSR_TIMEOUT: ${{ env.PYSR_TIMEOUT }}
 
