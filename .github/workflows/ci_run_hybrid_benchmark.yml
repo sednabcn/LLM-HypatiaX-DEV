@@ -26,7 +26,8 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-
+jobs:
+
   run-hybrid-benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 480    # 8 h ceiling — matches the ~4-8 h runtime estimate
@@ -99,7 +100,7 @@ env:
       # ── Artifacts ─────────────────────────────────────────────────────────
       - name: Upload executed notebook
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: hybrid-benchmark-notebook-${{ github.run_id }}
           path: .github/scripts/run_hybrid_benchmark.ipynb
@@ -107,7 +108,7 @@ env:
 
       - name: Upload HTML report
         if: success()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: hybrid-benchmark-report-${{ github.run_id }}
           path: run_hybrid_benchmark_report.html
@@ -115,7 +116,7 @@ env:
 
       - name: Upload results JSON
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: hybrid-benchmark-results-${{ github.run_id }}
           path: hypatiax/data/results/

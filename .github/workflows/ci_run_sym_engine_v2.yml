@@ -30,7 +30,8 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-
+jobs:
+
   run-sym-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 1440   # 24 h ceiling — matches the ~12-24 h runtime estimate
@@ -78,7 +79,8 @@ env:
           echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
 
       - name: Verify Julia threads
-        run: julia -e 'println("Julia threads: ", Threads.nthreads())'
+        run: |
+          julia -e 'println("Julia threads: ", Threads.nthreads())'
 
       # ── Secrets ───────────────────────────────────────────────────────────
       - name: Set Anthropic API key
@@ -111,7 +113,7 @@ env:
       # ── Artifacts ─────────────────────────────────────────────────────────
       - name: Upload executed notebook
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: sym-engine-notebook-${{ github.run_id }}
           path: .github/scripts/run_sym_engine_v2.ipynb
@@ -119,7 +121,7 @@ env:
 
       - name: Upload logs and checkpoint
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: sym-engine-logs-${{ github.run_id }}
           path: logs/

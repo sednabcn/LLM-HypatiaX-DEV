@@ -26,9 +26,8 @@ import warnings
 
 import numpy as np
 import pytest
-from sklearn.metrics import r2_score
-
 from experiment_protocol_all_30 import ExperimentProtocolAll
+from sklearn.metrics import r2_score
 from symbolic_engine import SymbolicTreeEngine
 
 # suppress noisy runtime warnings from tree exploration

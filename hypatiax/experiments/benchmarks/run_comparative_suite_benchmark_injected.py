@@ -56,8 +56,6 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -86,6 +84,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 _BENCH_PATH = _HERE / "run_comparative_suite_benchmark_v2.py"
 import importlib.util as _ilu
+
 _spec = _ilu.spec_from_file_location("_bench_v2", _BENCH_PATH)
 _bench = _ilu.module_from_spec(_spec)          # type: ignore[arg-type]
 _spec.loader.exec_module(_bench)               # type: ignore[union-attr]
@@ -94,10 +93,9 @@ ProtocolBenchmarkSuite = _bench.ProtocolBenchmarkSuite
 MethodResult           = _bench.MethodResult
 
 # Protocol
-from hypatiax.protocols.experiment_protocol_all_30 import ExperimentProtocolAll
-
 import numpy as np
 
+from hypatiax.protocols.experiment_protocol_all_30 import ExperimentProtocolAll
 
 # ---------------------------------------------------------------------------
 # Injection helpers
@@ -112,7 +110,7 @@ def _load_pysr_checkpoint(path: Path, method_label: str) -> dict[str, dict]:
     """
     if not path.exists():
         print(f"⚠️  {method_label} checkpoint not found: {path}", flush=True)
-        print(f"    Run the standalone runner first, then retry.", flush=True)
+        print("    Run the standalone runner first, then retry.", flush=True)
         return {}
     try:
         with open(path) as f:
@@ -244,7 +242,7 @@ def main() -> int:
 
     # Protocol
     protocol = ExperimentProtocolAll()
-    print(f"\n✅  ExperimentProtocolAll loaded  (protocol=all30, 30 equations)", flush=True)
+    print("\n✅  ExperimentProtocolAll loaded  (protocol=all30, 30 equations)", flush=True)
 
     # Collect all 30 test stubs
     all_tests: list[tuple] = []

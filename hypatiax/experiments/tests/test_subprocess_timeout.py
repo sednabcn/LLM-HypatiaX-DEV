@@ -55,7 +55,6 @@ import time
 
 import pytest
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _run_with_watchdog(fn, timeout_secs: float):
@@ -326,7 +325,6 @@ class TestDrainCommunicateBug:
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import unittest
 
     # Run without pytest for quick local validation
     suite = TestDrainCommunicateBug()

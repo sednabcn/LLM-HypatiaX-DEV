@@ -316,7 +316,6 @@ def _run_one_equation(
     Returns (result_dict_or_None, elapsed_seconds).
     result_dict mirrors MethodResult.to_dict(); None means the worker crashed.
     """
-    import signal
 
     # proc_timeout = pysr's internal budget + grace for Julia cleanup.
     # The worker's SIGALRM fires at this value; parent's SIGKILL fires 30s later.
