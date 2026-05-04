@@ -108,40 +108,107 @@ jobs:
       # before juliacall is imported (Cell 2). Passing it via `env:` here
       # ensures it is set before the notebook kernel forks.
       #
-      # OUTPUT_DIR overrides the hardcoded /kaggle/working/ path in CFG so
-      # result files are written to the workspace logs/ directory instead.
+      # The notebook hardcodes /kaggle/working/ for all output paths.
+      # The fix step below patches the notebook source before execution:
+      #   1. Fixes any empty cell IDs (nbformat validation requirement)
+      #   2. Replaces literal /kaggle/working/ strings in cell source
+      #   3. Injects a patch cell after the CFG definition cell that
+      #      rewrites any remaining CFG path values pointing to /kaggle/
+      #      — handles cases where the path is built dynamically via a
+      #      WORKING_DIR variable rather than written as a literal string.
       - name: Fix notebook cell IDs and output paths
         run: |
           python3 - <<'EOF'
-          import json, uuid
+          import json, re, uuid
           from pathlib import Path
 
           NB_PATH = Path(".github/scripts/exp2_hypatiax_v53_feynman.ipynb")
           raw = json.loads(NB_PATH.read_text())
+          cells = raw.get("cells", [])
 
-          # Fix any missing/empty cell IDs (nbformat validation requirement)
+          # 1. Fix missing/empty cell IDs
           fixed_ids = 0
-          for cell in raw.get("cells", []):
+          for cell in cells:
               cid = cell.get("id", "")
               if not cid or not str(cid).strip():
                   cell["id"] = uuid.uuid4().hex[:8]
                   fixed_ids += 1
 
-          # Patch hardcoded /kaggle/working/ paths to $GITHUB_WORKSPACE/logs/
-          fixed_paths = 0
-          for cell in raw.get("cells", []):
+          # 2. Replace literal /kaggle/working/ in all code cell source lines
+          fixed_literal = 0
+          for cell in cells:
               if cell.get("cell_type") != "code":
                   continue
-              src = "".join(cell["source"])
-              if "/kaggle/working/" in src:
-                  cell["source"] = [
-                      line.replace("/kaggle/working/", "logs/")
-                      for line in cell["source"]
-                  ]
-                  fixed_paths += 1
+              src = cell["source"]
+              new_src = [line.replace("/kaggle/working/", "logs/") for line in src]
+              if new_src != src:
+                  cell["source"] = new_src
+                  fixed_literal += 1
+
+          # 3. Find the cell that defines CFG or WORKING_DIR and inject an
+          #    override cell immediately after it that redirects all path values.
+          #    This handles dynamic construction like:
+          #      WORKING_DIR = '/kaggle/working/'
+          #      CFG = {'output_json': WORKING_DIR + 'file.json', ...}
+          patch_src = (
+              "import os as _os
+"
+              "_logs = 'logs/'
+"
+              "_os.makedirs(_logs, exist_ok=True)
+"
+              "# Override any /kaggle/working/ references from CFG / WORKING_DIR
+"
+              "try:
+"
+              "    WORKING_DIR = _logs
+"
+              "except NameError:
+"
+              "    pass
+"
+              "try:
+"
+              "    CFG.update({k: v.replace('/kaggle/working/', _logs)
+"
+              "                for k, v in CFG.items() if isinstance(v, str) and '/kaggle' in v})
+"
+              "except NameError:
+"
+              "    pass
+"
+          )
+
+          # Check if patch cell already present
+          already_patched = any(
+              "Override any /kaggle/working/" in "".join(c.get("source", []))
+              for c in cells
+          )
+
+          if not already_patched:
+              # Find last cell that mentions kaggle or CFG/WORKING_DIR definition
+              insert_after = -1
+              for i, cell in enumerate(cells):
+                  src_text = "".join(cell.get("source", []))
+                  if ("WORKING_DIR" in src_text or
+                      ("CFG" in src_text and "output_json" in src_text)):
+                      insert_after = i
+              if insert_after == -1:
+                  insert_after = 0  # fallback: insert after first cell
+              patch_cell = {
+                  "cell_type": "code",
+                  "id": uuid.uuid4().hex[:8],
+                  "metadata": {},
+                  "outputs": [],
+                  "source": patch_src.splitlines(keepends=True),
+                  "execution_count": None,
+              }
+              cells.insert(insert_after + 1, patch_cell)
+              raw["cells"] = cells
+              print(f"  Injected CFG path override cell after cell {insert_after}")
 
           NB_PATH.write_text(json.dumps(raw, indent=1))
-          print(f"Fixed {fixed_ids} cell ID(s), {fixed_paths} cell(s) with /kaggle/working/ paths")
+          print(f"Fixed {fixed_ids} cell ID(s), {fixed_literal} cell(s) with literal /kaggle paths")
           EOF
 
       - name: Execute notebook (Feynman n=30 equations)
