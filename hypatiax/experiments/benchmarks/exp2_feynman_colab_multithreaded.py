@@ -31,8 +31,57 @@ Upgraded from `parallelism='serial'` to **`parallelism='multithreading'`** for ~
 
 # CELL 1 -- Run this BEFORE installing PySR
 # JULIA_NUM_THREADS must be set before Julia initialises.
+import argparse
 import multiprocessing
 import os
+
+# ── CLI parsing (CI / run_all.sh invocation) ──────────────────────────────
+# Must happen before any other import that touches Julia/PySR so that
+# JULIA_NUM_THREADS is set correctly before juliacall initialises.
+#
+# Flags forwarded by the CI workflow:
+#   --samples N          training samples per equation   (env FEYNMAN_SAMPLES)
+#   --shard K/N          this job handles slice K of N   (e.g. 0/2 or 1/2)
+#   --checkpoint PATH    per-shard checkpoint JSON file
+#   --resume             load checkpoint and skip done equations
+#   --no-llm-cache       disable anthropic response caching
+#
+# When run inside a Colab notebook none of these flags are present and the
+# defaults produce the original Colab behaviour.
+_parser = argparse.ArgumentParser(
+    description='Exp 2 — Feynman Extrapolation (n=30)',
+    add_help=True,
+)
+_parser.add_argument('--samples',    type=int,  default=None,
+                     help='Training samples per equation (overrides FEYNMAN_SAMPLES env)')
+_parser.add_argument('--shard',      type=str,  default=None,
+                     help='Shard spec K/N, e.g. 0/2 or 1/2')
+_parser.add_argument('--checkpoint', type=str,  default=None,
+                     help='Path to per-shard checkpoint JSON (read + write)')
+_parser.add_argument('--resume',     action='store_true', default=False,
+                     help='Resume from checkpoint — skip already-completed equations')
+_parser.add_argument('--no-llm-cache', dest='no_llm_cache', action='store_true',
+                     default=False, help='Disable Anthropic response caching')
+_args, _unknown = _parser.parse_known_args()
+
+# Parse shard spec → (shard_index, total_shards)
+_SHARD_INDEX  = 0
+_SHARD_TOTAL  = 1  # default: no sharding — run all 30
+if _args.shard:
+    try:
+        _si, _st = _args.shard.split('/')
+        _SHARD_INDEX = int(_si)
+        _SHARD_TOTAL = int(_st)
+        if _SHARD_INDEX >= _SHARD_TOTAL or _SHARD_INDEX < 0:
+            raise ValueError(f'shard index {_SHARD_INDEX} out of range for total {_SHARD_TOTAL}')
+    except Exception as _e:
+        raise SystemExit(f'ERROR: --shard must be K/N (e.g. 0/2 or 1/2), got: {_args.shard!r} — {_e}')
+
+print(f'[CLI] shard={_SHARD_INDEX}/{_SHARD_TOTAL}  '
+      f'checkpoint={_args.checkpoint!r}  '
+      f'resume={_args.resume}  '
+      f'samples={_args.samples}  '
+      f'no-llm-cache={_args.no_llm_cache}', flush=True)
 
 n_cores = multiprocessing.cpu_count()
 print(f'Colab CPU cores available: {n_cores}')
@@ -108,24 +157,53 @@ else:
 """## 5 · Run configuration"""
 
 CFG = dict(
-    # FIX-WALLCLOCK: read timeout from env (PYSR_TIMEOUT=1100, METHOD_TIMEOUT=900)
-    # rather than hardcoding 300s. Priority: PYSR_TIMEOUT > METHOD_TIMEOUT > 1100 default.
-    timeout=int(os.environ.get("PYSR_TIMEOUT") or os.environ.get("METHOD_TIMEOUT") or 1100),
-    populations=int(os.environ.get("POPULATIONS", 30)),
+    # FIX-WALLCLOCK: read timeout from env. Priority: FEYNMAN_TIMEOUT > PYSR_TIMEOUT > default.
+    timeout=int(os.environ.get("FEYNMAN_TIMEOUT") or os.environ.get("PYSR_TIMEOUT")
+                or os.environ.get("METHOD_TIMEOUT") or 1100),
+    populations=int(os.environ.get("PYSR_POPULATIONS") or os.environ.get("POPULATIONS") or 30),
     iterations=int(os.environ.get("N_ITERATIONS", 1000)),
     n_equations=30, seed=42,
-    output_json='exp2_feynman_extrap_multithreaded.json',
+    # --checkpoint CLI flag (CI/run_all.sh) takes priority.
+    # Falls back to RESULTS_DIR-relative path so the file lands in the right place.
+    output_json=(
+        _args.checkpoint
+        if _args.checkpoint
+        else os.path.join(
+            os.environ.get("RESULTS_DIR",
+                           os.path.join(os.getcwd(), "hypatiax/data/results")),
+            "comparison_results/feynman-tests/exp2",
+            (f"exp2_feynman_checkpoint_shard{_SHARD_INDEX}.json"
+             if _SHARD_TOTAL > 1
+             else "exp2_feynman_checkpoint.json"),
+        )
+    ),
     nn_only=False,
+    # --samples CLI flag (CI) > FEYNMAN_SAMPLES env > 200.
+    n_samples=(_args.samples
+               if _args.samples is not None
+               else int(os.environ.get("FEYNMAN_SAMPLES", 200))),
+    resume=_args.resume,
 )
-MOUNT_DRIVE = True
+
+# Only mount Google Drive when NOT running under GitHub Actions / CI.
+_IN_CI = bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
+MOUNT_DRIVE = not _IN_CI
 if MOUNT_DRIVE:
     try:
         from google.colab import drive
         drive.mount('/content/drive')
-        CFG['output_json'] = '/content/drive/MyDrive/' + CFG['output_json']
+        CFG['output_json'] = '/content/drive/MyDrive/exp2_feynman_extrap_multithreaded.json'
         print(f"Checkpoints -> {CFG['output_json']}")
     except Exception as e:
         print(f'Drive mount skipped: {e}')
+
+# Ensure the checkpoint directory exists before any open(...,'w') call.
+os.makedirs(os.path.dirname(os.path.abspath(CFG['output_json'])), exist_ok=True)
+
+print(f"[CFG] checkpoint  : {CFG['output_json']}", flush=True)
+print(f"[CFG] shard       : {_SHARD_INDEX}/{_SHARD_TOTAL}", flush=True)
+print(f"[CFG] resume      : {CFG['resume']}", flush=True)
+print(f"[CFG] n_samples   : {CFG['n_samples']}", flush=True)
 print('Config:', CFG)
 
 """## 6 · 30-equation Feynman dataset
@@ -692,39 +770,83 @@ Checkpointed to Google Drive after every equation.
 Re-run after disconnect — completed equations are skipped automatically.
 """
 
-equations = FEYNMAN_30[:CFG['n_equations']]
+# ── Shard slicing ─────────────────────────────────────────────────────────
+# Each CI job handles a contiguous slice of the 30 equations.
+# Shard 0/2 → indices 0-14  (equations 1-15)
+# Shard 1/2 → indices 15-29 (equations 16-30)
+# No sharding (_SHARD_TOTAL == 1) → all 30 equations (Colab / local).
+_all_30 = FEYNMAN_30[:CFG['n_equations']]
+_slice_size = len(_all_30) // _SHARD_TOTAL
+_slice_start = _SHARD_INDEX * _slice_size
+# Last shard takes any remainder so all equations are covered.
+_slice_end = (_slice_start + _slice_size
+              if _SHARD_INDEX < _SHARD_TOTAL - 1
+              else len(_all_30))
+equations = _all_30[_slice_start:_slice_end]
 
-# Resume: load any existing checkpoint
+print(f"[SHARD {_SHARD_INDEX}/{_SHARD_TOTAL}] equations {_slice_start+1}–{_slice_end} "
+      f"({len(equations)} equations)", flush=True)
+
+# ── Checkpoint loading ─────────────────────────────────────────────────────
+# Each shard has its own checkpoint file so the two CI jobs are completely
+# independent — shard 1 never waits for shard 0's checkpoint to appear.
+# Loading is gated on --resume so a fresh run always starts clean even when
+# a stale checkpoint file exists on disk.
 all_results = {}
-if os.path.exists(CFG['output_json']):
-    with open(CFG['output_json']) as f:
-        all_results = json.load(f)
-    print(f"▶ Resume: loaded {len(all_results)} completed result(s) from {CFG['output_json']}")
+_ckpt_path = CFG["output_json"]
+if os.path.exists(_ckpt_path):
+    try:
+        with open(_ckpt_path) as _f:
+            _loaded = json.load(_f)
+        if CFG["resume"]:
+            all_results = _loaded
+            print(f"▶ Resume: loaded {len(all_results)} completed result(s) "
+                  f"from {_ckpt_path}", flush=True)
+        else:
+            print(f"⚡ Checkpoint found but --resume not set — starting fresh "
+                  f"(checkpoint has {len(_loaded)} entries)", flush=True)
+    except Exception as _ckpt_err:
+        print(f"⚠  Checkpoint load failed ({_ckpt_err}) — starting fresh", flush=True)
 else:
-    print('Starting fresh run')
+    print(f"Starting fresh run (no checkpoint at {_ckpt_path})", flush=True)
 
-print('=' * 65)
-print(f"EXPERIMENT 2: FEYNMAN EXTRAPOLATION (n={len(equations)})")
+_already_done = [eq for eq in equations if eq["id"] in all_results]
+_to_run       = [eq for eq in equations if eq["id"] not in all_results]
+if _already_done:
+    print(f"  ↳ {len(_already_done)} equation(s) already in checkpoint — will skip",
+          flush=True)
+print(f"  ↳ {len(_to_run)} equation(s) to run in this shard", flush=True)
+
+print("=" * 65)
+print(f"EXPERIMENT 2: FEYNMAN EXTRAPOLATION (n={len(equations)}, "
+      f"shard {_SHARD_INDEX}/{_SHARD_TOTAL})")
 print(f"timeout={CFG['timeout']}s  populations={CFG['populations']}  "
-      f"iterations={CFG['iterations']}")
-print('=' * 65)
+      f"iterations={CFG['iterations']}  samples={CFG['n_samples']}")
+print("=" * 65)
+
+# _global_offset: so log tags show [16/30] for shard 1, not [1/15].
+_global_offset = _slice_start
 
 for i, eq in enumerate(equations):
-    if eq['id'] in all_results:
-        print(f"[{i+1:2d}/30] ⏭  {eq['id']}: {eq['name']} — already done, skipping")
+    _global_i = _global_offset + i   # 0-based position across all 30
+    _tag = f"[{_global_i+1:2d}/30]"
+
+    if eq["id"] in all_results:
+        print(f"{_tag} ⏭  {eq['id']}: {eq['name']} — already done, skipping",
+              flush=True)
         continue
 
-    # Check wall-clock budget before starting a new equation
+    # Check wall-clock budget before starting a new equation.
     if not _time_budget_ok():
         break
 
-    eq_seed = CFG['seed'] + i * 7
-    print(f"\n[{i+1:2d}/30] {eq['id']}: {eq['name']} [{eq['domain']}]")
-    if eq.get('note'):
-        print(f"  NOTE: {eq['note']}")
+    eq_seed = CFG["seed"] + _global_i * 7   # global seed so results are reproducible
+    print(f"\n{_tag} {eq['id']}: {eq['name']} [{eq['domain']}]", flush=True)
+    if eq.get("note"):
+        print(f"  NOTE: {eq['note']}", flush=True)
 
     X_train, y_train, X_ext, y_ext, data_err = generate_data(
-        eq, N=200, noise_level=0.05, seed=eq_seed
+        eq, N=CFG["n_samples"], noise_level=0.05, seed=eq_seed
     )
     if data_err:
         print(f'  DATA ERROR: {data_err}')
@@ -765,10 +887,13 @@ for i, eq in enumerate(equations):
         json.dump(all_results, f, indent=2)
     # Upload to GitHub Actions artifact store so it survives a hard cancel
     _upload_checkpoint_artifact(CFG['output_json'])
-    # Push to results branch — survives even a SIGKILL (push is inline, not post-step)
+    # Push to results branch — survives even a SIGKILL (push is inline, not post-step).
+    # Use a shard-specific filename so the two parallel jobs don't overwrite each other.
+    _shard_suffix = f"_shard{_SHARD_INDEX}" if _SHARD_TOTAL > 1 else ""
     _push_result_to_branch(
         CFG['output_json'],
-        "hypatiax/data/results/comparison_results/feynman-tests/exp2/exp2_feynman_extrap_multithreaded.json"
+        f"hypatiax/data/results/comparison_results/feynman-tests/exp2/"
+        f"exp2_feynman_checkpoint{_shard_suffix}.json"
     )
 
 print('\n' + '=' * 65)
@@ -1237,9 +1362,13 @@ print(f'Zip: {zip_path}  ({zip_size:,} bytes)')
 for fname in sorted(os.listdir(EXPORT_DIR)):
     sz = os.path.getsize(os.path.join(EXPORT_DIR, fname))
     print(f'  {fname:<30} {sz:>8,} bytes')
-from google.colab import files
-
-print(f'Downloading {zip_path} ...')
-files.download(zip_path)
-if __name__ == "__main__":
-    pass  # TODO: add entry point
+# Colab-only: download the zip to the browser.
+# Skipped silently when running under CI or plain Python.
+_IN_CI = bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
+if not _IN_CI:
+    try:
+        from google.colab import files
+        print(f'Downloading {zip_path} ...')
+        files.download(zip_path)
+    except Exception:
+        pass  # not in Colab — zip stays on disk

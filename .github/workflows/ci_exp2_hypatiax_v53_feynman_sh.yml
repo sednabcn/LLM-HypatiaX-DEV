@@ -222,19 +222,50 @@ jobs:
       # progress rather than starting from scratch.
       - name: Seed checkpoint from committed results
         if: steps.checkpoint-restore.outputs.cache-hit != 'true'
+        env:
+          SHARD_IDX: ${{ matrix.shard }}
+          SHARD_TOTAL: "2"
         run: |
-          # Committed master checkpoint (written by the script into RESULTS_DIR)
-          COMMITTED="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_feynman_checkpoint.json"
-          # Staging target — different path from COMMITTED (logs/ vs RESULTS_DIR)
-          STAGED="${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json"
-          if [ -f "$COMMITTED" ]; then
-            cp "$COMMITTED" "$STAGED"
-            echo "Checkpoint seeded from git into shard ${{ matrix.shard }} staging:"
-            echo "  completed=$(jq -r '._meta.completed // "?"' "$STAGED")"
-            echo "  total=$(jq -r '._meta.total_equations // "?"' "$STAGED")"
+          STAGED="${{ github.workspace }}/logs/feynman_checkpoint_shard${SHARD_IDX}.json"
+          COMMITTED_SHARD="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_feynman_checkpoint_shard${SHARD_IDX}.json"
+          COMMITTED_MASTER="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_feynman_checkpoint.json"
+
+          if [ -f "$COMMITTED_SHARD" ]; then
+            cp "$COMMITTED_SHARD" "$STAGED"
+            N=$(jq 'keys | length' "$STAGED" 2>/dev/null || echo "?")
+            echo "Seeded shard-specific checkpoint (${N} equations) for shard ${SHARD_IDX}"
+          elif [ -f "$COMMITTED_MASTER" ]; then
+            # Filter master checkpoint to this shard's equation IDs using jq.
+            # Shard 0 → equations 0-14, Shard 1 → equations 15-29.
+            ALL_IDS=('I.6.2' 'I.12.2' 'I.15.10' 'I.34.8' 'I.50.26'
+                     'I.12.4' 'I.34.27' 'II.34.29b'
+                     'I.34.14' 'II.2.42' 'I.26.2'
+                     'II.11.3' 'I.18.12' 'I.37.4' 'II.11.27' 'I.41.16'
+                     'custom.hbar_omega' 'II.34.2a' 'III.4.32'
+                     'I.12.1' 'custom.kepler_period'
+                     'II.11.17' 'I.30.5'
+                     'I.29.4' 'I.48.2'
+                     'I.34.27b' 'I.34.10'
+                     'II.2.4' 'I.43.31' 'II.34.29a')
+            TOTAL=${#ALL_IDS[@]}
+            SLICE_SIZE=$(( TOTAL / SHARD_TOTAL ))
+            SLICE_START=$(( SHARD_IDX * SLICE_SIZE ))
+            if (( SHARD_IDX < SHARD_TOTAL - 1 )); then
+              SLICE_END=$(( SLICE_START + SLICE_SIZE ))
+            else
+              SLICE_END=$TOTAL
+            fi
+            SHARD_IDS=("${ALL_IDS[@]:${SLICE_START}:$(( SLICE_END - SLICE_START ))}")
+            # Build a jq filter: pick only keys in SHARD_IDS from the master JSON.
+            JQ_KEYS=$(printf '"%s",' "${SHARD_IDS[@]}")
+            JQ_KEYS="[${JQ_KEYS%,}]"
+            jq --argjson keys "$JQ_KEYS" 'with_entries(select(.key as $k | $keys | index($k) != null))'               "$COMMITTED_MASTER" > "$STAGED"
+            N=$(jq 'keys | length' "$STAGED" 2>/dev/null || echo "?")
+            echo "Seeded filtered master checkpoint (${N} equations) for shard ${SHARD_IDX}"
           else
-            echo "No committed checkpoint found — shard ${{ matrix.shard }} starts from scratch"
+            echo "No committed checkpoint found — shard ${SHARD_IDX} starts from scratch"
           fi
+
       # ── exp2_feynman (mirrors run_all.sh STEP 5) ───────────────────────────
 
       # Pre-flight: verify the script exists and imports resolve before the
@@ -274,9 +305,17 @@ jobs:
           FEYNMAN_SAMPLES: ${{ github.event.inputs.feynman_samples || '200' }}
           FEYNMAN_NOISELESS_THRESHOLD: "0.9999"
           RESUME: ${{ github.event.inputs.resume || 'true' }}
+          # GITHUB_TOKEN: needed by _push_result_to_branch to push the results branch.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
         run: |
           LOG="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run_shard${{ matrix.shard }}.log"
           CHECKPOINT="${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json"
+
+          # Compute the wall-clock deadline: 330 min from now (30 min before the 360 min hard limit).
+          # Exported so the Python script can read it and stop cleanly rather than being SIGKILL'd.
+          export JOB_DEADLINE=$(python3 -c "import time; print(int(time.time()) + 330*60)")
+          echo "JOB_DEADLINE set: $(python3 -c "import time,os; print(time.strftime('%H:%M:%S UTC', time.gmtime(int(os.environ['JOB_DEADLINE']))))")"
 
           ARGS="--samples ${{ github.event.inputs.feynman_samples || '200' }}"
           ARGS="$ARGS --shard ${{ matrix.shard }}/2"
