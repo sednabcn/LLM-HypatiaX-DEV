@@ -1,32 +1,7 @@
-name: Dependabot
-
-on:
-  schedule:
-    - cron: "0 6 * * 1"   # Every Monday at 06:00 UTC
-  workflow_dispatch:        # Allow manual triggering
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # Opt in to Node.js 24 (avoids deprecation warning)
-
-permissions:
-  contents: write
-  pull-requests: write
-
-jobs:
-  dependabot:
-    name: Dependabot Update
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Run Dependabot action
-        uses: github/dependabot-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
 # .github/dependabot.yml
+# Dependabot version update configuration.
+# This file belongs at .github/dependabot.yml — NOT inside .github/workflows/.
+# Dependabot runs automatically on GitHub's infrastructure; no Actions workflow needed.
 version: 2
 updates:
   - package-ecosystem: pip
@@ -34,7 +9,8 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      - dependency-name: "torch"
+      - dependency-name: "torch"     # installed via custom --index-url; Dependabot can't resolve it
+      - dependency-name: "pandas"    # pinned to 2.2.3 — only cp312 wheel-compatible release <3.0
 
   - package-ecosystem: "github-actions"
     directory: "/"

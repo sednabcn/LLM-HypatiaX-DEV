@@ -260,10 +260,22 @@ jobs:
       - name: Install Python dependencies
         # Matches run_all.sh env_check: pysr, torch, anthropic, sympy, scipy
         # plus scikit-learn, numpy, pandas used by exp2_feynman script directly
+        # FIX: install order matters — pandas must be installed BEFORE pysr in a
+        # separate pip invocation so it is already locked in the environment when
+        # pysr's resolver runs. If pandas is listed alongside pysr in one call,
+        # pip's backtracker can pick an older pandas that satisfies pysr's loose
+        # >=0.21,<4 bound but has no cp312 wheel, causing a source build that
+        # fails with ModuleNotFoundError: pkg_resources on Python 3.12.
         # FIX: torch installed separately so --index-url applies only to it.
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # Step 1 — pin pandas FIRST so the cp312 wheel is already resolved
+          # before pysr's dependency resolver runs.
+          # pandas==2.2.3 is the lowest release with a cp312 manylinux wheel;
+          # applymap() is still present (deprecated 2.2, removed 3.0).
+          pip install "pandas==2.2.3"
+          # Step 2 — remaining packages; pandas is already satisfied above.
           pip install \
             pysr \
             anthropic \
@@ -271,18 +283,8 @@ jobs:
             scikit-learn \
             scipy \
             numpy \
-            "pandas>=1.5.0,<2.1.0" \
             pyyaml \
             python-dotenv
-          # FIX: pin pandas<2.1.0 — pandas 2.1 renamed Styler.applymap() to .map(),
-          # and pandas 3.x removed it entirely. Without the pin, pysr pulls in the
-          # latest pandas (3.0.2 in this run), crashing the script after all equations
-          # complete but before the final result files are written.
-          # FIX: upgrade setuptools+wheel alongside pip — Python 3.12 dropped
-          # pkg_resources from stdlib; older pandas (<2.1) use setup.py builds that
-          # import it via setuptools. Without an explicit upgrade, the build-env
-          # overlay gets a stale setuptools and raises ModuleNotFoundError: pkg_resources.
-          # The >=1.5.0 lower bound ensures a pre-built wheel exists for cp312.
 
       # ── Julia ──────────────────────────────────────────────────────────────
       - name: Install Julia ${{ env.JULIA_VERSION }}
