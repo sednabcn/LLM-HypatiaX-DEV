@@ -317,13 +317,17 @@ jobs:
       # Now we filter the committed master checkpoint by the plan-output shard IDs.
       - name: Seed checkpoint from committed results
         if: steps.checkpoint-restore.outputs.cache-hit != 'true'
+        env:
+          SHARD0_IDS: ${{ needs.plan.outputs.shard0_ids }}
+          SHARD1_IDS: ${{ needs.plan.outputs.shard1_ids }}
+          SHARD_INDEX: ${{ matrix.shard }}
         run: |
           STAGED="${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json"
           COMMITTED_MASTER="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_feynman_checkpoint.json"
 
-          # Derive this shard's equation list from plan outputs (same source of truth
-          # the main run step uses), not from a hard-coded positional index.
-          SHARD_IDS='${{ matrix.shard == 0 && needs.plan.outputs.shard0_ids || needs.plan.outputs.shard1_ids }}'
+          # Derive this shard's equation list from plan outputs via env vars —
+          # avoids inline ternary truncation bug with long JSON arrays.
+          if [[ "$SHARD_INDEX" == "0" ]]; then SHARD_IDS="$SHARD0_IDS"; else SHARD_IDS="$SHARD1_IDS"; fi
 
           if [ -f "$COMMITTED_MASTER" ]; then
             # Filter master checkpoint to only the keys assigned to this shard.
@@ -385,6 +389,11 @@ jobs:
           RESUME: ${{ github.event.inputs.resume || 'true' }}
           # GITHUB_TOKEN: needed by _push_result_to_branch to push the results branch.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass both shard outputs as env vars — avoids inline ternary truncation
+          # bug where long JSON arrays were cut off mid-string by the runner.
+          SHARD0_IDS: ${{ needs.plan.outputs.shard0_ids }}
+          SHARD1_IDS: ${{ needs.plan.outputs.shard1_ids }}
+          SHARD_INDEX: ${{ matrix.shard }}
 
         run: |
           LOG="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run_shard${{ matrix.shard }}.log"
@@ -402,9 +411,10 @@ jobs:
             ARGS="$ARGS --resume"
           fi
 
-          # FIX B1: consume the plan job's outputs so each worker runs only
-          # the equations assigned to its shard, not all 30 unconditionally.
-          SHARD_IDS='${{ matrix.shard == 0 && needs.plan.outputs.shard0_ids || needs.plan.outputs.shard1_ids }}'
+          # FIX B1 + SHARD_IDS truncation fix: select shard IDs via shell if/else
+          # using env vars injected above — the inline ternary expression was
+          # truncating long JSON arrays mid-string on the GitHub Actions runner.
+          if [[ "$SHARD_INDEX" == "0" ]]; then SHARD_IDS="$SHARD0_IDS"; else SHARD_IDS="$SHARD1_IDS"; fi
           ARGS="$ARGS --equation-ids $SHARD_IDS"
 
           python3 -u exp2_feynman_colab_multithreaded.py $ARGS \
