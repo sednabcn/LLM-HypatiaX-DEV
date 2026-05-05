@@ -91,6 +91,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      # plan job only needs pyyaml (for any repro.yaml reads); json/pathlib are stdlib.
+      - name: Install plan dependencies
+        run: pip install pyyaml
+
       # Restore the shared checkpoint so plan can compute pending equations.
       # FIX B4: restore-keys no longer include the bare "feynman-sh-checkpoint-"
       # suffix. That prefix matches per-shard worker cache entries (which carry
@@ -190,7 +194,7 @@ jobs:
       PYSR_PARALLELISM: "multithreading"   # immune to ProcessExitedException
 
       # ── LLM ────────────────────────────────────────────────────────────────
-      LLM_MODEL: "claude-sonnet-4-20250514"
+      LLM_MODEL: "claude-sonnet-4-5"
       # Secret injected directly — avoids echoing the masked value in shell logs
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -224,7 +228,8 @@ jobs:
             scikit-learn \
             scipy \
             numpy \
-            pandas
+            pandas \
+            pyyaml
 
       # ── Julia ──────────────────────────────────────────────────────────────
       - name: Install Julia ${{ env.JULIA_VERSION }}
@@ -413,7 +418,7 @@ jobs:
           echo "  python3 -u exp2_feynman_colab_multithreaded.py \\"
           echo "    --samples ${{ github.event.inputs.feynman_samples || '200' }} \\"
           echo "    --equation-ids '<from plan outputs>' \\"
-          echo "    --checkpoint ${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json \\"
+          echo "    --checkpoint ${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json \\"
           echo "    --no-llm-cache \\"
           [[ "${{ github.event.inputs.resume || 'true' }}" == "true" ]] && echo "    --resume \\"
           echo ""
