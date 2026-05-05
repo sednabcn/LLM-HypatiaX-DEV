@@ -7,12 +7,20 @@ name: Exp 2 — Symbolic Engine v2 (Method 5) · run_all.sh (exp2_sym)
 #
 # Differences vs ci_run_sym_engine_v2.yml (notebook-based):
 #   • Python 3.12 (run_all.sh requires 3.12+)
-#   • Julia 1.12.6 (matches ci_exp2_hypatiax_v53_feynman_sh.yml)
+#   • Julia 1.11.5 (matches ci_exp2_hypatiax_v53_feynman_sh.yml)
 #   • Runs the Python script directly — no nbconvert, no path-patching step
 #   • ANTHROPIC_API_KEY injected via step env: (never echoed to shell log)
 #   • resume / one_equation inputs correctly forwarded to script flags
 #   • Explicit cache save step (actions/cache/save@v5) for partial-progress resume
 #   • PYTHONUNBUFFERED=1 + python3 -u to prevent pipe-buffer log blackout
+#
+# Sharding (5 parallel jobs, ~6 equations each):
+#   • matrix.shard ∈ {0,1,2,3,4} — each job receives --shard N/5
+#   • Fits full 30-equation run within the 6 h Actions hard limit
+#     (worst-case ~48 min/eq × 6 eq = ~5 h, leaving headroom for Julia JIT)
+#   • Per-shard checkpoint files prevent cross-job cache collisions
+#   • fail-fast: false — a single shard timeout doesn't cancel siblings
+#   • one_equation: only shard 0 executes; shards 1-4 skip the run step
 
 on:
   push:
@@ -52,10 +60,14 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    # GitHub Actions hard limit on standard runners is 6 h (360 min).
-    # A full 30-equation run is ~12-24 h; use a self-hosted runner and raise
-    # this limit for a complete run. For smoke-testing one equation this is fine.
+    # 5 parallel shards × ~6 equations each.
+    # Worst case: ~48 min/eq × 6 eq + ~10 min Julia JIT warmup ≈ 5 h 10 min.
+    # 360 min (6 h) gives ~50 min headroom per shard.
     timeout-minutes: 360
+    strategy:
+      fail-fast: false          # a timed-out shard doesn't cancel siblings
+      matrix:
+        shard: [0, 1, 2, 3, 4]  # 5 jobs × 6 equations = 30 total
 
     env:
       # ── Julia ──────────────────────────────────────────────────────────────
@@ -131,6 +143,7 @@ jobs:
           echo "JULIA_NUM_THREADS: ${JULIA_NUM_THREADS}"
           echo "PYSR_TIMEOUT:      ${{ github.event.inputs.pysr_timeout || '1100' }}s"
           echo "RESULTS_DIR:       ${RESULTS_DIR}"
+          echo "SHARD:             ${{ matrix.shard }}/5"
 
       # ── Directory structure (mirrors run_all.sh env_check mkdir -p) ─────────
       - name: Create results directory structure
@@ -154,32 +167,30 @@ jobs:
             "${{ github.workspace }}/logs"
 
       # ── Checkpoint cache (resume support) ──────────────────────────────────
-      # actions/cache@v5 splits restore and save.
+      # Per-shard checkpoint files prevent cross-job cache collisions.
       # Key strategy:
-      #   Primary : branch + run_id   → always unique, always saves fresh data
-      #   Fallback: branch prefix     → picks up the most recent run's checkpoint
-      #   Fallback: bare prefix       → cross-branch fallback
+      #   Primary : branch + run_id + shard → always unique, always saves fresh data
+      #   Fallback: branch + shard prefix   → picks up the most recent run's checkpoint
+      #   Fallback: bare shard prefix       → cross-branch fallback
       - name: Restore checkpoint cache
         id: checkpoint-restore
         uses: actions/cache/restore@v5
         with:
-          path: ${{ github.workspace }}/logs/exp2_symbolic_engine_checkpoint.json
-          key: sym-engine-checkpoint-${{ github.ref_name }}-${{ github.run_id }}
+          path: ${{ github.workspace }}/logs/exp2_sym_checkpoint_shard${{ matrix.shard }}.json
+          key: sym-engine-checkpoint-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            sym-engine-checkpoint-${{ github.ref_name }}-
-            sym-engine-checkpoint-
+            sym-engine-checkpoint-shard${{ matrix.shard }}-${{ github.ref_name }}-
+            sym-engine-checkpoint-shard${{ matrix.shard }}-
 
       # ── Seed checkpoint from committed file (cache miss only) ───────────────
-      # Copies the last committed checkpoint into the logs/ dir so the script
-      # can resume rather than start from scratch when no cache entry exists.
       - name: Seed checkpoint from committed results
         if: steps.checkpoint-restore.outputs.cache-hit != 'true'
         run: |
-          COMMITTED="${{ github.workspace }}/logs/exp2_symbolic_engine_checkpoint.json"
+          COMMITTED="${{ github.workspace }}/logs/exp2_sym_checkpoint_shard${{ matrix.shard }}.json"
           if [ -f "$COMMITTED" ]; then
             echo "Checkpoint already in place from git — $(jq -r '.completed | length' "$COMMITTED") equations done"
           else
-            echo "No committed checkpoint — starting from scratch"
+            echo "No committed checkpoint for shard ${{ matrix.shard }} — starting from scratch"
           fi
 
       # ── exp2_sym (mirrors run_all.sh STEP 6) ───────────────────────────────
@@ -205,10 +216,13 @@ jobs:
       # PYTHONUNBUFFERED=1 — forces Python to flush every print() immediately
       #                      instead of accumulating an 8 KB pipe buffer.
       # python3 -u         — belt-and-braces unbuffered flag alongside the env var.
+      # --shard N/5        — each job processes its slice of the 30 equations.
       # --resume flag      — forwarded from workflow_dispatch input (default: true).
-      # --one-equation     — forwarded when set; omitted when blank so all 30 run.
-      - name: Run exp2_sym — Symbolic Engine Method 5
-        if: github.event.inputs.dry_run != 'true'
+      # --one-equation     — forwarded when set; only shard 0 runs (shards 1-4 skip).
+      - name: Run exp2_sym — Symbolic Engine Method 5 (shard ${{ matrix.shard }}/5)
+        if: >-
+          github.event.inputs.dry_run != 'true' &&
+          (github.event.inputs.one_equation == '' || matrix.shard == 0)
         working-directory: ${{ env.EXPERIMENTS_DIR }}
         env:
           PYTHONUNBUFFERED: "1"
@@ -219,11 +233,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}    # required for _push_result_to_branch()
         run: |
-          LOG="${RESULTS_DIR}/exp2_sym_run.log"
+          LOG="${RESULTS_DIR}/exp2_sym_run_shard${{ matrix.shard }}.log"
 
-          # Build argument list dynamically so --one-equation is only appended
-          # when the input is non-empty (an empty string would match everything).
           ARGS="--pysr-timeout ${{ github.event.inputs.pysr_timeout || '1100' }}"
+          ARGS="$ARGS --shard ${{ matrix.shard }}/5"
           if [[ "${{ github.event.inputs.resume || 'true' }}" == "true" ]]; then
             ARGS="$ARGS --resume"
           fi
@@ -239,9 +252,10 @@ jobs:
         if: github.event.inputs.dry_run == 'true'
         working-directory: ${{ env.EXPERIMENTS_DIR }}
         run: |
-          echo "[dry-run] Would execute:"
+          echo "[dry-run] shard ${{ matrix.shard }}/5 would execute:"
           echo "  python3 -u run_exp2_symbolic_engine.py \\"
           echo "    --pysr-timeout ${{ github.event.inputs.pysr_timeout || '1100' }} \\"
+          echo "    --shard ${{ matrix.shard }}/5 \\"
           ONE_EQ="${{ github.event.inputs.one_equation }}"
           [[ "${{ github.event.inputs.resume || 'true' }}" == "true" ]] && echo "    --resume \\"
           [[ -n "$ONE_EQ" ]] && echo "    --one-equation $ONE_EQ \\"
@@ -258,16 +272,16 @@ jobs:
         if: always()
         uses: actions/cache/save@v5
         with:
-          path: ${{ github.workspace }}/logs/exp2_symbolic_engine_checkpoint.json
-          key: sym-engine-checkpoint-${{ github.ref_name }}-${{ github.run_id }}
+          path: ${{ github.workspace }}/logs/exp2_sym_checkpoint_shard${{ matrix.shard }}.json
+          key: sym-engine-checkpoint-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
 
       # ── Artifacts ──────────────────────────────────────────────────────────
       - name: Upload exp2_sym run log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: exp2-sym-engine-log-${{ github.run_id }}
-          path: ${{ env.RESULTS_DIR }}/exp2_sym_run.log
+          name: exp2-sym-engine-log-shard${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ env.RESULTS_DIR }}/exp2_sym_run_shard${{ matrix.shard }}.log
           if-no-files-found: ignore
           retention-days: 30
 
@@ -275,8 +289,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: exp2-sym-engine-checkpoint-${{ github.run_id }}
-          path: ${{ github.workspace }}/logs/exp2_symbolic_engine_checkpoint.json
+          name: exp2-sym-engine-checkpoint-shard${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ github.workspace }}/logs/exp2_sym_checkpoint_shard${{ matrix.shard }}.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -284,7 +298,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: exp2-sym-engine-results-${{ github.run_id }}
+          name: exp2-sym-engine-results-shard${{ matrix.shard }}-${{ github.run_id }}
           path: ${{ env.RESULTS_DIR }}/
           if-no-files-found: ignore
           retention-days: 30
