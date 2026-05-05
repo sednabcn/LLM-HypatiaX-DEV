@@ -553,8 +553,6 @@ jobs:
       # this is a safety-net that kicks in only when the target files are absent.
       - name: Extract results from checkpoint to RESULTS_DIR (safety net)
         if: always()
-        env:
-          RESULTS_DIR: ${{ github.workspace }}/hypatiax/data/results
         run: |
           CHECKPOINT="${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json"
           OUT_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2"
@@ -607,6 +605,7 @@ jobs:
           print(f"Wrote CSV → {csv_path}")
           PYEOF
         env:
+          RESULTS_DIR: ${{ github.workspace }}/hypatiax/data/results
           CHECKPOINT: ${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json
           OUT_DIR: ${{ github.workspace }}/hypatiax/data/results/comparison_results/feynman-tests/exp2
           SHARD_INDEX: ${{ matrix.shard }}
