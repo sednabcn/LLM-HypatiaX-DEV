@@ -41,8 +41,8 @@ import os
 #
 # Flags forwarded by the CI workflow:
 #   --samples N          training samples per equation   (env FEYNMAN_SAMPLES)
-#   --shard K/N          this job handles slice K of N   (e.g. 0/2 or 1/2)
-#   --checkpoint PATH    per-shard checkpoint JSON file
+#   --equation-ids JSON  JSON array of equation IDs to run (set by plan job)
+#   --checkpoint PATH    checkpoint JSON file
 #   --resume             load checkpoint and skip done equations
 #   --no-llm-cache       disable anthropic response caching
 #
@@ -52,32 +52,33 @@ _parser = argparse.ArgumentParser(
     description='Exp 2 — Feynman Extrapolation (n=30)',
     add_help=True,
 )
-_parser.add_argument('--samples',    type=int,  default=None,
+_parser.add_argument('--samples',      type=int,  default=None,
                      help='Training samples per equation (overrides FEYNMAN_SAMPLES env)')
-_parser.add_argument('--shard',      type=str,  default=None,
-                     help='Shard spec K/N, e.g. 0/2 or 1/2')
-_parser.add_argument('--checkpoint', type=str,  default=None,
-                     help='Path to per-shard checkpoint JSON (read + write)')
-_parser.add_argument('--resume',     action='store_true', default=False,
+_parser.add_argument('--equation-ids', type=str,  default=None, dest='equation_ids',
+                     help='JSON array of equation IDs, e.g. ["I.6.2","I.12.2"]. '
+                          'Set by the CI plan job. Absent = run all 30 (Colab/local).')
+_parser.add_argument('--checkpoint',   type=str,  default=None,
+                     help='Path to checkpoint JSON (read + write)')
+_parser.add_argument('--resume',       action='store_true', default=False,
                      help='Resume from checkpoint — skip already-completed equations')
 _parser.add_argument('--no-llm-cache', dest='no_llm_cache', action='store_true',
                      default=False, help='Disable Anthropic response caching')
 _args, _unknown = _parser.parse_known_args()
 
-# Parse shard spec → (shard_index, total_shards)
-_SHARD_INDEX  = 0
-_SHARD_TOTAL  = 1  # default: no sharding — run all 30
-if _args.shard:
+# Parse --equation-ids: a JSON array of IDs e.g. '["I.6.2","I.12.2"]'
+# When absent the script runs all 30 (Colab / local / manual invocation).
+import json as _json
+_EQUATION_IDS_OVERRIDE = None   # None = run all 30
+if _args.equation_ids:
     try:
-        _si, _st = _args.shard.split('/')
-        _SHARD_INDEX = int(_si)
-        _SHARD_TOTAL = int(_st)
-        if _SHARD_INDEX >= _SHARD_TOTAL or _SHARD_INDEX < 0:
-            raise ValueError(f'shard index {_SHARD_INDEX} out of range for total {_SHARD_TOTAL}')
+        _EQUATION_IDS_OVERRIDE = _json.loads(_args.equation_ids)
+        if not isinstance(_EQUATION_IDS_OVERRIDE, list):
+            raise ValueError('must be a JSON array')
     except Exception as _e:
-        raise SystemExit(f'ERROR: --shard must be K/N (e.g. 0/2 or 1/2), got: {_args.shard!r} — {_e}')
+        raise SystemExit(f'ERROR: --equation-ids must be a JSON array, '
+                         f'got: {_args.equation_ids!r} — {_e}')
 
-print(f'[CLI] shard={_SHARD_INDEX}/{_SHARD_TOTAL}  '
+print(f'[CLI] equation_ids={_EQUATION_IDS_OVERRIDE}  '
       f'checkpoint={_args.checkpoint!r}  '
       f'resume={_args.resume}  '
       f'samples={_args.samples}  '
@@ -172,9 +173,7 @@ CFG = dict(
             os.environ.get("RESULTS_DIR",
                            os.path.join(os.getcwd(), "hypatiax/data/results")),
             "comparison_results/feynman-tests/exp2",
-            (f"exp2_feynman_checkpoint_shard{_SHARD_INDEX}.json"
-             if _SHARD_TOTAL > 1
-             else "exp2_feynman_checkpoint.json"),
+            "exp2_feynman_checkpoint.json",
         )
     ),
     nn_only=False,
@@ -201,7 +200,6 @@ if MOUNT_DRIVE:
 os.makedirs(os.path.dirname(os.path.abspath(CFG['output_json'])), exist_ok=True)
 
 print(f"[CFG] checkpoint  : {CFG['output_json']}", flush=True)
-print(f"[CFG] shard       : {_SHARD_INDEX}/{_SHARD_TOTAL}", flush=True)
 print(f"[CFG] resume      : {CFG['resume']}", flush=True)
 print(f"[CFG] n_samples   : {CFG['n_samples']}", flush=True)
 print('Config:', CFG)
@@ -764,611 +762,616 @@ def _push_result_to_branch(local_file_path: str, repo_relative_path: str) -> Non
         except Exception:
             pass
 
-"""## 10 · Main loop — run all 30 equations
 
-Checkpointed to Google Drive after every equation.
-Re-run after disconnect — completed equations are skipped automatically.
-"""
+if __name__ == "__main__":
+    """## 10 · Main loop — run all 30 equations
 
-# ── Shard slicing ─────────────────────────────────────────────────────────
-# Each CI job handles a contiguous slice of the 30 equations.
-# Shard 0/2 → indices 0-14  (equations 1-15)
-# Shard 1/2 → indices 15-29 (equations 16-30)
-# No sharding (_SHARD_TOTAL == 1) → all 30 equations (Colab / local).
-_all_30 = FEYNMAN_30[:CFG['n_equations']]
-_slice_size = len(_all_30) // _SHARD_TOTAL
-_slice_start = _SHARD_INDEX * _slice_size
-# Last shard takes any remainder so all equations are covered.
-_slice_end = (_slice_start + _slice_size
-              if _SHARD_INDEX < _SHARD_TOTAL - 1
-              else len(_all_30))
-equations = _all_30[_slice_start:_slice_end]
+    Checkpointed to Google Drive after every equation.
+    Re-run after disconnect — completed equations are skipped automatically.
+    """
 
-print(f"[SHARD {_SHARD_INDEX}/{_SHARD_TOTAL}] equations {_slice_start+1}–{_slice_end} "
-      f"({len(equations)} equations)", flush=True)
+    # ── Equation selection ────────────────────────────────────────────────────
+    # In CI: --equation-ids is a JSON array set by the plan job AFTER reading
+    # the shared checkpoint. It contains only the equations still pending for
+    # this shard — the plan job does the split, not the workers.
+    # Locally / Colab: --equation-ids is absent → run all 30 in canonical order.
+    _all_30 = FEYNMAN_30[:CFG['n_equations']]
 
-# ── Checkpoint loading ─────────────────────────────────────────────────────
-# Each shard has its own checkpoint file so the two CI jobs are completely
-# independent — shard 1 never waits for shard 0's checkpoint to appear.
-# Loading is gated on --resume so a fresh run always starts clean even when
-# a stale checkpoint file exists on disk.
-all_results = {}
-_ckpt_path = CFG["output_json"]
-if os.path.exists(_ckpt_path):
-    try:
-        with open(_ckpt_path) as _f:
-            _loaded = json.load(_f)
-        if CFG["resume"]:
-            all_results = _loaded
-            print(f"▶ Resume: loaded {len(all_results)} completed result(s) "
-                  f"from {_ckpt_path}", flush=True)
-        else:
-            print(f"⚡ Checkpoint found but --resume not set — starting fresh "
-                  f"(checkpoint has {len(_loaded)} entries)", flush=True)
-    except Exception as _ckpt_err:
-        print(f"⚠  Checkpoint load failed ({_ckpt_err}) — starting fresh", flush=True)
-else:
-    print(f"Starting fresh run (no checkpoint at {_ckpt_path})", flush=True)
+    if _EQUATION_IDS_OVERRIDE is not None:
+        # Build an ID→eq map; keep the order the plan job decided.
+        _id_to_eq = {eq['id']: eq for eq in _all_30}
+        _missing  = [eid for eid in _EQUATION_IDS_OVERRIDE if eid not in _id_to_eq]
+        if _missing:
+            raise SystemExit(f'ERROR: unknown equation IDs from --equation-ids: {_missing}')
+        equations = [_id_to_eq[eid] for eid in _EQUATION_IDS_OVERRIDE]
+        print(f"[CI] {len(equations)} equation(s) assigned by plan job:", flush=True)
+        for _eq in equations:
+            print(f"  • {_eq['id']}: {_eq['name']}", flush=True)
+    else:
+        equations = _all_30
+        print(f"[LOCAL] Running all {len(equations)} equations", flush=True)
 
-_already_done = [eq for eq in equations if eq["id"] in all_results]
-_to_run       = [eq for eq in equations if eq["id"] not in all_results]
-if _already_done:
-    print(f"  ↳ {len(_already_done)} equation(s) already in checkpoint — will skip",
-          flush=True)
-print(f"  ↳ {len(_to_run)} equation(s) to run in this shard", flush=True)
+    # ── Checkpoint loading ─────────────────────────────────────────────────────
+    # Each shard has its own checkpoint file so the two CI jobs are completely
+    # independent — shard 1 never waits for shard 0's checkpoint to appear.
+    # Loading is gated on --resume so a fresh run always starts clean even when
+    # a stale checkpoint file exists on disk.
+    all_results = {}
+    _ckpt_path = CFG["output_json"]
+    if os.path.exists(_ckpt_path):
+        try:
+            with open(_ckpt_path) as _f:
+                _loaded = json.load(_f)
+            if CFG["resume"]:
+                all_results = _loaded
+                print(f"▶ Resume: loaded {len(all_results)} completed result(s) "
+                      f"from {_ckpt_path}", flush=True)
+            else:
+                print(f"⚡ Checkpoint found but --resume not set — starting fresh "
+                      f"(checkpoint has {len(_loaded)} entries)", flush=True)
+        except Exception as _ckpt_err:
+            print(f"⚠  Checkpoint load failed ({_ckpt_err}) — starting fresh", flush=True)
+    else:
+        print(f"Starting fresh run (no checkpoint at {_ckpt_path})", flush=True)
 
-print("=" * 65)
-print(f"EXPERIMENT 2: FEYNMAN EXTRAPOLATION (n={len(equations)}, "
-      f"shard {_SHARD_INDEX}/{_SHARD_TOTAL})")
-print(f"timeout={CFG['timeout']}s  populations={CFG['populations']}  "
-      f"iterations={CFG['iterations']}  samples={CFG['n_samples']}")
-print("=" * 65)
-
-# _global_offset: so log tags show [16/30] for shard 1, not [1/15].
-_global_offset = _slice_start
-
-for i, eq in enumerate(equations):
-    _global_i = _global_offset + i   # 0-based position across all 30
-    _tag = f"[{_global_i+1:2d}/30]"
-
-    if eq["id"] in all_results:
-        print(f"{_tag} ⏭  {eq['id']}: {eq['name']} — already done, skipping",
+    _already_done = [eq for eq in equations if eq["id"] in all_results]
+    _to_run       = [eq for eq in equations if eq["id"] not in all_results]
+    if _already_done:
+        print(f"  ↳ {len(_already_done)} equation(s) already in checkpoint — will skip",
               flush=True)
-        continue
+    print(f"  ↳ {len(_to_run)} equation(s) to run", flush=True)
 
-    # Check wall-clock budget before starting a new equation.
-    if not _time_budget_ok():
-        break
+    print("=" * 65)
+    print(f"EXPERIMENT 2: FEYNMAN EXTRAPOLATION (n={len(equations)})")
+    print(f"timeout={CFG['timeout']}s  populations={CFG['populations']}  "
+          f"iterations={CFG['iterations']}  samples={CFG['n_samples']}")
+    print("=" * 65)
 
-    eq_seed = CFG["seed"] + _global_i * 7   # global seed so results are reproducible
-    print(f"\n{_tag} {eq['id']}: {eq['name']} [{eq['domain']}]", flush=True)
-    if eq.get("note"):
-        print(f"  NOTE: {eq['note']}", flush=True)
+    # Canonical ID→global-index map for stable seeds and [N/30] log tags
+    # regardless of which shard subset is being run.
+    _ALL_IDS = [eq['id'] for eq in FEYNMAN_30]
 
-    X_train, y_train, X_ext, y_ext, data_err = generate_data(
-        eq, N=CFG["n_samples"], noise_level=0.05, seed=eq_seed
-    )
-    if data_err:
-        print(f'  DATA ERROR: {data_err}')
-        all_results[eq['id']] = {'name': eq['name'], 'domain': eq['domain'], 'error': data_err}
-        continue
+    for eq in equations:
+        _global_i = _ALL_IDS.index(eq['id'])   # 0-based index across all 30
+        _tag = f"[{_global_i+1:2d}/30]"
 
-    record = {'name': eq['name'], 'domain': eq['domain'], 'note': eq.get('note', '')}
+        if eq["id"] in all_results:
+            print(f"{_tag} ⏭  {eq['id']}: {eq['name']} — already done, skipping",
+                  flush=True)
+            continue
 
-    # ── NN baseline ──────────────────────────────────────────────────────────
-    print('  Running NN...')
-    record['nn'] = run_nn(X_train, y_train, X_ext, y_ext, seed=eq_seed)
-    _nn = record['nn']['extrap_r2']
-    print(f"  NN:  train_R²={record['nn']['train_r2']:.4f}  "
-          f"extrap_R²={f'{_nn:.4f}' if _nn is not None else 'N/A'}")
+        # Check wall-clock budget before starting a new equation.
+        if not _time_budget_ok():
+            break
 
-    # ── HypatiaX (PySR) ──────────────────────────────────────────────────────
-    if not CFG['nn_only']:
-        print('  Running HypatiaX (PySR)...')
-        record['hypatia'] = run_hypatia(
-            X_train, y_train, X_ext, y_ext,
-            seed=eq_seed,
-            niterations=CFG['iterations'],
-            timeout_secs=CFG['timeout'],
-            populations=CFG['populations'],
+        eq_seed = CFG["seed"] + _global_i * 7   # stable global seed
+        print(f"\n{_tag} {eq['id']}: {eq['name']} [{eq['domain']}]", flush=True)
+        if eq.get("note"):
+            print(f"  NOTE: {eq['note']}", flush=True)
+
+        X_train, y_train, X_ext, y_ext, data_err = generate_data(
+            eq, N=CFG["n_samples"], noise_level=0.05, seed=eq_seed
         )
-        h = record['hypatia']
-        _ht, _he = h.get('train_r2'), h.get('extrap_r2')
-        print(f"  HYP: train_R²={f'{_ht:.4f}' if _ht is not None else 'N/A'}  "
-              f"extrap_R²={f'{_he:.4f}' if _he is not None else 'N/A'}  "
-              f"time={h.get('time_s', 0):.0f}s")
-        if h.get('best_expression'):
-            print(f"  EXPR: {h['best_expression']}")
+        if data_err:
+            print(f'  DATA ERROR: {data_err}')
+            all_results[eq['id']] = {'name': eq['name'], 'domain': eq['domain'], 'error': data_err}
+            continue
 
-    all_results[eq['id']] = record
+        record = {'name': eq['name'], 'domain': eq['domain'], 'note': eq.get('note', '')}
 
-    # Checkpoint save — enables resume after disconnect
-    with open(CFG['output_json'], 'w') as f:
+        # ── NN baseline ──────────────────────────────────────────────────────────
+        print('  Running NN...')
+        record['nn'] = run_nn(X_train, y_train, X_ext, y_ext, seed=eq_seed)
+        _nn = record['nn']['extrap_r2']
+        print(f"  NN:  train_R²={record['nn']['train_r2']:.4f}  "
+              f"extrap_R²={f'{_nn:.4f}' if _nn is not None else 'N/A'}")
+
+        # ── HypatiaX (PySR) ──────────────────────────────────────────────────────
+        if not CFG['nn_only']:
+            print('  Running HypatiaX (PySR)...')
+            record['hypatia'] = run_hypatia(
+                X_train, y_train, X_ext, y_ext,
+                seed=eq_seed,
+                niterations=CFG['iterations'],
+                timeout_secs=CFG['timeout'],
+                populations=CFG['populations'],
+            )
+            h = record['hypatia']
+            _ht, _he = h.get('train_r2'), h.get('extrap_r2')
+            print(f"  HYP: train_R²={f'{_ht:.4f}' if _ht is not None else 'N/A'}  "
+                  f"extrap_R²={f'{_he:.4f}' if _he is not None else 'N/A'}  "
+                  f"time={h.get('time_s', 0):.0f}s")
+            if h.get('best_expression'):
+                print(f"  EXPR: {h['best_expression']}")
+
+        all_results[eq['id']] = record
+
+        # Checkpoint save — enables resume after disconnect
+        with open(CFG['output_json'], 'w') as f:
+            json.dump(all_results, f, indent=2)
+        # Upload to GitHub Actions artifact store so it survives a hard cancel
+        _upload_checkpoint_artifact(CFG['output_json'])
+        # Push to results branch — survives even a SIGKILL (push is inline, not post-step).
+        # Use a shard-specific filename so the two parallel jobs don't overwrite each other.
+        _push_result_to_branch(
+            CFG['output_json'],
+            "hypatiax/data/results/comparison_results/feynman-tests/exp2/"
+            "exp2_feynman_checkpoint.json"
+        )
+
+    print('\n' + '=' * 65)
+    print('All equations completed.')
+    print(f"Results saved → {CFG['output_json']}")
+
+    """## 11 · Statistical analysis — Mann-Whitney tests
+
+    1. All n=30 (primary claim)
+    2. Successes only (sub-claim, expected p < 0.01)
+    """
+
+    hyp_ext_all = [
+        r.get('hypatia', {}).get('extrap_r2')
+        for r in all_results.values()
+        if r.get('hypatia', {}).get('extrap_r2') is not None
+    ]
+    nn_ext_all = [
+        r.get('nn', {}).get('extrap_r2')
+        for r in all_results.values()
+        if r.get('nn', {}).get('extrap_r2') is not None
+    ]
+
+    successes = {
+        eid: r for eid, r in all_results.items()
+        if (r.get('hypatia', {}).get('extrap_r2') or -999) > 0.99
+    }
+    hyp_ext_succ = [r['hypatia']['extrap_r2'] for r in successes.values()]
+    nn_ext_succ  = [r['nn']['extrap_r2']      for r in successes.values()
+                    if r.get('nn', {}).get('extrap_r2') is not None]
+
+    n_hyp = len(hyp_ext_all)
+    n_succ = len(hyp_ext_succ)
+
+    print('=' * 65)
+    print('RESULTS SUMMARY')
+    print('=' * 65)
+    print(f"HypatiaX  n={n_hyp}  "
+          f"mean={np.mean(hyp_ext_all):.4f}  "
+          f"median={np.median(hyp_ext_all):.4f}  "
+          f"success(>0.99)={n_succ}/{n_hyp} ({n_succ/n_hyp*100:.1f}%)")
+    print(f"NN        n={len(nn_ext_all)}  "
+          f"mean={np.mean(nn_ext_all):.4f}  "
+          f"median={np.median(nn_ext_all):.4f}")
+
+    print()
+    # Test 1 — all n=30
+    if len(hyp_ext_all) >= 5 and len(nn_ext_all) >= 5:
+        u1, p1 = scipy_stats.mannwhitneyu(hyp_ext_all, nn_ext_all, alternative='greater')
+        sig1 = 'SIGNIFICANT ✓' if p1 < 0.05 else 'not significant'
+        print(f"Test 1 — all n=30:           U={u1:.0f},  p={p1:.4e}  [{sig1}]")
+
+    # Test 2 — successes only
+    if len(hyp_ext_succ) >= 3 and len(nn_ext_succ) >= 3:
+        u2, p2 = scipy_stats.mannwhitneyu(hyp_ext_succ, nn_ext_succ, alternative='greater')
+        sig2 = 'SIGNIFICANT ✓' if p2 < 0.05 else 'not significant'
+        print(f"Test 2 — successes (n={n_succ}):  "
+              f"U={u2:.0f},  p={p2:.4e}  [{sig2}]")
+    else:
+        print(f'Test 2 — successes: only {n_succ} success(es) — not enough for MW test')
+
+    print()
+    print('Successful equations:')
+    for eid, r in successes.items():
+        he = r['hypatia']['extrap_r2']
+        expr = r['hypatia'].get('best_expression', 'N/A')
+        print(f"  {eid:12s}  extrap_R²={he:.4f}  expr: {expr}")
+
+    """## 12 · Results table — all 30 equations"""
+
+    import pandas as pd
+
+    rows = []
+    for eq in FEYNMAN_30:
+        eid = eq['id']
+        r = all_results.get(eid, {})
+        h = r.get('hypatia', {})
+        nn = r.get('nn', {})
+        he = h.get('extrap_r2')
+        result = '✓ Win' if (he is not None and he > 0.99) else ('✗ Fail' if he is not None else '—')
+        rows.append({
+            'ID':           eid,
+            'Name':         eq['name'],
+            'Domain':       eq['domain'],
+            'H train R²':   f"{h.get('train_r2'):.3f}" if h.get('train_r2') is not None else '—',
+            'H extrap R²':  f"{he:.3f}" if he is not None else '—',
+            'NN extrap R²': f"{nn.get('extrap_r2'):.3f}" if nn.get('extrap_r2') is not None else '—',
+            'Result':       result,
+        })
+
+    df = pd.DataFrame(rows)
+
+    def colour_result(val):
+        if '✓' in str(val):
+            return 'background-color: #d4edda; color: #155724; font-weight: bold'
+        if '✗' in str(val):
+            return 'background-color: #f8d7da; color: #721c24'
+        return ''
+
+    df.style.applymap(colour_result, subset=['Result'])
+
+    """## 13 · LaTeX table — ready to paste into §6"""
+
+    CLIP_LO = -15.0
+
+    def _cell(v, is_extrap=False):
+        if v is None:
+            return '---'
+        if is_extrap:
+            if v > 0.99:
+                return r'\PASS{' + f'{v:.3f}' + '}'
+            elif v < 0:
+                if v < CLIP_LO:
+                    return r'\FAIL{$\ll{-}100$}'
+                return r'\FAIL{' + f'${v:.3f}$' + '}'
+        return f'{v:.3f}'
+
+
+    lines = [
+        r'\begin{table}[htbp]',
+        r'\centering',
+        r'\caption{Full 30-equation Feynman extrapolation results: '
+        r'HypatiaX vs.\ Neural Network at $2\times$ training range. '
+        r'Extrap $R^2$ below $-15$ marked as catastrophic failures. '
+        r'\PASS{Green}: $R^2>0.99$; \FAIL{Red}: $R^2<0$.}',
+        r'\label{tab:feynman30_extrap}',
+        r'\small',
+        r'\setlength{\tabcolsep}{5pt}',
+        r'\begin{tabular}{llccc}',
+        r'\toprule',
+        r'\textbf{Equation} & \textbf{Domain} & '
+        r'\textbf{Hyp Train $R^2$} & \textbf{Hyp Extrap $R^2$} & '
+        r'\textbf{NN Extrap $R^2$} \\',
+        r'\midrule',
+    ]
+
+    hyp_ext_vals, nn_ext_vals = [], []
+    hyp_ext_clipped, nn_ext_clipped = [], []
+    hyp_successes = nn_successes = 0
+    n_total = 0
+    shade = False
+
+    for eq_id, res in all_results.items():
+        h  = res.get('hypatia', {})
+        nn = res.get('nn', {})
+        he, ne, ht = h.get('extrap_r2'), nn.get('extrap_r2'), h.get('train_r2')
+
+        if he is not None:
+            hyp_ext_vals.append(he)
+            hyp_ext_clipped.append(max(he, CLIP_LO))
+            if he > 0.99: hyp_successes += 1
+        if ne is not None:
+            nn_ext_vals.append(ne)
+            nn_ext_clipped.append(max(ne, CLIP_LO))
+            if ne > 0.99: nn_successes += 1
+        n_total += 1
+
+        row_prefix = r'\rowcolor{lightgray}' + '\n' if shade else ''
+        shade = not shade
+        lines.append(
+            row_prefix +
+            f"{res['name']} & {res['domain']} & "
+            f"{_cell(ht)} & {_cell(he, True)} & {_cell(ne, True)} \\\\"
+        )
+
+    raw_hyp  = np.mean(hyp_ext_vals)    if hyp_ext_vals    else float('nan')
+    raw_nn   = np.mean(nn_ext_vals)     if nn_ext_vals     else float('nan')
+    clip_hyp = np.mean(hyp_ext_clipped) if hyp_ext_clipped else float('nan')
+    clip_nn  = np.mean(nn_ext_clipped)  if nn_ext_clipped  else float('nan')
+
+    lines += [
+        r'\midrule', r'\midrule',
+        f'\\textbf{{Mean extrap $R^2$ (raw)}} & --- & --- & ${raw_hyp:.2e}$ & ${raw_nn:.2e}$ \\\\',
+        f'\\textbf{{Mean extrap $R^2$ (clip $-15$)}} & --- & --- & {clip_hyp:.3f} & {clip_nn:.3f} \\\\',
+        '\\textbf{Success} ($R^2 > 0.99$) & --- & --- & '
+        r'\PASS{' + f'{hyp_successes}/{n_total} ({hyp_successes/n_total*100:.1f}\\%)' + '} & '
+        r'\FAIL{' + f'{nn_successes}/{n_total} ({nn_successes/n_total*100:.1f}\\%)' + '} \\\\',
+        r'\bottomrule',
+        r'\end{tabular}',
+        r'\end{table}',
+    ]
+
+    latex = '\n'.join(lines)
+    tex_path = CFG['output_json'].replace('.json', '_table.tex')
+    with open(tex_path, 'w') as f:
+        f.write(latex)
+
+    print(latex)
+    print(f'\nLaTeX table saved → {tex_path}')
+
+    """## 14 · Export — all formats
+
+    | File | Contents |
+    |---|---|
+    | `results.json` | Full raw results |
+    | `results.csv` | One row per equation |
+    | `table.tex` | LaTeX table for §6 |
+    | `table.html` | Colour-coded HTML |
+    | `report.html` | Self-contained HTML report |
+    | `stats.json` | Mann-Whitney + summary stats |
+    | `expressions.txt` | Best symbolic expressions |
+    """
+
+    import json
+    import os
+    import zipfile
+    from datetime import datetime
+
+    import numpy as np
+    import pandas as pd
+    from scipy import stats as scipy_stats
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    EXPORT_DIR = f'hypatia_exp2_{timestamp}'
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    print(f'Export folder: {EXPORT_DIR}/')
+
+    # 1 · JSON — full raw results
+    json_path = os.path.join(EXPORT_DIR, 'results.json')
+    with open(json_path, 'w') as f:
         json.dump(all_results, f, indent=2)
-    # Upload to GitHub Actions artifact store so it survives a hard cancel
-    _upload_checkpoint_artifact(CFG['output_json'])
-    # Push to results branch — survives even a SIGKILL (push is inline, not post-step).
-    # Use a shard-specific filename so the two parallel jobs don't overwrite each other.
-    _shard_suffix = f"_shard{_SHARD_INDEX}" if _SHARD_TOTAL > 1 else ""
-    _push_result_to_branch(
-        CFG['output_json'],
-        f"hypatiax/data/results/comparison_results/feynman-tests/exp2/"
-        f"exp2_feynman_checkpoint{_shard_suffix}.json"
+    print(f'[1/7] results.json       {os.path.getsize(json_path):,} bytes')
+
+    # 2 · CSV — flat table, one row per equation
+    rows = []
+    for eq in FEYNMAN_30:
+        eid = eq['id']
+        r   = all_results.get(eid, {})
+        h   = r.get('hypatia', {})
+        nn  = r.get('nn', {})
+        he  = h.get('extrap_r2')
+        rows.append({
+            'equation_id':         eid,
+            'name':                eq['name'],
+            'domain':              eq['domain'],
+            'hyp_train_r2':        h.get('train_r2'),
+            'hyp_extrap_r2':       he,
+            'hyp_time_s':          h.get('time_s'),
+            'hyp_success':         (he is not None and he > 0.99),
+            'nn_train_r2':         nn.get('train_r2'),
+            'nn_extrap_r2':        nn.get('extrap_r2'),
+            'nn_time_s':           nn.get('time_s'),
+            'hyp_best_expression': h.get('best_expression', ''),
+            'error':               r.get('error', ''),
+        })
+
+    df_export = pd.DataFrame(rows)
+    csv_path = os.path.join(EXPORT_DIR, 'results.csv')
+    df_export.to_csv(csv_path, index=False)
+    print(f'[2/7] results.csv        {os.path.getsize(csv_path):,} bytes  ({len(df_export)} rows)')
+    df_export
+
+    # 3 · LaTeX table (latex variable built in cell 12)
+    tex_path = os.path.join(EXPORT_DIR, 'table.tex')
+    with open(tex_path, 'w') as f:
+        f.write(latex)
+    print(f'[3/7] table.tex          {os.path.getsize(tex_path):,} bytes')
+
+    # 4 · HTML colour-coded table
+    def _bg(v, extrap=False):
+        try: v = float(v)
+        except Exception: return ''
+        if extrap:
+            if v > 0.99: return 'background:#d4edda;color:#155724;font-weight:bold'
+            if v < 0:    return 'background:#f8d7da;color:#721c24'
+        return ''
+
+    html_rows = []
+    for eq in FEYNMAN_30:
+        eid = eq['id']
+        r   = all_results.get(eid, {})
+        h   = r.get('hypatia', {})
+        nn  = r.get('nn', {})
+        he, ne, ht = h.get('extrap_r2'), nn.get('extrap_r2'), h.get('train_r2')
+        win = he is not None and he > 0.99
+        icon = '\u2713 Win' if win else '\u2717 Fail'
+        ibg  = 'background:#d4edda' if win else 'background:#f8d7da'
+        def fmt(v):
+            return f'{v:.4f}' if v is not None else '\u2014'
+        html_rows.append(
+            f'<tr><td><code>{eid}</code></td><td>{eq["name"]}</td>'
+            f'<td>{eq["domain"]}</td><td>{fmt(ht)}</td>'
+            f'<td style="{_bg(he,True)}">{fmt(he)}</td>'
+            f'<td style="{_bg(ne,True)}">{fmt(ne)}</td>'
+            f'<td style="{ibg};font-weight:bold">{icon}</td></tr>'
+        )
+
+    html_table_str = (
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<title>Feynman n=30 Results</title>'
+        '<style>body{font-family:Arial,sans-serif;font-size:13px;margin:24px}'
+        'table{border-collapse:collapse;width:100%}'
+        'th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}'
+        'th{background:#343a40;color:white}'
+        'tr:nth-child(even){background:#f9f9f9}'
+        'code{font-size:12px}</style></head><body>'
+        '<h2>Feynman Extrapolation \u2014 All n=30 Results</h2>'
+        '<p>HypatiaX vs Neural Network \u00b7 Full-budget (timeout=300s, populations=30)</p>'
+        '<table><thead><tr>'
+        '<th>ID</th><th>Name</th><th>Domain</th>'
+        '<th>H Train R\u00b2</th><th>H Extrap R\u00b2</th>'
+        '<th>NN Extrap R\u00b2</th><th>Result</th>'
+        '</tr></thead><tbody>' +
+        ''.join(html_rows) +
+        '</tbody></table></body></html>'
     )
 
-print('\n' + '=' * 65)
-print('All equations completed.')
-print(f"Results saved → {CFG['output_json']}")
+    html_table_path = os.path.join(EXPORT_DIR, 'table.html')
+    with open(html_table_path, 'w', encoding='utf-8') as f:
+        f.write(html_table_str)
+    print(f'[4/7] table.html         {os.path.getsize(html_table_path):,} bytes')
 
-"""## 11 · Statistical analysis — Mann-Whitney tests
+    # 5 · stats.json — machine-readable summary
+    _hyp_all = [r.get('hypatia',{}).get('extrap_r2') for r in all_results.values()
+                 if r.get('hypatia',{}).get('extrap_r2') is not None]
+    _nn_all  = [r.get('nn',{}).get('extrap_r2') for r in all_results.values()
+                 if r.get('nn',{}).get('extrap_r2') is not None]
+    _succ_hyp = [v for v in _hyp_all if v > 0.99]
+    _succ_nn  = [r.get('nn',{}).get('extrap_r2')
+                  for r in all_results.values()
+                  if (r.get('hypatia',{}).get('extrap_r2') or -999) > 0.99
+                  and r.get('nn',{}).get('extrap_r2') is not None]
 
-1. All n=30 (primary claim)
-2. Successes only (sub-claim, expected p < 0.01)
-"""
+    stats_out = {
+        'n_equations': len(all_results),
+        'n_successes': len(_succ_hyp),
+        'success_rate': len(_succ_hyp) / len(all_results) if all_results else 0,
+        'hyp_extrap_mean':   float(np.mean(_hyp_all))   if _hyp_all else None,
+        'hyp_extrap_median': float(np.median(_hyp_all)) if _hyp_all else None,
+        'nn_extrap_mean':    float(np.mean(_nn_all))    if _nn_all  else None,
+        'nn_extrap_median':  float(np.median(_nn_all))  if _nn_all  else None,
+    }
 
-hyp_ext_all = [
-    r.get('hypatia', {}).get('extrap_r2')
-    for r in all_results.values()
-    if r.get('hypatia', {}).get('extrap_r2') is not None
-]
-nn_ext_all = [
-    r.get('nn', {}).get('extrap_r2')
-    for r in all_results.values()
-    if r.get('nn', {}).get('extrap_r2') is not None
-]
+    if len(_hyp_all) >= 5 and len(_nn_all) >= 5:
+        u1, p1 = scipy_stats.mannwhitneyu(_hyp_all, _nn_all, alternative='greater')
+        stats_out['mw_all_U'] = float(u1)
+        stats_out['mw_all_p'] = float(p1)
+        stats_out['mw_all_significant'] = bool(p1 < 0.05)
 
-successes = {
-    eid: r for eid, r in all_results.items()
-    if (r.get('hypatia', {}).get('extrap_r2') or -999) > 0.99
-}
-hyp_ext_succ = [r['hypatia']['extrap_r2'] for r in successes.values()]
-nn_ext_succ  = [r['nn']['extrap_r2']      for r in successes.values()
-                if r.get('nn', {}).get('extrap_r2') is not None]
+    if len(_succ_hyp) >= 3 and len(_succ_nn) >= 3:
+        u2, p2 = scipy_stats.mannwhitneyu(_succ_hyp, _succ_nn, alternative='greater')
+        stats_out['mw_succ_U'] = float(u2)
+        stats_out['mw_succ_p'] = float(p2)
+        stats_out['mw_succ_significant'] = bool(p2 < 0.05)
 
-n_hyp = len(hyp_ext_all)
-n_succ = len(hyp_ext_succ)
+    stats_path = os.path.join(EXPORT_DIR, 'stats.json')
+    with open(stats_path, 'w') as f:
+        json.dump(stats_out, f, indent=2)
+    print(f'[5/7] stats.json         {os.path.getsize(stats_path):,} bytes')
+    print(json.dumps(stats_out, indent=2))
 
-print('=' * 65)
-print('RESULTS SUMMARY')
-print('=' * 65)
-print(f"HypatiaX  n={n_hyp}  "
-      f"mean={np.mean(hyp_ext_all):.4f}  "
-      f"median={np.median(hyp_ext_all):.4f}  "
-      f"success(>0.99)={n_succ}/{n_hyp} ({n_succ/n_hyp*100:.1f}%)")
-print(f"NN        n={len(nn_ext_all)}  "
-      f"mean={np.mean(nn_ext_all):.4f}  "
-      f"median={np.median(nn_ext_all):.4f}")
+    # 6 · expressions.txt — best symbolic formulas found
+    lines = ['HypatiaX Best Symbolic Expressions\n', '=' * 50 + '\n']
+    successes = [(eid, r) for eid, r in all_results.items()
+                 if (r.get('hypatia',{}).get('extrap_r2') or -999) > 0.99]
+    failures  = [(eid, r) for eid, r in all_results.items()
+                 if (r.get('hypatia',{}).get('extrap_r2') or -999) <= 0.99]
 
-print()
-# Test 1 — all n=30
-if len(hyp_ext_all) >= 5 and len(nn_ext_all) >= 5:
-    u1, p1 = scipy_stats.mannwhitneyu(hyp_ext_all, nn_ext_all, alternative='greater')
-    sig1 = 'SIGNIFICANT ✓' if p1 < 0.05 else 'not significant'
-    print(f"Test 1 — all n=30:           U={u1:.0f},  p={p1:.4e}  [{sig1}]")
+    lines.append(f'\nSUCCESSES ({len(successes)})\n' + '-' * 30 + '\n')
+    for eid, r in successes:
+        h = r.get('hypatia', {})
+        lines.append(f"{eid} ({r['name']})\n")
+        lines.append(f"  extrap_R2 = {h.get('extrap_r2'):.4f}\n")
+        lines.append(f"  expr      = {h.get('best_expression', 'N/A')}\n\n")
 
-# Test 2 — successes only
-if len(hyp_ext_succ) >= 3 and len(nn_ext_succ) >= 3:
-    u2, p2 = scipy_stats.mannwhitneyu(hyp_ext_succ, nn_ext_succ, alternative='greater')
-    sig2 = 'SIGNIFICANT ✓' if p2 < 0.05 else 'not significant'
-    print(f"Test 2 — successes (n={n_succ}):  "
-          f"U={u2:.0f},  p={p2:.4e}  [{sig2}]")
-else:
-    print(f'Test 2 — successes: only {n_succ} success(es) — not enough for MW test')
+    lines.append(f'FAILURES ({len(failures)})\n' + '-' * 30 + '\n')
+    for eid, r in failures:
+        h = r.get('hypatia', {})
+        he = h.get('extrap_r2')
+        # Fix: Separate conditional logic from format specifier
+        formatted_he = f"{he:.4f}" if he is not None else 'N/A'
+        lines.append(f"{eid} ({r['name']})  extrap_R2 = {formatted_he}\n")
 
-print()
-print('Successful equations:')
-for eid, r in successes.items():
-    he = r['hypatia']['extrap_r2']
-    expr = r['hypatia'].get('best_expression', 'N/A')
-    print(f"  {eid:12s}  extrap_R²={he:.4f}  expr: {expr}")
+    expr_path = os.path.join(EXPORT_DIR, 'expressions.txt')
+    with open(expr_path, 'w') as f:
+        f.writelines(lines)
+    print(f'[6/7] expressions.txt    {os.path.getsize(expr_path):,} bytes')
 
-"""## 12 · Results table — all 30 equations"""
+    # 7 · report.html — full self-contained report
+    n_eq   = len(all_results)
+    n_succ = len(_succ_hyp)
+    mw1_str = stats_out.get('mw_all_p') and (
+        f"U={stats_out['mw_all_U']:.0f}, p={stats_out['mw_all_p']:.4e} "
+        f"({'significant' if stats_out['mw_all_significant'] else 'not significant'})"
+    ) or 'N/A'
+    mw2_str = stats_out.get('mw_succ_p') and (
+        f"U={stats_out['mw_succ_U']:.0f}, p={stats_out['mw_succ_p']:.4e} "
+        f"({'significant' if stats_out['mw_succ_significant'] else 'not significant'})"
+    ) or 'N/A'
 
-import pandas as pd
-
-rows = []
-for eq in FEYNMAN_30:
-    eid = eq['id']
-    r = all_results.get(eid, {})
-    h = r.get('hypatia', {})
-    nn = r.get('nn', {})
-    he = h.get('extrap_r2')
-    result = '✓ Win' if (he is not None and he > 0.99) else ('✗ Fail' if he is not None else '—')
-    rows.append({
-        'ID':           eid,
-        'Name':         eq['name'],
-        'Domain':       eq['domain'],
-        'H train R²':   f"{h.get('train_r2'):.3f}" if h.get('train_r2') is not None else '—',
-        'H extrap R²':  f"{he:.3f}" if he is not None else '—',
-        'NN extrap R²': f"{nn.get('extrap_r2'):.3f}" if nn.get('extrap_r2') is not None else '—',
-        'Result':       result,
-    })
-
-df = pd.DataFrame(rows)
-
-def colour_result(val):
-    if '✓' in str(val):
-        return 'background-color: #d4edda; color: #155724; font-weight: bold'
-    if '✗' in str(val):
-        return 'background-color: #f8d7da; color: #721c24'
-    return ''
-
-df.style.applymap(colour_result, subset=['Result'])
-
-"""## 13 · LaTeX table — ready to paste into §6"""
-
-CLIP_LO = -15.0
-
-def _cell(v, is_extrap=False):
-    if v is None:
-        return '---'
-    if is_extrap:
-        if v > 0.99:
-            return r'\PASS{' + f'{v:.3f}' + '}'
-        elif v < 0:
-            if v < CLIP_LO:
-                return r'\FAIL{$\ll{-}100$}'
-            return r'\FAIL{' + f'${v:.3f}$' + '}'
-    return f'{v:.3f}'
-
-
-lines = [
-    r'\begin{table}[htbp]',
-    r'\centering',
-    r'\caption{Full 30-equation Feynman extrapolation results: '
-    r'HypatiaX vs.\ Neural Network at $2\times$ training range. '
-    r'Extrap $R^2$ below $-15$ marked as catastrophic failures. '
-    r'\PASS{Green}: $R^2>0.99$; \FAIL{Red}: $R^2<0$.}',
-    r'\label{tab:feynman30_extrap}',
-    r'\small',
-    r'\setlength{\tabcolsep}{5pt}',
-    r'\begin{tabular}{llccc}',
-    r'\toprule',
-    r'\textbf{Equation} & \textbf{Domain} & '
-    r'\textbf{Hyp Train $R^2$} & \textbf{Hyp Extrap $R^2$} & '
-    r'\textbf{NN Extrap $R^2$} \\',
-    r'\midrule',
-]
-
-hyp_ext_vals, nn_ext_vals = [], []
-hyp_ext_clipped, nn_ext_clipped = [], []
-hyp_successes = nn_successes = 0
-n_total = 0
-shade = False
-
-for eq_id, res in all_results.items():
-    h  = res.get('hypatia', {})
-    nn = res.get('nn', {})
-    he, ne, ht = h.get('extrap_r2'), nn.get('extrap_r2'), h.get('train_r2')
-
-    if he is not None:
-        hyp_ext_vals.append(he)
-        hyp_ext_clipped.append(max(he, CLIP_LO))
-        if he > 0.99: hyp_successes += 1
-    if ne is not None:
-        nn_ext_vals.append(ne)
-        nn_ext_clipped.append(max(ne, CLIP_LO))
-        if ne > 0.99: nn_successes += 1
-    n_total += 1
-
-    row_prefix = r'\rowcolor{lightgray}' + '\n' if shade else ''
-    shade = not shade
-    lines.append(
-        row_prefix +
-        f"{res['name']} & {res['domain']} & "
-        f"{_cell(ht)} & {_cell(he, True)} & {_cell(ne, True)} \\\\"
+    succ_rows = ''.join(
+        f'<tr><td><code>{eid}</code></td><td>{r["name"]}</td>'
+        f'<td>{r.get("hypatia",{}).get("extrap_r2",0):.4f}</td>'
+        f'<td style="font-family:monospace;font-size:11px">{r.get("hypatia",{}).get("best_expression","N/A")}</td></tr>'
+        for eid, r in all_results.items()
+        if (r.get('hypatia',{}).get('extrap_r2') or -999) > 0.99
     )
 
-raw_hyp  = np.mean(hyp_ext_vals)    if hyp_ext_vals    else float('nan')
-raw_nn   = np.mean(nn_ext_vals)     if nn_ext_vals     else float('nan')
-clip_hyp = np.mean(hyp_ext_clipped) if hyp_ext_clipped else float('nan')
-clip_nn  = np.mean(nn_ext_clipped)  if nn_ext_clipped  else float('nan')
+    report = f"""<!DOCTYPE html>
+    <html><head><meta charset=\"utf-8\">
+    <title>RF-09 Feynman Extrapolation Report</title>
+    <style>
+      body{{font-family:Arial,sans-serif;margin:40px;max-width:900px;color:#222}}
+      h1{{border-bottom:3px solid #343a40;padding-bottom:8px}}
+      h2{{color:#343a40;margin-top:32px}}
+      table{{border-collapse:collapse;width:100%;margin:10px 0}}
+      th,td{{border:1px solid #ccc;padding:7px 12px;text-align:left}}
+      th{{background:#343a40;color:#fff}}
+      tr:nth-child(even){{background:#f5f5f5}}
+      .box{{background:#f0f4ff;border-left:4px solid #4a6fa5;padding:12px 18px;margin:12px 0;border-radius:4px}}
+      .claim{{background:#fff8e1;border-left:4px solid #f0ad4e;padding:12px 18px;margin:16px 0;border-radius:4px}}
+      .pass{{background:#d4edda;color:#155724;font-weight:bold}}
+      footer{{margin-top:48px;font-size:11px;color:#999;border-top:1px solid #eee;padding-top:8px}}
+    </style></head><body>
+    <h1>RF-09 &#8212; Feynman Extrapolation: n=30 Full Report</h1>
+    <p><strong>HypatiaX Research</strong> &middot; {datetime.now().strftime('%Y-%m-%d %H:%M')} &middot;
+    timeout={CFG['timeout']}s &middot; populations={CFG['populations']} &middot; iterations={CFG['iterations']}</p>
 
-lines += [
-    r'\midrule', r'\midrule',
-    f'\\textbf{{Mean extrap $R^2$ (raw)}} & --- & --- & ${raw_hyp:.2e}$ & ${raw_nn:.2e}$ \\\\',
-    f'\\textbf{{Mean extrap $R^2$ (clip $-15$)}} & --- & --- & {clip_hyp:.3f} & {clip_nn:.3f} \\\\',
-    '\\textbf{Success} ($R^2 > 0.99$) & --- & --- & '
-    r'\PASS{' + f'{hyp_successes}/{n_total} ({hyp_successes/n_total*100:.1f}\\%)' + '} & '
-    r'\FAIL{' + f'{nn_successes}/{n_total} ({nn_successes/n_total*100:.1f}\\%)' + '} \\\\',
-    r'\bottomrule',
-    r'\end{tabular}',
-    r'\end{table}',
-]
+    <h2>Summary</h2>
+    <div class=\"box\">
+    HypatiaX successes (extrap R&sup2; &gt; 0.99): <strong>{n_succ}/{n_eq} ({n_succ/n_eq*100:.1f}%)</strong><br>
+    HypatiaX extrap R&sup2; &mdash; mean: <strong>{np.mean(_hyp_all):.4f}</strong> &nbsp; median: <strong>{np.median(_hyp_all):.4f}</strong><br>
+    NN extrap R&sup2; &mdash; mean: <strong>{np.mean(_nn_all):.4f}</strong> &nbsp; median: <strong>{np.median(_nn_all):.4f}</strong>
+    </div>
 
-latex = '\n'.join(lines)
-tex_path = CFG['output_json'].replace('.json', '_table.tex')
-with open(tex_path, 'w') as f:
-    f.write(latex)
+    <h2>Mann-Whitney tests</h2>
+    <table>
+      <tr><th>Test</th><th>n</th><th>Result</th></tr>
+      <tr><td>Test 1 &mdash; all n={n_eq} (primary claim)</td><td>{n_eq}</td><td>{mw1_str}</td></tr>
+      <tr><td>Test 2 &mdash; successes only (sub-claim)</td><td>{n_succ}</td><td>{mw2_str}</td></tr>
+    </table>
 
-print(latex)
-print(f'\nLaTeX table saved → {tex_path}')
+    <div class=\"claim\">
+    <strong>Suggested paper claim (replace current n=14 framing):</strong><br>
+    &#8220;HypatiaX finds a symbolic formula on <strong>{n_succ}/30</strong> Feynman equations.
+    On those {n_succ} equations, extrapolation significantly outperforms the NN baseline
+    (Mann-Whitney {mw2_str}).
+    On the remaining {n_eq - n_succ} equations where HypatiaX failed to find a formula,
+    PySR&#8217;s best approximation is also reported.&#8221;
+    </div>
 
-"""## 14 · Export — all formats
+    <h2>Successful equations</h2>
+    <table>
+      <tr><th>ID</th><th>Name</th><th>Extrap R&sup2;</th><th>Best expression</th></tr>
+      {succ_rows}
+    </table>
 
-| File | Contents |
-|---|---|
-| `results.json` | Full raw results |
-| `results.csv` | One row per equation |
-| `table.tex` | LaTeX table for §6 |
-| `table.html` | Colour-coded HTML |
-| `report.html` | Self-contained HTML report |
-| `stats.json` | Mann-Whitney + summary stats |
-| `expressions.txt` | Best symbolic expressions |
-"""
+    <h2>Full results table</h2>
+    {html_table_str}
 
-import json
-import os
-import zipfile
-from datetime import datetime
+    <footer>Generated by exp2_feynman_extrap_colab.ipynb &middot; HypatiaX Research &middot; RF-09</footer>
+    </body></html>"""
 
-import numpy as np
-import pandas as pd
-from scipy import stats as scipy_stats
-
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-EXPORT_DIR = f'hypatia_exp2_{timestamp}'
-os.makedirs(EXPORT_DIR, exist_ok=True)
-print(f'Export folder: {EXPORT_DIR}/')
-
-# 1 · JSON — full raw results
-json_path = os.path.join(EXPORT_DIR, 'results.json')
-with open(json_path, 'w') as f:
-    json.dump(all_results, f, indent=2)
-print(f'[1/7] results.json       {os.path.getsize(json_path):,} bytes')
-
-# 2 · CSV — flat table, one row per equation
-rows = []
-for eq in FEYNMAN_30:
-    eid = eq['id']
-    r   = all_results.get(eid, {})
-    h   = r.get('hypatia', {})
-    nn  = r.get('nn', {})
-    he  = h.get('extrap_r2')
-    rows.append({
-        'equation_id':         eid,
-        'name':                eq['name'],
-        'domain':              eq['domain'],
-        'hyp_train_r2':        h.get('train_r2'),
-        'hyp_extrap_r2':       he,
-        'hyp_time_s':          h.get('time_s'),
-        'hyp_success':         (he is not None and he > 0.99),
-        'nn_train_r2':         nn.get('train_r2'),
-        'nn_extrap_r2':        nn.get('extrap_r2'),
-        'nn_time_s':           nn.get('time_s'),
-        'hyp_best_expression': h.get('best_expression', ''),
-        'error':               r.get('error', ''),
-    })
-
-df_export = pd.DataFrame(rows)
-csv_path = os.path.join(EXPORT_DIR, 'results.csv')
-df_export.to_csv(csv_path, index=False)
-print(f'[2/7] results.csv        {os.path.getsize(csv_path):,} bytes  ({len(df_export)} rows)')
-df_export
-
-# 3 · LaTeX table (latex variable built in cell 12)
-tex_path = os.path.join(EXPORT_DIR, 'table.tex')
-with open(tex_path, 'w') as f:
-    f.write(latex)
-print(f'[3/7] table.tex          {os.path.getsize(tex_path):,} bytes')
-
-# 4 · HTML colour-coded table
-def _bg(v, extrap=False):
-    try: v = float(v)
-    except Exception: return ''
-    if extrap:
-        if v > 0.99: return 'background:#d4edda;color:#155724;font-weight:bold'
-        if v < 0:    return 'background:#f8d7da;color:#721c24'
-    return ''
-
-html_rows = []
-for eq in FEYNMAN_30:
-    eid = eq['id']
-    r   = all_results.get(eid, {})
-    h   = r.get('hypatia', {})
-    nn  = r.get('nn', {})
-    he, ne, ht = h.get('extrap_r2'), nn.get('extrap_r2'), h.get('train_r2')
-    win = he is not None and he > 0.99
-    icon = '\u2713 Win' if win else '\u2717 Fail'
-    ibg  = 'background:#d4edda' if win else 'background:#f8d7da'
-    def fmt(v):
-        return f'{v:.4f}' if v is not None else '\u2014'
-    html_rows.append(
-        f'<tr><td><code>{eid}</code></td><td>{eq["name"]}</td>'
-        f'<td>{eq["domain"]}</td><td>{fmt(ht)}</td>'
-        f'<td style="{_bg(he,True)}">{fmt(he)}</td>'
-        f'<td style="{_bg(ne,True)}">{fmt(ne)}</td>'
-        f'<td style="{ibg};font-weight:bold">{icon}</td></tr>'
-    )
-
-html_table_str = (
-    '<!DOCTYPE html><html><head><meta charset="utf-8">'
-    '<title>Feynman n=30 Results</title>'
-    '<style>body{font-family:Arial,sans-serif;font-size:13px;margin:24px}'
-    'table{border-collapse:collapse;width:100%}'
-    'th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}'
-    'th{background:#343a40;color:white}'
-    'tr:nth-child(even){background:#f9f9f9}'
-    'code{font-size:12px}</style></head><body>'
-    '<h2>Feynman Extrapolation \u2014 All n=30 Results</h2>'
-    '<p>HypatiaX vs Neural Network \u00b7 Full-budget (timeout=300s, populations=30)</p>'
-    '<table><thead><tr>'
-    '<th>ID</th><th>Name</th><th>Domain</th>'
-    '<th>H Train R\u00b2</th><th>H Extrap R\u00b2</th>'
-    '<th>NN Extrap R\u00b2</th><th>Result</th>'
-    '</tr></thead><tbody>' +
-    ''.join(html_rows) +
-    '</tbody></table></body></html>'
-)
-
-html_table_path = os.path.join(EXPORT_DIR, 'table.html')
-with open(html_table_path, 'w', encoding='utf-8') as f:
-    f.write(html_table_str)
-print(f'[4/7] table.html         {os.path.getsize(html_table_path):,} bytes')
-
-# 5 · stats.json — machine-readable summary
-_hyp_all = [r.get('hypatia',{}).get('extrap_r2') for r in all_results.values()
-             if r.get('hypatia',{}).get('extrap_r2') is not None]
-_nn_all  = [r.get('nn',{}).get('extrap_r2') for r in all_results.values()
-             if r.get('nn',{}).get('extrap_r2') is not None]
-_succ_hyp = [v for v in _hyp_all if v > 0.99]
-_succ_nn  = [r.get('nn',{}).get('extrap_r2')
-              for r in all_results.values()
-              if (r.get('hypatia',{}).get('extrap_r2') or -999) > 0.99
-              and r.get('nn',{}).get('extrap_r2') is not None]
-
-stats_out = {
-    'n_equations': len(all_results),
-    'n_successes': len(_succ_hyp),
-    'success_rate': len(_succ_hyp) / len(all_results) if all_results else 0,
-    'hyp_extrap_mean':   float(np.mean(_hyp_all))   if _hyp_all else None,
-    'hyp_extrap_median': float(np.median(_hyp_all)) if _hyp_all else None,
-    'nn_extrap_mean':    float(np.mean(_nn_all))    if _nn_all  else None,
-    'nn_extrap_median':  float(np.median(_nn_all))  if _nn_all  else None,
-}
-
-if len(_hyp_all) >= 5 and len(_nn_all) >= 5:
-    u1, p1 = scipy_stats.mannwhitneyu(_hyp_all, _nn_all, alternative='greater')
-    stats_out['mw_all_U'] = float(u1)
-    stats_out['mw_all_p'] = float(p1)
-    stats_out['mw_all_significant'] = bool(p1 < 0.05)
-
-if len(_succ_hyp) >= 3 and len(_succ_nn) >= 3:
-    u2, p2 = scipy_stats.mannwhitneyu(_succ_hyp, _succ_nn, alternative='greater')
-    stats_out['mw_succ_U'] = float(u2)
-    stats_out['mw_succ_p'] = float(p2)
-    stats_out['mw_succ_significant'] = bool(p2 < 0.05)
-
-stats_path = os.path.join(EXPORT_DIR, 'stats.json')
-with open(stats_path, 'w') as f:
-    json.dump(stats_out, f, indent=2)
-print(f'[5/7] stats.json         {os.path.getsize(stats_path):,} bytes')
-print(json.dumps(stats_out, indent=2))
-
-# 6 · expressions.txt — best symbolic formulas found
-lines = ['HypatiaX Best Symbolic Expressions\n', '=' * 50 + '\n']
-successes = [(eid, r) for eid, r in all_results.items()
-             if (r.get('hypatia',{}).get('extrap_r2') or -999) > 0.99]
-failures  = [(eid, r) for eid, r in all_results.items()
-             if (r.get('hypatia',{}).get('extrap_r2') or -999) <= 0.99]
-
-lines.append(f'\nSUCCESSES ({len(successes)})\n' + '-' * 30 + '\n')
-for eid, r in successes:
-    h = r.get('hypatia', {})
-    lines.append(f"{eid} ({r['name']})\n")
-    lines.append(f"  extrap_R2 = {h.get('extrap_r2'):.4f}\n")
-    lines.append(f"  expr      = {h.get('best_expression', 'N/A')}\n\n")
-
-lines.append(f'FAILURES ({len(failures)})\n' + '-' * 30 + '\n')
-for eid, r in failures:
-    h = r.get('hypatia', {})
-    he = h.get('extrap_r2')
-    # Fix: Separate conditional logic from format specifier
-    formatted_he = f"{he:.4f}" if he is not None else 'N/A'
-    lines.append(f"{eid} ({r['name']})  extrap_R2 = {formatted_he}\n")
-
-expr_path = os.path.join(EXPORT_DIR, 'expressions.txt')
-with open(expr_path, 'w') as f:
-    f.writelines(lines)
-print(f'[6/7] expressions.txt    {os.path.getsize(expr_path):,} bytes')
-
-# 7 · report.html — full self-contained report
-n_eq   = len(all_results)
-n_succ = len(_succ_hyp)
-mw1_str = stats_out.get('mw_all_p') and (
-    f"U={stats_out['mw_all_U']:.0f}, p={stats_out['mw_all_p']:.4e} "
-    f"({'significant' if stats_out['mw_all_significant'] else 'not significant'})"
-) or 'N/A'
-mw2_str = stats_out.get('mw_succ_p') and (
-    f"U={stats_out['mw_succ_U']:.0f}, p={stats_out['mw_succ_p']:.4e} "
-    f"({'significant' if stats_out['mw_succ_significant'] else 'not significant'})"
-) or 'N/A'
-
-succ_rows = ''.join(
-    f'<tr><td><code>{eid}</code></td><td>{r["name"]}</td>'
-    f'<td>{r.get("hypatia",{}).get("extrap_r2",0):.4f}</td>'
-    f'<td style="font-family:monospace;font-size:11px">{r.get("hypatia",{}).get("best_expression","N/A")}</td></tr>'
-    for eid, r in all_results.items()
-    if (r.get('hypatia',{}).get('extrap_r2') or -999) > 0.99
-)
-
-report = f"""<!DOCTYPE html>
-<html><head><meta charset=\"utf-8\">
-<title>RF-09 Feynman Extrapolation Report</title>
-<style>
-  body{{font-family:Arial,sans-serif;margin:40px;max-width:900px;color:#222}}
-  h1{{border-bottom:3px solid #343a40;padding-bottom:8px}}
-  h2{{color:#343a40;margin-top:32px}}
-  table{{border-collapse:collapse;width:100%;margin:10px 0}}
-  th,td{{border:1px solid #ccc;padding:7px 12px;text-align:left}}
-  th{{background:#343a40;color:#fff}}
-  tr:nth-child(even){{background:#f5f5f5}}
-  .box{{background:#f0f4ff;border-left:4px solid #4a6fa5;padding:12px 18px;margin:12px 0;border-radius:4px}}
-  .claim{{background:#fff8e1;border-left:4px solid #f0ad4e;padding:12px 18px;margin:16px 0;border-radius:4px}}
-  .pass{{background:#d4edda;color:#155724;font-weight:bold}}
-  footer{{margin-top:48px;font-size:11px;color:#999;border-top:1px solid #eee;padding-top:8px}}
-</style></head><body>
-<h1>RF-09 &#8212; Feynman Extrapolation: n=30 Full Report</h1>
-<p><strong>HypatiaX Research</strong> &middot; {datetime.now().strftime('%Y-%m-%d %H:%M')} &middot;
-timeout={CFG['timeout']}s &middot; populations={CFG['populations']} &middot; iterations={CFG['iterations']}</p>
-
-<h2>Summary</h2>
-<div class=\"box\">
-HypatiaX successes (extrap R&sup2; &gt; 0.99): <strong>{n_succ}/{n_eq} ({n_succ/n_eq*100:.1f}%)</strong><br>
-HypatiaX extrap R&sup2; &mdash; mean: <strong>{np.mean(_hyp_all):.4f}</strong> &nbsp; median: <strong>{np.median(_hyp_all):.4f}</strong><br>
-NN extrap R&sup2; &mdash; mean: <strong>{np.mean(_nn_all):.4f}</strong> &nbsp; median: <strong>{np.median(_nn_all):.4f}</strong>
-</div>
-
-<h2>Mann-Whitney tests</h2>
-<table>
-  <tr><th>Test</th><th>n</th><th>Result</th></tr>
-  <tr><td>Test 1 &mdash; all n={n_eq} (primary claim)</td><td>{n_eq}</td><td>{mw1_str}</td></tr>
-  <tr><td>Test 2 &mdash; successes only (sub-claim)</td><td>{n_succ}</td><td>{mw2_str}</td></tr>
-</table>
-
-<div class=\"claim\">
-<strong>Suggested paper claim (replace current n=14 framing):</strong><br>
-&#8220;HypatiaX finds a symbolic formula on <strong>{n_succ}/30</strong> Feynman equations.
-On those {n_succ} equations, extrapolation significantly outperforms the NN baseline
-(Mann-Whitney {mw2_str}).
-On the remaining {n_eq - n_succ} equations where HypatiaX failed to find a formula,
-PySR&#8217;s best approximation is also reported.&#8221;
-</div>
-
-<h2>Successful equations</h2>
-<table>
-  <tr><th>ID</th><th>Name</th><th>Extrap R&sup2;</th><th>Best expression</th></tr>
-  {succ_rows}
-</table>
-
-<h2>Full results table</h2>
-{html_table_str}
-
-<footer>Generated by exp2_feynman_extrap_colab.ipynb &middot; HypatiaX Research &middot; RF-09</footer>
-</body></html>"""
-
-report_path = os.path.join(EXPORT_DIR, 'report.html')
-with open(report_path, 'w', encoding='utf-8') as f:
-    f.write(report)
-print(f'[7/7] report.html        {os.path.getsize(report_path):,} bytes')
+    report_path = os.path.join(EXPORT_DIR, 'report.html')
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(report)
+    print(f'[7/7] report.html        {os.path.getsize(report_path):,} bytes')
 
 
-zip_path = EXPORT_DIR + '.zip'
-with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-    for fname in os.listdir(EXPORT_DIR):
-        zf.write(os.path.join(EXPORT_DIR, fname), fname)
-zip_size = os.path.getsize(zip_path)
-print(f'Zip: {zip_path}  ({zip_size:,} bytes)')
-for fname in sorted(os.listdir(EXPORT_DIR)):
-    sz = os.path.getsize(os.path.join(EXPORT_DIR, fname))
-    print(f'  {fname:<30} {sz:>8,} bytes')
-# Colab-only: download the zip to the browser.
-# Skipped silently when running under CI or plain Python.
-_IN_CI = bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
-if not _IN_CI:
-    try:
-        from google.colab import files
-        print(f'Downloading {zip_path} ...')
-        files.download(zip_path)
-    except Exception:
-        pass  # not in Colab — zip stays on disk
+    zip_path = EXPORT_DIR + '.zip'
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fname in os.listdir(EXPORT_DIR):
+            zf.write(os.path.join(EXPORT_DIR, fname), fname)
+    zip_size = os.path.getsize(zip_path)
+    print(f'Zip: {zip_path}  ({zip_size:,} bytes)')
+    for fname in sorted(os.listdir(EXPORT_DIR)):
+        sz = os.path.getsize(os.path.join(EXPORT_DIR, fname))
+        print(f'  {fname:<30} {sz:>8,} bytes')
+    # Colab-only: download the zip to the browser.
+    # Skipped silently when running under CI or plain Python.
+    _IN_CI = bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
+    if not _IN_CI:
+        try:
+            from google.colab import files
+            print(f'Downloading {zip_path} ...')
+            files.download(zip_path)
+        except Exception:
+            pass  # not in Colab — zip stays on disk
