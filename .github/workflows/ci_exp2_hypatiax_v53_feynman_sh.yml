@@ -415,9 +415,15 @@ jobs:
           # using env vars injected above — the inline ternary expression was
           # truncating long JSON arrays mid-string on the GitHub Actions runner.
           if [[ "$SHARD_INDEX" == "0" ]]; then SHARD_IDS="$SHARD0_IDS"; else SHARD_IDS="$SHARD1_IDS"; fi
-          ARGS="$ARGS --equation-ids $SHARD_IDS"
+          # FIX B5: --equation-ids is intentionally NOT folded into $ARGS.
+          # $ARGS is expanded unquoted (to allow word-splitting of simple flags),
+          # which would also split the JSON array on spaces and commas, delivering
+          # a truncated token like '["I.6.2",' to argparse instead of the full
+          # array. Passing it as a separate quoted argument preserves the JSON
+          # string as a single token regardless of its length or content.
 
           python3 -u exp2_feynman_colab_multithreaded.py $ARGS \
+            --equation-ids "$SHARD_IDS" \
             2>&1 | tee "$LOG"
 
       - name: Dry-run summary
