@@ -157,13 +157,73 @@ else:
 
 """## 5 · Run configuration"""
 
+# ── Load repro.yaml directly — single source of truth for all paper values ────
+import pathlib as _pathlib
+import yaml as _yaml
+
+def _load_repro_cfg():
+    """
+    Read config/repro.yaml from the repo.  Never hardcodes values — the file IS
+    the config.  Search order:
+      1. REPRO_CFG env var (explicit override)
+      2. $GITHUB_WORKSPACE/config/repro.yaml   (GitHub Actions)
+      3. Ancestors of this script: config/repro.yaml at ./ ../ ../../ ../../../
+      4. cwd/config/repro.yaml
+    Returns {} with a warning when not found so the script degrades gracefully.
+    """
+    candidates = []
+    if os.environ.get("REPRO_CFG"):
+        candidates.append(_pathlib.Path(os.environ["REPRO_CFG"]))
+    if os.environ.get("GITHUB_WORKSPACE"):
+        candidates.append(_pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "config" / "repro.yaml")
+    _here = _pathlib.Path(__file__).resolve().parent
+    for _rel in ("config/repro.yaml", "../config/repro.yaml",
+                 "../../config/repro.yaml", "../../../config/repro.yaml"):
+        candidates.append(_here / _rel)
+    candidates.append(_pathlib.Path.cwd() / "config" / "repro.yaml")
+    for _p in candidates:
+        try:
+            _p = _p.resolve()
+            if _p.exists():
+                with open(_p) as _f:
+                    _data = _yaml.safe_load(_f)
+                print(f"[repro.yaml] loaded from {_p}", flush=True)
+                return _data
+        except Exception as _e:
+            print(f"[repro.yaml] skipping {_p}: {_e}", flush=True)
+    print("[repro.yaml] WARNING: config/repro.yaml not found — falling back to env/built-in defaults", flush=True)
+    return {}
+
+_REPRO = _load_repro_cfg()
+
+def _r(*keys, default=None):
+    """Walk _REPRO by key path; return default if any key is missing."""
+    _v = _REPRO
+    for _k in keys:
+        if not isinstance(_v, dict):
+            return default
+        _v = _v.get(_k, default)
+        if _v is default:
+            return default
+    return _v
+
+print(f"[repro.yaml] run_id={_r('run_id')}  run_version={_r('run_version')}", flush=True)
+
 CFG = dict(
-    # FIX-WALLCLOCK: read timeout from env. Priority: FEYNMAN_TIMEOUT > PYSR_TIMEOUT > default.
+    # timeouts.feynman_pysr_seconds — Julia-internal PySR timeout.
+    # Env can override for CI dispatch; repro.yaml is the paper-quality value.
+    # METHOD_TIMEOUT is the outer runner budget — must NOT be in this chain.
     timeout=int(os.environ.get("FEYNMAN_TIMEOUT") or os.environ.get("PYSR_TIMEOUT")
-                or os.environ.get("METHOD_TIMEOUT") or 1100),
-    populations=int(os.environ.get("PYSR_POPULATIONS") or os.environ.get("POPULATIONS") or 30),
-    iterations=int(os.environ.get("N_ITERATIONS", 1000)),
-    n_equations=30, seed=42,
+                or _r('timeouts', 'feynman_pysr_seconds')),
+    fit_wall_timeout=int(os.environ.get("PYSR_FIT_WALL_TIMEOUT")
+                         or _r('timeouts', 'fit_wall_timeout')),
+    fit_grace_secs=int(os.environ.get("PYSR_FIT_GRACE_SECS")
+                       or _r('timeouts', 'fit_grace_secs')),
+    populations=int(os.environ.get("PYSR_POPULATIONS") or os.environ.get("POPULATIONS")
+                    or _r('pysr', 'populations')),
+    iterations=int(os.environ.get("N_ITERATIONS") or _r('pysr', 'niterations')),
+    n_equations=_r('benchmarks', 'feynman', 'expected', 'total'),
+    seed=_r('seeds', 'pysr_seed'),
     # --checkpoint CLI flag (CI/run_all.sh) takes priority.
     # Falls back to RESULTS_DIR-relative path so the file lands in the right place.
     output_json=(
@@ -561,10 +621,13 @@ def make_pysr(seed=42, niterations=1000, timeout_secs=1100, populations=30):
         _PYSR_VALID_PARAMS = set(inspect.signature(PySRRegressor.__init__).parameters.keys())
     valid = _PYSR_VALID_PARAMS
     kwargs = dict(
-        niterations=niterations, populations=populations, population_size=50,
-        maxsize=15, parsimony=0.02,
-        binary_operators=['+', '-', '*', '/'],
-        unary_operators=['exp', 'log', 'sin', 'cos', 'sqrt'],
+        niterations=niterations,
+        populations=populations,
+        population_size=_r('pysr', 'population_size'),
+        maxsize=_r('pysr', 'maxsize'),
+        parsimony=_r('pysr', 'parsimony'),
+        binary_operators=_r('pysr', 'binary_operators'),
+        unary_operators=_r('pysr', 'unary_operators'),
         random_state=seed, verbosity=0, progress=False,
     )
     # multithreading: safe on Colab, ~N x faster than serial (N = CPU cores)
@@ -1194,7 +1257,7 @@ if __name__ == "__main__":
         'tr:nth-child(even){background:#f9f9f9}'
         'code{font-size:12px}</style></head><body>'
         '<h2>Feynman Extrapolation \u2014 All n=30 Results</h2>'
-        '<p>HypatiaX vs Neural Network \u00b7 Full-budget (timeout=300s, populations=30)</p>'
+        '<p>HypatiaX vs Neural Network \u00b7 Full-budget (timeout=1100s, populations=30)</p>'
         '<table><thead><tr>'
         '<th>ID</th><th>Name</th><th>Domain</th>'
         '<th>H Train R\u00b2</th><th>H Extrap R\u00b2</th>'

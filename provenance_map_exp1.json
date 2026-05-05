@@ -1,0 +1,42 @@
+{
+  "family": "ablation_exp1",
+  "engine": "hybrid_system_v50_2.py",
+  "engine_version": "5.1",
+  "seed": 42,
+  "seed_is_paper_primary": true,
+  "populations": 30,
+  "niterations": 1000,
+  "model_string": "claude-sonnet-4-20250514",
+  "timestamp": "2026-05-02T23:50:43.802469",
+  "outputs": {
+    "results_json": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_ablation_results.json",
+    "checkpoint_json": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_ablation_checkpoint.json",
+    "tex_table5": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_ablation_table.tex",
+    "rf01_json": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_rf01_mannwhitney.json",
+    "rf01_sig_tex": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_rf01_significant.tex",
+    "rf01_sub_tex": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_rf01_subdomain.tex",
+    "instability_stats": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/exp1_instability_stats.json",
+    "instability_csv": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-PAPERS-Public/instability_extrapolation_v2.csv"
+  },
+  "paper_sections": [
+    "\u00a710.6",
+    "\u00a710.9"
+  ],
+  "paper_targets": {
+    "MW_run_a": "U=126, p=0.295  [seed=42 only]",
+    "MW_run_b": "U=101.5, p=0.683  [seed=42 only]",
+    "spearman_rho": "-0.70  (p<0.001) \u2014 cross-ref instability_analysis.csv from exp4"
+  },
+  "fixes_applied": [
+    "FIX-A: RMSE from expression string \u2014 active via HybridDiscoverySystem.discover()",
+    "FIX-B: formula/expression/final_formula aliases \u2014 routed through v5.1 discover()",
+    "FIX-C: deterministic PySR \u2014 allow_nondeterministic=False in HybridDiscoverySystem",
+    "FIX-D: extreme-scale log-transform \u2014 active in hypatia path",
+    "FIX-POW: auto pow for non-negative X \u2014 active in hypatia path",
+    "FIX-KEY: checkpoint keyed on eq_id (int), not name (survives renames)",
+    "FIX-POP: populations=30 (was 2 in original notebook)",
+    "FIX-APIKEY: Kaggle Secrets only \u2014 no hardcoded sk-ant key",
+    "FIX-WIRE: hypatia condition now routes through HybridDiscoverySystem (was bypassed)",
+    "FIX-WALLCLOCK v3: per-condition wall-clocks. hypatia=_HYPATIA_MAX_RETRIES(3)*PYSR_TIMEOUT(1100)+300=3600s pysr_only=PYSR_TIMEOUT(1100)+300=1400s. v2's shared 1700s caused SIGALRM inside Julia on attempt 2 (attempt 1 used ~1149s leaving only ~551s for attempt 2's 1100s run)."
+  ]
+}

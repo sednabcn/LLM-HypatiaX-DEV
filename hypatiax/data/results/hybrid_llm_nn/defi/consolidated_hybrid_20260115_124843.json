@@ -1,0 +1,1187 @@
+[
+  {
+    "method": "consolidated_hybrid",
+    "description": "Impermanent loss in constant product AMM (Uniswap V2)",
+    "domain": "amm",
+    "decision": "llm",
+    "decision_reason": "\u2b50 EXTRAP: LLM excellent (R\u00b2=1.0000)",
+    "is_extrapolation_test": true,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "2*sqrt(r)/(1+r) - 1",
+      "python_code": "def formula(price_ratio):\n    import numpy as np\n    r = price_ratio\n    return 2 * np.sqrt(r) / (1 + r) - 1",
+      "explanation": "This formula calculates the impermanent loss in a constant product AMM where r is the price ratio of one asset relative to its initial price. The loss represents the difference between holding tokens in the AMM versus holding them individually when prices change.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9980478938015706,
+        "rmse": 0.0013538159926621892,
+        "mae": 0.0009703173758832783
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "impermanent_loss",
+      "domain": "amm",
+      "difficulty": "hard",
+      "formula_type": "rational_sqrt",
+      "extrapolation_test": true,
+      "ground_truth": "2*sqrt(r)/(1+r) - 1",
+      "protocol": "Protocol_DeFi",
+      "train_range": "0.5-1.5",
+      "test_range": "1.6-2.5",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:42:01.986740"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Impermanent loss percentage in AMM",
+    "domain": "amm",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "N/A",
+      "python_code": "import numpy as np\n\ndef formula(price_ratio):\n    il_fraction = 2.0 * np.sqrt(price_ratio) / (1.0 + price_ratio) - 1.0\n    return il_fraction * 100.0\n\n# Examples\nprint(f\"No price change (r=1.0): {formula(1.0):.2f}%\")     # 0.00%\nprint(f\"2x price increase (r=2.0): {formula(2.0):.2f}%\")   # -5.72%\nprint(f\"5x price increase (r=5.0): {formula(5.0):.2f}%\")   # -25.46%\nprint(f\"50% price drop (r=0.5): {formula(0.5):.2f}%\")      # -5.72%",
+      "explanation": "N/A",
+      "specialized": true,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9929240112155265,
+        "rmse": 0.13567627583659428,
+        "mae": 0.09484450669975542
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "il_percentage",
+      "domain": "amm",
+      "difficulty": "medium",
+      "formula_type": "rational_sqrt",
+      "ground_truth": "(2*sqrt(r)/(1+r) - 1) * 100",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:42:20.721739"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Constant product formula: reserve Y given reserve X and invariant k",
+    "domain": "amm",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "reserve_y = invariant_k / reserve_x",
+      "python_code": "def formula(reserve_x, invariant_k):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return invariant_k / reserve_x",
+      "explanation": "In the constant product AMM formula x * y = k, given reserve X and the invariant k, we solve for reserve Y by dividing k by x. This maintains the constant product relationship between the two reserves.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.24441379823200737,
+        "rmse": 12331.672754618026,
+        "mae": 5104.413120233521
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "constant_product",
+      "domain": "amm",
+      "difficulty": "easy",
+      "formula_type": "rational",
+      "ground_truth": "k / x",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:42:37.116917"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Price impact of swap in constant product AMM",
+    "domain": "amm",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "swap_amount / (reserve_x + swap_amount)",
+      "python_code": "def formula(reserve_x, swap_amount):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return swap_amount / (reserve_x + swap_amount)",
+      "explanation": "In a constant product AMM, the price impact represents the percentage change in the reserve ratio after a swap. The formula calculates this as the swap amount divided by the sum of the original reserve and swap amount, representing how much the pool composition shifts due to the trade.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9910170571507203,
+        "rmse": 0.002703004342501044,
+        "mae": 0.002027001426382853
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "price_impact",
+      "domain": "amm",
+      "difficulty": "easy",
+      "formula_type": "rational",
+      "ground_truth": "dx / (x + dx)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:42:49.741983"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Parametric Value at Risk at 95% confidence (1-day)",
+    "domain": "risk_var",
+    "decision": "nn",
+    "decision_reason": "\u26a0\ufe0f EXTRAP: NN only (LLM failed)",
+    "is_extrapolation_test": true,
+    "llm_valid": false,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "N/A",
+      "python_code": "# Portfolio worth $1M with 2% daily volatility\nportfolio_value = 1_000_000\ndaily_volatility = 0.02\n\nvar_95 = formula(portfolio_value, daily_volatility)\nprint(f\"1-day VaR at 95% confidence: ${var_95:,.2f}\")\n# Output: 1-day VaR at 95% confidence: $32,900.00",
+      "explanation": "**VaR\u2089\u2085 = V \u00d7 \u03c3 \u00d7 1.645**",
+      "specialized": true,
+      "metrics": {
+        "error": "No formula function",
+        "success": false
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.996423929280808,
+        "rmse": 1132.3635049763684,
+        "mae": 799.0672202743202
+      }
+    },
+    "evaluation": {
+      "r2": 0.996423929280808,
+      "rmse": 1132.3635049763684,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "var_95",
+      "domain": "risk_var",
+      "difficulty": "medium",
+      "formula_type": "linear_multiplicative",
+      "extrapolation_test": true,
+      "ground_truth": "portfolio_value * volatility * 1.645",
+      "protocol": "Protocol_DeFi",
+      "train_range": "vol 0.01-0.03",
+      "test_range": "vol 0.035-0.05",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:43:06.395376"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Parametric Value at Risk at 99% confidence (1-day)",
+    "domain": "risk_var",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "VaR = portfolio_value \u00d7 daily_volatility \u00d7 2.326",
+      "python_code": "def formula(portfolio_value, daily_volatility):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return portfolio_value * daily_volatility * 2.326",
+      "explanation": "Parametric VaR at 99% confidence multiplies the portfolio value by daily volatility and the 99% confidence z-score (2.326) to estimate the maximum expected loss. This assumes normally distributed returns and calculates the loss threshold that should not be exceeded 99% of the time.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9987690452537181,
+        "rmse": 1078.9876014858835,
+        "mae": 771.671706081522
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "var_99",
+      "domain": "risk_var",
+      "difficulty": "medium",
+      "formula_type": "linear_multiplicative",
+      "ground_truth": "portfolio_value * volatility * 2.326",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:43:54.287687"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Multi-day Value at Risk using square root of time rule",
+    "domain": "risk_var",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "VaR_multi_day = VaR_1day \u00d7 \u221a(time_horizon_days)",
+      "python_code": "def formula(var_1day, time_horizon_days):\n    import numpy as np\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return var_1day * np.sqrt(time_horizon_days)",
+      "explanation": "The square root of time rule scales single-day Value at Risk to multiple days by multiplying by the square root of the time horizon. This assumes returns are independent and identically distributed with constant volatility.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9984251489035545,
+        "rmse": 4449.060611883163,
+        "mae": 3495.5567095790234
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "var_multiday",
+      "domain": "risk_var",
+      "difficulty": "easy",
+      "formula_type": "power_law",
+      "ground_truth": "var_1day * sqrt(days)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:44:54.354045"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Portfolio VaR for two correlated assets",
+    "domain": "risk_var",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": true,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.95,
+      "best_pattern": "linear"
+    },
+    "llm_result": {
+      "formula": "sqrt(var_asset1^2 + var_asset2^2 + 2*correlation*var_asset1*var_asset2)",
+      "python_code": "def formula(var_asset1, var_asset2, correlation):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return np.sqrt(var_asset1**2 + var_asset2**2 + 2*correlation*var_asset1*var_asset2)",
+      "explanation": "This formula calculates the portfolio Value at Risk (VaR) for two correlated assets by taking the square root of the sum of individual VaR squares plus twice their correlation-weighted cross product. The correlation term captures the diversification benefit (negative correlation) or concentration risk (positive correlation) between the two assets.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9986598175277825,
+        "rmse": 709.5764366640942,
+        "mae": 481.3990383213353
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "portfolio_var",
+      "domain": "risk_var",
+      "difficulty": "hard",
+      "formula_type": "power_law_complex",
+      "ground_truth": "sqrt(var1^2 + var2^2 + 2*rho*var1*var2)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:45:12.080612"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Optimal LP position size using risk-adjusted Kelly criterion",
+    "domain": "liquidity",
+    "decision": "nn",
+    "decision_reason": "\u26a0\ufe0f EXTRAP: NN only (LLM failed)",
+    "is_extrapolation_test": true,
+    "llm_valid": false,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "N/A",
+      "python_code": "# High fee, low risk pair (e.g., stablecoin pair)\noptimal_size = formula(expected_fee_apy=0.15, il_risk=0.05)  # ~30% allocation\n\n# Lower fee, higher risk pair (e.g., volatile altcoin pair)\noptimal_size = formula(expected_fee_apy=0.25, il_risk=0.30)  # ~14% allocation",
+      "explanation": "N/A",
+      "specialized": true,
+      "metrics": {
+        "error": "No formula function",
+        "success": false
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.8795587985047721,
+        "rmse": 0.02229392969068443,
+        "mae": 0.006567925134860295
+      }
+    },
+    "evaluation": {
+      "r2": 0.8795587985047721,
+      "rmse": 0.02229392969068443,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "kelly_criterion",
+      "domain": "liquidity",
+      "difficulty": "hard",
+      "formula_type": "rational_capped",
+      "extrapolation_test": true,
+      "ground_truth": "min(\u03bc / (2 * \u03c3\u00b2), 1.0)",
+      "protocol": "Protocol_DeFi",
+      "train_range": "apy 0.05-0.18",
+      "test_range": "apy 0.22-0.30",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:45:35.984543"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "LP fee earnings based on liquidity share",
+    "domain": "liquidity",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "(liquidity_provided / pool_liquidity) * total_fees",
+      "python_code": "def formula(liquidity_provided, pool_liquidity, total_fees):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return (liquidity_provided / pool_liquidity) * total_fees",
+      "explanation": "This formula calculates a liquidity provider's share of total fees by multiplying their proportional stake in the pool by the total fees collected. The liquidity provider earns fees proportional to their contribution relative to the entire pool's liquidity.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.8970697042683438,
+        "rmse": 167.3394902750717,
+        "mae": 92.30212575984375
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "lp_fee_share",
+      "domain": "liquidity",
+      "difficulty": "easy",
+      "formula_type": "rational_multiplicative",
+      "ground_truth": "(liq_provided / pool_liq) * total_fees",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:45:48.006729"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Capital efficiency multiplier for concentrated liquidity position",
+    "domain": "liquidity",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": true,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.95,
+      "best_pattern": "linear"
+    },
+    "llm_result": {
+      "formula": "P_upper / (P_upper - P_lower)",
+      "python_code": "def formula(price_lower, price_upper, price_current):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return price_upper / (price_upper - price_lower)",
+      "explanation": "The capital efficiency multiplier measures how much more efficient a concentrated liquidity position is compared to providing liquidity across the full price range. It represents the ratio of the upper bound to the price range width, indicating higher efficiency for narrower ranges.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.998843782349129,
+        "rmse": 0.004397430827172447,
+        "mae": 0.003184342384338312
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "capital_efficiency",
+      "domain": "liquidity",
+      "difficulty": "medium",
+      "formula_type": "rational",
+      "ground_truth": "P_upper / (P_upper - P_lower)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:46:03.863657"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "APY calculation from APR with daily compounding",
+    "domain": "liquidity",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": true,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.95,
+      "best_pattern": "linear"
+    },
+    "llm_result": {
+      "formula": "(1 + apr/365)^365 - 1",
+      "python_code": "def formula(apr):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return (1 + apr/365)**365 - 1",
+      "explanation": "This formula converts Annual Percentage Rate (APR) to Annual Percentage Yield (APY) by compounding the daily rate (apr/365) over 365 days in a year. The APY represents the actual annual return including the effect of compounding, which is higher than the nominal APR due to earning returns on previously earned interest.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9970760118934875,
+        "rmse": 0.00834018862489477,
+        "mae": 0.0060745110975161
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "apy_from_apr",
+      "domain": "liquidity",
+      "difficulty": "medium",
+      "formula_type": "exponential",
+      "ground_truth": "(1 + apr/365)^365 - 1",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:46:23.106346"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Expected Shortfall (CVaR) at 95% confidence for normal returns",
+    "domain": "expected_shortfall",
+    "decision": "llm",
+    "decision_reason": "\u2b50 EXTRAP: LLM excellent (R\u00b2=1.0000)",
+    "is_extrapolation_test": true,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "ES\u2080.\u2080\u2085 = portfolio_value \u00d7 daily_volatility \u00d7 2.063",
+      "python_code": "def formula(portfolio_value, daily_volatility):\n    # Expected Shortfall at 95% confidence for normal distribution\n    return portfolio_value * daily_volatility * 2.063",
+      "explanation": "Expected Shortfall at 95% confidence level represents the average loss in the worst 5% of scenarios, calculated as the portfolio value multiplied by daily volatility and the factor 2.063 (which is the conditional expectation beyond the 95th percentile for a standard normal distribution). This measure provides the expected loss given that a loss exceeds the 95% Value-at-Risk threshold.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9955574886900231,
+        "rmse": 1483.67213301824,
+        "mae": 1146.6829525688042
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "es_95",
+      "domain": "expected_shortfall",
+      "difficulty": "medium",
+      "formula_type": "linear_multiplicative",
+      "extrapolation_test": true,
+      "ground_truth": "portfolio * volatility * 2.063",
+      "protocol": "Protocol_DeFi",
+      "train_range": "vol 0.01-0.03",
+      "test_range": "vol 0.035-0.05",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:46:33.010954"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Expected Shortfall (CVaR) at 99% confidence for normal returns",
+    "domain": "expected_shortfall",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "ES\u2080.\u2089\u2089 = portfolio_value \u00d7 daily_volatility \u00d7 2.665",
+      "python_code": "def formula(portfolio_value, daily_volatility):\n    # Expected Shortfall at 99% confidence level for normal distribution\n    return portfolio_value * daily_volatility * 2.665",
+      "explanation": "Expected Shortfall at 99% confidence calculates the average loss beyond the 99% VaR threshold, using the factor 2.665 which represents the conditional expectation of a standard normal distribution beyond the 99th percentile. This provides the expected portfolio loss in the worst 1% of scenarios assuming normal return distribution.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9991947029310077,
+        "rmse": 999.9101407198692,
+        "mae": 740.2593801638152
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "es_99",
+      "domain": "expected_shortfall",
+      "difficulty": "medium",
+      "formula_type": "linear_multiplicative",
+      "ground_truth": "portfolio * volatility * 2.665",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:46:46.005831"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Expected Shortfall from VaR using tail risk multiplier",
+    "domain": "expected_shortfall",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": true,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.95,
+      "best_pattern": "linear"
+    },
+    "llm_result": {
+      "formula": "ES\u2089\u2085 = VaR\u2089\u2085 \u00d7 1.254",
+      "python_code": "def formula(var_95):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return var_95 * 1.254",
+      "explanation": "Expected Shortfall at 95% confidence level is calculated by multiplying the 95% Value-at-Risk by the tail risk multiplier of 1.254, which represents the average ratio of ES to VaR for a normal distribution. This multiplier accounts for the additional tail risk beyond the VaR threshold.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9984272847063845,
+        "rmse": 1221.9555592915772,
+        "mae": 762.4237208994202
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "es_from_var",
+      "domain": "expected_shortfall",
+      "difficulty": "easy",
+      "formula_type": "linear_multiplicative",
+      "ground_truth": "var_95 * 1.254",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:46:58.964113"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Portfolio Expected Shortfall for correlated positions",
+    "domain": "expected_shortfall",
+    "decision": "nn",
+    "decision_reason": "NN better (0.9978 > 0.8237)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": true,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.95,
+      "best_pattern": "linear"
+    },
+    "llm_result": {
+      "formula": "ES_portfolio = ES1 + ES2 + 2*\u03c1*sqrt(ES1*ES2)",
+      "python_code": "def formula(position1_es, position2_es, correlation):\n    # Calculate portfolio expected shortfall with correlation adjustment\n    import numpy as np\n    return position1_es + position2_es + 2*correlation*np.sqrt(position1_es*position2_es)",
+      "explanation": "The portfolio expected shortfall combines individual position expected shortfalls with a correlation adjustment term that accounts for the dependency between positions. The correlation term 2*\u03c1*sqrt(ES1*ES2) represents the diversification benefit (when \u03c1 < 0) or concentration risk (when \u03c1 > 0) between the two positions.",
+      "specialized": false,
+      "metrics": {
+        "r2": 0.823724443937589,
+        "rmse": 23696.56026703716,
+        "mae": 16672.194434471206,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9977598706911681,
+        "rmse": 2386.9235385747384,
+        "mae": 1606.481771741013
+      }
+    },
+    "evaluation": {
+      "r2": 0.9977598706911681,
+      "rmse": 2386.9235385747384,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "portfolio_es",
+      "domain": "expected_shortfall",
+      "difficulty": "hard",
+      "formula_type": "complex_additive",
+      "ground_truth": "ES1 + ES2 + \u03c1*sqrt(ES1*ES2)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:47:16.551551"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Liquidation price for leveraged long position",
+    "domain": "liquidation",
+    "decision": "nn",
+    "decision_reason": "\u26a0\ufe0f EXTRAP: NN only (LLM failed)",
+    "is_extrapolation_test": true,
+    "llm_valid": false,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": true,
+      "confidence": 0.9,
+      "best_pattern": "reciprocal"
+    },
+    "llm_result": {
+      "formula": "N/A",
+      "python_code": "N/A",
+      "explanation": "N/A",
+      "specialized": true,
+      "metrics": {
+        "error": "No code",
+        "success": false
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.992267466500258,
+        "rmse": 617.4102779517242,
+        "mae": 406.38010127560045
+      }
+    },
+    "evaluation": {
+      "r2": 0.992267466500258,
+      "rmse": 617.4102779517242,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "liquidation_long",
+      "domain": "liquidation",
+      "difficulty": "hard",
+      "formula_type": "complex_rational",
+      "extrapolation_test": true,
+      "ground_truth": "entry_price * (1 - 1/(leverage * 0.8))",
+      "protocol": "Protocol_DeFi",
+      "train_range": "leverage 2-5",
+      "test_range": "leverage 7-10",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:47:33.900711"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Liquidation price for leveraged short position",
+    "domain": "liquidation",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": true,
+      "has_reciprocal": true,
+      "confidence": 0.9,
+      "best_pattern": "reciprocal"
+    },
+    "llm_result": {
+      "formula": "N/A",
+      "python_code": "def formula(entry_price, leverage):\n    maintenance_margin = 0.8\n    return entry_price * (1.0 + 1.0 / (leverage * maintenance_margin))",
+      "explanation": "N/A",
+      "specialized": true,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9972198906132893,
+        "rmse": 157.3792943825843,
+        "mae": 123.18166565832944
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "liquidation_short",
+      "domain": "liquidation",
+      "difficulty": "hard",
+      "formula_type": "complex_rational",
+      "ground_truth": "entry_price * (1 + 1/(leverage * 0.8))",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:47:48.886828"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Maximum safe leverage for given acceptable loss tolerance",
+    "domain": "liquidation",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": true,
+      "has_reciprocal": true,
+      "confidence": 0.9,
+      "best_pattern": "reciprocal"
+    },
+    "llm_result": {
+      "formula": "1 / (acceptable_loss_pct * 0.8)",
+      "python_code": "def formula(entry_price, acceptable_loss_pct):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return 1 / (acceptable_loss_pct * 0.8)",
+      "explanation": "The maximum safe leverage is calculated by taking the reciprocal of the acceptable loss percentage multiplied by 0.8 as a safety buffer. This ensures that even with maximum leverage, the potential loss stays within the trader's risk tolerance while accounting for market volatility and liquidation mechanisms.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9980415902076388,
+        "rmse": 0.17987392521937823,
+        "mae": 0.1234489766750001
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "max_leverage",
+      "domain": "liquidation",
+      "difficulty": "medium",
+      "formula_type": "rational",
+      "ground_truth": "1 / (loss_pct * 0.8)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:47:57.841557"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Required collateral for leveraged position",
+    "domain": "liquidation",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": true,
+      "has_reciprocal": true,
+      "confidence": 0.9,
+      "best_pattern": "reciprocal"
+    },
+    "llm_result": {
+      "formula": "required_collateral = position_size / leverage",
+      "python_code": "def formula(position_size, leverage):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return position_size / leverage",
+      "explanation": "The required collateral for a leveraged position is calculated by dividing the total position size by the leverage ratio. This represents the minimum amount of capital that must be deposited to open and maintain the leveraged position.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9955970061520609,
+        "rmse": 1289.7257336089626,
+        "mae": 675.4510327234152
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "required_collateral",
+      "domain": "liquidation",
+      "difficulty": "easy",
+      "formula_type": "rational",
+      "ground_truth": "position_size / leverage",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:48:10.753026"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Simple staking rewards calculation",
+    "domain": "staking",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "stake_amount \u00d7 apr \u00d7 (time_days / 365)",
+      "python_code": "def formula(stake_amount, apr, time_days):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return stake_amount * apr * (time_days / 365)",
+      "explanation": "This formula calculates simple staking rewards by multiplying the staked amount by the annual percentage rate (APR) and the fraction of the year represented by the staking period. The result represents the total rewards earned over the specified time period.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.9964982787883342,
+        "rmse": 167.5732297367023,
+        "mae": 137.4671103027072
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "staking_rewards",
+      "domain": "staking",
+      "difficulty": "easy",
+      "formula_type": "linear_multiplicative",
+      "ground_truth": "stake * apr * (days/365)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:48:20.981948"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Staker's share after token emissions dilution",
+    "domain": "staking",
+    "decision": "llm",
+    "decision_reason": "Excellent LLM (R\u00b2=1.0000)",
+    "is_extrapolation_test": false,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": false,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.0,
+      "best_pattern": null
+    },
+    "llm_result": {
+      "formula": "user_stake / (total_staked + new_emissions)",
+      "python_code": "def formula(user_stake, total_staked, new_emissions):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return user_stake / (total_staked + new_emissions)",
+      "explanation": "The formula calculates a staker's proportional share after new token emissions are added to the total staked pool. The staker's individual stake remains unchanged, but their percentage ownership is diluted by the new emissions added to the denominator.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.8817221244664791,
+        "rmse": 0.0006138248557782375,
+        "mae": 0.0003502763347480272
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "staking_dilution",
+      "domain": "staking",
+      "difficulty": "medium",
+      "formula_type": "rational",
+      "ground_truth": "user_stake / (total_staked + new_emissions)",
+      "protocol": "Protocol_DeFi",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:48:33.897282"
+  },
+  {
+    "method": "consolidated_hybrid",
+    "description": "Compound staking rewards with auto-restaking",
+    "domain": "staking",
+    "decision": "llm",
+    "decision_reason": "\u2b50 EXTRAP: LLM excellent (R\u00b2=1.0000)",
+    "is_extrapolation_test": true,
+    "llm_valid": true,
+    "nn_valid": true,
+    "pattern_characteristics": {
+      "is_linear": true,
+      "has_sqrt": false,
+      "has_reciprocal": false,
+      "confidence": 0.95,
+      "best_pattern": "linear"
+    },
+    "llm_result": {
+      "formula": "P * (1 + r/n)^(n*t)",
+      "python_code": "def formula(principal, apr, periods_per_year, time_years):\n    # Use np.minimum(), np.maximum(), np.where() for conditionals\n    return principal * (1 + apr/periods_per_year)**(periods_per_year * time_years)",
+      "explanation": "This is the standard compound interest formula where staking rewards are automatically reinvested at each compounding period. The formula calculates the final value by compounding the APR divided by the number of periods per year, raised to the power of total compounding periods.",
+      "specialized": false,
+      "metrics": {
+        "r2": 1.0,
+        "rmse": 0.0,
+        "mae": 0.0,
+        "success": true
+      }
+    },
+    "nn_result": {
+      "metrics": {
+        "r2": 0.994188743506485,
+        "rmse": 2255.5471607336494,
+        "mae": 1712.6484855606943
+      }
+    },
+    "evaluation": {
+      "r2": 1.0,
+      "rmse": 0.0,
+      "success": true
+    },
+    "metadata": {
+      "equation_name": "compound_staking",
+      "domain": "staking",
+      "difficulty": "hard",
+      "formula_type": "exponential",
+      "extrapolation_test": true,
+      "ground_truth": "P * (1 + r/n)^(n*t)",
+      "protocol": "Protocol_DeFi",
+      "train_range": "apr 0.08-0.12",
+      "test_range": "apr 0.15-0.20",
+      "noise_level": 0.0
+    },
+    "timestamp": "2026-01-15T12:48:43.417278"
+  }
+]

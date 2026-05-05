@@ -1,0 +1,396 @@
+{
+  "total_tests": 23,
+  "total_time": 2647.09689950943,
+  "passed": 23,
+  "failed": 0,
+  "by_domain": {
+    "risk_var": {
+      "passed": 4,
+      "failed": 0,
+      "extrapolation": 1
+    },
+    "expected_shortfall": {
+      "passed": 4,
+      "failed": 0,
+      "extrapolation": 1
+    },
+    "liquidity": {
+      "passed": 4,
+      "failed": 0,
+      "extrapolation": 1
+    },
+    "liquidation": {
+      "passed": 4,
+      "failed": 0,
+      "extrapolation": 1
+    },
+    "amm": {
+      "passed": 4,
+      "failed": 0,
+      "extrapolation": 1
+    },
+    "staking": {
+      "passed": 3,
+      "failed": 0,
+      "extrapolation": 1
+    }
+  },
+  "by_difficulty": {
+    "hard": {
+      "passed": 7,
+      "failed": 0
+    },
+    "easy": {
+      "passed": 7,
+      "failed": 0
+    },
+    "medium": {
+      "passed": 9,
+      "failed": 0
+    }
+  },
+  "extrapolation_results": [
+    {
+      "test_name": "expected_shortfall_es_95",
+      "domain": "expected_shortfall",
+      "passed": true,
+      "r2": 1.0
+    },
+    {
+      "test_name": "liquidation_liquidation_long",
+      "domain": "liquidation",
+      "passed": true,
+      "r2": 0.9999999995309328
+    },
+    {
+      "test_name": "risk_var_var_95",
+      "domain": "risk_var",
+      "passed": true,
+      "r2": 1.0
+    },
+    {
+      "test_name": "staking_compound_staking",
+      "domain": "staking",
+      "passed": true,
+      "r2": 0.9999921113927784
+    },
+    {
+      "test_name": "liquidity_kelly_criterion",
+      "domain": "liquidity",
+      "passed": true,
+      "r2": 0.9399800296020402
+    },
+    {
+      "test_name": "amm_impermanent_loss",
+      "domain": "amm",
+      "passed": true,
+      "r2": 0.9986391172561985
+    }
+  ],
+  "detailed_results": [
+    {
+      "test_name": "amm_constant_product",
+      "domain": "amm",
+      "difficulty": "easy",
+      "r2": 1.0,
+      "validation_score": 99.1,
+      "time": 91.77151274681091,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "invariant_k/reserve_x",
+      "ground_truth": "k / x",
+      "error": null
+    },
+    {
+      "test_name": "amm_il_percentage",
+      "domain": "amm",
+      "difficulty": "medium",
+      "r2": 0.9994892224824672,
+      "validation_score": 90.4,
+      "time": 67.53108620643616,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "price_ratio*(-11.562348) + 23.076326 - 11.561018/price_ratio",
+      "ground_truth": "(2*sqrt(r)/(1+r) - 1) * 100",
+      "error": null
+    },
+    {
+      "test_name": "amm_impermanent_loss",
+      "domain": "amm",
+      "difficulty": "hard",
+      "r2": 0.9986391172561985,
+      "validation_score": 91.3,
+      "time": 460.2408151626587,
+      "passed": true,
+      "extrapolation": true,
+      "expression": "-0.069613725/price_ratio**1.3358182 + price_ratio - (-price_ratio + price_ratio) + (price_ratio - 0.5768689)*(-1.0965793) - 0.46832132",
+      "ground_truth": "2*sqrt(r)/(1+r) - 1",
+      "error": null
+    },
+    {
+      "test_name": "amm_price_impact",
+      "domain": "amm",
+      "difficulty": "easy",
+      "r2": 0.9999101795512388,
+      "validation_score": 98.5,
+      "time": 53.09215593338013,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "0.813586/((reserve_x/swap_amount)**0.94903105)",
+      "ground_truth": "dx / (x + dx)",
+      "error": null
+    },
+    {
+      "test_name": "expected_shortfall_es_95",
+      "domain": "expected_shortfall",
+      "difficulty": "medium",
+      "r2": 1.0,
+      "validation_score": 100.0,
+      "time": 27.53147292137146,
+      "passed": true,
+      "extrapolation": true,
+      "expression": "portfolio_value*2.063*daily_volatility",
+      "ground_truth": "portfolio * volatility * 2.063",
+      "error": null
+    },
+    {
+      "test_name": "expected_shortfall_es_99",
+      "domain": "expected_shortfall",
+      "difficulty": "medium",
+      "r2": 1.0,
+      "validation_score": 100.0,
+      "time": 95.44713187217712,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "portfolio_value*daily_volatility*2.665",
+      "ground_truth": "portfolio * volatility * 2.665",
+      "error": null
+    },
+    {
+      "test_name": "expected_shortfall_es_from_var",
+      "domain": "expected_shortfall",
+      "difficulty": "easy",
+      "r2": 0.9999999999999986,
+      "validation_score": 38.0,
+      "time": 76.83878445625305,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "var_95**(0.9998825**(0.8290035/var_95))*1.254",
+      "ground_truth": "var_95 * 1.254",
+      "error": null
+    },
+    {
+      "test_name": "expected_shortfall_portfolio_es",
+      "domain": "expected_shortfall",
+      "difficulty": "hard",
+      "r2": 1.0,
+      "validation_score": 91.3,
+      "time": 41.27717351913452,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "correlation*position2_es + correlation*(position2_es*(-0.58578646) + position2_es) + position2_es + position2_es - (-position2_es - 0.00012112083)",
+      "ground_truth": "ES1 + ES2 + \u03c1*sqrt(ES1*ES2)",
+      "error": null
+    },
+    {
+      "test_name": "liquidation_liquidation_long",
+      "domain": "liquidation",
+      "difficulty": "hard",
+      "r2": 0.9999999995309328,
+      "validation_score": 90.4,
+      "time": 44.568453311920166,
+      "passed": true,
+      "extrapolation": true,
+      "expression": "entry_price - (leverage - 0.62879866) - (entry_price/(0.80000603*leverage) - (-(0.6708232 - leverage) + 0.4142077/leverage))",
+      "ground_truth": "entry_price * (1 - 1/(leverage * 0.8))",
+      "error": null
+    },
+    {
+      "test_name": "liquidation_liquidation_short",
+      "domain": "liquidation",
+      "difficulty": "hard",
+      "r2": 0.9999281698983146,
+      "validation_score": 89.2,
+      "time": 260.4934048652649,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "entry_price*entry_price*(entry_price**(-0.0559074))**((leverage/entry_price)**(leverage*0.10932678))/(entry_price*(entry_price**(-1.6005129))**(0.06766151/leverage))",
+      "ground_truth": "entry_price * (1 + 1/(leverage * 0.8))",
+      "error": null
+    },
+    {
+      "test_name": "liquidation_max_leverage",
+      "domain": "liquidation",
+      "difficulty": "medium",
+      "r2": 1.0,
+      "validation_score": 99.1,
+      "time": 136.40038871765137,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "1.25/acceptable_loss_pct",
+      "ground_truth": "1 / (loss_pct * 0.8)",
+      "error": null
+    },
+    {
+      "test_name": "liquidation_required_collateral",
+      "domain": "liquidation",
+      "difficulty": "easy",
+      "r2": 1.0,
+      "validation_score": 99.1,
+      "time": 146.48139834403992,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "position_size/leverage",
+      "ground_truth": "position_size / leverage",
+      "error": null
+    },
+    {
+      "test_name": "liquidity_apy_from_apr",
+      "domain": "liquidity",
+      "difficulty": "medium",
+      "r2": 0.9999998699402883,
+      "validation_score": 91.0,
+      "time": 80.01896595954895,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "apr*exp(apr**1.0280974*0.52873605)",
+      "ground_truth": "(1 + apr/365)^365 - 1",
+      "error": null
+    },
+    {
+      "test_name": "liquidity_capital_efficiency",
+      "domain": "liquidity",
+      "difficulty": "medium",
+      "r2": 1.0,
+      "validation_score": 100.0,
+      "time": 78.32686638832092,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "price_upper*0.0025",
+      "ground_truth": "P_upper / (P_upper - P_lower)",
+      "error": null
+    },
+    {
+      "test_name": "liquidity_kelly_criterion",
+      "domain": "liquidity",
+      "difficulty": "hard",
+      "r2": 0.9399800296020402,
+      "validation_score": 90.1,
+      "time": 437.16906476020813,
+      "passed": true,
+      "extrapolation": true,
+      "expression": "((il_risk/expected_fee_apy)**(il_risk*(-expected_fee_apy + il_risk)))**(il_risk*(expected_fee_apy - il_risk)/(expected_fee_apy*expected_fee_apy))",
+      "ground_truth": "min(\u03bc / (2 * \u03c3\u00b2), 1.0)",
+      "error": null
+    },
+    {
+      "test_name": "liquidity_lp_fee_share",
+      "domain": "liquidity",
+      "difficulty": "easy",
+      "r2": 1.0,
+      "validation_score": 99.1,
+      "time": 49.85526990890503,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "liquidity_provided*total_fees/pool_liquidity",
+      "ground_truth": "(liq_provided / pool_liq) * total_fees",
+      "error": null
+    },
+    {
+      "test_name": "risk_var_portfolio_var",
+      "domain": "risk_var",
+      "difficulty": "hard",
+      "r2": 0.9999735641837875,
+      "validation_score": 99.4,
+      "time": 50.210100412368774,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "-correlation*(-0.40750065*var_asset1 - 7129.5474) + var_asset1 + 3602.8127",
+      "ground_truth": "sqrt(var1^2 + var2^2 + 2*rho*var1*var2)",
+      "error": null
+    },
+    {
+      "test_name": "risk_var_var_95",
+      "domain": "risk_var",
+      "difficulty": "medium",
+      "r2": 1.0,
+      "validation_score": 100.0,
+      "time": 73.74786877632141,
+      "passed": true,
+      "extrapolation": true,
+      "expression": "portfolio_value*1.645*daily_volatility",
+      "ground_truth": "portfolio_value * volatility * 1.645",
+      "error": null
+    },
+    {
+      "test_name": "risk_var_var_99",
+      "domain": "risk_var",
+      "difficulty": "medium",
+      "r2": 0.9999999999679485,
+      "validation_score": 100.0,
+      "time": 90.93787217140198,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "daily_volatility*2.0291436*portfolio_value/0.8723778",
+      "ground_truth": "portfolio_value * volatility * 2.326",
+      "error": null
+    },
+    {
+      "test_name": "risk_var_var_multiday",
+      "domain": "risk_var",
+      "difficulty": "easy",
+      "r2": 1.0,
+      "validation_score": 99.4,
+      "time": 26.360065937042236,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "sqrt(time_horizon_days)*var_1day",
+      "ground_truth": "var_1day * sqrt(days)",
+      "error": null
+    },
+    {
+      "test_name": "staking_compound_staking",
+      "domain": "staking",
+      "difficulty": "hard",
+      "r2": 0.9999921113927784,
+      "validation_score": 91.3,
+      "time": 123.03934359550476,
+      "passed": true,
+      "extrapolation": true,
+      "expression": "2.4020681**(1.1438664*apr*time_years)*principal",
+      "ground_truth": "P * (1 + r/n)^(n*t)",
+      "error": null
+    },
+    {
+      "test_name": "staking_staking_dilution",
+      "domain": "staking",
+      "difficulty": "medium",
+      "r2": 0.9999997973958191,
+      "validation_score": 89.5,
+      "time": 49.02389693260193,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "user_stake/(total_staked*(0.09931931**(0.27798057*new_emissions*(-1.457903)/total_staked)))",
+      "ground_truth": "user_stake / (total_staked + new_emissions)",
+      "error": null
+    },
+    {
+      "test_name": "staking_staking_rewards",
+      "domain": "staking",
+      "difficulty": "easy",
+      "r2": 0.999999999999999,
+      "validation_score": 91.9,
+      "time": 86.34685778617859,
+      "passed": true,
+      "extrapolation": false,
+      "expression": "stake_amount*time_days*(-150.20872)/(-54826.184/apr)",
+      "ground_truth": "stake * apr * (days/365)",
+      "error": null
+    }
+  ],
+  "configuration": {
+    "mode": "CUSTOM (iter=50)",
+    "iterations": 50,
+    "populations": 8
+  }
+}

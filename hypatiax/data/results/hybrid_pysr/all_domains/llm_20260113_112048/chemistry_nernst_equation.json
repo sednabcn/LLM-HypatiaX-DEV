@@ -1,0 +1,88 @@
+{
+  "test_name": "chemistry_nernst_equation",
+  "success": true,
+  "timestamp": "2026-01-13T14:39:58.733000",
+  "system_info": {
+    "engine_version": "SymbolicEngineWithLLM v20",
+    "protocol": "ALL",
+    "protocol_path": "/home/agagora/Downloads/GITHUB/LLM-HypatiaX-Colab/hypatiax/core/generation/hybrid_llm_guide_validation/experiment_protocol_all_30.py",
+    "test_cases_loaded": 30,
+    "iterations": 50,
+    "batch_mode": true
+  },
+  "discovery_setup": {
+    "domain": "chemistry",
+    "description": "Nernst Equation",
+    "variables": ["E0", "R", "T", "n", "F", "Qr"],
+    "samples": 1000,
+    "mode": "hybrid",
+    "equation_hint": "Nernst Equation"
+  },
+  "llm_configuration": {
+    "primary_model": "claude-sonnet-4-20250514",
+    "primary_provider": "anthropic",
+    "max_tokens": 4096,
+    "secondary_model": "models/gemini-2.5-flash",
+    "secondary_provider": "google",
+    "max_output_tokens": 8192
+  },
+  "hybrid_system_config": {
+    "version": "HybridDiscoverySystem v4.0",
+    "discovery_mode": "calibrated",
+    "auto_config": true,
+    "max_retries": 3,
+    "physics_aware_fallback": false,
+    "complexity_threshold": 20
+  },
+  "discovery_results": {
+    "workflow_version": "3.8",
+    "attempt": 1,
+    "max_attempts": 3,
+    "seed": 42,
+    "discovery_mode": "hybrid",
+    "strategy": "LLM first, PySR refinement",
+    "llm_phase": {
+      "best_expression": "E0 - (R * T * Qr) / (n * F + 1)",
+      "r2_score": -7.6671,
+      "time_seconds": 8.66,
+      "http_status": "HTTP/1.1 200 OK"
+    },
+    "pysr_refinement": {
+      "expression": "E0 - (-3.8086433e-5 / (((-0.119488746 + (-0.8081196 / (Qr + (-0.8081221 / Qr)))) / (T + ((T * Qr) * ((-1.3534302e-5 * Qr) + 0.004650621)))) * n))",
+      "r2_score": 1.0,
+      "time_seconds": 235.99,
+      "improvement": true,
+      "improvement_reason": "PySR refinement improved result"
+    },
+    "final_result": {
+      "expression": "E0 - (-3.8086433e-5 / (((-0.119488746 + (-0.8081196 / (Qr + (-0.8081221 / Qr)))) / (T + ((T * Qr) * ((-1.3534302e-5 * Qr) + 0.004650621)))) * n))",
+      "r2_score": 1.0,
+      "engine": "symbolic",
+      "early_stop": true,
+      "early_stop_reason": "Excellent result"
+    }
+  },
+  "validation": {
+    "expression_quality_check": "passed",
+    "score": 100.0,
+    "max_score": 100,
+    "workflow_status": "complete"
+  },
+  "performance": {
+    "total_time_seconds": 268.84,
+    "llm_time_seconds": 8.66,
+    "pysr_time_seconds": 235.99,
+    "validation_time_seconds": 0.09
+  },
+  "warnings": [
+    "RuntimeWarning: invalid value encountered in divide (numpy correlation calculation)",
+    "UserWarning: Setting random_state without deterministic=True and parallelism='serial' results in non-deterministic searches"
+  ],
+  "outcome": {
+    "test_passed": true,
+    "r2_score": 1.0,
+    "validation_score": 100.0,
+    "llm_mode": "hybrid_pysr_better",
+    "discovery_successful": true
+  }
+}

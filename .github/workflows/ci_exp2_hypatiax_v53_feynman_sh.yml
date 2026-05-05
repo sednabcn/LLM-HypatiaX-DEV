@@ -8,7 +8,7 @@ name: Exp 2 — HypatiaX v5.3 Feynman Extrapolation · run_all.sh (n=30)
 # Differences vs ci_exp2_hypatiax_v53_feynman.yml (notebook-based):
 #   • Python 3.12 (run_all.sh requires 3.12+, notebook used 3.11)
 #   • Adds torch, anthropic, sympy (run_all.sh env_check requirements)
-#   • FEYNMAN_TIMEOUT=900 s (run_all.sh default; notebook used 1100 s)
+#   • FEYNMAN_TIMEOUT=1100 s (paper value; matches notebook)
 #   • PYSR_POPULATIONS=4 (4 vCPUs on ubuntu-latest; paper used 2)
 #   • Runs the Python script directly — no nbconvert, no path-patching step
 #   • Results land in hypatiax/data/results/ (matches run_all.sh RESULTS_DIR)
@@ -53,17 +53,17 @@ on:
         required: false
         default: 'true'
       feynman_timeout:
-        description: 'PySR timeout in seconds per equation (run_all.sh default: 900)'
+        description: 'PySR timeout per equation in seconds (blank = read from repro.yaml)'
         required: false
-        default: '900'
+        default: ''
       feynman_samples:
-        description: 'Training samples per equation (run_all.sh default: 200)'
+        description: 'Training samples per equation (blank = 200)'
         required: false
         default: '200'
       pysr_populations:
-        description: 'PySR populations (set to nCPUs; ubuntu-latest has 4)'
+        description: 'PySR populations (blank = read from repro.yaml)'
         required: false
-        default: '4'
+        default: ''
       dry_run:
         description: 'Dry-run only — print commands, skip execution (true/false)'
         required: false
@@ -250,10 +250,26 @@ jobs:
           [[ -n "${ANTHROPIC_API_KEY:-}" ]] || { echo "ERROR: ANTHROPIC_API_KEY not set"; exit 1; }
           echo "ANTHROPIC_API_KEY: set (${#ANTHROPIC_API_KEY} chars)"
           echo "JULIA_NUM_THREADS: ${JULIA_NUM_THREADS}"
-          echo "PYSR_POPULATIONS:  ${{ github.event.inputs.pysr_populations || '4' }}"
-          echo "FEYNMAN_TIMEOUT:   ${{ github.event.inputs.feynman_timeout || '900' }}s"
           echo "FEYNMAN_SAMPLES:   ${{ github.event.inputs.feynman_samples || '200' }}"
           echo "RESULTS_DIR:       ${RESULTS_DIR}"
+          echo "=== repro.yaml (paper-quality values) ==="
+          python3 - << 'PYEOF'
+import yaml, pathlib
+p = pathlib.Path("${GITHUB_WORKSPACE}/config/repro.yaml")
+r = yaml.safe_load(p.read_text())
+t = r.get('timeouts', {}); s = r.get('pysr', {})
+print(f"  run_id                  : {r.get('run_id')}")
+print(f"  timeouts.feynman_pysr_seconds : {t.get('feynman_pysr_seconds')}")
+print(f"  timeouts.fit_wall_timeout     : {t.get('fit_wall_timeout')}")
+print(f"  timeouts.fit_grace_secs       : {t.get('fit_grace_secs')}")
+print(f"  timeouts.method_seconds       : {t.get('method_seconds')}")
+print(f"  pysr.populations        : {s.get('populations')}")
+print(f"  pysr.population_size    : {s.get('population_size')}")
+print(f"  pysr.niterations        : {s.get('niterations')}")
+print(f"  pysr.maxsize            : {s.get('maxsize')}")
+print(f"  pysr.parsimony          : {s.get('parsimony')}")
+print(f"  seeds.pysr_seed         : {r.get('seeds',{}).get('pysr_seed')}")
+PYEOF
           echo "SHARD:             (assigned by plan job)"
 
       # ── Directory structure (mirrors run_all.sh env_check mkdir -p) ─────────
@@ -380,10 +396,16 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
           JULIA_NUM_THREADS: "4"
-          PYSR_POPULATIONS: ${{ github.event.inputs.pysr_populations || '4' }}
-          FEYNMAN_TIMEOUT: ${{ github.event.inputs.feynman_timeout || '900' }}
+          # All paper-quality values come from repro.yaml read at runtime.
+          # REPRO_CFG tells the script exactly where to find the file.
+          REPRO_CFG: ${{ github.workspace }}/config/repro.yaml
+          # CI dispatch overrides (absent = script reads repro.yaml directly).
+          PYSR_POPULATIONS: ${{ github.event.inputs.pysr_populations || '' }}
+          FEYNMAN_TIMEOUT: ${{ github.event.inputs.feynman_timeout || '' }}
           FEYNMAN_SAMPLES: ${{ github.event.inputs.feynman_samples || '200' }}
           FEYNMAN_NOISELESS_THRESHOLD: "0.9999"
+          # PYSR_FIT_WALL_TIMEOUT / PYSR_FIT_GRACE_SECS / METHOD_TIMEOUT:
+          # NOT set here — script reads them from repro.yaml via REPRO_CFG.
           RESUME: ${{ github.event.inputs.resume || 'true' }}
           # GITHUB_TOKEN: needed by _push_result_to_branch to push the results branch.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -421,8 +443,8 @@ jobs:
           echo ""
           echo "  Env:"
           echo "    JULIA_NUM_THREADS=${JULIA_NUM_THREADS}"
-          echo "    PYSR_POPULATIONS=${{ github.event.inputs.pysr_populations || '4' }}"
-          echo "    FEYNMAN_TIMEOUT=${{ github.event.inputs.feynman_timeout || '900' }}"
+          echo "    PYSR_POPULATIONS=${{ github.event.inputs.pysr_populations || '30' }}"
+          echo "    FEYNMAN_TIMEOUT=${{ github.event.inputs.feynman_timeout || '1100' }}"
           echo "    FEYNMAN_SAMPLES=${{ github.event.inputs.feynman_samples || '200' }}"
           echo "    RESULTS_DIR=${RESULTS_DIR}"
 
