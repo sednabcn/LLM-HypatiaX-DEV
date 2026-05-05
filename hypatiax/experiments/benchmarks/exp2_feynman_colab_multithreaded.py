@@ -63,6 +63,7 @@ else:
 import inspect
 import json
 import os
+import subprocess
 import time
 import warnings
 
@@ -87,23 +88,22 @@ _PYSR_VALID_PARAMS = None
 Left sidebar → key icon → add `ANTHROPIC_API_KEY` → enable for this notebook.
 """
 
-# API key — CI/standalone: read from environment variable (set via GitHub secret).
-# Colab: falls back to Colab Secrets if env var not already set.
+# Use Colab Secrets (left sidebar key icon) -- avoids hardcoding keys.
+# Add secret: ANTHROPIC_API_KEY
 import os
 
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-if not ANTHROPIC_API_KEY:
-    try:
-        from google.colab import userdata
-        ANTHROPIC_API_KEY = userdata.get('ANTHROPIC_API_KEY') or ''
-        print('API key loaded from Colab Secrets OK')
-    except Exception:
-        ANTHROPIC_API_KEY = ''
-os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY
+try:
+    from google.colab import userdata
+    ANTHROPIC_API_KEY = userdata.get('ANTHROPIC_API_KEY')
+    print('API key loaded from Colab Secrets OK')
+except Exception as e:
+    print(f'Colab Secrets unavailable: {e}')
+    ANTHROPIC_API_KEY = ''  # paste key here only as last resort
+os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY or ''
 if ANTHROPIC_API_KEY and ANTHROPIC_API_KEY.startswith('sk-ant-'):
-    print(f'API key set OK ({len(ANTHROPIC_API_KEY)} chars)')
+    print('API key set OK')
 else:
-    print('WARNING: ANTHROPIC_API_KEY missing or invalid — LLM calls will fail')
+    print('Key missing -- add via Colab Secrets (left sidebar key icon)')
 
 """## 5 · Run configuration"""
 
@@ -117,16 +117,8 @@ CFG = dict(
     output_json='exp2_feynman_extrap_multithreaded.json',
     nn_only=False,
 )
-# Auto-detect Colab — mount Drive only when running interactively there.
-# On CI / standalone the checkpoint goes to RESULTS_DIR (set by workflow env).
-_ON_COLAB = False
-try:
-    import google.colab  # noqa: F401
-    _ON_COLAB = True
-except ImportError:
-    pass
-
-if _ON_COLAB:
+MOUNT_DRIVE = True
+if MOUNT_DRIVE:
     try:
         from google.colab import drive
         drive.mount('/content/drive')
@@ -134,17 +126,6 @@ if _ON_COLAB:
         print(f"Checkpoints -> {CFG['output_json']}")
     except Exception as e:
         print(f'Drive mount skipped: {e}')
-else:
-    # CI / standalone: honour RESULTS_DIR env var if set
-    _results_dir = os.environ.get('RESULTS_DIR', '')
-    if _results_dir:
-        os.makedirs(os.path.join(_results_dir, 'comparison_results', 'feynman-tests', 'exp2'),
-                    exist_ok=True)
-        CFG['output_json'] = os.path.join(
-            _results_dir, 'comparison_results', 'feynman-tests', 'exp2',
-            CFG['output_json']
-        )
-    print(f"Checkpoints -> {CFG['output_json']}")
 print('Config:', CFG)
 
 """## 6 · 30-equation Feynman dataset
@@ -557,6 +538,154 @@ def run_hypatia(X_train, y_train, X_ext, y_ext, seed=42,
 
 print('HypatiaX (PySR multithreading) wrapper defined')
 
+# ── Wall-clock budget (CI only) ────────────────────────────────────────────
+# JOB_DEADLINE is set by the workflow as: job_start_epoch + 330*60.
+# When running locally or in Colab the variable is absent → no limit applied.
+_JOB_DEADLINE = float(os.environ.get("JOB_DEADLINE", "inf"))
+_PYSR_TIMEOUT = float(CFG.get("timeout", 1100))
+
+def _time_budget_ok():
+    """Return True if there is enough wall-clock time to run one more equation."""
+    if _JOB_DEADLINE == float("inf"):
+        return True
+    remaining = _JOB_DEADLINE - time.time()
+    # Need: PySR timeout + 120s NN + 300s buffer for save/upload steps
+    needed = _PYSR_TIMEOUT + 120 + 300
+    if remaining < needed:
+        print(f"⏰ Wall-clock budget exhausted — {remaining:.0f}s left, "
+              f"need {needed:.0f}s for next equation. Stopping cleanly.")
+        return False
+    print(f"  ⏱ Budget: {remaining/60:.1f} min remaining")
+    return True
+
+
+def _upload_checkpoint_artifact(json_path):
+    """
+    Upload the checkpoint JSON as a GitHub Actions artifact via the
+    actions/upload-artifact JS action runtime API.
+    Falls back silently when not running in GitHub Actions.
+    Uses gh CLI if available, otherwise curl to the artifact upload URL.
+    """
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    if not os.path.exists(json_path):
+        return
+    try:
+        # gh CLI is pre-installed on all GitHub-hosted runners
+        run_id  = os.environ.get("GITHUB_RUN_ID", "")
+        repo    = os.environ.get("GITHUB_REPOSITORY", "")
+        token   = os.environ.get("GITHUB_TOKEN", "")
+        if not (run_id and repo and token):
+            return
+        dest = os.path.basename(json_path)
+        result = subprocess.run(
+            ["gh", "api", "--method", "POST",
+             f"/repos/{repo}/actions/runs/{run_id}/artifacts",
+             "--field", f"name=feynman-checkpoint-live",
+             "--field", f"file=@{json_path}"],
+            env={**os.environ, "GH_TOKEN": token},
+            capture_output=True, timeout=30
+        )
+        if result.returncode == 0:
+            print(f"  ☁  Checkpoint uploaded to Actions artifacts ({dest})")
+        # gh artifact upload (simpler, available in gh >= 2.40)
+        else:
+            result2 = subprocess.run(
+                ["gh", "artifact", "upload", json_path,
+                 "--name", "feynman-checkpoint-live",
+                 "--repo", repo],
+                env={**os.environ, "GH_TOKEN": token},
+                capture_output=True, timeout=30
+            )
+            if result2.returncode == 0:
+                print(f"  ☁  Checkpoint uploaded via gh artifact upload")
+    except Exception as e:
+        print(f"  ⚠  Checkpoint upload skipped: {e}")
+
+
+# ── Results branch push helper ───────────────────────────────────────────
+# It pushes a single file to the `results` branch after every equation save.
+# Works even if the job is SIGKILL'd — push happens inline, not in a post step.
+
+_GIT_RESULTS_BRANCH = "results"
+
+def _push_result_to_branch(local_file_path: str, repo_relative_path: str) -> None:
+    """
+    Push local_file_path to repo_relative_path on the `results` branch.
+    Silently skips when not running in GitHub Actions or git is unavailable.
+    """
+    import os, subprocess, tempfile, shutil
+
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo  = os.environ.get("GITHUB_REPOSITORY", "")
+    if not token or not repo:
+        print("  ⚠  GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping branch push", flush=True)
+        return
+
+    if not os.path.exists(local_file_path):
+        return
+
+    try:
+        # Use a throwaway clone in /tmp so we don't dirty the working tree
+        clone_dir = tempfile.mkdtemp(prefix="results_push_")
+        remote    = f"https://x-access-token:{token}@github.com/{repo}.git"
+
+        # Shallow clone of the results branch (create if absent)
+        result = subprocess.run(
+            ["git", "clone", "--depth=1", "--branch", _GIT_RESULTS_BRANCH,
+             "--single-branch", remote, clone_dir],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            # Branch doesn't exist yet — init an orphan
+            subprocess.run(["git", "init", clone_dir], capture_output=True, timeout=30)
+            subprocess.run(
+                ["git", "-C", clone_dir, "checkout", "--orphan", _GIT_RESULTS_BRANCH],
+                capture_output=True, timeout=30
+            )
+            subprocess.run(
+                ["git", "-C", clone_dir, "remote", "add", "origin", remote],
+                capture_output=True, timeout=30
+            )
+
+        # Copy the file into the clone, preserving subdirectory structure
+        dest = os.path.join(clone_dir, repo_relative_path)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(local_file_path, dest)
+
+        env = {**os.environ,
+               "GIT_AUTHOR_NAME":     "github-actions[bot]",
+               "GIT_AUTHOR_EMAIL":    "github-actions[bot]@users.noreply.github.com",
+               "GIT_COMMITTER_NAME":  "github-actions[bot]",
+               "GIT_COMMITTER_EMAIL": "github-actions[bot]@users.noreply.github.com"}
+
+        subprocess.run(["git", "-C", clone_dir, "add", repo_relative_path],
+                       capture_output=True, timeout=30)
+        subprocess.run(
+            ["git", "-C", clone_dir, "commit", "--allow-empty",
+             "-m", f"ci: checkpoint {os.path.basename(local_file_path)}"],
+            capture_output=True, env=env, timeout=30
+        )
+        push = subprocess.run(
+            ["git", "-C", clone_dir, "push", "origin", _GIT_RESULTS_BRANCH],
+            capture_output=True, text=True, timeout=60
+        )
+        if push.returncode == 0:
+            print(f"  🌿 Pushed checkpoint → branch '{_GIT_RESULTS_BRANCH}':{repo_relative_path}", flush=True)
+        else:
+            print(f"  ⚠  Branch push failed: {push.stderr.strip()[:120]}", flush=True)
+
+    except Exception as exc:
+        print(f"  ⚠  Branch push exception: {exc}", flush=True)
+    finally:
+        try:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        except Exception:
+            pass
+
 """## 10 · Main loop — run all 30 equations
 
 Checkpointed to Google Drive after every equation.
@@ -584,6 +713,10 @@ for i, eq in enumerate(equations):
     if eq['id'] in all_results:
         print(f"[{i+1:2d}/30] ⏭  {eq['id']}: {eq['name']} — already done, skipping")
         continue
+
+    # Check wall-clock budget before starting a new equation
+    if not _time_budget_ok():
+        break
 
     eq_seed = CFG['seed'] + i * 7
     print(f"\n[{i+1:2d}/30] {eq['id']}: {eq['name']} [{eq['domain']}]")
@@ -630,6 +763,13 @@ for i, eq in enumerate(equations):
     # Checkpoint save — enables resume after disconnect
     with open(CFG['output_json'], 'w') as f:
         json.dump(all_results, f, indent=2)
+    # Upload to GitHub Actions artifact store so it survives a hard cancel
+    _upload_checkpoint_artifact(CFG['output_json'])
+    # Push to results branch — survives even a SIGKILL (push is inline, not post-step)
+    _push_result_to_branch(
+        CFG['output_json'],
+        "hypatiax/data/results/comparison_results/feynman-tests/exp2/exp2_feynman_extrap_multithreaded.json"
+    )
 
 print('\n' + '=' * 65)
 print('All equations completed.')
@@ -728,15 +868,7 @@ def colour_result(val):
         return 'background-color: #f8d7da; color: #721c24'
     return ''
 
-# Display styled dataframe only inside a Jupyter/Colab kernel
-if _ON_COLAB:
-    try:
-        from IPython.display import display
-        display(df.style.applymap(colour_result, subset=['Result']))
-    except Exception:
-        print(df.to_string())
-else:
-    print(df.to_string())
+df.style.applymap(colour_result, subset=['Result'])
 
 """## 13 · LaTeX table — ready to paste into §6"""
 
@@ -887,7 +1019,7 @@ df_export = pd.DataFrame(rows)
 csv_path = os.path.join(EXPORT_DIR, 'results.csv')
 df_export.to_csv(csv_path, index=False)
 print(f'[2/7] results.csv        {os.path.getsize(csv_path):,} bytes  ({len(df_export)} rows)')
-print(df_export.to_string())
+df_export
 
 # 3 · LaTeX table (latex variable built in cell 12)
 tex_path = os.path.join(EXPORT_DIR, 'table.tex')
@@ -1105,15 +1237,9 @@ print(f'Zip: {zip_path}  ({zip_size:,} bytes)')
 for fname in sorted(os.listdir(EXPORT_DIR)):
     sz = os.path.getsize(os.path.join(EXPORT_DIR, fname))
     print(f'  {fname:<30} {sz:>8,} bytes')
-if _ON_COLAB:
-    try:
-        from google.colab import files
-        print(f'Downloading {zip_path} ...')
-        files.download(zip_path)
-    except Exception as e:
-        print(f'Colab download unavailable: {e}')
-else:
-    print(f'Artifact ready for upload: {zip_path}')
+from google.colab import files
 
-if __name__ == '__main__':
-    pass  # entry point — all logic runs at module level above
+print(f'Downloading {zip_path} ...')
+files.download(zip_path)
+if __name__ == "__main__":
+    pass  # TODO: add entry point

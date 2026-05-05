@@ -289,6 +289,92 @@ def _eq_key(meta: dict, domain: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Results branch push helper
+# ---------------------------------------------------------------------------
+# It pushes a single file to the `results` branch after every equation save.
+# Works even if the job is SIGKILL'd — push happens inline, not in a post step.
+
+_GIT_RESULTS_BRANCH = "results"
+
+def _push_result_to_branch(local_file_path: str, repo_relative_path: str) -> None:
+    """
+    Push local_file_path to repo_relative_path on the `results` branch.
+    Silently skips when not running in GitHub Actions or git is unavailable.
+    """
+    import os, subprocess, tempfile, shutil
+
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo  = os.environ.get("GITHUB_REPOSITORY", "")
+    if not token or not repo:
+        print("  ⚠  GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping branch push", flush=True)
+        return
+
+    if not os.path.exists(local_file_path):
+        return
+
+    try:
+        # Use a throwaway clone in /tmp so we don't dirty the working tree
+        clone_dir = tempfile.mkdtemp(prefix="results_push_")
+        remote    = f"https://x-access-token:{token}@github.com/{repo}.git"
+
+        # Shallow clone of the results branch (create if absent)
+        result = subprocess.run(
+            ["git", "clone", "--depth=1", "--branch", _GIT_RESULTS_BRANCH,
+             "--single-branch", remote, clone_dir],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            # Branch doesn't exist yet — init an orphan
+            subprocess.run(["git", "init", clone_dir], capture_output=True, timeout=30)
+            subprocess.run(
+                ["git", "-C", clone_dir, "checkout", "--orphan", _GIT_RESULTS_BRANCH],
+                capture_output=True, timeout=30
+            )
+            subprocess.run(
+                ["git", "-C", clone_dir, "remote", "add", "origin", remote],
+                capture_output=True, timeout=30
+            )
+
+        # Copy the file into the clone, preserving subdirectory structure
+        dest = os.path.join(clone_dir, repo_relative_path)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(local_file_path, dest)
+
+        env = {**os.environ,
+               "GIT_AUTHOR_NAME":     "github-actions[bot]",
+               "GIT_AUTHOR_EMAIL":    "github-actions[bot]@users.noreply.github.com",
+               "GIT_COMMITTER_NAME":  "github-actions[bot]",
+               "GIT_COMMITTER_EMAIL": "github-actions[bot]@users.noreply.github.com"}
+
+        subprocess.run(["git", "-C", clone_dir, "add", repo_relative_path],
+                       capture_output=True, timeout=30)
+        subprocess.run(
+            ["git", "-C", clone_dir, "commit", "--allow-empty",
+             "-m", f"ci: checkpoint {os.path.basename(local_file_path)}"],
+            capture_output=True, env=env, timeout=30
+        )
+        push = subprocess.run(
+            ["git", "-C", clone_dir, "push", "origin", _GIT_RESULTS_BRANCH],
+            capture_output=True, text=True, timeout=60
+        )
+        if push.returncode == 0:
+            print(f"  🌿 Pushed checkpoint → branch '{_GIT_RESULTS_BRANCH}':{repo_relative_path}", flush=True)
+        else:
+            print(f"  ⚠  Branch push failed: {push.stderr.strip()[:120]}", flush=True)
+
+    except Exception as exc:
+        print(f"  ⚠  Branch push exception: {exc}", flush=True)
+    finally:
+        try:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Per-equation subprocess runner
 # ---------------------------------------------------------------------------
 
@@ -465,6 +551,22 @@ def main() -> int:
     completed: set[str] = set(state.get("completed", []))
     results:   dict     = state.get("results", {})
 
+    # Guard: if resume=True but checkpoint already covers all equations,
+    # reset so this run is not a silent no-op.
+    if args.resume and completed:
+        protocol_check = ExperimentProtocolAll()
+        total_check = sum(
+            1 for dom in protocol_check.get_all_domains()
+            for _ in protocol_check.load_test_data(dom, num_samples=1)
+        )
+        if len(completed) >= total_check:
+            print(
+                f"⚠️  Checkpoint marks {len(completed)}/{total_check} equations complete "
+                f"— all done. If you want to re-run, set resume=false.",
+                flush=True,
+            )
+            return 0
+
     # ── Collect all 30 test stubs (metadata only — no X/y yet) ───────────────
     all_tests: list[tuple] = []
     for domain in protocol.get_all_domains():
@@ -559,6 +661,7 @@ def main() -> int:
             state["completed"] = list(completed)
             state["results"]   = results
             _save_checkpoint(state)
+            _push_result_to_branch(str(_CHECKPOINT_PATH), "logs/exp2_symbolic_engine_checkpoint.json")
             completed_rows.append({
                 "eq_name":   meta.get("equation_name", description)[:26],
                 "domain":    domain,
@@ -596,6 +699,7 @@ def main() -> int:
         state["results"]    = results
         state["timestamp"]  = datetime.now().isoformat()
         _save_checkpoint(state)
+        _push_result_to_branch(str(_CHECKPOINT_PATH), "logs/exp2_symbolic_engine_checkpoint.json")
 
         if success:
             solved += 1
