@@ -69,14 +69,27 @@ on:
         required: false
         default: 'false'
 
+# FIX C1: grant contents:write so github-actions[bot] can push result branches.
+# Without this, any git push inside the workflow fails with "Permission denied"
+# even when GITHUB_TOKEN is correctly injected. The default token only has
+# contents:read on workflows triggered by push/schedule/workflow_dispatch.
+permissions:
+  contents: write
+
 jobs:
 
   plan:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      shard0_ids: ${{ steps.split.outputs.shard0_ids }}
-      shard1_ids: ${{ steps.split.outputs.shard1_ids }}
+      shard0_ids:  ${{ steps.split.outputs.shard0_ids }}
+      shard1_ids:  ${{ steps.split.outputs.shard1_ids }}
+      shard2_ids:  ${{ steps.split.outputs.shard2_ids }}
+      shard3_ids:  ${{ steps.split.outputs.shard3_ids }}
+      # num_shards drives the worker matrix: 2, 3, or 4 depending on pending count.
+      # Formula: largest of {2,3,4} that divides pending evenly, else 2.
+      num_shards:  ${{ steps.split.outputs.num_shards }}
+      shard_range: ${{ steps.split.outputs.shard_range }}
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -125,13 +138,14 @@ jobs:
             echo "No committed checkpoint found — starting fresh"
           fi
 
-      # Compute pending equations and split them into 2 balanced JSON arrays.
+      # Compute pending equations and split into 2–4 balanced shards.
+      # Shard count = largest divisor of len(pending) in {2,3,4}; falls back to 2.
       # Write the script to a temp file to avoid YAML/heredoc indentation issues.
       - name: Compute and split pending equations
         id: split
         run: |
           cat > /tmp/plan_split.py << 'ENDOFSCRIPT'
-          import json, os, pathlib
+          import json, os, pathlib, math
           ALL_IDS = [
             "I.6.2", "I.12.2", "I.15.10", "I.34.8", "I.50.26",
             "I.12.4", "I.34.27", "II.34.29b", "I.34.14", "II.2.42",
@@ -147,30 +161,58 @@ jobs:
           except Exception:
             done = set()
           pending = [e for e in ALL_IDS if e not in done]
-          mid = len(pending) // 2
-          s0, s1 = pending[:mid], pending[mid:]
-          print(f"Checkpoint: {len(done)}/30 done, {len(pending)} pending")
-          print(f"Shard 0 ({len(s0)}): {s0}")
-          print(f"Shard 1 ({len(s1)}): {s1}")
+          n = len(pending)
+
+          # Pick the largest of {2,3,4} that divides n evenly.
+          # If none divide evenly, choose the one that minimises the remainder
+          # (ties broken by preferring fewer shards).
+          # Hard minimum: 2 shards; hard maximum: 4 shards.
+          candidates = [2, 3, 4]
+          best = min(candidates, key=lambda k: (n % k, -k) if n % k != 0 else (0, -k))
+          # Never create more shards than there are pending equations.
+          num_shards = min(best, n) if n > 0 else 2
+
+          # Distribute pending evenly: first (n % num_shards) shards get one extra.
+          shards = []
+          base, extra = divmod(n, num_shards)
+          idx = 0
+          for i in range(num_shards):
+            size = base + (1 if i < extra else 0)
+            shards.append(pending[idx:idx+size])
+            idx += size
+
+          print(f"Checkpoint: {len(done)}/30 done, {n} pending → {num_shards} shards")
+          for i, s in enumerate(shards):
+            print(f"  Shard {i} ({len(s)}): {s}")
+
           gho = pathlib.Path(os.environ["GITHUB_OUTPUT"])
           with gho.open('a') as f:
-            f.write(f"shard0_ids={json.dumps(s0)}\n")
-            f.write(f"shard1_ids={json.dumps(s1)}\n")
+            # Always write all 4 shard outputs (unused ones get empty arrays).
+            for i in range(4):
+              ids = shards[i] if i < len(shards) else []
+              f.write(f"shard{i}_ids={json.dumps(ids)}\n")
+            f.write(f"num_shards={num_shards}\n")
+            # shard_range is a JSON array used by the worker matrix include list.
+            f.write(f"shard_range={json.dumps(list(range(num_shards)))}\n")
           ENDOFSCRIPT
           python3 /tmp/plan_split.py
 
   run-exp2-feynman-sh:
     needs: plan
     runs-on: ubuntu-latest
-    # 2 parallel shards × ~15 equations each.
-    # Worst case: ~48 min/eq × 15 eq + ~10 min Julia JIT warmup ≈ 13 h — still
-    # over the 6 h limit. For a guaranteed sub-6 h run use a self-hosted runner
-    # or increase the shard count. For smoke-testing one equation this is fine.
+    # Dynamic shards: 2–4 parallel workers × ≤15 equations each.
+    # Shard count is chosen by plan job as the largest of {2,3,4} that divides
+    # the pending equation count evenly (minimising remainder otherwise).
+    # Worst case per shard: ~48 min/eq × 15 eq + ~10 min Julia JIT ≈ 13 h —
+    # still over the 6 h GHA limit. For guaranteed sub-6 h use a self-hosted
+    # runner or accept that some shards will checkpoint and resume next run.
     timeout-minutes: 360
     strategy:
       fail-fast: false          # a timed-out shard doesn't cancel the sibling
       matrix:
-        shard: [0, 1]           # shard index only used for cache/artifact naming
+        # shard_range is a JSON array like [0,1], [0,1,2], or [0,1,2,3]
+        # emitted by the plan job; fromJSON turns it into a matrix dimension.
+        shard: ${{ fromJSON(needs.plan.outputs.shard_range) }}
 
     env:
       # ── Node.js 24 opt-in (silences deprecation warnings for all actions) ──
@@ -320,6 +362,8 @@ jobs:
         env:
           SHARD0_IDS: ${{ needs.plan.outputs.shard0_ids }}
           SHARD1_IDS: ${{ needs.plan.outputs.shard1_ids }}
+          SHARD2_IDS: ${{ needs.plan.outputs.shard2_ids }}
+          SHARD3_IDS: ${{ needs.plan.outputs.shard3_ids }}
           SHARD_INDEX: ${{ matrix.shard }}
         run: |
           STAGED="${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json"
@@ -327,7 +371,13 @@ jobs:
 
           # Derive this shard's equation list from plan outputs via env vars —
           # avoids inline ternary truncation bug with long JSON arrays.
-          if [[ "$SHARD_INDEX" == "0" ]]; then SHARD_IDS="$SHARD0_IDS"; else SHARD_IDS="$SHARD1_IDS"; fi
+          case "$SHARD_INDEX" in
+            0) SHARD_IDS="$SHARD0_IDS" ;;
+            1) SHARD_IDS="$SHARD1_IDS" ;;
+            2) SHARD_IDS="$SHARD2_IDS" ;;
+            3) SHARD_IDS="$SHARD3_IDS" ;;
+            *) echo "ERROR: unexpected SHARD_INDEX=$SHARD_INDEX"; exit 1 ;;
+          esac
 
           if [ -f "$COMMITTED_MASTER" ]; then
             # Filter master checkpoint to only the keys assigned to this shard.
@@ -389,10 +439,12 @@ jobs:
           RESUME: ${{ github.event.inputs.resume || 'true' }}
           # GITHUB_TOKEN: needed by _push_result_to_branch to push the results branch.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pass both shard outputs as env vars — avoids inline ternary truncation
+          # Pass all shard outputs as env vars — avoids inline ternary truncation
           # bug where long JSON arrays were cut off mid-string by the runner.
           SHARD0_IDS: ${{ needs.plan.outputs.shard0_ids }}
           SHARD1_IDS: ${{ needs.plan.outputs.shard1_ids }}
+          SHARD2_IDS: ${{ needs.plan.outputs.shard2_ids }}
+          SHARD3_IDS: ${{ needs.plan.outputs.shard3_ids }}
           SHARD_INDEX: ${{ matrix.shard }}
 
         run: |
@@ -411,17 +463,23 @@ jobs:
             ARGS="$ARGS --resume"
           fi
 
-          # FIX B1 + SHARD_IDS truncation fix: select shard IDs via shell if/else
+          # FIX B1 + SHARD_IDS truncation fix: select shard IDs via shell case
           # using env vars injected above — the inline ternary expression was
           # truncating long JSON arrays mid-string on the GitHub Actions runner.
-          if [[ "$SHARD_INDEX" == "0" ]]; then SHARD_IDS="$SHARD0_IDS"; else SHARD_IDS="$SHARD1_IDS"; fi
-          # FIX B5: --equation-ids is intentionally NOT folded into $ARGS.
-          # $ARGS is expanded unquoted (to allow word-splitting of simple flags),
-          # which would also split the JSON array on spaces and commas, delivering
-          # a truncated token like '["I.6.2",' to argparse instead of the full
-          # array. Passing it as a separate quoted argument preserves the JSON
-          # string as a single token regardless of its length or content.
+          # Extended to support 2/3/4 shards (dynamic from plan job).
+          case "$SHARD_INDEX" in
+            0) SHARD_IDS="$SHARD0_IDS" ;;
+            1) SHARD_IDS="$SHARD1_IDS" ;;
+            2) SHARD_IDS="$SHARD2_IDS" ;;
+            3) SHARD_IDS="$SHARD3_IDS" ;;
+            *) echo "ERROR: unexpected SHARD_INDEX=$SHARD_INDEX"; exit 1 ;;
+          esac
 
+          # FIX B5: --equation-ids is intentionally NOT folded into $ARGS.
+          # $ARGS expands unquoted (to word-split simple flags), which would also
+          # split the JSON array on spaces/commas, delivering a truncated token
+          # like '["I.6.2",' to argparse. Passing it as a separate quoted
+          # argument preserves the full JSON string as a single token.
           python3 -u exp2_feynman_colab_multithreaded.py $ARGS \
             --equation-ids "$SHARD_IDS" \
             2>&1 | tee "$LOG"
