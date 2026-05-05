@@ -236,7 +236,8 @@ jobs:
       PYSR_PARALLELISM: "multithreading"   # immune to ProcessExitedException
 
       # ── LLM ────────────────────────────────────────────────────────────────
-      LLM_MODEL: "claude-sonnet-4-5"
+      # Model string must match repro.yaml llm_model exactly.
+      LLM_MODEL: "claude-sonnet-4-20250514"
       # Secret injected directly — avoids echoing the masked value in shell logs
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -270,8 +271,13 @@ jobs:
             scikit-learn \
             scipy \
             numpy \
-            pandas \
-            pyyaml
+            "pandas<2.1.0" \
+            pyyaml \
+            python-dotenv
+          # FIX: pin pandas<2.1.0 — pandas 2.1 renamed Styler.applymap() to .map(),
+          # and pandas 3.x removed it entirely. Without the pin, pysr pulls in the
+          # latest pandas (3.0.2 in this run), crashing the script after all equations
+          # complete but before the final result files are written.
 
       # ── Julia ──────────────────────────────────────────────────────────────
       - name: Install Julia ${{ env.JULIA_VERSION }}
@@ -306,6 +312,17 @@ jobs:
           echo "=== repro.yaml (paper-quality values) ==="
           python3 "${{ github.workspace }}/.github/scripts/print_repro.py"
           echo "SHARD:             (assigned by plan job)"
+
+      # ── Anthropic API key validation (config/test_key_status.py) ─────────────
+      # Runs a live round-trip against the Anthropic API to confirm the GitHub
+      # secret is valid and has credits before the 6-hour experiment starts.
+      # Fails fast with a clear error rather than discovering the key is broken
+      # mid-run after several equations have already been attempted.
+      - name: Validate ANTHROPIC_API_KEY (live round-trip)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python3 "${{ github.workspace }}/config/test_key_status.py"
 
       # ── Directory structure (mirrors run_all.sh env_check mkdir -p) ─────────
       - name: Create results directory structure
@@ -437,6 +454,11 @@ jobs:
           # PYSR_FIT_WALL_TIMEOUT / PYSR_FIT_GRACE_SECS / METHOD_TIMEOUT:
           # NOT set here — script reads them from repro.yaml via REPRO_CFG.
           RESUME: ${{ github.event.inputs.resume || 'true' }}
+          # FIX: ANTHROPIC_API_KEY repeated at step level — the Python script's
+          # Colab fallback path calls os.environ.get() after the google import
+          # fails. Job-level env should flow through, but step-level is explicit
+          # and reliable; avoids "Key missing" when the Colab path short-circuits.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # GITHUB_TOKEN: needed by _push_result_to_branch to push the results branch.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pass all shard outputs as env vars — avoids inline ternary truncation
@@ -448,6 +470,13 @@ jobs:
           SHARD_INDEX: ${{ matrix.shard }}
 
         run: |
+          # ENFORCE: set ANTHROPIC_API_KEY from GitHub secret at the shell level.
+          # This guarantees os.environ['ANTHROPIC_API_KEY'] is populated before
+          # Python starts, overriding any Colab-path fallback in the script.
+          export ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}"
+          [[ -n "${ANTHROPIC_API_KEY}" ]] || { echo "ERROR: ANTHROPIC_API_KEY secret is empty or unset"; exit 1; }
+          echo "ANTHROPIC_API_KEY: enforced from GitHub secret (${#ANTHROPIC_API_KEY} chars)"
+
           LOG="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run_shard${{ matrix.shard }}.log"
           CHECKPOINT="${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json"
 
@@ -480,6 +509,14 @@ jobs:
           # split the JSON array on spaces/commas, delivering a truncated token
           # like '["I.6.2",' to argparse. Passing it as a separate quoted
           # argument preserves the full JSON string as a single token.
+          #
+          # FIX C2: set -o pipefail — without this, the exit code of
+          # `python3 ... | tee "$LOG"` is tee's exit code (always 0), not
+          # Python's. A crash inside the script (e.g. AttributeError in the
+          # summary display block) was silently swallowed: the step showed green,
+          # upload steps ran, and found no result files. With pipefail the step
+          # fails immediately if Python exits non-zero, making the crash visible.
+          set -o pipefail
           python3 -u exp2_feynman_colab_multithreaded.py $ARGS \
             --equation-ids "$SHARD_IDS" \
             2>&1 | tee "$LOG"
@@ -502,6 +539,77 @@ jobs:
           echo "    FEYNMAN_TIMEOUT=${{ github.event.inputs.feynman_timeout || '1100' }}"
           echo "    FEYNMAN_SAMPLES=${{ github.event.inputs.feynman_samples || '200' }}"
           echo "    RESULTS_DIR=${RESULTS_DIR}"
+
+      # ── FIX C3: Extract results from checkpoint → RESULTS_DIR ───────────────
+      # Root bug in the previous run: the script crashed in the summary display
+      # block (df.style.applymap — see pandas fix above) AFTER all equations
+      # completed and per-equation checkpoints were pushed to git, but BEFORE the
+      # final comparison_results JSON/CSV were written.  The upload steps found
+      # no files and silently skipped them (if-no-files-found: ignore).
+      #
+      # This step runs if: always() and writes results directly from the checkpoint
+      # so they land in RESULTS_DIR regardless of whether the script's summary
+      # block completes cleanly.  The script's own save is the canonical output;
+      # this is a safety-net that kicks in only when the target files are absent.
+      - name: Extract results from checkpoint to RESULTS_DIR (safety net)
+        if: always()
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/hypatiax/data/results
+        run: |
+          CHECKPOINT="${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json"
+          OUT_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2"
+          JSON_OUT="${OUT_DIR}/exp2_feynman_results_shard${{ matrix.shard }}.json"
+          CSV_OUT="${OUT_DIR}/exp2_feynman_results_shard${{ matrix.shard }}.csv"
+
+          if [ ! -f "$CHECKPOINT" ]; then
+            echo "No checkpoint found — skipping extraction"
+            exit 0
+          fi
+
+          # Only write if the script didn't already produce the files itself.
+          ALREADY=$(ls "${OUT_DIR}"/*.json "${OUT_DIR}"/*.csv 2>/dev/null | wc -l)
+          if [ "$ALREADY" -gt 0 ]; then
+            echo "Result files already present (script saved them cleanly) — skipping extraction"
+            exit 0
+          fi
+
+          mkdir -p "$OUT_DIR"
+          python3 - << 'PYEOF'
+          import json, csv, os, pathlib, sys
+
+          ckpt_path = os.environ["CHECKPOINT"]
+          out_dir   = pathlib.Path(os.environ["OUT_DIR"])
+          shard     = os.environ["SHARD_INDEX"]
+
+          raw = json.loads(pathlib.Path(ckpt_path).read_text())
+          rows = {k: v for k, v in raw.items() if not k.startswith("_")}
+
+          if not rows:
+              print("Checkpoint contains no equation results — nothing to extract")
+              sys.exit(0)
+
+          # Write JSON
+          json_path = out_dir / f"exp2_feynman_results_shard{shard}.json"
+          json_path.write_text(json.dumps(rows, indent=2))
+          print(f"Wrote {len(rows)} results → {json_path}")
+
+          # Write CSV (flatten top-level scalar fields per equation)
+          csv_path = out_dir / f"exp2_feynman_results_shard{shard}.csv"
+          all_keys = sorted({k for row in rows.values() if isinstance(row, dict) for k in row})
+          with csv_path.open("w", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=["equation_id"] + all_keys, extrasaction="ignore")
+              w.writeheader()
+              for eq_id, data in rows.items():
+                  if isinstance(data, dict):
+                      w.writerow({"equation_id": eq_id, **data})
+                  else:
+                      w.writerow({"equation_id": eq_id})
+          print(f"Wrote CSV → {csv_path}")
+          PYEOF
+        env:
+          CHECKPOINT: ${{ github.workspace }}/logs/exp2_feynman_checkpoint_shard${{ matrix.shard }}.json
+          OUT_DIR: ${{ github.workspace }}/hypatiax/data/results/comparison_results/feynman-tests/exp2
+          SHARD_INDEX: ${{ matrix.shard }}
 
       # ── Ensure checkpoint exists before cache save ──────────────────────────
       # actions/cache/save@v5 errors with "Cache save failed" when the target
