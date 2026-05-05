@@ -253,23 +253,24 @@ jobs:
           echo "FEYNMAN_SAMPLES:   ${{ github.event.inputs.feynman_samples || '200' }}"
           echo "RESULTS_DIR:       ${RESULTS_DIR}"
           echo "=== repro.yaml (paper-quality values) ==="
-          python3 - << 'PYEOF'
-import yaml, pathlib
-p = pathlib.Path("${GITHUB_WORKSPACE}/config/repro.yaml")
+          cat > /tmp/print_repro.py << 'SCRIPTEOF'
+import yaml, pathlib, os
+p = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'config' / 'repro.yaml'
 r = yaml.safe_load(p.read_text())
 t = r.get('timeouts', {}); s = r.get('pysr', {})
-print(f"  run_id                  : {r.get('run_id')}")
-print(f"  timeouts.feynman_pysr_seconds : {t.get('feynman_pysr_seconds')}")
-print(f"  timeouts.fit_wall_timeout     : {t.get('fit_wall_timeout')}")
-print(f"  timeouts.fit_grace_secs       : {t.get('fit_grace_secs')}")
-print(f"  timeouts.method_seconds       : {t.get('method_seconds')}")
-print(f"  pysr.populations        : {s.get('populations')}")
-print(f"  pysr.population_size    : {s.get('population_size')}")
-print(f"  pysr.niterations        : {s.get('niterations')}")
-print(f"  pysr.maxsize            : {s.get('maxsize')}")
-print(f"  pysr.parsimony          : {s.get('parsimony')}")
-print(f"  seeds.pysr_seed         : {r.get('seeds',{}).get('pysr_seed')}")
-PYEOF
+print('  run_id                       :', r.get('run_id'))
+print('  timeouts.feynman_pysr_seconds:', t.get('feynman_pysr_seconds'))
+print('  timeouts.fit_wall_timeout    :', t.get('fit_wall_timeout'))
+print('  timeouts.fit_grace_secs      :', t.get('fit_grace_secs'))
+print('  timeouts.method_seconds      :', t.get('method_seconds'))
+print('  pysr.populations             :', s.get('populations'))
+print('  pysr.population_size         :', s.get('population_size'))
+print('  pysr.niterations             :', s.get('niterations'))
+print('  pysr.maxsize                 :', s.get('maxsize'))
+print('  pysr.parsimony               :', s.get('parsimony'))
+print('  seeds.pysr_seed              :', r.get('seeds', {}).get('pysr_seed'))
+SCRIPTEOF
+          python3 /tmp/print_repro.py
           echo "SHARD:             (assigned by plan job)"
 
       # ── Directory structure (mirrors run_all.sh env_check mkdir -p) ─────────
