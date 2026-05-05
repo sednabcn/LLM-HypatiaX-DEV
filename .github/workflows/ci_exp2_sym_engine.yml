@@ -70,6 +70,9 @@ jobs:
         shard: [0, 1, 2, 3, 4]  # 5 jobs × 6 equations = 30 total
 
     env:
+      # ── Node.js 24 opt-in (silences deprecation warnings for all actions) ──
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
       # ── Julia ──────────────────────────────────────────────────────────────
       JULIA_VERSION: "1.11.5"
       JULIA_MINOR: "1.11"
@@ -264,6 +267,25 @@ jobs:
           echo "    JULIA_NUM_THREADS=4"
           echo "    PYSR_TIMEOUT=${{ github.event.inputs.pysr_timeout || '1100' }}"
           echo "    RESULTS_DIR=${RESULTS_DIR}"
+
+      # ── Ensure checkpoint exists before cache save ──────────────────────────
+      # actions/cache/save@v5 errors with "Cache save failed" when the target
+      # path doesn't exist. This happens when the script crashes, times out, or
+      # --shard is not yet implemented and the file is never written.
+      # We write a minimal stub so the save always succeeds, and the next run
+      # can detect a fresh start (completed=[]) vs real partial progress.
+      - name: Ensure checkpoint file exists
+        if: always()
+        run: |
+          CHECKPOINT="${{ github.workspace }}/logs/exp2_sym_checkpoint_shard${{ matrix.shard }}.json"
+          if [ -f "$CHECKPOINT" ]; then
+            COUNT=$(jq -r '.completed | length' "$CHECKPOINT" 2>/dev/null || echo "?")
+            echo "Checkpoint present — $COUNT equations completed"
+          else
+            mkdir -p "${{ github.workspace }}/logs"
+            echo '{"completed":[],"shard":"${{ matrix.shard }}/5","stub":true}' > "$CHECKPOINT"
+            echo "No checkpoint written by script — saved empty stub for shard ${{ matrix.shard }}"
+          fi
 
       # ── Save checkpoint cache ───────────────────────────────────────────────
       # Runs even on failure or timeout so partial progress is preserved

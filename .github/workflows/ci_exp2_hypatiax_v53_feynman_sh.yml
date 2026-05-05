@@ -1,0 +1,368 @@
+name: Exp 2 — HypatiaX v5.3 Feynman Extrapolation · run_all.sh (n=30)
+
+# Mirrors the exp2_feynman step from run_all.sh:
+#   bash run_all.sh --step exp2_feynman
+# Runs exp2_feynman_colab_multithreaded.py directly (no notebook kernel),
+# so output streams live to the Actions log without buffering.
+#
+# Differences vs ci_exp2_hypatiax_v53_feynman.yml (notebook-based):
+#   • Python 3.12 (run_all.sh requires 3.12+, notebook used 3.11)
+#   • Adds torch, anthropic, sympy (run_all.sh env_check requirements)
+#   • FEYNMAN_TIMEOUT=900 s (run_all.sh default; notebook used 1100 s)
+#   • PYSR_POPULATIONS=4 (4 vCPUs on ubuntu-latest; paper used 2)
+#   • Runs the Python script directly — no nbconvert, no path-patching step
+#   • Results land in hypatiax/data/results/ (matches run_all.sh RESULTS_DIR)
+#
+# Bug fixes vs original:
+#   • FIX: checkpoint self-copy — CHECKPOINT_SRC and CHECKPOINT_DST resolved to
+#     the same path (both under github.workspace/hypatiax/data/results/…).
+#     Checkpoints now staged in $GITHUB_WORKSPACE/logs/ which is outside
+#     RESULTS_DIR, making src ≠ dst and the cp meaningful.
+#   • FIX: --resume never reached the script — RESUME was set as an env var
+#     but the python3 invocation only passed --samples and --no-llm-cache.
+#     Now forwarded as a CLI flag consistent with the sym-engine workflow.
+#
+# Sharding (2 parallel jobs, ~15 equations each):
+#   • matrix.shard ∈ {0, 1} — each job receives --shard N/2
+#   • Fits full 30-equation run within the 6 h Actions hard limit
+#     (worst-case ~48 min/eq × 15 eq = ~12 h → reduced to ~6 h per shard)
+#   • Per-shard checkpoint files prevent cross-job cache collisions
+#   • fail-fast: false — a single shard timeout doesn't cancel the sibling
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'hypatiax/experiments/benchmarks/exp2_feynman_colab_multithreaded.py'
+      - '.github/workflows/ci_exp2_hypatiax_v53_feynman_sh.yml'
+      - 'run_all.sh'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'hypatiax/experiments/benchmarks/exp2_feynman_colab_multithreaded.py'
+  schedule:
+    - cron: '30 0 * * *'   # 00:30 UTC = 01:30 BST — job 4 of 4 (+13 h from job 3)
+  workflow_dispatch:
+    inputs:
+      resume:
+        description: 'Resume from checkpoint (true/false)'
+        required: false
+        default: 'true'
+      feynman_timeout:
+        description: 'PySR timeout in seconds per equation (run_all.sh default: 900)'
+        required: false
+        default: '900'
+      feynman_samples:
+        description: 'Training samples per equation (run_all.sh default: 200)'
+        required: false
+        default: '200'
+      pysr_populations:
+        description: 'PySR populations (set to nCPUs; ubuntu-latest has 4)'
+        required: false
+        default: '4'
+      dry_run:
+        description: 'Dry-run only — print commands, skip execution (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+
+  run-exp2-feynman-sh:
+    runs-on: ubuntu-latest
+    # 2 parallel shards × ~15 equations each.
+    # Worst case: ~48 min/eq × 15 eq + ~10 min Julia JIT warmup ≈ 13 h — still
+    # over the 6 h limit. For a guaranteed sub-6 h run use a self-hosted runner
+    # or increase the shard count. For smoke-testing one equation this is fine.
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false          # a timed-out shard doesn't cancel the sibling
+      matrix:
+        shard: [0, 1]           # 2 jobs × 15 equations = 30 total
+
+    env:
+      # ── Node.js 24 opt-in (silences deprecation warnings for all actions) ──
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+      # ── Julia ──────────────────────────────────────────────────────────────
+      JULIA_VERSION: "1.11.5"
+      JULIA_MINOR: "1.11"
+      JULIA_NUM_THREADS: "4"          # ubuntu-latest: 4 vCPUs
+      JULIA_EXCLUSIVE: "0"
+      PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"   # segfault guard; set before any juliacall import
+
+      # ── PySR hyperparameters (Table 23 / run_all.sh) ───────────────────────
+      PYSR_GENERATIONS: "10000"
+      PYSR_POPULATION: "100"
+      PYSR_TOURNAMENT_SIZE: "3"
+      PYSR_CROSSOVER: "0.9"
+      PYSR_MUTATION: "0.1"
+      PYSR_PARETO_PRESSURE: "0.001"
+      PYSR_SEED: "42"
+      PYSR_PARALLELISM: "multithreading"   # immune to ProcessExitedException
+
+      # ── LLM ────────────────────────────────────────────────────────────────
+      LLM_MODEL: "claude-sonnet-4-20250514"
+      # Secret injected directly — avoids echoing the masked value in shell logs
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      # ── Paths (mirrors run_all.sh RESULTS_DIR / EXPERIMENTS_DIR) ───────────
+      RESULTS_DIR: ${{ github.workspace }}/hypatiax/data/results
+      EXPERIMENTS_DIR: ${{ github.workspace }}/hypatiax/experiments/benchmarks
+
+    steps:
+      # ── Repo ───────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python 3.12 (run_all.sh requirement) ───────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        # Matches run_all.sh env_check: pysr, torch, anthropic, sympy, scipy
+        # plus scikit-learn, numpy, pandas used by exp2_feynman script directly
+        # FIX: torch installed separately so --index-url applies only to it.
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install \
+            pysr \
+            anthropic \
+            sympy \
+            scikit-learn \
+            scipy \
+            numpy \
+            pandas
+
+      # ── Julia ──────────────────────────────────────────────────────────────
+      - name: Install Julia ${{ env.JULIA_VERSION }}
+        run: |
+          TARBALL="julia-${JULIA_VERSION}-linux-x86_64.tar.gz"
+          URL="https://julialang-s3.julialang.org/bin/linux/x64/${JULIA_MINOR}/${TARBALL}"
+          wget -q "$URL"
+          tar -xzf "$TARBALL"
+          echo "${GITHUB_WORKSPACE}/julia-${JULIA_VERSION}/bin" >> "$GITHUB_PATH"
+
+      # FIX: use block scalar (|) so the single quotes inside the julia -e
+      # argument are not interpreted by the YAML parser.
+      - name: Verify Julia threads
+        run: |
+          julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      # ── env_check (mirrors run_all.sh STEP 0) ──────────────────────────────
+      - name: Environment check (mirrors run_all.sh env_check)
+        run: |
+          echo "Python: $(python3 --version)"
+          python3 -c "import pysr;      print('PySR:        ', pysr.__version__)"
+          python3 -c "import torch;     print('PyTorch:     ', torch.__version__)"
+          python3 -c "import anthropic; print('anthropic SDK: ok')"
+          python3 -c "import sympy;     print('SymPy:       ', sympy.__version__)"
+          python3 -c "import scipy;     print('SciPy:       ', scipy.__version__)"
+          python3 -c "import sklearn;   print('scikit-learn:', sklearn.__version__)"
+          [[ -n "${ANTHROPIC_API_KEY:-}" ]] || { echo "ERROR: ANTHROPIC_API_KEY not set"; exit 1; }
+          echo "ANTHROPIC_API_KEY: set (${#ANTHROPIC_API_KEY} chars)"
+          echo "JULIA_NUM_THREADS: ${JULIA_NUM_THREADS}"
+          echo "PYSR_POPULATIONS:  ${{ github.event.inputs.pysr_populations || '4' }}"
+          echo "FEYNMAN_TIMEOUT:   ${{ github.event.inputs.feynman_timeout || '900' }}s"
+          echo "FEYNMAN_SAMPLES:   ${{ github.event.inputs.feynman_samples || '200' }}"
+          echo "RESULTS_DIR:       ${RESULTS_DIR}"
+          echo "SHARD:             ${{ matrix.shard }}/2"
+
+      # ── Directory structure (mirrors run_all.sh env_check mkdir -p) ─────────
+      - name: Create results directory structure
+        run: |
+          mkdir -p \
+            "${RESULTS_DIR}/comparison_results/feynman-tests/exp2" \
+            "${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep" \
+            "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless" \
+            "${RESULTS_DIR}/comparison_results/noise-noiseless/15" \
+            "${RESULTS_DIR}/comparison_results/extrapolation" \
+            "${RESULTS_DIR}/extrapolation" \
+            "${RESULTS_DIR}/hybrid_llm_nn/all_domains" \
+            "${RESULTS_DIR}/hybrid_llm_nn/defi" \
+            "${RESULTS_DIR}/hybrid_pysr/all_domains" \
+            "${RESULTS_DIR}/hybrid_pysr/defi" \
+            "${RESULTS_DIR}/llm_guided/all_domains" \
+            "${RESULTS_DIR}/llm_guided/defi" \
+            "${RESULTS_DIR}/standalone_llm_nn" \
+            "${RESULTS_DIR}/figures" \
+            "${RESULTS_DIR}/tables" \
+            "${{ github.workspace }}/logs"   # staging area for per-shard checkpoints
+
+      # ── Checkpoint cache (resume support) ──────────────────────────────────
+      # Checkpoints are staged in $GITHUB_WORKSPACE/logs/ — outside RESULTS_DIR —
+      # so CHECKPOINT_SRC (git-committed, inside the workspace clone) and
+      # CHECKPOINT_DST (the staging area) are always different paths.
+      # This was the root bug in the original: both paths resolved to the same
+      # absolute location, making cp a no-op and leaving the script without
+      # any checkpoint to resume from.
+      #
+      # Key strategy:
+      #   Primary : branch + shard + run_id → always unique, always saves fresh data
+      #   Fallback: branch + shard prefix   → picks up the most recent run's checkpoint
+      #   Fallback: bare shard prefix       → cross-branch fallback
+      - name: Restore checkpoint cache
+        id: checkpoint-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json
+          key: feynman-sh-checkpoint-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            feynman-sh-checkpoint-shard${{ matrix.shard }}-${{ github.ref_name }}-
+            feynman-sh-checkpoint-shard${{ matrix.shard }}-
+
+      # ── Seed checkpoint from committed results (cache miss only) ────────────
+      # FIX: CHECKPOINT_SRC is the git-committed master checkpoint inside the
+      # workspace clone; CHECKPOINT_DST is the logs/ staging path — different
+      # directories, so cp is no longer a self-copy no-op.
+      # On a cache miss the script reads from logs/ so it finds the committed
+      # progress rather than starting from scratch.
+      - name: Seed checkpoint from committed results
+        if: steps.checkpoint-restore.outputs.cache-hit != 'true'
+        run: |
+          # Committed master checkpoint (written by the script into RESULTS_DIR)
+          COMMITTED="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_feynman_checkpoint.json"
+          # Staging target — different path from COMMITTED (logs/ vs RESULTS_DIR)
+          STAGED="${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json"
+          if [ -f "$COMMITTED" ]; then
+            cp "$COMMITTED" "$STAGED"
+            echo "Checkpoint seeded from git into shard ${{ matrix.shard }} staging:"
+            echo "  completed=$(jq -r '._meta.completed // "?"' "$STAGED")"
+            echo "  total=$(jq -r '._meta.total_equations // "?"' "$STAGED")"
+          else
+            echo "No committed checkpoint found — shard ${{ matrix.shard }} starts from scratch"
+          fi
+      # ── exp2_feynman (mirrors run_all.sh STEP 5) ───────────────────────────
+
+      # Pre-flight: verify the script exists and imports resolve before the
+      # real run. Any crash here surfaces as a clear error, not silent pipe death.
+      - name: Pre-flight — verify script and imports
+        if: github.event.inputs.dry_run != 'true'
+        working-directory: ${{ env.EXPERIMENTS_DIR }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+          JULIA_NUM_THREADS: "4"
+        run: |
+          echo "=== working directory ==="
+          pwd
+          echo "=== script present ==="
+          ls -lh exp2_feynman_colab_multithreaded.py
+          echo "=== import check ==="
+          python3 -c "import exp2_feynman_colab_multithreaded; print('imports OK')"
+
+      # Main run.
+      # PYTHONUNBUFFERED=1 — forces Python to flush every print() immediately
+      #                      instead of accumulating an 8 KB pipe buffer.
+      # python3 -u         — belt-and-braces unbuffered flag alongside the env var.
+      # --resume           — FIX: was set only as RESUME env var; script never
+      #                      received it as a CLI flag. Now forwarded explicitly.
+      # --shard N/2        — each job processes its slice of the 30 equations.
+      # --checkpoint       — points the script at the per-shard staging file.
+      - name: Run exp2_feynman — Feynman SR benchmark Phase 2 (shard ${{ matrix.shard }}/2)
+        if: github.event.inputs.dry_run != 'true'
+        working-directory: ${{ env.EXPERIMENTS_DIR }}
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+          JULIA_NUM_THREADS: "4"
+          PYSR_POPULATIONS: ${{ github.event.inputs.pysr_populations || '4' }}
+          FEYNMAN_TIMEOUT: ${{ github.event.inputs.feynman_timeout || '900' }}
+          FEYNMAN_SAMPLES: ${{ github.event.inputs.feynman_samples || '200' }}
+          FEYNMAN_NOISELESS_THRESHOLD: "0.9999"
+          RESUME: ${{ github.event.inputs.resume || 'true' }}
+        run: |
+          LOG="${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run_shard${{ matrix.shard }}.log"
+          CHECKPOINT="${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json"
+
+          ARGS="--samples ${{ github.event.inputs.feynman_samples || '200' }}"
+          ARGS="$ARGS --shard ${{ matrix.shard }}/2"
+          ARGS="$ARGS --checkpoint $CHECKPOINT"
+          ARGS="$ARGS --no-llm-cache"
+          if [[ "${{ github.event.inputs.resume || 'true' }}" == "true" ]]; then
+            ARGS="$ARGS --resume"
+          fi
+
+          python3 -u exp2_feynman_colab_multithreaded.py $ARGS \
+            2>&1 | tee "$LOG"
+
+      - name: Dry-run summary
+        if: github.event.inputs.dry_run == 'true'
+        working-directory: ${{ env.EXPERIMENTS_DIR }}
+        run: |
+          echo "[dry-run] shard ${{ matrix.shard }}/2 would execute:"
+          echo "  python3 -u exp2_feynman_colab_multithreaded.py \\"
+          echo "    --samples ${{ github.event.inputs.feynman_samples || '200' }} \\"
+          echo "    --shard ${{ matrix.shard }}/2 \\"
+          echo "    --checkpoint ${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json \\"
+          echo "    --no-llm-cache \\"
+          [[ "${{ github.event.inputs.resume || 'true' }}" == "true" ]] && echo "    --resume \\"
+          echo ""
+          echo "  Env:"
+          echo "    JULIA_NUM_THREADS=${JULIA_NUM_THREADS}"
+          echo "    PYSR_POPULATIONS=${{ github.event.inputs.pysr_populations || '4' }}"
+          echo "    FEYNMAN_TIMEOUT=${{ github.event.inputs.feynman_timeout || '900' }}"
+          echo "    FEYNMAN_SAMPLES=${{ github.event.inputs.feynman_samples || '200' }}"
+          echo "    RESULTS_DIR=${RESULTS_DIR}"
+
+      # ── Ensure checkpoint exists before cache save ──────────────────────────
+      # actions/cache/save@v5 errors with "Cache save failed" when the target
+      # path doesn't exist. This happens when the script crashes, times out, or
+      # --shard/--checkpoint are not yet implemented and the file is never written.
+      # We write a minimal stub so the save always succeeds, and the next run
+      # can detect a fresh start (completed=[]) vs real partial progress.
+      - name: Ensure checkpoint file exists
+        if: always()
+        run: |
+          CHECKPOINT="${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json"
+          if [ -f "$CHECKPOINT" ]; then
+            COUNT=$(jq -r '._meta.completed // (.completed | length) // "?"' "$CHECKPOINT" 2>/dev/null || echo "?")
+            echo "Checkpoint present — $COUNT equations completed"
+          else
+            mkdir -p "${{ github.workspace }}/logs"
+            echo '{"_meta":{"completed":0,"total_equations":0},"completed":[],"shard":"${{ matrix.shard }}/2","stub":true}' > "$CHECKPOINT"
+            echo "No checkpoint written by script — saved empty stub for shard ${{ matrix.shard }}"
+          fi
+
+      # ── Save checkpoint cache ───────────────────────────────────────────────
+      # Runs even if the experiment step was skipped (dry-run) or failed
+      # mid-way, so partial progress is preserved for the next resume.
+      - name: Save checkpoint cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/logs/feynman_checkpoint_shard${{ matrix.shard }}.json
+          key: feynman-sh-checkpoint-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
+
+      # ── Artifacts ──────────────────────────────────────────────────────────
+      - name: Upload exp2 run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp2-feynman-sh-log-shard${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ env.RESULTS_DIR }}/comparison_results/feynman-tests/exp2/exp2_run_shard${{ matrix.shard }}.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload exp2 result JSONs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp2-feynman-sh-results-shard${{ matrix.shard }}-${{ github.run_id }}
+          path: |
+            ${{ env.RESULTS_DIR }}/comparison_results/feynman-tests/exp2/*.json
+            ${{ env.RESULTS_DIR }}/comparison_results/feynman-tests/exp2/*.csv
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload full results directory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp2-feynman-sh-all-shard${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ env.RESULTS_DIR }}/
+          if-no-files-found: ignore
+          retention-days: 30
