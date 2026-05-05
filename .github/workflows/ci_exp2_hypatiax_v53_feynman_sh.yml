@@ -329,6 +329,19 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # Diagnostic: confirm the secret is reaching this step.
+          # GitHub masks the actual value in logs; what matters is non-zero length.
+          # If length is 0 the secret is missing/misspelled in repo Settings → Secrets.
+          KEY_LEN=${#ANTHROPIC_API_KEY}
+          echo "ANTHROPIC_API_KEY present in env: $([ $KEY_LEN -gt 0 ] && echo YES || echo NO)"
+          echo "ANTHROPIC_API_KEY length        : ${KEY_LEN} chars"
+          echo "ANTHROPIC_API_KEY prefix        : ${ANTHROPIC_API_KEY:0:7}..."   # shows 'sk-ant-' if correct
+          if [[ $KEY_LEN -eq 0 ]]; then
+            echo "::error::ANTHROPIC_API_KEY secret is empty. Go to:"
+            echo "::error::  Settings → Secrets and variables → Actions → New repository secret"
+            echo "::error::  Name: ANTHROPIC_API_KEY   Value: sk-ant-..."
+            exit 1
+          fi
           python3 "${{ github.workspace }}/config/test_key_status.py"
 
       # ── Directory structure (mirrors run_all.sh env_check mkdir -p) ─────────
@@ -531,7 +544,16 @@ jobs:
       - name: Dry-run summary
         if: github.event.inputs.dry_run == 'true'
         working-directory: ${{ env.EXPERIMENTS_DIR }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # Key visibility check — safe to print prefix since GitHub masks full value.
+          KEY_LEN=${#ANTHROPIC_API_KEY}
+          echo "=== ANTHROPIC_API_KEY check ==="
+          echo "  Present : $([ $KEY_LEN -gt 0 ] && echo YES || echo NO)"
+          echo "  Length  : ${KEY_LEN} chars"
+          echo "  Prefix  : ${ANTHROPIC_API_KEY:0:7}..."   # expect 'sk-ant-'
+          echo "================================"
           echo "[dry-run] shard ${{ matrix.shard }}/2 would execute:"
           echo "  python3 -u exp2_feynman_colab_multithreaded.py \\"
           echo "    --samples ${{ github.event.inputs.feynman_samples || '200' }} \\"
