@@ -6,7 +6,7 @@ name: Consolidate exp2 Feynman results
 #    the expensive 14-hour experiment.
 on:
   workflow_run:
-    workflows: ["CI exp2 HypatiaX Feynman SH"]   # must match `name:` of the main workflow exactly
+    workflows: ["Exp 2 — HypatiaX v5.3 Feynman Extrapolation · run_all.sh (n=30)"]   # must match `name:` of the main workflow exactly
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -68,9 +68,9 @@ jobs:
             # workflow_dispatch with no input and no workflow_run event:
             # fetch the latest completed run of the main workflow via the API.
             echo "No run_id provided — querying API for latest completed run..."
-            LATEST=$(gh api               "/repos/${{ github.repository }}/actions/workflows"               --jq '.workflows[] | select(.name == "CI exp2 HypatiaX Feynman SH") | .id'               | head -1)
+            LATEST=$(gh api               "/repos/${{ github.repository }}/actions/workflows"               --jq '.workflows[] | select(.name == "Exp 2 — HypatiaX v5.3 Feynman Extrapolation · run_all.sh (n=30)") | .id'               | head -1)
             if [[ -z "$LATEST" ]]; then
-              echo "ERROR: could not find workflow named 'CI exp2 HypatiaX Feynman SH'"
+              echo "ERROR: could not find workflow named 'Exp 2 — HypatiaX v5.3 Feynman Extrapolation · run_all.sh (n=30)'"
               exit 1
             fi
             RUN_ID=$(gh api               "/repos/${{ github.repository }}/actions/workflows/${LATEST}/runs?status=completed&per_page=1"               --jq '.workflow_runs[0].id')
