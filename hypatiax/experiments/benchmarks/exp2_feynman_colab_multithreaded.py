@@ -22,7 +22,7 @@ Upgraded from `parallelism='serial'` to **`parallelism='multithreading'`** for ~
 > **Setup order:** Run Cell 1 FIRST (sets `JULIA_NUM_THREADS`), then Cell 2 (installs PySR).
 > Installing PySR before Cell 1 means Julia defaults to 1 thread.
 
-> **API key:** Use Colab Secrets (left sidebar key icon). Never hardcode keys in notebooks.
+> **API key:** Set `ANTHROPIC_API_KEY` as a GitHub Actions secret, or via `export ANTHROPIC_API_KEY=sk-ant-...` locally. Colab Secrets are also supported as a fallback.
 
 ## 1 · Environment setup
 
@@ -135,25 +135,61 @@ _PYSR_VALID_PARAMS = None
 
 """## 4 · API key
 
-Left sidebar → key icon → add `ANTHROPIC_API_KEY` → enable for this notebook.
+GitHub Actions: set ANTHROPIC_API_KEY as a repository secret.
+Local: export ANTHROPIC_API_KEY=sk-ant-...
+Colab: Left sidebar → key icon → add ANTHROPIC_API_KEY → enable for this notebook.
 """
 
-# Use Colab Secrets (left sidebar key icon) -- avoids hardcoding keys.
-# Add secret: ANTHROPIC_API_KEY
+# ── API key loading — env-first, Colab Secrets as fallback ───────────────
+# Priority:
+#   1. ANTHROPIC_API_KEY already in environment (GitHub Actions secret, local export)
+#   2. Colab Secrets (google.colab.userdata) — only when running in Colab
+#   3. Kaggle Secrets (kaggle_secrets) — only when running on Kaggle
+# Never hardcode keys here.
 import os
 
-try:
-    from google.colab import userdata
-    ANTHROPIC_API_KEY = userdata.get('ANTHROPIC_API_KEY')
-    print('API key loaded from Colab Secrets OK')
-except Exception as e:
-    print(f'Colab Secrets unavailable: {e}')
-    ANTHROPIC_API_KEY = ''  # paste key here only as last resort
-os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY or ''
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '').strip()
+
+if not ANTHROPIC_API_KEY:
+    # Try Colab Secrets (silently skip when not in Colab)
+    try:
+        from google.colab import userdata as _colab_userdata
+        _colab_key = _colab_userdata.get('ANTHROPIC_API_KEY') or ''
+        if _colab_key:
+            ANTHROPIC_API_KEY = _colab_key
+            print('API key loaded from Colab Secrets OK')
+    except Exception:
+        pass  # not in Colab — expected in CI and local runs
+
+if not ANTHROPIC_API_KEY:
+    # Try Kaggle Secrets (silently skip when not on Kaggle)
+    try:
+        from kaggle_secrets import UserSecretsClient as _KaggleSecrets
+        _kaggle_key = _KaggleSecrets().get_secret('ANTHROPIC_API_KEY') or ''
+        if _kaggle_key:
+            ANTHROPIC_API_KEY = _kaggle_key
+            print('API key loaded from Kaggle Secrets OK')
+    except Exception:
+        pass  # not on Kaggle — expected in CI and local runs
+
+os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY
+
+_in_ci = bool(os.environ.get('GITHUB_ACTIONS') or os.environ.get('CI'))
 if ANTHROPIC_API_KEY and ANTHROPIC_API_KEY.startswith('sk-ant-'):
-    print('API key set OK')
+    _src = 'environment (GitHub Actions secret)' if _in_ci else 'environment'
+    print(f'API key set OK — source: {_src} ({len(ANTHROPIC_API_KEY)} chars)')
+elif ANTHROPIC_API_KEY:
+    print(f'WARNING: ANTHROPIC_API_KEY is set but does not start with sk-ant- '
+          f'— check the secret value ({len(ANTHROPIC_API_KEY)} chars, '
+          f'prefix: {ANTHROPIC_API_KEY[:7]}...)')
 else:
-    print('Key missing -- add via Colab Secrets (left sidebar key icon)')
+    if _in_ci:
+        print('ERROR: ANTHROPIC_API_KEY not found in environment. '
+              'Go to: Settings → Secrets and variables → Actions → '
+              'New repository secret → Name: ANTHROPIC_API_KEY')
+    else:
+        print('WARNING: ANTHROPIC_API_KEY not set — LLM calls will fail. '
+              'Set it via: export ANTHROPIC_API_KEY=sk-ant-...')
 
 """## 5 · Run configuration"""
 
@@ -746,12 +782,11 @@ def _upload_checkpoint_artifact(json_path):
 # It pushes a single file to the `results` branch after every equation save.
 # Works even if the job is SIGKILL'd — push happens inline, not in a post step.
 
-_GIT_RESULTS_BRANCH = "results"
-
 def _push_result_to_branch(local_file_path: str, repo_relative_path: str) -> None:
     """
-    Push local_file_path to repo_relative_path on the `results` branch.
-    Silently skips when not running in GitHub Actions or git is unavailable.
+    Push local_file_path to repo_relative_path on the default branch (main).
+    Uses a shallow clone → commit → push so it works even if the runner's
+    working tree is dirty. Silently skips when not in GitHub Actions.
     """
     import os, subprocess, tempfile, shutil
 
@@ -761,34 +796,26 @@ def _push_result_to_branch(local_file_path: str, repo_relative_path: str) -> Non
     token = os.environ.get("GITHUB_TOKEN", "")
     repo  = os.environ.get("GITHUB_REPOSITORY", "")
     if not token or not repo:
-        print("  ⚠  GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping branch push", flush=True)
+        print("  ⚠  GITHUB_TOKEN or GITHUB_REPOSITORY not set — skipping push", flush=True)
         return
 
     if not os.path.exists(local_file_path):
         return
 
+    # Detect the default branch (main or master) from the remote
+    _default_branch = os.environ.get("GITHUB_REF_NAME", "master").split("/")[-1]
+    if _default_branch not in ("master",):
+        _default_branch = "master"   # safe fallback
+
     try:
-        # Use a throwaway clone in /tmp so we don't dirty the working tree
         clone_dir = tempfile.mkdtemp(prefix="results_push_")
         remote    = f"https://x-access-token:{token}@github.com/{repo}.git"
 
-        # Shallow clone of the results branch (create if absent)
-        result = subprocess.run(
-            ["git", "clone", "--depth=1", "--branch", _GIT_RESULTS_BRANCH,
+        subprocess.run(
+            ["git", "clone", "--depth=1", "--branch", _default_branch,
              "--single-branch", remote, clone_dir],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, timeout=60, check=True
         )
-        if result.returncode != 0:
-            # Branch doesn't exist yet — init an orphan
-            subprocess.run(["git", "init", clone_dir], capture_output=True, timeout=30)
-            subprocess.run(
-                ["git", "-C", clone_dir, "checkout", "--orphan", _GIT_RESULTS_BRANCH],
-                capture_output=True, timeout=30
-            )
-            subprocess.run(
-                ["git", "-C", clone_dir, "remote", "add", "origin", remote],
-                capture_output=True, timeout=30
-            )
 
         # Copy the file into the clone, preserving subdirectory structure
         dest = os.path.join(clone_dir, repo_relative_path)
@@ -809,16 +836,16 @@ def _push_result_to_branch(local_file_path: str, repo_relative_path: str) -> Non
             capture_output=True, env=env, timeout=30
         )
         push = subprocess.run(
-            ["git", "-C", clone_dir, "push", "origin", _GIT_RESULTS_BRANCH],
+            ["git", "-C", clone_dir, "push", "origin", _default_branch],
             capture_output=True, text=True, timeout=60
         )
         if push.returncode == 0:
-            print(f"  🌿 Pushed checkpoint → branch '{_GIT_RESULTS_BRANCH}':{repo_relative_path}", flush=True)
+            print(f"  📌 Pushed checkpoint → {_default_branch}:{repo_relative_path}", flush=True)
         else:
-            print(f"  ⚠  Branch push failed: {push.stderr.strip()[:120]}", flush=True)
+            print(f"  ⚠  Push failed: {push.stderr.strip()[:200]}", flush=True)
 
     except Exception as exc:
-        print(f"  ⚠  Branch push exception: {exc}", flush=True)
+        print(f"  ⚠  Push exception: {exc}", flush=True)
     finally:
         try:
             shutil.rmtree(clone_dir, ignore_errors=True)
@@ -955,11 +982,13 @@ if __name__ == "__main__":
         # Upload to GitHub Actions artifact store so it survives a hard cancel
         _upload_checkpoint_artifact(CFG['output_json'])
         # Push to results branch — survives even a SIGKILL (push is inline, not post-step).
-        # Use a shard-specific filename so the two parallel jobs don't overwrite each other.
+        # FIX: use the checkpoint file's own basename so each shard writes to its own
+        # path (e.g. exp2_feynman_checkpoint_shard0.json) and shards never overwrite
+        # each other on the results branch.
+        _ckpt_basename = os.path.basename(CFG['output_json'])
         _push_result_to_branch(
             CFG['output_json'],
-            "hypatiax/data/results/comparison_results/feynman-tests/exp2/"
-            "exp2_feynman_checkpoint.json"
+            f"hypatiax/data/results/comparison_results/feynman-tests/exp2/{_ckpt_basename}"
         )
 
     print('\n' + '=' * 65)
