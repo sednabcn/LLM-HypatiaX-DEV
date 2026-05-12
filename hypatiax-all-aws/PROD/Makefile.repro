@@ -1,0 +1,136 @@
+# =============================================================================
+# HypatiaX Reproducibility — Makefile
+#
+# Usage:
+#   make setup-aws              — one-time: create S3 bucket + store API key
+#   make publish-repro-stack    — upload/update the CloudFormation template
+#   make rotate-key             — update the Anthropic key in Secrets Manager
+#   make check-key-spend        — print current monthly spend on the repro key
+#   make test-launch            — launch the stack in your own account (test)
+#   make delete-test-stack      — delete the test stack
+# =============================================================================
+
+TEMPLATE_BUCKET  ?= hypatiax-public
+REGION           ?= us-east-1
+STACK_NAME       ?= hypatiax-repro
+SECRET_NAME      ?= hypatiax/repro/anthropic-key
+TEMPLATE_FILE    := cloudformation/hypatiax-reproducibility.yaml
+TEMPLATE_S3_KEY  := hypatiax-reproducibility.yaml
+TEMPLATE_URL     := https://$(TEMPLATE_BUCKET).s3.amazonaws.com/$(TEMPLATE_S3_KEY)
+
+.PHONY: all setup-aws publish-repro-stack rotate-key check-key-spend \
+        test-launch delete-test-stack secret-arn launch-url
+
+# ─────────────────────────────────────────────────────────────────────────────
+# One-time AWS setup
+# ─────────────────────────────────────────────────────────────────────────────
+setup-aws:
+	@echo "=== Creating public template bucket ==="
+	aws s3 mb s3://$(TEMPLATE_BUCKET) --region $(REGION) 2>/dev/null \
+	    || echo "Bucket already exists — skipping"
+	aws s3api put-bucket-policy \
+	    --bucket $(TEMPLATE_BUCKET) \
+	    --policy '{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::$(TEMPLATE_BUCKET)/*"}]}'
+	@echo ""
+	@echo "=== Storing Anthropic API key in Secrets Manager ==="
+	@echo "Paste your dedicated reviewer key when prompted."
+	@read -s -p "Anthropic API key (sk-ant-...): " KEY && echo "" && \
+	aws secretsmanager create-secret \
+	    --name $(SECRET_NAME) \
+	    --description "HypatiaX reviewer reproducibility key — budget capped" \
+	    --secret-string "$$KEY" \
+	    --region $(REGION) \
+	    || aws secretsmanager update-secret \
+	        --secret-id $(SECRET_NAME) \
+	        --secret-string "$$KEY" \
+	        --region $(REGION)
+	@echo ""
+	@echo "=== Secret ARN (paste into template AnthropicKeySecretArn default) ==="
+	@$(MAKE) secret-arn
+	@echo ""
+	@echo "=== Publishing template ==="
+	@$(MAKE) publish-repro-stack
+	@echo ""
+	@echo "✅  Setup complete. Update the AnthropicKeySecretArn default in"
+	@echo "    $(TEMPLATE_FILE) with the ARN above, then re-run:"
+	@echo "    make publish-repro-stack"
+
+secret-arn:
+	@aws secretsmanager describe-secret \
+	    --secret-id $(SECRET_NAME) \
+	    --region $(REGION) \
+	    --query ARN --output text
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Publish / update template
+# ─────────────────────────────────────────────────────────────────────────────
+publish-repro-stack:
+	@echo "Uploading $(TEMPLATE_FILE) → s3://$(TEMPLATE_BUCKET)/$(TEMPLATE_S3_KEY)"
+	aws s3 cp $(TEMPLATE_FILE) \
+	    s3://$(TEMPLATE_BUCKET)/$(TEMPLATE_S3_KEY) \
+	    --acl public-read \
+	    --region $(REGION)
+	@echo ""
+	@echo "Template URL:"
+	@echo "  $(TEMPLATE_URL)"
+	@echo ""
+	@$(MAKE) launch-url
+
+launch-url:
+	@echo "Launch URL (put this in README / paper supplementary):"
+	@echo "  https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=$(TEMPLATE_URL)&stackName=$(STACK_NAME)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Key rotation — no template change needed, takes effect on next reviewer launch
+# ─────────────────────────────────────────────────────────────────────────────
+rotate-key:
+	@echo "Rotating Anthropic API key in Secrets Manager..."
+	@read -s -p "New Anthropic API key (sk-ant-...): " KEY && echo "" && \
+	aws secretsmanager update-secret \
+	    --secret-id $(SECRET_NAME) \
+	    --secret-string "$$KEY" \
+	    --region $(REGION)
+	@echo "✅  Key updated. New reviewers will pick it up automatically."
+	@echo "    Old key can be safely deleted from Anthropic console."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Spend check (requires Anthropic console — this just reminds you where to look)
+# ─────────────────────────────────────────────────────────────────────────────
+check-key-spend:
+	@echo "Check spend at: https://console.anthropic.com/settings/keys"
+	@echo "Look for key named: hypatiax-repro-reviewers"
+	@echo ""
+	@echo "Current secret metadata:"
+	aws secretsmanager describe-secret \
+	    --secret-id $(SECRET_NAME) \
+	    --region $(REGION) \
+	    --query '{Name:Name,LastChangedDate:LastChangedDate,ARN:ARN}' \
+	    --output table
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test launch (in your own account)
+# ─────────────────────────────────────────────────────────────────────────────
+test-launch:
+	@echo "Launching test stack: $(STACK_NAME)-test"
+	aws cloudformation create-stack \
+	    --stack-name $(STACK_NAME)-test \
+	    --template-url $(TEMPLATE_URL) \
+	    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+	    --parameters \
+	        ParameterKey=PysrTimeout,ParameterValue=500 \
+	        ParameterKey=RepoBranch,ParameterValue=main \
+	    --region $(REGION)
+	@echo ""
+	@echo "Stack creating... check status:"
+	@echo "  aws cloudformation describe-stacks --stack-name $(STACK_NAME)-test --region $(REGION)"
+	@echo ""
+	@echo "Watch live:"
+	@echo "  aws cloudformation wait stack-create-complete --stack-name $(STACK_NAME)-test --region $(REGION)"
+
+delete-test-stack:
+	@echo "Deleting test stack: $(STACK_NAME)-test"
+	aws cloudformation delete-stack \
+	    --stack-name $(STACK_NAME)-test \
+	    --region $(REGION)
+	@echo "Deletion initiated. S3 bucket must be emptied first if it contains objects:"
+	@echo "  aws s3 rm s3://hypatiax-repro-\$$(aws sts get-caller-identity --query Account --output text)-$(STACK_NAME)-test --recursive"

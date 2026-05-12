@@ -73,12 +73,14 @@ def python() -> str:
 SCRIPT_MAP: dict[str, str] = {
     "nguyen12_exp3":        "hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py",
     "nguyen12_exp3b":       "hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02_seed_123.py",
-    "ablation_exp1":        "hypatiax/experiments/benchmarks/exp1_ablation_populations_30_updated.py",
+    "ablation_exp1":        "hypatiax/experiments/benchmarks/exp1_ablation.py",
     "defi_v3":              "hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py",
     "feynman_exp2":         "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
     "noise_sweep":          "hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py",
+    "sample_complexity":    "hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py",
     "hybrid_routing":       "hypatiax/experiments/benchmarks/run_hybrid_system_benchmark.py",
-    "instability_rf02_04":  "hypatiax/experiments/benchmarks/run_dual_sweep_benchmarks.py",
+    "hybrid_all_domains":   "hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py",
+    "instability_rf02_04":  "hypatiax/experiments/benchmarks/run_instability_suite.py",
     "extrap_comparative":   "hypatiax/experiments/benchmarks/run_dual_condition_benchmark.py",
     "provenance_audit":     "scripts/patches/provenance_audit.py",
 }
@@ -87,11 +89,16 @@ SCRIPT_MAP: dict[str, str] = {
 _TIMEOUT_AWARE_SCRIPTS: frozenset[str] = frozenset({
     "run_dual_sweep",
     "run_noise_sweep",
+    "run_sample_complexity",   # peer of run_noise_sweep — same timeout flags
     "run_dual_condition",
     "run_hybrid_system",
     # hypatiax_defi_benchmark_v3c does NOT accept --pysr-timeout / --method-timeout
     # (it errors with "unrecognized arguments"). Removed from this set so
     # _timeout_args() returns [] for the defi_v3 task.
+    #
+    # hybrid_system_llm_nn_all_domains does NOT accept --pysr-timeout /
+    # --method-timeout; it uses --samples. Excluded here so hybrid_all_domains
+    # tasks receive no spurious timeout flags.
 })
 
 

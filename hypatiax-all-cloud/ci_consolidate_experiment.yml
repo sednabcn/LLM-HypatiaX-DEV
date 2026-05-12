@@ -1,0 +1,392 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  ci_consolidate_experiment.yml — standalone consolidation for any experiment
+#
+#  Purpose: re-merge shard artifacts from a previous run WITHOUT re-running the
+#           expensive workers.  Mirrors ci_consolidate_exp2.yml but is
+#           generalised to every experiment ID supported by ci_experiment.yml.
+#
+#  Triggers:
+#    1. Automatically after ci_experiment.yml completes (any conclusion).
+#       workflow_run.workflows must list every possible expanded name because
+#       GitHub evaluates the list at parse time — expressions are NOT allowed.
+#    2. Manually — specify the experiment and optionally the source run_id.
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: "Consolidate experiment results"
+
+on:
+  # ── Auto-trigger: fires when ANY ci_experiment.yml run finishes ───────────
+  # GitHub does NOT interpolate expressions inside workflow_run.workflows[].
+  # We must list every possible workflow name literally.
+  workflow_run:
+    workflows:
+      - "HypatiaX — exp1 · run_all.sh"
+      - "HypatiaX — exp1b · run_all.sh"
+      - "HypatiaX — exp2_feynman · run_all.sh"
+      - "HypatiaX — exp2 · run_all.sh"
+      - "HypatiaX — exp3 · run_all.sh"
+      - "HypatiaX — exp3b · run_all.sh"
+      - "HypatiaX — suppA · run_all.sh"
+      - "HypatiaX — suppB · run_all.sh"
+      - "HypatiaX — suppB_sc · run_all.sh"
+      - "HypatiaX — hybrid_all_domains · run_all.sh"
+      - "HypatiaX — instability · run_all.sh"
+      - "HypatiaX — extrap · run_all.sh"
+    types: [completed]
+
+  # ── Manual trigger ────────────────────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+
+      experiment:
+        description: "Experiment ID to consolidate"
+        required: true
+        type: choice
+        options:
+          - exp1
+          - exp1b
+          - exp2_feynman
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
+        default: exp2_feynman
+
+      run_id:
+        description: "Source workflow run ID (blank = triggering run or latest completed)"
+        required: false
+        default: ""
+
+      result_subdir_override:
+        description: "Output sub-directory override (blank = auto from experiment)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions:  read
+
+env:
+  OUT_BASE: "hypatiax/data/results"
+
+jobs:
+  consolidate:
+    name: "Merge shard results"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # consolidation runs in <30 min; 60 min is a generous safety cap
+    # Workers upstream use n_shards=4 (preferred) or 3 (quota-limited).
+    # Artifact download scales with shard count — 60 min cap remains sufficient for both.
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install "pandas==2.2.3" numpy scipy
+
+      # ── Resolve experiment ID ─────────────────────────────────────────────
+      # workflow_dispatch  → github.event.inputs.experiment  (explicit)
+      # workflow_run       → parse from github.event.workflow_run.name
+      #                      e.g. "HypatiaX — exp2_feynman · run_all.sh"
+      - name: Resolve experiment ID
+        id: exp
+        run: |
+          EXPLICIT="${{ github.event.inputs.experiment }}"
+          WF_NAME="${{ github.event.workflow_run.name }}"
+
+          if [[ -n "$EXPLICIT" ]]; then
+            echo "id=$EXPLICIT" >> "$GITHUB_OUTPUT"
+          else
+            # Extract the experiment ID between "— " and " ·"
+            EXP=$(echo "$WF_NAME" | sed 's/.*— \(.*\) · .*/\1/')
+            if [[ -z "$EXP" ]]; then
+              echo "ERROR: cannot parse experiment from workflow name: '$WF_NAME'"
+              exit 1
+            fi
+            echo "Parsed experiment from workflow_run name: $EXP"
+            echo "id=$EXP" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Resolve which run to download artifacts from ─────────────────────
+      - name: Resolve source run ID
+        id: run_id
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPLICIT: ${{ github.event.inputs.run_id }}
+          EVENT_ID: ${{ github.event.workflow_run.id }}
+          EXP:      ${{ steps.exp.outputs.id }}
+        run: |
+          # The workflow name pattern used by ci_experiment.yml
+          MAIN_WF_NAME="HypatiaX — ${EXP} · run_all.sh"
+
+          if [[ -n "$EXPLICIT" && "$EXPLICIT" =~ ^[0-9]+$ ]]; then
+            echo "Using explicit run_id from input: $EXPLICIT"
+            echo "id=$EXPLICIT" >> "$GITHUB_OUTPUT"
+
+          elif [[ -n "$EVENT_ID" && "$EVENT_ID" =~ ^[0-9]+$ ]]; then
+            echo "Using workflow_run event id: $EVENT_ID"
+            echo "id=$EVENT_ID" >> "$GITHUB_OUTPUT"
+
+          else
+            echo "No run_id provided — querying API for latest completed run of '${MAIN_WF_NAME}' …"
+            WF_ID=$(gh api \
+              "/repos/${{ github.repository }}/actions/workflows" \
+              --jq ".workflows[] | select(.name == \"${MAIN_WF_NAME}\") | .id" \
+              | head -1)
+            if [[ -z "$WF_ID" ]]; then
+              echo "ERROR: workflow '${MAIN_WF_NAME}' not found."; exit 1
+            fi
+            RUN_ID=$(gh api \
+              "/repos/${{ github.repository }}/actions/workflows/${WF_ID}/runs?status=completed&per_page=1" \
+              --jq '.workflow_runs[0].id')
+            if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
+              echo "ERROR: no completed runs found for '${MAIN_WF_NAME}'"; exit 1
+            fi
+            echo "Found latest completed run: $RUN_ID"
+            echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Resolve result sub-directory from experiment ID ──────────────────
+      - name: Resolve experiment metadata
+        id: meta
+        env:
+          EXP:             ${{ steps.exp.outputs.id }}
+          SUBDIR_OVERRIDE: ${{ github.event.inputs.result_subdir_override }}
+        run: |
+          if [[ -n "$SUBDIR_OVERRIDE" ]]; then
+            echo "result_subdir=$SUBDIR_OVERRIDE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$EXP" in
+            exp1)               echo "result_subdir=comparison_results/noise-noiseless/noiseless"      >> "$GITHUB_OUTPUT" ;;
+            exp1b)              echo "result_subdir=comparison_results/noise-noiseless/15"              >> "$GITHUB_OUTPUT" ;;
+            exp2_feynman)       echo "result_subdir=comparison_results/feynman-tests/exp2"              >> "$GITHUB_OUTPUT" ;;
+            exp2)               echo "result_subdir=comparison_results/feynman-tests/exp2_multi"        >> "$GITHUB_OUTPUT" ;;
+            exp3|exp3b)         echo "result_subdir=extrapolation"                                      >> "$GITHUB_OUTPUT" ;;
+            suppA)              echo "result_subdir=hybrid_pysr/defi"                                   >> "$GITHUB_OUTPUT" ;;
+            suppB)              echo "result_subdir=comparison_results/feynman-tests/noise-sweep"       >> "$GITHUB_OUTPUT" ;;
+            suppB_sc)           echo "result_subdir=comparison_results/feynman-tests/sample-complexity" >> "$GITHUB_OUTPUT" ;;
+            hybrid_all_domains) echo "result_subdir=hybrid_llm_nn/all_domains"                         >> "$GITHUB_OUTPUT" ;;
+            instability)        echo "result_subdir=figures"                                            >> "$GITHUB_OUTPUT" ;;
+            extrap)             echo "result_subdir=comparison_results/extrapolation"                   >> "$GITHUB_OUTPUT" ;;
+            *) echo "ERROR: unknown experiment '$EXP'"; exit 1 ;;
+          esac
+
+      - name: Download shard artifacts from source run
+        uses: actions/download-artifact@v4
+        with:
+          run-id:       ${{ steps.run_id.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path:         downloaded_artifacts
+          pattern:      "results-${{ steps.exp.outputs.id }}-shard*"
+
+      - name: List downloaded artifacts
+        run: find downloaded_artifacts -type f | sort
+
+      - name: Merge shards and write consolidated outputs
+        env:
+          EXP:           ${{ steps.exp.outputs.id }}
+          RESULT_SUBDIR: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json, os, sys
+          from datetime import datetime
+          import numpy as np
+          from scipy import stats as scipy_stats
+
+          EXP        = os.environ["EXP"]
+          ART_DIR    = "downloaded_artifacts"
+          RESULT_SUB = os.environ["RESULT_SUBDIR"]
+          OUT_DIR    = os.path.join("hypatiax/data/results", RESULT_SUB)
+          os.makedirs(OUT_DIR, exist_ok=True)
+
+          candidates = sorted(glob.glob(f"{ART_DIR}/**/*.json", recursive=True))
+          print(f"Candidate JSON files: {len(candidates)}")
+          for p in candidates[:20]:
+              print(f"  {p}")
+          if len(candidates) > 20:
+              print(f"  … and {len(candidates) - 20} more")
+
+          merged = {}
+          for path in candidates:
+              try:
+                  with open(path) as f:
+                      data = json.load(f)
+                  if not isinstance(data, dict):
+                      continue
+                  if "results" in data and isinstance(data["results"], list):
+                      rows = {r.get("equation_id") or r.get("task_id") or r.get("id"): r
+                              for r in data["results"]
+                              if any(k in r for k in ("equation_id","task_id","id"))}
+                  elif "task_id" in data:
+                      rows = {data["task_id"]: data}
+                  else:
+                      rows = {k: v for k, v in data.items() if isinstance(v, dict)}
+                  rows = {k: v for k, v in rows.items() if k is not None}
+                  merged.update(rows)
+                  if rows:
+                      print(f"  +{len(rows)} from {os.path.basename(path)}")
+              except Exception as e:
+                  print(f"  SKIP {path}: {e}")
+
+          print(f"\nTotal merged: {len(merged)} entries")
+
+          if not merged:
+              print("ERROR: nothing to merge — check that shard artifacts exist for this run.")
+              sys.exit(1)
+
+          # ── Write outputs ──────────────────────────────────────────────────
+          with open(os.path.join(OUT_DIR, f"{EXP}_merged.json"), "w") as f:
+              json.dump(merged, f, indent=2)
+
+          hyp, nn = [], []
+          for r in merged.values():
+              if not isinstance(r, dict):
+                  continue
+              hr2 = (r.get("hypatia") or {}).get("extrap_r2")
+              nr2 = (r.get("nn")      or {}).get("extrap_r2")
+              if hr2 is not None: hyp.append(float(hr2))
+              if nr2 is not None: nn.append(float(nr2))
+
+          successes = [v for v in hyp if v > 0.99]
+          stats = {
+              "experiment":        EXP,
+              "generated_at":      datetime.utcnow().isoformat() + "Z",
+              "source_run_id":     os.environ.get("GITHUB_RUN_ID", ""),
+              "n_merged":          len(merged),
+              "n_successes":       len(successes),
+              "success_rate":      len(successes) / len(merged) if merged else None,
+              "hyp_extrap_mean":   float(np.mean(hyp))   if hyp else None,
+              "hyp_extrap_median": float(np.median(hyp)) if hyp else None,
+              "nn_extrap_mean":    float(np.mean(nn))     if nn  else None,
+              "nn_extrap_median":  float(np.median(nn))   if nn  else None,
+          }
+          if len(hyp) >= 5 and len(nn) >= 5:
+              u, p = scipy_stats.mannwhitneyu(hyp, nn, alternative="greater")
+              stats.update({"mw_U": float(u), "mw_p": float(p),
+                            "mw_significant": bool(p < 0.05)})
+          with open(os.path.join(OUT_DIR, f"{EXP}_stats.json"), "w") as f:
+              json.dump(stats, f, indent=2)
+
+          csv_rows = ["task_id,name,domain,hyp_train_r2,hyp_extrap_r2,nn_extrap_r2,success,best_expression"]
+          for tid, r in sorted(merged.items()):
+              if not isinstance(r, dict):
+                  continue
+              h = r.get("hypatia", {}) or {}
+              n = r.get("nn",      {}) or {}
+              ht = h.get("train_r2", "")
+              he = h.get("extrap_r2", ""); ne = n.get("extrap_r2", "")
+              ok = isinstance(he, float) and he > 0.99
+              expr = str(h.get("best_expression", "")).replace(",", ";")
+              csv_rows.append(f'{tid},{r.get("name","")},{r.get("domain","")},'
+                              f'{ht},{he},{ne},{ok},{expr}')
+          with open(os.path.join(OUT_DIR, f"{EXP}_merged.csv"), "w") as f:
+              f.write("\n".join(csv_rows))
+
+          print(f"\n{'='*65}")
+          if hyp:
+              pct = 100 * stats["success_rate"] if stats["success_rate"] is not None else 0
+              print(f"SUCCESS RATE : {len(successes)}/{len(merged)} ({pct:.1f}%)")
+              if "mw_p" in stats:
+                  sig = "SIGNIFICANT" if stats["mw_significant"] else "not significant"
+                  print(f"Mann-Whitney : U={stats['mw_U']:.0f}  p={stats['mw_p']:.4e}  [{sig}]")
+              print(f"{'='*65}")
+              print(f"  {'ID':<24} {'Name':<28} {'H-R²':>9} {'NN-R²':>9}  OK")
+              print("  " + "-"*74)
+              for tid, r in sorted(merged.items()):
+                  if not isinstance(r, dict):
+                      continue
+                  h = r.get("hypatia", {}) or {}
+                  n = r.get("nn",      {}) or {}
+                  he = h.get("extrap_r2"); ne = n.get("extrap_r2")
+                  ok = isinstance(he, float) and he > 0.99
+                  he_str = f"{he:>+9.4f}" if isinstance(he, float) else f"{'N/A':>9}"
+                  ne_str = f"{ne:>+9.4f}" if isinstance(ne, float) else f"{'N/A':>9}"
+                  print(f"  {tid:<24} {str(r.get('name',''))[:27]:<28} {he_str} {ne_str}  {'Y' if ok else 'N'}")
+          else:
+              print(f"Merged {len(merged)} entries (no R² data — non-R² experiment)")
+          print(f"{'='*65}")
+          print(f"Outputs: {OUT_DIR}/")
+          PYEOF
+
+      # ── Stage results → canonical tree paths ────────────────────────────────
+      # hypatiax/data/results/<subdir>/ is the merge scratch area.
+      # The canonical repo tree keeps results directly under the repo root
+      # (comparison_results/, extrapolation/, hybrid_llm_nn/, etc.).
+      # This step copies the three output files from the staging path to the
+      # matching canonical path so the commit lands in the right place.
+      - name: Stage results to canonical tree paths
+        env:
+          EXP:           ${{ steps.exp.outputs.id }}
+          RESULT_SUBDIR: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          SRC="hypatiax/data/results/${RESULT_SUBDIR}"
+          DST="${RESULT_SUBDIR}"   # canonical path at repo root
+
+          # Skip if src and dst are the same (e.g. SUBDIR_OVERRIDE already canonical).
+          if [[ "$SRC" == "$DST" ]]; then
+            echo "SRC == DST — no copy needed (already at canonical path)."
+          else
+            echo "Staging: $SRC  →  $DST"
+            mkdir -p "$DST"
+            for f in "${EXP}_merged.json" "${EXP}_merged.csv" "${EXP}_stats.json"; do
+              if [[ -f "$SRC/$f" ]]; then
+                cp -v "$SRC/$f" "$DST/$f"
+              else
+                echo "  WARN: $SRC/$f not found — skipping"
+              fi
+            done
+          fi
+
+      - name: Upload consolidated artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-${{ steps.exp.outputs.id }}-${{ github.run_id }}
+          path: |
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/${{ steps.exp.outputs.id }}_merged.json
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/${{ steps.exp.outputs.id }}_merged.csv
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/${{ steps.exp.outputs.id }}_stats.json
+          if-no-files-found: warn
+
+      - name: Commit and push to master
+        env:
+          EXP: ${{ steps.exp.outputs.id }}
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage both the hypatiax/data/results scratch copy and the
+          # canonical tree copy (they are identical; git deduplicates).
+          git add \
+            "${OUT_BASE}/${SUB}/${EXP}_merged.json" \
+            "${OUT_BASE}/${SUB}/${EXP}_merged.csv"  \
+            "${OUT_BASE}/${SUB}/${EXP}_stats.json"  \
+            "${SUB}/${EXP}_merged.json"             \
+            "${SUB}/${EXP}_merged.csv"              \
+            "${SUB}/${EXP}_stats.json"              2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "ci: ${EXP} re-consolidated from run ${{ steps.run_id.outputs.id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin master
+            echo "Pushed."
+          fi
