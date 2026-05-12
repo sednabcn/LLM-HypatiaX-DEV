@@ -1017,9 +1017,8 @@ jobs:
           echo "  Total JSON files  : ${ALL}"
           echo "  Matching ${GLOB_PATTERN}: ${MATCH}"
           if [[ "${ALL}" -gt 0 && "${MATCH}" -eq 0 ]]; then
-            echo "::warning::CRITICAL 4 — ${LABEL} wrote ${ALL} JSON file(s) but NONE match \
-'${GLOB_PATTERN}'. tables-generator will produce placeholder tables. \
-Reconcile run_$(echo ${LABEL} | tr '[:upper:]' '[:lower:]')_benchmark.py output prefix with the glob in tables-generator.py."
+            LABEL_LC=$(echo "${LABEL}" | tr '[:upper:]' '[:lower:]')
+            echo "::warning::CRITICAL 4 — ${LABEL} wrote ${ALL} JSON file(s) but NONE match '${GLOB_PATTERN}'. tables-generator will produce placeholder tables. Reconcile run_${LABEL_LC}_benchmark.py output prefix with the glob in tables-generator.py."
           elif [[ "${MATCH}" -gt 0 ]]; then
             echo "  ✓ Filename format OK — tables-generator glob will match."
           else
