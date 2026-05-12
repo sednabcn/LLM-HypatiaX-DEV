@@ -1,0 +1,204 @@
+══════════════════════════════════════════════════════════════════════════════
+  HypatiaX Pipeline Static Tracer — Report
+  Generated : 2026-05-12 13:53:46
+  Repo root : (not provided)
+  Shell     : run_all.sh
+══════════════════════════════════════════════════════════════════════════════
+
+  SUMMARY
+──────────────────────────────────────────────────────────────────────────────
+  ERRORs      : 0
+  WARNINGs    : 1
+  INFO        : 44
+
+  Total steps in catalogue : 16
+  Steps declared in shell  : 16
+
+  ✅  No errors — pipeline structure is consistent
+
+══════════════════════════════════════════════════════════════════════════════
+
+  STEP DEPENDENCY GRAPH
+──────────────────────────────────────────────────────────────────────────────
+  [00] env_check                  0 script(s)
+         out    : comparison_results/feynman-tests/exp2
+         out    : comparison_results/feynman-tests/noise-sweep
+         out    : comparison_results/feynman-tests/sample-complexity
+         out    : comparison_results/noise-noiseless/noiseless
+         out    : … (12 more)
+  [01] exp1                       2 script(s) ← env_check
+         script : EXPERIMENTS_DIR/hypatiax_defi_benchmark_v3c.py
+         script : ANALYSIS_DIR/statistical_analysis.py
+         out    : hypatiax_defi_benchmark_v3*results*.json
+         out    : exp1_run.log
+         out    : exp1_rf01_mannwhitney*.json
+         out    : comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json
+         out    : … (1 more)
+  [02] exp1b                      2 script(s) ← env_check
+         script : EXPERIMENTS_DIR/hypatiax_defi_benchmark_v3c.py
+         script : EXPERIMENTS_DIR/portfolio_variance_v3c2.py
+         out    : portfolio_variance*.json
+         out    : defi_v3_*.json
+         out    : exp1b_run.log
+  [03] extrap                     1 script(s) ← env_check
+         script : EXPERIMENTS_DIR/run_comparative_suite_benchmark_v2.py
+         out    : comparison_results/extrapolation/all_domains_extrap_v4_*.json
+         out    : extrap_run.log
+  [04] hybrid_all_domains         1 script(s) ← env_check
+         script : CORE_DIR/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py
+         out    : hybrid_llm_nn/all_domains/hybrid_llm_nn_all_domains_*.json
+         out    : hybrid_all_domains_run.log
+  [05] instability                1 script(s) ← env_check, exp1
+         script : EXPERIMENTS_DIR/run_instability_suite.py
+         out    : figures/instability_analysis.csv
+         out    : figures/instability_extrapolation.csv
+         out    : figures/fig_paper_complexity_vs_instability.png
+         out    : figures/fig_paper_complexity_vs_instability.pdf
+         out    : … (7 more)
+         in     : hypatiax_defi_benchmark_v3*results*.json
+  [06] exp2_feynman               1 script(s) ← env_check
+         script : EXPERIMENTS_DIR/run_comparative_suite_benchmark_v2.py
+         out    : comparison_results/feynman-tests/exp2/exp2_results*.json
+         out    : comparison_results/feynman-tests/exp2/exp2_run.log
+  [07] exp2                       1 script(s) ← env_check
+         script : EXPERIMENTS_DIR/run_comparative_suite_benchmark_v2.py
+         out    : exp2_run.log
+  [08] exp3                       1 script(s) ← env_check
+         script : EXPERIMENTS_DIR/exp3_nguyen12_hybrid50v_02.py
+         out    : exp3_run.log
+         out    : exp3*nguyen12*.json
+  [09] exp3b                      1 script(s) ← env_check, exp3
+         script : EXPERIMENTS_DIR/exp3_nguyen12_hybrid50v_02.py
+         out    : exp3b_run.log
+  [10] suppA                      1 script(s) ← env_check, hybrid_all_domains
+         script : EXPERIMENTS_DIR/run_hybrid_system_benchmark.py
+         out    : suppA_run.log
+         out    : hybrid_llm_nn/defi/consolidated_hybrid*.json
+         out    : hybrid_llm_nn/all_domains/hybrid_system*.json
+  [11] suppB                      1 script(s) ← env_check
+         script : EXPERIMENTS_DIR/run_noise_sweep_benchmark.py
+         out    : comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json
+         out    : suppB_run.log
+  [12] suppB_sc                   1 script(s) ← env_check
+         script : EXPERIMENTS_DIR/run_sample_complexity_benchmark.py
+         out    : comparison_results/feynman-tests/sample-complexity/sample_complexity_*.json
+         out    : suppB_sc_run.log
+  [13] tables                     1 script(s) ← exp1, exp1b, extrap, instability, exp2_feynman, exp3, exp3b, suppB, suppB_sc
+         script : REPO_ROOT/tables/generate_tables.py
+         out    : tables/five_system.tex
+         out    : tables/defi_main.tex
+         out    : tables/defi_tiers.tex
+         out    : tables/runtime.tex
+         out    : … (15 more)
+         in     : hypatiax_defi_benchmark_v3*results*.json
+         in     : ablation_*.json
+         in     : portfolio_variance*.json
+         in     : … (6 more)
+  [14] figures                    1 script(s) ← exp1, exp1b, instability
+         script : REPO_ROOT/figures/generate_figures.py
+         out    : figures/fig_paper_complexity_vs_instability.pdf
+         out    : figures/fig_paper_complexity_vs_instability.png
+         out    : figures/fig_instability_3d.pdf
+         out    : figures/fig_r2_heatmap_clipped.pdf
+         out    : … (2 more)
+         in     : hypatiax_defi_benchmark_v3*results*.json
+         in     : ablation_*.json
+         in     : portfolio_variance*.json
+         in     : … (1 more)
+  [15] validate                   0 script(s) ← exp1, exp2_feynman, hybrid_all_domains, instability, suppB_sc, suppB, tables, figures, exp1b, exp2, exp3, exp3b, extrap
+         in     : comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json
+         in     : comparison_results/feynman-tests/exp2/exp2_results*.json
+         in     : exp1_rf01_mannwhitney*.json
+         in     : … (12 more)
+
+══════════════════════════════════════════════════════════════════════════════
+
+  ⚠   WARN (1)
+──────────────────────────────────────────────────────────────────────────────
+
+  ▸ PIPELINE
+    [script_exists] --repo-root not provided; skipping on-disk script existence checks
+
+══════════════════════════════════════════════════════════════════════════════
+
+  ℹ   INFO (44)
+──────────────────────────────────────────────────────────────────────────────
+
+  ▸ PIPELINE
+    [step_order] Step order in _STEP_ORDER matches catalogue ✓
+    [step_order] ✓ run_all.sh _STEP_ORDER matches tracer catalogue
+    [step_order] Shell run() call sequence (16 steps): env_check → exp1 → exp1b → extrap → hybrid_all_domains → instability → exp2_feynman → exp2 → exp3 → exp3b → suppA → suppB → suppB_sc → tables → figures → validate
+
+  ▸ exp1
+    [validate] ✓ outputs covered by validate step
+
+  ▸ exp1b
+    [validate] ✓ outputs covered by validate step
+
+  ▸ exp2
+    [validate] ✓ outputs covered by validate step
+
+  ▸ exp2_feynman
+    [validate] ✓ outputs covered by validate step
+
+  ▸ exp3
+    [validate] ✓ outputs covered by validate step
+
+  ▸ exp3b
+    [validate] ✓ outputs covered by validate step
+
+  ▸ extrap
+    [validate] ✓ outputs covered by validate step
+
+  ▸ figures
+    [dependency] ✓ input 'hypatiax_defi_benchmark_v3*results*.json' ← step 'exp1' (order 1)
+    [dependency] ✓ input 'ablation_*.json' ← step 'exp1' (order 1)
+    [dependency] ✓ input 'portfolio_variance*.json' ← step 'exp1b' (order 2)
+    [dependency] ✓ input 'figures/instability_analysis.csv' ← step 'instability' (order 5)
+
+  ▸ hybrid_all_domains
+    [validate] ✓ outputs covered by validate step
+
+  ▸ instability
+    [dependency] ✓ input 'hypatiax_defi_benchmark_v3*results*.json' ← step 'exp1' (order 1)
+    [validate] ✓ outputs covered by validate step
+
+  ▸ suppA
+    [validate] ✓ outputs covered by validate step
+
+  ▸ suppB
+    [validate] ✓ outputs covered by validate step
+
+  ▸ suppB_sc
+    [validate] ✓ outputs covered by validate step
+
+  ▸ tables
+    [dependency] ✓ input 'hypatiax_defi_benchmark_v3*results*.json' ← step 'exp1' (order 1)
+    [dependency] ✓ input 'ablation_*.json' ← step 'exp1' (order 1)
+    [dependency] ✓ input 'portfolio_variance*.json' ← step 'exp1b' (order 2)
+    [dependency] ✓ input 'comparison_results/feynman-tests/exp2/*.json' ← step 'exp2_feynman' (order 6)
+    [dependency] ✓ input 'exp3*nguyen12*.json' ← step 'exp3b' (order 9)
+    [dependency] ✓ input 'figures/instability_analysis.csv' ← step 'instability' (order 5)
+    [dependency] ✓ input 'comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json' ← step 'suppB' (order 11)
+    [dependency] ✓ input 'comparison_results/feynman-tests/sample-complexity/sample_complexity_*.json' ← step 'suppB_sc' (order 12)
+    [dependency] ✓ input 'comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json' ← step 'exp1' (order 1)
+
+  ▸ validate
+    [dependency] ✓ input 'comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json' ← step 'exp1' (order 1)
+    [dependency] ✓ input 'comparison_results/feynman-tests/exp2/exp2_results*.json' ← step 'exp2_feynman' (order 6)
+    [dependency] ✓ input 'exp1_rf01_mannwhitney*.json' ← step 'exp1' (order 1)
+    [dependency] ✓ input 'hybrid_llm_nn/all_domains/*.json' ← step 'hybrid_all_domains' (order 4)
+    [dependency] ✓ input 'figures/instability_analysis.csv' ← step 'instability' (order 5)
+    [dependency] ✓ input 'figures/fig_paper_complexity_vs_instability.pdf' ← step 'figures' (order 14)
+    [dependency] ✓ input 'comparison_results/feynman-tests/sample-complexity/*.json' ← step 'suppB_sc' (order 12)
+    [dependency] ✓ input 'comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json' ← step 'suppB' (order 11)
+    [dependency] ✓ input 'tables/*.tex' ← step 'tables' (order 13)
+    [dependency] ✓ input 'figures/*.pdf' ← step 'figures' (order 14)
+    [dependency] ✓ input 'portfolio_variance*.json' ← step 'exp1b' (order 2)
+    [dependency] ✓ input 'defi_v3_*.json' ← step 'exp1b' (order 2)
+    [dependency] ✓ input 'exp2_run.log' ← step 'exp2' (order 7)
+    [dependency] ✓ input 'exp3*nguyen12*.json' ← step 'exp3b' (order 9)
+    [dependency] ✓ input 'comparison_results/extrapolation/all_domains_extrap_v4_*.json' ← step 'extrap' (order 3)
+
+══════════════════════════════════════════════════════════════════════════════
+
