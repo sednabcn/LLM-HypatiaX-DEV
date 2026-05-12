@@ -39,7 +39,7 @@
 #             Julia upgraded to 1.11 via julia-actions/setup-julia@v2.
 # ══════════════════════════════════════════════════════════════════════════════
 
-name: "HypatiaX — ${{ github.event.inputs.experiment }} · run_all.sh"
+name: "HypatiaX — experiment runner · run_all.sh"
 
 # ── Triggers ──────────────────────────────────────────────────────────────────
 on:
@@ -428,7 +428,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.plan.outputs.shard_matrix) }}
 
-    if: ${{ fromJson(matrix.ids)[0] != null }}
+    if: ${{ needs.plan.outputs.shard_matrix != '[]' && needs.plan.outputs.shard_matrix != '' }}
 
     env:
       EXP:            ${{ needs.plan.outputs.exp_id }}
