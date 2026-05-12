@@ -171,7 +171,132 @@ jobs:
             exit 1
           fi
 
-      # ── 4. Build trace command ────────────────────────────────────────────────
+      # ── 4b. Cross-check repro.yaml hyperparameters ───────────────────────────
+      #        Validates on-disk repro.yaml against expected paper values.
+      #        Mismatches are emitted as ::warning:: annotations and counted in
+      #        n_repro_warns (surfaced in the job summary). Never blocks the job
+      #        unless fail_on_warning=true is set at dispatch.
+      - name: Cross-check repro.yaml
+        id: repro_check
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          REPRO_CFG: ${{ env.REPRO_CFG }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys, yaml
+
+          cfg_path = os.environ["REPRO_CFG"]
+          if not os.path.exists(cfg_path):
+              print(f"::warning::repro.yaml not found at {cfg_path} — hyperparameter cross-check skipped")
+              with open(os.environ.get("GITHUB_OUTPUT", "/dev/null"), "a") as gh:
+                  gh.write("n_repro_warns=1\n")
+              sys.exit(0)
+
+          with open(cfg_path) as f:
+              cfg = yaml.safe_load(f)
+
+          warns = []
+
+          def chk(path, expected, label=None):
+              keys = path.split(".")
+              val = cfg
+              try:
+                  for k in keys:
+                      val = val[k]
+              except (KeyError, TypeError):
+                  warns.append(f"MISSING  {path} — expected {expected!r}")
+                  return
+              if val != expected:
+                  warns.append(f"MISMATCH {label or path}: got {val!r}, expected {expected!r}")
+
+          # Identity
+          chk("run_id",      "paper_v3")
+          chk("run_version", "3.0")
+          chk("llm_model",   "claude-sonnet-4-20250514")
+          chk("llm_retries", 3)
+          chk("llm_k_runs",  30)
+
+          # Seeds
+          chk("seeds.default",   42)
+          chk("seeds.pysr_seed", 42)
+
+          # Task counts
+          chk("n_tasks_defi",        74)
+          chk("n_tasks_instability", 70)
+          chk("pca_train_frac",      0.40)
+          chk("nn_time_limit",       120)
+
+          # Timeouts
+          chk("timeouts.pysr_attempt_seconds",      1100)
+          chk("timeouts.feynman_pysr_seconds",       1100)
+          chk("timeouts.instability_pysr_seconds",    300)
+          chk("timeouts.fit_wall_timeout",           1200)
+          chk("timeouts.fit_grace_secs",              120)
+          chk("timeouts.kill_grace_seconds",          300)
+          chk("timeouts.method_seconds",              900)
+          chk("timeouts.equation_wall_clock",        1200)
+
+          # PySR
+          chk("pysr.niterations",    1000)
+          chk("pysr.populations",      30)
+          chk("pysr.population_size",  33)
+          chk("pysr.parsimony",       0.01)
+          chk("pysr.maxsize",           30)
+          chk("pysr.deterministic",   True)
+          chk("pysr.fit_wall_timeout", 1200)
+          chk("pysr.fit_grace_secs",    120)
+
+          # Engine
+          chk("engine.name",                  "hybrid_system_v50_2")
+          chk("engine.version",               "v5.1")
+          chk("engine.allow_nondeterministic", False)
+
+          # Benchmark expected values
+          chk("benchmarks.defi.expected.accuracy",          0.892)
+          chk("benchmarks.defi.expected.total_cases",          74)
+          chk("benchmarks.defi.expected.catastrophic",           0)
+          chk("benchmarks.defi.train_frac",                  0.40)
+          chk("benchmarks.core15.expected.mw_u",            126.0)
+          chk("benchmarks.core15.expected.mw_p",            0.295)
+          chk("benchmarks.core15.expected.speedup",          1.73)
+          chk("benchmarks.feynman.expected.successes",           9)
+          chk("benchmarks.feynman.expected.total",              30)
+          chk("benchmarks.nguyen12.expected.hypatia_success",   11)
+          chk("benchmarks.nguyen12.expected.pysr_success",      10)
+          chk("benchmarks.nguyen12.expected.nn_success",         0)
+          chk("benchmarks.nguyen12.expected.mw_u",             113)
+          chk("benchmarks.nguyen12.expected.mw_p",          0.0097)
+          chk("benchmarks.noise_sweep.expected.ehd_rate",      1.0)
+          chk("benchmarks.noise_sweep.expected.plateau_n",     500)
+          chk("benchmarks.routing.expected.fix1_improvement", 0.06)
+          chk("benchmarks.routing.expected.fix2_improvement", 0.05)
+          chk("benchmarks.routing.expected.fix3_improvement", 0.01)
+          chk("benchmarks.instability.expected.spearman_rho", -0.70)
+          chk("benchmarks.instability.expected.p_value",       0.001)
+          chk("benchmarks.instability.k_runs",                   30)
+          chk("benchmarks.instability.total_tasks",              70)
+
+          # Paper fixes declared
+          for fk in ["FIX-C1", "FIX-C2", "FIX-T1", "FIX-T2", "FIX-XR3", "FIX-B2", "FIX-B3"]:
+              if fk not in (cfg.get("fixes") or {}):
+                  warns.append(f"MISSING  fixes.{fk} — expected paper fix not declared")
+
+          # Emit
+          for w in warns:
+              print(f"::warning::repro.yaml \u25b8 {w}")
+          if warns:
+              print(f"\nrepro cross-check: {len(warns)} warning(s)")
+          else:
+              print("\u2713 repro.yaml cross-check passed \u2014 all hyperparameters match paper values")
+
+          with open(os.environ.get("GITHUB_OUTPUT", "/dev/null"), "a") as gh:
+              gh.write(f"n_repro_warns={len(warns)}\n")
+              gh.write(f"repro_run_id={cfg.get('run_id','')}\n")
+              gh.write(f"repro_run_version={cfg.get('run_version','')}\n")
+              gh.write(f"repro_llm_model={cfg.get('llm_model','')}\n")
+          PYEOF
+
+      # ── 4c. Build trace command ───────────────────────────────────────────────
       - name: Build and echo trace command
         id: cmd
         env:
@@ -269,7 +394,11 @@ jobs:
           # Capture the shard count used by the triggering experiment run
           # (available only on workflow_run; blank on push/PR/manual triggers).
           N_SHARDS_UPSTREAM: ${{ github.event.workflow_run.inputs.n_shards || '' }}
-          EXP_FILTER:     ${{ steps.triggered_exp.outputs.exp || github.event.inputs.experiment_filter || '' }}
+          EXP_FILTER:        ${{ steps.triggered_exp.outputs.exp || github.event.inputs.experiment_filter || '' }}
+          N_REPRO_WARNS:     ${{ steps.repro_check.outputs.n_repro_warns || '0' }}
+          REPRO_RUN_ID:      ${{ steps.repro_check.outputs.repro_run_id || '' }}
+          REPRO_RUN_VERSION: ${{ steps.repro_check.outputs.repro_run_version || '' }}
+          REPRO_LLM_MODEL:   ${{ steps.repro_check.outputs.repro_llm_model || '' }}
         run: |
           python3 - <<'PYEOF'
           import json, os, re
@@ -296,7 +425,7 @@ jobs:
               "repository":         os.environ.get("GITHUB_REPOSITORY", ""),
               "ref":                os.environ.get("GITHUB_REF", ""),
               "shell_script":       os.environ.get("SHELL_SCRIPT", "run_all.sh"),
-              "trace_script":       os.environ.get("TRACE_SCRIPT", "trace_pipeline_1_.py"),
+              "trace_script":       os.environ.get("TRACE_SCRIPT", "trace_pipeline.py"),
               "triggered_by_exp":   os.environ.get("TRIGGERED_EXP", ""),
               "n_shards_upstream":  os.environ.get("N_SHARDS_UPSTREAM", "unknown"),
               "experiment_filter":  os.environ.get("EXP_FILTER", ""),
@@ -304,6 +433,10 @@ jobs:
               "trace_exit_code":    int(os.environ.get("TRACE_EXIT", "0")),
               "n_errors":           int(os.environ.get("N_ERRORS", "0")),
               "n_warnings":         int(os.environ.get("N_WARNINGS", "0")),
+              "n_repro_warns":      int(os.environ.get("N_REPRO_WARNS", "0")),
+              "repro_run_id":       os.environ.get("REPRO_RUN_ID", ""),
+              "repro_run_version":  os.environ.get("REPRO_RUN_VERSION", ""),
+              "repro_llm_model":    os.environ.get("REPRO_LLM_MODEL", ""),
               "status":             "PASS" if int(os.environ.get("TRACE_EXIT", "0")) == 0 else "FAIL",
               "steps_found":        [{"index": int(i), "name": n} for i, n in steps_found],
               "dep_graph":          dep_edges,
@@ -315,7 +448,7 @@ jobs:
 
           print(f"trace_summary.json written — status={summary['status']}  "
                 f"errors={summary['n_errors']}  warnings={summary['n_warnings']}  "
-                f"steps={len(summary['steps_found'])}")
+                f"repro_warns={summary['n_repro_warns']}  steps={len(summary['steps_found'])}")
           PYEOF
 
       # ── 8. Write GitHub Actions job summary ──────────────────────────────────
@@ -347,7 +480,15 @@ jobs:
               f"| Filter | `{s['experiment_filter'] or 'all steps'}` |",
               f"| Errors | **{s['n_errors']}** |",
               f"| Warnings | **{s['n_warnings']}** |",
+              f"| Repro warns | **{s.get('n_repro_warns', 0)}** |",
               f"| Steps traced | **{len(s['steps_found'])}** |",
+              "",
+              "### Reproducibility config",
+              f"| Field | Value |",
+              f"|---|---|",
+              f"| run_id | `{s.get('repro_run_id') or '—'}` |",
+              f"| run_version | `{s.get('repro_run_version') or '—'}` |",
+              f"| llm_model | `{s.get('repro_llm_model') or '—'}` |",
               "",
           ]
 
@@ -411,14 +552,16 @@ jobs:
           if [[ -f trace_summary.json ]]; then
             N_ERR=$(python3 -c "import json; print(json.load(open('trace_summary.json'))['n_errors'])")
             N_WARN=$(python3 -c "import json; print(json.load(open('trace_summary.json'))['n_warnings'])")
+            N_REPRO=$(python3 -c "import json; print(json.load(open('trace_summary.json')).get('n_repro_warns', 0))")
+            N_TOTAL_WARN=$(( N_WARN + N_REPRO ))
             FAIL_WARN="${{ github.event.inputs.fail_on_warning || 'false' }}"
-            echo "Trace result: errors=$N_ERR  warnings=$N_WARN  fail_on_warning=$FAIL_WARN"
+            echo "Trace result: errors=$N_ERR  warnings=$N_WARN  repro_warns=$N_REPRO  fail_on_warning=$FAIL_WARN"
             if [[ $N_ERR -gt 0 ]]; then
               echo "::error::Pipeline trace found $N_ERR error(s) — see trace_report.txt."
               exit 1
             fi
-            if [[ "$FAIL_WARN" == "true" && $N_WARN -gt 0 ]]; then
-              echo "::error::Pipeline trace found $N_WARN warning(s) and fail_on_warning=true."
+            if [[ "$FAIL_WARN" == "true" && $N_TOTAL_WARN -gt 0 ]]; then
+              echo "::error::Pipeline trace found $N_WARN trace warning(s) and $N_REPRO repro warning(s) — fail_on_warning=true."
               exit 1
             fi
             echo "✓ Gate passed — no blocking issues."

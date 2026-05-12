@@ -337,7 +337,10 @@ _STEP_CATALOGUE: list[dict] = [
             "hybrid_llm_nn/all_domains/hybrid_system*.json",
         ],
         inputs=[],
-        deps=["env_check"],
+        # hybrid_all_domains (order 4) runs before suppA (order 10) in run_all.sh
+        # and both write to hybrid_llm_nn/all_domains/ — declaring the ordering
+        # here prevents the isolation check from flagging a spurious write race.
+        deps=["env_check", "hybrid_all_domains"],
     ),
 
     # ── 11: suppB ─────────────────────────────────────────────────────────────
@@ -462,9 +465,19 @@ _STEP_CATALOGUE: list[dict] = [
             "comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json",
             "tables/*.tex",
             "figures/*.pdf",
+            # exp1b
+            "portfolio_variance*.json",
+            "defi_v3_*.json",
+            # exp2
+            "exp2_run.log",
+            # exp3 / exp3b
+            "exp3*nguyen12*.json",
+            # extrap
+            "comparison_results/extrapolation/all_domains_extrap_v4_*.json",
         ],
         deps=["exp1", "exp2_feynman", "hybrid_all_domains", "instability",
-              "suppB_sc", "suppB", "tables", "figures"],
+              "suppB_sc", "suppB", "tables", "figures",
+              "exp1b", "exp2", "exp3", "exp3b", "extrap"],
     ),
 ]
 
