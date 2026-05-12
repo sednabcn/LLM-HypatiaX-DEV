@@ -16,7 +16,7 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     echo "✅ HypatiaX JMLR Environment Active"
     echo "======================================"
     echo "  Project Root: $HYPATIAX_ROOT"
-    echo "  Python Path:  ${PYTHONPATH%%:*}"  # Show first entry
+    echo "  Python Path: ${HYPATIAX_ROOT}"  # Show dir directly
     echo ""
     echo "Quick commands:"
     echo "  • Test import:       python -c 'from hypatiax.protocols.experiment_protocol import ExperimentProtocol; print(\"✓ OK\")'"

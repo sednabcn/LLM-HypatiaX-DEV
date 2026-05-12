@@ -1,0 +1,24 @@
+version: 0.2
+env:
+  parameter-store:
+    ANTHROPIC_API_KEY: /hypatiax/anthropic_key
+phases:
+  install:
+    commands:
+      - pip3 install -r requirements.txt
+      - python3 -c "import julia; julia.install()"
+  pre_build:
+    commands:
+      - aws s3 cp s3://hypatiax-results/checkpoints/ logs/ --recursive || true
+  build:
+    commands:
+      - python3 run_all_checkpoint.py --only exp2
+          --equation-range $EXP2_EQUATION_RANGE
+          --resume --continue-on-fail
+  post_build:
+    commands:
+      - aws s3 sync logs/ s3://hypatiax-results/checkpoints/
+      - aws s3 sync hypatiax/data/results/ s3://hypatiax-results/results/
+artifacts:
+  files:
+    - hypatiax/data/results/comparison_results/exp2_shard_*_checkpoint.json

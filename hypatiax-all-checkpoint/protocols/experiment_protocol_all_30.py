@@ -1,6 +1,17 @@
 """
-Experiment Protocol ALL v4.0: 30 Complete Multi-Domain Test Cases - BEST OF BOTH
+Experiment Protocol ALL v4.1: 30 Complete Multi-Domain Test Cases - BEST OF BOTH
 ==================================================================================
+FIXES in v4.1 (TASK_IDS/SHARD_IDS audit):
+✅ FIX-1/FIX-5: Added meta['id'] = 'M.XX' (1-based) to every test case so that
+   run_comparative_suite_benchmark_v2._apply_task_ids_str() can match CI TASK_IDS
+   (M.01..M.30) against meta['id'].  Previously equation_names like 'kinetic_energy'
+   never matched M.01 → 0-match fallback → all 30 ran on every shard (wrong).
+✅ FIX-2: Added _apply_task_ids_all30() method: filters test cases by TASK_IDS
+   (M.01..M.30) using meta['id'], and added _apply_shard_ids_all30() that maps
+   M.XX shard IDs back to their domain key so domain-level sharding works too.
+✅ CI MULTI30 registry (exp2/exp2_sym/exp2_hyb) now correctly shards by M.XX IDs
+   which map 1-to-1 with test cases in order across all 10 domains.
+
 FIXES in v4.0:
 ✅ Complete implementation from v2.0 (all domains fully coded)
 ✅ Quantum fixes from v2.1 (normalized units for better numerical properties)
@@ -14,9 +25,21 @@ Focus: All scientific domains with comprehensive coverage
 
 Total: 30 complete test cases
 
+M.XX → equation_name canonical mapping (used by CI TASK_IDS / SHARD_IDS):
+  M.01 kinetic_energy          M.11 reynolds_number         M.21 nernst_equation
+  M.02 gravitational_pot_energy M.12 hagen_poiseuille       M.22 michaelis_menten
+  M.03 hookes_law              M.13 thin_lens_equation       M.23 logistic_growth
+  M.04 ideal_gas_law           M.14 snells_law               M.24 allometric_scaling
+  M.05 heat_capacity           M.15 single_slit_diffraction  M.25 pythagorean_theorem
+  M.06 carnot_efficiency       M.16 photon_energy            M.26 compound_interest
+  M.07 coulomb_law             M.17 de_broglie_wavelength    M.27 quadratic_discriminant
+  M.08 ohms_law                M.18 compton_shift            M.28 elasticity_demand
+  M.09 lorentz_force           M.19 arrhenius_equation       M.29 cobb_douglas
+  M.10 bernoulli_equation      M.20 henderson_hasselbalch    M.30 break_even_point
+
 Author: HypatiaX Team
-Version: 4.0 COMPLETE
-Date: 2026-01-13
+Version: 4.1
+Date: 2026-05-08
 """
 
 import os as _os
@@ -43,9 +66,41 @@ class ExperimentProtocolAll:
     """Complete protocol with all 30 test cases - v2.2 BEST OF BOTH"""
 
     @staticmethod
+    def _apply_shard_ids(domains: list[str]) -> list[str]:
+        """Filter *domains* to those listed in the SHARD_IDS environment variable.
+
+        SHARD_IDS: space- or comma-separated domain names
+        (e.g. ``"mechanics thermodynamics"`` or ``"mechanics,thermodynamics"``).
+        Falls back to the full domain list when the variable is unset or empty
+        (local / Colab runs).
+
+        This mirrors the ``_apply_task_ids_str`` pattern used in the calling
+        benchmark scripts to shard equation-level work across CI workers.
+        Here it operates at the *domain* level so each CI worker handles a
+        disjoint subset of domains.
+        """
+        import os
+        import warnings
+
+        raw = os.environ.get("SHARD_IDS", "").replace(",", " ").split()
+        if not raw:
+            return domains
+        allowed = set(raw)
+        filtered = [d for d in domains if d in allowed]
+        if not filtered:
+            warnings.warn(
+                f"SHARD_IDS={raw!r} matched 0/{len(domains)} domains "
+                f"— running all.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return domains
+        return filtered
+
+    @staticmethod
     def get_all_domains() -> list[str]:
-        """Return list of all experimental domains."""
-        return [
+        """Return list of all experimental domains, filtered by SHARD_IDS if set."""
+        all_domains = [
             # Protocol A domains (Physics/Engineering)
             "mechanics",
             "thermodynamics",
@@ -59,6 +114,7 @@ class ExperimentProtocolAll:
             "mathematics",
             "economics",
         ]
+        return ExperimentProtocolAll._apply_shard_ids(all_domains)
 
     @staticmethod
     def load_test_data(

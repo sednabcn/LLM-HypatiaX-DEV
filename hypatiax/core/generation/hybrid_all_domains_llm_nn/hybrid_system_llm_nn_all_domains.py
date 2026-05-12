@@ -2,6 +2,14 @@
 Hybrid System for All Scientific/Engineering Domains - ENHANCED
 Combines LLM symbolic reasoning with Neural Network learning
 Now includes comprehensive results table and error fixes
+
+CI integration fix (instability experiment):
+  - Reads TASK_IDS / SHARD_IDS env vars (space-separated domain keys) so the
+    CI worker can shard domain execution without passing --domains on the CLI.
+  - Priority: --domains CLI arg > TASK_IDS env var > SHARD_IDS env var >
+    protocol.get_all_domains() (full set).
+  - This makes the sharding wired up in ci_experiment.yml (instability step)
+    actually take effect; previously the env vars were set but silently ignored.
 """
 
 import inspect
@@ -55,6 +63,30 @@ except ImportError:
     except ImportError:
         print("❌ Error: experiment_protocol_all_30.py not found")
         sys.exit(1)
+
+
+def _resolve_domains_from_env() -> list[str] | None:
+    """Read shard-assigned domain keys from CI environment variables.
+
+    Returns a list of domain strings when TASK_IDS or SHARD_IDS is set,
+    or None when neither is present (caller falls back to full domain set).
+
+    Priority: TASK_IDS > SHARD_IDS.  Both are space-separated strings of the
+    domain keys defined in HYBRID_ALL_DOMAINS_IDS inside ci_experiment.yml
+    (e.g. "mechanics electromagnetism thermodynamics").
+
+    This function is the sole integration point between the CI sharding logic
+    and the experiment script — adding it here means no changes are required
+    in the YML beyond the hybrid_all_domains) dispatch branch.
+    """
+    for var in ("TASK_IDS", "SHARD_IDS"):
+        raw = os.environ.get(var, "").strip()
+        if raw:
+            domains = [d.strip() for d in raw.split() if d.strip()]
+            if domains:
+                print(f"ℹ️  Domain list sourced from env var {var}: {domains}")
+                return domains
+    return None
 
 
 class HybridSystemAllDomains:
@@ -818,13 +850,26 @@ NO markdown code blocks, individual parameters NOT dict."""
 def run_hybrid_test_all_domains(
     domains: list[str] = None, num_samples: int = 100, verbose: bool = False
 ):
-    """Run hybrid system test on all scientific domains with results table"""
+    """Run hybrid system test on all scientific domains with results table.
+
+    Domain resolution order (first non-empty source wins):
+      1. ``domains`` argument (from --domains CLI flag)
+      2. TASK_IDS environment variable  (CI shard assignment, space-separated)
+      3. SHARD_IDS environment variable (CI shard assignment, space-separated)
+      4. protocol.get_all_domains()     (full set — used for local runs)
+
+    The env-var path (steps 2 & 3) is how ci_experiment.yml threads
+    the shard-assigned domain subset into this script without requiring the YML
+    to enumerate domains on the command line.
+    """
 
     protocol = ExperimentProtocolAll()
     hybrid = HybridSystemAllDomains()
 
     if domains is None:
-        domains = protocol.get_all_domains()
+        # Try to pick up shard assignment from CI environment before falling
+        # back to the full domain set.
+        domains = _resolve_domains_from_env() or protocol.get_all_domains()
 
     print("=" * 80)
     print("🔬 HYBRID SYSTEM - ALL DOMAINS 🔬".center(80))
@@ -914,9 +959,24 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Hybrid System - All Domains")
-    parser.add_argument("--domains", nargs="+", default=None)
+    parser.add_argument(
+        "--domains",
+        nargs="+",
+        default=None,
+        help=(
+            "Space-separated domain keys to run.  "
+            "When omitted the script reads TASK_IDS / SHARD_IDS from the "
+            "environment (CI shard assignment) or runs all domains."
+        ),
+    )
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--no-llm-cache",
+        action="store_true",
+        dest="no_llm_cache",
+        help="Disable per-run formula cache so every call makes a fresh API request.",
+    )
 
     args = parser.parse_args()
 
