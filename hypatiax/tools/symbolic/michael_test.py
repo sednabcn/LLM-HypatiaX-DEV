@@ -3,7 +3,7 @@ michael_test.py — HypatiaX SymbolicEngine: Biology Domain (Paper-Quality)
 ==========================================================================
 Drives SymbolicEngine against all three biology test cases from
 ExperimentProtocolAll using the exact hyperparameters published in
-repro.yaml (run_id="paper_v3", llm_model="claude-sonnet-4-20250514",
+repro.yaml (run_id="paper_v3", llm_model="claude-sonnet-4-5",
 seed=42, niterations=1000, populations=30, population_size=33 …).
 
 Biology test cases (from experiment_protocol_all_30.py):
@@ -52,7 +52,7 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "hypatiax")]:
 REPRO = {
     "run_id":           "paper_v3",
     "run_version":      "3.0",
-    "llm_model":        "claude-sonnet-4-20250514",
+    "llm_model":        "claude-sonnet-4-5",
     "llm_retries":      3,
     "llm_k_runs":       30,
     "seed":             42,

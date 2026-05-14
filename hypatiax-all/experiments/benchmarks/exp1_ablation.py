@@ -123,7 +123,7 @@ _TIMEOUT_ENV       = os.environ.get("METHOD_TIMEOUT") or os.environ.get("PYSR_TI
 TIMEOUT_SECS       = int(_TIMEOUT_ENV)
 SEED               = _GLOBAL_SEED
 CONDITIONS         = ["pysr_only", "hypatia"]
-MODEL_STRING       = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
+MODEL_STRING       = os.environ.get("LLM_MODEL", "claude-sonnet-4-5")
 
 # FIX-WALLCLOCK: per-condition wall-clocks.
 # hypatia runs _HYPATIA_MAX_RETRIES × PySR attempts — shared cap fired inside
