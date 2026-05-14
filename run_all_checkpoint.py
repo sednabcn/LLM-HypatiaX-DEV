@@ -37,6 +37,34 @@ Notes:
     validate-patches (Phase 0) checks patched source code.
     verify (Phase 3) cross-checks numerical results — equivalent to run_all.sh validate.
 
+Changelog v7.2 (2026-05-14):
+    FIX-DOMAINS: HYBRID_ALL_DOMAINS_IDS corrected — removed "statistics", "finance",
+              "other" (never in ExperimentProtocolAll); added "fluid_dynamics",
+              "mathematics" (present in protocol). Matches CI HYBRID_ALL_DOMAINS_IDS
+              and run_all.sh HYBRID_ALL_DOMAINS_EXPECTED exactly. validate_hybrid_
+              all_domains_ids() no longer aborts at startup.
+    FIX-EXP2-CMD: exp2 Step cmd changed from --benchmark all30 (invalid argparse
+              choice) to --protocol all30, matching run_all.sh STEP 6.
+    FIX-EXP2-SKIP-PYSR: --skip-pysr added to both exp2_feynman and exp2 Step cmds,
+              matching run_all.sh STEPS 5+6. Without it methods 5+6 (Julia) blow
+              the deadline and diverge from CI runs.
+    FIX-SUPPA-POSTMOVE: suppA post_move targets corrected from hybrid_llm_nn/{defi,
+              all_domains} to hybrid_pysr/defi for both globs, matching run_all.sh
+              STEP 9 and the step's own result_glob.
+    FIX-EXP3-POSTMOVE: exp3 + exp3b post_move destinations corrected from
+              RESULTS_DIR root to RESULTS_DIR/extrapolation/, matching run_all.sh
+              FIX-4 comment and CI RESULT_SUBDIR=extrapolation.
+    FIX-EXP3-RESULTGLOB: exp3 result_glob corrected from embedded absolute path
+              "hypatiax/data/results/nguyen12_exp3_*.json" (broken relative-to-
+              RESULTS_DIR resolution) to "extrapolation/*nguyen*seed42*.json".
+    FIX-EXP3B-WALRUS: exp3b cmd walrus := inside list-comp doesn't update outer
+              rc (CPython list-comp scoping); rewritten as explicit for-loop so
+              first non-zero seed returncode actually propagates to sys.exit(rc).
+    FIX-JULIA-THREADS: JULIA_NUM_THREADS default corrected 1→4, matching CI env
+              JULIA_NUM_THREADS:"4" and run_all.sh export JULIA_NUM_THREADS=4.
+    FIX-COMMENT: Removed dangling suppA comment block that was misplaced above the
+              provenance Step (Phase 3), causing reader confusion about step order.
+
 Changelog v7.1 (2026-05-08):
     SYNC-run_all.sh:
       exp1        — cmd changed to hypatiax_defi_benchmark_v3c.py (direct script,
@@ -226,9 +254,9 @@ _PAPER_STEP_IDS = {
 # BLOCKER-1 / WARN-2: canonical 10-domain list for hybrid_all_domains.
 # validate_hybrid_all_domains_ids() checks this against the script at runtime.
 HYBRID_ALL_DOMAINS_IDS: list[str] = [
-    "mechanics", "electromagnetism", "thermodynamics", "quantum",
-    "optics",    "chemistry",        "biology",        "statistics",
-    "finance",   "other",
+    "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
+    "optics",    "quantum",        "chemistry",        "biology",
+    "mathematics", "economics",
 ]
 
 # ── suppB sample-complexity sweep parameters (BLOCKER-2) ───────────────────
@@ -1011,6 +1039,7 @@ STEPS: list[Step] = [
          [sys.executable,
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
           "--benchmark", "feynman",
+          "--skip-pysr",
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
           "--checkpoint-name", "feynman_exp2_checkpoint",
@@ -1033,7 +1062,8 @@ STEPS: list[Step] = [
          "Exp 2 · Combined five-system comparison — all methods (§10.7 combined)",
          [sys.executable,
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
-          "--benchmark", "all30",
+          "--protocol", "all30",
+          "--skip-pysr",
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
           "--checkpoint-name", "exp2_checkpoint",
@@ -1054,12 +1084,12 @@ STEPS: list[Step] = [
              "11/12 (91.7% by 4-decimal rounding) · strict R²≥0.9999: 4/12 (33.3%) · "
              "MW U=113, p=0.0097"
          ),
-         result_glob="hypatiax/data/results/nguyen12_exp3_*.json",
+         result_glob="extrapolation/*nguyen*seed42*.json",
          env_extra={"SKIP_PKG_CHECK": "1"},
-         # run_all.sh STEP 7: move nguyen*seed42*.json → RESULTS_DIR/
+         # run_all.sh STEP 7: move nguyen*seed42*.json → RESULTS_DIR/extrapolation/
          post_move=[
-             PostMove(EXPERIMENTS_DIR, "*nguyen*seed42*.json", RESULTS_DIR),
-             PostMove(EXPERIMENTS_DIR, "*nguyen12*42*.json",   RESULTS_DIR),
+             PostMove(EXPERIMENTS_DIR, "*nguyen*seed42*.json", RESULTS_DIR / "extrapolation"),
+             PostMove(EXPERIMENTS_DIR, "*nguyen12*42*.json",   RESULTS_DIR / "extrapolation"),
          ]),
 
     Step("exp3b",
@@ -1070,17 +1100,18 @@ STEPS: list[Step] = [
           "s = pathlib.Path('hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py');"
           "extra = ['--n-tasks','1'] if os.environ.get('ONE_EQUATION')=='1' else [];"
           "rc = 0;"
-          "[rc := rc or subprocess.run([sys.executable, str(s), '--seed', seed] + extra,"
-          " env=os.environ).returncode"
-          " for seed in ('99','123','777','2024')];"
+          "\nfor seed in ('99','123','777','2024'):\n"
+          "    r = subprocess.run([sys.executable, str(s), '--seed', seed] + extra,"
+          " env=os.environ);\n"
+          "    rc = rc or r.returncode\n"
           "sys.exit(rc)"],
          phase="1 · Core experiments",
          expected="consistent with SEED=42 across all 5 seeds",
          result_glob="extrapolation/full_run_*.json",
          env_extra={"SKIP_PKG_CHECK": "1"},
-         # run_all.sh STEP 8: move all *nguyen*.json → RESULTS_DIR/
+         # run_all.sh STEP 8: move all *nguyen*.json → RESULTS_DIR/extrapolation/
          post_move=[
-             PostMove(EXPERIMENTS_DIR, "*nguyen*.json", RESULTS_DIR),
+             PostMove(EXPERIMENTS_DIR, "*nguyen*.json", RESULTS_DIR / "extrapolation"),
          ]),
 
     # ── Phase 2: Supplementary benchmarks ─────────────────────────────────
@@ -1107,13 +1138,12 @@ STEPS: list[Step] = [
              "SKIP_PERF_ANALYSIS":    "1",
              "HYPATIAX_CORE_OPTIONAL": "1",
          },
-         # run_all.sh STEP 9: move consolidated_hybrid* → hybrid_llm_nn/defi/
-         #                     move hybrid_system*       → hybrid_llm_nn/all_domains/
+         # run_all.sh STEP 9: move consolidated_hybrid* + hybrid_system* → hybrid_pysr/defi/
          post_move=[
              PostMove(EXPERIMENTS_DIR, "consolidated_hybrid*.json",
-                      RESULTS_DIR / "hybrid_llm_nn" / "defi"),
+                      RESULTS_DIR / "hybrid_pysr" / "defi"),
              PostMove(EXPERIMENTS_DIR, "hybrid_system*.json",
-                      RESULTS_DIR / "hybrid_llm_nn" / "all_domains"),
+                      RESULTS_DIR / "hybrid_pysr" / "defi"),
          ]),
 
     # ── BLOCKER-1 RESOLVED: hybrid_all_domains (was: instability) ──────────
@@ -1198,14 +1228,7 @@ STEPS: list[Step] = [
                       exclude="sample-complexity"),
          ]),
 
-    # ── suppA — hybrid-PySR DeFi benchmark ─────────────────────────────────
-    # WARN-1 DOCUMENTED: suppA runs run_hybrid_system_benchmark.py (standalone
-    # hybrid-PySR DeFi run), NOT the routing-improvements script from Supp A.
-    # The routing improvements (Fix 0–5b, 66.2%→89.2%) are baked into exp1.
-    # result_glob corrected to hybrid_pysr/defi (matches CI RESULT_SUBDIR).
-    # BLOCKER-3 NOTE: suppA and hybrid_all_domains now use distinct output dirs:
-    #   suppA            → hybrid_pysr/defi/**/*.json
-    #   hybrid_all_domains → hybrid_llm_nn/all_domains/**/*.json
+    # ── Phase 3: Audit & verification ──────────────────────────────────────
     Step("provenance",
          "§11 · Provenance audit — protocol orchestration",
          ["python3", "-c",
@@ -1696,7 +1719,7 @@ def main() -> None:
         clear_checkpoint(); sys.exit(0)
 
     banner(
-        "HypatiaX · Reproducibility Pipeline v7.1"
+        "HypatiaX · Reproducibility Pipeline v7.2"
         + ("  [DRY-RUN]"          if args.dry_run            else "")
         + ("  [SMOKE-TEST]"       if args.one_equation        else "")
         + ("  [PAPER-QUALITY-1]"  if args.one_equation_paper  else "")
@@ -1782,7 +1805,7 @@ def main() -> None:
     env.setdefault("ENGINE_NAME",
                    _repro_config.get("engine", {}).get("name", "hybrid_system_v50_2"))
     env.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
-    env.setdefault("JULIA_NUM_THREADS", "1")
+    env.setdefault("JULIA_NUM_THREADS", "4")
     env.setdefault("FEYNMAN_SAMPLES",   str(_repro_config.get("feynman_samples", 200)))
 
     # Timeout priority: CLI flag > repro.yaml > env var > hard default
