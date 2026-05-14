@@ -7,9 +7,9 @@ import numpy as np
 from scipy import stats as scipy_stats
 
 
-# =========================
-# Config
-# =========================
+# =========================================================
+# CONFIG
+# =========================================================
 
 EXP = os.environ.get("EXP", "exp1")
 RESULT_SUBDIR = os.environ["RESULT_SUBDIR"]
@@ -17,15 +17,16 @@ ALL_PENDING = json.loads(os.environ.get("ALL_PENDING", "[]"))
 
 BASE_DIR = Path("hypatiax/data/results")
 RESULT_DIR = BASE_DIR / RESULT_SUBDIR
-OUT_DIR = RESULT_DIR
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
-MERGED_FILE = OUT_DIR / f"{EXP}_merged.json"
+INPUT_MERGED_FILE = RESULT_DIR / f"{EXP}_merged.json"
+OUTPUT_MERGED_FILE = RESULT_DIR / f"{EXP}_merged_clean.json"
+OUTPUT_STATS_FILE = RESULT_DIR / f"{EXP}_stats.json"
 
 
-# =========================
-# Constants
-# =========================
+# =========================================================
+# DOMAIN KEYS
+# =========================================================
 
 _DEFI_IDS = {
     "amm", "risk_var", "liquidity", "expected_shortfall",
@@ -33,24 +34,13 @@ _DEFI_IDS = {
     "trading", "derivatives",
 }
 
-_META_KEYS = {
-    "experiment", "generated_at", "source_run_id",
-    "n_total", "n_merged", "n_successes",
-    "success_rate", "config", "metadata",
-}
 
-_RESULT_KEYS = {
-    "equation_id", "task_id", "id",
-    "hypatia", "nn", "r2", "rmse",
-    "success", "best_expression",
-}
+# =========================================================
+# NORMALIZATION
+# =========================================================
 
-
-# =========================
-# Normalization
-# =========================
-
-def _normalize(item: dict) -> dict:
+def normalize(item: dict) -> dict:
+    """Standardize HypatiaX / NN schema formats."""
     if not isinstance(item, dict):
         return item
 
@@ -58,10 +48,10 @@ def _normalize(item: dict) -> dict:
 
     inner = item.get("results")
 
-    # unify nested structure
     if isinstance(inner, dict):
         inner = dict(inner)
 
+        # unify naming
         if "pure_llm" in inner and "hypatia" not in inner:
             inner["hypatia"] = inner.pop("pure_llm")
 
@@ -74,142 +64,168 @@ def _normalize(item: dict) -> dict:
     return item
 
 
-# =========================
-# Loaders
-# =========================
+# =========================================================
+# EXTRACTION ENGINE (FIXED CORE)
+# =========================================================
 
-def load_merged_file(path: Path) -> dict:
-    print(f"[INFO] Loading merged file: {path}")
-    with open(path) as f:
-        return json.load(f)
+def extract_rows(data: dict | list) -> dict:
+    """
+    Supports 3 formats:
+    1. {"amm": {...}, "risk_var": {...}}
+    2. {"results": [...]}
+    3. task_id / equation_id based systems
+    """
 
-
-def load_shards(directory: Path) -> list[Path]:
-    files = list(directory.rglob("*.json"))
-    print(f"[INFO] Found {len(files)} JSON files in {directory}")
-    return files
-
-
-# =========================
-# Parsing logic
-# =========================
-
-def extract_rows(data):
     rows = {}
 
+    # -------------------------
+    # CASE 1: LIST FORMAT
+    # -------------------------
     if isinstance(data, list):
         for item in data:
-            if isinstance(item, dict):
-                key = item.get("equation_id") or item.get("task_id") or item.get("id")
-                if key:
-                    rows[key] = _normalize(item)
+            if not isinstance(item, dict):
+                continue
 
+            key = (
+                item.get("equation_id")
+                or item.get("task_id")
+                or item.get("id")
+            )
+
+            if key:
+                rows[key] = normalize(item)
+
+    # -------------------------
+    # CASE 2: DICT FORMAT
+    # -------------------------
     elif isinstance(data, dict):
 
-        if "results" in data and isinstance(data["results"], list):
+        # CASE 2A: nested results list
+        if isinstance(data.get("results"), list):
             for r in data["results"]:
                 if isinstance(r, dict):
                     key = r.get("equation_id") or r.get("task_id") or r.get("id")
                     if key:
-                        rows[key] = _normalize(r)
+                        rows[key] = normalize(r)
 
+        # CASE 2B: DIRECT DEFI FORMAT (YOUR CASE)
+        elif any(k in _DEFI_IDS for k in data.keys()):
+            for k in _DEFI_IDS:
+                if k in data and isinstance(data[k], dict):
+                    rows[k] = normalize(data[k])
+
+        # CASE 2C: SINGLE TASK OBJECT
         elif "task_id" in data:
-            rows[data["task_id"]] = _normalize(data)
+            rows[data["task_id"]] = normalize(data)
 
+        # CASE 2D: GENERIC FALLBACK
         else:
-            # fallback structured dict
             for k, v in data.items():
-                if isinstance(v, dict) and (
-                    k in _DEFI_IDS or any(rk in v for rk in _RESULT_KEYS)
-                ):
-                    rows[k] = _normalize(v)
+                if isinstance(v, dict):
+                    rows[k] = normalize(v)
 
     return rows
 
 
-# =========================
-# Main pipeline
-# =========================
+# =========================================================
+# LOADING
+# =========================================================
+
+def load_input():
+    """
+    Priority:
+    1. merged file (preferred)
+    2. raw JSON scan fallback
+    """
+
+    if INPUT_MERGED_FILE.exists():
+        print(f"[INFO] Loading merged file: {INPUT_MERGED_FILE}")
+        with open(INPUT_MERGED_FILE) as f:
+            return json.load(f), "merged"
+
+    print(f"[WARN] No merged file found, scanning directory fallback")
+
+    files = list(RESULT_DIR.rglob("*.json"))
+
+    if not files:
+        raise FileNotFoundError(f"No JSON found in {RESULT_DIR}")
+
+    print(f"[INFO] Found {len(files)} JSON files")
+    combined = []
+
+    for f in files:
+        try:
+            with open(f) as fh:
+                combined.append(json.load(fh))
+        except Exception as e:
+            print(f"[SKIP] {f}: {e}")
+
+    return combined, "shards"
+
+
+# =========================================================
+# MAIN PIPELINE
+# =========================================================
 
 def main():
 
-    merged = {}
-
     print("\n==============================")
-    print("HypatiaX Merge Pipeline")
+    print(" HypatiaX Clean Merge Engine ")
     print("==============================")
+
     print(f"EXP: {EXP}")
     print(f"RESULT_DIR: {RESULT_DIR}")
-    print(f"OUT_DIR: {OUT_DIR}")
+
+    data, mode = load_input()
+
+    print(f"[MODE] {mode}")
+
+    merged = {}
+
+    # normalize input into rows
+    extracted = extract_rows(data)
+
+    merged.update(extracted)
 
     # =========================
-    # MODE 1: Prefer merged file
-    # =========================
-    if MERGED_FILE.exists():
-
-        print("\n[MODE] Using merged JSON (fast path)")
-
-        data = load_merged_file(MERGED_FILE)
-        merged = extract_rows(data)
-
-    else:
-
-        # =========================
-        # MODE 2: legacy shard mode
-        # =========================
-        print("\n[MODE] Using shard scan (legacy mode)")
-
-        files = load_shards(RESULT_DIR)
-
-        if not files:
-            raise FileNotFoundError(
-                f"No JSON files found in {RESULT_DIR}"
-            )
-
-        for path in files:
-            try:
-                with open(path) as f:
-                    data = json.load(f)
-
-                rows = extract_rows(data)
-
-                if rows:
-                    print(f"[OK] {path.name}: {len(rows)} rows")
-
-                merged.update(rows)
-
-            except Exception as e:
-                print(f"[SKIP] {path}: {e}")
-
-    # =========================
-    # Summary
+    # VALIDATION (IMPORTANT)
     # =========================
 
-    print("\n==============================")
-    print(f"Total merged: {len(merged)}")
-    print("==============================")
+    if not merged:
+        print("\n==============================")
+        print("❌ ERROR: EMPTY MERGE")
+        print("==============================")
+        print("Likely causes:")
+        print(" - Wrong schema (amm/risk_var not detected)")
+        print(" - Wrong input file")
+        print(" - Unexpected JSON structure")
+        raise RuntimeError("Merge produced 0 rows")
+
+    # =========================
+    # SAVE CLEAN OUTPUT
+    # =========================
+
+    with open(OUTPUT_MERGED_FILE, "w") as f:
+        json.dump(merged, f, indent=2)
+
+    print(f"\n[WRITE] {OUTPUT_MERGED_FILE}")
+
+    # =========================
+    # COVERAGE
+    # =========================
 
     if ALL_PENDING:
         missing = sorted(set(ALL_PENDING) - set(merged))
-        coverage = len(merged) / len(ALL_PENDING) * 100
+        coverage = len(merged) / len(ALL_PENDING)
 
-        print(f"Coverage: {len(merged)}/{len(ALL_PENDING)} ({coverage:.1f}%)")
+        print("\n==============================")
+        print(f"Coverage: {len(merged)}/{len(ALL_PENDING)} ({coverage:.1%})")
 
         if missing:
             print(f"Missing: {missing}")
 
     # =========================
-    # Save merged output
-    # =========================
-
-    merged_path = OUT_DIR / f"{EXP}_merged.json"
-    with open(merged_path, "w") as f:
-        json.dump(merged, f, indent=2)
-
-    print(f"[WRITE] {merged_path}")
-
-    # =========================
-    # Stats computation
+    # STATS
     # =========================
 
     hyp, nn = [], []
@@ -230,15 +246,14 @@ def main():
 
     stats = {
         "experiment": EXP,
+        "mode": mode,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "n_total": len(ALL_PENDING) if ALL_PENDING else len(merged),
         "n_merged": len(merged),
         "n_successes": len(successes),
         "success_rate": (len(successes) / len(merged)) if merged else None,
-        "hyp_extrap_mean": float(np.mean(hyp)) if hyp else None,
-        "hyp_extrap_median": float(np.median(hyp)) if hyp else None,
-        "nn_extrap_mean": float(np.mean(nn)) if nn else None,
-        "nn_extrap_median": float(np.median(nn)) if nn else None,
+        "hyp_mean": float(np.mean(hyp)) if hyp else None,
+        "nn_mean": float(np.mean(nn)) if nn else None,
     }
 
     if len(hyp) >= 5 and len(nn) >= 5:
@@ -249,14 +264,14 @@ def main():
             "mw_significant": bool(p < 0.05),
         })
 
-    stats_path = OUT_DIR / f"{EXP}_stats.json"
-    with open(stats_path, "w") as f:
+    with open(OUTPUT_STATS_FILE, "w") as f:
         json.dump(stats, f, indent=2)
 
-    print(f"[WRITE] {stats_path}")
+    print(f"[WRITE] {OUTPUT_STATS_FILE}")
 
     print("\nPipeline complete.")
 
 
 if __name__ == "__main__":
     main()
+
