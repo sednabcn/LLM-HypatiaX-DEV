@@ -161,7 +161,9 @@ if ver < (0, 40, 0):
     sys.exit(1)
 print("anthropic SDK version: " + anthropic.__version__ + " (>= 0.40.0 OK)")
 SDKCHECK
-  [ $? -eq 0 ] || exit 1
+  # BUG 4 FIX: the '[ $? -eq 0 ] || exit 1' guard that was here is dead code —
+  # set -e (line above) exits the subshell immediately if python3 fails, so $?
+  # is never checked. Removed to avoid misleading future readers.
   python3 -c "import sympy; print(\"SymPy:\", sympy.__version__)"
   python3 -c "import scipy; print(\"SciPy:\", scipy.__version__)"
   # FIX-11: match CI pip-installed + checked deps (scikit-learn, pyyaml, matplotlib, pmlb)
@@ -196,8 +198,12 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
   # FIX CRITICAL 3: hybrid_llm_nn/all_domains (not /defi)
   # BUG 2 FIX: added extrapolation/multi_seed — exp3b now writes to this subdir
   # (was: extrapolation/) to avoid collision with exp3 outputs.
-  # Mirrors ci_experiment.yml Create results directory structure step.
-  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,noise-sweep,sample-complexity},noise-noiseless/{noiseless,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
+  # BUG 1 FIX: added comparison_results/feynman-tests/exp2_multi (exp2 tee target)
+  # and bare extrapolation/ (exp3 RESULT_SUBDIR) — both present in the CI mkdir
+  # step but absent here, causing tee/mv failures when those steps run standalone.
+  # Mirrors ci_experiment.yml Create results directory structure step exactly.
+  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
+  mkdir -p '"${RESULTS_DIR}"'/extrapolation
   echo "Directory structure: ok"
 '
 
@@ -268,6 +274,10 @@ run extrap "OOD extrapolation comparative run (Tab 9 OOD columns)" bash -c "
     --extrap \
     --extrap-multiplier \${EXTRAP_MULTIPLIER:-2.0} \
     --extrap-train-frac \${EXTRAP_TRAIN_FRAC:-0.8} \
+    --samples ${FEYNMAN_SAMPLES} \
+    --pysr-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${FEYNMAN_TIMEOUT} \
+    --no-llm-cache \
     2>&1 | tee '${RESULTS_DIR}'/extrap_run.log
   echo 'extrap output: ${RESULTS_DIR}/comparison_results/extrapolation/'
   ls '${RESULTS_DIR}/comparison_results/extrapolation/' 2>/dev/null || true
@@ -412,6 +422,7 @@ run exp2 "Combined five-system comparison — all Methods (Tab 19 full)" bash -c
     --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${FEYNMAN_TIMEOUT} \
     --checkpoint-name exp2_checkpoint \
     --resume \
     2>&1 | tee '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi/exp2_run.log'

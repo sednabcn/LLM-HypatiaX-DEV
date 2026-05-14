@@ -168,7 +168,7 @@ jobs:
 
       - name: Restore shared checkpoint (plan)
         id: restore_plan
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v4.0.2
         with:
           path: checkpoint_plan.json
           key:  checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -461,7 +461,7 @@ jobs:
 
       - name: Save plan checkpoint cache
         if: always()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v4.0.2
         with:
           path: checkpoint_plan.json
           key: checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -590,7 +590,7 @@ jobs:
 
       - name: Restore shard checkpoint
         id: restore_worker
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v4.0.2
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key:  checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -1007,6 +1007,52 @@ print(' '.join(ids))")
           esac
 
 
+      # ── FIX-G5: Safety-net extraction ────────────────────────────────────────
+      # Rescues computed results from the per-shard checkpoint into RESULTS_DIR
+      # when the experiment script crashes after writing checkpoint entries but
+      # before writing its final JSON/CSV outputs.  Runs unconditionally (always())
+      # so it fires even if "Run experiment tasks" exits non-zero.
+      # Strategy: iterate every task ID in the shard checkpoint's "completed" list;
+      # for each one, glob for any matching JSON/CSV in the workspace root and move
+      # it into the canonical RESULTS_DIR path so the artifact upload step finds it.
+      - name: Safety-net — rescue results from shard checkpoint (FIX-G5)
+        if: always()
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json, os, shutil
+
+          shard_idx  = os.environ["SHARD_INDEX"]
+          ckpt_path  = f"checkpoint_worker_shard{shard_idx}.json"
+          result_dir = os.path.join(os.environ["OUT_BASE"], os.environ["RESULT_SUBDIR"])
+          os.makedirs(result_dir, exist_ok=True)
+
+          if not os.path.exists(ckpt_path):
+              print(f"No shard checkpoint found at {ckpt_path} — nothing to rescue.")
+          else:
+              try:
+                  completed = json.load(open(ckpt_path)).get("completed", [])
+              except Exception as e:
+                  print(f"Could not read checkpoint: {e}")
+                  completed = []
+
+              rescued = 0
+              for tid in completed:
+                  safe = tid.replace("/", "_").replace(".", "_")
+                  for pattern in (f"*{safe}*.json", f"*{safe}*.csv"):
+                      for src in glob.glob(pattern):
+                          dst = os.path.join(result_dir, os.path.basename(src))
+                          if src == dst or os.path.abspath(src) == os.path.abspath(dst):
+                              continue
+                          if not os.path.exists(dst):
+                              shutil.move(src, dst)
+                              print(f"  rescued: {src}  →  {dst}")
+                              rescued += 1
+              print(f"Safety-net rescue complete: {rescued} file(s) moved for shard {shard_idx}")
+          PYEOF
+
       # ── Move results to canonical RESULTS_DIR after each experiment ──────────
       # Picks up outputs written to CWD or a temp path and places them into the
       # canonical ${OUT_BASE}/${RESULT_SUBDIR} location that the consolidate job
@@ -1205,7 +1251,7 @@ print(' '.join(ids))")
 
       - name: Persist shard checkpoint to cache
         if: always()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v4.0.2
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key: checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -1261,7 +1307,9 @@ print(' '.join(ids))")
           path:         downloaded_artifacts
           # FIX: pattern matches stable artifact names "results-{exp}-shard{N}"
           # (run_id suffix was removed from upload name to fix cross-workflow consolidation)
-          pattern:      "results-${{ github.event.inputs.experiment }}-shard*"
+          # BUG FIX: was github.event.inputs.experiment; must match the upload which uses
+          # needs.plan.outputs.exp_id for consistency (BUG 8 FIX established this pattern).
+          pattern:      "results-${{ needs.plan.outputs.exp_id }}-shard*"
 
       - name: List downloaded artifacts
         run: find downloaded_artifacts -type f | sort
