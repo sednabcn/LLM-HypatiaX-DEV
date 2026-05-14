@@ -293,6 +293,33 @@ jobs:
                   with open(path) as f:
                       data = json.load(f)
 
+                  print("\n" + "="*70)
+                  print(f"DEBUG FILE: {path}")
+                  print(f"TOP-LEVEL TYPE: {type(data).__name__}")
+
+                  if isinstance(data, dict):
+                      print("TOP-LEVEL KEYS:")
+                      for k in list(data.keys())[:20]:
+                          print(f"  - {k}")
+
+                          v = data[k]
+                          if isinstance(v, dict):
+                              print(f"      nested keys: {list(v.keys())[:10]}")
+
+                  elif isinstance(data, list):
+                      print(f"LIST LENGTH: {len(data)}")
+
+                      if data:
+                          first = data[0]
+                          print(f"FIRST ITEM TYPE: {type(first).__name__}")
+
+                          if isinstance(first, dict):
+                              print("FIRST ITEM KEYS:")
+                              for k in list(first.keys())[:20]:
+                                  print(f"  - {k}")
+
+                  print("="*70 + "\n")
+
                   rows = {}
 
                   # -- Strategy A: top-level list (DeFi benchmark format) --------
