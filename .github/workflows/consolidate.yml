@@ -23,13 +23,28 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
-      - name: Download all artifacts
+      # ✅ CRITICAL FIX: download artifacts from triggering run
+      - name: Download experiment artifacts
         uses: actions/download-artifact@v4
         with:
           path: all_results
+          run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Show artifact structure
-        run: ls -R all_results
+      # ✅ Safe debug step (prevents crash)
+      - name: Verify artifacts exist
+        run: |
+          if [ -d all_results ] && [ "$(ls -A all_results)" ]; then
+            echo "Artifacts downloaded successfully:"
+            ls -R all_results
+          else
+            echo "ERROR: No artifacts found from experiment run"
+            exit 1
+          fi
+
+      # Optional dependency install (only if needed)
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
 
       - name: Run consolidation
         run: |
