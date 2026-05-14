@@ -67,65 +67,64 @@ def normalize(item: dict) -> dict:
 # =========================================================
 # EXTRACTION ENGINE (FIXED CORE)
 # =========================================================
-
 def extract_rows(data: dict | list) -> dict:
-    """
-    Supports 3 formats:
-    1. {"amm": {...}, "risk_var": {...}}
-    2. {"results": [...]}
-    3. task_id / equation_id based systems
-    """
-
     rows = {}
 
-    # -------------------------
-    # CASE 1: LIST FORMAT
-    # -------------------------
+    # =========================
+    # CASE 1: LIST
+    # =========================
     if isinstance(data, list):
         for item in data:
-            if not isinstance(item, dict):
-                continue
+            if isinstance(item, dict):
+                key = item.get("task_id") or item.get("equation_id") or item.get("id")
+                if key:
+                    rows[key] = normalize(item)
 
-            key = (
-                item.get("equation_id")
-                or item.get("task_id")
-                or item.get("id")
-            )
-
-            if key:
-                rows[key] = normalize(item)
-
-    # -------------------------
-    # CASE 2: DICT FORMAT
-    # -------------------------
+    # =========================
+    # CASE 2: DICT
+    # =========================
     elif isinstance(data, dict):
 
-        # CASE 2A: nested results list
-        if isinstance(data.get("results"), list):
-            for r in data["results"]:
-                if isinstance(r, dict):
-                    key = r.get("equation_id") or r.get("task_id") or r.get("id")
-                    if key:
-                        rows[key] = normalize(r)
+        # -------------------------------------------------
+        # 🔴 CASE A: YOUR ACTUAL FORMAT (KEYED EXPERIMENT)
+        # -------------------------------------------------
+        defi_keys = set(data.keys()) & _DEFI_IDS
 
-        # CASE 2B: DIRECT DEFI FORMAT (YOUR CASE)
-        elif any(k in _DEFI_IDS for k in data.keys()):
-            for k in _DEFI_IDS:
-                if k in data and isinstance(data[k], dict):
-                    rows[k] = normalize(data[k])
-
-        # CASE 2C: SINGLE TASK OBJECT
-        elif "task_id" in data:
-            rows[data["task_id"]] = normalize(data)
-
-        # CASE 2D: GENERIC FALLBACK
-        else:
-            for k, v in data.items():
+        if defi_keys:
+            for k in defi_keys:
+                v = data[k]
                 if isinstance(v, dict):
                     rows[k] = normalize(v)
 
-    return rows
+            return rows
 
+        # -------------------------------------------------
+        # CASE B: results list format
+        # -------------------------------------------------
+        if isinstance(data.get("results"), list):
+            for r in data["results"]:
+                if isinstance(r, dict):
+                    key = r.get("task_id") or r.get("id") or r.get("equation_id")
+                    if key:
+                        rows[key] = normalize(r)
+
+            return rows
+
+        # -------------------------------------------------
+        # CASE C: single task object
+        # -------------------------------------------------
+        if "task_id" in data:
+            rows[data["task_id"]] = normalize(data)
+            return rows
+
+        # -------------------------------------------------
+        # CASE D: fallback (DO NOT OVERFILTER)
+        # -------------------------------------------------
+        for k, v in data.items():
+            if isinstance(v, dict):
+                rows[k] = normalize(v)
+
+    return rows
 
 # =========================================================
 # LOADING
