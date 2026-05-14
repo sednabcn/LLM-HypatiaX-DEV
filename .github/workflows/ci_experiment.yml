@@ -1,13 +1,13 @@
-# ══════════════════════════════════════════════════════════════════════════════
-#  ci_experiment.yml — HypatiaX unified experiment runner (was: ci_experiment_instability.yml)
+# ==============================================================================
+#  ci_experiment.yml - HypatiaX unified experiment runner (was: ci_experiment_instability.yml)
 #
-#  Covers: exp1 · exp1b · exp2_feynman · exp2 · exp3 · exp3b
-#          suppA · suppB · suppB_sc · extrap
-#          hybrid_all_domains (STEP 4 — one-shot LLM+NN, 10 domains)
-#          instability        (STEP 4a — Instability Index §10.9, run_instability_suite.py)
+#  Covers: exp1 . exp1b . exp2_feynman . exp2 . exp3 . exp3b
+#          suppA . suppB . suppB_sc . extrap
+#          hybrid_all_domains (STEP 4 - one-shot LLM+NN, 10 domains)
+#          instability        (STEP 4a - Instability Index S10.9, run_instability_suite.py)
 #
-#  Architecture (fixes B1–B4 from shard_architecture_audit.svg):
-#    plan  → workers (matrix) → upload-per-shard artifacts
+#  Architecture (fixes B1-B4 from shard_architecture_audit.svg):
+#    plan  -> workers (matrix) -> upload-per-shard artifacts
 #    B1 fixed: plan outputs are wired into worker env via needs.plan.outputs
 #    B2 fixed: worker cache key includes shard index (${{ matrix.shard }})
 #    B3 fixed: seed-on-miss filters by plan-computed pending IDs, not positional slice
@@ -15,7 +15,7 @@
 #
 #  Hard deadline: 6 hours wall-clock.
 #    - Each worker job has timeout-minutes: 330 (5 h 30 m).
-#    - run_all.sh is invoked with JOB_DEADLINE=19800 (330 min × 60 s).
+#    - run_all.sh is invoked with JOB_DEADLINE=19800 (330 min ? 60 s).
 #    - The plan job and consolidate job run in <10 min each, fitting the envelope.
 #
 #  Fixes backported from ci_exp2_hypatiax_v53_feynman_sh.yml (generic diffs only):
@@ -37,17 +37,17 @@
 #    FIX-G10: PYTHON_JULIACALL_HANDLE_SIGNALS=yes set before any juliacall import
 #             so Julia segfaults produce traceable Python exceptions.
 #             Julia upgraded to 1.11 via julia-actions/setup-julia@v2.
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
-name: "HypatiaX — experiment runner · run_all.sh"
-run-name: "HypatiaX — ${{ inputs.experiment }} · run_all.sh"
+name: "HypatiaX - experiment runner . run_all.sh"
+run-name: "HypatiaX - ${{ inputs.experiment }} . run_all.sh"
 
-# ── Triggers ──────────────────────────────────────────────────────────────────
+# -- Triggers ------------------------------------------------------------------
 on:
   workflow_dispatch:
     inputs:
 
-      # ── Which experiment to run ────────────────────────────────────────────
+      # -- Which experiment to run --------------------------------------------
       experiment:
         description: "Experiment ID (see run_all.sh --step)"
         required: true
@@ -61,21 +61,25 @@ on:
           - exp3b
           - suppA
           - suppB
-          - suppB_sc           # ← FIX CRITICAL 2: added to dispatch menu
-          - hybrid_all_domains # ← FIX CRITICAL 1: renamed from instability
-          - instability        # ← STEP 4a: Instability Index §10.9 (run_instability_suite.py)
-          - extrap             # ← STEP 3: all-domains OOD extrapolation (Tab 9 OOD)
+          ## <- FIX CRITICAL 2: added to dispatch menu
+          - suppB_sc
+          ## <- FIX CRITICAL 1: renamed from instability
+          - hybrid_all_domains
+          ## <- STEP 4a: Instability Index S10.9 (run_instability_suite.py)
+          - instability
+          ## <- STEP 3: all-domains OOD extrapolation (Tab 9 OOD)
+          - extrap
         default: exp2_feynman
 
-      # ── Sharding ──────────────────────────────────────────────────────────
+      # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards — 4 (preferred) or 3 (quota-limited)"
+        description: "Number of parallel worker shards - 4 (preferred) or 3 (quota-limited)"
         required: false
         default: "4"
 
-      # ── Seeds / samples ───────────────────────────────────────────────────
+      # -- Seeds / samples ---------------------------------------------------
       seeds:
-        description: "Comma-separated seed list (e.g. 42,99,123,777,2024) — overrides per-experiment default"
+        description: "Comma-separated seed list (e.g. 42,99,123,777,2024) - overrides per-experiment default"
         required: false
         default: ""
 
@@ -84,13 +88,13 @@ on:
         required: false
         default: "200"
 
-      # ── Noise levels (suppB) ──────────────────────────────────────────────
+      # -- Noise levels (suppB) ----------------------------------------------
       noise_levels:
         description: "Comma-separated noise levels for suppB (e.g. 0.0,0.5,1.0,5.0,10.0)"
         required: false
         default: "0.0,0.5,1.0,5.0,10.0"
 
-      # ── PySR hyperparameters ───────────────────────────────────────────────
+      # -- PySR hyperparameters -----------------------------------------------
       pysr_generations:
         description: "PySR generations (PYSR_GENERATIONS)"
         required: false
@@ -101,20 +105,20 @@ on:
         required: false
         default: "4"
 
-      # ── Task-ID override ──────────────────────────────────────────────────
+      # -- Task-ID override --------------------------------------------------
       task_ids_override:
         description: "Space-separated task IDs to run (blank = full experiment set)"
         required: false
         default: ""
 
-      # ── Resume / dry-run ─────────────────────────────────────────────────
+      # -- Resume / dry-run -------------------------------------------------
       resume:
-        description: "Resume from checkpoint — skip task IDs already recorded as done (true/false)"
+        description: "Resume from checkpoint - skip task IDs already recorded as done (true/false)"
         required: false
         default: "true"
 
       dry_run:
-        description: "Dry-run — print commands without executing (true/false)"
+        description: "Dry-run - print commands without executing (true/false)"
         required: false
         default: "false"
 
@@ -142,12 +146,12 @@ env:
   JULIA_NUM_THREADS:   "4"
   JULIA_EXCLUSIVE:     "0"
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  JOB 1 — plan
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+#  JOB 1 - plan
+# ==============================================================================
 jobs:
   plan:
-    name: "Plan — ${{ github.event.inputs.experiment }}"
+    name: "Plan - ${{ github.event.inputs.experiment }}"
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -249,11 +253,11 @@ jobs:
               DEFAULT_SEEDS="42"
               ;;
 
-            # ── STEP 4a: Instability Index §10.9 ─────────────────────────────────────
+            # -- STEP 4a: Instability Index S10.9 -------------------------------------
             # Runs run_instability_suite.py against K-run DeFi benchmark results.
             # Stage 1: reads hypatiax_defi_variance_results.json (or multi-run JSONs).
-            # Stage 2: merges extrapolation R² when benchmark JSON is present.
-            # Stage 3: writes all 12 instability figures (Groups A–C + EX).
+            # Stage 2: merges extrapolation R2 when benchmark JSON is present.
+            # Stage 3: writes all 12 instability figures (Groups A-C + EX).
             # RESULT_SUBDIR=figures so shard artifacts contain the CSVs + pngs/pdfs.
             instability)
               SCRIPT="hypatiax/experiments/benchmarks/run_instability_suite.py"
@@ -262,7 +266,7 @@ jobs:
               DEFAULT_SEEDS="42"
               ;;
 
-            # ← FIX CRITICAL 1: renamed from "instability"; RESULT_SUBDIR fixed (CRITICAL 3)
+            # <- FIX CRITICAL 1: renamed from "instability"; RESULT_SUBDIR fixed (CRITICAL 3)
             hybrid_all_domains)
               SCRIPT="hypatiax/experiments/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py"
               NEEDS_JULIA=false
@@ -270,22 +274,22 @@ jobs:
               DEFAULT_SEEDS="42"
               ;;
 
-            # ← FIX CRITICAL 2: new experiment entry for sample-complexity sweep
+            # <- FIX CRITICAL 2: new experiment entry for sample-complexity sweep
             suppB_sc)
               SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
-              # TASK-6 (HIGH): Same NEEDS_JULIA caveat as suppB — verify whether
+              # TASK-6 (HIGH): Same NEEDS_JULIA caveat as suppB - verify whether
               # run_sample_complexity_benchmark.py invokes PySR/EHD before setting false.
               NEEDS_JULIA=false
               RESULT_SUBDIR="comparison_results/feynman-tests/sample-complexity"
               DEFAULT_SEEDS="42"
               ;;
 
-            # ── STEP 3: all-domains OOD extrapolation comparative ─────────────────
+            # -- STEP 3: all-domains OOD extrapolation comparative -----------------
             # Produces Tab 9 OOD columns.
             # Script : run_comparative_suite_benchmark_v2.py --extrap
             # Output : comparison_results/extrapolation/all_domains_extrap_v4_*.json
             # Keys   : extrap_r2 per method per equation (merged by consolidate job)
-            # Julia  : true — methods 5/6 (SymbolicEngine, HybridV40) use PySR
+            # Julia  : true - methods 5/6 (SymbolicEngine, HybridV40) use PySR
             extrap)
               SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
               NEEDS_JULIA=true
@@ -323,12 +327,12 @@ jobs:
           # BUG 5 FIX: make the clamp visible so callers are not silently misled.
           if N_SHARDS != N_SHARDS_RAW:
               print(f"::warning::n_shards input was {N_SHARDS_RAW}; clamped to {N_SHARDS} "
-                    f"(accepted range: 3–4). Update dispatch_experiment.sh call if intentional.")
+                    f"(accepted range: 3-4). Update dispatch_experiment.sh call if intentional.")
           OVERRIDE     = os.environ["OVERRIDE"].split() if os.environ["OVERRIDE"].strip() else []
           SEEDS        = [s.strip() for s in os.environ["EFFECTIVE_SEEDS"].split(",") if s.strip()]
           NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
 
-          # ── exp2_feynman shard IDs ────────────────────────────────────────────
+          # -- exp2_feynman shard IDs --------------------------------------------
           # BenchmarkProtocol._apply_shard_ids() filters at DOMAIN level, not
           # individual equation level.  Domain keys are "feynman_<sub-domain>"
           # (the _FEYNMAN_PREFIX + eq.domain from each FeynmanEquation).
@@ -359,19 +363,19 @@ jobs:
               "feynman_thermodynamics",
           ]
 
-          # ── exp2 shard IDs ────────────────────────────────────────────────────
+          # -- exp2 shard IDs ----------------------------------------------------
           # ExperimentProtocolAll._apply_shard_ids() also filters at DOMAIN level.
           # Domain keys are bare strings from get_all_domains():
           #   mechanics, thermodynamics, electromagnetism, fluid_dynamics,
           #   optics, quantum, chemistry, biology, mathematics, economics
-          # M.01–M.30 are equation-level IDs used only for task_ids_override /
-          # checkpoint tracking — they are NOT what SHARD_IDS matches against.
+          # M.01-M.30 are equation-level IDs used only for task_ids_override /
+          # checkpoint tracking - they are NOT what SHARD_IDS matches against.
           EXP2_DOMAINS = [
               "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
               "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
           ]
 
-          # M.XX IDs — used for checkpoint tracking and task_ids_override only.
+          # M.XX IDs - used for checkpoint tracking and task_ids_override only.
           MULTI30 = [f"M.{i:02d}" for i in range(1, 31)]
 
           NGUYEN12 = [f"N{i}" for i in range(1, 13)]
@@ -384,7 +388,7 @@ jobs:
               "liquidation", "risk", "lending", "staking", "trading", "derivatives",
           ]
 
-          # ── hybrid_all_domains shard IDs ──────────────────────────────────────
+          # -- hybrid_all_domains shard IDs --------------------------------------
           # Matches ExperimentProtocolAll.get_all_domains() exactly.
           # FIX: removed "statistics", "finance", "other" (don't exist in protocol);
           #      added "fluid_dynamics" and "mathematics" (present in protocol).
@@ -393,7 +397,7 @@ jobs:
               "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
           ]
 
-          # ── suppB / suppB_sc use feynman domain keys for shard splitting ──────
+          # -- suppB / suppB_sc use feynman domain keys for shard splitting ------
           # suppB shards by feynman domain (same as exp2_feynman), not equation ID.
           SUPPB_SC_SAMPLE_COUNTS = ["50", "100", "200", "500", "750", "1000"]
           SUPPB_SC_IDS = [f"sc_n{n}__{eq}" for n in SUPPB_SC_SAMPLE_COUNTS
@@ -437,7 +441,7 @@ jobs:
           print(f"Total={len(all_ids)}  Done={len(done)}  Pending={len(pending)}")
 
           if not pending:
-              print("Nothing pending — all tasks already complete.")
+              print("Nothing pending - all tasks already complete.")
               with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
                   fh.write("shard_matrix=[]\n")
                   fh.write("all_pending=[]\n")
@@ -456,7 +460,7 @@ jobs:
           print("Shard assignment:")
           for s in matrix:
               ids = json.loads(s["ids"])
-              print(f"  shard {s['shard']}: {len(ids)} tasks — {ids[:4]}{'…' if len(ids)>4 else ''}")
+              print(f"  shard {s['shard']}: {len(ids)} tasks - {ids[:4]}{'...' if len(ids)>4 else ''}")
           PYEOF
 
       - name: Save plan checkpoint cache
@@ -467,11 +471,11 @@ jobs:
           key: checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  JOB 2 — worker
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+#  JOB 2 - worker
+# ==============================================================================
   worker:
-    name: "Worker — ${{ github.event.inputs.experiment }} shard ${{ matrix.shard }}"
+    name: "Worker - ${{ github.event.inputs.experiment }} shard ${{ matrix.shard }}"
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 330
@@ -529,12 +533,12 @@ jobs:
         run: |
           python3 -c "import pysr; pysr.install()"
 
-      # ── FIX: methods 5 & 6 (SymbolicEngineWithLLM, HybridDiscoverySystem v50_2) ──
+      # -- FIX: methods 5 & 6 (SymbolicEngineWithLLM, HybridDiscoverySystem v50_2) --
       # _probe() in run_comparative_suite_benchmark_v2.py imports symbolic_engine.py
       # and hybrid_system_v50_2.py at module load time.  Both transitively import pysr,
       # which calls juliacall to load SymbolicRegression.jl.  If the Julia depot is not
       # fully precompiled before the probe runs, juliacall raises a precompilation error
-      # that _probe() silently swallows → SYM_ENGINE_AVAILABLE = False permanently,
+      # that _probe() silently swallows -> SYM_ENGINE_AVAILABLE = False permanently,
       # and every test reports "SymbolicEngineWithLLM not available" for the whole run.
       #
       # Fix: run a short Julia precompile warmup AFTER pysr.install() so that
@@ -553,7 +557,7 @@ jobs:
 
           # Warm up juliacall + SymbolicRegression.jl so that _probe() succeeds.
           # Uses a minimal PySR fit (5 iterations, 1 population) just to force
-          # full precompilation — the result is discarded.
+          # full precompilation - the result is discarded.
           warmup = """
           import numpy as np
           import pysr
@@ -577,7 +581,7 @@ jobs:
           )
           print(result.stdout or "")
           if result.returncode != 0:
-              # Warmup failure is non-fatal — methods 5/6 will still show N/A,
+              # Warmup failure is non-fatal - methods 5/6 will still show N/A,
               # but we surface the error so it's visible in the step log.
               print("WARNING: Julia precompile warmup failed (methods 5+6 may be N/A):")
               print(result.stderr[-3000:] if result.stderr else "(no stderr)")
@@ -619,7 +623,7 @@ jobs:
           if [ -f "${REPRO_CFG}" ]; then
             python3 "${{ github.workspace }}/.github/scripts/print_repro.py"
           else
-            echo "WARNING: repro.yaml not found at ${REPRO_CFG} — using workflow env defaults"
+            echo "WARNING: repro.yaml not found at ${REPRO_CFG} - using workflow env defaults"
           fi
 
       - name: Validate ANTHROPIC_API_KEY (live round-trip)
@@ -676,7 +680,7 @@ jobs:
             echo "Seeded shard ${{ matrix.shard }} checkpoint (${N} tasks) from committed master"
           else
             echo '{"completed":[]}' > "$CKPT_PATH"
-            echo "No committed checkpoint found — shard ${{ matrix.shard }} starts fresh"
+            echo "No committed checkpoint found - shard ${{ matrix.shard }} starts fresh"
           fi
 
       - name: Resolve this shard's pending IDs
@@ -705,12 +709,13 @@ jobs:
               fh.write(f"has_work={'true' if pending else 'false'}\n")
           PYEOF
 
-      # ── FIX TASK 7: domain-list validation for hybrid_all_domains ──────────
+      # -- FIX TASK 7: domain-list validation for hybrid_all_domains ----------
       # Reads HYBRID_ALL_DOMAINS_IDS from the Python plan registry (above) and
       # cross-checks against ExperimentProtocolAll.get_all_domains() at runtime.
       # The worker exits 1 if the lists diverge, surfacing the mismatch before
       # the 5.5-hour experiment run starts.
-      - name: Validate hybrid_all_domains domain list   # ← FIX TASK 7
+      # FIX TASK 7
+      - name: Validate hybrid_all_domains domain list
         if: ${{ needs.plan.outputs.exp_id == 'hybrid_all_domains' }}
         run: |
           python3 - <<'PYEOF'
@@ -734,7 +739,7 @@ jobs:
           try:
               spec.loader.exec_module(mod)
           except SystemExit:
-              pass  # script may call sys.exit() at module level — tolerate
+              pass  # script may call sys.exit() at module level - tolerate
 
           actual = getattr(mod, "DOMAINS",
                    getattr(mod, "ALL_DOMAINS",
@@ -754,7 +759,7 @@ jobs:
           extra    = actual_set - EXPECTED
 
           if missing or extra:
-              print("DOMAIN LIST MISMATCH — update HYBRID_ALL_DOMAINS_IDS in the plan step!")
+              print("DOMAIN LIST MISMATCH - update HYBRID_ALL_DOMAINS_IDS in the plan step!")
               if missing: print(f"  In CI registry but NOT in script : {sorted(missing)}")
               if extra:   print(f"  In script but NOT in CI registry : {sorted(extra)}")
               sys.exit(1)
@@ -780,7 +785,7 @@ jobs:
           echo "ANTHROPIC_API_KEY: enforced (${#ANTHROPIC_API_KEY} chars)"
 
           if [[ "${{ github.event.inputs.dry_run || 'false' }}" == "true" ]]; then
-            echo "=== DRY RUN — shard ${{ matrix.shard }} | experiment: ${EXP} ==="
+            echo "=== DRY RUN - shard ${{ matrix.shard }} | experiment: ${EXP} ==="
             echo "${PENDING_IDS}" | python3 -c "import json,sys; [print(' ',t) for t in json.load(sys.stdin)]"
             echo "FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT}  FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES}"
             echo "PYSR_POPULATIONS=${PYSR_POPULATIONS}  PYSR_GENERATIONS=${PYSR_GENERATIONS}"
@@ -790,11 +795,8 @@ jobs:
 
           mkdir -p "${RESULTS_DIR}/${RESULT_SUBDIR}"
 
-          python3 -c "
-import json, os
-ids = json.loads(os.environ['PENDING_IDS'])
-print('\n'.join(ids))
-" > /tmp/pending_ids.txt
+          python3 -c "import json,os; print('\n'.join(json.loads(os.environ['PENDING_IDS'])))" \
+            > /tmp/pending_ids.txt
 
           echo "=== Shard ${SHARD_INDEX} | Experiment: ${EXP} ==="
           cat /tmp/pending_ids.txt
@@ -825,7 +827,7 @@ print('\n'.join(ids))
               # excluded from exp2_feynman.  They are PySR-backed tools that are
               # NOT part of the paper's Tab 16-18 comparison (only methods 1-4
               # appear in the tables).  Including them wastes Julia startup time
-              # (~150s per test × 30 tests) on a 5h30m budget.
+              # (~150s per test ? 30 tests) on a 5h30m budget.
               # If you want them back, remove --skip-pysr here AND in run_all.sh.
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
@@ -860,17 +862,11 @@ print('\n'.join(ids))
               ;;
 
             exp3|exp3b)
-              SEEDS_IN_SHARD=$(python3 -c "
-lines = open('/tmp/pending_ids.txt').read().splitlines()
-seeds = sorted(set(l.split('_seed')[1] for l in lines if '_seed' in l))
-print(' '.join(seeds))")
+              SEEDS_IN_SHARD=$(python3 -c "import sys; lines=open('/tmp/pending_ids.txt').read().splitlines(); seeds=sorted(set(l.split('_seed')[1] for l in lines if '_seed' in l)); print(' '.join(seeds))")
               for SEED in ${SEEDS_IN_SHARD}; do
-                SEED_TASK_IDS=$(python3 -c "
-lines = open('/tmp/pending_ids.txt').read().splitlines()
-ids = [l.split('_seed')[0] for l in lines if l.endswith('_seed${SEED}')]
-print(' '.join(ids))")
+                SEED_TASK_IDS=$(python3 -c "import sys; lines=open('/tmp/pending_ids.txt').read().splitlines(); ids=[l.split('_seed')[0] for l in lines if l.endswith('_seed${SEED}')]; print(' '.join(ids))")
                 if [[ -z "${SEED_TASK_IDS}" ]]; then
-                  echo "WARNING: no Nguyen IDs for seed=${SEED} — skipping"
+                  echo "WARNING: no Nguyen IDs for seed=${SEED} - skipping"
                   continue
                 fi
                 TASK_IDS="${SEED_TASK_IDS}" \
@@ -904,7 +900,7 @@ print(' '.join(ids))")
               done < /tmp/pending_ids.txt
               ;;
 
-            # ← FIX CRITICAL 2: new suppB_sc dispatch branch
+            # <- FIX CRITICAL 2: new suppB_sc dispatch branch
             # Task format: "sc_n{n}__{feynman_id}"  e.g. "sc_n200__I.6.20"
             # N_SAMPLES and TASK_ID are extracted per task and passed as env vars.
             # run_sample_complexity_benchmark.py reads N_SAMPLES (int) and
@@ -916,7 +912,7 @@ print(' '.join(ids))")
                 NPART="${task%%__*}"; NPART="${NPART#sc_n}"
                 EQ_ID="${task##*__}"
                 if [[ -z "${NPART}" || -z "${EQ_ID}" ]]; then
-                  echo "WARNING: malformed suppB_sc task ID '${task}' — skipping"
+                  echo "WARNING: malformed suppB_sc task ID '${task}' - skipping"
                   continue
                 fi
                 N_SAMPLES="${NPART}" \
@@ -928,8 +924,8 @@ print(' '.join(ids))")
               done < /tmp/pending_ids.txt
               ;;
 
-            # ── STEP 4a: instability ─────────────────────────────────────────────────
-            # run_instability_suite.py is a pure-analysis script — it reads pre-existing
+            # -- STEP 4a: instability -------------------------------------------------
+            # run_instability_suite.py is a pure-analysis script - it reads pre-existing
             # benchmark JSONs from RESULTS_DIR and writes CSVs + figures to figures/.
             # TASK_IDS / SHARD_IDS are passed so the script can filter to specific DeFi
             # cases (Stage 1 case-filter path via --cases flag).  If the full set is
@@ -942,7 +938,7 @@ print(' '.join(ids))")
                 BENCH_ARG="--benchmark-json ${BENCH_JSON}"
                 echo "[instability] Stage 2 extrapolation merge enabled: ${BENCH_JSON}"
               else
-                echo "[instability] No benchmark JSON found — Stage 2 (EX figure) skipped."
+                echo "[instability] No benchmark JSON found - Stage 2 (EX figure) skipped."
               fi
               TASK_IDS_FILTER=""
               if [[ -n "${TASK_IDS}" ]]; then
@@ -959,9 +955,9 @@ print(' '.join(ids))")
                   --format png pdf
               ;;
 
-            # ← FIX CRITICAL 1: renamed case label from "instability" to "hybrid_all_domains"
-            # ← FIX CRITICAL 3: outputs now written to hybrid_llm_nn/all_domains (set in meta)
-            # ← FIX TASK 7: domain list validated in the preceding dedicated step;
+            # <- FIX CRITICAL 1: renamed case label from "instability" to "hybrid_all_domains"
+            # <- FIX CRITICAL 3: outputs now written to hybrid_llm_nn/all_domains (set in meta)
+            # <- FIX TASK 7: domain list validated in the preceding dedicated step;
             #               the --domains flag passes this shard's domain subset to
             #               the script so run_hybrid_test_all_domains() only iterates
             #               the assigned domains. TASK_IDS / SHARD_IDS are also
@@ -976,7 +972,7 @@ print(' '.join(ids))")
                   --samples "${FEYNMAN_SAMPLES}"
               ;;
 
-            # ── STEP 3: all-domains OOD extrapolation comparative ─────────────────
+            # -- STEP 3: all-domains OOD extrapolation comparative -----------------
             # task_ids_override passes a subset of FEYNMAN_30 (space-separated).
             # Each shard receives its slice via TASK_IDS / SHARD_IDS env vars.
             # The script reads N_FEYNMAN_TASKS from env to limit equations when
@@ -1007,7 +1003,7 @@ print(' '.join(ids))")
           esac
 
 
-      # ── FIX-G5: Safety-net extraction ────────────────────────────────────────
+      # -- FIX-G5: Safety-net extraction ----------------------------------------
       # Rescues computed results from the per-shard checkpoint into RESULTS_DIR
       # when the experiment script crashes after writing checkpoint entries but
       # before writing its final JSON/CSV outputs.  Runs unconditionally (always())
@@ -1015,7 +1011,7 @@ print(' '.join(ids))")
       # Strategy: iterate every task ID in the shard checkpoint's "completed" list;
       # for each one, glob for any matching JSON/CSV in the workspace root and move
       # it into the canonical RESULTS_DIR path so the artifact upload step finds it.
-      - name: Safety-net — rescue results from shard checkpoint (FIX-G5)
+      - name: Safety-net - rescue results from shard checkpoint (FIX-G5)
         if: always()
         env:
           EXP:           ${{ needs.plan.outputs.exp_id }}
@@ -1030,7 +1026,7 @@ print(' '.join(ids))")
           os.makedirs(result_dir, exist_ok=True)
 
           if not os.path.exists(ckpt_path):
-              print(f"No shard checkpoint found at {ckpt_path} — nothing to rescue.")
+              print(f"No shard checkpoint found at {ckpt_path} - nothing to rescue.")
           else:
               try:
                   completed = json.load(open(ckpt_path)).get("completed", [])
@@ -1048,15 +1044,15 @@ print(' '.join(ids))")
                               continue
                           if not os.path.exists(dst):
                               shutil.move(src, dst)
-                              print(f"  rescued: {src}  →  {dst}")
+                              print(f"  rescued: {src}  ->  {dst}")
                               rescued += 1
               print(f"Safety-net rescue complete: {rescued} file(s) moved for shard {shard_idx}")
           PYEOF
 
-      # ── Move results to canonical RESULTS_DIR after each experiment ──────────
+      # -- Move results to canonical RESULTS_DIR after each experiment ----------
       # Picks up outputs written to CWD or a temp path and places them into the
       # canonical ${OUT_BASE}/${RESULT_SUBDIR} location that the consolidate job
-      # and artifact upload expect.  Uses 'mv -v … || true' so the step never
+      # and artifact upload expect.  Uses 'mv -v ... || true' so the step never
       # fails when a file already lives in the right place or when a subset of
       # tasks produced no output (partial shard).
       - name: Move results to RESULTS_DIR
@@ -1079,19 +1075,19 @@ print(' '.join(ids))")
 
           case "${EXP}" in
 
-            # ── exp1: noiseless DeFi benchmark ───────────────────────────────
+            # -- exp1: noiseless DeFi benchmark -------------------------------
             exp1)
               move_matching "protocol_core_noiseless_*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless"
               move_matching "defi_v3_*.json"                  "${RESULTS_DIR}"
               ;;
 
-            # ── exp1b: noisy DeFi benchmark (noise=15) ───────────────────────
+            # -- exp1b: noisy DeFi benchmark (noise=15) -----------------------
             exp1b)
               move_matching "comparison_FIXED_*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/15"
               move_matching "comparison_FIXED_*.txt"  "${RESULTS_DIR}/comparison_results/noise-noiseless/15"
               ;;
 
-            # ── exp2_feynman: comparative Feynman suite ───────────────────────
+            # -- exp2_feynman: comparative Feynman suite -----------------------
             exp2_feynman)
               move_matching "exp2_feynman_checkpoint_shard*.json" "${TARGET}"
               move_matching "exp2_feynman_merged.*"               "${TARGET}"
@@ -1099,14 +1095,14 @@ print(' '.join(ids))")
               move_matching "exp2_all*_checkpoint.json"           "${RESULTS_DIR}/comparison_results"
               ;;
 
-            # ── exp2: multi-seed comparative suite ───────────────────────────
+            # -- exp2: multi-seed comparative suite ---------------------------
             exp2)
               move_matching "exp2_checkpoint_shard*.json" "${TARGET}"
               move_matching "exp2_merged.*"               "${TARGET}"
               move_matching "exp2_stats.json"             "${TARGET}"
               ;;
 
-            # ── exp3: Nguyen12 extrapolation (single seed) ───────────────────
+            # -- exp3: Nguyen12 extrapolation (single seed) -------------------
             exp3)
               move_matching "full_run_*.json"          "${RESULTS_DIR}/extrapolation"
               move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation"
@@ -1123,8 +1119,8 @@ print(' '.join(ids))")
               move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation/multi_seed"
               ;;
 
-            # ── suppA: hybrid PySR/DeFi benchmark ────────────────────────────
-            # RESULT_SUBDIR=hybrid_pysr/defi (set in meta step) — move must
+            # -- suppA: hybrid PySR/DeFi benchmark ----------------------------
+            # RESULT_SUBDIR=hybrid_pysr/defi (set in meta step) - move must
             # match so the artifact upload and consolidate job find the files.
             suppA)
               move_matching "consolidated_hybrid_*.json"          "${RESULTS_DIR}/hybrid_pysr/defi"
@@ -1133,7 +1129,7 @@ print(' '.join(ids))")
               move_matching "hypatiax_defi_benchmark_v3_results*" "${RESULTS_DIR}"
               ;;
 
-            # ── suppB: noise sweep ────────────────────────────────────────────
+            # -- suppB: noise sweep --------------------------------------------
             # Top-level files + per-equation sub-directories (e.g. I.12.1-correction/)
             suppB)
               move_matching "noise_sweep_*.json" "${TARGET}"
@@ -1149,25 +1145,25 @@ print(' '.join(ids))")
                   done
               ;;
 
-            # ── suppB_sc: sample-complexity sweep ────────────────────────────
+            # -- suppB_sc: sample-complexity sweep ----------------------------
             suppB_sc)
               move_matching "sample_complexity_*.json" "${TARGET}"
               move_matching "sample_complexity_*.csv"  "${TARGET}"
               ;;
 
-            # ── hybrid_all_domains: LLM+NN all-domains run ───────────────────
+            # -- hybrid_all_domains: LLM+NN all-domains run -------------------
             hybrid_all_domains)
               move_matching "hybrid_llm_nn_all_domains_*.json" "${RESULTS_DIR}/hybrid_llm_nn/all_domains"
               ;;
 
-            # ── instability: instability index figures + CSVs ─────────────────
+            # -- instability: instability index figures + CSVs -----------------
             instability)
               move_matching "instability_analysis.csv" "${RESULTS_DIR}/figures"
               move_matching "*.png"                    "${RESULTS_DIR}/figures"
               move_matching "*.pdf"                    "${RESULTS_DIR}/figures"
               ;;
 
-            # ── extrap: OOD extrapolation comparative ─────────────────────────
+            # -- extrap: OOD extrapolation comparative -------------------------
             # Also rescues standalone_llm_nn outputs written by some script variants
             extrap)
               move_matching "all_domains_extrap_v4_*.json" "${RESULTS_DIR}/comparison_results/extrapolation"
@@ -1181,7 +1177,7 @@ print(' '.join(ids))")
           echo "=== RESULTS_DIR contents after move ==="
           find "${RESULTS_DIR}/${RESULT_SUBDIR}" -type f | sort || true
 
-      # ── CRITICAL 4: verify suppB / suppB_sc output filename format ──────────
+      # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------
       # tables-generator looks for noise_sweep_*.json (suppB) and
       # sample_complexity_*.json (suppB_sc) under their respective result dirs.
       # If the benchmark scripts write files with a different prefix, all
@@ -1207,11 +1203,11 @@ print(' '.join(ids))")
           echo "  Matching ${GLOB_PATTERN}: ${MATCH}"
           if [[ "${ALL}" -gt 0 && "${MATCH}" -eq 0 ]]; then
             LABEL_LC=$(echo "${LABEL}" | tr '[:upper:]' '[:lower:]')
-            echo "::warning::CRITICAL 4 — ${LABEL} wrote ${ALL} JSON file(s) but NONE match '${GLOB_PATTERN}'. tables-generator will produce placeholder tables. Reconcile run_${LABEL_LC}_benchmark.py output prefix with the glob in tables-generator.py."
+            echo "::warning::CRITICAL 4 - ${LABEL} wrote ${ALL} JSON file(s) but NONE match '${GLOB_PATTERN}'. tables-generator will produce placeholder tables. Reconcile run_${LABEL_LC}_benchmark.py output prefix with the glob in tables-generator.py."
           elif [[ "${MATCH}" -gt 0 ]]; then
-            echo "  ✓ Filename format OK — tables-generator glob will match."
+            echo "  OK Filename format OK - tables-generator glob will match."
           else
-            echo "  ⚠ No output files yet (shard may have had no pending tasks)."
+            echo "  WARN No output files yet (shard may have had no pending tasks)."
           fi
 
       - name: Save shard checkpoint
@@ -1263,7 +1259,7 @@ print(' '.join(ids))")
           # FIX: removed -${{ github.run_id }} suffix.
           # ci_consolidate_experiment.yml downloads with pattern "results-{exp}-shard*"
           # from a different run.  The run_id suffix caused zero matches because
-          # download-artifact@v4 matches artifact names, not file paths — the pattern
+          # download-artifact@v4 matches artifact names, not file paths - the pattern
           # "results-exp1-shard*" never matched "results-exp1-shard0-25791073646".
           # Stable name "results-{exp}-shard{N}" matches the pattern correctly.
           name: results-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}
@@ -1272,11 +1268,11 @@ print(' '.join(ids))")
           retention-days: 30
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  JOB 3 — consolidate
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+#  JOB 3 - consolidate
+# ==============================================================================
   consolidate:
-    name: "Consolidate — ${{ github.event.inputs.experiment }}"
+    name: "Consolidate - ${{ github.event.inputs.experiment }}"
     needs: [plan, worker]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1341,9 +1337,9 @@ print(' '.join(ids))")
           for p in candidates[:20]:
               print(f"  {p}")
           if len(candidates) > 20:
-              print(f"  … and {len(candidates) - 20} more")
+              print(f"  ... and {len(candidates) - 20} more")
 
-          # Keys that are top-level metadata in merged JSONs — NOT task result rows.
+          # Keys that are top-level metadata in merged JSONs - NOT task result rows.
           # The fallback branch (no "results" list, no "task_id") iterates top-level
           # dict entries; without this exclusion "protocol" and "purelm_truncation_audit"
           # are treated as tasks, producing 2 fake rows with success=False in the CSV.
@@ -1397,7 +1393,7 @@ print(' '.join(ids))")
               pct = 100 * (1 - len(missing) / len(all_pending))
               print(f"Coverage: {len(merged)}/{len(all_pending)} ({pct:.1f}%)")
               if missing:
-                  print(f"Missing ({len(missing)}): {missing[:10]}{'…' if len(missing)>10 else ''}")
+                  print(f"Missing ({len(missing)}): {missing[:10]}{'...' if len(missing)>10 else ''}")
 
           merged_path = os.path.join(OUT_DIR, f"{EXP}_merged.json")
           with open(merged_path, "w") as f:
@@ -1462,7 +1458,7 @@ print(' '.join(ids))")
           if hyp:
               pct = 100 * stats["success_rate"] if stats["success_rate"] is not None else 0
               print(f"SUCCESS RATE : {len(successes)}/{len(merged)} ({pct:.1f}%)")
-              print(f"HypatiaX R²  mean={stats['hyp_extrap_mean']:.4f}  "
+              print(f"HypatiaX R2  mean={stats['hyp_extrap_mean']:.4f}  "
                     f"median={stats['hyp_extrap_median']:.4f}")
               if nn:
                   print(f"NN baseline  mean={stats['nn_extrap_mean']:.4f}  "
@@ -1471,7 +1467,7 @@ print(' '.join(ids))")
                   sig = "SIGNIFICANT" if stats["mw_significant"] else "not significant"
                   print(f"Mann-Whitney : U={stats['mw_U']:.0f}  p={stats['mw_p']:.4e}  [{sig}]")
           else:
-              print(f"Merged {len(merged)} entries (no R² stats — non-R² experiment)")
+              print(f"Merged {len(merged)} entries (no R2 stats - non-R2 experiment)")
           print(f"{'='*65}")
           print(f"Outputs: {OUT_DIR}/")
           PYEOF
@@ -1507,13 +1503,13 @@ print(' '.join(ids))")
           REPORT_DIR = "hypatiax/data/reports"
           os.makedirs(REPORT_DIR, exist_ok=True)
 
-          # ── Load stats if they exist ──────────────────────────────────────
+          # -- Load stats if they exist --------------------------------------
           stats_path  = os.path.join(OUT_DIR, f"{EXP}_stats.json")
           merged_path = os.path.join(OUT_DIR, f"{EXP}_merged.json")
           stats  = json.load(open(stats_path))  if os.path.exists(stats_path)  else {}
           merged = json.load(open(merged_path)) if os.path.exists(merged_path) else {}
 
-          # ── Count method-level outcomes from merged results ───────────────
+          # -- Count method-level outcomes from merged results ---------------
           method_summary = {}
           for tid, r in merged.items():
               if not isinstance(r, dict):
@@ -1532,7 +1528,7 @@ print(' '.join(ids))")
                       if isinstance(r2, float):
                           ms["r2_sum"] += r2
 
-          # ── Build report ──────────────────────────────────────────────────
+          # -- Build report --------------------------------------------------
           report = {
               "experiment":     EXP,
               "run_id":         os.environ["RUN_ID"],
@@ -1562,18 +1558,18 @@ print(' '.join(ids))")
               "warnings": [],
           }
 
-          # ── Detect and record problems ────────────────────────────────────
+          # -- Detect and record problems ------------------------------------
           if report["n_merged"] == 0:
-              report["warnings"].append("n_merged=0: no shard artifacts merged — check artifact name pattern and worker logs")
+              report["warnings"].append("n_merged=0: no shard artifacts merged - check artifact name pattern and worker logs")
           if report["n_merged"] is not None and report["n_total"] is not None:
               if report["n_merged"] < report["n_total"]:
                   missing = report["n_total"] - report["n_merged"]
                   report["warnings"].append(f"{missing} tasks missing from merge ({report['n_merged']}/{report['n_total']} coverage)")
           for method, ms in report["methods"].items():
               if "tools" in method and ms["n"] > 0 and ms["n_success"] == 0:
-                  report["warnings"].append(f"{method}: 0 successes — likely Julia precompile failure (check _probe log)")
+                  report["warnings"].append(f"{method}: 0 successes - likely Julia precompile failure (check _probe log)")
 
-          # ── Write timestamped report + latest symlink ─────────────────────
+          # -- Write timestamped report + latest symlink ---------------------
           ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
           report_file = os.path.join(REPORT_DIR, f"{EXP}_{ts}.json")
           latest_file = os.path.join(REPORT_DIR, f"{EXP}_latest.json")
@@ -1583,29 +1579,29 @@ print(' '.join(ids))")
           with open(latest_file, "w") as f:
               json.dump(report, f, indent=2)
 
-          # ── Print summary ─────────────────────────────────────────────────
+          # -- Print summary -------------------------------------------------
           print(f"\n{'='*65}")
-          print(f"STEP REPORT — {EXP}")
+          print(f"STEP REPORT - {EXP}")
           print(f"  Run     : {os.environ['RUN_URL']}")
           print(f"  Merged  : {report['n_merged']} / {report['n_total']}")
           if report['success_rate'] is not None:
               print(f"  Success : {report['n_successes']} ({100*report['success_rate']:.1f}%)")
           if report['hyp_r2_mean'] is not None:
-              print(f"  R² mean : hyp={report['hyp_r2_mean']:.4f}  nn={report['nn_r2_mean']:.4f}")
+              print(f"  R2 mean : hyp={report['hyp_r2_mean']:.4f}  nn={report['nn_r2_mean']:.4f}")
           if report["warnings"]:
               print(f"  Warnings ({len(report['warnings'])}):")
               for w in report["warnings"]:
-                  print(f"    ⚠ {w}")
+                  print(f"    WARN {w}")
           else:
-              print("  No warnings ✓")
+              print("  No warnings OK")
           print(f"  Written : {report_file}")
           print(f"{'='*65}")
           PYEOF
 
-      # ── Abort pipeline if step report signals failure ───────────────────
+      # -- Abort pipeline if step report signals failure -------------------
       # Reads the freshly-written _latest.json report and exits 1 if:
-      #   • status != "ok"   (n_merged == 0 — nothing was merged from shards)
-      #   • any FATAL warning is present (n_merged=0 tag)
+      #   . status != "ok"   (n_merged == 0 - nothing was merged from shards)
+      #   . any FATAL warning is present (n_merged=0 tag)
       # Non-fatal warnings (partial coverage) are printed but do not abort.
       - name: Abort if step report indicates failure
         env:
@@ -1620,7 +1616,7 @@ print(' '.join(ids))")
           latest     = os.path.join(REPORT_DIR, f"{EXP}_latest.json")
 
           if not os.path.exists(latest):
-              print(f"PIPELINE ABORT — report file not found: {latest}")
+              print(f"PIPELINE ABORT - report file not found: {latest}")
               sys.exit(1)
 
           report = json.load(open(latest))
@@ -1629,31 +1625,31 @@ print(' '.join(ids))")
           if report.get("status") != "ok":
               fatal.append(f"status={report.get('status')!r}  (expected 'ok')")
           if report.get("n_merged", 0) == 0:
-              fatal.append("n_merged=0 — no shard artifacts were merged")
+              fatal.append("n_merged=0 - no shard artifacts were merged")
 
           print(f"\n{'='*65}")
-          print(f"STEP REPORT CHECK — {EXP}")
+          print(f"STEP REPORT CHECK - {EXP}")
           print(f"  n_merged : {report.get('n_merged')} / {report.get('n_total')}")
           print(f"  status   : {report.get('status')}")
           if report.get("warnings"):
               for w in report["warnings"]:
-                  print(f"  ⚠  {w}")
+                  print(f"  WARN  {w}")
 
           if fatal:
               print(f"\n  PIPELINE ABORT ({len(fatal)} fatal issue(s)):")
               for f in fatal:
-                  print(f"    ✗ {f}")
+                  print(f"    FAIL {f}")
               print(f"{'='*65}\n")
               sys.exit(1)
 
-          print(f"  ✓ Report OK — proceeding to commit.")
+          print(f"  OK Report OK - proceeding to commit.")
           print(f"{'='*65}\n")
           PYEOF
 
       # BUG 9 FIX: the inline consolidate job was missing the canonical-tree staging
       # step that ci_consolidate_experiment.yml performs.  Without it, every inline-
       # consolidated run leaves comparison_results/, extrapolation/, etc. stale.
-      # This step mirrors ci_consolidate_experiment.yml lines 343–365 exactly.
+      # This step mirrors ci_consolidate_experiment.yml lines 343-365 exactly.
       - name: Stage results to canonical tree paths
         env:
           EXP:           ${{ needs.plan.outputs.exp_id }}
@@ -1664,15 +1660,15 @@ print(' '.join(ids))")
           DST="${RESULT_SUBDIR}"   # canonical path at repo root
 
           if [[ "$SRC" == "$DST" ]]; then
-            echo "SRC == DST — no copy needed (already at canonical path)."
+            echo "SRC == DST - no copy needed (already at canonical path)."
           else
-            echo "Staging: $SRC  →  $DST"
+            echo "Staging: $SRC  ->  $DST"
             mkdir -p "$DST"
             for f in "${EXP}_merged.json" "${EXP}_merged.csv" "${EXP}_stats.json"; do
               if [[ -f "$SRC/$f" ]]; then
                 cp -v "$SRC/$f" "$DST/$f"
               else
-                echo "  WARN: $SRC/$f not found — skipping"
+                echo "  WARN: $SRC/$f not found - skipping"
               fi
             done
           fi
@@ -1686,7 +1682,7 @@ print(' '.join(ids))")
           EXP="${{ needs.plan.outputs.exp_id }}"
 
           # BUG 9 FIX: stage both the hypatiax/data/results scratch copy AND the
-          # canonical tree copy (mirroring ci_consolidate_experiment.yml lines 501–509).
+          # canonical tree copy (mirroring ci_consolidate_experiment.yml lines 501-509).
           git add \
             "${OUT_BASE}/${SUB}/${EXP}_merged.json" \
             "${OUT_BASE}/${SUB}/${EXP}_merged.csv"  \
@@ -1698,9 +1694,9 @@ print(' '.join(ids))")
             hypatiax/data/reports/${EXP}_*.json         2>/dev/null || true
 
           if git diff --cached --quiet; then
-            echo "No changes — results unchanged from previous run."
+            echo "No changes - results unchanged from previous run."
           else
-            git commit -m "ci: ${EXP} consolidated results — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git commit -m "ci: ${EXP} consolidated results - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed consolidated results to master."
           fi
