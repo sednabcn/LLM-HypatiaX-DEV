@@ -216,8 +216,14 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
   python3 statistical_analysis.py \
     2>&1 | tee -a '${RESULTS_DIR}'/exp1_run.log
   # ── Move exp1 outputs → RESULTS_DIR ──────────────────────────────────────
+  # Primary output: hypatiax_defi_benchmark_v3*results*.json
+  # Also capture protocol_core_noiseless_*.json (protocol wrapper variant)
+  # and ablation / mannwhitney JSON files.
+  # CI worker 'Move results to RESULTS_DIR' step matches all three globs; keep in sync.
   find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'hypatiax_defi_benchmark_v3*results*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/' \;
+    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/' \;
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'protocol_core_noiseless_*.json' \
+    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/' \; 2>/dev/null || true
   find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'ablation_*.json' \
     -exec mv -v {} '${RESULTS_DIR}/' \;
   find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'exp1_rf01_mannwhitney*.json' \
@@ -564,7 +570,10 @@ def check(label, got, expected, tol=TOLERANCE):
 print("\n=== Validating key numerical results against JMLR v3.0 ===\n")
 
 # --- exp1 noiseless ---
-noiseless_files = sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json"))
+noiseless_files = (
+    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/hypatiax_defi_benchmark_v3*results*.json")) +
+    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json"))
+)
 if noiseless_files:
     with open(noiseless_files[-1]) as f: data = json.load(f)
     hx = [r for r in data.get('results', []) if r.get('method') in ('hybrid_v40', 'Hybrid v40')]

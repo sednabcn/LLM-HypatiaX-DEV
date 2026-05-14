@@ -61,6 +61,7 @@ permissions:
   actions:  read
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   OUT_BASE: "hypatiax/data/results"
 
 jobs:
@@ -387,7 +388,7 @@ jobs:
             ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/${{ steps.exp.outputs.id }}_merged.json
             ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/${{ steps.exp.outputs.id }}_merged.csv
             ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/${{ steps.exp.outputs.id }}_stats.json
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Write step report to hypatiax/data/reports
         if: always()

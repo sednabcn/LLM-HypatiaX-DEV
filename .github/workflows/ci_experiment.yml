@@ -172,7 +172,7 @@ jobs:
 
       - name: Restore shared checkpoint (plan)
         id: restore_plan
-        uses: actions/cache/restore@v4.2.0
+        uses: actions/cache/restore@v4.2.3
         with:
           path: checkpoint_plan.json
           key:  checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -465,7 +465,7 @@ jobs:
 
       - name: Save plan checkpoint cache
         if: always()
-        uses: actions/cache/save@v4.2.0
+        uses: actions/cache/save@v4.2.3
         with:
           path: checkpoint_plan.json
           key: checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -594,7 +594,7 @@ jobs:
 
       - name: Restore shard checkpoint
         id: restore_worker
-        uses: actions/cache/restore@v4.2.0
+        uses: actions/cache/restore@v4.2.3
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key:  checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -1076,9 +1076,15 @@ jobs:
           case "${EXP}" in
 
             # -- exp1: noiseless DeFi benchmark -------------------------------
+            # hypatiax_defi_benchmark_v3c.py writes:
+            #   hypatiax_defi_benchmark_v3_results_<TS>.json   ← primary output
+            #   protocol_core_noiseless_<TS>.json              ← if protocol wrapper used
+            #   defi_v3_<TS>.json                              ← legacy name
+            # All three patterns are moved so the artifact upload finds them.
             exp1)
-              move_matching "protocol_core_noiseless_*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless"
-              move_matching "defi_v3_*.json"                  "${RESULTS_DIR}"
+              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless"
+              move_matching "protocol_core_noiseless_*.json"           "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless"
+              move_matching "defi_v3_*.json"                           "${RESULTS_DIR}"
               ;;
 
             # -- exp1b: noisy DeFi benchmark (noise=15) -----------------------
@@ -1177,8 +1183,31 @@ jobs:
           echo "=== RESULTS_DIR contents after move ==="
           find "${RESULTS_DIR}/${RESULT_SUBDIR}" -type f | sort || true
 
-      # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------
-      # tables-generator looks for noise_sweep_*.json (suppB) and
+      # -- Verify exp1 output files exist before upload -------------------------
+      # hypatiax_defi_benchmark_v3c.py writes hypatiax_defi_benchmark_v3*results*.json.
+      # If none are found, the artifact upload will be empty and consolidate will abort.
+      - name: Verify exp1 output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp1' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/comparison_results/noise-noiseless/noiseless"
+          COUNT_PRIMARY=$(find "${TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
+          COUNT_LEGACY=$(find  "${TARGET}" -name "protocol_core_noiseless_*.json" 2>/dev/null | wc -l)
+          COUNT_TOTAL=$((COUNT_PRIMARY + COUNT_LEGACY))
+          echo "=== exp1 output verification ==="
+          echo "  hypatiax_defi_benchmark_v3*results*.json : ${COUNT_PRIMARY}"
+          echo "  protocol_core_noiseless_*.json           : ${COUNT_LEGACY}"
+          echo "  Total                                    : ${COUNT_TOTAL}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT_TOTAL}" -eq 0 ]]; then
+            echo "::error::exp1 produced NO output files in '${TARGET}'."
+            echo "  Expected: hypatiax_defi_benchmark_v3*results*.json or protocol_core_noiseless_*.json"
+            echo "  The experiment script may have written files under a different name."
+            echo "  Check the 'Run experiment tasks' log for errors and actual output filenames."
+            exit 1
+          fi
+          echo "  OK exp1 output files present."
+
+      # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------      # tables-generator looks for noise_sweep_*.json (suppB) and
       # sample_complexity_*.json (suppB_sc) under their respective result dirs.
       # If the benchmark scripts write files with a different prefix, all
       # generated tables will contain placeholder text.  This step surfaces
@@ -1247,10 +1276,32 @@ jobs:
 
       - name: Persist shard checkpoint to cache
         if: always()
-        uses: actions/cache/save@v4.2.0
+        uses: actions/cache/save@v4.2.3
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key: checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Pre-upload artifact file count check
+        if: always()
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+        run: |
+          UPLOAD_DIR="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${UPLOAD_DIR}" -type f 2>/dev/null | wc -l || echo 0)
+          echo "=== Artifact upload check: ${UPLOAD_DIR} ==="
+          echo "  Files found: ${COUNT}"
+          find "${UPLOAD_DIR}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::Shard ${{ matrix.shard }} (${EXP}): upload directory '${UPLOAD_DIR}' is EMPTY."
+            echo "  Possible causes:"
+            echo "    1. Experiment script wrote output files with an unexpected filename prefix"
+            echo "    2. Experiment script exited non-zero before writing any files"
+            echo "    3. 'Move results to RESULTS_DIR' step has a glob mismatch for ${EXP}"
+            echo "  Check 'Run experiment tasks' and 'Move results to RESULTS_DIR' step logs above."
+            # Emit a non-fatal warning here; the upload step itself will fail with
+            # if-no-files-found: error which provides the definitive failure signal.
+          fi
 
       - name: Upload shard results artifact
         if: always()
@@ -1262,9 +1313,11 @@ jobs:
           # download-artifact@v4 matches artifact names, not file paths - the pattern
           # "results-exp1-shard*" never matched "results-exp1-shard0-25791073646".
           # Stable name "results-{exp}-shard{N}" matches the pattern correctly.
+          # CHANGED: if-no-files-found: warn -> error so an empty upload is a loud
+          # failure rather than a silent one that propagates to n_merged=0 in consolidate.
           name: results-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}
           path: ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
 
@@ -1483,7 +1536,9 @@ jobs:
             ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/${{ needs.plan.outputs.exp_id }}_merged.json
             ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/${{ needs.plan.outputs.exp_id }}_merged.csv
             ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/${{ needs.plan.outputs.exp_id }}_stats.json
-          if-no-files-found: warn
+          # CHANGED: if-no-files-found: warn -> error so a failed consolidation is
+          # a loud, visible failure rather than a silent one.
+          if-no-files-found: error
 
       - name: Write step report to hypatiax/data/reports
         if: always()
