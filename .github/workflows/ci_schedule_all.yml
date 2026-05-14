@@ -27,7 +27,7 @@ on:
   # Kicks off slot 0 every Monday at 00:00 UTC.
   schedule:
     - cron: "0 0 * * 1"
-    - cron: "0 7 * * 3"  # Wednesday 08:00 BST (London)
+    - cron: "45 7 * * 4" # Thursday 08:45 BST (London)
 
   # Manual entry point — also used by each slot to dispatch the next.
   workflow_dispatch:
@@ -227,12 +227,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 95    # 30 min consolidation + 60 min cooldown + 5 min buffer
 
+    outputs:
+      consol_ok: ${{ steps.wait_consol.outputs.consol_ok }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       # ── C1. Wait for ci_consolidate_experiment.yml ────────────────────────
       - name: Wait for consolidation
+        id: wait_consol
         env:
           GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
           EXP:                 ${{ needs.resolve.outputs.experiment }}
@@ -273,16 +277,25 @@ jobs:
 
               case "$CONSOL_STATUS" in
                 "completed success")
-                  echo "✓ Consolidation of $EXP SUCCEEDED"; break ;;
+                  echo "✓ Consolidation of $EXP SUCCEEDED"
+                  echo "consol_ok=true" >> "$GITHUB_OUTPUT"
+                  break ;;
                 "completed failure"|"completed cancelled")
-                  echo "⚠ Consolidation of $EXP ended with: $CONSOL_STATUS — continuing"; break ;;
+                  echo "✗ Consolidation of $EXP FAILED: $CONSOL_STATUS — ABORTING CHAIN"
+                  echo "consol_ok=false" >> "$GITHUB_OUTPUT"
+                  break ;;
               esac
             else
               echo "  [consolidate/$EXP] $(date -u +%H:%M:%SZ)  waiting for consolidation run to appear …"
             fi
 
             if [[ $(date +%s) -gt $CONSOL_DEADLINE ]]; then
-              echo "⚠ 30 min timeout waiting for consolidation — moving on"
+              # BUG 7 FIX: a hard abort on timeout kills the entire weekly chain if
+              # consolidation is merely slow (e.g. large artifact download on a busy
+              # runner).  Emit a distinct value so the self-dispatch step can warn
+              # without aborting, and let the operator decide whether to continue.
+              echo "⚠ 30 min timeout waiting for consolidation of ${EXP} — marking as timed_out"
+              echo "consol_ok=timed_out" >> "$GITHUB_OUTPUT"
               break
             fi
 
@@ -296,7 +309,54 @@ jobs:
           sleep 3600
           echo "Cooldown complete."
 
-      # ── C3. Self-dispatch next slot ───────────────────────────────────────
+      # ── C3. Clean Actions cache for completed experiment ─────────────────
+      # Runs after cooldown so the just-finished experiment's worker caches
+      # (shard checkpoints, Julia depot) are evicted before the next slot
+      # starts.  This prevents stale checkpoint data from a failed run from
+      # seeding a fresh run with wrong state.
+      #
+      # BUG 6 FIX: removed the erroneous comment "run-finalize has no checkout step".
+      # run-finalize DOES have a Checkout step at the top of the job (line ~234 above).
+      # The comment was copied from an earlier draft and could mislead future editors
+      # into removing the checkout thinking it unnecessary.
+      #
+      # --repo is still mandatory for `gh cache` commands because they operate on
+      # repository-level resources and gh requires an explicit --repo flag when not
+      # inferring from a git remote in the working directory.
+      - name: Clean experiment cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXP:      ${{ needs.resolve.outputs.experiment }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "Listing caches matching 'checkpoint-worker-${EXP}-' …"
+
+          # Collect matching cache IDs.  gh cache list returns TSV:
+          #   <id>  <key>  <ref>  <size>  <created_at>
+          CACHE_IDS=$(gh cache list \
+            --repo "$REPO" \
+            --limit 100 \
+            --json id,key \
+            --jq ".[] | select(.key | startswith(\"checkpoint-worker-${EXP}-\")) | .id" \
+            2>/dev/null || true)
+
+          if [[ -z "$CACHE_IDS" ]]; then
+            echo "No caches found for experiment '${EXP}' — nothing to delete."
+          else
+            COUNT=$(echo "$CACHE_IDS" | wc -l | tr -d ' ')
+            echo "Deleting ${COUNT} cache(s) for '${EXP}' …"
+            while IFS= read -r cid; do
+              [[ -z "$cid" ]] && continue
+              gh cache delete "$cid" --repo "$REPO" \
+                && echo "  ✓ deleted cache $cid" \
+                || echo "  ⚠ could not delete cache $cid (may have already expired)"
+            done <<< "$CACHE_IDS"
+            echo "Cache clean complete for '${EXP}'."
+          fi
+
+      # ── C4. Self-dispatch next slot ───────────────────────────────────────
       - name: Self-dispatch next slot
         env:
           GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
@@ -304,7 +364,23 @@ jobs:
           N_SHARDS:          ${{ github.event.inputs.n_shards || '4' }}
           TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
           TOTAL:             ${{ needs.resolve.outputs.total }}
+          CONSOL_OK:         ${{ steps.wait_consol.outputs.consol_ok }}
         run: |
+          # BUG 7 FIX: distinguish genuine failure from timeout.
+          # consol_ok=false   → consolidation explicitly failed/was cancelled → abort chain.
+          # consol_ok=timed_out → consolidation did not finish within 30 min window but
+          #                       may still be running; emit a warning and continue the
+          #                       chain so one slow experiment doesn't stop everything.
+          # consol_ok=true    → success → continue normally.
+          if [[ "${CONSOL_OK}" == "false" ]]; then
+            echo "✗ Consolidation explicitly failed (consol_ok=false) — CHAIN ABORTED."
+            echo "  Fix the consolidation failure for ${{ needs.resolve.outputs.experiment }} and re-trigger manually."
+            exit 1
+          fi
+          if [[ "${CONSOL_OK}" == "timed_out" ]]; then
+            echo "::warning::Consolidation of ${{ needs.resolve.outputs.experiment }} timed out after 30 min."
+            echo "  The consolidation run may still be in progress.  Continuing chain — monitor Actions UI."
+          fi
           if [[ $NEXT_INDEX -lt $TOTAL ]]; then
             echo "→ Dispatching next slot: index $NEXT_INDEX"
             gh workflow run ci_schedule_all.yml \
