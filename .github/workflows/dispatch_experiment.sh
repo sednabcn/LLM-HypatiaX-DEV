@@ -37,6 +37,8 @@ REPRO="${REPRO_CFG:-config/repro.yaml}"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 # Read a top-level key from repro.yaml; fall back to $default if absent.
+# If the value is a YAML list, it is coerced to a comma-separated string so
+# that --field seeds="42,99,123" is correct rather than --field seeds="[42, 99, 123]".
 get() {
   local key="$1" default="$2"
   python3 - <<PYEOF 2>/dev/null || echo "$default"
@@ -44,7 +46,12 @@ import yaml, sys
 try:
     cfg = yaml.safe_load(open("$REPRO"))
     val = cfg.get("$key")
-    print(val if val is not None else "$default")
+    if val is None:
+        print("$default")
+    elif isinstance(val, list):
+        print(",".join(str(v) for v in val))
+    else:
+        print(val)
 except Exception:
     print("$default")
 PYEOF

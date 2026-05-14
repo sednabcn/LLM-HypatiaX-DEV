@@ -5,22 +5,22 @@ Paper: "HypatiaX: A Hybrid Symbolic-Neural Framework for
         Extrapolation-Reliable Analytical Discovery"  (JMLR v3.0, Apr 2026)
 
 Usage:
-    python3 run_all.py                      # full pipeline
-    python3 run_all.py --skip-slow          # skip slow steps
-    python3 run_all.py --only exp3          # run one step by id
-    python3 run_all.py --resume             # resume from last checkpoint
-    python3 run_all.py --resume --from exp2 # resume, force-rerun from step
-    python3 run_all.py --clear-checkpoint   # delete checkpoint and exit
-    python3 run_all.py --continue-on-fail   # log failures but keep going
-    python3 run_all.py --verify-only        # re-check results without re-running
-    python3 run_all.py --seed 123           # override seed for all steps
-    python3 run_all.py --only exp3 --seed 777
-    python3 run_all.py --dry-run
-    python3 run_all.py --dry-run --only exp1 --case-range 1-4
-    python3 run_all.py --skip-paper
-    python3 run_all.py --pysr-timeout 900
-    python3 run_all.py --one-equation       # smoke-test: 1 equation per experiment
-    python3 run_all.py --one-equation-paper # reviewer probe: paper-quality values
+    python3 run_all_checkpoint.py                      # full pipeline
+    python3 run_all_checkpoint.py --skip-slow          # skip slow steps
+    python3 run_all_checkpoint.py --only exp3          # run one step by id
+    python3 run_all_checkpoint.py --resume             # resume from last checkpoint
+    python3 run_all_checkpoint.py --resume --from exp2 # resume, force-rerun from step
+    python3 run_all_checkpoint.py --clear-checkpoint   # delete checkpoint and exit
+    python3 run_all_checkpoint.py --continue-on-fail   # log failures but keep going
+    python3 run_all_checkpoint.py --verify-only        # re-check results without re-running
+    python3 run_all_checkpoint.py --seed 123           # override seed for all steps
+    python3 run_all_checkpoint.py --only exp3 --seed 777
+    python3 run_all_checkpoint.py --dry-run
+    python3 run_all_checkpoint.py --dry-run --only exp1 --case-range 1-4
+    python3 run_all_checkpoint.py --skip-paper
+    python3 run_all_checkpoint.py --pysr-timeout 900
+    python3 run_all_checkpoint.py --one-equation       # smoke-test: 1 equation per experiment
+    python3 run_all_checkpoint.py --one-equation-paper # reviewer probe: paper-quality values
 
 Step IDs (use with --only / --from):
     Setup    : deps  patches-gen  patches-apply  fixup-init  fixup-tex
@@ -36,6 +36,25 @@ Notes:
     --from requires --resume to have any effect; alone it is a no-op.
     validate-patches (Phase 0) checks patched source code.
     verify (Phase 3) cross-checks numerical results — equivalent to run_all.sh validate.
+
+Changelog v7.3 (2026-05-14):
+    FIX-EXP3B-POSTMOVE: exp3b post_move destination corrected from
+              RESULTS_DIR/extrapolation to RESULTS_DIR/extrapolation/multi_seed,
+              completing the BUG-2 fix already present in run_all.sh STEP 8.
+              Without this, exp3b outputs would land in extrapolation/ and
+              overwrite the exp3 seed=42 consolidated files.
+    FIX-EXP3B-RESULTGLOB: exp3b result_glob corrected from
+              "extrapolation/full_run_*.json" (pattern never matched anything)
+              to "extrapolation/multi_seed/*nguyen*.json", consistent with
+              the corrected post_move destination and run_all.sh STEP 8.
+    FIX-ENSURE-OUTDIR: ensure_output_dirs now creates extrapolation/multi_seed
+              so the exp3b post_move never fails with FileNotFoundError.
+              Previously missing despite being required by the BUG-2 fix.
+    FIX-PYSR-POPULATIONS-DEFAULT: env_check inline Python fallback default for
+              PYSR_POPULATIONS corrected from '2' to '4', matching CI workflow
+              env PYSR_POPULATIONS:"4" and run_all.sh export PYSR_POPULATIONS=4.
+    FIX-USAGE-FILENAME: docstring usage examples updated from python3 run_all.py
+              to python3 run_all_checkpoint.py (actual filename).
 
 Changelog v7.2 (2026-05-14):
     FIX-DOMAINS: HYBRID_ALL_DOMAINS_IDS corrected — removed "statistics", "finance",
@@ -803,7 +822,7 @@ STEPS: list[Step] = [
              "if not key:",
              "    print('ERROR: ANTHROPIC_API_KEY not set'); sys.exit(1)",
              "print(f'ANTHROPIC_API_KEY: set ({len(key)} chars)')",
-             "print('PYSR_POPULATIONS:', os.environ.get('PYSR_POPULATIONS','2'))",
+             "print('PYSR_POPULATIONS:', os.environ.get('PYSR_POPULATIONS','4'))",
              "from pathlib import Path",
              "results = Path(os.environ.get('RESULTS_DIR',",
              "               'hypatiax/data/results'))",
@@ -1107,11 +1126,13 @@ STEPS: list[Step] = [
           "sys.exit(rc)"],
          phase="1 · Core experiments",
          expected="consistent with SEED=42 across all 5 seeds",
-         result_glob="extrapolation/full_run_*.json",
+         result_glob="extrapolation/multi_seed/*nguyen*.json",
          env_extra={"SKIP_PKG_CHECK": "1"},
-         # run_all.sh STEP 8: move all *nguyen*.json → RESULTS_DIR/extrapolation/
+         # BUG 2 FIX: target is extrapolation/multi_seed/ (not extrapolation/).
+         # Prevents overwriting the exp3 seed=42 outputs that live in extrapolation/.
+         # Mirrors run_all.sh STEP 8 (find … -exec mv {} RESULTS_DIR/extrapolation/multi_seed/).
          post_move=[
-             PostMove(EXPERIMENTS_DIR, "*nguyen*.json", RESULTS_DIR / "extrapolation"),
+             PostMove(EXPERIMENTS_DIR, "*nguyen*.json", RESULTS_DIR / "extrapolation" / "multi_seed"),
          ]),
 
     # ── Phase 2: Supplementary benchmarks ─────────────────────────────────
@@ -1407,6 +1428,9 @@ def ensure_output_dirs() -> None:
         "comparison_results/noise-noiseless/noiseless",
         "comparison_results/noise-noiseless/15",
         "extrapolation",
+        # BUG 2 FIX: exp3b writes to extrapolation/multi_seed/ (not extrapolation/)
+        # to avoid colliding with exp3 seed=42 outputs in extrapolation/.
+        "extrapolation/multi_seed",
         # BLOCKER-1 + BLOCKER-3: hybrid_all_domains output (not /defi)
         "hybrid_llm_nn/all_domains",
         # kept for suppA and other scripts that may write here
