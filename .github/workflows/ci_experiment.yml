@@ -172,7 +172,7 @@ jobs:
 
       - name: Restore shared checkpoint (plan)
         id: restore_plan
-        uses: actions/cache/restore@v4.0.2
+        uses: actions/cache/restore@v4.2.0
         with:
           path: checkpoint_plan.json
           key:  checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -465,7 +465,7 @@ jobs:
 
       - name: Save plan checkpoint cache
         if: always()
-        uses: actions/cache/save@v4.0.2
+        uses: actions/cache/save@v4.2.0
         with:
           path: checkpoint_plan.json
           key: checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -594,7 +594,7 @@ jobs:
 
       - name: Restore shard checkpoint
         id: restore_worker
-        uses: actions/cache/restore@v4.0.2
+        uses: actions/cache/restore@v4.2.0
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key:  checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -689,7 +689,7 @@ jobs:
           python3 - <<'PYEOF'
           import json, os
 
-          shard_ids = json.loads(os.environ["SHARD_IDS"])
+          shard_ids = json.loads(os.environ.get("SHARD_IDS") or "[]")
           ckpt_path = f"checkpoint_worker_shard{os.environ['SHARD_INDEX']}.json"
 
           done = set()
@@ -1247,7 +1247,7 @@ jobs:
 
       - name: Persist shard checkpoint to cache
         if: always()
-        uses: actions/cache/save@v4.0.2
+        uses: actions/cache/save@v4.2.0
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key: checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -1327,7 +1327,7 @@ jobs:
           RESULT_SUB = os.environ["RESULT_SUBDIR"]
           OUT_DIR    = os.path.join("hypatiax/data/results", RESULT_SUB)
           os.makedirs(OUT_DIR, exist_ok=True)
-          all_pending = json.loads(os.environ.get("ALL_PENDING", "[]"))
+          all_pending = json.loads(os.environ.get("ALL_PENDING") or "[]")
 
           candidates = sorted(glob.glob(f"{ART_DIR}/**/*.json", recursive=True))
           if not candidates:

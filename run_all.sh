@@ -66,7 +66,7 @@ export PYSR_POPULATIONS="${PYSR_POPULATIONS:-4}"
 # Feynman benchmark defaults (Appendix A)
 # FIX-10: exported so subshells and child processes inherit the values.
 export FEYNMAN_SAMPLES=200
-export FEYNMAN_TIMEOUT=1100        # ← FIX-G2: paper value 1100s (was 900)
+export FEYNMAN_TIMEOUT=1100        # FIX-G2: paper value 1100s (was 900)
 export FEYNMAN_NOISELESS_THRESHOLD=0.9999
 
 # Julia signal handling — FIX-6 (FIX-G10): must be set before any juliacall
@@ -134,7 +134,7 @@ run() {
     [[ "$skip" == true ]] && return 0
   fi
   echo ""
-  log "=== STEP: ${step} — ${desc} ==="
+  log "=== STEP: ${step} -- ${desc} ==="
   if [[ "$DRY_RUN" == true ]]; then
     echo "    [dry-run] $*"
   else
@@ -185,14 +185,14 @@ SDKCHECK
   echo "REPRO_CFG: ${REPRO_CFG}"
   # FIX-12: REPRO_CFG audit — mirrors CI FIX-G2 print_repro.py log
   if [ -f "${REPRO_CFG}" ]; then
-    echo "repro.yaml found — printing key values:"
+    echo "repro.yaml found -- printing key values:"
     python3 -c "
 import yaml, sys
 with open(\"${REPRO_CFG}\") as f: cfg = yaml.safe_load(f)
 for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
 " 2>/dev/null || echo "  (could not parse repro.yaml)"
   else
-    echo "WARNING: repro.yaml not found at ${REPRO_CFG} — using env defaults"
+    echo "WARNING: repro.yaml not found at ${REPRO_CFG} -- using env defaults"
   fi
   echo "Results dir: '"${RESULTS_DIR}"'"
   # FIX CRITICAL 3: hybrid_llm_nn/all_domains (not /defi)
@@ -208,7 +208,7 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
 '
 
 # ── STEP 1: exp1 ──────────────────────────────────────────────────────────────
-run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 · Fig 9, 10)" bash -c "
+run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   python3 hypatiax_defi_benchmark_v3c.py \
     2>&1 | tee '${RESULTS_DIR}'/exp1_run.log
@@ -225,7 +225,7 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 · Fig 9, 10)" bash -c "
 "
 
 # ── STEP 2: exp1b ─────────────────────────────────────────────────────────────
-run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 · Fig 11-13)" bash -c "
+run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   DEFI_TASK_FILTER=portfolio \
   DEFI_SEEDS='42,99,123,777,2024' \
@@ -295,7 +295,7 @@ run extrap "OOD extrapolation comparative run (Tab 9 OOD columns)" bash -c "
 # NOTE: This step does NOT reproduce the §10.9 Instability Index (Regime A/B/C,
 # Spearman ρ). That is STEP 4a (instability) which runs run_instability_suite.py
 # against the K-run DeFi benchmark results from STEP 1 (exp1).
-run hybrid_all_domains "Hybrid LLM+NN all-domains run — 10 domains (§10.9 hybrid)" bash -c "
+run hybrid_all_domains "Hybrid LLM+NN all-domains run -- 10 domains (SS10.9 hybrid)" bash -c "
   # ── FIX TASK 7: runtime domain-list validation ────────────────────────────
   ACTUAL_DOMAINS=\$(python3 - << 'PYEOF'
 import importlib.util, sys, pathlib
@@ -324,7 +324,7 @@ PYEOF
   EXPECTED_SORTED=\$(echo '${HYBRID_ALL_DOMAINS_EXPECTED}' | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,\$//')
   ACTUAL_SORTED=\$(echo \"\${ACTUAL_DOMAINS}\" | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,\$//')
   if [[ \"\${ACTUAL_SORTED}\" != \"\${EXPECTED_SORTED}\" ]]; then
-    echo '[WARN] hybrid_all_domains domain list MISMATCH — update HYBRID_ALL_DOMAINS_EXPECTED'
+    echo '[WARN] hybrid_all_domains domain list MISMATCH -- update HYBRID_ALL_DOMAINS_EXPECTED'
     echo '  Expected: '\"\${EXPECTED_SORTED}\"
     echo '  Actual  : '\"\${ACTUAL_SORTED}\"
     exit 1
@@ -359,7 +359,7 @@ PYEOF
 #   fig_paper_regime_counts.{png,pdf}
 #   hypatiax_instability_per_case.{png,pdf}
 #   … (all 12 figure stems: Groups A + B + C + EX)
-run instability "Instability Index analysis + all figures — §10.9 (Regime A/B/C · Groups A–C + EX)" bash -c "
+run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/C - Groups A-C + EX)" bash -c "
   mkdir -p '${RESULTS_DIR}/figures'
 
   # Locate the most recent DeFi benchmark JSON produced by STEP 1 (exp1) for
@@ -370,7 +370,7 @@ run instability "Instability Index analysis + all figures — §10.9 (Regime A/B
     echo '[instability] Stage 2 extrapolation merge enabled: '\"\${BENCH_JSON}\"
     BENCH_ARG=\"--benchmark-json \${BENCH_JSON}\"
   else
-    echo '[instability] No benchmark JSON found — Stage 2 (EX figure) skipped.'
+    echo '[instability] No benchmark JSON found -- Stage 2 (EX figure) skipped.'
     echo '              Run STEP 1 (exp1) first to enable the EX figure.'
     BENCH_ARG=\"\"
   fi
@@ -392,7 +392,7 @@ run instability "Instability Index analysis + all figures — §10.9 (Regime A/B
 #   They are NOT in the paper's Tab 16-18 comparison.  Julia startup overhead
 #   (~150s per test × 30 tests = 75 min) would blow the 5h30m job deadline.
 #   Remove --skip-pysr here AND in ci_experiment.yml if you want them back.
-run exp2_feynman "Feynman SR benchmark — Phase 2 noisy protocol (Tab 16-18)" bash -c "
+run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
   python3 run_comparative_suite_benchmark_v2.py \
@@ -414,7 +414,7 @@ run exp2_feynman "Feynman SR benchmark — Phase 2 noisy protocol (Tab 16-18)" b
 #      standalone (--step exp2) without a prior env_check.
 # --skip-pysr: methods 5+6 (SymbolicEngine, HybridV50_2) not in Tab 19 comparison.
 #   Julia startup overhead (~150s per test × 30 tests) would exceed job deadline.
-run exp2 "Combined five-system comparison — all Methods (Tab 19 full)" bash -c "
+run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'
   python3 run_comparative_suite_benchmark_v2.py \
@@ -430,7 +430,7 @@ run exp2 "Combined five-system comparison — all Methods (Tab 19 full)" bash -c
 
 # ── STEP 7: exp3 ──────────────────────────────────────────────────────────────
 # FIX: mkdir -p ensures results/extrapolation exists when running standalone.
-run exp3 "Nguyen-12 benchmark — SEED=42 (tab:nguyen12 · §10.8)" bash -c "
+run exp3 "Nguyen-12 benchmark -- SEED=42 (tab:nguyen12 - SS10.8)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/extrapolation'
   python3 exp3_nguyen12_hybrid50v_02.py \
@@ -465,7 +465,7 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
 "
 
 # ── STEP 9: suppA ─────────────────────────────────────────────────────────────
-run suppA "DeFi routing improvement experiments (Supplement A · Tab 11-13 routing)" bash -c "
+run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routing)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   python3 run_hybrid_system_benchmark.py \
     2>&1 | tee '${RESULTS_DIR}'/suppA_run.log
@@ -480,7 +480,7 @@ run suppA "DeFi routing improvement experiments (Supplement A · Tab 11-13 routi
 
 # ── STEP 10: suppB — noise sweep ─────────────────────────────────────────────
 # FIX CRITICAL 2: noise sweep now its own step; sample-complexity in suppB_sc
-run suppB "Noise sweep benchmark σ ∈ {0,0.5,1,5,10}% (Tab 28, 29 · Supplement B)" bash -c "
+run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Supplement B)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   python3 run_noise_sweep_benchmark.py \
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
@@ -498,7 +498,7 @@ run suppB "Noise sweep benchmark σ ∈ {0,0.5,1,5,10}% (Tab 28, 29 · Supplemen
 # Produces: Tab 29 sample-complexity columns · Supplement B §6
 # Task format: sc_n{n}__{feynman_id}  →  n ∈ {50,100,200,500,750,1000}, 30 equations
 # Output dir: comparison_results/feynman-tests/sample-complexity/
-run suppB_sc "Sample-complexity sweep n ∈ {50…1000} (Tab 29 · Supplement B §6)" bash -c "
+run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   NOISE_LEVEL='5.0' \
   SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \
@@ -519,7 +519,7 @@ run suppB_sc "Sample-complexity sweep n ∈ {50…1000} (Tab 29 · Supplement B 
 # FIX STEP-11-12: output now goes to \${RESULTS_DIR}/tables/ (same tree as figures)
 # Previously written to \${REPO_ROOT}/scripts/paper/tables which diverged from
 # the path used by inventory_results() and tables-generator glob checks.
-run tables "Generate all LaTeX tables from result JSONs → \${RESULTS_DIR}/tables/" bash -c "
+run tables "Generate all LaTeX tables from result JSONs -> \${RESULTS_DIR}/tables/" bash -c "
   mkdir -p '${RESULTS_DIR}/tables'
   cd '${REPO_ROOT}/tables'
   TABLE_OUTDIR='${RESULTS_DIR}/tables' \
@@ -535,7 +535,7 @@ run tables "Generate all LaTeX tables from result JSONs → \${RESULTS_DIR}/tabl
 # ── STEP 12: figures ─────────────────────────────────────────────────────────
 # FIX STEP-11-12: confirmed output dir is \${RESULTS_DIR}/figures/ — consistent
 # with Step 11 (tables) now also writing under \${RESULTS_DIR}/.
-run figures "Generate all paper figures from results → \${RESULTS_DIR}/figures/" bash -c "
+run figures "Generate all paper figures from results -> \${RESULTS_DIR}/figures/" bash -c "
   mkdir -p '${RESULTS_DIR}/figures'
   cd '${REPO_ROOT}/figures'
   python3 generate_figures.py \
@@ -572,8 +572,8 @@ if noiseless_files:
         import statistics
         r2v = [r['r2_train'] for r in hx if 'r2_train' in r]
         if r2v:
-            check("Hybrid v40 mean train R²",   statistics.mean(r2v),   0.931)
-            check("Hybrid v40 median train R²", statistics.median(r2v), 1.000)
+            check("Hybrid v40 mean train R2",   statistics.mean(r2v),   0.931)
+            check("Hybrid v40 median train R2", statistics.median(r2v), 1.000)
 else:
     print("  [SKIP] exp1 noiseless results not found")
 
@@ -614,7 +614,7 @@ print(f"  [{'OK' if inst_csv else 'FAIL'}] instability_analysis.csv")
 inst_fig = glob.glob(f"{RESULTS}/figures/fig_paper_complexity_vs_instability.pdf")
 ok_ifig = bool(inst_fig)
 checks.append(("fig_paper_complexity_vs_instability.pdf present", 1.0 if ok_ifig else 0.0, 1.0, ok_ifig))
-print(f"  [{'OK' if ok_ifig else 'FAIL'}] fig_paper_complexity_vs_instability.pdf (KEY §10.9 figure)")
+print(f"  [{'OK' if ok_ifig else 'FAIL'}] fig_paper_complexity_vs_instability.pdf (KEY SS10.9 figure)")
 
 # --- FIX CRITICAL 2: suppB_sc output present ---
 # Output path: comparison_results/feynman-tests/sample-complexity/
@@ -636,9 +636,9 @@ if noise_sweep_all:
     if not ok:
         bad = [os.path.basename(p) for p in noise_sweep_all[:5]]
         print(f"  [FAIL] noise-sweep/: {len(noise_sweep_all)} JSON(s) found but NONE match "
-              f"noise_sweep_*.json. Actual filenames: {bad} — reconcile script output prefix with tables-generator glob.")
+              f"noise_sweep_*.json. Actual filenames: {bad} -- reconcile script output prefix with tables-generator glob.")
     else:
-        print(f"  [OK]   noise-sweep/: {len(noise_sweep_matched)} noise_sweep_*.json — tables-generator glob OK")
+        print(f"  [OK]   noise-sweep/: {len(noise_sweep_matched)} noise_sweep_*.json -- tables-generator glob OK")
 else:
     print(f"  [SKIP] noise-sweep/: no JSON files found (suppB not yet run)")
 
@@ -688,15 +688,15 @@ echo "    Table 17         <- exp2_feynman      (Feynman noisy)"
 echo "    Table 19         <- exp2              (five-system comparison)"
 echo "    Table 28         <- suppB             (noise sweep)"
 echo "    Table 29 sc      <- suppB_sc          (sample complexity)"
-echo "    tab:hybrid_all   <- hybrid_all_domains (§10.9 hybrid system — one-shot)"
+echo "    tab:hybrid_all   <- hybrid_all_domains (SS10.9 hybrid system -- one-shot)"
 echo "    tab:nguyen12     <- exp3              (extrapolation/)      seed=42"
 echo "                    <- exp3b             (extrapolation/multi_seed/)  seeds 99/123/777/2024"
-echo "    tab:instability  <- instability        (§10.9 Regime A/B/C, Spearman ρ, 12 figs)"
+echo "    tab:instability  <- instability        (SS10.9 Regime A/B/C, Spearman rho, 12 figs)"
 echo ""
 echo "  Instability outputs (STEP 4a):"
 echo "    ${RESULTS_DIR}/figures/instability_analysis.csv"
 echo "    ${RESULTS_DIR}/figures/instability_extrapolation.csv  (Stage 2, if benchmark JSON found)"
-echo "    ${RESULTS_DIR}/figures/fig_paper_complexity_vs_instability.{png,pdf}  <- KEY (§10.9)"
+echo "    ${RESULTS_DIR}/figures/fig_paper_complexity_vs_instability.{png,pdf}  <- KEY (SS10.9)"
 echo "    ${RESULTS_DIR}/figures/fig_paper_instability_hist.{png,pdf}"
 echo "    ${RESULTS_DIR}/figures/fig_paper_regime_counts.{png,pdf}"
 echo "    ${RESULTS_DIR}/figures/hypatiax_instability_per_case.{png,pdf}"

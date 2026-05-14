@@ -1743,7 +1743,7 @@ def main() -> None:
         clear_checkpoint(); sys.exit(0)
 
     banner(
-        "HypatiaX · Reproducibility Pipeline v7.2"
+        "HypatiaX · Reproducibility Pipeline v7.3"
         + ("  [DRY-RUN]"          if args.dry_run            else "")
         + ("  [SMOKE-TEST]"       if args.one_equation        else "")
         + ("  [PAPER-QUALITY-1]"  if args.one_equation_paper  else "")
@@ -1989,7 +1989,7 @@ def main() -> None:
             if result.status == "fail" and not args.continue_on_fail:
                 print(f"\n  Pipeline aborted at [{step.id}].")
                 print(f"  Checkpoint saved → {CHECKPOINT}")
-                print("  To resume:  python3 run_all.py --resume")
+                print("  To resume:  python3 run_all_checkpoint.py --resume")
                 _print_summary(results, time.time() - t_total)
                 sys.exit(1)
 
@@ -2049,7 +2049,7 @@ def _print_summary(results: list[StepResult], elapsed: float) -> None:
         for r in failed:
             print(f"    [{r.id}] → {r.log_path}")
         print(f"\n  Checkpoint : {CHECKPOINT}")
-        print("  Resume     : python3 run_all.py --resume")
+        print("  Resume     : python3 run_all_checkpoint.py --resume")
     else:
         print("\n  ✓ All steps passed.")
         print(f"  Results    : {RESULTS_DIR}/")
