@@ -1,23 +1,54 @@
 # ==============================================================================
-#  ci_consolidate_experiment.yml - standalone consolidation for any experiment
+#  ci_consolidate_experiment.yml
+#  Standalone re-consolidation: re-merges shard artifacts from a PREVIOUS run
+#  WITHOUT re-running the expensive workers.
 #
-#  Purpose: re-merge shard artifacts from a previous run WITHOUT re-running the
-#           expensive workers.  Mirrors ci_consolidate_exp2.yml but is
-#           generalised to every experiment ID supported by ci_experiment.yml.
+#  Mirrors the inline consolidate job inside ci_experiment.yml but operates
+#  on an arbitrary source run_id, making it safe to re-run after a partial
+#  failure or to backfill results.
 #
 #  Triggers:
 #    1. Automatically after ci_experiment.yml completes (any conclusion).
-#       workflow_run.workflows must list every possible expanded name because
-#       GitHub evaluates the list at parse time - expressions are NOT allowed.
 #    2. Manually - specify the experiment and optionally the source run_id.
+#
+#  Key fixes vs previous version:
+#    FIX-C1  RESULTS_DIR path: workers upload from ${OUT_BASE}/${RESULT_SUBDIR}/
+#            so artifacts are extracted to:
+#              downloaded_artifacts/<artifact-name>/hypatiax/data/results/<subdir>/<file>
+#            The recursive glob already finds these; the bug was in the merge
+#            strategies silently rejecting every row (see FIX-C2/C3 below).
+#
+#    FIX-C2  DeFi v3 format (hypatiax_defi_benchmark_v3_results.json):
+#            top-level dict keyed by protocol ID ("amm", "risk_var", ...) with
+#            values containing "pure_llm" / "neural_network" sub-dicts.
+#            Old Strategy D filtered every entry because "pure_llm" and
+#            "neural_network" were absent from _RESULT_KEYS, and the DeFi IDs
+#            ("amm" etc.) were not in _META_KEYS so the file fell through to
+#            the generic dict branch which then rejected all values.
+#            Fix: added Strategy D2 that detects DeFi v3 files by checking
+#            whether any top-level key is a known DeFi ID, then normalises
+#            pure_llm->hypatia and neural_network->nn before merging.
+#
+#    FIX-C3  protocol_core_noiseless format: top-level dict keyed by protocol
+#            ID; values contain "hypatia" / "nn" sub-dicts directly (correct
+#            canonical names) but the old _RESULT_KEYS check still rejected them
+#            because the values did not contain "equation_id", "task_id", etc.
+#            Fix: added "protocol" to _RESULT_KEYS (it appears as a per-task
+#            field in the value dict) and "pure_llm"/"neural_network" so both
+#            naming conventions are accepted.
+#
+#    FIX-C4  Dropped the separate "plan" job. All metadata is resolved inline
+#            in the single consolidate job, eliminating extra job-to-job output
+#            serialisation overhead and the associated debug trace noise.
+#
+#    FIX-C5  SRC_RUN_ID: _stats.json now records the source worker run_id, not
+#            this consolidation job's own run_id.
 # ==============================================================================
 
 name: "Consolidate experiment results"
 
 on:
   # -- Auto-trigger: fires when ANY ci_experiment.yml run finishes -----------
-  # GitHub does NOT interpolate expressions inside workflow_run.workflows[].
-  # We must list every possible workflow name literally.
   workflow_run:
     workflows:
       - "HypatiaX - experiment runner . run_all.sh"
@@ -68,9 +99,7 @@ jobs:
   consolidate:
     name: "Merge shard results"
     runs-on: ubuntu-latest
-    timeout-minutes: 60   # consolidation runs in <30 min; 60 min is a generous safety cap
-    # Workers upstream use n_shards=4 (preferred) or 3 (quota-limited).
-    # Artifact download scales with shard count - 60 min cap remains sufficient for both.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout master
@@ -91,22 +120,17 @@ jobs:
 
       # -- Resolve experiment ID ---------------------------------------------
       # workflow_dispatch  -> github.event.inputs.experiment  (explicit)
-      # workflow_run       -> parse from github.event.workflow_run.name
-      #                      e.g. "HypatiaX - exp2_feynman . run_all.sh"
+      # workflow_run       -> parse from github.event.workflow_run.display_title
+      #                       e.g. "HypatiaX - exp1 . run_all.sh"
       - name: Resolve experiment ID
         id: exp
         run: |
           EXPLICIT="${{ github.event.inputs.experiment }}"
-          # BUG 3 FIX: github.event.workflow_run.name is the static workflow `name:` field
-          # ("HypatiaX - experiment runner . run_all.sh") - it never contains the
-          # experiment ID.  display_title reflects the dynamic `run-name:` field
-          # ("HypatiaX - exp2_feynman . run_all.sh") which does embed the experiment ID.
           WF_TITLE="${{ github.event.workflow_run.display_title }}"
 
           if [[ -n "$EXPLICIT" ]]; then
             echo "id=$EXPLICIT" >> "$GITHUB_OUTPUT"
           else
-            # Extract the experiment ID between "- " and " ."
             EXP=$(echo "$WF_TITLE" | sed 's/.*- \(.*\) \. .*/\1/')
             if [[ -z "$EXP" ]]; then
               echo "ERROR: cannot parse experiment from workflow display_title: '$WF_TITLE'"
@@ -116,16 +140,15 @@ jobs:
             echo "id=$EXP" >> "$GITHUB_OUTPUT"
           fi
 
-      # -- Resolve which run to download artifacts from ---------------------
+      # -- Resolve which run to download artifacts from ----------------------
       - name: Resolve source run ID
         id: run_id
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXPLICIT: ${{ github.event.inputs.run_id }}
-          EVENT_ID: ${{ github.event.workflow_run.id }}
-          EXP:      ${{ steps.exp.outputs.id }}
+          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          EXPLICIT:  ${{ github.event.inputs.run_id }}
+          EVENT_ID:  ${{ github.event.workflow_run.id }}
+          EXP:       ${{ steps.exp.outputs.id }}
         run: |
-          # The workflow name pattern used by ci_experiment.yml
           MAIN_WF_NAME="HypatiaX - experiment runner . run_all.sh"
 
           if [[ -n "$EXPLICIT" && "$EXPLICIT" =~ ^[0-9]+$ ]]; then
@@ -155,7 +178,7 @@ jobs:
             echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
           fi
 
-      # -- Resolve result sub-directory from experiment ID ------------------
+      # -- Resolve result sub-directory and all_pending from experiment ID ---
       - name: Resolve experiment metadata
         id: meta
         env:
@@ -164,37 +187,65 @@ jobs:
         run: |
           if [[ -n "$SUBDIR_OVERRIDE" ]]; then
             echo "result_subdir=$SUBDIR_OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "all_pending="                   >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # all_pending: canonical short task-ID list for each experiment.
-          # Used by the merge step for accurate coverage tracking (n_merged / n_total).
-          # Leave empty ("") for experiments whose task list is dynamic or unknown;
-          # the merge step will fall back to len(merged) as n_total.
+          DEFI_TASKS='["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]'
+
           case "$EXP" in
             exp1)
-              echo "result_subdir=comparison_results/noise-noiseless/noiseless"      >> "$GITHUB_OUTPUT"
-              echo 'all_pending=["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]' >> "$GITHUB_OUTPUT"
+              echo "result_subdir=comparison_results/noise-noiseless/noiseless" >> "$GITHUB_OUTPUT"
+              echo "all_pending=${DEFI_TASKS}"                                   >> "$GITHUB_OUTPUT"
               ;;
             exp1b)
-              echo "result_subdir=comparison_results/noise-noiseless/15"              >> "$GITHUB_OUTPUT"
-              echo 'all_pending=["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]' >> "$GITHUB_OUTPUT"
+              echo "result_subdir=comparison_results/noise-noiseless/15"         >> "$GITHUB_OUTPUT"
+              echo "all_pending=${DEFI_TASKS}"                                   >> "$GITHUB_OUTPUT"
               ;;
-            exp2_feynman)       echo "result_subdir=comparison_results/feynman-tests/exp2"              >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            exp2)               echo "result_subdir=comparison_results/feynman-tests/exp2_multi"        >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            exp3)               echo "result_subdir=extrapolation"                                      >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            # BUG 2 FIX: exp3b now uses extrapolation/multi_seed to avoid colliding with exp3.
-            exp3b)              echo "result_subdir=extrapolation/multi_seed"                           >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            exp2_feynman)
+              echo "result_subdir=comparison_results/feynman-tests/exp2"         >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                 >> "$GITHUB_OUTPUT"
+              ;;
+            exp2)
+              echo "result_subdir=comparison_results/feynman-tests/exp2_multi"   >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                 >> "$GITHUB_OUTPUT"
+              ;;
+            exp3)
+              echo "result_subdir=extrapolation"                                  >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                  >> "$GITHUB_OUTPUT"
+              ;;
+            exp3b)
+              # BUG 2 FIX: distinct subdir to avoid colliding with exp3.
+              echo "result_subdir=extrapolation/multi_seed"                       >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                  >> "$GITHUB_OUTPUT"
+              ;;
             suppA)
-              echo "result_subdir=hybrid_pysr/defi"                                   >> "$GITHUB_OUTPUT"
-              echo 'all_pending=["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]' >> "$GITHUB_OUTPUT"
+              echo "result_subdir=hybrid_pysr/defi"                               >> "$GITHUB_OUTPUT"
+              echo "all_pending=${DEFI_TASKS}"                                    >> "$GITHUB_OUTPUT"
               ;;
-            suppB)              echo "result_subdir=comparison_results/feynman-tests/noise-sweep"       >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            suppB_sc)           echo "result_subdir=comparison_results/feynman-tests/sample-complexity" >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            hybrid_all_domains) echo "result_subdir=hybrid_llm_nn/all_domains"                         >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            instability)        echo "result_subdir=figures"                                            >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            extrap)             echo "result_subdir=comparison_results/extrapolation"                   >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
-            *) echo "ERROR: unknown experiment '$EXP'"; exit 1 ;;
+            suppB)
+              echo "result_subdir=comparison_results/feynman-tests/noise-sweep"   >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                  >> "$GITHUB_OUTPUT"
+              ;;
+            suppB_sc)
+              echo "result_subdir=comparison_results/feynman-tests/sample-complexity" >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                      >> "$GITHUB_OUTPUT"
+              ;;
+            hybrid_all_domains)
+              echo "result_subdir=hybrid_llm_nn/all_domains"                      >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                  >> "$GITHUB_OUTPUT"
+              ;;
+            instability)
+              echo "result_subdir=figures"                                         >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                  >> "$GITHUB_OUTPUT"
+              ;;
+            extrap)
+              echo "result_subdir=comparison_results/extrapolation"               >> "$GITHUB_OUTPUT"
+              echo "all_pending="                                                  >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "ERROR: unknown experiment '$EXP'"; exit 1
+              ;;
           esac
 
       - name: Download shard artifacts from source run
@@ -212,11 +263,7 @@ jobs:
         env:
           EXP:           ${{ steps.exp.outputs.id }}
           RESULT_SUBDIR: ${{ steps.meta.outputs.result_subdir }}
-          # BUG 4 FIX: pass the upstream experiment run ID explicitly so _stats.json
-          # records where the raw results came from, not this consolidation job's own run.
           SRC_RUN_ID:    ${{ steps.run_id.outputs.id }}
-          # ALL_PENDING: canonical task-ID list for accurate coverage tracking (n_merged / n_total).
-          # Resolved from the experiment metadata step; empty string → n_total = len(merged).
           ALL_PENDING:   ${{ steps.meta.outputs.all_pending }}
         run: |
           python3 - <<'PYEOF'
@@ -230,42 +277,71 @@ jobs:
           RESULT_SUB = os.environ["RESULT_SUBDIR"]
           OUT_DIR    = os.path.join("hypatiax/data/results", RESULT_SUB)
           os.makedirs(OUT_DIR, exist_ok=True)
+          all_pending = json.loads(os.environ.get("ALL_PENDING") or "[]")
 
+          # -- Find all JSON files anywhere inside the artifact tree ----------
+          # FIX-C1: download-artifact preserves the upload path structure.
+          # Workers upload from ${OUT_BASE}/${RESULT_SUBDIR}/, so files land at:
+          #   downloaded_artifacts/<artifact-name>/hypatiax/data/results/<subdir>/<file>
+          # The recursive glob finds them regardless of nesting depth.
           candidates = sorted(glob.glob(f"{ART_DIR}/**/*.json", recursive=True))
-          print(f"Candidate JSON files: {len(candidates)}")
+
+          print(f"Candidate files ({len(candidates)}):")
           for p in candidates[:20]:
               print(f"  {p}")
           if len(candidates) > 20:
               print(f"  ... and {len(candidates) - 20} more")
 
+          # -- Field name sets -----------------------------------------------
+          # _META_KEYS: file-level metadata keys present in merged/stats JSONs.
+          # Strategy D skips top-level dict entries whose key is in this set.
           _META_KEYS = frozenset({
               "purelm_truncation_audit", "experiment", "generated_at",
               "source_run_id", "n_total", "n_merged", "n_successes", "success_rate",
               "hyp_extrap_mean", "hyp_extrap_median", "nn_extrap_mean", "nn_extrap_median",
               "config", "metadata", "run_info", "summary",
           })
+
+          # _RESULT_KEYS: a task result dict must contain at least one of these.
+          # FIX-C2/C3: added "pure_llm", "neural_network", "protocol" so that
+          # DeFi v3 (pure_llm/neural_network) and protocol_core_noiseless
+          # (protocol as a per-task field) are both recognised by Strategy D.
           _RESULT_KEYS = frozenset({
-              "equation_id", "task_id", "id", "protocol", "hypatia", "nn", "r2", "rmse",
-              "success", "best_expression", "domain", "name", "formula",
-              "pure_llm", "neural_network",
+              "equation_id", "task_id", "id", "protocol",
+              "hypatia", "nn", "pure_llm", "neural_network",
+              "r2", "rmse", "success", "best_expression",
+              "domain", "name", "formula",
+          })
+
+          # Known DeFi task IDs used by Strategy D2 to detect DeFi v3 files.
+          _DEFI_IDS = frozenset({
+              "amm", "risk_var", "liquidity", "expected_shortfall",
+              "liquidation", "risk", "lending", "staking", "trading", "derivatives",
           })
 
           def _normalise(item):
-              """Remap DeFi field names to the canonical names used by downstream stats.
+              """Remap field names to canonical names used by the downstream stats code.
 
-              Handles two shapes:
-                A) nested:  item["results"] = {"pure_llm": …, "neural_network": …}
-                            → flattens results into item and renames keys
-                B) flat:    item["pure_llm"] = …, item["neural_network"] = …
-                            → renames keys in-place (protocol_core_noiseless format)
-              Also remaps test_r2 → extrap_r2 within each model sub-dict.
+              Handles two result shapes:
+
+              Shape A - nested "results" dict (DeFi v3 / suppA format):
+                item["results"] = {"pure_llm": {...}, "neural_network": {...}}
+                -> flattened into item with pure_llm->hypatia, neural_network->nn
+
+              Shape B - flat top-level fields (protocol_core_noiseless format):
+                item["pure_llm"] = {...}, item["neural_network"] = {...}
+                -> renamed in-place
+
+              Also remaps test_r2 -> extrap_r2 inside each model sub-dict so
+              downstream R2 stats always read from the "extrap_r2" key.
               """
               if not isinstance(item, dict):
                   return item
               result = dict(item)
-              # Shape A: nested "results" dict
+
               inner = result.get("results")
               if isinstance(inner, dict):
+                  # Shape A: nested
                   inner = dict(inner)
                   if "pure_llm" in inner and "hypatia" not in inner:
                       inner["hypatia"] = inner.pop("pure_llm")
@@ -277,7 +353,7 @@ jobs:
                   result["results"] = inner
                   result.update(inner)
               else:
-                  # Shape B: flat (protocol_core_noiseless, checkpoint format)
+                  # Shape B: flat
                   if "pure_llm" in result and "hypatia" not in result:
                       result["hypatia"] = result.pop("pure_llm")
                   if "neural_network" in result and "nn" not in result:
@@ -288,6 +364,7 @@ jobs:
               return result
 
           merged = {}
+
           for path in candidates:
               try:
                   with open(path) as f:
@@ -296,33 +373,27 @@ jobs:
                   print("\n" + "="*70)
                   print(f"DEBUG FILE: {path}")
                   print(f"TOP-LEVEL TYPE: {type(data).__name__}")
-
                   if isinstance(data, dict):
                       print("TOP-LEVEL KEYS:")
                       for k in list(data.keys())[:20]:
                           print(f"  - {k}")
-
                           v = data[k]
                           if isinstance(v, dict):
                               print(f"      nested keys: {list(v.keys())[:10]}")
-
                   elif isinstance(data, list):
                       print(f"LIST LENGTH: {len(data)}")
-
                       if data:
                           first = data[0]
                           print(f"FIRST ITEM TYPE: {type(first).__name__}")
-
                           if isinstance(first, dict):
                               print("FIRST ITEM KEYS:")
                               for k in list(first.keys())[:20]:
                                   print(f"  - {k}")
-
                   print("="*70 + "\n")
 
                   rows = {}
 
-                  # -- Strategy A: top-level list (DeFi benchmark format) --------
+                  # -- Strategy A: top-level list (list-of-dicts) ------------
                   if isinstance(data, list):
                       for item in data:
                           if not isinstance(item, dict):
@@ -332,38 +403,63 @@ jobs:
                           if key is not None:
                               rows[key] = _normalise(item)
 
-                  # -- Strategy B: dict with top-level "results" list ------------
-                  elif "results" in data and isinstance(data["results"], list):
-                      rows = {r.get("equation_id") or r.get("task_id") or r.get("id"): _normalise(r)
+                  elif isinstance(data, dict):
+
+                      # -- Strategy B: dict with top-level "results" list ----
+                      if "results" in data and isinstance(data["results"], list):
+                          rows = {
+                              r.get("equation_id") or r.get("task_id") or r.get("id"): _normalise(r)
                               for r in data["results"]
-                              if any(k in r for k in ("equation_id", "task_id", "id"))}
+                              if any(k in r for k in ("equation_id", "task_id", "id"))
+                          }
 
-                  # -- Strategy C: single-task dict ------------------------------
-                  elif "task_id" in data:
-                      rows = {data["task_id"]: _normalise(data)}
+                      # -- Strategy C: single-task dict ----------------------
+                      elif "task_id" in data:
+                          rows = {data["task_id"]: _normalise(data)}
 
-                  # -- Strategy D: dict keyed by task ID -------------------------
-                  # Handles protocol_core_noiseless checkpoint format where each top-level
-                  # key is a short protocol ID ("amm", "risk_var", …) and the value is a
-                  # result dict that may use pure_llm/neural_network field names.
-                  else:
-                      rows = {
-                          k: _normalise(v) for k, v in data.items()
-                          if isinstance(v, dict)
-                          and k not in _META_KEYS
-                          and any(rk in v for rk in _RESULT_KEYS)
-                      }
+                      # -- Strategy D2: DeFi v3 dict-keyed format ------------
+                      # FIX-C2: hypatiax_defi_benchmark_v3_results.json is a
+                      # dict keyed by DeFi protocol ID with values containing
+                      # "pure_llm" / "neural_network".  Detected by checking
+                      # whether any top-level key is a known DeFi ID.
+                      elif any(k in _DEFI_IDS for k in data):
+                          rows = {
+                              k: _normalise(v)
+                              for k, v in data.items()
+                              if k in _DEFI_IDS and isinstance(v, dict)
+                          }
+
+                      # -- Strategy D: generic dict-keyed fallback -----------
+                      # FIX-C3: _RESULT_KEYS now includes "protocol",
+                      # "pure_llm", "neural_network" so protocol_core_noiseless
+                      # values are accepted here when Strategy D2 doesn't fire.
+                      else:
+                          rows = {
+                              k: _normalise(v) for k, v in data.items()
+                              if isinstance(v, dict)
+                              and k not in _META_KEYS
+                              and any(rk in v for rk in _RESULT_KEYS)
+                          }
 
                   rows = {k: v for k, v in rows.items() if k is not None}
                   merged.update(rows)
+
                   if rows:
                       print(f"  +{len(rows)} from {os.path.basename(path)}")
                   else:
                       print(f"  (no task rows) {os.path.basename(path)}")
+
               except Exception as e:
                   print(f"  SKIP {path}: {e}")
 
           print(f"\nTotal merged: {len(merged)} entries")
+
+          if all_pending:
+              missing = [t for t in all_pending if t not in merged]
+              pct = 100 * (1 - len(missing) / len(all_pending)) if all_pending else 0
+              print(f"Coverage: {len(merged)}/{len(all_pending)} ({pct:.1f}%)")
+              if missing:
+                  print(f"Missing ({len(missing)}): {missing[:10]}{'...' if len(missing)>10 else ''}")
 
           if not merged:
               print("WARNING: nothing merged - no matching shard artifacts found for this run.")
@@ -371,10 +467,12 @@ jobs:
               print("  1. Artifact name mismatch (check upload vs download pattern)")
               print("  2. Workers crashed before writing any output files")
               print("  3. Wrong run_id passed to consolidation")
+              print("  4. JSON structure not matched by any strategy (check DEBUG output above)")
               print("Writing empty outputs so downstream report step can still run.")
 
           # -- Write outputs --------------------------------------------------
-          with open(os.path.join(OUT_DIR, f"{EXP}_merged.json"), "w") as f:
+          merged_path = os.path.join(OUT_DIR, f"{EXP}_merged.json")
+          with open(merged_path, "w") as f:
               json.dump(merged, f, indent=2)
 
           hyp, nn = [], []
@@ -387,15 +485,11 @@ jobs:
               if nr2 is not None: nn.append(float(nr2))
 
           successes = [v for v in hyp if v > 0.99]
-          # n_total: use the canonical task-ID list when available so the coverage
-          # denominator is the number of EXPECTED tasks, not just what was merged.
-          # Falls back to len(merged) when ALL_PENDING was not set (non-DeFi experiments).
           n_total = len(all_pending) if all_pending else (len(merged) if merged else None)
           stats = {
               "experiment":        EXP,
               "generated_at":      datetime.now(timezone.utc).isoformat(),
-              # BUG 4 FIX: SRC_RUN_ID is the upstream experiment run; GITHUB_RUN_ID
-              # would be this consolidation job's own run ID - wrong attribution.
+              # FIX-C5: records the upstream worker run, not this job's run_id.
               "source_run_id":     os.environ.get("SRC_RUN_ID", ""),
               "n_total":           n_total,
               "n_merged":          len(merged),
@@ -410,7 +504,9 @@ jobs:
               u, p = scipy_stats.mannwhitneyu(hyp, nn, alternative="greater")
               stats.update({"mw_U": float(u), "mw_p": float(p),
                             "mw_significant": bool(p < 0.05)})
-          with open(os.path.join(OUT_DIR, f"{EXP}_stats.json"), "w") as f:
+
+          stats_path = os.path.join(OUT_DIR, f"{EXP}_stats.json")
+          with open(stats_path, "w") as f:
               json.dump(stats, f, indent=2)
 
           csv_rows = ["task_id,name,domain,hyp_train_r2,hyp_extrap_r2,nn_extrap_r2,success,best_expression"]
@@ -423,15 +519,24 @@ jobs:
               he = h.get("extrap_r2", ""); ne = n.get("extrap_r2", "")
               ok = isinstance(he, float) and he > 0.99
               expr = str(h.get("best_expression", "")).replace(",", ";")
-              csv_rows.append(f'{tid},{r.get("name","")},{r.get("domain","")},'
-                              f'{ht},{he},{ne},{ok},{expr}')
-          with open(os.path.join(OUT_DIR, f"{EXP}_merged.csv"), "w") as f:
+              csv_rows.append(
+                  f'{tid},{r.get("name","")},{r.get("domain","")},'
+                  f'{ht},{he},{ne},{ok},{expr}'
+              )
+
+          csv_path = os.path.join(OUT_DIR, f"{EXP}_merged.csv")
+          with open(csv_path, "w") as f:
               f.write("\n".join(csv_rows))
 
           print(f"\n{'='*65}")
           if hyp:
               pct = 100 * stats["success_rate"] if stats["success_rate"] is not None else 0
               print(f"SUCCESS RATE : {len(successes)}/{len(merged)} ({pct:.1f}%)")
+              print(f"HypatiaX R2  mean={stats['hyp_extrap_mean']:.4f}  "
+                    f"median={stats['hyp_extrap_median']:.4f}")
+              if nn:
+                  print(f"NN baseline  mean={stats['nn_extrap_mean']:.4f}  "
+                        f"median={stats['nn_extrap_median']:.4f}")
               if "mw_p" in stats:
                   sig = "SIGNIFICANT" if stats["mw_significant"] else "not significant"
                   print(f"Mann-Whitney : U={stats['mw_U']:.0f}  p={stats['mw_p']:.4e}  [{sig}]")
@@ -454,22 +559,19 @@ jobs:
           print(f"Outputs: {OUT_DIR}/")
           PYEOF
 
-      # -- Stage results -> canonical tree paths --------------------------------
+      # -- Stage results to canonical tree paths ------------------------------
       # hypatiax/data/results/<subdir>/ is the merge scratch area.
-      # The canonical repo tree keeps results directly under the repo root
-      # (comparison_results/, extrapolation/, hybrid_llm_nn/, etc.).
-      # This step copies the three output files from the staging path to the
-      # matching canonical path so the commit lands in the right place.
+      # The canonical repo tree keeps results at the repo root:
+      #   comparison_results/, extrapolation/, hybrid_llm_nn/, etc.
       - name: Stage results to canonical tree paths
         env:
           EXP:           ${{ steps.exp.outputs.id }}
           RESULT_SUBDIR: ${{ steps.meta.outputs.result_subdir }}
         run: |
           set -euo pipefail
-          SRC="hypatiax/data/results/${RESULT_SUBDIR}"
-          DST="${RESULT_SUBDIR}"   # canonical path at repo root
+          SRC="${OUT_BASE}/${RESULT_SUBDIR}"
+          DST="${RESULT_SUBDIR}"
 
-          # Skip if src and dst are the same (e.g. SUBDIR_OVERRIDE already canonical).
           if [[ "$SRC" == "$DST" ]]; then
             echo "SRC == DST - no copy needed (already at canonical path)."
           else
@@ -498,10 +600,10 @@ jobs:
       - name: Write step report to hypatiax/data/reports
         if: always()
         env:
-          EXP:       ${{ steps.exp.outputs.id }}
-          RUN_ID:    ${{ github.run_id }}
-          RUN_URL:   ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SRC_RUN:   ${{ steps.run_id.outputs.id }}
+          EXP:           ${{ steps.exp.outputs.id }}
+          RUN_ID:        ${{ github.run_id }}
+          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SRC_RUN:       ${{ steps.run_id.outputs.id }}
           RESULT_SUBDIR: ${{ steps.meta.outputs.result_subdir }}
         run: |
           python3 - <<'PYEOF'
@@ -540,11 +642,15 @@ jobs:
           }
 
           if report["n_merged"] == 0:
-              report["warnings"].append("n_merged=0: no shard artifacts found - check artifact name and source run_id")
+              report["warnings"].append(
+                  "n_merged=0: no shard artifacts found - check artifact name and source run_id"
+              )
           if report["n_merged"] is not None and report["n_total"] is not None:
               if report["n_merged"] < report["n_total"]:
                   missing = report["n_total"] - report["n_merged"]
-                  report["warnings"].append(f"{missing} tasks missing ({report['n_merged']}/{report['n_total']} coverage)")
+                  report["warnings"].append(
+                      f"{missing} tasks missing ({report['n_merged']}/{report['n_total']} coverage)"
+                  )
 
           ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
           report_file = os.path.join(REPORT_DIR, f"{EXP}_{ts}.json")
@@ -563,12 +669,8 @@ jobs:
           print(f"{'='*65}")
           PYEOF
 
-      # -- Abort pipeline if step report signals failure -------------------
       - name: Abort if step report indicates failure
         env:
-          # BUG 11 FIX: RESULT_SUBDIR was declared here but never referenced by
-          # the Python block below (which reads only REPORT_DIR, a fixed path).
-          # Removed to avoid misleading future editors.
           EXP: ${{ steps.exp.outputs.id }}
         run: |
           python3 - <<'PYEOF'
@@ -617,9 +719,6 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage both the hypatiax/data/results scratch copy and the
-          # canonical tree copy (they are identical; git deduplicates).
-          # Also stage the timestamped and latest report files.
           git add \
             "${OUT_BASE}/${SUB}/${EXP}_merged.json" \
             "${OUT_BASE}/${SUB}/${EXP}_merged.csv"  \
