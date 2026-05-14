@@ -167,20 +167,33 @@ jobs:
             exit 0
           fi
 
+          # all_pending: canonical short task-ID list for each experiment.
+          # Used by the merge step for accurate coverage tracking (n_merged / n_total).
+          # Leave empty ("") for experiments whose task list is dynamic or unknown;
+          # the merge step will fall back to len(merged) as n_total.
           case "$EXP" in
-            exp1)               echo "result_subdir=comparison_results/noise-noiseless/noiseless"      >> "$GITHUB_OUTPUT" ;;
-            exp1b)              echo "result_subdir=comparison_results/noise-noiseless/15"              >> "$GITHUB_OUTPUT" ;;
-            exp2_feynman)       echo "result_subdir=comparison_results/feynman-tests/exp2"              >> "$GITHUB_OUTPUT" ;;
-            exp2)               echo "result_subdir=comparison_results/feynman-tests/exp2_multi"        >> "$GITHUB_OUTPUT" ;;
-            exp3)               echo "result_subdir=extrapolation"                                      >> "$GITHUB_OUTPUT" ;;
+            exp1)
+              echo "result_subdir=comparison_results/noise-noiseless/noiseless"      >> "$GITHUB_OUTPUT"
+              echo 'all_pending=["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]' >> "$GITHUB_OUTPUT"
+              ;;
+            exp1b)
+              echo "result_subdir=comparison_results/noise-noiseless/15"              >> "$GITHUB_OUTPUT"
+              echo 'all_pending=["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]' >> "$GITHUB_OUTPUT"
+              ;;
+            exp2_feynman)       echo "result_subdir=comparison_results/feynman-tests/exp2"              >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            exp2)               echo "result_subdir=comparison_results/feynman-tests/exp2_multi"        >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            exp3)               echo "result_subdir=extrapolation"                                      >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
             # BUG 2 FIX: exp3b now uses extrapolation/multi_seed to avoid colliding with exp3.
-            exp3b)              echo "result_subdir=extrapolation/multi_seed"                           >> "$GITHUB_OUTPUT" ;;
-            suppA)              echo "result_subdir=hybrid_pysr/defi"                                   >> "$GITHUB_OUTPUT" ;;
-            suppB)              echo "result_subdir=comparison_results/feynman-tests/noise-sweep"       >> "$GITHUB_OUTPUT" ;;
-            suppB_sc)           echo "result_subdir=comparison_results/feynman-tests/sample-complexity" >> "$GITHUB_OUTPUT" ;;
-            hybrid_all_domains) echo "result_subdir=hybrid_llm_nn/all_domains"                         >> "$GITHUB_OUTPUT" ;;
-            instability)        echo "result_subdir=figures"                                            >> "$GITHUB_OUTPUT" ;;
-            extrap)             echo "result_subdir=comparison_results/extrapolation"                   >> "$GITHUB_OUTPUT" ;;
+            exp3b)              echo "result_subdir=extrapolation/multi_seed"                           >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            suppA)
+              echo "result_subdir=hybrid_pysr/defi"                                   >> "$GITHUB_OUTPUT"
+              echo 'all_pending=["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]' >> "$GITHUB_OUTPUT"
+              ;;
+            suppB)              echo "result_subdir=comparison_results/feynman-tests/noise-sweep"       >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            suppB_sc)           echo "result_subdir=comparison_results/feynman-tests/sample-complexity" >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            hybrid_all_domains) echo "result_subdir=hybrid_llm_nn/all_domains"                         >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            instability)        echo "result_subdir=figures"                                            >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
+            extrap)             echo "result_subdir=comparison_results/extrapolation"                   >> "$GITHUB_OUTPUT" ; echo 'all_pending=' >> "$GITHUB_OUTPUT" ;;
             *) echo "ERROR: unknown experiment '$EXP'"; exit 1 ;;
           esac
 
@@ -202,6 +215,9 @@ jobs:
           # BUG 4 FIX: pass the upstream experiment run ID explicitly so _stats.json
           # records where the raw results came from, not this consolidation job's own run.
           SRC_RUN_ID:    ${{ steps.run_id.outputs.id }}
+          # ALL_PENDING: canonical task-ID list for accurate coverage tracking (n_merged / n_total).
+          # Resolved from the experiment metadata step; empty string → n_total = len(merged).
+          ALL_PENDING:   ${{ steps.meta.outputs.all_pending }}
         run: |
           python3 - <<'PYEOF'
           import glob, json, os, sys
@@ -235,25 +251,40 @@ jobs:
           })
 
           def _normalise(item):
-              """Remap DeFi field names to the canonical names used by downstream stats."""
+              """Remap DeFi field names to the canonical names used by downstream stats.
+
+              Handles two shapes:
+                A) nested:  item["results"] = {"pure_llm": …, "neural_network": …}
+                            → flattens results into item and renames keys
+                B) flat:    item["pure_llm"] = …, item["neural_network"] = …
+                            → renames keys in-place (protocol_core_noiseless format)
+              Also remaps test_r2 → extrap_r2 within each model sub-dict.
+              """
               if not isinstance(item, dict):
                   return item
               result = dict(item)
-              # Flatten nested "results" dict one level up so stats writer finds keys
+              # Shape A: nested "results" dict
               inner = result.get("results")
               if isinstance(inner, dict):
                   inner = dict(inner)
-                  # pure_llm -> hypatia,  neural_network -> nn
                   if "pure_llm" in inner and "hypatia" not in inner:
                       inner["hypatia"] = inner.pop("pure_llm")
                   if "neural_network" in inner and "nn" not in inner:
                       inner["nn"] = inner.pop("neural_network")
-                  # test_r2 -> extrap_r2 within each sub-result
                   for sub in (inner.get("hypatia") or {}, inner.get("nn") or {}):
                       if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
                           sub["extrap_r2"] = sub["test_r2"]
                   result["results"] = inner
                   result.update(inner)
+              else:
+                  # Shape B: flat (protocol_core_noiseless, checkpoint format)
+                  if "pure_llm" in result and "hypatia" not in result:
+                      result["hypatia"] = result.pop("pure_llm")
+                  if "neural_network" in result and "nn" not in result:
+                      result["nn"] = result.pop("neural_network")
+                  for sub in (result.get("hypatia") or {}, result.get("nn") or {}):
+                      if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
+                          sub["extrap_r2"] = sub["test_r2"]
               return result
 
           merged = {}
@@ -276,18 +307,21 @@ jobs:
 
                   # -- Strategy B: dict with top-level "results" list ------------
                   elif "results" in data and isinstance(data["results"], list):
-                      rows = {r.get("equation_id") or r.get("task_id") or r.get("id"): r
+                      rows = {r.get("equation_id") or r.get("task_id") or r.get("id"): _normalise(r)
                               for r in data["results"]
                               if any(k in r for k in ("equation_id", "task_id", "id"))}
 
                   # -- Strategy C: single-task dict ------------------------------
                   elif "task_id" in data:
-                      rows = {data["task_id"]: data}
+                      rows = {data["task_id"]: _normalise(data)}
 
                   # -- Strategy D: dict keyed by task ID -------------------------
+                  # Handles protocol_core_noiseless checkpoint format where each top-level
+                  # key is a short protocol ID ("amm", "risk_var", …) and the value is a
+                  # result dict that may use pure_llm/neural_network field names.
                   else:
                       rows = {
-                          k: v for k, v in data.items()
+                          k: _normalise(v) for k, v in data.items()
                           if isinstance(v, dict)
                           and k not in _META_KEYS
                           and any(rk in v for rk in _RESULT_KEYS)
@@ -326,13 +360,17 @@ jobs:
               if nr2 is not None: nn.append(float(nr2))
 
           successes = [v for v in hyp if v > 0.99]
+          # n_total: use the canonical task-ID list when available so the coverage
+          # denominator is the number of EXPECTED tasks, not just what was merged.
+          # Falls back to len(merged) when ALL_PENDING was not set (non-DeFi experiments).
+          n_total = len(all_pending) if all_pending else (len(merged) if merged else None)
           stats = {
               "experiment":        EXP,
               "generated_at":      datetime.now(timezone.utc).isoformat(),
               # BUG 4 FIX: SRC_RUN_ID is the upstream experiment run; GITHUB_RUN_ID
               # would be this consolidation job's own run ID - wrong attribution.
               "source_run_id":     os.environ.get("SRC_RUN_ID", ""),
-              "n_total":           len(merged) if merged else None,  # best-effort; no pending list available
+              "n_total":           n_total,
               "n_merged":          len(merged),
               "n_successes":       len(successes),
               "success_rate":      len(successes) / len(merged) if merged else None,
