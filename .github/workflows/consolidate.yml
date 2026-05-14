@@ -1,0 +1,33 @@
+name: Consolidate Results
+
+on:
+  workflow_run:
+    workflows: ["Experiment CI (Parallel Workers)"]
+    types:
+      - completed
+
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_results
+
+      - name: Show downloaded structure
+        run: ls -R all_results
+
+      - name: Consolidate results into one file
+        run: |
+          python .github/scripts/consolidate.py --input_dir all_results --output final_result.json
+
+      - name: Upload final consolidated result
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-consolidated-result
+          path: final_result.json

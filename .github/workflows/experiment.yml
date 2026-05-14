@@ -1,0 +1,38 @@
+name: Experiment CI (Parallel Workers)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        worker_id: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run worker experiment
+        run: |
+          mkdir -p results
+          python .gitub/scripts/run_experiment.py --worker ${matrix.worker_id} --output results/result_${matrix.worker_id}.json
+
+      - name: Upload worker result
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-result-${{ matrix.worker_id }}
+          path: results/result_${{ matrix.worker_id }}.json
