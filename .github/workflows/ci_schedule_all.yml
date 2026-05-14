@@ -1,18 +1,18 @@
-name: "HypatiaX — scheduled full run"
+name: "HypatiaX - scheduled full run"
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 #  TRIGGER STRATEGY
-#  ─ cron fires once per week to kick off the chain at slot 0
-#  ─ each slot self-dispatches this workflow with experiment_index+1
+#  - cron fires once per week to kick off the chain at slot 0
+#  - each slot self-dispatches this workflow with experiment_index+1
 #    so the chain runs for 11 experiments sequentially
-#  ─ workflow_dispatch lets you start mid-chain or run a single
+#  - workflow_dispatch lets you start mid-chain or run a single
 #    experiment manually; n_shards is the ONLY input you type
 #
-#  TIMEOUT FIX (was: single 510-min job — exceeded GitHub's 6-hour hard cap)
+#  TIMEOUT FIX (was: single 510-min job - exceeded GitHub's 6-hour hard cap)
 #  Each slot is now split into TWO jobs chained with `needs`:
 #
-#    run-experiment   (≤ 355 min)  dispatch + wait for ci_experiment.yml
-#    run-finalize     (≤  95 min)  wait for consolidation + 1 h cooldown
+#    run-experiment   (? 355 min)  dispatch + wait for ci_experiment.yml
+#    run-finalize     (?  95 min)  wait for consolidation + 1 h cooldown
 #                                  + self-dispatch next slot
 #
 #  Both jobs stay safely under the 360-minute (6 h) GitHub hard limit.
@@ -21,15 +21,15 @@ name: "HypatiaX — scheduled full run"
 #  WORKER COUNT
 #  Default n_shards = 4. Use 3 only when GitHub concurrent-job quota is tight.
 #  The value is forwarded unchanged to ci_experiment.yml via dispatch_experiment.sh.
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 on:
   # Kicks off slot 0 every Monday at 09:10 UTC (10:10 BST).
   schedule:
-    - cron: "10 9 * * 1"   # Monday   09:10 UTC (10:10 BST) — regular weekly run
-    - cron: "30 10 * * 4"   # Thursday  10:30 UTC (11:30 BST) — recovery / ad-hoc
+    - cron: "10 9 * * 1"   # Monday   09:10 UTC (10:10 BST) - regular weekly run
+    - cron: "0 11 * * 4"   # Thursday 11:00 UTC (12:00 BST) - recovery / ad-hoc
 
-  # Manual entry point — also used by each slot to dispatch the next.
+  # Manual entry point - also used by each slot to dispatch the next.
   workflow_dispatch:
     inputs:
       experiment_index:
@@ -37,12 +37,12 @@ on:
         required: false
         default: "0"
       n_shards:
-        description: "Number of parallel worker shards — 4 (preferred) or 3 (quota-limited)"
+        description: "Number of parallel worker shards - 4 (preferred) or 3 (quota-limited)"
         required: true
         default: "4"
 
       task_ids_override:
-        description: "Space-separated task IDs to run (blank = full experiment set) — forwarded to ci_experiment.yml"
+        description: "Space-separated task IDs to run (blank = full experiment set) - forwarded to ci_experiment.yml"
         required: false
         default: ""
 
@@ -51,7 +51,7 @@ permissions:
   actions:  write   # needed to dispatch ci_experiment.yml and self-dispatch
 
 env:
-  # Ordered list — must agree with ci_experiment.yml and ci_consolidate_experiment.yml.
+  # Ordered list - must agree with ci_experiment.yml and ci_consolidate_experiment.yml.
   ALL_EXPERIMENTS: >-
     exp1 exp1b exp2_feynman exp2
     exp3 exp3b suppA suppB suppB_sc
@@ -61,13 +61,13 @@ env:
   # The run-experiment job (355 min) gives 25 min of headroom around this.
   PERIOD_SECONDS: "19800"
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 jobs:
 
-  # ══════════════════════════════════════════════════════════
-  #  JOB A — resolve which experiment lives at the current slot
+  # ==========================================================
+  #  JOB A - resolve which experiment lives at the current slot
   #  (fast; kept separate so both downstream jobs can share outputs)
-  # ══════════════════════════════════════════════════════════
+  # ==========================================================
   resolve:
     name: "Resolve slot ${{ github.event.inputs.experiment_index || '0' }}"
     runs-on: ubuntu-latest
@@ -96,7 +96,7 @@ jobs:
           IDX=$(( IDX ))
 
           if [[ $IDX -ge $TOTAL ]]; then
-            echo "✓ All $TOTAL experiments complete — chain ends here."
+            echo "OK All $TOTAL experiments complete - chain ends here."
             echo "done=true"  >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -108,18 +108,18 @@ jobs:
           echo "next_index=$NEXT"  >> "$GITHUB_OUTPUT"
           echo "total=$TOTAL"      >> "$GITHUB_OUTPUT"
           echo "done=false"        >> "$GITHUB_OUTPUT"
-          echo "→ Slot $IDX / $(( TOTAL - 1 )): $EXP  (next=$NEXT)"
+          echo "-> Slot $IDX / $(( TOTAL - 1 )): $EXP  (next=$NEXT)"
 
-  # ══════════════════════════════════════════════════════════
-  #  JOB B — dispatch ci_experiment.yml and wait for it
+  # ==========================================================
+  #  JOB B - dispatch ci_experiment.yml and wait for it
   #
   #  timeout-minutes: 355 = 5 h 55 m
   #  < GitHub's 6 h (360 min) hard limit, with 5 min to spare.
   #  The worker deadline (PERIOD_SECONDS=19800 = 5 h 30 m) fits
   #  inside this with 25 min of headroom for startup + API calls.
-  # ══════════════════════════════════════════════════════════
+  # ==========================================================
   run-experiment:
-    name: "Dispatch + wait — ${{ needs.resolve.outputs.experiment }}"
+    name: "Dispatch + wait - ${{ needs.resolve.outputs.experiment }}"
     needs: resolve
     if: needs.resolve.outputs.done == 'false'
     runs-on: ubuntu-latest
@@ -136,7 +136,7 @@ jobs:
       - name: Install PyYAML
         run: pip install pyyaml --quiet
 
-      # ── B1. Dispatch ci_experiment.yml ────────────────────────────────────
+      # -- B1. Dispatch ci_experiment.yml ------------------------------------
       - name: Dispatch experiment
         id: dispatch
         env:
@@ -148,23 +148,23 @@ jobs:
           set -euo pipefail
 
           DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "▶ Dispatching $EXP at $DISPATCH_ISO (n_shards=$N_SHARDS)"
+          echo "> Dispatching $EXP at $DISPATCH_ISO (n_shards=$N_SHARDS)"
           bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "" "$TASK_IDS_OVERRIDE"
 
           sleep 30   # give GitHub time to register the new run
 
-          echo "Locating run ID for $EXP dispatched after $DISPATCH_ISO …"
+          echo "Locating run ID for $EXP dispatched after $DISPATCH_ISO ..."
           EXP_RUN_ID=""
           for attempt in $(seq 1 20); do
             EXP_RUN_ID=$(gh api \
               "/repos/${{ github.repository }}/actions/workflows/ci_experiment.yml/runs?per_page=5" \
               --jq ".workflow_runs[]
-                    | select(.name | startswith(\"HypatiaX — ${EXP}\"))
+                    | select(.name | startswith(\"HypatiaX - ${EXP}\"))
                     | select(.created_at > \"$DISPATCH_ISO\")
                     | .id" \
               | head -1)
             [[ -n "$EXP_RUN_ID" ]] && break
-            echo "  Not found yet (attempt $attempt/20) — retrying in 15 s …"
+            echo "  Not found yet (attempt $attempt/20) - retrying in 15 s ..."
             sleep 15
           done
 
@@ -175,7 +175,7 @@ jobs:
           echo "exp_run_id=$EXP_RUN_ID"         >> "$GITHUB_OUTPUT"
           echo "dispatch_iso=$DISPATCH_ISO"       >> "$GITHUB_OUTPUT"
 
-      # ── B2. Wait for ci_experiment.yml to reach COMPLETED ────────────────
+      # -- B2. Wait for ci_experiment.yml to reach COMPLETED ----------------
       - name: Wait for experiment to complete
         id: wait_exp
         env:
@@ -199,14 +199,14 @@ jobs:
                 EXP_CONCLUDED_ISO=$(gh api \
                   "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
                   --jq '.updated_at')
-                echo "Experiment concluded at $EXP_CONCLUDED_ISO — status: $EXP_STATUS"
+                echo "Experiment concluded at $EXP_CONCLUDED_ISO - status: $EXP_STATUS"
                 echo "exp_concluded_iso=$EXP_CONCLUDED_ISO" >> "$GITHUB_OUTPUT"
                 exit 0
                 ;;
             esac
 
             if [[ $(date +%s) -gt $EXP_DEADLINE ]]; then
-              echo "⚠ ${PERIOD_SECONDS}s deadline reached for $EXP — emitting current timestamp and moving on"
+              echo "WARN ${PERIOD_SECONDS}s deadline reached for $EXP - emitting current timestamp and moving on"
               echo "exp_concluded_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -214,14 +214,14 @@ jobs:
             sleep 60
           done
 
-  # ══════════════════════════════════════════════════════════
-  #  JOB C — wait for consolidation, cooldown, self-dispatch
+  # ==========================================================
+  #  JOB C - wait for consolidation, cooldown, self-dispatch
   #
   #  timeout-minutes: 95 = 30 min consolidation + 60 min cooldown + 5 min buffer
   #  Well under the 360-min GitHub hard cap.
-  # ══════════════════════════════════════════════════════════
+  # ==========================================================
   run-finalize:
-    name: "Consolidate + cooldown — ${{ needs.resolve.outputs.experiment }}"
+    name: "Consolidate + cooldown - ${{ needs.resolve.outputs.experiment }}"
     needs: [resolve, run-experiment]
     if: needs.resolve.outputs.done == 'false'
     runs-on: ubuntu-latest
@@ -234,7 +234,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── C1. Wait for ci_consolidate_experiment.yml ────────────────────────
+      # -- C1. Wait for ci_consolidate_experiment.yml ------------------------
       - name: Wait for consolidation
         id: wait_consol
         env:
@@ -277,16 +277,16 @@ jobs:
 
               case "$CONSOL_STATUS" in
                 "completed success")
-                  echo "✓ Consolidation of $EXP SUCCEEDED"
+                  echo "OK Consolidation of $EXP SUCCEEDED"
                   echo "consol_ok=true" >> "$GITHUB_OUTPUT"
                   break ;;
                 "completed failure"|"completed cancelled")
-                  echo "✗ Consolidation of $EXP FAILED: $CONSOL_STATUS — ABORTING CHAIN"
+                  echo "FAIL Consolidation of $EXP FAILED: $CONSOL_STATUS - ABORTING CHAIN"
                   echo "consol_ok=false" >> "$GITHUB_OUTPUT"
                   break ;;
               esac
             else
-              echo "  [consolidate/$EXP] $(date -u +%H:%M:%SZ)  waiting for consolidation run to appear …"
+              echo "  [consolidate/$EXP] $(date -u +%H:%M:%SZ)  waiting for consolidation run to appear ..."
             fi
 
             if [[ $(date +%s) -gt $CONSOL_DEADLINE ]]; then
@@ -294,7 +294,7 @@ jobs:
               # consolidation is merely slow (e.g. large artifact download on a busy
               # runner).  Emit a distinct value so the self-dispatch step can warn
               # without aborting, and let the operator decide whether to continue.
-              echo "⚠ 30 min timeout waiting for consolidation of ${EXP} — marking as timed_out"
+              echo "WARN 30 min timeout waiting for consolidation of ${EXP} - marking as timed_out"
               echo "consol_ok=timed_out" >> "$GITHUB_OUTPUT"
               break
             fi
@@ -302,14 +302,14 @@ jobs:
             sleep 30
           done
 
-      # ── C2. 1-hour cooldown ───────────────────────────────────────────────
+      # -- C2. 1-hour cooldown -----------------------------------------------
       - name: Cooldown (1 hour)
         run: |
-          echo "Cooldown: sleeping 1 hour before dispatching the next experiment …"
+          echo "Cooldown: sleeping 1 hour before dispatching the next experiment ..."
           sleep 3600
           echo "Cooldown complete."
 
-      # ── C3. Clean Actions cache for completed experiment ─────────────────
+      # -- C3. Clean Actions cache for completed experiment -----------------
       # Runs after cooldown so the just-finished experiment's worker caches
       # (shard checkpoints, Julia depot) are evicted before the next slot
       # starts.  This prevents stale checkpoint data from a failed run from
@@ -331,7 +331,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Listing caches matching 'checkpoint-worker-${EXP}-' …"
+          echo "Listing caches matching 'checkpoint-worker-${EXP}-' ..."
 
           # Collect matching cache IDs.  gh cache list returns TSV:
           #   <id>  <key>  <ref>  <size>  <created_at>
@@ -343,20 +343,20 @@ jobs:
             2>/dev/null || true)
 
           if [[ -z "$CACHE_IDS" ]]; then
-            echo "No caches found for experiment '${EXP}' — nothing to delete."
+            echo "No caches found for experiment '${EXP}' - nothing to delete."
           else
             COUNT=$(echo "$CACHE_IDS" | wc -l | tr -d ' ')
-            echo "Deleting ${COUNT} cache(s) for '${EXP}' …"
+            echo "Deleting ${COUNT} cache(s) for '${EXP}' ..."
             while IFS= read -r cid; do
               [[ -z "$cid" ]] && continue
               gh cache delete "$cid" --repo "$REPO" \
-                && echo "  ✓ deleted cache $cid" \
-                || echo "  ⚠ could not delete cache $cid (may have already expired)"
+                && echo "  OK deleted cache $cid" \
+                || echo "  WARN could not delete cache $cid (may have already expired)"
             done <<< "$CACHE_IDS"
             echo "Cache clean complete for '${EXP}'."
           fi
 
-      # ── C4. Self-dispatch next slot ───────────────────────────────────────
+      # -- C4. Self-dispatch next slot ---------------------------------------
       - name: Self-dispatch next slot
         env:
           GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
@@ -367,26 +367,26 @@ jobs:
           CONSOL_OK:         ${{ steps.wait_consol.outputs.consol_ok }}
         run: |
           # BUG 7 FIX: distinguish genuine failure from timeout.
-          # consol_ok=false   → consolidation explicitly failed/was cancelled → abort chain.
-          # consol_ok=timed_out → consolidation did not finish within 30 min window but
+          # consol_ok=false   -> consolidation explicitly failed/was cancelled -> abort chain.
+          # consol_ok=timed_out -> consolidation did not finish within 30 min window but
           #                       may still be running; emit a warning and continue the
           #                       chain so one slow experiment doesn't stop everything.
-          # consol_ok=true    → success → continue normally.
+          # consol_ok=true    -> success -> continue normally.
           if [[ "${CONSOL_OK}" == "false" ]]; then
-            echo "✗ Consolidation explicitly failed (consol_ok=false) — CHAIN ABORTED."
+            echo "FAIL Consolidation explicitly failed (consol_ok=false) - CHAIN ABORTED."
             echo "  Fix the consolidation failure for ${{ needs.resolve.outputs.experiment }} and re-trigger manually."
             exit 1
           fi
           if [[ "${CONSOL_OK}" == "timed_out" ]]; then
             echo "::warning::Consolidation of ${{ needs.resolve.outputs.experiment }} timed out after 30 min."
-            echo "  The consolidation run may still be in progress.  Continuing chain — monitor Actions UI."
+            echo "  The consolidation run may still be in progress.  Continuing chain - monitor Actions UI."
           fi
           if [[ $NEXT_INDEX -lt $TOTAL ]]; then
-            echo "→ Dispatching next slot: index $NEXT_INDEX"
+            echo "-> Dispatching next slot: index $NEXT_INDEX"
             gh workflow run ci_schedule_all.yml \
               --field experiment_index="$NEXT_INDEX" \
               --field n_shards="$N_SHARDS" \
               --field task_ids_override="$TASK_IDS_OVERRIDE"
           else
-            echo "✓ All experiments dispatched — chain complete."
+            echo "OK All experiments dispatched - chain complete."
           fi
