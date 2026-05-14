@@ -464,7 +464,7 @@ The expression must be evaluable with numpy."""
         try:
             dbg(f"LLM API call attempt {attempt+1}/4 …")
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-5",
                 max_tokens=1024,
                 temperature=0.0,
                 messages=[{"role": "user", "content": prompt}]

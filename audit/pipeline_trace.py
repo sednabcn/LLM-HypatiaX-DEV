@@ -131,7 +131,7 @@ def _build_env(repo_root: Path, results_dir: Path, seed: int) -> dict[str, str]:
         "NN_SEED":               seed_str,
         "PYSR_SEED":             seed_str,
         "PYTHONHASHSEED":        seed_str,
-        "LLM_MODEL":             "claude-sonnet-4-20250514",
+        "LLM_MODEL":             "claude-sonnet-4-5",
         "LLM_RETRIES":           "3",
         "LLM_K_RUNS":            "1",
         "N_TASKS_DEFI":          "74",

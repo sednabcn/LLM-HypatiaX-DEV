@@ -124,7 +124,7 @@ TIMEOUT_SECS      = int(_TIMEOUT_ENV)
 
 SEED          = _GLOBAL_SEED   # env-driven: PYSR_SEED → NN_SEED → 42
 CONDITIONS    = ["pysr_only", "hypatia"]
-MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")  # not printed in submitted tex (double-blind)
+MODEL_STRING  = os.environ.get("LLM_MODEL", "claude-sonnet-4-5")  # not printed in submitted tex (double-blind)
 
 _seed_source = "PYSR_SEED" if os.environ.get("PYSR_SEED") else ("NN_SEED" if os.environ.get("NN_SEED") else "default")
 print(f"populations : {POPULATIONS}  (paper-quality)")

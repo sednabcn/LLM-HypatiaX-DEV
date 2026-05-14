@@ -87,7 +87,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install "pandas==2.2.3" numpy scipy
+          pip install "pandas==2.2.3" numpy scipy seaborn
 
       # -- Resolve experiment ID ---------------------------------------------
       # workflow_dispatch  -> github.event.inputs.experiment  (explicit)
@@ -223,29 +223,68 @@ jobs:
               print(f"  ... and {len(candidates) - 20} more")
 
           _META_KEYS = frozenset({
-              "protocol", "purelm_truncation_audit", "experiment", "generated_at",
+              "purelm_truncation_audit", "experiment", "generated_at",
               "source_run_id", "n_total", "n_merged", "n_successes", "success_rate",
               "hyp_extrap_mean", "hyp_extrap_median", "nn_extrap_mean", "nn_extrap_median",
               "config", "metadata", "run_info", "summary",
           })
           _RESULT_KEYS = frozenset({
-              "equation_id", "task_id", "id", "hypatia", "nn", "r2", "rmse",
+              "equation_id", "task_id", "id", "protocol", "hypatia", "nn", "r2", "rmse",
               "success", "best_expression", "domain", "name", "formula",
+              "pure_llm", "neural_network",
           })
+
+          def _normalise(item):
+              """Remap DeFi field names to the canonical names used by downstream stats."""
+              if not isinstance(item, dict):
+                  return item
+              result = dict(item)
+              # Flatten nested "results" dict one level up so stats writer finds keys
+              inner = result.get("results")
+              if isinstance(inner, dict):
+                  inner = dict(inner)
+                  # pure_llm -> hypatia,  neural_network -> nn
+                  if "pure_llm" in inner and "hypatia" not in inner:
+                      inner["hypatia"] = inner.pop("pure_llm")
+                  if "neural_network" in inner and "nn" not in inner:
+                      inner["nn"] = inner.pop("neural_network")
+                  # test_r2 -> extrap_r2 within each sub-result
+                  for sub in (inner.get("hypatia") or {}, inner.get("nn") or {}):
+                      if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
+                          sub["extrap_r2"] = sub["test_r2"]
+                  result["results"] = inner
+                  result.update(inner)
+              return result
 
           merged = {}
           for path in candidates:
               try:
                   with open(path) as f:
                       data = json.load(f)
-                  if not isinstance(data, dict):
-                      continue
-                  if "results" in data and isinstance(data["results"], list):
+
+                  rows = {}
+
+                  # -- Strategy A: top-level list (DeFi benchmark format) --------
+                  if isinstance(data, list):
+                      for item in data:
+                          if not isinstance(item, dict):
+                              continue
+                          key = (item.get("equation_id") or item.get("task_id")
+                                 or item.get("id") or item.get("protocol"))
+                          if key is not None:
+                              rows[key] = _normalise(item)
+
+                  # -- Strategy B: dict with top-level "results" list ------------
+                  elif "results" in data and isinstance(data["results"], list):
                       rows = {r.get("equation_id") or r.get("task_id") or r.get("id"): r
                               for r in data["results"]
-                              if any(k in r for k in ("equation_id","task_id","id"))}
+                              if any(k in r for k in ("equation_id", "task_id", "id"))}
+
+                  # -- Strategy C: single-task dict ------------------------------
                   elif "task_id" in data:
                       rows = {data["task_id"]: data}
+
+                  # -- Strategy D: dict keyed by task ID -------------------------
                   else:
                       rows = {
                           k: v for k, v in data.items()
@@ -253,6 +292,7 @@ jobs:
                           and k not in _META_KEYS
                           and any(rk in v for rk in _RESULT_KEYS)
                       }
+
                   rows = {k: v for k, v in rows.items() if k is not None}
                   merged.update(rows)
                   if rows:

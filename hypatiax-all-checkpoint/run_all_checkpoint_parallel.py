@@ -1857,7 +1857,7 @@ def main() -> None:
         env["PYTHONHASHSEED"] = _seed_str
 
     # LLM config
-    env.setdefault("LLM_MODEL", _repro_config.get("llm_model", "claude-sonnet-4-20250514"))
+    env.setdefault("LLM_MODEL", _repro_config.get("llm_model", "claude-sonnet-4-5"))
     env.setdefault("LLM_RETRIES", str(_repro_config.get("llm_retries", 3)))
     # FIX: default LLM_K_RUNS to 1 (not llm_k_runs=30 from repro.yaml) so standard
     # experiment steps run a single pass; the instability step overrides to 30 via

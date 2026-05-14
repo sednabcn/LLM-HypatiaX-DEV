@@ -43,7 +43,7 @@ PAPER_CONFIG: dict[str, str] = {
     "NN_SEED":             "42",     # seeds.default
     "PYSR_SEED":           "42",     # seeds.pysr_seed
     # ── LLM ───────────────────────────────────────────────────────────────
-    "LLM_MODEL":           "claude-sonnet-4-20250514",  # llm_model
+    "LLM_MODEL":           "claude-sonnet-4-5",  # llm_model
     # ── Engine / misc ─────────────────────────────────────────────────────
     "ENGINE_NAME":         "hybrid_system_v50_2",  # engine.name  ← previously unvalidated
     "PCA_TRAIN_FRAC":      "0.4",   # pca_train_frac        ← previously unvalidated
