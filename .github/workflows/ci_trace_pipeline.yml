@@ -145,10 +145,14 @@ jobs:
       - name: Resolve triggered experiment (workflow_run only)
         id: triggered_exp
         run: |
-          WF_NAME="${{ github.event.workflow_run.name }}"
-          if [[ -n "$WF_NAME" ]]; then
-            EXP=$(echo "$WF_NAME" | sed 's/.*— \(.*\) · .*/\1/')
-            echo "Parsed experiment from triggering workflow: $EXP"
+          # BUG 3 FIX: github.event.workflow_run.name is the static workflow `name:` field
+          # and never contains the experiment ID.  display_title reflects the dynamic
+          # `run-name:` ("HypatiaX — exp2_feynman · run_all.sh") which does embed it.
+          # Kept in sync with the identical fix in ci_consolidate_experiment.yml.
+          WF_TITLE="${{ github.event.workflow_run.display_title }}"
+          if [[ -n "$WF_TITLE" ]]; then
+            EXP=$(echo "$WF_TITLE" | sed 's/.*— \(.*\) · .*/\1/')
+            echo "Parsed experiment from triggering workflow display_title: $EXP"
             echo "exp=$EXP" >> "$GITHUB_OUTPUT"
           else
             echo "exp=" >> "$GITHUB_OUTPUT"
@@ -212,6 +216,11 @@ jobs:
           # Identity
           chk("run_id",      "paper_v3")
           chk("run_version", "3.0")
+          # BUG 10 NOTE: claude-sonnet-4-20250514 requires anthropic SDK ≥ 0.40.0.
+          # environment.yml pins anthropic==0.28.0 which predates this model string.
+          # If workers install from environment.yml they may fail at runtime.
+          # Recommended fix: update environment.yml to anthropic>=0.40.0 and pin
+          # the worker pip install step in ci_experiment.yml to match.
           chk("llm_model",   "claude-sonnet-4-20250514")
           chk("llm_retries", 3)
           chk("llm_k_runs",  30)
@@ -402,7 +411,7 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import json, os, re
-          from datetime import datetime
+          from datetime import datetime, timezone
 
           report_path = "trace_report.txt"
           report_text = open(report_path).read() if os.path.exists(report_path) else ""
@@ -420,7 +429,7 @@ jobs:
           warn_lines = re.findall(r'^\s*\[(\w+)\].*(?:WARN|⚠).*$', report_text, re.MULTILINE)
 
           summary = {
-              "generated_at":       datetime.utcnow().isoformat() + "Z",
+              "generated_at":       datetime.now(timezone.utc).isoformat(),
               "source_run_id":      os.environ.get("GITHUB_RUN_ID", ""),
               "repository":         os.environ.get("GITHUB_REPOSITORY", ""),
               "ref":                os.environ.get("GITHUB_REF", ""),

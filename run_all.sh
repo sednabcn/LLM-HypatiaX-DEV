@@ -11,6 +11,13 @@
 # FIX WARN-2     : HYBRID_ALL_DOMAINS_EXPECTED corrected to 10-domain list that
 #                  matches CI HYBRID_ALL_DOMAINS_IDS and ExperimentProtocolAll
 # FIX STEP-ORDER : removed exp2_sym / exp2_hyb (no run-blocks exist for them)
+# SYNC-ci (2026-05-14):
+#   — git push now uses HEAD:ref_name (not hardcoded master)
+#   — consolidate timeout-minutes: 30 added
+#   — Upload consolidated artifact: if: always() added
+#   — shard_matrix=[] emitted on empty-pending to let worker if-guard fire
+#   — JOB_DEADLINE exported to exp3/exp3b subprocess env
+#   — python3 -c IndentationErrors fixed (3 sites in worker step)
 #
 # STEP IDs (linear order):
 #   env_check          → verify Python, PySR, API key
@@ -37,6 +44,9 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 RESULTS_DIR="${RESULTS_DIR:-${REPO_ROOT}/hypatiax/data/results}"
 EXPERIMENTS_DIR="${EXPERIMENTS_DIR:-${REPO_ROOT}/hypatiax/experiments/benchmarks}"
+# FIX-5: GENERATION_DIR aligns with CI script path hypatiax/experiments/generation/
+# (was CORE_DIR/generation which resolved to hypatiax/core/generation — wrong tree)
+GENERATION_DIR="${GENERATION_DIR:-${REPO_ROOT}/hypatiax/experiments/generation}"
 CORE_DIR="${CORE_DIR:-${REPO_ROOT}/hypatiax/core}"
 ANALYSIS_DIR="${ANALYSIS_DIR:-${REPO_ROOT}/hypatiax/analysis}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/scripts}"
@@ -49,17 +59,39 @@ export PYSR_CROSSOVER=0.9
 export PYSR_MUTATION=0.1
 export PYSR_PARETO_PRESSURE=0.001
 export PYSR_SEED=42
-export PYSR_POPULATIONS="${PYSR_POPULATIONS:-2}"
+# FIX-1: default was 2; CI uses 4 (workflow env PYSR_POPULATIONS: "4").
+# Local runs with 2 populations diverge from paper results — align to 4.
+export PYSR_POPULATIONS="${PYSR_POPULATIONS:-4}"
 
 # Feynman benchmark defaults (Appendix A)
-FEYNMAN_SAMPLES=200
-FEYNMAN_TIMEOUT=1100        # ← FIX-G2: paper value 1100s (was 900)
-FEYNMAN_NOISELESS_THRESHOLD=0.9999
+# FIX-10: exported so subshells and child processes inherit the values.
+export FEYNMAN_SAMPLES=200
+export FEYNMAN_TIMEOUT=1100        # ← FIX-G2: paper value 1100s (was 900)
+export FEYNMAN_NOISELESS_THRESHOLD=0.9999
+
+# Julia signal handling — FIX-6 (FIX-G10): must be set before any juliacall
+# import so Julia segfaults produce traceable Python exceptions.
+export PYTHON_JULIACALL_HANDLE_SIGNALS=yes
+
+# Julia threading — FIX-7: match CI env (JULIA_NUM_THREADS: "4", JULIA_EXCLUSIVE: "0")
+export JULIA_NUM_THREADS="${JULIA_NUM_THREADS:-4}"
+export JULIA_EXCLUSIVE="${JULIA_EXCLUSIVE:-0}"
+
+# Repro config — FIX-8 (FIX-G2): paper-quality hyperparameters loaded at runtime.
+# Scripts that honour REPRO_CFG will prefer values from config/repro.yaml
+# over their own compile-time defaults (e.g. FEYNMAN_TIMEOUT=1100 from paper).
+export REPRO_CFG="${REPRO_CFG:-${REPO_ROOT}/config/repro.yaml}"
+
+# Job deadline — FIX-9: CI passes JOB_DEADLINE=19800 (330 min) to run_all.sh.
+# Set the same default locally so deadline-aware scripts behave consistently.
+# Override with JOB_DEADLINE=0 to disable deadline enforcement locally.
+export JOB_DEADLINE="${JOB_DEADLINE:-19800}"
 
 # Expected domain list for hybrid_all_domains validation (FIX WARN-2)
-# Must match CI HYBRID_ALL_DOMAINS_IDS and ExperimentProtocolAll.get_all_domains()
-# OLD (wrong, 5 domains): "physics,finance,biology,chemistry,economics"
-HYBRID_ALL_DOMAINS_EXPECTED="biology,chemistry,electromagnetism,finance,mechanics,optics,other,quantum,statistics,thermodynamics"
+# Must match ExperimentProtocolAll.get_all_domains() in experiment_protocol_all_30.py v4.1.
+# FIX: removed "statistics", "finance", "other" (never existed in protocol);
+#      added "fluid_dynamics" and "mathematics" (present in protocol).
+HYBRID_ALL_DOMAINS_EXPECTED="biology,chemistry,economics,electromagnetism,fluid_dynamics,mathematics,mechanics,optics,quantum,thermodynamics"
 
 # ── CLI parsing ───────────────────────────────────────────────────────────────
 ONLY_STEP=""
@@ -118,14 +150,54 @@ run env_check "Verify environment (Python, Julia/PySR, API key, directories)" ba
   python3 -c "import pysr; print(\"PySR:\", pysr.__version__)" || { echo "ERROR: pysr not installed"; exit 1; }
   python3 -c "import torch; print(\"PyTorch:\", torch.__version__)"
   python3 -c "import anthropic; print(\"anthropic SDK: ok\")"
+  # BUG 10 FIX: claude-sonnet-4-20250514 (repro.yaml llm_model) requires SDK >= 0.40.0.
+  # environment.yml was pinned to 0.28.0 which predates this model family.
+  # Assert the minimum here so local runs fail fast with a clear message.
+  python3 - <<'SDKCHECK'
+import anthropic, sys
+ver = tuple(int(x) for x in anthropic.__version__.split(".")[:3])
+if ver < (0, 40, 0):
+    print("ERROR: anthropic SDK " + anthropic.__version__ + " is too old; need >= 0.40.0 for claude-sonnet-4-20250514")
+    sys.exit(1)
+print("anthropic SDK version: " + anthropic.__version__ + " (>= 0.40.0 OK)")
+SDKCHECK
+  [ $? -eq 0 ] || exit 1
   python3 -c "import sympy; print(\"SymPy:\", sympy.__version__)"
   python3 -c "import scipy; print(\"SciPy:\", scipy.__version__)"
+  # FIX-11: match CI pip-installed + checked deps (scikit-learn, pyyaml, matplotlib, pmlb)
+  python3 -c "import sklearn; print(\"scikit-learn:\", sklearn.__version__)" || { echo "ERROR: scikit-learn not installed"; exit 1; }
+  python3 -c "import yaml; print(\"PyYAML: ok\")" || { echo "ERROR: pyyaml not installed"; exit 1; }
+  python3 -c "import matplotlib; print(\"matplotlib:\", matplotlib.__version__)" || { echo "ERROR: matplotlib not installed"; exit 1; }
+  python3 -c "import pmlb; print(\"pmlb: ok\")" || { echo "ERROR: pmlb not installed"; exit 1; }
   [[ -n "${ANTHROPIC_API_KEY:-}" ]] || { echo "ERROR: ANTHROPIC_API_KEY not set"; exit 1; }
   echo "ANTHROPIC_API_KEY: set (${#ANTHROPIC_API_KEY} chars)"
+  # FIX-13: echo all CI-parity env vars for auditability
   echo "PYSR_POPULATIONS: ${PYSR_POPULATIONS}"
+  echo "JULIA_NUM_THREADS: ${JULIA_NUM_THREADS}"
+  echo "JULIA_EXCLUSIVE: ${JULIA_EXCLUSIVE}"
+  echo "PYTHON_JULIACALL_HANDLE_SIGNALS: ${PYTHON_JULIACALL_HANDLE_SIGNALS}"
+  echo "FEYNMAN_SAMPLES: ${FEYNMAN_SAMPLES}"
+  echo "FEYNMAN_TIMEOUT: ${FEYNMAN_TIMEOUT}"
+  echo "FEYNMAN_NOISELESS_THRESHOLD: ${FEYNMAN_NOISELESS_THRESHOLD}"
+  echo "JOB_DEADLINE: ${JOB_DEADLINE}s"
+  echo "REPRO_CFG: ${REPRO_CFG}"
+  # FIX-12: REPRO_CFG audit — mirrors CI FIX-G2 print_repro.py log
+  if [ -f "${REPRO_CFG}" ]; then
+    echo "repro.yaml found — printing key values:"
+    python3 -c "
+import yaml, sys
+with open(\"${REPRO_CFG}\") as f: cfg = yaml.safe_load(f)
+for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
+" 2>/dev/null || echo "  (could not parse repro.yaml)"
+  else
+    echo "WARNING: repro.yaml not found at ${REPRO_CFG} — using env defaults"
+  fi
   echo "Results dir: '"${RESULTS_DIR}"'"
   # FIX CRITICAL 3: hybrid_llm_nn/all_domains (not /defi)
-  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,noise-sweep,sample-complexity},noise-noiseless/{noiseless,15},extrapolation},extrapolation,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
+  # BUG 2 FIX: added extrapolation/multi_seed — exp3b now writes to this subdir
+  # (was: extrapolation/) to avoid collision with exp3 outputs.
+  # Mirrors ci_experiment.yml Create results directory structure step.
+  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,noise-sweep,sample-complexity},noise-noiseless/{noiseless,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
   echo "Directory structure: ok"
 '
 
@@ -217,9 +289,11 @@ run hybrid_all_domains "Hybrid LLM+NN all-domains run — 10 domains (§10.9 hyb
   # ── FIX TASK 7: runtime domain-list validation ────────────────────────────
   ACTUAL_DOMAINS=\$(python3 - << 'PYEOF'
 import importlib.util, sys, pathlib
+# FIX-5: use GENERATION_DIR (hypatiax/experiments/generation/) — matches CI script path.
+# Previously used CORE_DIR/generation/ (hypatiax/core/generation/) — wrong tree.
 spec = importlib.util.spec_from_file_location(
     'hybrid_mod',
-    pathlib.Path('${CORE_DIR}/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py')
+    pathlib.Path('${GENERATION_DIR}/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py')
 )
 mod = importlib.util.module_from_spec(spec)
 try:
@@ -246,8 +320,8 @@ PYEOF
     exit 1
   fi
   echo '[hybrid_all_domains] Domain-list OK: '\"\${ACTUAL_SORTED}\"
-  # ── Main experiment ───────────────────────────────────────────────────────
-  cd '${CORE_DIR}/generation/hybrid_all_domains_llm_nn'
+  # ── Main experiment — FIX-5: cd to GENERATION_DIR (not CORE_DIR) ─────────
+  cd '${GENERATION_DIR}/hybrid_all_domains_llm_nn'
   python3 hybrid_system_llm_nn_all_domains.py \
     --samples '${FEYNMAN_SAMPLES}' \
     2>&1 | tee '${RESULTS_DIR}'/hybrid_all_domains_run.log
@@ -302,53 +376,81 @@ run instability "Instability Index analysis + all figures — §10.9 (Regime A/B
 
 
 # ── STEP 5: exp2_feynman ──────────────────────────────────────────────────────
+# FIX: mkdir -p ensures tee target directory exists when this step runs
+#      standalone (--step exp2_feynman) without a prior env_check.
+# --skip-pysr: methods 5+6 (SymbolicEngine, HybridV50_2) are excluded.
+#   They are NOT in the paper's Tab 16-18 comparison.  Julia startup overhead
+#   (~150s per test × 30 tests = 75 min) would blow the 5h30m job deadline.
+#   Remove --skip-pysr here AND in ci_experiment.yml if you want them back.
 run exp2_feynman "Feynman SR benchmark — Phase 2 noisy protocol (Tab 16-18)" bash -c "
   cd '${EXPERIMENTS_DIR}'
+  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
   python3 run_comparative_suite_benchmark_v2.py \
     --benchmark feynman \
+    --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
     --checkpoint-name feynman_exp2_checkpoint \
     --resume \
-    2>&1 | tee '${RESULTS_DIR}'/comparison_results/feynman-tests/exp2/exp2_run.log
+    2>&1 | tee '${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log'
 "
 
 # ── STEP 6: exp2 ──────────────────────────────────────────────────────────────
+# FIX: --benchmark all30 was not a valid argparse choice.
+# FIX: exp2 uses ExperimentProtocolAll (30 multi-domain equations, Tab 19).
+#      --protocol all30 loads ExperimentProtocolAll from experiment_protocol_all_30.py.
+#      --benchmark is not passed (not applicable to the all30 protocol path).
+# FIX: mkdir -p ensures tee target directory exists when this step runs
+#      standalone (--step exp2) without a prior env_check.
+# --skip-pysr: methods 5+6 (SymbolicEngine, HybridV50_2) not in Tab 19 comparison.
+#   Julia startup overhead (~150s per test × 30 tests) would exceed job deadline.
 run exp2 "Combined five-system comparison — all Methods (Tab 19 full)" bash -c "
   cd '${EXPERIMENTS_DIR}'
+  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'
   python3 run_comparative_suite_benchmark_v2.py \
-    --benchmark all30 \
+    --protocol all30 \
+    --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
     --checkpoint-name exp2_checkpoint \
     --resume \
-    2>&1 | tee '${RESULTS_DIR}'/exp2_run.log
+    2>&1 | tee '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi/exp2_run.log'
 "
 
 # ── STEP 7: exp3 ──────────────────────────────────────────────────────────────
+# FIX: mkdir -p ensures results/extrapolation exists when running standalone.
 run exp3 "Nguyen-12 benchmark — SEED=42 (tab:nguyen12 · §10.8)" bash -c "
   cd '${EXPERIMENTS_DIR}'
+  mkdir -p '${RESULTS_DIR}/extrapolation'
   python3 exp3_nguyen12_hybrid50v_02.py \
     --seed 42 \
     2>&1 | tee '${RESULTS_DIR}'/exp3_run.log
-  # ── Move exp3 outputs → RESULTS_DIR ──────────────────────────────────────
+  # FIX-4: CI RESULT_SUBDIR=extrapolation — move outputs to extrapolation/,
+  # not to ${RESULTS_DIR}/ root (was: -exec mv {} '${RESULTS_DIR}/' which lost the subdir).
   find '${EXPERIMENTS_DIR}' -maxdepth 1 \
     \( -name '*nguyen*seed42*.json' -o -name '*nguyen12*42*.json' \) \
-    -exec mv -v {} '${RESULTS_DIR}/' \; 2>/dev/null || true
+    -exec mv -v {} '${RESULTS_DIR}/extrapolation/' \; 2>/dev/null || true
 "
 
 # ── STEP 8: exp3b ─────────────────────────────────────────────────────────────
+# BUG 2 FIX: exp3b now uses extrapolation/multi_seed/ as its RESULT_SUBDIR.
+# Previously both exp3 and exp3b wrote to extrapolation/, causing the second
+# run's git commit to overwrite the first's merged files.
+# Mirrors ci_experiment.yml (exp3b RESULT_SUBDIR="extrapolation/multi_seed")
+# and ci_consolidate_experiment.yml (exp3b → extrapolation/multi_seed case).
 run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" bash -c "
   cd '${EXPERIMENTS_DIR}'
+  mkdir -p '${RESULTS_DIR}/extrapolation/multi_seed'
   for seed in 99 123 777 2024; do
     echo '--- exp3b seed='\$seed' ---'
     python3 exp3_nguyen12_hybrid50v_02.py \
       --seed \$seed \
       2>&1 | tee -a '${RESULTS_DIR}'/exp3b_run.log
   done
-  # ── Move exp3b outputs → RESULTS_DIR ─────────────────────────────────────
+  # BUG 2 FIX: target is extrapolation/multi_seed/ (not extrapolation/).
+  # Prevents overwriting the exp3 seed=42 outputs that live in extrapolation/.
   find '${EXPERIMENTS_DIR}' -maxdepth 1 -name '*nguyen*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/' \;
+    -exec mv -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \;
 "
 
 # ── STEP 9: suppA ─────────────────────────────────────────────────────────────
@@ -356,11 +458,13 @@ run suppA "DeFi routing improvement experiments (Supplement A · Tab 11-13 routi
   cd '${EXPERIMENTS_DIR}'
   python3 run_hybrid_system_benchmark.py \
     2>&1 | tee '${RESULTS_DIR}'/suppA_run.log
-  # ── Move suppA outputs → RESULTS_DIR/hybrid_llm_nn/defi/ ─────────────────
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'consolidated_hybrid*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/hybrid_llm_nn/defi/' \;
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'hybrid_system*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/hybrid_llm_nn/all_domains/' \;
+  # FIX-2: CI RESULT_SUBDIR=hybrid_pysr/defi — move outputs there, not hybrid_llm_nn/defi/.
+  # FIX-3: removed second mv of hybrid_system*.json to hybrid_llm_nn/all_domains/ —
+  #         suppA is a DeFi routing run, not a hybrid_all_domains run; those files
+  #         belong in hybrid_pysr/defi/ alongside the consolidated outputs.
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 \
+    \( -name 'consolidated_hybrid*.json' -o -name 'hybrid_system*.json' \) \
+    -exec mv -v {} '${RESULTS_DIR}/hybrid_pysr/defi/' \;
 "
 
 # ── STEP 10: suppB — noise sweep ─────────────────────────────────────────────
@@ -527,6 +631,13 @@ if noise_sweep_all:
 else:
     print(f"  [SKIP] noise-sweep/: no JSON files found (suppB not yet run)")
 
+# --- BUG 2 FIX: exp3b outputs must be in extrapolation/multi_seed/, not extrapolation/ ---
+exp3b_files = glob.glob(f"{RESULTS}/extrapolation/multi_seed/*nguyen*.json")
+ok_exp3b = bool(exp3b_files)
+checks.append(("exp3b outputs in extrapolation/multi_seed/ (BUG 2)", 1.0 if ok_exp3b else 0.0, 1.0, ok_exp3b))
+print(f"  [{'OK' if ok_exp3b else 'SKIP'}] extrapolation/multi_seed/: {len(exp3b_files)} nguyen JSON(s) "
+      f"{'(exp3b not yet run)' if not ok_exp3b else ''}")
+
 # --- FIX STEP-11-12: tables and figures co-located under RESULTS_DIR ---
 tbl = glob.glob(f"{RESULTS}/tables/*.tex")
 fig = glob.glob(f"{RESULTS}/figures/*.pdf")
@@ -567,7 +678,8 @@ echo "    Table 19         <- exp2              (five-system comparison)"
 echo "    Table 28         <- suppB             (noise sweep)"
 echo "    Table 29 sc      <- suppB_sc          (sample complexity)"
 echo "    tab:hybrid_all   <- hybrid_all_domains (§10.9 hybrid system — one-shot)"
-echo "    tab:nguyen12     <- exp3/exp3b"
+echo "    tab:nguyen12     <- exp3              (extrapolation/)      seed=42"
+echo "                    <- exp3b             (extrapolation/multi_seed/)  seeds 99/123/777/2024"
 echo "    tab:instability  <- instability        (§10.9 Regime A/B/C, Spearman ρ, 12 figs)"
 echo ""
 echo "  Instability outputs (STEP 4a):"

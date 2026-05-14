@@ -218,12 +218,19 @@ def _probe(module_path: str, class_name: str) -> bool:
 
     NOTE: Any module imported here that transitively loads torch will be safe
     because torch has already been imported (eagerly, after juliacall) above.
+
+    FIX: exceptions are now printed to stderr so that probe failures
+    (e.g. Julia precompilation errors, missing packages) are visible in the
+    GitHub Actions step log instead of being silently swallowed.  The return
+    value is still False on any failure — this is non-fatal by design.
     """
     import importlib
     try:
         mod = importlib.import_module(module_path)
         return hasattr(mod, class_name)
-    except Exception:
+    except Exception as _exc:
+        print(f"⚠️  _probe({module_path!r}, {class_name!r}) failed: {_exc}",
+              file=__import__("sys").stderr, flush=True)
         return False
 
 
@@ -606,7 +613,10 @@ class BaseMethod:
                     net.load_state_dict(best_w)
                 with torch.no_grad():
                     pred_s = net(X_t).numpy().flatten()
-                return pred_s * t_std + t_mean
+                # FIX: cast to float64 before denormalising. torch outputs float32;
+                # multiplying by a large t_std overflows float32 (~3.4e38) on
+                # equations with y ~ 10^2+ scale, producing inf/NaN and RuntimeWarning.
+                return pred_s.astype(np.float64) * t_std + t_mean
 
             best_y_hybrid: np.ndarray | None = None
             best_r2 = float("-inf")
@@ -1728,7 +1738,10 @@ class HybridAllDomainsMethod(BaseMethod):
                     net.load_state_dict(best_w)
                 with torch.no_grad():
                     pred_s = net(X_t).numpy().flatten()
-                return pred_s * t_std + t_mean
+                # FIX: cast to float64 before denormalising. torch outputs float32;
+                # multiplying by a large t_std overflows float32 (~3.4e38) on
+                # equations with y ~ 10^2+ scale, producing inf/NaN and RuntimeWarning.
+                return pred_s.astype(np.float64) * t_std + t_mean
 
             best_result = None
             best_r2     = float("-inf")
