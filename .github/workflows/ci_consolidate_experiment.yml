@@ -1,5 +1,5 @@
-# ══════════════════════════════════════════════════════════════════════════════
-#  ci_consolidate_experiment.yml — standalone consolidation for any experiment
+# ==============================================================================
+#  ci_consolidate_experiment.yml - standalone consolidation for any experiment
 #
 #  Purpose: re-merge shard artifacts from a previous run WITHOUT re-running the
 #           expensive workers.  Mirrors ci_consolidate_exp2.yml but is
@@ -8,22 +8,22 @@
 #  Triggers:
 #    1. Automatically after ci_experiment.yml completes (any conclusion).
 #       workflow_run.workflows must list every possible expanded name because
-#       GitHub evaluates the list at parse time — expressions are NOT allowed.
-#    2. Manually — specify the experiment and optionally the source run_id.
-# ══════════════════════════════════════════════════════════════════════════════
+#       GitHub evaluates the list at parse time - expressions are NOT allowed.
+#    2. Manually - specify the experiment and optionally the source run_id.
+# ==============================================================================
 
 name: "Consolidate experiment results"
 
 on:
-  # ── Auto-trigger: fires when ANY ci_experiment.yml run finishes ───────────
+  # -- Auto-trigger: fires when ANY ci_experiment.yml run finishes -----------
   # GitHub does NOT interpolate expressions inside workflow_run.workflows[].
   # We must list every possible workflow name literally.
   workflow_run:
     workflows:
-      - "HypatiaX — experiment runner · run_all.sh"
+      - "HypatiaX - experiment runner . run_all.sh"
     types: [completed]
 
-  # ── Manual trigger ────────────────────────────────────────────────────────
+  # -- Manual trigger --------------------------------------------------------
   workflow_dispatch:
     inputs:
 
@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60   # consolidation runs in <30 min; 60 min is a generous safety cap
     # Workers upstream use n_shards=4 (preferred) or 3 (quota-limited).
-    # Artifact download scales with shard count — 60 min cap remains sufficient for both.
+    # Artifact download scales with shard count - 60 min cap remains sufficient for both.
 
     steps:
       - name: Checkout master
@@ -88,25 +88,25 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install "pandas==2.2.3" numpy scipy
 
-      # ── Resolve experiment ID ─────────────────────────────────────────────
-      # workflow_dispatch  → github.event.inputs.experiment  (explicit)
-      # workflow_run       → parse from github.event.workflow_run.name
-      #                      e.g. "HypatiaX — exp2_feynman · run_all.sh"
+      # -- Resolve experiment ID ---------------------------------------------
+      # workflow_dispatch  -> github.event.inputs.experiment  (explicit)
+      # workflow_run       -> parse from github.event.workflow_run.name
+      #                      e.g. "HypatiaX - exp2_feynman . run_all.sh"
       - name: Resolve experiment ID
         id: exp
         run: |
           EXPLICIT="${{ github.event.inputs.experiment }}"
           # BUG 3 FIX: github.event.workflow_run.name is the static workflow `name:` field
-          # ("HypatiaX — experiment runner · run_all.sh") — it never contains the
+          # ("HypatiaX - experiment runner . run_all.sh") - it never contains the
           # experiment ID.  display_title reflects the dynamic `run-name:` field
-          # ("HypatiaX — exp2_feynman · run_all.sh") which does embed the experiment ID.
+          # ("HypatiaX - exp2_feynman . run_all.sh") which does embed the experiment ID.
           WF_TITLE="${{ github.event.workflow_run.display_title }}"
 
           if [[ -n "$EXPLICIT" ]]; then
             echo "id=$EXPLICIT" >> "$GITHUB_OUTPUT"
           else
-            # Extract the experiment ID between "— " and " ·"
-            EXP=$(echo "$WF_TITLE" | sed 's/.*— \(.*\) · .*/\1/')
+            # Extract the experiment ID between "- " and " ."
+            EXP=$(echo "$WF_TITLE" | sed 's/.*- \(.*\) \. .*/\1/')
             if [[ -z "$EXP" ]]; then
               echo "ERROR: cannot parse experiment from workflow display_title: '$WF_TITLE'"
               exit 1
@@ -115,7 +115,7 @@ jobs:
             echo "id=$EXP" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Resolve which run to download artifacts from ─────────────────────
+      # -- Resolve which run to download artifacts from ---------------------
       - name: Resolve source run ID
         id: run_id
         env:
@@ -125,7 +125,7 @@ jobs:
           EXP:      ${{ steps.exp.outputs.id }}
         run: |
           # The workflow name pattern used by ci_experiment.yml
-          MAIN_WF_NAME="HypatiaX — experiment runner · run_all.sh"
+          MAIN_WF_NAME="HypatiaX - experiment runner . run_all.sh"
 
           if [[ -n "$EXPLICIT" && "$EXPLICIT" =~ ^[0-9]+$ ]]; then
             echo "Using explicit run_id from input: $EXPLICIT"
@@ -136,7 +136,7 @@ jobs:
             echo "id=$EVENT_ID" >> "$GITHUB_OUTPUT"
 
           else
-            echo "No run_id provided — querying API for latest completed run of '${MAIN_WF_NAME}' …"
+            echo "No run_id provided - querying API for latest completed run of '${MAIN_WF_NAME}' ..."
             WF_ID=$(gh api \
               "/repos/${{ github.repository }}/actions/workflows" \
               --jq ".workflows[] | select(.name == \"${MAIN_WF_NAME}\") | .id" \
@@ -154,7 +154,7 @@ jobs:
             echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Resolve result sub-directory from experiment ID ──────────────────
+      # -- Resolve result sub-directory from experiment ID ------------------
       - name: Resolve experiment metadata
         id: meta
         env:
@@ -219,7 +219,7 @@ jobs:
           for p in candidates[:20]:
               print(f"  {p}")
           if len(candidates) > 20:
-              print(f"  … and {len(candidates) - 20} more")
+              print(f"  ... and {len(candidates) - 20} more")
 
           _META_KEYS = frozenset({
               "protocol", "purelm_truncation_audit", "experiment", "generated_at",
@@ -264,14 +264,14 @@ jobs:
           print(f"\nTotal merged: {len(merged)} entries")
 
           if not merged:
-              print("WARNING: nothing merged — no matching shard artifacts found for this run.")
+              print("WARNING: nothing merged - no matching shard artifacts found for this run.")
               print("Possible causes:")
               print("  1. Artifact name mismatch (check upload vs download pattern)")
               print("  2. Workers crashed before writing any output files")
               print("  3. Wrong run_id passed to consolidation")
               print("Writing empty outputs so downstream report step can still run.")
 
-          # ── Write outputs ──────────────────────────────────────────────────
+          # -- Write outputs --------------------------------------------------
           with open(os.path.join(OUT_DIR, f"{EXP}_merged.json"), "w") as f:
               json.dump(merged, f, indent=2)
 
@@ -289,7 +289,7 @@ jobs:
               "experiment":        EXP,
               "generated_at":      datetime.now(timezone.utc).isoformat(),
               # BUG 4 FIX: SRC_RUN_ID is the upstream experiment run; GITHUB_RUN_ID
-              # would be this consolidation job's own run ID — wrong attribution.
+              # would be this consolidation job's own run ID - wrong attribution.
               "source_run_id":     os.environ.get("SRC_RUN_ID", ""),
               "n_total":           len(merged) if merged else None,  # best-effort; no pending list available
               "n_merged":          len(merged),
@@ -330,7 +330,7 @@ jobs:
                   sig = "SIGNIFICANT" if stats["mw_significant"] else "not significant"
                   print(f"Mann-Whitney : U={stats['mw_U']:.0f}  p={stats['mw_p']:.4e}  [{sig}]")
               print(f"{'='*65}")
-              print(f"  {'ID':<24} {'Name':<28} {'H-R²':>9} {'NN-R²':>9}  OK")
+              print(f"  {'ID':<24} {'Name':<28} {'H-R2':>9} {'NN-R2':>9}  OK")
               print("  " + "-"*74)
               for tid, r in sorted(merged.items()):
                   if not isinstance(r, dict):
@@ -343,12 +343,12 @@ jobs:
                   ne_str = f"{ne:>+9.4f}" if isinstance(ne, float) else f"{'N/A':>9}"
                   print(f"  {tid:<24} {str(r.get('name',''))[:27]:<28} {he_str} {ne_str}  {'Y' if ok else 'N'}")
           else:
-              print(f"Merged {len(merged)} entries (no R² data — non-R² experiment)")
+              print(f"Merged {len(merged)} entries (no R2 data - non-R2 experiment)")
           print(f"{'='*65}")
           print(f"Outputs: {OUT_DIR}/")
           PYEOF
 
-      # ── Stage results → canonical tree paths ────────────────────────────────
+      # -- Stage results -> canonical tree paths --------------------------------
       # hypatiax/data/results/<subdir>/ is the merge scratch area.
       # The canonical repo tree keeps results directly under the repo root
       # (comparison_results/, extrapolation/, hybrid_llm_nn/, etc.).
@@ -365,15 +365,15 @@ jobs:
 
           # Skip if src and dst are the same (e.g. SUBDIR_OVERRIDE already canonical).
           if [[ "$SRC" == "$DST" ]]; then
-            echo "SRC == DST — no copy needed (already at canonical path)."
+            echo "SRC == DST - no copy needed (already at canonical path)."
           else
-            echo "Staging: $SRC  →  $DST"
+            echo "Staging: $SRC  ->  $DST"
             mkdir -p "$DST"
             for f in "${EXP}_merged.json" "${EXP}_merged.csv" "${EXP}_stats.json"; do
               if [[ -f "$SRC/$f" ]]; then
                 cp -v "$SRC/$f" "$DST/$f"
               else
-                echo "  WARN: $SRC/$f not found — skipping"
+                echo "  WARN: $SRC/$f not found - skipping"
               fi
             done
           fi
@@ -434,7 +434,7 @@ jobs:
           }
 
           if report["n_merged"] == 0:
-              report["warnings"].append("n_merged=0: no shard artifacts found — check artifact name and source run_id")
+              report["warnings"].append("n_merged=0: no shard artifacts found - check artifact name and source run_id")
           if report["n_merged"] is not None and report["n_total"] is not None:
               if report["n_merged"] < report["n_total"]:
                   missing = report["n_total"] - report["n_merged"]
@@ -447,17 +447,17 @@ jobs:
           with open(latest_file, "w") as f: json.dump(report, f, indent=2)
 
           print(f"\n{'='*65}")
-          print(f"CONSOLIDATE REPORT — {EXP}  (source run {os.environ.get('SRC_RUN','')})")
+          print(f"CONSOLIDATE REPORT - {EXP}  (source run {os.environ.get('SRC_RUN','')})")
           print(f"  Merged  : {report['n_merged']} / {report['n_total']}")
           if report['success_rate'] is not None:
               print(f"  Success : {report['n_successes']} ({100*report['success_rate']:.1f}%)")
           if report["warnings"]:
-              for w in report["warnings"]: print(f"  ⚠ {w}")
+              for w in report["warnings"]: print(f"  WARN {w}")
           print(f"  Written : {report_file}")
           print(f"{'='*65}")
           PYEOF
 
-      # ── Abort pipeline if step report signals failure ───────────────────
+      # -- Abort pipeline if step report signals failure -------------------
       - name: Abort if step report indicates failure
         env:
           # BUG 11 FIX: RESULT_SUBDIR was declared here but never referenced by
@@ -473,7 +473,7 @@ jobs:
           latest     = os.path.join(REPORT_DIR, f"{EXP}_latest.json")
 
           if not os.path.exists(latest):
-              print(f"PIPELINE ABORT — report file not found: {latest}")
+              print(f"PIPELINE ABORT - report file not found: {latest}")
               sys.exit(1)
 
           report = json.load(open(latest))
@@ -482,24 +482,24 @@ jobs:
           if report.get("status") != "ok":
               fatal.append(f"status={report.get('status')!r}  (expected 'ok')")
           if report.get("n_merged", 0) == 0:
-              fatal.append("n_merged=0 — no shard artifacts were merged")
+              fatal.append("n_merged=0 - no shard artifacts were merged")
 
           print(f"\n{'='*65}")
-          print(f"STEP REPORT CHECK — {EXP}")
+          print(f"STEP REPORT CHECK - {EXP}")
           print(f"  n_merged : {report.get('n_merged')} / {report.get('n_total')}")
           print(f"  status   : {report.get('status')}")
           if report.get("warnings"):
               for w in report["warnings"]:
-                  print(f"  ⚠  {w}")
+                  print(f"  WARN  {w}")
 
           if fatal:
               print(f"\n  PIPELINE ABORT ({len(fatal)} fatal issue(s)):")
               for f in fatal:
-                  print(f"    ✗ {f}")
+                  print(f"    FAIL {f}")
               print(f"{'='*65}\n")
               sys.exit(1)
 
-          print(f"  ✓ Report OK — proceeding to commit.")
+          print(f"  OK Report OK - proceeding to commit.")
           print(f"{'='*65}\n")
           PYEOF
 
@@ -527,7 +527,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "ci: ${EXP} re-consolidated from run ${{ steps.run_id.outputs.id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git commit -m "ci: ${EXP} re-consolidated from run ${{ steps.run_id.outputs.id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed."
           fi
