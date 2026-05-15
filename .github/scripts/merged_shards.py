@@ -3,33 +3,35 @@
 HypatiaX Unified Consolidation Engine
 =====================================
 
-Production-safe shard merger for:
+Canonical, experiment-agnostic shard merger.
 
-- exp1
-- exp1b
-- exp2
-- exp2_feynman
-- exp3
-- exp3b
-- suppA
-- suppB
-- suppB_sc
-- instability
-- extrap
-- hybrid_all_domains
+Usage
+-----
+    python scripts/merge_shards.py \
+        --experiment   <exp_id>          \
+        --input-root   downloaded_artifacts \
+        --output-dir   hypatiax/data/results/<subdir>
+
+Outputs (all written to --output-dir)
+--------------------------------------
+    _merged.json       Merged task records keyed by task_id
+    _merged.csv        Flat CSV view of the same records
+    _stats.json        Basic pre-aggregation counts and R² summaries
+    _checkpoint.json   Provenance / run metadata
 
 Design goals
 ------------
-
-1. Canonical normalization layer
+1. Canonical normalisation layer
 2. Deterministic task identity
 3. Recursive extraction
-4. Duplicate-safe merge policy
-5. Stable metrics/statistics
+4. Duplicate-safe merge policy (highest-score row wins)
+5. Basic aggregation stats only — no experiment-specific analysis
 6. Explicit diagnostics
 7. Schema-forward compatibility
 
-This implementation REPLACES all legacy merge heuristics.
+This script is the ONLY authoritative merge implementation.
+It is reused by both ci_experiment.yml (inline consolidate job)
+and ci_consolidate_experiment.yml (standalone re-consolidation).
 """
 
 from __future__ import annotations
@@ -46,7 +48,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
-from scipy import stats as scipy_stats
 
 
 # ============================================================
@@ -55,9 +56,8 @@ from scipy import stats as scipy_stats
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
-
 logger = logging.getLogger("hypatiax.merge")
 
 
@@ -78,17 +78,22 @@ DEFI_IDS = {
     "derivatives",
 }
 
+# Corrected mapping: human-readable equation_id → canonical DeFi protocol ID.
+# Verified against _get_test_cases() domain fields in hypatiax_defi_benchmark_v3c.py.
+#   "Annualised Portfolio tracking error"  -> risk_var  (was "amm"      in legacy versions)
+#   "Correlated Portfolio VaR"             -> risk      (was "risk_var"  in legacy versions)
+#   "Portfolio VaR for two correlated"     -> risk_var  (was "liquidity" in legacy versions)
 EQ_ID_TO_DEFI = {
-    "Annualised Portfolio tracking error": "amm",
-    "Correlated Portfolio VaR": "risk_var",
-    "Portfolio VaR for two correlated": "liquidity",
+    "Annualised Portfolio tracking error":        "risk_var",
+    "Correlated Portfolio VaR":                   "risk",
+    "Portfolio VaR for two correlated":           "risk_var",
     "Portfolio Expected Shortfall for correlated": "expected_shortfall",
-    "Portfolio Sharpe Ratio": "risk",
-    "Portfolio Sortino Ratio": "staking",
-    "Portfolio Beta": "lending",
-    "Portfolio Information Ratio": "trading",
-    "Portfolio Maximum Drawdown": "derivatives",
-    "Portfolio Omega Ratio": "liquidation",
+    "Portfolio Sharpe Ratio":                     "risk",
+    "Portfolio Sortino Ratio":                    "staking",
+    "Portfolio Beta":                             "lending",
+    "Portfolio Information Ratio":                "trading",
+    "Portfolio Maximum Drawdown":                 "derivatives",
+    "Portfolio Omega Ratio":                      "liquidation",
 }
 
 META_KEYS = {
@@ -103,6 +108,11 @@ META_KEYS = {
     "timestamp",
     "script",
     "purelm_truncation_audit",
+    # Stats-file top-level keys — skip so merged stats files are never
+    # re-ingested as task records.
+    "n_total", "n_merged", "n_successes", "success_rate",
+    "hyp_extrap_mean", "hyp_extrap_median",
+    "nn_extrap_mean", "nn_extrap_median",
 }
 
 
@@ -112,29 +122,24 @@ META_KEYS = {
 
 @dataclass
 class MergeConfig:
-    exp: str
-    result_dir: Path
-    artifact_dir: Path
-    pending: List[str]
+    experiment: str
+    input_root: Path
+    output_dir: Path
 
 
 # ============================================================
 # UTILS
 # ============================================================
 
-
 def load_json(path: Path) -> Any:
     with open(path, "r") as f:
         return json.load(f)
 
 
-
 def safe_write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-
     with open(path, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)
-
 
 
 def is_nan(v: Any) -> bool:
@@ -142,15 +147,11 @@ def is_nan(v: Any) -> bool:
 
 
 # ============================================================
-# NORMALIZATION
+# NORMALISATION
 # ============================================================
 
-
 def canonical_task_id(obj: Dict[str, Any]) -> Optional[str]:
-    """
-    Resolve ONE deterministic task identity.
-    """
-
+    """Return one deterministic task identity for a record."""
     candidates = [
         obj.get("task_id"),
         obj.get("equation_id"),
@@ -159,96 +160,125 @@ def canonical_task_id(obj: Dict[str, Any]) -> Optional[str]:
         obj.get("id"),
         obj.get("name"),
     ]
-
     for c in candidates:
         if c:
             return EQ_ID_TO_DEFI.get(str(c), str(c))
-
     return None
 
 
-
-def normalize_model_dict(d: Any) -> Dict[str, Any]:
-
+def normalise_model_dict(d: Any) -> Dict[str, Any]:
     if not isinstance(d, dict):
         return {}
-
     out = dict(d)
-
+    # Unify test_r2 → extrap_r2 so downstream stats always read extrap_r2.
     if "test_r2" in out and "extrap_r2" not in out:
         out["extrap_r2"] = out["test_r2"]
-
     return out
 
 
+def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
+    """
+    Normalise one candidate record into the canonical task schema.
 
-def normalize_row(raw: Any) -> Optional[Dict[str, Any]]:
+    Handles:
+      Shape A  nested "results" dict  (DeFi v3 / suppA)
+      Shape B  flat top-level fields  (protocol_core_noiseless)
 
+    Renames:
+      pure_llm       → hypatia
+      neural_network → nn
+      test_r2        → extrap_r2  (inside model sub-dicts)
+
+    BUG 3 FIX: the old return dict was hard-coded to 5 keys, so rows whose
+    domain == "hybrid" were extracted correctly by extract_rows but then
+    silently dropped here — the caller received a record with domain="hybrid"
+    but normalise_row returned a dict that omitted nothing wrong structurally;
+    the real issue is that hybrid tasks have no canonical task_id derivation
+    path and were returning None from canonical_task_id.  They are now
+    included via a fallback task_id derived from the domain field.
+
+    BUG 4 FIX: difficulty, formula_type, and extrapolation_intractable were
+    never included in the hard-coded return dict and were silently dropped on
+    every row.  They are now explicitly preserved via _PASSTHROUGH_FIELDS.
+    """
     if not isinstance(raw, dict):
         return None
 
     row = dict(raw)
 
+    # Flatten nested "results" block if present.
     inner = row.get("results")
-    if not isinstance(inner, dict):
-        inner = row
+    if isinstance(inner, dict):
+        inner = dict(inner)
+        if "pure_llm" in inner and "hypatia" not in inner:
+            inner["hypatia"] = inner.pop("pure_llm")
+        if "neural_network" in inner and "nn" not in inner:
+            inner["nn"] = inner.pop("neural_network")
+        row.update(inner)
 
-    hyp = (
-        inner.get("hypatia")
-        or inner.get("pure_llm")
-        or {}
-    )
+    # Rename flat-level aliases.
+    if "pure_llm" in row and "hypatia" not in row:
+        row["hypatia"] = row.pop("pure_llm")
+    if "neural_network" in row and "nn" not in row:
+        row["nn"] = row.pop("neural_network")
 
-    nn = (
-        inner.get("nn")
-        or inner.get("neural_network")
-        or {}
-    )
+    hyp = normalise_model_dict(row.get("hypatia") or {})
+    nn  = normalise_model_dict(row.get("nn") or {})
 
     task_id = canonical_task_id(row)
-
+    # BUG 3 FIX: hybrid rows have domain="hybrid" but no equation_id /
+    # protocol that maps through EQ_ID_TO_DEFI, so canonical_task_id
+    # returned None and the row was discarded.  Fall back to domain so
+    # hybrid records survive the merge.
+    if not task_id:
+        task_id = row.get("domain") or row.get("id") or row.get("name")
     if not task_id:
         return None
 
-    return {
+    # BUG 4 FIX: build the output from a copy of the full row so no fields
+    # are silently dropped, then overwrite the keys we explicitly manage.
+    # _PASSTHROUGH_FIELDS (difficulty, formula_type, extrapolation_intractable)
+    # are therefore included automatically alongside any other unknown fields
+    # that future schema versions may add.
+    out = {k: v for k, v in row.items() if k not in META_KEYS}
+    out.update({
         "task_id": task_id,
-        "name": row.get("name") or row.get("equation_id") or task_id,
-        "domain": row.get("domain") or task_id,
-        "hypatia": normalize_model_dict(hyp),
-        "nn": normalize_model_dict(nn),
-    }
+        "name":    row.get("name") or row.get("equation_id") or task_id,
+        "domain":  row.get("domain") or task_id,
+        "hypatia": hyp,
+        "nn":      nn,
+    })
+    return out
 
 
 # ============================================================
 # EXTRACTION
 # ============================================================
 
+def extract_rows(obj: Any) -> List[Dict[str, Any]]:
+    """
+    Recursively walk an arbitrary JSON structure and collect all records
+    that normalise into valid task rows.
 
-def extract_rows(obj: Any) -> Iterable[Dict[str, Any]]:
+    Walks into lists and dict values except META_KEYS subtrees.
+    """
+    found: List[Dict[str, Any]] = []
 
-    found = []
-
-    def walk(x: Any):
-
+    def walk(x: Any) -> None:
         if isinstance(x, list):
-            for i in x:
-                walk(i)
+            for item in x:
+                walk(item)
             return
-
         if not isinstance(x, dict):
             return
-
-        normalized = normalize_row(x)
-
-        if normalized:
-            found.append(normalized)
-
+        normalised = normalise_row(x)
+        if normalised:
+            found.append(normalised)
         for k, v in x.items():
             if k not in META_KEYS:
                 walk(v)
 
     walk(obj)
-
     return found
 
 
@@ -256,213 +286,176 @@ def extract_rows(obj: Any) -> Iterable[Dict[str, Any]]:
 # MERGE POLICY
 # ============================================================
 
-
 def score_row(row: Dict[str, Any]) -> int:
-
+    """Higher score = more complete record; wins in duplicate resolution."""
     score = 0
-
-    h = row.get("hypatia", {})
-    n = row.get("nn", {})
-
+    h = row.get("hypatia") or {}
+    n = row.get("nn") or {}
     if h.get("extrap_r2") is not None:
         score += 10
-
     if h.get("train_r2") is not None:
         score += 5
-
     if h.get("best_expression"):
         score += 3
-
     if n.get("extrap_r2") is not None:
         score += 2
-
     return score
 
 
-
 def merge_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-
+    """Merge extracted rows; highest-score row wins per task_id."""
     merged: Dict[str, Dict[str, Any]] = {}
-
     for row in rows:
-
         tid = row["task_id"]
-
-        if tid not in merged:
+        if tid not in merged or score_row(row) > score_row(merged[tid]):
             merged[tid] = row
-            continue
-
-        old_score = score_row(merged[tid])
-        new_score = score_row(row)
-
-        if new_score > old_score:
-            merged[tid] = row
-
     return merged
 
 
 # ============================================================
-# STATS
+# STATS  (basic pre-aggregation only — no experiment-specific tests)
 # ============================================================
 
+def build_stats(
+    experiment: str,
+    merged: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Produce basic aggregation stats for the consolidated dataset.
 
-def build_stats(exp: str, merged: Dict[str, Any], pending: List[str]):
+    Intentionally limited to:
+      - record counts and coverage
+      - per-model R² mean / median
 
-    hyp = []
-    nn = []
+    Mann-Whitney and other experiment-specific statistical tests are
+    performed downstream, after full consolidation, not here.
+    """
+    hyp_r2: List[float] = []
+    nn_r2:  List[float] = []
     successes = 0
 
     for row in merged.values():
-
         hr2 = (row.get("hypatia") or {}).get("extrap_r2")
         nr2 = (row.get("nn") or {}).get("extrap_r2")
-
         if hr2 is not None and not is_nan(hr2):
-            hyp.append(float(hr2))
-
+            hyp_r2.append(float(hr2))
             if hr2 > 0.99:
                 successes += 1
-
         if nr2 is not None and not is_nan(nr2):
-            nn.append(float(nr2))
+            nn_r2.append(float(nr2))
 
-    stats = {
-        "experiment": exp,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "n_total": len(pending),
-        "n_merged": len(merged),
-        "n_successes": successes,
-        "success_rate": (
-            successes / len(merged)
-            if merged else None
-        ),
-        "hyp_extrap_mean": (
-            float(np.mean(hyp))
-            if hyp else None
-        ),
-        "hyp_extrap_median": (
-            float(np.median(hyp))
-            if hyp else None
-        ),
-        "nn_extrap_mean": (
-            float(np.mean(nn))
-            if nn else None
-        ),
-        "nn_extrap_median": (
-            float(np.median(nn))
-            if nn else None
-        ),
+    return {
+        "experiment":        experiment,
+        "generated_at":      datetime.now(timezone.utc).isoformat(),
+        "n_merged":          len(merged),
+        "n_successes":       successes,
+        "success_rate":      (successes / len(merged)) if merged else None,
+        "hyp_extrap_mean":   float(np.mean(hyp_r2))   if hyp_r2 else None,
+        "hyp_extrap_median": float(np.median(hyp_r2)) if hyp_r2 else None,
+        "nn_extrap_mean":    float(np.mean(nn_r2))    if nn_r2  else None,
+        "nn_extrap_median":  float(np.median(nn_r2))  if nn_r2  else None,
     }
-
-    if len(hyp) >= 5 and len(nn) >= 5:
-
-        u, p = scipy_stats.mannwhitneyu(
-            hyp,
-            nn,
-            alternative="greater",
-        )
-
-        stats["mw_U"] = float(u)
-        stats["mw_p"] = float(p)
-        stats["mw_significant"] = bool(p < 0.05)
-
-    return stats
 
 
 # ============================================================
 # CSV
 # ============================================================
 
-
-def write_csv(path: Path, merged: Dict[str, Any]):
-
+def write_csv(path: Path, merged: Dict[str, Any]) -> None:
     rows = [
         "task_id,name,domain,hyp_train_r2,hyp_extrap_r2,nn_extrap_r2,success,best_expression"
     ]
-
     for tid, row in sorted(merged.items()):
-
-        h = row.get("hypatia") or {}
-        n = row.get("nn") or {}
-
-        he = h.get("extrap_r2")
+        h  = row.get("hypatia") or {}
+        n  = row.get("nn") or {}
+        he = h.get("extrap_r2", "")
         ok = isinstance(he, float) and he > 0.99
-
-        expr = str(
-            h.get("best_expression", "")
-        ).replace(",", ";")
-
+        expr = str(h.get("best_expression", "")).replace(",", ";")
         rows.append(
             f'{tid},'
-            f'{row.get("name","")},'
-            f'{row.get("domain","")},'
-            f'{h.get("train_r2","")},'
-            f'{h.get("extrap_r2","")},'
-            f'{n.get("extrap_r2","")},'
+            f'{row.get("name", "")},'
+            f'{row.get("domain", "")},'
+            f'{h.get("train_r2", "")},'
+            f'{he},'
+            f'{n.get("extrap_r2", "")},'
             f'{ok},'
             f'{expr}'
         )
-
     path.parent.mkdir(parents=True, exist_ok=True)
-
     with open(path, "w") as f:
         f.write("\n".join(rows))
+
+
+# ============================================================
+# CHECKPOINT
+# ============================================================
+
+def write_checkpoint(path: Path, experiment: str, result_subdir: str, merged: Dict[str, Any]) -> None:
+    # BUG 5 FIX: _checkpoint.json previously omitted result_subdir, so
+    # ci_analysis.yml's "Resolve experiment metadata" step always fell through
+    # to the dispatch-input fallback and failed on automatic workflow_run
+    # triggers where no inputs are provided.  result_subdir is now written
+    # here — the consolidate job already has it in scope — so the analysis
+    # workflow can resolve it from the artifact without needing manual inputs.
+    checkpoint = {
+        "experiment":    experiment,
+        "result_subdir": result_subdir,
+        "generated_at":  datetime.now(timezone.utc).isoformat(),
+        "n_merged":      len(merged),
+        "task_ids":      sorted(merged.keys()),
+    }
+    safe_write_json(path, checkpoint)
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
-
-def main():
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--exp", required=True)
-    parser.add_argument("--result-subdir", required=True)
-    parser.add_argument("--artifact-dir", default="downloaded_artifacts")
-    parser.add_argument("--pending", default="[]")
-
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Merge shard artifacts into consolidated outputs."
+    )
+    parser.add_argument("--experiment",  required=True,
+                        help="Experiment ID (e.g. exp1, exp2_feynman)")
+    parser.add_argument("--input-root",  required=True,
+                        help="Root directory containing downloaded shard artifacts")
+    parser.add_argument("--output-dir",  required=True,
+                        help="Directory to write _merged.json / _merged.csv / _stats.json / _checkpoint.json")
+    # BUG 5 FIX: result_subdir must be written into _checkpoint.json so
+    # ci_analysis.yml can resolve it without manual workflow_dispatch inputs.
+    parser.add_argument("--result-subdir", required=True,
+                        help="Canonical result subdirectory (e.g. comparison_results/noise-noiseless/noiseless)")
     args = parser.parse_args()
 
     config = MergeConfig(
-        exp=args.exp,
-        result_dir=Path("hypatiax/data/results") / args.result_subdir,
-        artifact_dir=Path(args.artifact_dir),
-        pending=json.loads(args.pending),
+        experiment=args.experiment,
+        input_root=Path(args.input_root),
+        output_dir=Path(args.output_dir),
     )
+    result_subdir = args.result_subdir
 
     logger.info("=" * 70)
     logger.info("HypatiaX Unified Consolidation Engine")
     logger.info("=" * 70)
-    logger.info(f"EXP: {config.exp}")
-    logger.info(f"RESULT_DIR: {config.result_dir}")
-    logger.info(f"ARTIFACT_DIR: {config.artifact_dir}")
+    logger.info(f"EXPERIMENT : {config.experiment}")
+    logger.info(f"INPUT_ROOT : {config.input_root}")
+    logger.info(f"OUTPUT_DIR : {config.output_dir}")
 
     files = sorted(
-        glob.glob(
-            f"{config.artifact_dir}/**/*.json",
-            recursive=True,
-        )
+        glob.glob(f"{config.input_root}/**/*.json", recursive=True)
     )
-
     logger.info(f"JSON FILES FOUND: {len(files)}")
 
-    all_rows = []
+    all_rows: List[Dict[str, Any]] = []
 
     for path in files:
-
         logger.info("-" * 70)
         logger.info(f"READ: {path}")
-
         try:
             data = load_json(Path(path))
             rows = list(extract_rows(data))
-
             logger.info(f"ROWS EXTRACTED: {len(rows)}")
-
             all_rows.extend(rows)
-
         except Exception as e:
             logger.exception(f"FAILED TO READ: {path} :: {e}")
 
@@ -471,51 +464,49 @@ def main():
     logger.info("=" * 70)
     logger.info("MERGED TASKS")
     logger.info("=" * 70)
-
     for k in sorted(merged.keys()):
         logger.info(f"  - {k}")
 
-    missing = [
-        t for t in config.pending
-        if t not in merged
-    ]
-
-    coverage = (
-        100 * len(merged) / len(config.pending)
-        if config.pending else 100
-    )
-
-    logger.info(
-        f"COVERAGE: {len(merged)}/{len(config.pending)} ({coverage:.1f}%)"
-    )
-
-    if missing:
-        logger.warning(f"MISSING TASKS: {missing}")
-
     if not merged:
-        raise RuntimeError(
-            "FATAL: merge produced zero rows"
-        )
+        raise RuntimeError("FATAL: merge produced zero rows")
 
-    stats = build_stats(
-        config.exp,
-        merged,
-        config.pending,
-    )
+    stats = build_stats(config.experiment, merged)
 
-    merged_path = config.result_dir / f"{config.exp}_merged.json"
-    stats_path = config.result_dir / f"{config.exp}_stats.json"
-    csv_path = config.result_dir / f"{config.exp}_merged.csv"
+    merged_path     = config.output_dir / "_merged.json"
+    csv_path        = config.output_dir / "_merged.csv"
+    stats_path      = config.output_dir / "_stats.json"
+    checkpoint_path = config.output_dir / "_checkpoint.json"
 
     safe_write_json(merged_path, merged)
-    safe_write_json(stats_path, stats)
     write_csv(csv_path, merged)
+    safe_write_json(stats_path, stats)
+    write_checkpoint(checkpoint_path, config.experiment, result_subdir, merged)
 
     logger.info("=" * 70)
     logger.info(f"WRITE OK: {merged_path}")
-    logger.info(f"WRITE OK: {stats_path}")
     logger.info(f"WRITE OK: {csv_path}")
+    logger.info(f"WRITE OK: {stats_path}")
+    logger.info(f"WRITE OK: {checkpoint_path}")
     logger.info("=" * 70)
+
+    n = stats["n_merged"]
+    sr = stats.get("success_rate")
+    hr2_mean = stats.get("hyp_extrap_mean")
+    logger.info(
+        f"SUMMARY: {n} tasks merged | "
+        f"success_rate={sr:.3f}" if sr is not None else f"SUMMARY: {n} tasks merged"
+    )
+    if hr2_mean is not None:
+        logger.info(
+            f"  HypatiaX R² mean={hr2_mean:.4f}  "
+            f"median={stats['hyp_extrap_median']:.4f}"
+        )
+    nn_mean = stats.get("nn_extrap_mean")
+    if nn_mean is not None:
+        logger.info(
+            f"  NN baseline  mean={nn_mean:.4f}  "
+            f"median={stats['nn_extrap_median']:.4f}"
+        )
 
 
 if __name__ == "__main__":

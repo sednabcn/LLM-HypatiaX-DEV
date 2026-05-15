@@ -1,0 +1,457 @@
+# ==============================================================================
+#  ci_analysis.yml - HypatiaX post-consolidation statistical analysis
+#
+#  Architecture contract (read before editing):
+#    This workflow runs AFTER ci_experiment.yml has completed and committed
+#    _merged.json to the repository.  It is the ONLY stage that may perform
+#    statistical analysis.  Workers and the consolidate job MUST NOT run
+#    statistical tests; see ci_experiment.yml for the architectural rationale.
+#
+#  Responsibilities:
+#    - Mann-Whitney U tests (per-method, cross-method)
+#    - R² distribution analysis and per-method success rates
+#    - Method summary tables (coverage, median R², rank)
+#    - Coverage gap detection
+#    - Instability / domain-consistency metrics (exp: instability, hybrid_all_domains)
+#    - Extrapolation checks (exp: extrap)
+#    - Publication-quality table generation
+#    - Markdown report (_report.md) and structured output (_analysis.json)
+#    - Fatal-condition abort (exits non-zero; PR merge blocked by branch protection)
+#
+#  Inputs:
+#    _merged.json ONLY.  Never reads raw shard artifacts.
+#
+#  Outputs committed to master:
+#    {result_subdir}/_report.md
+#    {result_subdir}/_analysis.json
+#    hypatiax/data/results/{result_subdir}/_report.md
+#    hypatiax/data/results/{result_subdir}/_analysis.json
+#
+#  Triggering modes:
+#    1. Automatic (workflow_run): fires when ci_experiment.yml completes.
+#       Downloads the consolidated artifact from the triggering run; reads
+#       _checkpoint.json to recover exp_id and result_subdir.
+#    2. Manual (workflow_dispatch): re-runs analysis on an already-committed
+#       _merged.json without re-running the experiment.  Requires experiment
+#       and result_subdir; source_run_id is optional (uses committed file if
+#       omitted).
+# ==============================================================================
+
+name: "HypatiaX - analysis"
+run-name: "HypatiaX - analysis . ${{ github.event.workflow_run.display_title || github.event.inputs.experiment }}"
+
+# -- Triggers ------------------------------------------------------------------
+on:
+
+  # Automatic: fires after ci_experiment.yml finishes (success OR failure —
+  # consolidate runs with if: always() so the artifact exists even on partial
+  # worker failures).
+  workflow_run:
+    workflows: ["HypatiaX - experiment runner . run_all.sh"]
+    types: [completed]
+
+  # Manual re-run: re-analyse an already-committed _merged.json.
+  workflow_dispatch:
+    inputs:
+
+      experiment:
+        description: "Experiment ID (must match a committed result_subdir)"
+        required: true
+        type: choice
+        options:
+          - exp1
+          - exp1b
+          - exp2_feynman
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
+
+      result_subdir:
+        description: "Canonical result subdirectory (e.g. comparison_results/noise-noiseless/noiseless)"
+        required: true
+        type: string
+
+      source_run_id:
+        description: "ci_experiment.yml run ID to download the consolidated artifact from (leave blank to use committed _merged.json)"
+        required: false
+        default: ""
+
+# -- Permissions ---------------------------------------------------------------
+permissions:
+  contents: write   # commit report + analysis outputs
+  actions:  read    # download artifacts from triggering workflow run
+
+# -- Global env ----------------------------------------------------------------
+env:
+  OUT_BASE: hypatiax/data/results
+
+
+# ==============================================================================
+#  JOB: analysis
+# ==============================================================================
+jobs:
+
+  analysis:
+    name: "Analysis - ${{ github.event.workflow_run.name || github.event.inputs.experiment }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Run regardless of whether the triggering workflow succeeded or failed —
+    # consolidate runs with if: always() so a partial-failure run still
+    # produces a consolidated artifact worth analysing.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       (github.event.workflow_run.conclusion == 'success' ||
+        github.event.workflow_run.conclusion == 'failure'))
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      # -----------------------------------------------------------------------
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      # -----------------------------------------------------------------------
+      - name: Install analysis dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # scipy required for Mann-Whitney U tests (this is the ONLY job
+          # that installs scipy; workers and consolidate must not use it).
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
+
+      # -----------------------------------------------------------------------
+      # Download consolidated artifact from the triggering workflow run.
+      # The artifact name is "consolidated-{exp_id}-{run_id}" (see
+      # ci_experiment.yml consolidate job "Upload consolidated artifact" step).
+      # We use a wildcard pattern because we don't know exp_id upfront.
+      - name: Download consolidated artifact (workflow_run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v8.0.1
+        with:
+          run-id:       ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path:         consolidated_artifact
+          pattern:      "consolidated-*"
+          merge-multiple: true
+
+      # Manual dispatch variant: download from an explicit run ID if provided.
+      - name: Download consolidated artifact (manual dispatch with source_run_id)
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.source_run_id != ''
+        uses: actions/download-artifact@v8.0.1
+        with:
+          run-id:       ${{ github.event.inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path:         consolidated_artifact
+          pattern:      "consolidated-${{ github.event.inputs.experiment }}-*"
+          merge-multiple: true
+
+      # -----------------------------------------------------------------------
+      - name: List downloaded artifact tree
+        run: |
+          echo "=== consolidated_artifact tree ==="
+          find consolidated_artifact -type f 2>/dev/null | sort || echo "(empty or not downloaded)"
+
+      # -----------------------------------------------------------------------
+      # Resolve exp_id and result_subdir from:
+      #   1. _checkpoint.json in the downloaded artifact (authoritative)
+      #   2. workflow_dispatch inputs (fallback / manual mode)
+      - name: Resolve experiment metadata
+        id: meta
+        env:
+          DISPATCH_EXP: ${{ github.event.inputs.experiment }}
+          DISPATCH_SUB: ${{ github.event.inputs.result_subdir }}
+        run: |
+          set -euo pipefail
+
+          CKPT=$(find consolidated_artifact -name "_checkpoint.json" 2>/dev/null | head -1)
+
+          if [[ -n "$CKPT" ]]; then
+            echo "Found checkpoint: $CKPT"
+            EXP=$(python -c "
+          import json, sys
+          d = json.load(open('$CKPT'))
+          v = d.get('experiment') or d.get('exp_id') or ''
+          print(v.strip())
+          ")
+            # BUG 5 FIX: _checkpoint.json was written without a result_subdir key
+            # so SUB was always empty when triggered via workflow_run, causing the
+            # "Cannot resolve experiment or result_subdir" abort.  We now derive
+            # result_subdir from the experiment name using the same mapping that
+            # ci_experiment.yml uses when writing the checkpoint, and only fall back
+            # to the raw experiment name if no mapping entry exists.
+            SUB=$(python -c "
+          import json, sys
+          d = json.load(open('$CKPT'))
+          v = d.get('result_subdir') or ''
+          if not v:
+              # Derive result_subdir from experiment name using the canonical mapping.
+              exp = d.get('experiment') or d.get('exp_id') or ''
+            # BUG C FIX: the fallback mapping previously contained 12 fabricated
+            # paths (e.g. 'comparison_results/noise-noiseless/noisy' for exp1b,
+            # 'comparison_results/feynman/all' for exp2_feynman) that did not match
+            # the canonical values in ci_experiment_working.yml or
+            # ci_consolidate_experiment.yml.  Any automatic workflow_run trigger
+            # whose checkpoint omitted result_subdir would therefore write analysis
+            # outputs to a non-existent directory, producing a silent no-op commit.
+            # Replaced with the exact values from the ci_experiment_working.yml
+            # case statement and ci_consolidate_experiment.yml subdir_map, which
+            # are the single source of truth.
+              mapping = {
+                  'exp1':               'comparison_results/noise-noiseless/noiseless',
+                  'exp1b':              'comparison_results/noise-noiseless/15',
+                  'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+                  'exp2':               'comparison_results/feynman-tests/exp2_multi',
+                  'exp3':               'extrapolation',
+                  'exp3b':              'extrapolation/multi_seed',
+                  'suppA':              'hybrid_pysr/defi',
+                  'suppB':              'comparison_results/feynman-tests/noise-sweep',
+                  'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+                  'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+                  'instability':        'figures',
+                  'extrap':             'comparison_results/extrapolation',
+              }
+              v = mapping.get(exp, exp)
+          print(v.strip())
+          ")
+          fi
+
+          # Fall back to dispatch inputs (manual mode or checkpoint missing key).
+          EXP="${EXP:-${DISPATCH_EXP}}"
+          SUB="${SUB:-${DISPATCH_SUB}}"
+
+          if [[ -z "$EXP" || -z "$SUB" ]]; then
+            echo "::error::Cannot resolve experiment or result_subdir."
+            echo "  If triggering via workflow_run, ensure _checkpoint.json is"
+            echo "  present in the consolidated artifact and contains 'experiment'"
+            echo "  and 'result_subdir' keys."
+            echo "  If triggering manually, provide both inputs."
+            exit 1
+          fi
+
+          echo "exp_id=${EXP}"         >> "$GITHUB_OUTPUT"
+          echo "result_subdir=${SUB}"  >> "$GITHUB_OUTPUT"
+          echo "Resolved: exp=${EXP}  subdir=${SUB}"
+
+      # -----------------------------------------------------------------------
+      # Locate _merged.json: prefer the downloaded artifact copy (guaranteed
+      # consistent with the run that produced it), fall back to the committed
+      # file (manual dispatch without source_run_id).
+      - name: Locate _merged.json
+        id: locate
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+
+          ARTIFACT_JSON=$(find consolidated_artifact -name "_merged.json" 2>/dev/null | head -1)
+          COMMITTED_JSON="${OUT_BASE}/${SUB}/_merged.json"
+
+          if [[ -f "$ARTIFACT_JSON" ]]; then
+            MERGED_JSON="$ARTIFACT_JSON"
+            echo "Using artifact copy: $MERGED_JSON"
+          elif [[ -f "$COMMITTED_JSON" ]]; then
+            MERGED_JSON="$COMMITTED_JSON"
+            echo "Using committed copy: $MERGED_JSON"
+          else
+            echo "::error::_merged.json not found."
+            echo "  Searched:"
+            echo "    artifact:  consolidated_artifact/**/_merged.json"
+            echo "    committed: ${COMMITTED_JSON}"
+            echo "  Ensure ci_experiment.yml consolidate job completed and committed results."
+            exit 1
+          fi
+
+          # Sanity-check: file must be non-empty and valid JSON.
+          python -c "
+          import json, sys
+          path = '$MERGED_JSON'
+          try:
+              data = json.load(open(path))
+          except Exception as e:
+              print(f'::error::_merged.json is not valid JSON: {e}')
+              sys.exit(1)
+          n = len(data) if isinstance(data, (dict, list)) else '?'
+          print(f'_merged.json OK — {n} top-level entries.')
+          "
+
+          echo "merged_json=${MERGED_JSON}" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # REPORT step: run full statistical analysis via scripts/run_analysis.py.
+      #
+      # scripts/run_analysis.py is responsible for:
+      #   - Loading _merged.json
+      #   - Mann-Whitney U tests (per-method and cross-method comparisons)
+      #   - R² distribution analysis and per-method success rates
+      #   - Method summary tables (coverage %, median R², rank)
+      #   - Coverage gap detection (equations with no successful method)
+      #   - Instability / domain-consistency metrics (instability, hybrid_all_domains)
+      #   - Extrapolation OOD checks (extrap)
+      #   - Writing _report.md  (Markdown, human-readable)
+      #   - Writing _analysis.json (structured, machine-readable)
+      #     including a "fatal_conditions" list for the abort check below.
+      #
+      # The script receives OUT_DIR so it can write to the correct location.
+      # It must not commit anything — that is this workflow's responsibility.
+      - name: Run statistical analysis and write report
+        id: run_analysis
+        env:
+          EXP:         ${{ steps.meta.outputs.exp_id }}
+          SUB:         ${{ steps.meta.outputs.result_subdir }}
+          MERGED_JSON: ${{ steps.locate.outputs.merged_json }}
+        run: |
+          set -euo pipefail
+
+          OUT_DIR="${OUT_BASE}/${SUB}"
+          mkdir -p "${OUT_DIR}"
+
+          echo "=== Running analysis for ${EXP} ==="
+          echo "  Input:  ${MERGED_JSON}"
+          echo "  Output: ${OUT_DIR}"
+
+          # BUG B FIX: --method-aliases and --r2-field were added to this call
+          # but run_analysis.py's argparse only accepts --experiment, --merged-json,
+          # and --output-dir.  The extra flags caused argparse to error out,
+          # meaning every analysis run failed immediately after the consolidate
+          # commit.  Removed: run_analysis.py already uses the correct canonical
+          # method names (pure_llm / neural_network / hybrid) and field path
+          # (results.<method>.test_r2) natively — no translation flags are needed.
+          python scripts/run_analysis.py \
+            --experiment  "${EXP}"       \
+            --merged-json "${MERGED_JSON}" \
+            --output-dir  "${OUT_DIR}"
+
+      # -----------------------------------------------------------------------
+      - name: Verify report outputs
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="${OUT_BASE}/${SUB}"
+
+          echo "=== Output directory ==="
+          ls -lah "${OUT_DIR}"
+
+          test -f "${OUT_DIR}/_report.md"    || { echo "::error::_report.md missing";    exit 1; }
+          test -f "${OUT_DIR}/_analysis.json" || { echo "::error::_analysis.json missing"; exit 1; }
+
+          echo "All expected analysis outputs present."
+
+      # -----------------------------------------------------------------------
+      - name: Upload analysis artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: analysis-${{ steps.meta.outputs.exp_id }}-${{ github.run_id }}
+          path: |
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/_report.md
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/_analysis.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # Mirror outputs to the canonical result_subdir path (repo root) so both
+      # hypatiax/data/results/{subdir}/ and {subdir}/ carry the report.
+      # This mirrors the staging pattern used in the consolidate job.
+      - name: Stage analysis outputs to canonical tree paths
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          SRC="${OUT_BASE}/${SUB}"
+          DST="${SUB}"
+
+          if [[ "$SRC" == "$DST" ]]; then
+            echo "SRC == DST - no copy needed (already at canonical path)."
+          else
+            echo "Staging: $SRC  ->  $DST"
+            mkdir -p "$DST"
+            for f in _report.md _analysis.json; do
+              if [[ -f "$SRC/$f" ]]; then
+                cp -v "$SRC/$f" "$DST/$f"
+              else
+                echo "  WARN: $SRC/$f not found - skipping"
+              fi
+            done
+          fi
+
+      # -----------------------------------------------------------------------
+      - name: Commit and push analysis outputs to master
+        env:
+          EXP: ${{ steps.meta.outputs.exp_id }}
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            "${OUT_BASE}/${SUB}/_report.md"      \
+            "${OUT_BASE}/${SUB}/_analysis.json"  \
+            "${SUB}/_report.md"                  \
+            "${SUB}/_analysis.json"              \
+            2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to analysis outputs - results unchanged from previous run."
+          else
+            git pull --rebase origin "${{ github.ref_name }}"
+            git commit -m "ci: ${EXP} analysis report - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed analysis outputs to master."
+          fi
+
+      # -----------------------------------------------------------------------
+      # Abort on fatal conditions flagged by scripts/run_analysis.py.
+      # _analysis.json["fatal_conditions"] is a list of strings (empty = OK).
+      # Non-zero exit here fails the workflow, which can block PR merges via
+      # branch protection rules.  This step runs AFTER the commit so the
+      # report is always available even when the run is aborted.
+      - name: Abort on fatal conditions
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python - <<'PYEOF'
+          import json, os, sys
+
+          sub      = os.environ["SUB"]
+          out_base = os.environ.get("OUT_BASE", "hypatiax/data/results")
+          path     = f"{out_base}/{sub}/_analysis.json"
+
+          if not os.path.exists(path):
+              print("No _analysis.json found; skipping fatal-condition check.")
+              sys.exit(0)
+
+          with open(path) as f:
+              analysis = json.load(f)
+
+          fatal = analysis.get("fatal_conditions", [])
+
+          if not fatal:
+              print("No fatal conditions detected. Analysis complete.")
+              sys.exit(0)
+
+          print(f"::error::Fatal conditions detected ({len(fatal)}):")
+          for i, cond in enumerate(fatal, 1):
+              print(f"  {i}. {cond}")
+          print()
+          print("Review _report.md for full diagnostic details.")
+          print("To re-run analysis after fixes: use workflow_dispatch with the same result_subdir.")
+          sys.exit(1)
+          PYEOF

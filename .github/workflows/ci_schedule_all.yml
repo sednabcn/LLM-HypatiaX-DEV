@@ -215,13 +215,13 @@ jobs:
           done
 
   # ==========================================================
-  #  JOB C - wait for consolidation, cooldown, self-dispatch
+  #  JOB C - wait for analysis, cooldown, self-dispatch
   #
-  #  timeout-minutes: 95 = 30 min consolidation + 60 min cooldown + 5 min buffer
+  #  timeout-minutes: 95 = 30 min analysis + 60 min cooldown + 5 min buffer
   #  Well under the 360-min GitHub hard cap.
   # ==========================================================
   run-finalize:
-    name: "Consolidate + cooldown - ${{ needs.resolve.outputs.experiment }}"
+    name: "Analyse + cooldown - ${{ needs.resolve.outputs.experiment }}"
     needs: [resolve, run-experiment]
     if: needs.resolve.outputs.done == 'false'
     runs-on: ubuntu-latest
@@ -234,8 +234,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.2.2
 
-      # -- C1. Wait for ci_consolidate_experiment.yml ------------------------
-      - name: Wait for consolidation
+      # -- C1. Wait for ci_analysis.yml -----------------------------------------
+      # BUG 7 FIX: this step previously polled ci_consolidate_experiment.yml,
+      # which completes well before ci_analysis.yml runs.  The self-dispatch
+      # therefore fired before analysis had written _report.md / _analysis.json,
+      # meaning the next slot started with an incomplete repo state.  The correct
+      # workflow to poll is ci_analysis.yml — it is the final stage of the
+      # pipeline and its completion guarantees all outputs are committed.
+      - name: Wait for analysis
         id: wait_consol
         env:
           GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
@@ -251,17 +257,17 @@ jobs:
           while true; do
             # Primary: match by triggering run ID (reliable when API field is present).
             CONSOL_RUN_ID=$(gh api \
-              "/repos/${{ github.repository }}/actions/workflows/ci_consolidate_experiment.yml/runs?per_page=10" \
+              "/repos/${{ github.repository }}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
               --jq ".workflow_runs[]
                     | select(.created_at > \"$EXP_CONCLUDED_ISO\")
                     | select((.triggering_workflow_run // {} | .id | tostring) == \"$EXP_RUN_ID\")
                     | .id" \
               | head -1)
 
-            # Fallback: first consolidation run created after experiment concluded.
+            # Fallback: first analysis run created after experiment concluded.
             if [[ -z "$CONSOL_RUN_ID" ]]; then
               CONSOL_RUN_ID=$(gh api \
-                "/repos/${{ github.repository }}/actions/workflows/ci_consolidate_experiment.yml/runs?per_page=5" \
+                "/repos/${{ github.repository }}/actions/workflows/ci_analysis.yml/runs?per_page=5" \
                 --jq ".workflow_runs[]
                       | select(.created_at > \"$EXP_CONCLUDED_ISO\")
                       | .id" \
@@ -273,20 +279,20 @@ jobs:
                 "/repos/${{ github.repository }}/actions/runs/$CONSOL_RUN_ID" \
                 --jq '"\(.status) \(.conclusion)"')
 
-              echo "  [consolidate/$EXP] $(date -u +%H:%M:%SZ)  run=$CONSOL_RUN_ID  $CONSOL_STATUS"
+              echo "  [analysis/$EXP] $(date -u +%H:%M:%SZ)  run=$CONSOL_RUN_ID  $CONSOL_STATUS"
 
               case "$CONSOL_STATUS" in
                 "completed success")
-                  echo "OK Consolidation of $EXP SUCCEEDED"
+                  echo "OK Analysis of $EXP SUCCEEDED"
                   echo "consol_ok=true" >> "$GITHUB_OUTPUT"
                   break ;;
                 "completed failure"|"completed cancelled")
-                  echo "FAIL Consolidation of $EXP FAILED: $CONSOL_STATUS - ABORTING CHAIN"
+                  echo "FAIL Analysis of $EXP FAILED: $CONSOL_STATUS - ABORTING CHAIN"
                   echo "consol_ok=false" >> "$GITHUB_OUTPUT"
                   break ;;
               esac
             else
-              echo "  [consolidate/$EXP] $(date -u +%H:%M:%SZ)  waiting for consolidation run to appear ..."
+              echo "  [analysis/$EXP] $(date -u +%H:%M:%SZ)  waiting for analysis run to appear ..."
             fi
 
             if [[ $(date +%s) -gt $CONSOL_DEADLINE ]]; then
@@ -294,7 +300,7 @@ jobs:
               # consolidation is merely slow (e.g. large artifact download on a busy
               # runner).  Emit a distinct value so the self-dispatch step can warn
               # without aborting, and let the operator decide whether to continue.
-              echo "WARN 30 min timeout waiting for consolidation of ${EXP} - marking as timed_out"
+              echo "WARN 30 min timeout waiting for analysis of ${EXP} - marking as timed_out"
               echo "consol_ok=timed_out" >> "$GITHUB_OUTPUT"
               break
             fi
@@ -373,13 +379,13 @@ jobs:
           #                       chain so one slow experiment doesn't stop everything.
           # consol_ok=true    -> success -> continue normally.
           if [[ "${CONSOL_OK}" == "false" ]]; then
-            echo "FAIL Consolidation explicitly failed (consol_ok=false) - CHAIN ABORTED."
-            echo "  Fix the consolidation failure for ${{ needs.resolve.outputs.experiment }} and re-trigger manually."
+            echo "FAIL Analysis explicitly failed (consol_ok=false) - CHAIN ABORTED."
+            echo "  Fix the analysis failure for ${{ needs.resolve.outputs.experiment }} and re-trigger manually."
             exit 1
           fi
           if [[ "${CONSOL_OK}" == "timed_out" ]]; then
-            echo "::warning::Consolidation of ${{ needs.resolve.outputs.experiment }} timed out after 30 min."
-            echo "  The consolidation run may still be in progress.  Continuing chain - monitor Actions UI."
+            echo "::warning::Analysis of ${{ needs.resolve.outputs.experiment }} timed out after 30 min."
+            echo "  The analysis run may still be in progress.  Continuing chain - monitor Actions UI."
           fi
           if [[ $NEXT_INDEX -lt $TOTAL ]]; then
             echo "-> Dispatching next slot: index $NEXT_INDEX"
