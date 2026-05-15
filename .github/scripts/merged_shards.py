@@ -142,7 +142,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp", required=True)
     parser.add_argument("--result-subdir", required=True)
-    parser.add_argument("--pending", default='["amm","risk_var"]')
+    parser.add_argument(
+        "--pending",
+        default='["amm","risk_var","liquidity","expected_shortfall","liquidation","risk","lending","staking","trading","derivatives"]'
+    )
 
     args = parser.parse_args()
 

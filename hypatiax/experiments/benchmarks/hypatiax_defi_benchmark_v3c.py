@@ -958,6 +958,61 @@ def _get_test_cases() -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 7b — Case registry contract  (required by validate_case_registry.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sanitize_id(name: str) -> str:
+    """Convert a human-readable case name to a filesystem-safe ID.
+
+    Rules imposed by validate_case_registry.py:
+      • Only [A-Za-z0-9_-] allowed
+      • Spaces → underscores
+      • All other characters stripped
+    """
+    import re as _re
+    s = name.strip().replace(" ", "_")
+    s = _re.sub(r"[^A-Za-z0-9_\-]", "", s)
+    return s
+
+
+def build_cases() -> list[dict]:
+    """Return the benchmark case registry in the format required by CI.
+
+    Each entry::
+
+        {"id": "<filesystem-safe-id>", "args": ["--cases", "<name>"]}
+
+    The ``args`` list is passed verbatim to the benchmark script by the CI
+    worker, e.g.::
+
+        python hypatiax_defi_benchmark_v3c.py --cases "Black-Scholes Call Price"
+
+    Contract (enforced by validate_case_registry.py):
+      • returns a non-empty list
+      • every element is a dict with "id" (str) and "args" (list[str])
+      • all IDs are unique and match [A-Za-z0-9_-]+
+      • two calls return identical results (deterministic)
+    """
+    cases = []
+    seen_ids: set = set()
+    for tc in _get_test_cases():
+        raw_id = _sanitize_id(tc["name"])
+        # Guarantee uniqueness: append domain suffix on collision
+        unique_id = raw_id
+        if unique_id in seen_ids:
+            unique_id = f"{raw_id}_{_sanitize_id(tc['domain'])}"
+        if unique_id in seen_ids:
+            # Last resort: append difficulty
+            unique_id = f"{raw_id}_{_sanitize_id(tc['domain'])}_{tc['difficulty']}"
+        seen_ids.add(unique_id)
+        cases.append({
+            "id":   unique_id,
+            "args": ["--cases", tc["name"]],
+        })
+    return cases
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8 — Checkpoint helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
