@@ -447,20 +447,50 @@ jobs:
                   fh.write("all_pending=[]\n")
               sys.exit(0)
 
-          shards = [[] for _ in range(N_SHARDS)]
-          for i, task in enumerate(pending):
-              shards[i % N_SHARDS].append(task)
+          # -- Block-partition shard assignment (replaces round-robin) --------
+          # divmod(N, W) = (chunk, r)
+          #   Workers 0 .. r-1  get chunk+1 tasks each ("fat" shards).
+          #   Workers r .. W-1  get chunk   tasks each ("thin" shards).
+          # This produces contiguous, deterministic ranges so run_ids are stable
+          # between re-runs as long as all_ids order is stable.
+          def _block_shards(all_ids, n_shards):
+              N = len(all_ids)
+              chunk, r = divmod(N, n_shards)
+              shards, start = [], 0
+              for j in range(n_shards):
+                  size = chunk + (1 if j < r else 0)
+                  shards.append(all_ids[start : start + size])
+                  start += size
+              return shards
 
-          matrix = [{"shard": i, "ids": json.dumps(shards[i])} for i in range(N_SHARDS)]
+          raw_shards = _block_shards(pending, N_SHARDS)
+
+          # Stable global index: position of each task in the FULL all_ids list
+          # (not just pending), so IDs survive checkpoint restarts.
+          global_index = {task: i for i, task in enumerate(all_ids)}
+
+          matrix = [
+              {
+                  "shard":   j,
+                  "ids":     json.dumps(raw_shards[j]),
+                  # run_ids: "{exp}-{global_index}" — unique, stable, cross-ref-safe.
+                  # consolidate uses these to match shard results to all_pending.
+                  "run_ids": json.dumps([f"{EXP}-{global_index[t]}" for t in raw_shards[j]]),
+              }
+              for j in range(N_SHARDS)
+          ]
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"shard_matrix={json.dumps(matrix)}\n")
               fh.write(f"all_pending={json.dumps(pending)}\n")
 
-          print("Shard assignment:")
+          print("Shard assignment (block-partition):")
           for s in matrix:
               ids = json.loads(s["ids"])
-              print(f"  shard {s['shard']}: {len(ids)} tasks - {ids[:4]}{'...' if len(ids)>4 else ''}")
+              rids = json.loads(s["run_ids"])
+              print(f"  shard {s['shard']}: {len(ids)} tasks"
+                    f" | IDs: {ids[:3]}{'...' if len(ids)>3 else ''}"
+                    f" | run_ids: {rids[:2]}{'...' if len(rids)>2 else ''}")
           PYEOF
 
       - name: Save plan checkpoint cache
@@ -494,6 +524,9 @@ jobs:
       RESULT_SUBDIR:  ${{ needs.plan.outputs.result_subdir }}
       SHARD_IDS:      ${{ matrix.ids }}
       SHARD_INDEX:    ${{ matrix.shard }}
+      # Stable unique run_id per task: "{exp}-{global_index}" (from plan matrix).
+      # Workers write this into result JSON so consolidate can cross-reference.
+      SHARD_RUN_IDS:  ${{ matrix.run_ids }}
       EFFECTIVE_SEEDS: ${{ needs.plan.outputs.effective_seeds }}
 
     steps:
@@ -1249,12 +1282,17 @@ jobs:
           result_dir = os.path.join(os.environ["OUT_BASE"],
                                     os.environ["RESULT_SUBDIR"])
           shard_ids  = json.loads(os.environ["SHARD_IDS"])
+          # run_ids mirrors shard_ids positionally: run_ids[i] is the stable
+          # unique ID for shard_ids[i], e.g. "exp1-3" for DEFI_TASKS[3].
+          shard_run_ids = json.loads(os.environ.get("SHARD_RUN_IDS") or "[]")
+          id_to_run_id  = dict(zip(shard_ids, shard_run_ids))
 
           completed = []
           if os.path.exists(ckpt_path):
               try:
                   with open(ckpt_path) as f:
                       completed = json.load(f).get("completed", [])
+
               except Exception:
                   pass
 
@@ -1269,7 +1307,14 @@ jobs:
                   done_set.add(tid)
 
           with open(ckpt_path, "w") as f:
-              json.dump({"completed": sorted(done_set)}, f, indent=2)
+              json.dump({
+                  "completed": sorted(done_set),
+                  # run_id_map lets consolidate look up the stable run_id by task ID
+                  # without re-parsing the entire shard matrix from the plan job output.
+                  "run_id_map": {tid: id_to_run_id[tid]
+                                 for tid in sorted(done_set)
+                                 if tid in id_to_run_id},
+              }, f, indent=2)
 
           print(f"Checkpoint saved: {len(done_set)} completed tasks in shard {os.environ['SHARD_INDEX']}")
           PYEOF
@@ -1392,44 +1437,98 @@ jobs:
           if len(candidates) > 20:
               print(f"  ... and {len(candidates) - 20} more")
 
-          # Keys that are top-level metadata in merged JSONs - NOT task result rows.
-          # The fallback branch (no "results" list, no "task_id") iterates top-level
-          # dict entries; without this exclusion "protocol" and "purelm_truncation_audit"
-          # are treated as tasks, producing 2 fake rows with success=False in the CSV.
+          # -----------------------------------------------------------------
+          # Field-name sets — KEEP IN SYNC with ci_consolidate_experiment.yml
+          # -----------------------------------------------------------------
           _META_KEYS = frozenset({
-              "protocol", "purelm_truncation_audit", "experiment", "generated_at",
+              "purelm_truncation_audit", "experiment", "generated_at",
               "source_run_id", "n_total", "n_merged", "n_successes", "success_rate",
               "hyp_extrap_mean", "hyp_extrap_median", "nn_extrap_mean", "nn_extrap_median",
               "config", "metadata", "run_info", "summary",
           })
-          # A task result dict must contain at least one of these keys to be accepted.
           _RESULT_KEYS = frozenset({
-              "equation_id", "task_id", "id", "hypatia", "nn", "r2", "rmse",
-              "success", "best_expression", "domain", "name", "formula",
+              "equation_id", "task_id", "id", "protocol",
+              "hypatia", "nn", "pure_llm", "neural_network",
+              "r2", "rmse", "success", "best_expression",
+              "domain", "name", "formula",
           })
+          _DEFI_IDS = frozenset({
+              "amm", "risk_var", "liquidity", "expected_shortfall",
+              "liquidation", "risk", "lending", "staking", "trading", "derivatives",
+          })
+
+          def _normalise(item):
+              """Remap pure_llm->hypatia, neural_network->nn, test_r2->extrap_r2."""
+              if not isinstance(item, dict):
+                  return item
+              result = dict(item)
+              inner = result.get("results")
+              if isinstance(inner, dict):
+                  inner = dict(inner)
+                  if "pure_llm" in inner and "hypatia" not in inner:
+                      inner["hypatia"] = inner.pop("pure_llm")
+                  if "neural_network" in inner and "nn" not in inner:
+                      inner["nn"] = inner.pop("neural_network")
+                  for sub in (inner.get("hypatia") or {}, inner.get("nn") or {}):
+                      if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
+                          sub["extrap_r2"] = sub["test_r2"]
+                  result["results"] = inner
+                  result.update(inner)
+              else:
+                  if "pure_llm" in result and "hypatia" not in result:
+                      result["hypatia"] = result.pop("pure_llm")
+                  if "neural_network" in result and "nn" not in result:
+                      result["nn"] = result.pop("neural_network")
+                  for sub in (result.get("hypatia") or {}, result.get("nn") or {}):
+                      if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
+                          sub["extrap_r2"] = sub["test_r2"]
+              return result
 
           merged = {}
           for path in candidates:
               try:
                   with open(path) as f:
                       data = json.load(f)
-                  if not isinstance(data, dict):
-                      continue
-                  if "results" in data and isinstance(data["results"], list):
-                      rows = {r.get("equation_id") or r.get("task_id") or r.get("id"): r
+
+                  rows = {}
+
+                  # Strategy A: top-level list
+                  if isinstance(data, list):
+                      for item in data:
+                          if not isinstance(item, dict):
+                              continue
+                          key = (item.get("equation_id") or item.get("task_id")
+                                 or item.get("id") or item.get("protocol"))
+                          if key is not None:
+                              rows[key] = _normalise(item)
+
+                  elif isinstance(data, dict):
+                      # Strategy B: dict with top-level "results" list
+                      if "results" in data and isinstance(data["results"], list):
+                          rows = {
+                              r.get("equation_id") or r.get("task_id") or r.get("id"): _normalise(r)
                               for r in data["results"]
-                              if any(k in r for k in ("equation_id", "task_id", "id"))}
-                  elif "task_id" in data:
-                      rows = {data["task_id"]: data}
-                  else:
-                      # Fallback: top-level dict entries that look like task results.
-                      # FIX: skip known metadata keys and entries that have no result fields.
-                      rows = {
-                          k: v for k, v in data.items()
-                          if isinstance(v, dict)
-                          and k not in _META_KEYS
-                          and any(rk in v for rk in _RESULT_KEYS)
-                      }
+                              if any(k in r for k in ("equation_id", "task_id", "id"))
+                          }
+                      # Strategy C: single-task dict
+                      elif "task_id" in data:
+                          rows = {data["task_id"]: _normalise(data)}
+                      # Strategy D2: DeFi v3 dict keyed by protocol ID
+                      elif any(k in _DEFI_IDS for k in data):
+                          rows = {
+                              k: _normalise(v)
+                              for k, v in data.items()
+                              if k in _DEFI_IDS and isinstance(v, dict)
+                          }
+                      # Strategy D: generic dict-keyed fallback
+                      else:
+                          rows = {
+                              k: _normalise(v) for k, v in data.items()
+                              if isinstance(v, dict)
+                              and k not in _META_KEYS
+                              and any(rk in v for rk in _RESULT_KEYS)
+                          }
+
                   rows = {k: v for k, v in rows.items() if k is not None}
                   merged.update(rows)
                   if rows:
