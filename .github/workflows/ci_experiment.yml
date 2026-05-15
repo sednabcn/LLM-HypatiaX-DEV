@@ -1516,6 +1516,9 @@ jobs:
           SUB="${{ needs.plan.outputs.result_subdir }}"
           EXP="${{ needs.plan.outputs.exp_id }}"
 
+          # Pull before staging so rebase doesn't see uncommitted index changes.
+          git pull --rebase origin "${{ github.ref_name }}"
+
           git add \
             "${OUT_BASE}/${SUB}/_merged.json"     \
             "${OUT_BASE}/${SUB}/_merged.csv"      \
@@ -1530,7 +1533,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes - results unchanged from previous run."
           else
-            git pull --rebase origin "${{ github.ref_name }}"
             git commit -m "ci: ${EXP} consolidated results - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed consolidated results to master."
