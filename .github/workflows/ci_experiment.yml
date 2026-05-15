@@ -1516,10 +1516,13 @@ jobs:
           SUB="${{ needs.plan.outputs.result_subdir }}"
           EXP="${{ needs.plan.outputs.exp_id }}"
 
-          # --autostash: stashes any working-tree / index changes that
-          # merge_shards.py wrote into the repo tree (e.g. hypatiax/data/results/…),
-          # rebases onto origin, then pops them back — so git add below always
-          # finds them intact regardless of what remote pushed in the meantime.
+          # Unstage anything left in the index by actions/checkout or prior steps
+          # (sparse-checkout internals can leave staged entries that block rebase).
+          # This does NOT touch working-tree files — our result files are safe.
+          git reset HEAD 2>/dev/null || true
+
+          # --autostash handles any remaining working-tree dirtiness (files written
+          # by merge_shards.py inside the repo tree) during the rebase.
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
           git add \
