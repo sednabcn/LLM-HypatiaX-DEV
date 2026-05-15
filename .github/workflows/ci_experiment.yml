@@ -1457,6 +1457,15 @@ jobs:
               "liquidation", "risk", "lending", "staking", "trading", "derivatives",
           })
 
+          # FIX-L1: same equation_id -> protocol ID remap as ci_consolidate_experiment.yml.
+          _EQ_ID_TO_DEFI = {
+              "Annualised Portfolio tracking error":          "amm",
+              "Correlated Portfolio VaR":                    "risk_var",
+              "Portfolio VaR for two correlated":            "liquidity",
+              "Portfolio Expected Shortfall for correlated": "expected_shortfall",
+              "Portfolio Sharpe Ratio":                       "risk",
+          }
+
           def _normalise(item):
               """Remap pure_llm->hypatia, neural_network->nn, test_r2->extrap_r2."""
               if not isinstance(item, dict):
@@ -1493,23 +1502,27 @@ jobs:
                   rows = {}
 
                   # Strategy A: top-level list
+                  # FIX-L1: remap equation_id human names to protocol IDs.
                   if isinstance(data, list):
                       for item in data:
                           if not isinstance(item, dict):
                               continue
-                          key = (item.get("equation_id") or item.get("task_id")
-                                 or item.get("id") or item.get("protocol"))
-                          if key is not None:
-                              rows[key] = _normalise(item)
+                          raw_key = (item.get("equation_id") or item.get("task_id")
+                                     or item.get("id") or item.get("protocol"))
+                          if raw_key is None:
+                              continue
+                          key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
+                          rows[key] = _normalise(item)
 
                   elif isinstance(data, dict):
                       # Strategy B: dict with top-level "results" list
                       if "results" in data and isinstance(data["results"], list):
-                          rows = {
-                              r.get("equation_id") or r.get("task_id") or r.get("id"): _normalise(r)
-                              for r in data["results"]
-                              if any(k in r for k in ("equation_id", "task_id", "id"))
-                          }
+                          for r in data["results"]:
+                              if not any(k in r for k in ("equation_id", "task_id", "id")):
+                                  continue
+                              raw_key = r.get("equation_id") or r.get("task_id") or r.get("id")
+                              key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
+                              rows[key] = _normalise(r)
                       # Strategy C: single-task dict
                       elif "task_id" in data:
                           rows = {data["task_id"]: _normalise(data)}
@@ -1520,6 +1533,14 @@ jobs:
                               for k, v in data.items()
                               if k in _DEFI_IDS and isinstance(v, dict)
                           }
+                      # Strategy E: protocol_core_noiseless format
+                      # FIX-L2: results live under data["tests"] dict.
+                      elif "tests" in data and isinstance(data["tests"], dict):
+                          for raw_key, v in data["tests"].items():
+                              if not isinstance(v, dict):
+                                  continue
+                              key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
+                              rows[key] = _normalise(v)
                       # Strategy D: generic dict-keyed fallback
                       else:
                           rows = {
@@ -1557,8 +1578,12 @@ jobs:
                   continue
               hr2 = (r.get("hypatia") or {}).get("extrap_r2")
               nr2 = (r.get("nn")      or {}).get("extrap_r2")
-              if hr2 is not None: hyp.append(float(hr2))
-              if nr2 is not None: nn.append(float(nr2))
+              # FIX-L3: skip NaN values so a single missing R2 does not
+              # poison np.mean/np.median for the entire experiment.
+              if hr2 is not None and not (isinstance(hr2, float) and hr2 != hr2):
+                  hyp.append(float(hr2))
+              if nr2 is not None and not (isinstance(nr2, float) and nr2 != nr2):
+                  nn.append(float(nr2))
 
           successes = [v for v in hyp if v > 0.99]
           stats = {
