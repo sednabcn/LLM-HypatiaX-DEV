@@ -1516,8 +1516,11 @@ jobs:
           SUB="${{ needs.plan.outputs.result_subdir }}"
           EXP="${{ needs.plan.outputs.exp_id }}"
 
-          # Pull before staging so rebase doesn't see uncommitted index changes.
-          git pull --rebase origin "${{ github.ref_name }}"
+          # --autostash: stashes any working-tree / index changes that
+          # merge_shards.py wrote into the repo tree (e.g. hypatiax/data/results/…),
+          # rebases onto origin, then pops them back — so git add below always
+          # finds them intact regardless of what remote pushed in the meantime.
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
 
           git add \
             "${OUT_BASE}/${SUB}/_merged.json"     \
