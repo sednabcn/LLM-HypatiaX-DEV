@@ -288,6 +288,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Reset index and pull before staging — rebase refuses to run
+          # if the index contains staged entries.
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+
           git add \
             "${OUT_BASE}/${SUB}/_merged.json"     \
             "${OUT_BASE}/${SUB}/_merged.csv"      \
@@ -297,7 +302,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git pull --rebase origin "${{ github.ref_name }}"
             git commit -m "ci: ${EXP} re-consolidated from run ${{ steps.run_id.outputs.id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed."
