@@ -1368,6 +1368,35 @@ jobs:
 
 # ==============================================================================
 #  JOB 3 - consolidate
+#
+#  ARCHITECTURE CONTRACT (read before editing):
+#    Workers are valid ONLY as equation-ID splitters.  Each worker shard
+#    processes its assigned equation IDs and uploads one artifact.
+#
+#    This job's ONLY responsibilities are:
+#      1. Download all per-shard artifacts.
+#      2. Merge by equation ID via scripts/merge_shards.py (single authoritative
+#         implementation — do NOT duplicate merge logic here).
+#      3. Upload the consolidated artifact and commit to master.
+#
+#    scripts/merge_shards.py writes:
+#      _merged.json       Merged task records keyed by task_id
+#      _merged.csv        Flat CSV view
+#      _stats.json        Basic pre-aggregation counts and R² summaries
+#      _checkpoint.json   Provenance / run metadata
+#
+#    Statistical analysis (Mann-Whitney, R² distributions, per-method
+#    success rates, paper tables) and all downstream reporting run in
+#    ci_analysis.yml, which triggers on workflow_run after this workflow
+#    completes.  DO NOT add statistical tests or report generation here.
+#
+#    ci_consolidate_experiment.yml is the standalone re-run variant of
+#    this job.  Both call scripts/merge_shards.py, so they are always in
+#    sync by construction — there is no separate merge logic to maintain.
+#
+#    ci_consolidate_experiment.yml fires automatically (workflow_run
+#    trigger) after this workflow completes.  It detects "no changes" and
+#    skips push when this job already committed identical outputs.
 # ==============================================================================
   consolidate:
     name: "Consolidate - ${{ github.event.inputs.experiment }}"
@@ -1375,6 +1404,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: always()
+
+    # Outputs consumed by ci_analysis.yml via workflow_run event:
+    #   github.event.workflow_run.id lets the analysis job download the
+    #   "consolidated-{exp_id}-{run_id}" artifact and read _checkpoint.json
+    #   to recover these values without a separate API call.
+    outputs:
+      exp_id:        ${{ steps.set_outputs.outputs.exp_id }}
+      result_subdir: ${{ steps.set_outputs.outputs.result_subdir }}
 
     steps:
       - name: Checkout master
@@ -1391,7 +1428,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install "pandas==2.2.3" numpy scipy
+          pip install "numpy>=1.26"
 
       - name: Download all shard artifacts
         uses: actions/download-artifact@v8.0.1
@@ -1408,430 +1445,49 @@ jobs:
       - name: List downloaded artifacts
         run: find downloaded_artifacts -type f | sort
 
-      - name: Merge shards and write consolidated outputs
+      - name: Merge shards
         env:
           EXP:           ${{ needs.plan.outputs.exp_id }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-          ALL_PENDING:   ${{ needs.plan.outputs.all_pending }}
         run: |
-          python3 - <<'PYEOF'
-          import glob, json, os, sys
-          from datetime import datetime, timezone
-          import numpy as np
-          from scipy import stats as scipy_stats
+          # BUG A FIX: --result-subdir was missing.  merge_shards.py requires it
+          # so write_checkpoint() can embed result_subdir in _checkpoint.json,
+          # allowing ci_analysis.yml to resolve the path on automatic triggers
+          # without needing manual workflow_dispatch inputs (Bug 5 fix in merge_shards.py).
+          python scripts/merge_shards.py \
+            --experiment    "${EXP}" \
+            --input-root    downloaded_artifacts \
+            --output-dir    "${OUT_BASE}/${RESULT_SUBDIR}" \
+            --result-subdir "${RESULT_SUBDIR}"
 
-          EXP        = os.environ["EXP"]
-          ART_DIR    = "downloaded_artifacts"
-          RESULT_SUB = os.environ["RESULT_SUBDIR"]
-          OUT_DIR    = os.path.join("hypatiax/data/results", RESULT_SUB)
-          os.makedirs(OUT_DIR, exist_ok=True)
-          all_pending = json.loads(os.environ.get("ALL_PENDING") or "[]")
-
-          candidates = sorted(glob.glob(f"{ART_DIR}/**/*.json", recursive=True))
-          if not candidates:
-              print("WARNING: no JSON files found in downloaded artifacts")
-
-          print(f"Candidate files ({len(candidates)}):")
-          for p in candidates[:20]:
-              print(f"  {p}")
-          if len(candidates) > 20:
-              print(f"  ... and {len(candidates) - 20} more")
-
-          # -----------------------------------------------------------------
-          # Field-name sets — KEEP IN SYNC with ci_consolidate_experiment.yml
-          # -----------------------------------------------------------------
-          _META_KEYS = frozenset({
-              "purelm_truncation_audit", "experiment", "generated_at",
-              "source_run_id", "n_total", "n_merged", "n_successes", "success_rate",
-              "hyp_extrap_mean", "hyp_extrap_median", "nn_extrap_mean", "nn_extrap_median",
-              "config", "metadata", "run_info", "summary",
-          })
-          _RESULT_KEYS = frozenset({
-              "equation_id", "task_id", "id", "protocol",
-              "hypatia", "nn", "pure_llm", "neural_network",
-              "r2", "rmse", "success", "best_expression",
-              "domain", "name", "formula",
-          })
-          _DEFI_IDS = frozenset({
-              "amm", "risk_var", "liquidity", "expected_shortfall",
-              "liquidation", "risk", "lending", "staking", "trading", "derivatives",
-          })
-
-          # FIX-L1: same equation_id -> protocol ID remap as ci_consolidate_experiment.yml.
-          _EQ_ID_TO_DEFI = {
-              "Annualised Portfolio tracking error":          "amm",
-              "Correlated Portfolio VaR":                    "risk_var",
-              "Portfolio VaR for two correlated":            "liquidity",
-              "Portfolio Expected Shortfall for correlated": "expected_shortfall",
-              "Portfolio Sharpe Ratio":                       "risk",
-          }
-
-          def _normalise(item):
-              """Remap pure_llm->hypatia, neural_network->nn, test_r2->extrap_r2."""
-              if not isinstance(item, dict):
-                  return item
-              result = dict(item)
-              inner = result.get("results")
-              if isinstance(inner, dict):
-                  inner = dict(inner)
-                  if "pure_llm" in inner and "hypatia" not in inner:
-                      inner["hypatia"] = inner.pop("pure_llm")
-                  if "neural_network" in inner and "nn" not in inner:
-                      inner["nn"] = inner.pop("neural_network")
-                  for sub in (inner.get("hypatia") or {}, inner.get("nn") or {}):
-                      if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
-                          sub["extrap_r2"] = sub["test_r2"]
-                  result["results"] = inner
-                  result.update(inner)
-              else:
-                  if "pure_llm" in result and "hypatia" not in result:
-                      result["hypatia"] = result.pop("pure_llm")
-                  if "neural_network" in result and "nn" not in result:
-                      result["nn"] = result.pop("neural_network")
-                  for sub in (result.get("hypatia") or {}, result.get("nn") or {}):
-                      if isinstance(sub, dict) and "extrap_r2" not in sub and "test_r2" in sub:
-                          sub["extrap_r2"] = sub["test_r2"]
-              return result
-
-          merged = {}
-          for path in candidates:
-              try:
-                  with open(path) as f:
-                      data = json.load(f)
-
-                  rows = {}
-
-                  # Strategy A: top-level list
-                  # FIX-L1: remap equation_id human names to protocol IDs.
-                  if isinstance(data, list):
-                      for item in data:
-                          if not isinstance(item, dict):
-                              continue
-                          raw_key = (item.get("equation_id") or item.get("task_id")
-                                     or item.get("id") or item.get("protocol"))
-                          if raw_key is None:
-                              continue
-                          key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
-                          rows[key] = _normalise(item)
-
-                  elif isinstance(data, dict):
-                      # Strategy B: dict with top-level "results" list
-                      if "results" in data and isinstance(data["results"], list):
-                          for r in data["results"]:
-                              if not any(k in r for k in ("equation_id", "task_id", "id")):
-                                  continue
-                              raw_key = r.get("equation_id") or r.get("task_id") or r.get("id")
-                              key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
-                              rows[key] = _normalise(r)
-                      # Strategy C: single-task dict
-                      elif "task_id" in data:
-                          rows = {data["task_id"]: _normalise(data)}
-                      # Strategy D2: DeFi v3 dict keyed by protocol ID
-                      elif any(k in _DEFI_IDS for k in data):
-                          rows = {
-                              k: _normalise(v)
-                              for k, v in data.items()
-                              if k in _DEFI_IDS and isinstance(v, dict)
-                          }
-                      # Strategy E: protocol_core_noiseless format
-                      # FIX-L2: results live under data["tests"] dict.
-                      elif "tests" in data and isinstance(data["tests"], dict):
-                          for raw_key, v in data["tests"].items():
-                              if not isinstance(v, dict):
-                                  continue
-                              key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
-                              rows[key] = _normalise(v)
-                      # Strategy D: generic dict-keyed fallback
-                      else:
-                          rows = {
-                              k: _normalise(v) for k, v in data.items()
-                              if isinstance(v, dict)
-                              and k not in _META_KEYS
-                              and any(rk in v for rk in _RESULT_KEYS)
-                          }
-
-                  rows = {k: v for k, v in rows.items() if k is not None}
-                  merged.update(rows)
-                  if rows:
-                      print(f"  +{len(rows)} from {os.path.basename(path)}")
-                  else:
-                      print(f"  (no task rows) {os.path.basename(path)}")
-              except Exception as e:
-                  print(f"  SKIP {path}: {e}")
-
-          print(f"\nTotal merged: {len(merged)} entries")
-
-          if all_pending:
-              missing = [t for t in all_pending if t not in merged]
-              pct = 100 * (1 - len(missing) / len(all_pending))
-              print(f"Coverage: {len(merged)}/{len(all_pending)} ({pct:.1f}%)")
-              if missing:
-                  print(f"Missing ({len(missing)}): {missing[:10]}{'...' if len(missing)>10 else ''}")
-
-          merged_path = os.path.join(OUT_DIR, f"{EXP}_merged.json")
-          with open(merged_path, "w") as f:
-              json.dump(merged, f, indent=2)
-
-          hyp, nn = [], []
-          for r in merged.values():
-              if not isinstance(r, dict):
-                  continue
-              hr2 = (r.get("hypatia") or {}).get("extrap_r2")
-              nr2 = (r.get("nn")      or {}).get("extrap_r2")
-              # FIX-L3: skip NaN values so a single missing R2 does not
-              # poison np.mean/np.median for the entire experiment.
-              if hr2 is not None and not (isinstance(hr2, float) and hr2 != hr2):
-                  hyp.append(float(hr2))
-              if nr2 is not None and not (isinstance(nr2, float) and nr2 != nr2):
-                  nn.append(float(nr2))
-
-          successes = [v for v in hyp if v > 0.99]
-          stats = {
-              "experiment":        EXP,
-              "generated_at":      datetime.now(timezone.utc).isoformat(),
-              "source_run_id":     os.environ.get("GITHUB_RUN_ID", ""),
-              "n_total":           len(all_pending) if all_pending else None,
-              "n_merged":          len(merged),
-              "n_successes":       len(successes),
-              "success_rate":      len(successes) / len(merged) if merged else None,
-              "hyp_extrap_mean":   float(np.mean(hyp))   if hyp else None,
-              "hyp_extrap_median": float(np.median(hyp)) if hyp else None,
-              "nn_extrap_mean":    float(np.mean(nn))     if nn  else None,
-              "nn_extrap_median":  float(np.median(nn))   if nn  else None,
-          }
-          if len(hyp) >= 5 and len(nn) >= 5:
-              u, p = scipy_stats.mannwhitneyu(hyp, nn, alternative="greater")
-              stats.update({
-                  "mw_U":           float(u),
-                  "mw_p":           float(p),
-                  "mw_significant": bool(p < 0.05),
-              })
-
-          stats_path = os.path.join(OUT_DIR, f"{EXP}_stats.json")
-          with open(stats_path, "w") as f:
-              json.dump(stats, f, indent=2)
-
-          # BUG 1 FIX: CSV schema was 6 columns; ci_consolidate_experiment.yml writes 7.
-          # Added hyp_train_r2 column so both jobs produce identical schemas.
-          csv_rows = ["task_id,name,domain,hyp_train_r2,hyp_extrap_r2,nn_extrap_r2,success,best_expression"]
-          for tid, r in sorted(merged.items()):
-              if not isinstance(r, dict):
-                  continue
-              h = r.get("hypatia", {}) or {}
-              n = r.get("nn",      {}) or {}
-              ht = h.get("train_r2", "")
-              he = h.get("extrap_r2", ""); ne = n.get("extrap_r2", "")
-              ok = isinstance(he, float) and he > 0.99
-              expr = str(h.get("best_expression", "")).replace(",", ";")
-              csv_rows.append(
-                  f'{tid},{r.get("name","")},{r.get("domain","")},'
-                  f'{ht},{he},{ne},{ok},{expr}'
-              )
-          csv_path = os.path.join(OUT_DIR, f"{EXP}_merged.csv")
-          with open(csv_path, "w") as f:
-              f.write("\n".join(csv_rows))
-
-          print(f"\n{'='*65}")
-          if hyp:
-              pct = 100 * stats["success_rate"] if stats["success_rate"] is not None else 0
-              print(f"SUCCESS RATE : {len(successes)}/{len(merged)} ({pct:.1f}%)")
-              print(f"HypatiaX R2  mean={stats['hyp_extrap_mean']:.4f}  "
-                    f"median={stats['hyp_extrap_median']:.4f}")
-              if nn:
-                  print(f"NN baseline  mean={stats['nn_extrap_mean']:.4f}  "
-                        f"median={stats['nn_extrap_median']:.4f}")
-              if "mw_p" in stats:
-                  sig = "SIGNIFICANT" if stats["mw_significant"] else "not significant"
-                  print(f"Mann-Whitney : U={stats['mw_U']:.0f}  p={stats['mw_p']:.4e}  [{sig}]")
-          else:
-              print(f"Merged {len(merged)} entries (no R2 stats - non-R2 experiment)")
-          print(f"{'='*65}")
-          print(f"Outputs: {OUT_DIR}/")
-          PYEOF
+      - name: Verify merged outputs
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          ls -lah "${OUT_BASE}/${RESULT_SUBDIR}"
+          test -f "${OUT_BASE}/${RESULT_SUBDIR}/_merged.json"
+          test -f "${OUT_BASE}/${RESULT_SUBDIR}/_merged.csv"
+          test -f "${OUT_BASE}/${RESULT_SUBDIR}/_checkpoint.json"
+          echo "All expected outputs present."
 
       - name: Upload consolidated artifact
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          # BUG 8 FIX: was github.event.inputs.experiment; all other consolidate-job
-          # references use needs.plan.outputs.exp_id for consistency and future-proofing.
           name: consolidated-${{ needs.plan.outputs.exp_id }}-${{ github.run_id }}
           path: |
-            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/${{ needs.plan.outputs.exp_id }}_merged.json
-            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/${{ needs.plan.outputs.exp_id }}_merged.csv
-            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/${{ needs.plan.outputs.exp_id }}_stats.json
-          # CHANGED: if-no-files-found: warn -> error so a failed consolidation is
-          # a loud, visible failure rather than a silent one.
+            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/_merged.json
+            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/_merged.csv
+            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/_stats.json
+            ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/_checkpoint.json
           if-no-files-found: error
 
-      - name: Write step report to hypatiax/data/reports
-        if: always()
-        env:
-          EXP:           ${{ needs.plan.outputs.exp_id }}
-          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-          RUN_ID:        ${{ github.run_id }}
-          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          N_SHARDS:      ${{ github.event.inputs.n_shards || '4' }}
-        run: |
-          python3 - <<'PYEOF'
-          import json, os, glob
-          from datetime import datetime, timezone
-
-          EXP        = os.environ["EXP"]
-          OUT_DIR    = os.path.join("hypatiax/data/results", os.environ["RESULT_SUBDIR"])
-          REPORT_DIR = "hypatiax/data/reports"
-          os.makedirs(REPORT_DIR, exist_ok=True)
-
-          # -- Load stats if they exist --------------------------------------
-          stats_path  = os.path.join(OUT_DIR, f"{EXP}_stats.json")
-          merged_path = os.path.join(OUT_DIR, f"{EXP}_merged.json")
-          stats  = json.load(open(stats_path))  if os.path.exists(stats_path)  else {}
-          merged = json.load(open(merged_path)) if os.path.exists(merged_path) else {}
-
-          # -- Count method-level outcomes from merged results ---------------
-          method_summary = {}
-          for tid, r in merged.items():
-              if not isinstance(r, dict):
-                  continue
-              # exp2_feynman / exp2: results keyed by method name under top-level
-              for key in ("PureLLM Baseline (core)", "ImprovedNN (core)",
-                          "EnhancedHybridSystemDeFi (core)", "HybridSystemLLMNN all-domains (core)",
-                          "SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v50_2 (tools)"):
-                  if key in r and isinstance(r[key], dict):
-                      ms = method_summary.setdefault(key, {"n": 0, "n_success": 0, "r2_sum": 0.0})
-                      ms["n"] += 1
-                      res = r[key]
-                      r2  = res.get("r2")
-                      if isinstance(r2, float) and r2 > 0.99:
-                          ms["n_success"] += 1
-                      if isinstance(r2, float):
-                          ms["r2_sum"] += r2
-
-          # -- Build report --------------------------------------------------
-          report = {
-              "experiment":     EXP,
-              "run_id":         os.environ["RUN_ID"],
-              "run_url":        os.environ["RUN_URL"],
-              "generated_at":   datetime.now(timezone.utc).isoformat(),
-              "n_shards":       int(os.environ.get("N_SHARDS", 4)),
-              "n_total":        stats.get("n_total"),
-              "n_merged":       stats.get("n_merged", len(merged)),
-              "n_successes":    stats.get("n_successes", 0),
-              "success_rate":   stats.get("success_rate"),
-              "hyp_r2_mean":    stats.get("hyp_extrap_mean"),
-              "hyp_r2_median":  stats.get("hyp_extrap_median"),
-              "nn_r2_mean":     stats.get("nn_extrap_mean"),
-              "nn_r2_median":   stats.get("nn_extrap_median"),
-              "mw_p":           stats.get("mw_p"),
-              "mw_significant": stats.get("mw_significant"),
-              "methods": {
-                  k: {
-                      "n":           v["n"],
-                      "n_success":   v["n_success"],
-                      "success_rate": v["n_success"] / v["n"] if v["n"] else None,
-                      "r2_mean":     v["r2_sum"] / v["n"] if v["n"] else None,
-                  }
-                  for k, v in method_summary.items()
-              },
-              "status": "ok" if stats.get("n_merged", 0) > 0 else "empty",
-              "warnings": [],
-          }
-
-          # -- Detect and record problems ------------------------------------
-          if report["n_merged"] == 0:
-              report["warnings"].append("n_merged=0: no shard artifacts merged - check artifact name pattern and worker logs")
-          if report["n_merged"] is not None and report["n_total"] is not None:
-              if report["n_merged"] < report["n_total"]:
-                  missing = report["n_total"] - report["n_merged"]
-                  report["warnings"].append(f"{missing} tasks missing from merge ({report['n_merged']}/{report['n_total']} coverage)")
-          for method, ms in report["methods"].items():
-              if "tools" in method and ms["n"] > 0 and ms["n_success"] == 0:
-                  report["warnings"].append(f"{method}: 0 successes - likely Julia precompile failure (check _probe log)")
-
-          # -- Write timestamped report + latest symlink ---------------------
-          ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-          report_file = os.path.join(REPORT_DIR, f"{EXP}_{ts}.json")
-          latest_file = os.path.join(REPORT_DIR, f"{EXP}_latest.json")
-
-          with open(report_file, "w") as f:
-              json.dump(report, f, indent=2)
-          with open(latest_file, "w") as f:
-              json.dump(report, f, indent=2)
-
-          # -- Print summary -------------------------------------------------
-          print(f"\n{'='*65}")
-          print(f"STEP REPORT - {EXP}")
-          print(f"  Run     : {os.environ['RUN_URL']}")
-          print(f"  Merged  : {report['n_merged']} / {report['n_total']}")
-          if report['success_rate'] is not None:
-              print(f"  Success : {report['n_successes']} ({100*report['success_rate']:.1f}%)")
-          if report['hyp_r2_mean'] is not None:
-              print(f"  R2 mean : hyp={report['hyp_r2_mean']:.4f}  nn={report['nn_r2_mean']:.4f}")
-          if report["warnings"]:
-              print(f"  Warnings ({len(report['warnings'])}):")
-              for w in report["warnings"]:
-                  print(f"    WARN {w}")
-          else:
-              print("  No warnings OK")
-          print(f"  Written : {report_file}")
-          print(f"{'='*65}")
-          PYEOF
-
-      # -- Abort pipeline if step report signals failure -------------------
-      # Reads the freshly-written _latest.json report and exits 1 if:
-      #   . status != "ok"   (n_merged == 0 - nothing was merged from shards)
-      #   . any FATAL warning is present (n_merged=0 tag)
-      # Non-fatal warnings (partial coverage) are printed but do not abort.
-      - name: Abort if step report indicates failure
-        env:
-          EXP:           ${{ needs.plan.outputs.exp_id }}
-          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-        run: |
-          python3 - <<'PYEOF'
-          import json, os, sys
-
-          EXP        = os.environ["EXP"]
-          REPORT_DIR = "hypatiax/data/reports"
-          latest     = os.path.join(REPORT_DIR, f"{EXP}_latest.json")
-
-          if not os.path.exists(latest):
-              print(f"PIPELINE ABORT - report file not found: {latest}")
-              sys.exit(1)
-
-          report = json.load(open(latest))
-          fatal  = []
-
-          if report.get("status") != "ok":
-              fatal.append(f"status={report.get('status')!r}  (expected 'ok')")
-          if report.get("n_merged", 0) == 0:
-              fatal.append("n_merged=0 - no shard artifacts were merged")
-
-          print(f"\n{'='*65}")
-          print(f"STEP REPORT CHECK - {EXP}")
-          print(f"  n_merged : {report.get('n_merged')} / {report.get('n_total')}")
-          print(f"  status   : {report.get('status')}")
-          if report.get("warnings"):
-              for w in report["warnings"]:
-                  print(f"  WARN  {w}")
-
-          if fatal:
-              print(f"\n  PIPELINE ABORT ({len(fatal)} fatal issue(s)):")
-              for f in fatal:
-                  print(f"    FAIL {f}")
-              print(f"{'='*65}\n")
-              sys.exit(1)
-
-          print(f"  OK Report OK - proceeding to commit.")
-          print(f"{'='*65}\n")
-          PYEOF
-
-      # BUG 9 FIX: the inline consolidate job was missing the canonical-tree staging
-      # step that ci_consolidate_experiment.yml performs.  Without it, every inline-
-      # consolidated run leaves comparison_results/, extrapolation/, etc. stale.
-      # This step mirrors ci_consolidate_experiment.yml lines 343-365 exactly.
+      # Stage merged outputs to canonical repo tree paths so both the
+      # hypatiax/data/results/ scratch copy AND the canonical copy at the
+      # bare result_subdir path are committed.  ci_consolidate_experiment.yml
+      # mirrors this step; changes here must be reflected there too.
       - name: Stage results to canonical tree paths
         env:
-          EXP:           ${{ needs.plan.outputs.exp_id }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           set -euo pipefail
@@ -1843,7 +1499,7 @@ jobs:
           else
             echo "Staging: $SRC  ->  $DST"
             mkdir -p "$DST"
-            for f in "${EXP}_merged.json" "${EXP}_merged.csv" "${EXP}_stats.json"; do
+            for f in _merged.json _merged.csv _stats.json _checkpoint.json; do
               if [[ -f "$SRC/$f" ]]; then
                 cp -v "$SRC/$f" "$DST/$f"
               else
@@ -1860,22 +1516,38 @@ jobs:
           SUB="${{ needs.plan.outputs.result_subdir }}"
           EXP="${{ needs.plan.outputs.exp_id }}"
 
-          # BUG 9 FIX: stage both the hypatiax/data/results scratch copy AND the
-          # canonical tree copy (mirroring ci_consolidate_experiment.yml lines 501-509).
           git add \
-            "${OUT_BASE}/${SUB}/${EXP}_merged.json" \
-            "${OUT_BASE}/${SUB}/${EXP}_merged.csv"  \
-            "${OUT_BASE}/${SUB}/${EXP}_stats.json"  \
-            "${SUB}/${EXP}_merged.json"             \
-            "${SUB}/${EXP}_merged.csv"              \
-            "${SUB}/${EXP}_stats.json"              \
-            "hypatiax/data/reports/${EXP}_latest.json" \
-            hypatiax/data/reports/${EXP}_*.json         2>/dev/null || true
+            "${OUT_BASE}/${SUB}/_merged.json"     \
+            "${OUT_BASE}/${SUB}/_merged.csv"      \
+            "${OUT_BASE}/${SUB}/_stats.json"      \
+            "${OUT_BASE}/${SUB}/_checkpoint.json" \
+            "${SUB}/_merged.json"                 \
+            "${SUB}/_merged.csv"                  \
+            "${SUB}/_stats.json"                  \
+            "${SUB}/_checkpoint.json"             \
+            2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No changes - results unchanged from previous run."
           else
+            git pull --rebase origin "${{ github.ref_name }}"
             git commit -m "ci: ${EXP} consolidated results - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed consolidated results to master."
           fi
+
+      - name: Set consolidate outputs
+        id: set_outputs
+        if: always()
+        env:
+          EXP: ${{ needs.plan.outputs.exp_id }}
+          SUB: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          # Expose exp_id and result_subdir as job outputs so ci_analysis.yml
+          # can verify which experiment triggered it (via workflow_run event).
+          # The analysis job does NOT consume these directly — it downloads the
+          # consolidated artifact and reads _checkpoint.json — but having explicit
+          # outputs here aids debugging and future cross-job references.
+          echo "exp_id=${EXP}"        >> "$GITHUB_OUTPUT"
+          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
+          echo "Consolidate outputs set: exp=${EXP}  subdir=${SUB}"

@@ -62,7 +62,7 @@ on:
   #    expressions inside workflow_run.workflows[]).
   workflow_run:
     workflows:
-      - "HypatiaX — experiment runner · run_all.sh"
+      - "HypatiaX - experiment runner . run_all.sh"
     types: [completed]
 
   # 3. Manual: run on demand with optional overrides.
@@ -147,11 +147,12 @@ jobs:
         run: |
           # BUG 3 FIX: github.event.workflow_run.name is the static workflow `name:` field
           # and never contains the experiment ID.  display_title reflects the dynamic
-          # `run-name:` ("HypatiaX — exp2_feynman · run_all.sh") which does embed it.
-          # Kept in sync with the identical fix in ci_consolidate_experiment.yml.
+          # `run-name:` ("HypatiaX - exp2_feynman . run_all.sh") which does embed it.
+          # ci_experiment.yml run-name uses ASCII hyphen (-) and period (.) — not em-dash
+          # or middle-dot.  Kept in sync with ci_consolidate_experiment.yml sed pattern.
           WF_TITLE="${{ github.event.workflow_run.display_title }}"
           if [[ -n "$WF_TITLE" ]]; then
-            EXP=$(echo "$WF_TITLE" | sed 's/.*— \(.*\) · .*/\1/')
+            EXP=$(echo "$WF_TITLE" | sed 's/.*- \(.*\) \. .*/\1/')
             echo "Parsed experiment from triggering workflow display_title: $EXP"
             echo "exp=$EXP" >> "$GITHUB_OUTPUT"
           else
@@ -216,10 +217,10 @@ jobs:
           # Identity
           chk("run_id",      "paper_v3")
           chk("run_version", "3.0")
-          # NOTE: claude-sonnet-4-5 requires anthropic SDK ≥ 0.40.0.
+          # NOTE: claude-sonnet-4-20250514 requires anthropic SDK ≥ 0.40.0.
           # environment.yml was updated from anthropic==0.28.0 → anthropic==0.40.0
           # (fixed two sessions ago); this check is now satisfied by that pin.
-          chk("llm_model",   "claude-sonnet-4-5")
+          chk("llm_model",   "claude-sonnet-4-20250514")
           chk("llm_retries", 3)
           chk("llm_k_runs",  30)
 
