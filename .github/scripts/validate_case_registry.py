@@ -29,11 +29,11 @@ Exit codes
   1 — one or more scripts failed, or no scripts found
 """
 
-import importlib.util
 import json
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -50,15 +50,86 @@ class ValidationError(Exception):
     pass
 
 
-def _load_module(path: Path):
-    """Import *path* as a Python module.  Raises on syntax / import errors."""
-    spec   = importlib.util.spec_from_file_location(path.stem, path)
-    module = importlib.util.module_from_spec(spec)
-    # Push a mock __name__ so top-level ``if __name__ == "__main__":`` guards
-    # are respected.
-    module.__name__ = path.stem
-    spec.loader.exec_module(module)
-    return module
+# ---------------------------------------------------------------------------
+# Subprocess-isolated case extraction
+# ---------------------------------------------------------------------------
+# Benchmarks are imported inside a child process so that heavy top-level
+# imports (torch, tensorflow, …) and accidental sys.exit() calls cannot
+# crash or hang the validator itself.  The child serialises build_cases()
+# output as JSON on stdout; the parent deserialises it.
+
+_EXTRACT_SCRIPT = textwrap.dedent("""
+import importlib.util, json, sys
+
+path = sys.argv[1]
+spec   = importlib.util.spec_from_file_location("_bench", path)
+module = importlib.util.module_from_spec(spec)
+module.__name__ = "_bench"          # suppress __main__ guards
+spec.loader.exec_module(module)
+
+if not hasattr(module, "build_cases"):
+    print(json.dumps({"error": "missing build_cases() function"}))
+    sys.exit(0)
+
+fn = module.build_cases
+if not callable(fn):
+    print(json.dumps({"error": "build_cases is not callable"}))
+    sys.exit(0)
+
+try:
+    c1 = fn()
+    c2 = fn()
+    print(json.dumps({"cases1": c1, "cases2": c2}))
+except Exception as exc:
+    print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
+""")
+
+
+def _extract_cases_subprocess(path: Path) -> Dict[str, Any]:
+    """Run the benchmark in a child process; return its JSON output."""
+    result = subprocess.run(
+        [sys.executable, "-c", _EXTRACT_SCRIPT, str(path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    raw = result.stdout.strip()
+    if not raw:
+        stderr = result.stderr.strip()
+        raise ValidationError(
+            f"subprocess produced no output (exit {result.returncode})"
+            + (f": {stderr[:200]}" if stderr else "")
+        )
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"subprocess output is not valid JSON: {exc}") from exc
+
+
+def _validate_module(path: Path) -> int:
+    """Run all checks against a benchmark script via subprocess.  Returns case count."""
+    payload = _extract_cases_subprocess(path)
+
+    if "error" in payload:
+        raise ValidationError(payload["error"])
+
+    cases1 = payload["cases1"]
+    cases2 = payload["cases2"]
+
+    # Determinism check
+    try:
+        j1 = json.dumps(cases1, sort_keys=True)
+        j2 = json.dumps(cases2, sort_keys=True)
+    except TypeError as exc:
+        raise ValidationError(
+            f"build_cases() returned non-serialisable data: {exc}"
+        ) from exc
+
+    if j1 != j2:
+        raise ValidationError(
+            "build_cases() is not deterministic — two calls returned different results"
+        )
+
+    count = _validate_cases(cases1, path)
+    return count
 
 
 def _validate_cases(cases: Any, path: Path) -> int:
@@ -99,34 +170,6 @@ def _validate_cases(cases: Any, path: Path) -> int:
     return len(cases)
 
 
-def _validate_module(module, path: Path) -> int:
-    """Run all checks against an imported module.  Returns case count."""
-    if not hasattr(module, "build_cases"):
-        raise ValidationError("missing build_cases() function")
-
-    build_cases = module.build_cases
-    if not callable(build_cases):
-        raise ValidationError("build_cases is not callable")
-
-    cases1 = build_cases()
-    cases2 = build_cases()
-
-    # Determinism check — compare via JSON round-trip (handles numpy types etc.)
-    try:
-        j1 = json.dumps(cases1, sort_keys=True)
-        j2 = json.dumps(cases2, sort_keys=True)
-    except TypeError as exc:
-        raise ValidationError(
-            f"build_cases() returned non-serialisable data: {exc}"
-        ) from exc
-
-    if j1 != j2:
-        raise ValidationError(
-            "build_cases() is not deterministic — two calls returned different results"
-        )
-
-    count = _validate_cases(cases1, path)
-    return count
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +184,7 @@ def validate_file(path: Path) -> Tuple[bool, Optional[str]]:
     """
     warning: Optional[str] = None
     try:
-        module = _load_module(path)
-        count  = _validate_module(module, path)
+        count  = _validate_module(path)
 
         msg = f"✅ {path.name}: {count} cases"
         if count > 5000:
@@ -155,8 +197,8 @@ def validate_file(path: Path) -> Tuple[bool, Optional[str]]:
     except ValidationError as exc:
         print(f"❌ {path.name}: {exc}")
         return False, None
-    except SyntaxError as exc:
-        print(f"❌ {path.name}: syntax error — {exc}")
+    except subprocess.TimeoutExpired:
+        print(f"❌ {path.name}: timed out after 60 s — possible infinite loop at import time")
         return False, None
     except Exception as exc:  # noqa: BLE001
         print(f"❌ {path.name}: unexpected error — {type(exc).__name__}: {exc}")
