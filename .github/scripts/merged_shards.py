@@ -103,6 +103,15 @@ def merge_records(records: Dict[str, List[Any]]) -> Dict[str, Any]:
     for domain, items in records.items():
         cleaned = [r for r in items if is_valid_record(r)]
 
+        # FIX: remap test_r2 -> extrap_r2 inside each model sub-dict so the
+        # downstream R2 stats (which always read "extrap_r2") work correctly
+        # for records that were written with "test_r2" by the benchmark script.
+        for r in cleaned:
+            for sub_key in ("hypatia", "pure_llm", "nn", "neural_network"):
+                sub = r.get(sub_key)
+                if isinstance(sub, dict) and "test_r2" in sub and "extrap_r2" not in sub:
+                    sub["extrap_r2"] = sub["test_r2"]
+
         if cleaned:
             merged[domain] = {
                 "count": len(cleaned),
