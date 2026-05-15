@@ -1516,13 +1516,10 @@ jobs:
           SUB="${{ needs.plan.outputs.result_subdir }}"
           EXP="${{ needs.plan.outputs.exp_id }}"
 
-          # Unstage anything left in the index by actions/checkout or prior steps
-          # (sparse-checkout internals can leave staged entries that block rebase).
-          # This does NOT touch working-tree files — our result files are safe.
+          # Reset index and pull before staging — rebase refuses to run
+          # if the index contains staged entries (from checkout internals
+          # or files written into the repo tree by prior steps).
           git reset HEAD 2>/dev/null || true
-
-          # --autostash handles any remaining working-tree dirtiness (files written
-          # by merge_shards.py inside the repo tree) during the rebase.
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
           git add \
