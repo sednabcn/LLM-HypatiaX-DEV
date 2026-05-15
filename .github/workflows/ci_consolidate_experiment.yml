@@ -414,37 +414,30 @@ jobs:
           # This table maps the canonical human names the script emits to the
           # protocol IDs that all_pending expects.  Add new entries here whenever
           # hypatiax_defi_benchmark_v3c.py adds tasks.
-          # FIX-MAP: corrected against _get_test_cases() domain fields in
-          # hypatiax_defi_benchmark_v3c.py (lines 876–957).
-          # Three entries were wrong in the previous version:
-          #   "Annualised Portfolio tracking error" had domain "risk_var", not "amm"
-          #   "Correlated Portfolio VaR"            had domain "risk",     not "risk_var"
-          #   "Portfolio VaR for two correlated"    had domain "risk_var", not "liquidity"
-          # All other entries verified against the catalogue and confirmed correct.
           _EQ_ID_TO_DEFI = {
-              # Annualised tracking error  -> risk_var  (FIX: was "amm")
-              "Annualised Portfolio tracking error": "risk_var",
-              # Correlated VaR             -> risk      (FIX: was "risk_var")
-              "Correlated Portfolio VaR":            "risk",
-              # Portfolio VaR two correlated -> risk_var (FIX: was "liquidity")
-              "Portfolio VaR for two correlated":    "risk_var",
+              # Annualised tracking error  -> amm
+              "Annualised Portfolio tracking error": "amm",
+              # Correlated VaR             -> risk_var
+              "Correlated Portfolio VaR":            "risk_var",
+              # Portfolio VaR two correlated         -> liquidity
+              "Portfolio VaR for two correlated":    "liquidity",
               # Expected Shortfall         -> expected_shortfall
               "Portfolio Expected Shortfall for correlated": "expected_shortfall",
-              # Sharpe Ratio               -> risk  ✓
+              # Sharpe Ratio               -> risk
               "Portfolio Sharpe Ratio":              "risk",
-              # Sortino Ratio              -> staking  ✓
+              # Sortino Ratio              -> staking
               "Portfolio Sortino Ratio":             "staking",
-              # Beta                       -> lending  ✓
+              # Beta                       -> lending
               "Portfolio Beta":                      "lending",
-              # Information Ratio          -> trading  ✓
+              # Information Ratio          -> trading
               "Portfolio Information Ratio":         "trading",
-              # Maximum Drawdown           -> derivatives  ✓
+              # Maximum Drawdown           -> derivatives
               "Portfolio Maximum Drawdown":          "derivatives",
-              # Omega Ratio                -> liquidation  ✓
+              # Omega Ratio                -> liquidation
               "Portfolio Omega Ratio":               "liquidation",
           }
 
-          def _normalise(item, domain_key=None):
+          def _normalise(item):
               """Remap field names to canonical names used by the downstream stats code.
 
               Handles two result shapes:
@@ -459,18 +452,10 @@ jobs:
 
               Also remaps test_r2 -> extrap_r2 inside each model sub-dict so
               downstream R2 stats always read from the "extrap_r2" key.
-
-              FIX-DOMAIN: injects a "domain" key when domain_key is supplied and
-              "domain" is absent, so merged_shards.py's extract_domain_records()
-              domain-filter can locate these records (it keys on item["domain"]).
               """
               if not isinstance(item, dict):
                   return item
               result = dict(item)
-
-              # FIX-DOMAIN: inject domain field so merged_shards.py can find this record.
-              if domain_key and "domain" not in result:
-                  result["domain"] = domain_key
 
               inner = result.get("results")
               if isinstance(inner, dict):
@@ -563,11 +548,9 @@ jobs:
                       # dict keyed by DeFi protocol ID with values containing
                       # "pure_llm" / "neural_network".  Detected by checking
                       # whether any top-level key is a known DeFi ID.
-                      # FIX-DOMAIN: pass domain_key=k so _normalise() injects
-                      # "domain" into each record for merged_shards.py filtering.
                       elif any(k in _DEFI_IDS for k in data):
                           rows = {
-                              k: _normalise(v, domain_key=k)
+                              k: _normalise(v)
                               for k, v in data.items()
                               if k in _DEFI_IDS and isinstance(v, dict)
                           }
@@ -579,14 +562,12 @@ jobs:
                       # data["tests"], which is a dict keyed by task name.  Each
                       # value contains "pure_llm" / "neural_network" sub-dicts.
                       # None of the existing strategies matched this shape.
-                      # FIX-DOMAIN: pass domain_key=key so _normalise() injects
-                      # "domain" into each record for merged_shards.py filtering.
                       elif "tests" in data and isinstance(data["tests"], dict):
                           for raw_key, v in data["tests"].items():
                               if not isinstance(v, dict):
                                   continue
                               key = _EQ_ID_TO_DEFI.get(raw_key, raw_key)
-                              rows[key] = _normalise(v, domain_key=key)
+                              rows[key] = _normalise(v)
 
                       # -- Strategy D: generic dict-keyed fallback -----------
                       # FIX-C3: _RESULT_KEYS now includes "protocol",
