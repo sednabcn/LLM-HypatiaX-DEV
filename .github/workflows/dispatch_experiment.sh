@@ -25,11 +25,28 @@
 set -euo pipefail
 
 # -- Args ----------------------------------------------------------------------
-EXP="${1:?Usage: dispatch_experiment.sh <experiment_id> <n_shards> [--dry-run] [task_ids_override]}"
-# Default to 4 shards; fall back to 3 only when the caller explicitly passes "3".
+#
+# Usage (updated):
+#   dispatch_experiment.sh <experiment_id> <n_shards> [task_ids_override] [--dry-run]
+#
+# --dry-run is now a named flag accepted anywhere after $2, not a positional $3.
+# Previously, passing a task_ids_override as $3 silently landed in the dry-run
+# slot and was ignored; the actual override slot ($4) stayed empty.  The
+# scheduler's call-site ("" "$TASK_IDS_OVERRIDE") is still compatible: the
+# empty string at $3 is harmless and --dry-run is simply absent.
+EXP="${1:?Usage: dispatch_experiment.sh <experiment_id> <n_shards> [task_ids_override] [--dry-run]}"
 N_SHARDS="${2:-4}"
-DRY_RUN="${3:-}"
-TASK_IDS_OVERRIDE="${4:-}"
+TASK_IDS_OVERRIDE="${3:-}"  # was $4; $3 was the --dry-run positional slot (removed)
+
+# Parse --dry-run from anywhere in args $3+; strip it from TASK_IDS_OVERRIDE if needed.
+DRY_RUN=""
+for _arg in "${@:3}"; do
+  if [[ "$_arg" == "--dry-run" ]]; then
+    DRY_RUN="--dry-run"
+    [[ "$TASK_IDS_OVERRIDE" == "--dry-run" ]] && TASK_IDS_OVERRIDE=""
+    break
+  fi
+done
 
 # Path to the repo's canonical repro config (relative to repo root).
 REPRO="${REPRO_CFG:-config/repro.yaml}"
@@ -57,7 +74,13 @@ except Exception:
 PYEOF
 }
 
-# -- Validate n_shards (3 or 4 only) ------------------------------------------
+# -- Validate n_shards --------------------------------------------------------
+# Fail fast: 0 or a non-integer here causes cryptic shard-startup failures in
+# ci_experiment.yml. Values outside 3-4 are unusual but allowed with a warning.
+if ! [[ "$N_SHARDS" =~ ^[0-9]+$ ]] || [[ "$N_SHARDS" -lt 1 ]]; then
+  echo "ERROR: n_shards='$N_SHARDS' is not a positive integer - aborting."
+  exit 1
+fi
 if [[ "$N_SHARDS" != "3" && "$N_SHARDS" != "4" ]]; then
   echo "WARNING: n_shards=$N_SHARDS is outside the recommended range (3-4)."
   echo "         Accepted values are 3 (quota-limited) or 4 (preferred)."
@@ -70,7 +93,10 @@ PYSR_POP=$(get  pysr_populations   "4")
 N_SAMPLES=$(get feynman_samples    "200")
 NOISE=$(get     noise_levels       "0.0,0.5,1.0,5.0,10.0")
 SEEDS=$(get     default_seeds      "")
-TIMEOUT=$(get   feynman_timeout    "1100")
+# feynman_timeout is intentionally NOT dispatched via --field: ci_experiment.yml
+# injects it as a workflow-level env var (FEYNMAN_TIMEOUT) from repro.yaml
+# directly, so passing it here would be ignored and create a misleading field.
+# TIMEOUT=$(get feynman_timeout "1100")  <-- removed to avoid dead variable
 
 # -- Summary -------------------------------------------------------------------
 echo "======================================================="
@@ -80,7 +106,7 @@ echo "  config source : $REPRO      (auto)"
 echo "-------------------------------------------------------"
 echo "  pysr_generations  : $PYSR_GEN"
 echo "  pysr_populations  : $PYSR_POP"
-echo "  feynman_timeout   : $TIMEOUT  (repro.yaml -> workflow env FEYNMAN_TIMEOUT, not a dispatch field)"
+echo "  feynman_timeout   : (set via FEYNMAN_TIMEOUT workflow env from repro.yaml - not a dispatch field)"
 echo "  n_samples         : $N_SAMPLES"
 echo "  noise_levels      : $NOISE"
 echo "  seeds             : ${SEEDS:-<default>}"

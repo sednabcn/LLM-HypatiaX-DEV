@@ -53,7 +53,7 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  contents: write   # needed by ci_consolidate_experiment.yml to commit merged results
   actions:  write   # needed to dispatch ci_experiment.yml and self-dispatch
 
 env:
@@ -160,17 +160,25 @@ jobs:
 
           DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "> Dispatching $EXP at $DISPATCH_ISO (n_shards=$N_SHARDS)"
-          bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "" "$TASK_IDS_OVERRIDE"
+          # BUG 10 FIX (residual): dispatch_experiment.sh was fixed to treat $3
+          # as TASK_IDS_OVERRIDE (not --dry-run which is now a named flag).  The
+          # old call here passed 4 positional args: "EXP" "N_SHARDS" "" "TASK_IDS_OVERRIDE"
+          # which meant $3="" (empty) and $4=TASK_IDS_OVERRIDE was silently dropped.
+          # Updated to the new 3-arg signature: "EXP" "N_SHARDS" "TASK_IDS_OVERRIDE".
+          bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE"
 
           sleep 30   # give GitHub time to register the new run
 
           echo "Locating run ID for $EXP dispatched after $DISPATCH_ISO ..."
           EXP_RUN_ID=""
           for attempt in $(seq 1 20); do
+            # Use display_title (set per-run by ci_experiment.yml, contains the experiment
+            # name) rather than .name (the static workflow file title "HypatiaX - experiment
+            # runner . run_all.sh", which never contains the experiment name).
             EXP_RUN_ID=$(gh api \
               "/repos/${{ github.repository }}/actions/workflows/ci_experiment.yml/runs?per_page=5" \
               --jq ".workflow_runs[]
-                    | select(.name | startswith(\"HypatiaX - ${EXP}\"))
+                    | select(.display_title | startswith(\"HypatiaX - ${EXP}\"))
                     | select(.created_at > \"$DISPATCH_ISO\")
                     | .id" \
               | head -1)
