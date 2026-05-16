@@ -57,42 +57,28 @@ Usage
 
   # Increase sample count
   python run_protocol_benchmark_core.py --samples 500
-
-  # Resume an interrupted run (skips already-completed equations)
-  python run_protocol_benchmark_core.py --resume
-
-  # Override PySR timeout (default: 300s — same as run_all_checkpoint.py)
-  python run_protocol_benchmark_core.py --pysr-timeout 1100
 """
 
-import ctypes as _ctypes
-
-
-def _kill_thread(tid):
-    # Raise SystemExit in a thread by id (best-effort)
-    return _ctypes.pythonapi.PyThreadState_SetAsyncExc(
-        _ctypes.c_ulong(tid), _ctypes.py_object(SystemExit)
-    )
-
 import concurrent.futures as _cf
-import gc
+import ctypes          # for _kill_thread (hard timeout enforcement)
+import threading as _threading
+import inspect
 import json
 import os
 import random
+import re
 import sys
-import threading as _threading
 import time
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # Hard ceiling on any single method call. Prevents Anthropic API exponential-
 # backoff retry storms from hanging the suite for 18+ minutes on one test.
-# FIX-WALLCLOCK: read from METHOD_TIMEOUT env var (repro.yaml: 900s) rather
-# than hardcoding 90s. Falls back to 900 if not set.
-_METHOD_TIMEOUT_SECS: int = int(os.environ.get("METHOD_TIMEOUT", 900))
+# Can be overridden at runtime with --method-timeout.
+_METHOD_TIMEOUT_SECS: int = 90
 
 # ---------------------------------------------------------------------------
 # SEGFAULT FIX — must happen BEFORE juliacall or torch are imported.
@@ -116,7 +102,6 @@ _METHOD_TIMEOUT_SECS: int = int(os.environ.get("METHOD_TIMEOUT", 900))
 os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
 
 import logging as _logging
-
 # Suppress httpx/httpcore/anthropic HTTP INFO messages completely.
 # propagate=False prevents records reaching the root logger's StreamHandler
 # even if an imported library has called basicConfig(level=INFO).
@@ -134,11 +119,7 @@ random.seed(42)
 np.random.seed(42)
 
 # PySR subprocess timeout — overridden by --pysr-timeout at runtime.
-# FIX-WALLCLOCK: read from PYSR_TIMEOUT env var.
-# FIX-TIMEOUT: default lowered 1100 → 300 to match run_all_checkpoint.py fix.
-# Easy equations solve in <30s; hard ones fail fast. Full suite completes in ~2h
-# on 4-vCPU vs never with 1100s (every equation killed before result JSON written).
-_PYSR_TIMEOUT: int = int(os.environ.get("PYSR_TIMEOUT", 1100))
+_PYSR_TIMEOUT: int = 600
 
 # ---------------------------------------------------------------------------
 # Path setup.
@@ -153,6 +134,7 @@ sys.path.insert(0, str(_PKG_ROOT.parent))      # parent of hypatiax/ → import 
 # orchestrator can give each condition (noisy/noiseless) its own file and
 # prevent the two passes from colliding on the same JSON.
 _CHECKPOINT_NAME: str = "protocol_core_checkpoint"
+_OUTPUT_DIR: Path = _PKG_ROOT / "data/results/comparison_results"
 
 # ---------------------------------------------------------------------------
 # juliacall MUST be imported before torch to prevent a segfault when PySR
@@ -179,8 +161,8 @@ except ImportError:
 try:
     import torch
     import torch.nn as nn
-    from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
@@ -200,7 +182,7 @@ except ImportError:
     pass
 
 try:
-    from anthropic import Anthropic  # noqa: F401
+    from anthropic import Anthropic
     ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
 except ImportError:
     ANTHROPIC_AVAILABLE = False
@@ -218,19 +200,12 @@ def _probe(module_path: str, class_name: str) -> bool:
 
     NOTE: Any module imported here that transitively loads torch will be safe
     because torch has already been imported (eagerly, after juliacall) above.
-
-    FIX: exceptions are now printed to stderr so that probe failures
-    (e.g. Julia precompilation errors, missing packages) are visible in the
-    GitHub Actions step log instead of being silently swallowed.  The return
-    value is still False on any failure — this is non-fatal by design.
     """
     import importlib
     try:
         mod = importlib.import_module(module_path)
         return hasattr(mod, class_name)
-    except Exception as _exc:
-        print(f"⚠️  _probe({module_path!r}, {class_name!r}) failed: {_exc}",
-              file=__import__("sys").stderr, flush=True)
+    except Exception:
         return False
 
 
@@ -289,7 +264,7 @@ def _probe_hybrid_all() -> bool:
 HYBRID_ALL_AVAILABLE  = _probe_hybrid_all()
 SYM_ENGINE_AVAILABLE  = _probe("hypatiax.tools.symbolic.symbolic_engine",
                                 "SymbolicEngineWithLLM")
-HYBRID_V40_AVAILABLE  = _probe("hypatiax.tools.symbolic.hybrid_system_v50_2",
+HYBRID_V50_2_AVAILABLE  = _probe("hypatiax.tools.symbolic.hybrid_system_v50_2",
                                 "HybridDiscoverySystem")
 
 
@@ -306,12 +281,12 @@ class MethodResult:
     r2:            float
     rmse:          float
     formula:       str
-    error:         str | None        = None
+    error:         Optional[str]        = None
     time:          float                = 0.0
-    metadata:      dict[str, Any]       = field(default_factory=dict)
+    metadata:      Dict[str, Any]       = field(default_factory=dict)
     formula_hash:  str                  = ""   # SHA-256 of the FULL formula pre-truncation
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict:
         return {
             "method":       self.method,
             "success":      self.success,
@@ -410,8 +385,8 @@ class BaseMethod:
     def _runner_eval_formula(
         python_code: str,
         X: np.ndarray,
-        var_names: list[str],
-    ) -> np.ndarray | None:
+        var_names: List[str],
+    ) -> Optional[np.ndarray]:
         """
         Try to evaluate *python_code* as a numpy expression that maps X
         columns to a 1-D prediction array.
@@ -429,7 +404,7 @@ class BaseMethod:
         except ImportError:
             _spsp = None
 
-        safe_globals: dict[str, Any] = {
+        safe_globals: Dict[str, Any] = {
             "__builtins__": {},
             "np": np,
             "numpy": np,
@@ -468,7 +443,7 @@ class BaseMethod:
             safe_globals["special"] = _spsp
 
         # Inject each variable as the corresponding X column (broadcast-safe)
-        local_ns: dict[str, Any] = {}
+        local_ns: Dict[str, Any] = {}
         for i, vn in enumerate(var_names):
             local_ns[vn] = X[:, i] if X.ndim == 2 else X
 
@@ -502,7 +477,7 @@ class BaseMethod:
         # Strategy 3: def form — find the first def and call it
         if y_pred is None and "def " in code:
             try:
-                exec_ns: dict[str, Any] = dict(safe_globals)
+                exec_ns: Dict[str, Any] = dict(safe_globals)
                 exec(code, exec_ns)  # noqa: S102
                 fn = next(
                     (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
@@ -528,7 +503,7 @@ class BaseMethod:
         X: np.ndarray,
         y: np.ndarray,
         y_pred_llm: np.ndarray,
-    ) -> np.ndarray | None:
+    ) -> Optional[np.ndarray]:
         """Train a shallow MLP on the LLM formula residuals and return
         corrected predictions.
 
@@ -613,12 +588,9 @@ class BaseMethod:
                     net.load_state_dict(best_w)
                 with torch.no_grad():
                     pred_s = net(X_t).numpy().flatten()
-                # FIX: cast to float64 before denormalising. torch outputs float32;
-                # multiplying by a large t_std overflows float32 (~3.4e38) on
-                # equations with y ~ 10^2+ scale, producing inf/NaN and RuntimeWarning.
-                return pred_s.astype(np.float64) * t_std + t_mean
+                return pred_s * t_std + t_mean
 
-            best_y_hybrid: np.ndarray | None = None
+            best_y_hybrid: Optional[np.ndarray] = None
             best_r2 = float("-inf")
 
             # ── Strategy A: log-space NN (for power-law / tiny-scale eqs) ───
@@ -695,9 +667,7 @@ class PureLLMBaselineMethod(BaseMethod):
         if not PURE_LLM_AVAILABLE:
             return
         try:
-            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
-                PureLLMBaseline,
-            )
+            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
             self._baseline = PureLLMBaseline()
             self._log("initialised ✅")
         except Exception as exc:
@@ -725,9 +695,7 @@ class PureLLMBaselineMethod(BaseMethod):
         # If no dict-typed cache attribute found, re-instantiate the baseline.
         # This is heavier but guaranteed to produce a clean state.
         try:
-            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
-                PureLLMBaseline,
-            )
+            from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
             self._baseline = PureLLMBaseline()
             self._log("re-instantiated PureLLMBaseline (no cache attribute found)")
         except Exception as exc:
@@ -743,8 +711,8 @@ class PureLLMBaselineMethod(BaseMethod):
     def _runner_eval_formula(
         python_code: str,
         X: np.ndarray,
-        var_names: list[str],
-    ) -> np.ndarray | None:
+        var_names: List[str],
+    ) -> Optional[np.ndarray]:
         """
         Try to evaluate *python_code* as a numpy expression that maps X
         columns to a 1-D prediction array.
@@ -762,7 +730,7 @@ class PureLLMBaselineMethod(BaseMethod):
         except ImportError:
             _spsp = None
 
-        safe_globals: dict[str, Any] = {
+        safe_globals: Dict[str, Any] = {
             "__builtins__": {},
             "np": np,
             "numpy": np,
@@ -801,7 +769,7 @@ class PureLLMBaselineMethod(BaseMethod):
             safe_globals["special"] = _spsp
 
         # Inject each variable as the corresponding X column (broadcast-safe)
-        local_ns: dict[str, Any] = {}
+        local_ns: Dict[str, Any] = {}
         for i, vn in enumerate(var_names):
             local_ns[vn] = X[:, i] if X.ndim == 2 else X
 
@@ -835,7 +803,7 @@ class PureLLMBaselineMethod(BaseMethod):
         # Strategy 3: def form — find the first def and call it
         if y_pred is None and "def " in code:
             try:
-                exec_ns: dict[str, Any] = dict(safe_globals)
+                exec_ns: Dict[str, Any] = dict(safe_globals)
                 exec(code, exec_ns)  # noqa: S102
                 fn = next(
                     (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
@@ -951,9 +919,7 @@ class ImprovedNNMethod(BaseMethod):
         if not NN_AVAILABLE:
             return
         try:
-            from hypatiax.core.training.baseline_neural_network_defi_improved import (
-                ImprovedNN,
-            )
+            from hypatiax.core.training.baseline_neural_network_defi_improved import ImprovedNN
             self._ImprovedNN = ImprovedNN
             self._log(f"initialised ✅  (nn_seeds={self._nn_seeds})")
         except Exception as exc:
@@ -1265,18 +1231,6 @@ class ImprovedNNMethod(BaseMethod):
                 rmse=rmse_final,
                 formula=f"ImprovedNN({X.shape[1]}→{'→'.join(str(h) for h in hidden)}→1,{space_tag})",
             )
-
-            # ── MEM-FIX: explicitly delete torch objects so GC can reclaim
-            # them immediately instead of waiting until the next equation.
-            # Without this, 30 equations × model + tensors accumulate in RAM.
-            try:
-                del model, optimizer, scheduler, X_t, y_t
-                if _lin_model is not None:
-                    del _lin_model, _lin_scaler_X, _lin_scaler_y
-                gc.collect()
-            except Exception:
-                pass
-
             return single_result
 
         except Exception as exc:
@@ -1437,7 +1391,7 @@ class HybridDeFiMethod(BaseMethod):
             # first one that contains a numeric r2.
             decision = result.get("decision", "unknown")
 
-            def _extract_eval(d: dict) -> dict | None:
+            def _extract_eval(d: dict) -> Optional[dict]:
                 """Return the sub-dict that contains a numeric r2, or None."""
                 if not isinstance(d, dict):
                     return None
@@ -1580,7 +1534,7 @@ class HybridAllDomainsMethod(BaseMethod):
         super().__init__("HybridSystemLLMNN all-domains (core)", verbose)
         self._system = None
         self._no_cache = no_cache
-        self._init_error: str | None = None
+        self._init_error: Optional[str] = None
         # Do NOT gate on HYBRID_ALL_AVAILABLE — the probe found `datetime` as
         # the first public class because the real model class is defined inside
         # a function / conditional block and does not appear at module top-level.
@@ -1664,7 +1618,7 @@ class HybridAllDomainsMethod(BaseMethod):
         X: np.ndarray,
         y: np.ndarray,
         y_pred_llm: np.ndarray,
-    ) -> np.ndarray | None:
+    ) -> Optional[np.ndarray]:
         """Train a shallow MLP on the LLM formula's residuals and return
         corrected predictions: y_hybrid = y_pred_llm + NN(X).
 
@@ -1738,10 +1692,7 @@ class HybridAllDomainsMethod(BaseMethod):
                     net.load_state_dict(best_w)
                 with torch.no_grad():
                     pred_s = net(X_t).numpy().flatten()
-                # FIX: cast to float64 before denormalising. torch outputs float32;
-                # multiplying by a large t_std overflows float32 (~3.4e38) on
-                # equations with y ~ 10^2+ scale, producing inf/NaN and RuntimeWarning.
-                return pred_s.astype(np.float64) * t_std + t_mean
+                return pred_s * t_std + t_mean
 
             best_result = None
             best_r2     = float("-inf")
@@ -2073,7 +2024,6 @@ method   = payload["method"]   # "symbolic_engine" | "hybrid_v50_2"
 kwargs   = payload["kwargs"]
 import numpy as np
 
-
 X        = np.array(kwargs["X"])
 y        = np.array(kwargs["y"])
 var_names = kwargs["var_names"]
@@ -2094,15 +2044,19 @@ try:
         _pysr_to  = kwargs.get("pysr_timeout", 150)
         _pop_size = kwargs.get("population_size", 33)
         _parsimony = kwargs.get("parsimony", 0.0032)
+        _populations = kwargs.get("populations", None)
         _use_tc  = kwargs.get("use_transcendental_compositions", False)
         _domain  = kwargs.get("domain", metadata.get("domain", "general"))
-        _disc_cfg = DiscoveryConfig(
+        _disc_cfg_kwargs = dict(
             niterations=_n_iter,
             pysr_timeout=_pysr_to,
             population_size=_pop_size,
             parsimony=_parsimony,
             use_transcendental_compositions=_use_tc,
         )
+        if _populations is not None:
+            _disc_cfg_kwargs["populations"] = _populations
+        _disc_cfg = DiscoveryConfig(**_disc_cfg_kwargs)
         # ALWAYS use llm_mode="none" in this benchmark subprocess.
         # "hybrid" mode returns the LLM answer directly when R²>0.95,
         # skipping PySR entirely and producing results identical to PureLLMBaseline.
@@ -2130,14 +2084,18 @@ try:
         _n_retry   = kwargs.get("max_retries", 3)
         _pop_size  = kwargs.get("population_size", 33)
         _parsimony = kwargs.get("parsimony", 0.0032)
+        _populations = kwargs.get("populations", None)
         _use_tc    = kwargs.get("use_transcendental_compositions", False)
-        _disc_cfg  = DiscoveryConfig(
+        _disc_cfg_kwargs = dict(
             niterations=_n_iter,
             pysr_timeout=_pysr_to,
             population_size=_pop_size,
             parsimony=_parsimony,
             use_transcendental_compositions=_use_tc,
         )
+        if _populations is not None:
+            _disc_cfg_kwargs["populations"] = _populations
+        _disc_cfg  = DiscoveryConfig(**_disc_cfg_kwargs)
         system = HybridDiscoverySystem(
             discovery_config=_disc_cfg,
             max_retries=_n_retry,
@@ -2172,12 +2130,12 @@ def _run_pysr_in_subprocess(
     method: str,
     X: "np.ndarray",
     y: "np.ndarray",
-    var_names: list[str],
+    var_names: List[str],
     description: str,
-    metadata: dict,
-    extra_kwargs: dict | None = None,
-    timeout: int | None = None,
-) -> dict:
+    metadata: Dict,
+    extra_kwargs: Optional[Dict] = None,
+    timeout: Optional[int] = None,
+) -> Dict:
     """
     Run a PySR-backed method in an isolated subprocess.
 
@@ -2191,9 +2149,7 @@ def _run_pysr_in_subprocess(
     -------
     Result dict (always contains at least {"success": bool}).
     """
-    import base64
-    import pickle
-    import subprocess
+    import pickle, base64, subprocess
 
     if timeout is None:
         timeout = _PYSR_TIMEOUT
@@ -2230,33 +2186,8 @@ def _run_pysr_in_subprocess(
         try:
             stdout_bytes, stderr_bytes = proc.communicate(input=encoded, timeout=timeout)
         except subprocess.TimeoutExpired:
-            # ── FIX: drain communicate() with a hard timeout ─────────────
-            # ROOT CAUSE of test-2 28064s runaway:
-            # proc.kill() sends SIGKILL to the Python subprocess, but
-            # juliacall embeds Julia as a C extension whose native threads
-            # survive the Python interpreter death and keep the stdout/stderr
-            # pipes open.  The bare proc.communicate() drain then blocks
-            # indefinitely until Julia's BFGS refinement finishes naturally.
-            # Fix: use os.killpg to kill the entire process GROUP (Python +
-            # any Julia worker processes), then drain with a 30s timeout.
-            # If the drain still hangs after 30s, close the pipes by force.
-            import signal as _signal
-            try:
-                import os as _os
-                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
-            except Exception:
-                proc.kill()  # fallback: single-process kill
-            try:
-                _, stderr_bytes = proc.communicate(timeout=30)
-            except subprocess.TimeoutExpired:
-                # Pipes still open after 30s — close them by force
-                if proc.stdout:
-                    proc.stdout.close()
-                if proc.stderr:
-                    proc.stderr.close()
-                stderr_bytes = b""
-            except Exception:
-                stderr_bytes = b""
+            proc.kill()
+            _, stderr_bytes = proc.communicate()
             stderr_tail = (
                 stderr_bytes.decode(errors="replace")[-300:] if stderr_bytes else ""
             )
@@ -2309,13 +2240,14 @@ _JULIA_RESERVED = frozenset({
 })
 
 
-def _sanitise_var_names(var_names: list[str]):
+def _sanitise_var_names(var_names: List[str]):
     """
     Return (safe_names, rename_map) where rename_map maps safe→original.
     Only renames variables whose names appear in _JULIA_RESERVED.
     """
     safe_names = []
-    rename_map: dict[str, str] = {}   # safe_name → original_name
+    rename_map: Dict[str, str] = {}   # safe_name → original_name
+    counters: Dict[str, int] = {}
 
     for name in var_names:
         if name in _JULIA_RESERVED:
@@ -2334,7 +2266,7 @@ def _sanitise_var_names(var_names: list[str]):
     return safe_names, rename_map
 
 
-def _restore_var_names(formula: str, rename_map: dict[str, str]) -> str:
+def _restore_var_names(formula: str, rename_map: Dict[str, str]) -> str:
     """Replace safe aliases back with original variable names in a formula string."""
     if not rename_map:
         return formula
@@ -2376,7 +2308,7 @@ class SymbolicEngineMethod(BaseMethod):
         if rename_map:
             self._log(f"renaming reserved vars: {rename_map}")
 
-        # ── Same adaptive budget as HybridSystemV40Method ────────────────────
+        # ── Same adaptive budget as HybridSystemV50_2Method ────────────────────
         # Old code sent max_iterations=5 — PySR needs ≥40 to find anything.
         # Now we use the same 4-signal heuristic and per-attempt timeout so
         # this method is directly comparable to v50_2.
@@ -2415,6 +2347,8 @@ class SymbolicEngineMethod(BaseMethod):
             _p = getattr(_active, "_parsimony", None)
             if _p is not None:
                 _se_kwargs["parsimony"] = _p
+            if getattr(_active, "_populations", None) is not None:
+                _se_kwargs["populations"] = _active._populations
             if getattr(_active, "_use_transcendental_compositions", False):
                 _se_kwargs["use_transcendental_compositions"] = True
 
@@ -2454,7 +2388,7 @@ class SymbolicEngineMethod(BaseMethod):
         # was active, what operators were injected, what the Pareto front found).
         _trace = result.get("trace", []) if result else []
         if _trace:
-            print("\n   [SE-TRACE] subprocess diagnostic trace:", flush=True)
+            print(f"\n   [SE-TRACE] subprocess diagnostic trace:", flush=True)
             for _t in _trace:
                 print(f"      {_t}", flush=True)
         self._log(f"run error: {err}")
@@ -2475,12 +2409,10 @@ class HybridSystemV50_2Method(BaseMethod):
     def __init__(self, verbose=False):
         super().__init__("HybridDiscoverySystem v50_2 (tools)", verbose)
         self._system = None
-        if not HYBRID_V40_AVAILABLE:
+        if not HYBRID_V50_2_AVAILABLE:
             return
         try:
-            from hypatiax.tools.symbolic.hybrid_system_v50_2 import (
-                HybridDiscoverySystem,
-            )
+            from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem
             self._system = HybridDiscoverySystem()
             if not hasattr(self._system, "discover"):
                 self._log("⚠️  missing 'discover' method — disabled")
@@ -2491,7 +2423,7 @@ class HybridSystemV50_2Method(BaseMethod):
             self._log(f"init failed: {exc}")
 
     def run(self, description, X, y, var_names, metadata, verbose=False) -> MethodResult:
-        if not HYBRID_V40_AVAILABLE:
+        if not HYBRID_V50_2_AVAILABLE:
             return self._unavailable("HybridDiscoverySystem v50_2 not available")
 
         # Rename any Julia-reserved variable names before calling PySR.
@@ -2510,9 +2442,9 @@ class HybridSystemV50_2Method(BaseMethod):
         # Always a single subprocess run — Julia startup (~90s) paid once.
         import math as _math
 
-        _MAX_RETRIES_V40_OUTER = 3   # kept in sync with _MAX_RETRIES_V40 below
+        _MAX_RETRIES_V50_2_OUTER = 3   # kept in sync with _MAX_RETRIES_V50_2 below
         _t_avail_outer   = max(60, _METHOD_TIMEOUT_SECS - 150)
-        _per_to_outer    = min(200, max(60, _t_avail_outer // _MAX_RETRIES_V40_OUTER))
+        _per_to_outer    = min(200, max(60, _t_avail_outer // _MAX_RETRIES_V50_2_OUTER))
         # Iterations: scale to per-attempt timeout, assuming ~1s/iteration
         _ITER_MAX  = max(40, min(200, _per_to_outer - 30))
         _ITER_MIN  = 40
@@ -2552,9 +2484,9 @@ class HybridSystemV50_2Method(BaseMethod):
         #      = (_METHOD_TIMEOUT_SECS - 150s overhead) / 3 retries
         #   B) User constraint: respect --pysr-timeout CLI flag
         # We take the minimum so neither is violated.
-        _MAX_RETRIES_V40 = 3
+        _MAX_RETRIES_V50_2 = 3
         _t_available     = max(60, _METHOD_TIMEOUT_SECS - 150)
-        _budget_per_attempt = max(60, _t_available // _MAX_RETRIES_V40)
+        _budget_per_attempt = max(60, _t_available // _MAX_RETRIES_V50_2)
         # _PYSR_TIMEOUT is the user's --pysr-timeout flag (default 600).
         # Use it as a ceiling — never exceed what the user asked for.
         _per_attempt_to  = min(_budget_per_attempt, _PYSR_TIMEOUT)
@@ -2562,13 +2494,15 @@ class HybridSystemV50_2Method(BaseMethod):
         _tc_kwargs = {
             "max_iterations": _n_iter_adaptive,
             "pysr_timeout":   _per_attempt_to,     # FIX: was _PYSR_TIMEOUT (600s) — now per-attempt
-            "max_retries":    _MAX_RETRIES_V40,     # FIX: was not forwarded at all
+            "max_retries":    _MAX_RETRIES_V50_2,     # FIX: was not forwarded at all
         }
         _active = globals().get("_ACTIVE_SUITE")
         if _active is not None:
             _p = getattr(_active, "_parsimony", None)
             if _p is not None:
                 _tc_kwargs["parsimony"] = _p
+            if getattr(_active, "_populations", None) is not None:
+                _tc_kwargs["populations"] = _active._populations
             if getattr(_active, "_use_transcendental_compositions", False):
                 _tc_kwargs["use_transcendental_compositions"] = True
 
@@ -2578,7 +2512,7 @@ class HybridSystemV50_2Method(BaseMethod):
             _meta["domain"] = "general"
 
         print(
-            f"[ADAPTIVE-V40] {_n_iter_adaptive} iters"
+            f"[ADAPTIVE-V50_2] {_n_iter_adaptive} iters"
             f" (spread={_spread:.1f}dec, vars={_n_vars}, depth={_op_depth}, diff={_diff}, score={_score:.2f})"
             f" — eq='{_eq_name_lower or _domain_lower}'",
             flush=True,
@@ -2640,19 +2574,19 @@ class ProtocolBenchmarkSuite:
 
     def __init__(
         self,
-        method_indices: list[int] | None = None,
+        method_indices: Optional[List[int]] = None,
         verbose: bool = False,
         no_llm_cache: bool = False,
         nn_seeds: int = 1,
     ):
         self.verbose = verbose
-        self.results: list[dict] = []
+        self.results: List[Dict] = []
         self._no_llm_cache = no_llm_cache   # used by _print_comparison for warning text
 
         # Instantiate only the requested method indices (default: all).
         active_indices = set(method_indices) if method_indices else {i for i, *_ in self.METHOD_REGISTRY}
 
-        self.methods: list[BaseMethod] = []
+        self.methods: List[BaseMethod] = []
         for idx, cls, src in self.METHOD_REGISTRY:
             if idx not in active_indices:
                 continue
@@ -2678,7 +2612,7 @@ class ProtocolBenchmarkSuite:
         # Build a set of already-instantiated method names for O(1) lookup —
         # avoids calling cls(verbose=False) in the loop which re-initialises
         # HybridDiscoverySystem (2 s each) and prints 7 duplicate log blocks.
-        {m.name for m in self.methods}
+        active_names = {m.name for m in self.methods}
 
         print(f"\n{'='*80}")
         print("PROTOCOL BENCHMARK — CORE SCRIPT METHODS".center(80))
@@ -2690,11 +2624,12 @@ class ProtocolBenchmarkSuite:
             # Use a temporary instance only to read .name — but only if we
             # didn't already instantiate it above.  Since cls.__init__ may be
             # expensive, derive the name from the already-created instance.
-            next(
+            method_name = next(
                 (m.name for m in self.methods
                  if type(m).__name__ == cls.__name__),
                 cls.__name__   # fallback: use class name
             )
+            flag = "✅" if method_name in active_names else "❌"
             print(f"  [{idx}] {cls.__name__:<38} ← {src}")
         print(f"{'='*80}\n")
 
@@ -2705,11 +2640,11 @@ class ProtocolBenchmarkSuite:
         description: str,
         X: np.ndarray,
         y: np.ndarray,
-        var_names: list[str],
-        metadata: dict,
+        var_names: List[str],
+        metadata: Dict,
         domain: str,
         verbose: bool = True,
-    ) -> dict:
+    ) -> Dict:
         """Run all active methods on one protocol test case."""
 
         if verbose:
@@ -2718,7 +2653,7 @@ class ProtocolBenchmarkSuite:
             print(f"  Domain: {domain}  |  Samples: {X.shape[0]}  |  Vars: {X.shape[1]}")
             print(f"{'='*80}")
 
-        results: dict[str, MethodResult] = {}
+        results: Dict[str, MethodResult] = {}
 
         # ── overflow guard ─────────────────────────────────────────────────
         # Detect astronomically large y (e.g. Planck f³/(exp(hf/kT)-1) with
@@ -2846,124 +2781,6 @@ class ProtocolBenchmarkSuite:
         if verbose:
             self._print_comparison(results, comparison, y)
 
-        # ── STEP 3: OOD extrapolation evaluation ─────────────────────────────
-        # When --extrap is active, generate an OOD test set for each variable
-        # range and evaluate every method's formula on it.  The extrap_r2 field
-        # is what the CI consolidate job reads for Tab 9 OOD columns.
-        #
-        # Strategy: sort samples by primary variable (col 0); use bottom
-        # extrap_train_frac as training range; test range starts at x_max and
-        # extends to x_max * extrap_multiplier (linear interpolation).
-        # Methods that produce symbolic formulas (r2 > 0) are re-evaluated;
-        # NN-only methods get extrap_r2 = NaN (symbol needed for OOD claim).
-        extrap_results: dict[str, dict] = {}
-        if getattr(self, "_extrap_mode", False):
-            _train_frac  = getattr(self, "_extrap_train_frac", 0.8)
-            _multiplier  = getattr(self, "_extrap_multiplier", 2.0)
-
-            # ── Build OOD test set ────────────────────────────────────────
-            # Sort by first variable to get a clean range split.
-            _sort_idx     = np.argsort(X[:, 0])
-            _X_sorted     = X[_sort_idx]
-            _y_sorted     = y[_sort_idx]
-            _n_train      = max(10, int(len(_X_sorted) * _train_frac))
-            _X_tr         = _X_sorted[:_n_train]
-
-            # OOD x range: interpolate from x_max → x_max * multiplier
-            _x_max_col0   = float(_X_tr[:, 0].max())
-            _x_ood_max    = _x_max_col0 * _multiplier
-            _n_ood        = max(50, len(_X_sorted) - _n_train)
-            _np_rng       = np.random.default_rng(seed=42 + 9999)
-
-            # For multi-variable X: keep other columns in-distribution (random
-            # resample from training set); only col 0 is shifted to OOD range.
-            _X_ood = _X_tr[_np_rng.integers(0, _n_train, size=_n_ood)].copy()
-            _X_ood[:, 0] = _np_rng.uniform(_x_max_col0, _x_ood_max, size=_n_ood)
-
-            # Ground truth on OOD points requires re-evaluating the protocol.
-            # We compute it by calling _safe_r2 against the in-dist trained
-            # prediction as a proxy: if the method has a valid symbolic formula
-            # it will extrapolate cleanly; NNs will not.
-            # True OOD y is approximated by reusing the in-dist formula applied
-            # to the OOD X — this is mathematically correct for symbolic methods.
-            if verbose:
-                print(f"\n  📐 OOD extrap eval | "
-                      f"x₀ range [{_x_max_col0:.3g} → {_x_ood_max:.3g}]  "
-                      f"({_n_ood} OOD points)")
-
-            for _mname, _mres in results.items():
-                _er: dict = {"extrap_r2": None, "extrap_rmse": None,
-                             "extrap_error_pct": None}
-                try:
-                    # Only evaluate methods that had a valid in-dist result
-                    if not _mres.success or not np.isfinite(_mres.r2):
-                        _er["extrap_r2"]  = float("nan")
-                        _er["extrap_rmse"] = float("nan")
-                        extrap_results[_mname] = _er
-                        continue
-
-                    # Re-run the method on OOD X (timeout inherited from module)
-                    _method_obj = next(
-                        (m for m in self.methods if m.name == _mname), None
-                    )
-                    if _method_obj is None:
-                        extrap_results[_mname] = _er
-                        continue
-
-                    # Use a shorter timeout for the OOD probe (no Julia here,
-                    # just formula evaluation — 60 s is ample).
-                    import concurrent.futures as _cf_ood
-                    _ood_timeout = min(60, _METHOD_TIMEOUT_SECS)
-                    with _cf_ood.ThreadPoolExecutor(max_workers=1) as _ex_ood:
-                        _fut_ood = _ex_ood.submit(
-                            _method_obj.run,
-                            description, _X_ood,
-                            # Approximate OOD y by applying the in-dist formula
-                            # to OOD X — for symbolic methods this is exact.
-                            # We pass zeros and compute extrap_r2 from the
-                            # formula's own prediction vs the analytic prediction.
-                            _mres.r2 * np.ones(_n_ood),   # placeholder y_ood
-                            var_names, metadata,
-                        )
-                        try:
-                            _ood_res = _fut_ood.result(timeout=_ood_timeout)
-                        except Exception:
-                            _ood_res = None
-
-                    if _ood_res is not None and _ood_res.success:
-                        # extrap_r2: how well in-dist R² is maintained OOD
-                        # For symbolic methods: extrap_r2 ≈ in-dist r2 (good)
-                        # For NNs: extrap_r2 << in-dist r2 (poor)
-                        _train_rmse = _mres.rmse
-                        _ood_rmse   = _ood_res.rmse
-                        _er["extrap_r2"]   = float(_ood_res.r2)
-                        _er["extrap_rmse"] = float(_ood_rmse)
-                        if _train_rmse > 0 and np.isfinite(_ood_rmse):
-                            _er["extrap_error_pct"] = float(
-                                (_ood_rmse / _train_rmse) * 100.0
-                            )
-                        if verbose:
-                            _ood_r2_s = (f"{_ood_res.r2:.4f}"
-                                         if np.isfinite(_ood_res.r2) else "nan")
-                            _ood_err_s = (f"{_er['extrap_error_pct']:.1f}%"
-                                          if _er["extrap_error_pct"] is not None
-                                          else "—")
-                            print(f"    {_mname[:38]:<38} "
-                                  f"extrap_r2={_ood_r2_s}  "
-                                  f"extrap_err={_ood_err_s}")
-                    else:
-                        _er["extrap_r2"]  = float("nan")
-                        _er["extrap_rmse"] = float("nan")
-
-                except Exception as _ex:
-                    _er["extrap_r2"]  = float("nan")
-                    _er["extrap_rmse"] = float("nan")
-                    if verbose:
-                        print(f"    {_mname[:38]:<38} extrap eval error: "
-                              f"{str(_ex)[:50]}")
-
-                extrap_results[_mname] = _er
-
         record = {
             "description": description,
             "domain":      domain,
@@ -2972,20 +2789,13 @@ class ProtocolBenchmarkSuite:
             "winner":      comparison["winner"],
             "timestamp":   datetime.now().isoformat(),
         }
-
-        # ── STEP 3: merge extrap metrics into each method's result dict ──────
-        if extrap_results:
-            for _mname, _er in extrap_results.items():
-                if _mname in record["results"]:
-                    record["results"][_mname].update(_er)
-
         self.results.append(record)
         return record
 
     # ── comparison helpers ──────────────────────────────────────────────────
 
     @staticmethod
-    def _y_scale_stats(y: np.ndarray) -> dict:
+    def _y_scale_stats(y: np.ndarray) -> Dict:
         """Compute scale statistics for y used to power NRMSE and diagnostics."""
         y_fin   = y[np.isfinite(y)] if y is not None and len(y) > 0 else np.array([1.0])
         y_std   = float(np.std(y_fin))  if len(y_fin) > 1 else 1.0
@@ -2995,7 +2805,7 @@ class ProtocolBenchmarkSuite:
         denom   = y_std if y_std > 0 else (y_range if y_range > 0 else 1.0)
         return {"std": y_std, "mean": y_mean, "range": y_range, "max": y_max, "denom": denom}
 
-    def _compare(self, results: dict[str, MethodResult], y: np.ndarray = None) -> dict:
+    def _compare(self, results: Dict[str, MethodResult], y: np.ndarray = None) -> Dict:
         valid = {
             name: res.r2
             for name, res in results.items()
@@ -3055,7 +2865,7 @@ class ProtocolBenchmarkSuite:
         }
         _SYMBOLIC_NAMES = {"SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem v50_2 (tools)"}
 
-        formula_hashes: dict[str, list[str]] = {}
+        formula_hashes: Dict[str, List[str]] = {}
         for name, res in results.items():
             if res.success and res.formula and res.formula not in ("N/A", ""):
                 if name in _independent_methods:
@@ -3087,7 +2897,7 @@ class ProtocolBenchmarkSuite:
             "y_scale":    y_scale,
         }
 
-    def _print_comparison(self, results: dict[str, MethodResult], comparison: dict,
+    def _print_comparison(self, results: Dict[str, MethodResult], comparison: Dict,
                           y: np.ndarray = None):
         # ── Scale diagnostic ─────────────────────────────────────────────────
         sc = comparison.get("y_scale") or (self._y_scale_stats(y) if y is not None else {})
@@ -3096,21 +2906,21 @@ class ProtocolBenchmarkSuite:
             _scale_dec = int(np.log10(max(sc["max"], 1.0))) if sc["max"] >= 1.0 else 0
             print(f"\n  📐 Target scale:  std={sc['std']:.3g}  mean|y|={sc['mean']:.3g}"
                   f"  range={sc['range']:.3g}  (~10^{_scale_dec})", flush=True)
-            print("     NRMSE = RMSE / std(y).  <0.10 → excellent  |  >0.30 → poor fit", flush=True)
+            print(f"     NRMSE = RMSE / std(y).  <0.10 → excellent  |  >0.30 → poor fit", flush=True)
 
         # ── Cache / duplicate-result warning ─────────────────────────────────
         dupes = comparison.get("duplicates", {})
         if dupes:
-            print("\n  ⚠️  DUPLICATE RESULT DETECTED:", flush=True)
+            print(f"\n  ⚠️  DUPLICATE RESULT DETECTED:", flush=True)
             for formula_hash, methods in dupes.items():
                 print(f"     formula_hash={formula_hash[:16]}… shared by: {', '.join(methods)}", flush=True)
             if self._no_llm_cache:
-                print("     --no-llm-cache is active: this is API-level determinism", flush=True)
-                print("     (same prompt → same completion at temperature=0).", flush=True)
-                print("     These methods are not independent for this equation.", flush=True)
+                print(f"     --no-llm-cache is active: this is API-level determinism", flush=True)
+                print(f"     (same prompt → same completion at temperature=0).", flush=True)
+                print(f"     These methods are not independent for this equation.", flush=True)
             else:
-                print("     These LLM-backed methods returned the same formula.", flush=True)
-                print("     If this is unexpected, run with --no-llm-cache to force fresh generation.", flush=True)
+                print(f"     These LLM-backed methods returned the same formula.", flush=True)
+                print(f"     If this is unexpected, run with --no-llm-cache to force fresh generation.", flush=True)
 
         # ── Main table ───────────────────────────────────────────────────────
         _COL_R2 = 9   # header field width for "R²" column (data uses 8)
@@ -3153,14 +2963,14 @@ class ProtocolBenchmarkSuite:
             return
 
         total = len(self.results)
-        wins: dict[str, int]           = {}
-        all_r2: dict[str, list[float]] = {}
-        bad_r2: dict[str, int]         = {}   # count of non-finite R² per method
-        fail_r2: dict[str, int]        = {}   # count of R² ≤ 0 (practical failure)
-        success_n: dict[str, int]      = {}
+        wins: Dict[str, int]           = {}
+        all_r2: Dict[str, List[float]] = {}
+        bad_r2: Dict[str, int]         = {}   # count of non-finite R² per method
+        fail_r2: Dict[str, int]        = {}   # count of R² ≤ 0 (practical failure)
+        success_n: Dict[str, int]      = {}
 
-        all_nrmse: dict[str, list[float]] = {}   # NRMSE values per method across tests
-        dupe_count: dict[str, int] = {}            # # tests where method hit cache
+        all_nrmse: Dict[str, List[float]] = {}   # NRMSE values per method across tests
+        dupe_count: Dict[str, int] = {}            # # tests where method hit cache
 
         for rec in self.results:
             w = rec["winner"]
@@ -3199,7 +3009,7 @@ class ProtocolBenchmarkSuite:
         # ── Primary metric: R² + NRMSE statistics ────────────────────────────
         # Sorted by median R² — more robust than mean when outliers are present.
         print(f"\n📊 R² / NRMSE summary  (all finite results, n={total}):")
-        print("   NRMSE = RMSE / std(y) per test.  <0.10 = excellent  |  >0.30 = poor")
+        print(f"   NRMSE = RMSE / std(y) per test.  <0.10 = excellent  |  >0.30 = poor")
         print(f"   {'Method':<42} {'Med R²':>8}  {'Med NRMSE':>9}  {'Std R²':>7}  "
               f"{'Failures':>8}  {'Cache⚠':>6}  {'Success'}")
         print("   " + "-" * 92)
@@ -3242,10 +3052,10 @@ class ProtocolBenchmarkSuite:
         total_dupes = sum(dupe_count.values())
         if total_dupes > 0:
             print(f"\n  ⚠️  CACHE HIT SUMMARY: {total_dupes} duplicate-result events.")
-            print("     Run with --no-llm-cache to force fresh generation for LLM methods.")
+            print(f"     Run with --no-llm-cache to force fresh generation for LLM methods.")
         # ── Secondary metric: win count ───────────────────────────────────────
         # Note: wins are broken by speed for ties, so this is a fair count.
-        print("\n🏆 Wins  (tiebreaker: faster method wins):")
+        print(f"\n🏆 Wins  (tiebreaker: faster method wins):")
         if wins:
             for m, c in sorted(wins.items(), key=lambda x: x[1], reverse=True):
                 bar = "█" * int(c / total * 40)
@@ -3265,17 +3075,16 @@ class ProtocolBenchmarkSuite:
         )
         if n_truncated > 0:
             print()
-            print("  ⚠️  PURE LLM INTEGRITY WARNING")
+            print(f"  ⚠️  PURE LLM INTEGRITY WARNING")
             print(f"  {n_truncated}/{total} PureLLM formulas were syntactically incomplete")
-            print("  (truncated — no valid return statement).")
-            print("  Those results are recorded as success=False in the JSON.")
-            print("  Pure LLM recovery rate excludes these cases.")
+            print(f"  (truncated — no valid return statement).")
+            print(f"  Those results are recorded as success=False in the JSON.")
+            print(f"  Pure LLM recovery rate excludes these cases.")
             print()
 
         self._save(
             noiseless=getattr(self, "_noiseless", False),
             threshold=getattr(self, "_threshold", 0.995),
-            extrap=getattr(self, "_extrap_mode", False),
         )
 
         # FIX 7 — export flat benchmark_results.json for easy downstream analysis.
@@ -3297,7 +3106,7 @@ class ProtocolBenchmarkSuite:
                         "runtime": _mres.get("time"),
                         "success": _mres.get("success", False),
                     })
-            _json_path = _PKG_ROOT / "data/results/comparison_results/benchmark_results.json"
+            _json_path = _OUTPUT_DIR / "benchmark_results.json"
             _json_path.parent.mkdir(parents=True, exist_ok=True)
             with open(_json_path, "w") as _jf:
                 json.dump(_flat_records, _jf, indent=2, default=str)
@@ -3305,14 +3114,8 @@ class ProtocolBenchmarkSuite:
         except Exception as _je:
             print(f"\n⚠️  Could not export benchmark_results.json: {_je}")
 
-    def _save(self, noiseless: bool = False, threshold: float = 0.995,
-              extrap: bool = False):
-        # ── STEP 3 extrap mode: route to dedicated saver ─────────────────────
-        if extrap:
-            self._save_extrap()
-            return
-
-        out_dir = _PKG_ROOT / "data/results/comparison_results"
+    def _save(self, noiseless: bool = False, threshold: float = 0.995):
+        out_dir = _OUTPUT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
         mode = "noiseless" if noiseless else "noisy"
@@ -3369,75 +3172,15 @@ class ProtocolBenchmarkSuite:
         if n_trunc > 0:
             print(f"   ⚠️  {n_trunc} truncated PureLLM formulas recorded as INVALID in JSON")
 
-    # ── STEP 3: OOD extrapolation saver ────────────────────────────────────
-    # Writes to  data/results/comparison_results/extrapolation/
-    # Filename:  all_domains_extrap_v4_<TIMESTAMP>.json
-    #
-    # Output schema (CI consolidate job reads extrap_r2 per method):
-    # {
-    #   "timestamp": "...",
-    #   "script": "run_comparative_suite_benchmark_v2 --extrap",
-    #   "protocol": { "mode": "extrap", "extrap_multiplier": 2.0,
-    #                 "train_fraction": 0.8, "noise_level": 0.05 },
-    #   "total_tests": N,
-    #   "methods": [...],
-    #   "tests": [
-    #     {
-    #       "description": "...",
-    #       "domain": "...",
-    #       "results": {
-    #         "<method_name>": {
-    #           "r2":        <float>,   # in-distribution train R²
-    #           "extrap_r2": <float>,   # OOD test R²  ← Tab 9 OOD column
-    #           "rmse":      <float>,
-    #           "extrap_rmse": <float>,
-    #           "extrap_error_pct": <float>,  # (extrap_rmse/train_rmse)*100
-    #           "formula": "...",
-    #           "success": <bool>
-    #         }
-    #       }
-    #     }, ...
-    #   ]
-    # }
-
-    def _save_extrap(self):
-        out_dir = _PKG_ROOT / "data/results/comparison_results/extrapolation"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = out_dir / f"all_domains_extrap_v4_{ts}.json"
-
-        payload = {
-            "timestamp":  datetime.now().isoformat(),
-            "script":     "run_comparative_suite_benchmark_v2 --extrap (STEP 3)",
-            "protocol": {
-                "mode":             "extrap",
-                "extrap_multiplier": getattr(self, "_extrap_multiplier", 2.0),
-                "train_fraction":    getattr(self, "_extrap_train_frac", 0.8),
-                "noise_level":       0.05,
-                "note": (
-                    "OOD extrapolation — train on bottom train_fraction of each "
-                    "variable range, test on [max*1.0 … max*extrap_multiplier]. "
-                    "extrap_r2 is the Tab 9 OOD column metric."
-                ),
-            },
-            "total_tests": len(self.results),
-            "methods":     [m.name for m in self.methods],
-            "tests":       self.results,
-        }
-        with open(path, "w") as f:
-            json.dump(payload, f, indent=2, default=str)
-        print(f"\n💾 Extrap results saved → {path}")
-        print(f"   (Tab 9 OOD columns: extrap_r2 per method per equation)")
-
     # ── checkpoint helpers (for --resume) ──────────────────────────────────
 
     @staticmethod
     def _checkpoint_path() -> Path:
-        out_dir = _PKG_ROOT / "data/results/comparison_results"
+        out_dir = _OUTPUT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
         return out_dir / f"{_CHECKPOINT_NAME}.json"
 
-    def save_checkpoint(self, total_tests: int, completed_keys: list[str],
+    def save_checkpoint(self, total_tests: int, completed_keys: List[str],
                         had_timeouts: bool = False):
         """Atomically write current results + metadata to the checkpoint file.
 
@@ -3462,7 +3205,7 @@ class ProtocolBenchmarkSuite:
         os.replace(tmp, path)   # POSIX atomic
 
     @staticmethod
-    def load_checkpoint() -> dict | None:
+    def load_checkpoint() -> Optional[Dict]:
         """Return checkpoint dict if one exists, else None."""
         path = ProtocolBenchmarkSuite._checkpoint_path()
         if path.exists():
@@ -3486,11 +3229,6 @@ class ProtocolBenchmarkSuite:
 # ============================================================================
 
 def main():
-    """
-    Split protocol: 80/20 random split, random_state=42, extrap_multiplier=2.0.
-    NOTE: This differs from the DeFi benchmark PCA 40/60 split (hypatiax_defi_benchmark_v3c.py).
-    Results are NOT directly comparable. See §10.7 disclosure note in the paper.
-    """
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -3523,18 +3261,6 @@ Examples
         choices=["feynman", "srbench", "both"],
         default="feynman",
         help="Which published SR benchmark to use (default: feynman)",
-    )
-    parser.add_argument(
-        "--protocol",
-        choices=["feynman", "all30"],
-        default="feynman",
-        dest="protocol",
-        help=(
-            "Which experiment protocol to load (default: feynman = "
-            "experiment_protocol_benchmark_v2.py / BenchmarkProtocol). "
-            "Use 'all30' to load experiment_protocol_all_30.py / "
-            "ExperimentProtocolAll — the 30 multi-domain equations used by exp2."
-        ),
     )
     parser.add_argument(
         "--domain", type=str, default="all_domains",
@@ -3593,52 +3319,20 @@ Examples
             "PySR/Julia). Useful when Julia startup overhead dominates test time."
         ),
     )
-    # ── STEP 3: OOD extrapolation mode ───────────────────────────────────────
     parser.add_argument(
-        "--extrap",
-        action="store_true",
-        dest="extrap",
-        help=(
-            "STEP 3 — OOD extrapolation comparative run (Tab 9 OOD columns). "
-            "Splits each equation's variable range: trains on the bottom "
-            "train-frac of the range, tests on [max … max*extrap-multiplier]. "
-            "Saves to comparison_results/extrapolation/all_domains_extrap_v4_*.json. "
-            "Produces extrap_r2 per method per equation in addition to in-dist r2."
-        ),
-    )
-    parser.add_argument(
-        "--extrap-multiplier", type=float, default=2.0, dest="extrap_multiplier",
-        metavar="X",
-        help=(
-            "OOD test range upper bound as a multiple of training max "
-            "(default: 2.0 → test range [x_max … 2*x_max]). "
-            "ExtrapolationTestProtocol 'medium' regime. "
-            "Paper value: 2.0."
-        ),
-    )
-    parser.add_argument(
-        "--extrap-train-frac", type=float, default=0.8, dest="extrap_train_frac",
-        metavar="F",
-        help=(
-            "Fraction of each variable range used for training in extrap mode "
-            "(default: 0.8 → train on [x_min … x_min + 0.8*(x_max-x_min)]). "
-            "Remaining top 20 %% of range is held out; OOD test starts beyond x_max."
-        ),
-    )
-    parser.add_argument(
-        "--pysr-timeout", type=int, default=int(os.environ.get("PYSR_TIMEOUT", 1100)), dest="pysr_timeout",
+        "--pysr-timeout", type=int, default=600, dest="pysr_timeout",
         metavar="SECS",
         help=(
-            "Seconds before a PySR subprocess is killed (default: 1100, from PYSR_TIMEOUT env). "
+            "Seconds before a PySR subprocess is killed (default: 600). "
             "Julia startup alone takes 60-90 s, so values below 300 will "
             "almost always time out before any search is attempted."
         ),
     )
     parser.add_argument(
-        "--method-timeout", type=int, default=int(os.environ.get("METHOD_TIMEOUT", 900)), dest="method_timeout",
+        "--method-timeout", type=int, default=90, dest="method_timeout",
         metavar="SECS",
         help=(
-            "Hard timeout in seconds for each individual method call (default: 900, from METHOD_TIMEOUT env). "
+            "Hard timeout in seconds for each individual method call (default: 90). "
             "Prevents Anthropic API retry storms from hanging the suite indefinitely."
         ),
     )
@@ -3679,6 +3373,15 @@ Examples
             "PySR complexity penalty (default: 0.0032). Lower values (e.g. 0.001) "
             "allow deeper operator trees — needed for transcendental compositions "
             "like arcsin(sin(x)). Only affects v50_2 / SymbolicEngine methods."
+        ),
+    )
+    parser.add_argument(
+        "--populations", type=int, default=None, dest="populations",
+        help=(
+            "PySR populations parameter — number of independent populations "
+            "to evolve in parallel (default: PySR built-in default of 15). "
+            "Higher values improve diversity at the cost of memory/time. "
+            "Only affects v50_2 / SymbolicEngine methods."
         ),
     )
     parser.add_argument(
@@ -3727,6 +3430,18 @@ Examples
             "and retained after completion (use --clear-checkpoint to delete it)."
         ),
     )
+    parser.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory where results JSON files are written (default: "
+            "<pkg_root>/data/results/comparison_results). "
+            "Set by CI to match RESULT_SUBDIR so outputs land in the expected "
+            "upload path (e.g. hypatiax/data/results/comparison_results/feynman-tests/exp2)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -3738,92 +3453,56 @@ Examples
     global _METHOD_TIMEOUT_SECS
     _METHOD_TIMEOUT_SECS = args.method_timeout
 
-    # ── Load protocol ────────────────────────────────────────────────────────
-    # --protocol feynman (default): BenchmarkProtocol from experiment_protocol_benchmark_v2.py
-    # --protocol all30            : ExperimentProtocolAll from experiment_protocol_all_30.py
-    #
-    # Both classes expose the same interface:
-    #   protocol.get_all_domains()            → list[str]
-    #   protocol.load_test_data(domain, ...)  → list[tuple]
-    # so the rest of the script works unchanged regardless of which is loaded.
-    _protocol_choice = getattr(args, "protocol", "feynman")
+    # ── Load BenchmarkProtocol ──────────────────────────────────────────────
+    try:
+        from hypatiax.protocols.experiment_protocol_benchmark_v2 import BenchmarkProtocol
+        _noiseless = getattr(args, "noiseless", False)
+        _threshold = getattr(args, "threshold", None)
+        if _threshold is None:
+            _threshold = 0.9999 if _noiseless else 0.995
 
-    if _protocol_choice == "all30":
-        # exp2 multi-domain 30-equation comparison
-        try:
-            from hypatiax.protocols.experiment_protocol_all_30 import (
-                ExperimentProtocolAll,
-            )
-            protocol = ExperimentProtocolAll()
-            _noiseless = False     # all30 protocol has no noiseless variant
-            _threshold = 0.995
-            print("✅ ExperimentProtocolAll loaded  (protocol=all30, 30 multi-domain equations)")
-            print()
-        except ImportError as _e:
-            print(f"❌  experiment_protocol_all_30.py not found: {_e}")
-            print("    Expected at: hypatiax/protocols/experiment_protocol_all_30.py")
-            sys.exit(1)
-    else:
-        # default: Feynman BenchmarkProtocol
-        try:
-            from hypatiax.protocols.experiment_protocol_benchmark_v2 import (
-                BenchmarkProtocol,
-            )
-            _noiseless = getattr(args, "noiseless", False)
-            _threshold = getattr(args, "threshold", None)
-            if _threshold is None:
-                _threshold = 0.9999 if _noiseless else 0.995
-
-            protocol = BenchmarkProtocol(
-                benchmark=args.benchmark,
-                num_samples=args.samples,
-                seed=42,
-                feynman_series=args.series,
-                noiseless=_noiseless,
-            )
-            print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
-            print()
-            if _noiseless:
-                print("=" * 70)
-                print("  NOISELESS MODE  —  noise_level = 0.0")
-                print(f"  R² threshold    :  {_threshold}")
-                print("  Comparable to   :  NeSymReS (59.4%)  AI Feynman (79.3%)")
-                print("                     TPSR (56.0%)       DSR (32.0%)")
-                print("  Output file     :  protocol_core_noiseless_TIMESTAMP.json")
-                print("=" * 70)
-            else:
-                print("=" * 70)
-                print("  NOISY MODE  —  noise_level = 0.05")
-                print(f"  R² threshold    :  {_threshold}  (practical)")
-                print("  R² ceiling      :  ~0.9982  (noise floor)")
-                print("  NOT comparable to published noiseless figures.")
-                print("  Use --noiseless --threshold 0.9999 for literature comparison.")
-                print("=" * 70)
-            print()
-        except ImportError:
-            print("❌  experiment_protocol_benchmark_v2.py not found.")
-            print("    Expected at: hypatiax/protocols/experiment_protocol_benchmark_v2.py")
-            sys.exit(1)
+        protocol = BenchmarkProtocol(
+            benchmark=args.benchmark,
+            num_samples=args.samples,
+            seed=42,
+            feynman_series=args.series,
+            noiseless=_noiseless,
+        )
+        print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
+        print()
+        if _noiseless:
+            print("=" * 70)
+            print("  NOISELESS MODE  —  noise_level = 0.0")
+            print(f"  R² threshold    :  {_threshold}")
+            print("  Comparable to   :  NeSymReS (59.4%)  AI Feynman (79.3%)")
+            print("                     TPSR (56.0%)       DSR (32.0%)")
+            print("  Output file     :  protocol_core_noiseless_TIMESTAMP.json")
+            print("=" * 70)
+        else:
+            print("=" * 70)
+            print("  NOISY MODE  —  noise_level = 0.05")
+            print(f"  R² threshold    :  {_threshold}  (practical)")
+            print("  R² ceiling      :  ~0.9982  (noise floor)")
+            print("  NOT comparable to published noiseless figures.")
+            print("  Use --noiseless --threshold 0.9999 for literature comparison.")
+            print("=" * 70)
+        print()
+    except ImportError:
+        print("❌  experiment_protocol_benchmark_v2.py not found.")
+        print("    Expected at: hypatiax/protocols/experiment_protocol_benchmark_v2.py")
+        sys.exit(1)
 
     # ── Build suite ─────────────────────────────────────────────────────────
-    # --skip-pysr: exclude methods 5 (SymbolicEngine) and 6 (HybridV40).
+    # --skip-pysr: exclude methods 5 (SymbolicEngine) and 6 (HybridV50_2).
     _method_indices = args.methods
     if getattr(args, "skip_pysr", False):
         _skip = {5, 6}
         _method_indices = [m for m in (_method_indices or [1,2,3,4,5,6]) if m not in _skip]
         print(f"ℹ️  --skip-pysr: running methods {_method_indices}")
-
-    # ONE_EQUATION smoke-test: auto-skip PySR methods 5+6 because Julia startup
-    # alone takes 60-90s — longer than the entire PYSR_TIMEOUT=60s smoke-test
-    # budget. They will always timeout and produce no result.
-    if os.environ.get("ONE_EQUATION") == "1" and not getattr(args, "skip_pysr", False):
-        _method_indices = [m for m in (_method_indices or [1,2,3,4,5,6]) if m not in {5, 6}]
-        print(f"ℹ️  Smoke-test (ONE_EQUATION=1): auto-skipping PySR methods 5+6 "
-              f"(Julia startup > PYSR_TIMEOUT). Running methods {_method_indices}")
-
     _no_llm_cache = getattr(args, "no_llm_cache", False)
     _nn_seeds     = getattr(args, "nn_seeds", 1)
     _parsimony    = getattr(args, "parsimony", None)
+    _populations  = getattr(args, "populations", None)
     _use_tc       = getattr(args, "use_transcendental_compositions", False)
     suite = ProtocolBenchmarkSuite(
         method_indices=_method_indices,
@@ -3834,54 +3513,30 @@ Examples
     suite._noiseless  = _noiseless
     suite._threshold  = _threshold
 
-    # ── STEP 3: propagate extrap flags ──────────────────────────────────────
-    _extrap_mode = getattr(args, "extrap", False)
-    suite._extrap_mode        = _extrap_mode
-    suite._extrap_multiplier  = getattr(args, "extrap_multiplier", 2.0)
-    suite._extrap_train_frac  = getattr(args, "extrap_train_frac", 0.8)
-    if _extrap_mode:
-        print("=" * 70)
-        print("  EXTRAP MODE (STEP 3) — OOD extrapolation comparative")
-        print(f"  Train fraction : {suite._extrap_train_frac:.0%} of each variable range")
-        print(f"  OOD multiplier : {suite._extrap_multiplier:.1f}× training max")
-        print(f"  Metric         : extrap_r2  (Tab 9 OOD columns)")
-        print(f"  Output dir     : comparison_results/extrapolation/")
-        print(f"  Filename       : all_domains_extrap_v4_<TS>.json")
-        print("=" * 70)
-        print()
-
     # Propagate symbolic-engine tuning to suite so run_test() can pass
     # them to DiscoveryConfig when constructing v50_2 / SymbolicEngine.
     if _parsimony is not None:
         suite._parsimony = _parsimony
         print(f"ℹ️  --parsimony {_parsimony} (PySR default 0.0032 overridden)")
+    if _populations is not None:
+        suite._populations = _populations
+        print(f"ℹ️  --populations {_populations} (PySR default 15 overridden)")
     if _use_tc:
         suite._use_transcendental_compositions = True
         print("ℹ️  --use-transcendental-compositions: asin_of_sin / acos_of_cos / atan_of_tan enabled")
 
     # ── Collect test cases (same logic as run_comparative_suite_benchmark) ──
-    # MEM-FIX: store only lightweight metadata tuples (no X/y arrays) in
-    # all_tests so 30 datasets are NOT all in RAM simultaneously.
-    # Each tuple is (desc, var_names, meta, domain).
-    # X and y are loaded lazily inside the main loop via _load_eq_data().
-    all_tests: list[tuple] = []   # (desc, var_names, meta, domain) — no X/y
+    all_tests: List[tuple] = []
     _equation_indices = getattr(args, "equations", None)  # 1-based list or None
-
-    def _iter_protocol(domain_filter=None):
-        """Yield (desc, X, y, var_names, meta, domain) from the protocol."""
-        domains = [domain_filter] if domain_filter else protocol.get_all_domains()
-        for dom in domains:
-            for case in protocol.load_test_data(dom, num_samples=args.samples):
-                desc, X, y, var_names, meta = case
-                yield desc, X, y, var_names, meta, dom
 
     if args.test:
         print(f"\n🔍 Searching for: '{args.test}'")
-        for desc, X, y, var_names, meta, domain in _iter_protocol():
-            if args.test.lower() in meta["equation_name"].lower():
-                all_tests.append((desc, var_names, meta, domain))
-                # Keep X/y only for this single test — stored temporarily
-                _single_test_data = {meta["equation_name"]: (X, y)}
+        for domain in protocol.get_all_domains():
+            for desc, X, y, var_names, meta in protocol.load_test_data(domain, num_samples=args.samples):
+                if args.test.lower() in meta["equation_name"].lower():
+                    all_tests.append((desc, X, y, var_names, meta, domain))
+                    break
+            if all_tests:
                 break
         if not all_tests:
             print(f"❌  '{args.test}' not found. Available equations:")
@@ -3889,12 +3544,13 @@ Examples
                 for _, _, _, _, meta in protocol.load_test_data(domain, num_samples=10):
                     print(f"   • {meta['equation_name']}")
             sys.exit(1)
+
     else:
-        _single_test_data = {}
+        # Load all domains or a specific one
         if args.domain == "all_domains":
-            for desc, X, y, var_names, meta, domain in _iter_protocol():
-                all_tests.append((desc, var_names, meta, domain))
-                del X, y   # don't hold all 30 datasets in RAM
+            for domain in protocol.get_all_domains():
+                for case in protocol.load_test_data(domain, num_samples=args.samples):
+                    all_tests.append((*case, domain))
         else:
             available = protocol.get_all_domains()
             resolved  = args.domain
@@ -3907,9 +3563,8 @@ Examples
                 else:
                     print(f"❌  Unknown domain '{args.domain}'.  Available: {', '.join(available)}")
                     sys.exit(1)
-            for desc, X, y, var_names, meta, _ in _iter_protocol(resolved):
-                all_tests.append((desc, var_names, meta, resolved))
-                del X, y
+            for case in protocol.load_test_data(resolved, num_samples=args.samples):
+                all_tests.append((*case, resolved))
 
     # ── --equations: filter to specific 1-based indices ─────────────────────
     if _equation_indices:
@@ -3926,16 +3581,6 @@ Examples
             print(f"   [{_equation_indices[i] if i < len(_equation_indices) else '?'}] {_desc}")
         all_tests = filtered
 
-    # ── ONE_EQUATION / N_FEYNMAN_TASKS smoke-test: limit to first N equations ──
-    # run_all_checkpoint.py --one-equation sets N_FEYNMAN_TASKS=1 in env.
-    # Paper-quality runs leave it unset → all equations run.
-    _n_feynman = os.environ.get("N_FEYNMAN_TASKS")
-    if _n_feynman and not _equation_indices and not args.test:
-        _n_feynman = int(_n_feynman)
-        all_tests = all_tests[:_n_feynman]
-        print(f"\n🔥 Smoke-test mode (N_FEYNMAN_TASKS={_n_feynman}): running {len(all_tests)} equation(s)")
-        print(f"   Equation: {all_tests[0][0] if all_tests else 'none'}")
-
     if not all_tests:
         print("❌  No test cases found.")
         sys.exit(1)
@@ -3945,12 +3590,17 @@ Examples
     if getattr(args, "checkpoint_name", None):
         _CHECKPOINT_NAME = args.checkpoint_name
 
+    global _OUTPUT_DIR
+    if getattr(args, "output_dir", None):
+        _OUTPUT_DIR = Path(args.output_dir).resolve()
+        _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
     # ── --clear-checkpoint ───────────────────────────────────────────────────
     if getattr(args, "clear_checkpoint", False):
         ProtocolBenchmarkSuite.clear_checkpoint()
 
     # ── --resume: skip already-done tests ───────────────────────────────────
-    completed_keys: list[str] = []
+    completed_keys: List[str] = []
     if getattr(args, "resume", False):
         ckpt = ProtocolBenchmarkSuite.load_checkpoint()
         if ckpt:
@@ -3981,7 +3631,7 @@ Examples
 
     # ── Progress tracking ────────────────────────────────────────────────────
     _suite_start = time.time()
-    _test_times: list[float] = []
+    _test_times: List[float] = []
 
     def _fmt_duration(seconds: float) -> str:
         seconds = int(seconds)
@@ -4006,10 +3656,7 @@ Examples
 
     # ── Main loop ───────────────────────────────────────────────────────────
     global_done = len(completed_keys)   # tests already done before this run
-    # MEM-FIX: all_tests now stores (desc, var_names, meta, domain) — no X/y.
-    # X and y are reloaded from the protocol lazily, one equation at a time,
-    # so only one dataset is ever in RAM at once (vs 30 previously).
-    for i, (description, var_names, metadata, domain) in enumerate(all_tests, 1):
+    for i, (description, X, y, var_names, metadata, domain) in enumerate(all_tests, 1):
         eq_key = _eq_key(metadata, domain)
 
         # Skip if already completed (resume mode)
@@ -4022,7 +3669,7 @@ Examples
         # Progress header
         elapsed     = _test_start - _suite_start
         done_before = global_done
-        total_tests - i  # tests still to run after this one
+        remaining   = total_tests - i  # tests still to run after this one
 
         if _test_times:
             avg_t   = sum(_test_times) / len(_test_times)
@@ -4039,28 +3686,6 @@ Examples
                f"{total_tests - done_before} left")
         pprint(f"{'='*80}")
 
-        # MEM-FIX: lazy-load X/y for this equation only now.
-        # For --test single-equation runs, X/y were captured into _single_test_data.
-        # For all other runs, reload from the protocol on demand.
-        _eq_name = metadata.get("equation_name", description)
-        if _eq_name in _single_test_data:
-            X, y = _single_test_data[_eq_name]
-        else:
-            _loaded = list(protocol.load_test_data(domain, num_samples=args.samples))
-            _match  = next(
-                (case for case in _loaded
-                 if case[4].get("equation_name", case[0]) == _eq_name  # type: ignore[union-attr]
-                 or case[0] == description),
-                None,
-            )
-            if _match is None:
-                pprint(f"  ⚠️  Could not reload X/y for '{_eq_name}' — skipping")
-                global_done += 1
-                completed_keys.append(eq_key)
-                continue
-            _, X, y, _, _ = _match
-            del _loaded, _match  # free the rest immediately
-
         suite.run_test(
             description=description,
             X=X, y=y,
@@ -4069,10 +3694,6 @@ Examples
             domain=domain,
             verbose=not args.quiet,
         )
-
-        # MEM-FIX: release this equation's data arrays immediately after run.
-        del X, y
-        gc.collect()
 
         # Record timing
         _test_elapsed = time.time() - _test_start
@@ -4112,7 +3733,7 @@ Examples
         suite.print_summary()
     except Exception as _summary_exc:
         print(f"\n⚠️  print_summary raised: {_summary_exc}")
-        print("   Checkpoint cleanup will still proceed.")
+        print(f"   Checkpoint cleanup will still proceed.")
 
     # ── Checkpoint lifecycle ─────────────────────────────────────────────────
     # Default behaviour: checkpoint is ALWAYS retained after a run completes.
@@ -4123,15 +3744,15 @@ Examples
         pass   # checkpointing was disabled — no file was written, nothing to clean up
     elif getattr(args, "clear_checkpoint", False):
         ProtocolBenchmarkSuite.clear_checkpoint()
-        print("\n🗑️  Checkpoint deleted (--clear-checkpoint requested).")
+        print(f"\n🗑️  Checkpoint deleted (--clear-checkpoint requested).")
     elif _run_had_timeouts:
-        print("\n⚠️  Checkpoint retained (had_timeouts=True — internet drop or Julia hang?).")
-        print("   Use --resume on next run to continue from where it stopped.")
+        print(f"\n⚠️  Checkpoint retained (had_timeouts=True — internet drop or Julia hang?).")
+        print(f"   Use --resume on next run to continue from where it stopped.")
     elif _all_accounted_for:
         print(f"\n📋  Checkpoint retained — all {total_tests} tests complete. Pass --clear-checkpoint to remove.")
     else:
         print(f"\n⚠️  Checkpoint retained — {len(completed_keys)}/{total_tests} tests done.")
-        print("   Use --resume on next run to continue.")
+        print(f"   Use --resume on next run to continue.")
 
     print("\n✅  Done.\n")
 

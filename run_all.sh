@@ -241,9 +241,9 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
     2>&1 | tee -a '${RESULTS_DIR}'/exp1b_run.log
   # ── Move exp1b outputs → RESULTS_DIR ─────────────────────────────────────
   find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'defi_v3_*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/' \;
+    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/15/' \;
   find '${EXPERIMENTS_DIR}' -maxdepth 1 -name '*portfolio*variance*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/' \;
+    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/15/' \;
 "
 
 # ── STEP 3: extrap ────────────────────────────────────────────────────────────
@@ -283,6 +283,7 @@ run extrap "OOD extrapolation comparative run (Tab 9 OOD columns)" bash -c "
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
     --method-timeout ${FEYNMAN_TIMEOUT} \
+    --output-dir '${RESULTS_DIR}/comparison_results/extrapolation' \
     --no-llm-cache \
     2>&1 | tee '${RESULTS_DIR}'/extrap_run.log
   echo 'extrap output: ${RESULTS_DIR}/comparison_results/extrapolation/'
@@ -407,6 +408,7 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" ba
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
     --checkpoint-name feynman_exp2_checkpoint \
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
     --resume \
     2>&1 | tee '${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log'
 "
@@ -430,6 +432,7 @@ run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c 
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
     --method-timeout ${FEYNMAN_TIMEOUT} \
     --checkpoint-name exp2_checkpoint \
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi' \
     --resume \
     2>&1 | tee '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi/exp2_run.log'
 "
@@ -444,7 +447,9 @@ run exp3 "Nguyen-12 benchmark -- SEED=42 (tab:nguyen12 - SS10.8)" bash -c "
     2>&1 | tee '${RESULTS_DIR}'/exp3_run.log
   # FIX-4: CI RESULT_SUBDIR=extrapolation — move outputs to extrapolation/,
   # not to ${RESULTS_DIR}/ root (was: -exec mv {} '${RESULTS_DIR}/' which lost the subdir).
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 \
+  # FIX-DIR: script writes to RESULTS_DIR root (via _resolve_results_dir), not
+  # EXPERIMENTS_DIR — search must use RESULTS_DIR, not EXPERIMENTS_DIR.
+  find '${RESULTS_DIR}' -maxdepth 1 \
     \( -name '*nguyen*seed42*.json' -o -name '*nguyen12*42*.json' \) \
     -exec mv -v {} '${RESULTS_DIR}/extrapolation/' \; 2>/dev/null || true
 "
@@ -466,7 +471,10 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
   done
   # BUG 2 FIX: target is extrapolation/multi_seed/ (not extrapolation/).
   # Prevents overwriting the exp3 seed=42 outputs that live in extrapolation/.
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name '*nguyen*.json' \
+  # FIX-DIR: script writes to RESULTS_DIR root — search RESULTS_DIR, not EXPERIMENTS_DIR.
+  # FIX-GLOB: exclude seed42 explicitly so exp3 output is never swept here.
+  find '${RESULTS_DIR}' -maxdepth 1 -name '*nguyen*.json' \
+    ! -name '*seed42*' ! -name '*nguyen12*42*' \
     -exec mv -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \;
 "
 
@@ -587,7 +595,7 @@ else:
     print("  [SKIP] exp1 noiseless results not found")
 
 # --- exp2_feynman ---
-exp2_files = sorted(glob.glob(f"{RESULTS}/comparison_results/feynman-tests/exp2/exp2_results*.json"))
+exp2_files = sorted(glob.glob(f"{RESULTS}/comparison_results/feynman-tests/exp2/protocol_core_noisy_*.json"))
 if exp2_files:
     with open(exp2_files[-1]) as f: data = json.load(f)
     rec = data.get('hybrid_deFi_recovery') or data.get('recovery_rate')
