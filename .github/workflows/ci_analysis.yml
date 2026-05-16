@@ -22,8 +22,6 @@
 #    _merged.json ONLY.  Never reads raw shard artifacts.
 #
 #  Outputs committed to master:
-#    {result_subdir}/_report.md
-#    {result_subdir}/_analysis.json
 #    hypatiax/data/results/{result_subdir}/_report.md
 #    hypatiax/data/results/{result_subdir}/_analysis.json
 #
@@ -367,32 +365,6 @@ jobs:
           retention-days: 30
 
       # -----------------------------------------------------------------------
-      # Mirror outputs to the canonical result_subdir path (repo root) so both
-      # hypatiax/data/results/{subdir}/ and {subdir}/ carry the report.
-      # This mirrors the staging pattern used in the consolidate job.
-      - name: Stage analysis outputs to canonical tree paths
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          set -euo pipefail
-          SRC="${OUT_BASE}/${SUB}"
-          DST="${SUB}"
-
-          if [[ "$SRC" == "$DST" ]]; then
-            echo "SRC == DST - no copy needed (already at canonical path)."
-          else
-            echo "Staging: $SRC  ->  $DST"
-            mkdir -p "$DST"
-            for f in _report.md _analysis.json; do
-              if [[ -f "$SRC/$f" ]]; then
-                cp -v "$SRC/$f" "$DST/$f"
-              else
-                echo "  WARN: $SRC/$f not found - skipping"
-              fi
-            done
-          fi
-
-      # -----------------------------------------------------------------------
       - name: Commit and push analysis outputs to master
         env:
           EXP: ${{ steps.meta.outputs.exp_id }}
@@ -407,11 +379,11 @@ jobs:
           git reset HEAD 2>/dev/null || true
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
+          # Only commit under OUT_BASE (hypatiax/data/results/...) —
+          # never the bare SUB path at repo root.
           git add \
             "${OUT_BASE}/${SUB}/_report.md"      \
             "${OUT_BASE}/${SUB}/_analysis.json"  \
-            "${SUB}/_report.md"                  \
-            "${SUB}/_analysis.json"              \
             2>/dev/null || true
 
           if git diff --cached --quiet; then
