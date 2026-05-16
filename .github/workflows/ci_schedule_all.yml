@@ -12,7 +12,7 @@ name: "HypatiaX - scheduled full run"
 #  Each slot is split into TWO jobs chained with `needs`:
 #
 #    run-experiment   (~355 min)  dispatch + wait for ci_experiment.yml
-#    run-finalize     (~ 95 min)  wait for analysis + 1 h cooldown
+#    run-finalize     (~125 min)  wait for analysis (up to 60 min) + 1 h cooldown
 #                                 + self-dispatch next slot
 #
 #  Both jobs stay safely under the 360-minute (6 h) GitHub hard limit.
@@ -254,8 +254,12 @@ jobs:
   # ==========================================================
   #  JOB C - wait for analysis, cooldown, self-dispatch
   #
-  #  timeout-minutes: 95 = 30 min analysis + 60 min cooldown + 5 min buffer
+  #  timeout-minutes: 125 = 60 min analysis poll + 60 min cooldown + 5 min buffer
   #  Well under the 360-min GitHub hard cap.
+  #
+  #  Poll window expanded from 30 → 60 min (FIX: race condition where
+  #  ci_analysis.yml triggered via workflow_run could take >30 min to
+  #  start on a busy runner pool, causing systematic timed_out results).
   #
   #  This job only runs when run-experiment succeeds (exp_ok=true).
   #  If run-experiment exits 1, GitHub's `needs` mechanism skips this
@@ -266,7 +270,7 @@ jobs:
     needs: [resolve, run-experiment]
     if: needs.resolve.outputs.done == 'false' && needs.run-experiment.outputs.exp_ok == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 95    # 30 min consolidation + 60 min cooldown + 5 min buffer
+    timeout-minutes: 125   # 60 min analysis poll + 60 min cooldown + 5 min buffer
 
     outputs:
       consol_ok: ${{ steps.wait_consol.outputs.consol_ok }}
@@ -291,7 +295,7 @@ jobs:
           set -euo pipefail
 
           CONSOL_RUN_ID=""
-          CONSOL_DEADLINE=$(( $(date +%s) + 1800 ))   # up to 30 min
+          CONSOL_DEADLINE=$(( $(date +%s) + 3600 ))   # up to 60 min (FIX: was 30 min; workflow_run trigger can take >30 min to start on busy runners)
 
           while true; do
             # Primary: match by triggering run ID (reliable when API field is present).
@@ -303,12 +307,16 @@ jobs:
                     | .id" \
               | head -1)
 
-            # Fallback: first analysis run created after experiment concluded.
+            # Fallback: first analysis run for THIS experiment created after experiment
+            # concluded.  Filtered by display_title to prevent latching onto a
+            # concurrent experiment's analysis run (FIX: was unscoped, could return
+            # any ci_analysis.yml run created after EXP_CONCLUDED_ISO).
             if [[ -z "$CONSOL_RUN_ID" ]]; then
               CONSOL_RUN_ID=$(gh api \
-                "/repos/${{ github.repository }}/actions/workflows/ci_analysis.yml/runs?per_page=5" \
+                "/repos/${{ github.repository }}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
                 --jq ".workflow_runs[]
                       | select(.created_at > \"$EXP_CONCLUDED_ISO\")
+                      | select(.display_title | contains(\"$EXP\"))
                       | .id" \
                 | head -1)
             fi
@@ -338,7 +346,7 @@ jobs:
               # A hard abort here would kill the chain if analysis is merely slow
               # (e.g. large artifact download on a busy runner).  Emit timed_out so
               # the self-dispatch step can warn without aborting (BUG 7 FIX).
-              echo "WARN 30 min timeout waiting for analysis of ${EXP} - marking as timed_out."
+              echo "WARN 60 min timeout waiting for analysis of ${EXP} - marking as timed_out."
               echo "consol_ok=timed_out" >> "$GITHUB_OUTPUT"
               break
             fi
