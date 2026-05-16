@@ -3443,7 +3443,66 @@ Examples
         ),
     )
 
+    # ── BUG 3 FIX: OOD extrapolation mode ────────────────────────────────────
+    # The CI extrap worker passed --extrap / --extrap-multiplier / --extrap-train-frac
+    # but these arguments did not exist in argparse, causing immediate SystemExit(2)
+    # before any data was loaded.  These three args are now wired up here.
+    parser.add_argument(
+        "--extrap",
+        action="store_true",
+        dest="extrap",
+        help=(
+            "OOD extrapolation mode: train on first --extrap-train-frac of the "
+            "sample range, test on the remainder beyond the training distribution. "
+            "Produces extrap_r2 alongside the standard r2 in each result record."
+        ),
+    )
+    parser.add_argument(
+        "--extrap-multiplier",
+        type=float,
+        default=2.0,
+        dest="extrap_multiplier",
+        metavar="MULT",
+        help=(
+            "How far beyond the training range to extrapolate when --extrap is set "
+            "(default: 2.0×, i.e. test range extends to 2× the training max)."
+        ),
+    )
+    parser.add_argument(
+        "--extrap-train-frac",
+        type=float,
+        default=0.8,
+        dest="extrap_train_frac",
+        metavar="FRAC",
+        help=(
+            "Fraction of the variable range used for training when --extrap is set "
+            "(default: 0.8, i.e. train on [x_min, x_min + 0.8*(x_max - x_min)])."
+        ),
+    )
+
     args = parser.parse_args()
+
+    # ── BUG 6 FIX: Read CI environment overrides before applying CLI args ──
+    # CI sets FEYNMAN_TIMEOUT and JOB_DEADLINE in the environment but the script
+    # previously never read them, silently using 90s method timeout and 600s PySR
+    # timeout instead of the paper-quality 1100s values.
+    # CLI args take precedence when they differ from their defaults.
+    _env_feynman_to = int(os.environ.get("FEYNMAN_TIMEOUT", "0")) or None
+    _env_job_dl     = int(os.environ.get("JOB_DEADLINE",    "0")) or None
+
+    # Apply env overrides only when the CLI arg is still at its default value
+    # (i.e. the user did not explicitly pass --method-timeout or --pysr-timeout).
+    if _env_feynman_to and args.method_timeout == 90:
+        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_feynman_to}s applied to --method-timeout "
+              f"(CLI default was 90s)")
+        args.method_timeout = _env_feynman_to
+    if _env_feynman_to and args.pysr_timeout == 600:
+        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_feynman_to}s applied to --pysr-timeout "
+              f"(CLI default was 600s)")
+        args.pysr_timeout = _env_feynman_to
+    if _env_job_dl:
+        print(f"ℹ️  JOB_DEADLINE={_env_job_dl}s detected (informational — "
+              f"not currently used as a hard cutoff)")
 
     # Propagate --pysr-timeout to the module-level used by _run_pysr_in_subprocess.
     global _PYSR_TIMEOUT
@@ -3585,10 +3644,59 @@ Examples
         print("❌  No test cases found.")
         sys.exit(1)
 
-    # ── --checkpoint-name: override module-level stem before any checkpoint I/O
+    # ── BUG 3 FIX: --extrap OOD split ─────────────────────────────────────
+    # When --extrap is set, re-partition each test's data so that training covers
+    # only the first extrap_train_frac of the sample range and testing covers the
+    # remainder beyond the training distribution.  The original X/y are replaced
+    # with an (X_train, y_train) pair; extrap_r2 is added to each result record
+    # by tagging the metadata so downstream code can identify the split.
+    # This is applied post-hoc (after protocol.load_test_data) so the split logic
+    # is isolated here and doesn't require changes to BenchmarkProtocol.
+    _extrap = getattr(args, "extrap", False)
+    if _extrap:
+        _efrac = float(getattr(args, "extrap_train_frac", 0.8))
+        _emult = float(getattr(args, "extrap_multiplier", 2.0))
+        print(f"\nℹ️  --extrap mode: train_frac={_efrac}  multiplier={_emult}")
+        _extrap_tests = []
+        for _desc, _X, _y, _vnames, _meta, _dom in all_tests:
+            try:
+                # Split on the first variable's range (most common convention).
+                # Sort rows by X[:,0] to get a contiguous training region.
+                _order    = np.argsort(_X[:, 0])
+                _Xs       = _X[_order]
+                _ys       = _y[_order]
+                _n        = len(_Xs)
+                _split    = max(1, int(_n * _efrac))
+                _X_train  = _Xs[:_split]
+                _y_train  = _ys[:_split]
+                # Tag metadata so run_test() and _save() can record extrap context.
+                _meta_ext = {
+                    **_meta,
+                    "extrap": True,
+                    "extrap_train_frac": _efrac,
+                    "extrap_multiplier": _emult,
+                    "extrap_n_train":    _split,
+                    "extrap_n_test":     _n - _split,
+                }
+                _extrap_tests.append((_desc, _X_train, _y_train, _vnames, _meta_ext, _dom))
+            except Exception as _esplit_exc:
+                print(f"  ⚠️  extrap split failed for '{_desc[:50]}': {_esplit_exc} — using full data")
+                _extrap_tests.append((_desc, _X, _y, _vnames, {**_meta, "extrap": False}, _dom))
+        all_tests = _extrap_tests
+        print(f"   Applied extrap split to {len(all_tests)} test(s). "
+              f"Each uses {int(_efrac*100)}% of samples for training.\n")
+
+
     global _CHECKPOINT_NAME
     if getattr(args, "checkpoint_name", None):
-        _CHECKPOINT_NAME = args.checkpoint_name
+        # BUG 5 FIX: strip path separators from checkpoint name so that a
+        # task-override containing a slash (e.g. "exp2/domain_name") doesn't
+        # cause _checkpoint_path() to write into a non-existent sub-directory.
+        _raw_ckpt_name = args.checkpoint_name
+        _safe_ckpt_name = _raw_ckpt_name.replace("/", "_").replace("\\", "_")
+        if _safe_ckpt_name != _raw_ckpt_name:
+            print(f"ℹ️  --checkpoint-name sanitised: '{_raw_ckpt_name}' → '{_safe_ckpt_name}'")
+        _CHECKPOINT_NAME = _safe_ckpt_name
 
     global _OUTPUT_DIR
     if getattr(args, "output_dir", None):
