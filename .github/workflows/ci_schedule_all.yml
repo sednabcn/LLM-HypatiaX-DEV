@@ -117,6 +117,129 @@ jobs:
           echo "-> Slot $IDX / $(( TOTAL - 1 )): $EXP  (next=$NEXT)"
 
   # ==========================================================
+  #  JOB PURGE - delete old runs of the experiment runner and
+  #  the scheduler BEFORE slot 0 launches a new one.
+  #
+  #  Runs after resolve (so we know this is a real slot, not a
+  #  chain-end no-op) but BEFORE run-experiment so the Actions
+  #  UI is clean when the new pipeline appears.
+  #
+  #  Protected (never deleted):
+  #    - any run with status in_progress or queued
+  #    - the current schedule run (github.run_id)
+  #  Deleted:
+  #    - all completed, failed, cancelled, timed_out runs
+  #
+  #  Non-fatal: a purge failure warns but never blocks the chain.
+  # ==========================================================
+  purge_old_runs:
+    name: "Purge old runs before slot ${{ needs.resolve.outputs.experiment }}"
+    needs: resolve
+    if: needs.resolve.outputs.done == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Delete older runs (experiment runner + scheduler)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          WORKFLOW_NAMES=(
+            "HypatiaX - experiment runner . run_all.sh"
+            "HypatiaX - scheduled full run"
+          )
+
+          purge_workflow() {
+            local WF_NAME="$1"
+            echo "──────────────────────────────────────────"
+            echo "Purging old runs for: ${WF_NAME}"
+
+            # Resolve numeric workflow ID from display name.
+            WF_ID=$(gh api \
+              "repos/${REPO}/actions/workflows?per_page=100" \
+              --jq ".workflows[] | select(.name == \"${WF_NAME}\") | .id" \
+              2>/dev/null | head -1 || true)
+
+            if [[ -z "${WF_ID}" ]]; then
+              echo "  ⚠ Workflow not found: '${WF_NAME}' — skipping."
+              return 0
+            fi
+            echo "  Workflow ID: ${WF_ID}"
+
+            # Protect ONLY truly live runs: in_progress or queued.
+            # crashed (failure/cancelled/timed_out) and completed runs
+            # are NOT protected — they should all be deleted.
+            mapfile -t LIVE_IDS < <(gh api \
+              "repos/${REPO}/actions/workflows/${WF_ID}/runs?per_page=100" \
+              --jq '.workflow_runs[]
+                    | select(.status == "in_progress" or .status == "queued")
+                    | .id | tostring' \
+              2>/dev/null || true)
+
+            # Always protect the current scheduler run unconditionally.
+            LIVE_IDS+=("${THIS_RUN}")
+
+            echo "  Live/protected run IDs: ${LIVE_IDS[*]:-none}"
+
+            declare -A PROTECTED
+            for ID in "${LIVE_IDS[@]}"; do
+              PROTECTED["${ID}"]=1
+            done
+
+            # Fetch ALL runs (no status filter) — catches completed,
+            # failed, cancelled, timed_out, and any other terminal state.
+            DELETED=0
+            SKIPPED=0
+            PAGE=1
+
+            while true; do
+              RUNS=$(gh api \
+                "repos/${REPO}/actions/workflows/${WF_ID}/runs?per_page=100&page=${PAGE}" \
+                --jq '.workflow_runs[] | "\(.id) \(.status) \(.created_at)"' \
+                2>/dev/null || true)
+
+              [[ -z "$RUNS" ]] && break
+
+              while IFS=' ' read -r RUN_ID STATUS CREATED_AT; do
+                if [[ -n "${PROTECTED[${RUN_ID}]+_}" ]]; then
+                  echo "  ✔ Keeping live run ${RUN_ID} (${STATUS})"
+                  SKIPPED=$((SKIPPED + 1))
+                  continue
+                fi
+
+                if gh api --method DELETE \
+                     "repos/${REPO}/actions/runs/${RUN_ID}" \
+                     2>/dev/null; then
+                  echo "  🗑  Deleted run ${RUN_ID} — ${STATUS} (created ${CREATED_AT})"
+                  DELETED=$((DELETED + 1))
+                else
+                  echo "  ⚠  Could not delete run ${RUN_ID} — skipping."
+                  SKIPPED=$((SKIPPED + 1))
+                fi
+              done <<< "$RUNS"
+
+              PAGE=$((PAGE + 1))
+              ROW_COUNT=$(echo "$RUNS" | wc -l)
+              [[ "${ROW_COUNT}" -lt 100 ]] && break
+            done
+
+            echo "  Done — deleted: ${DELETED}  skipped/kept: ${SKIPPED}"
+          }
+
+          for WF in "${WORKFLOW_NAMES[@]}"; do
+            purge_workflow "${WF}" || {
+              echo "::warning::purge_workflow failed for '${WF}' — continuing."
+            }
+          done
+
+          echo ""
+          echo "Purge complete."
+
+  # ==========================================================
   #  JOB B - dispatch ci_experiment.yml and wait for it
   #
   #  timeout-minutes: 355 = 5 h 55 m
@@ -130,7 +253,7 @@ jobs:
   # ==========================================================
   run-experiment:
     name: "Dispatch + wait - ${{ needs.resolve.outputs.experiment }}"
-    needs: resolve
+    needs: [resolve, purge_old_runs]
     if: needs.resolve.outputs.done == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 355   # safely under the 360-min GitHub hard cap
@@ -155,6 +278,13 @@ jobs:
           EXP:               ${{ needs.resolve.outputs.experiment }}
           N_SHARDS:          ${{ github.event.inputs.n_shards || '4' }}
           TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+          # Paper-quality timeouts from repro.yaml (method_seconds / feynman_pysr_seconds).
+          # Read by run_comparative_suite_benchmark_v2.py BUG-6-FIX env-override block.
+          # Low-RAM machines: method_seconds=900 gives Julia 90 s startup + 600 s search.
+          METHOD_TIMEOUT:       "900"    # repro.yaml timeouts.method_seconds
+          FEYNMAN_TIMEOUT:      "900"    # repro.yaml timeouts.feynman_pysr_seconds (capped at method budget)
+          PYSR_FIT_WALL_TIMEOUT: "1200"  # repro.yaml timeouts.fit_wall_timeout -> DiscoveryConfig
+          PYSR_FIT_GRACE_SECS:   "120"   # repro.yaml timeouts.fit_grace_secs   -> DiscoveryConfig
         run: |
           set -euo pipefail
 
@@ -257,9 +387,9 @@ jobs:
   #  timeout-minutes: 125 = 60 min analysis poll + 60 min cooldown + 5 min buffer
   #  Well under the 360-min GitHub hard cap.
   #
-  #  Poll window expanded from 30 → 60 min (FIX: race condition where
-  #  ci_analysis.yml triggered via workflow_run could take >30 min to
-  #  start on a busy runner pool, causing systematic timed_out results).
+  #  Poll window expanded 30 -> 60 min (FIX: ci_analysis.yml fires via
+  #  workflow_run which can take >30 min to start on a busy runner pool,
+  #  causing systematic timed_out results).
   #
   #  This job only runs when run-experiment succeeds (exp_ok=true).
   #  If run-experiment exits 1, GitHub's `needs` mechanism skips this
@@ -270,7 +400,7 @@ jobs:
     needs: [resolve, run-experiment]
     if: needs.resolve.outputs.done == 'false' && needs.run-experiment.outputs.exp_ok == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 125   # 60 min analysis poll + 60 min cooldown + 5 min buffer
+    timeout-minutes: 130   # 60 min analysis poll + 60 min cooldown + 10 min buffer
 
     outputs:
       consol_ok: ${{ steps.wait_consol.outputs.consol_ok }}
@@ -279,74 +409,70 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.2.2
 
-      # -- C1. Wait for ci_analysis.yml --------------------------------------
-      # Polls ci_analysis.yml (the final pipeline stage) rather than
-      # ci_consolidate_experiment.yml, which completes earlier and would
-      # let the self-dispatch fire before _report.md / _analysis.json are
-      # committed (BUG 7 FIX).
-      - name: Wait for analysis
+      # -- C1. Dispatch ci_analysis.yml and wait for it ---------------------
+      # ci_analysis.yml uses a workflow_run trigger which GitHub does NOT fire
+      # when the triggering workflow was itself dispatched by another workflow
+      # (ci_schedule_all.yml → ci_experiment.yml → no auto-trigger).
+      # Fix: explicitly dispatch ci_analysis.yml here, then poll for completion.
+      - name: Dispatch and wait for analysis
         id: wait_consol
         env:
-          GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
-          EXP:                 ${{ needs.resolve.outputs.experiment }}
-          EXP_RUN_ID:          ${{ needs.run-experiment.outputs.exp_run_id }}
-          EXP_CONCLUDED_ISO:   ${{ needs.run-experiment.outputs.exp_concluded_iso }}
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          EXP:               ${{ needs.resolve.outputs.experiment }}
+          EXP_RUN_ID:        ${{ needs.run-experiment.outputs.exp_run_id }}
+          DISPATCH_ISO:      ${{ needs.run-experiment.outputs.exp_concluded_iso }}
         run: |
           set -euo pipefail
 
-          CONSOL_RUN_ID=""
-          CONSOL_DEADLINE=$(( $(date +%s) + 3600 ))   # up to 60 min (FIX: was 30 min; workflow_run trigger can take >30 min to start on busy runners)
+          REPO="${{ github.repository }}"
+
+          # -- C1a. Dispatch ci_analysis.yml explicitly ----------------------
+          echo "> Dispatching ci_analysis.yml for ${EXP} (exp_run_id=${EXP_RUN_ID})"
+          gh workflow run ci_analysis.yml             --field experiment="${EXP}"             --field source_run_id="${EXP_RUN_ID}"
+
+          sleep 20   # give GitHub time to register the new run
+
+          # -- C1b. Locate the run ID we just dispatched ---------------------
+          DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ANALYSIS_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            ANALYSIS_RUN_ID=$(gh api               "/repos/${REPO}/actions/workflows/ci_analysis.yml/runs?per_page=10"               --jq ".workflow_runs[]
+                    | select(.event == "workflow_dispatch")
+                    | select(.display_title | contains("${EXP}"))
+                    | .id"               | head -1)
+            [[ -n "$ANALYSIS_RUN_ID" ]] && break
+            echo "  Not found yet (attempt ${attempt}/20) — retrying in 15s ..."
+            sleep 15
+          done
+
+          if [[ -z "$ANALYSIS_RUN_ID" ]]; then
+            echo "::error::Could not locate dispatched ci_analysis.yml run for ${EXP}"
+            echo "consol_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "Analysis run ID: ${ANALYSIS_RUN_ID}"
+
+          # -- C1c. Poll until complete (up to 60 min) -----------------------
+          CONSOL_DEADLINE=$(( $(date +%s) + 3600 ))
 
           while true; do
-            # Primary: match by triggering run ID (reliable when API field is present).
-            CONSOL_RUN_ID=$(gh api \
-              "/repos/${{ github.repository }}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
-              --jq ".workflow_runs[]
-                    | select(.created_at > \"$EXP_CONCLUDED_ISO\")
-                    | select((.triggering_workflow_run // {} | .id | tostring) == \"$EXP_RUN_ID\")
-                    | .id" \
-              | head -1)
+            CONSOL_STATUS=$(gh api               "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}"               --jq '"\(.status) \(.conclusion)"')
 
-            # Fallback: first analysis run for THIS experiment created after experiment
-            # concluded.  Filtered by display_title to prevent latching onto a
-            # concurrent experiment's analysis run (FIX: was unscoped, could return
-            # any ci_analysis.yml run created after EXP_CONCLUDED_ISO).
-            if [[ -z "$CONSOL_RUN_ID" ]]; then
-              CONSOL_RUN_ID=$(gh api \
-                "/repos/${{ github.repository }}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
-                --jq ".workflow_runs[]
-                      | select(.created_at > \"$EXP_CONCLUDED_ISO\")
-                      | select(.display_title | contains(\"$EXP\"))
-                      | .id" \
-                | head -1)
-            fi
+            echo "  [analysis/${EXP}] $(date -u +%H:%M:%SZ)  run=${ANALYSIS_RUN_ID}  ${CONSOL_STATUS}"
 
-            if [[ -n "$CONSOL_RUN_ID" ]]; then
-              CONSOL_STATUS=$(gh api \
-                "/repos/${{ github.repository }}/actions/runs/$CONSOL_RUN_ID" \
-                --jq '"\(.status) \(.conclusion)"')
-
-              echo "  [analysis/$EXP] $(date -u +%H:%M:%SZ)  run=$CONSOL_RUN_ID  $CONSOL_STATUS"
-
-              case "$CONSOL_STATUS" in
-                "completed success")
-                  echo "OK Analysis of $EXP SUCCEEDED."
-                  echo "consol_ok=true" >> "$GITHUB_OUTPUT"
-                  break ;;
-                "completed failure"|"completed cancelled")
-                  echo "FAIL Analysis of $EXP FAILED: $CONSOL_STATUS - ABORTING CHAIN."
-                  echo "consol_ok=false" >> "$GITHUB_OUTPUT"
-                  break ;;
-              esac
-            else
-              echo "  [analysis/$EXP] $(date -u +%H:%M:%SZ)  waiting for analysis run to appear ..."
-            fi
+            case "$CONSOL_STATUS" in
+              "completed success")
+                echo "OK Analysis of ${EXP} SUCCEEDED."
+                echo "consol_ok=true" >> "$GITHUB_OUTPUT"
+                break ;;
+              "completed failure"|"completed cancelled"|"completed timed_out")
+                echo "FAIL Analysis of ${EXP} concluded with: ${CONSOL_STATUS} — ABORTING CHAIN."
+                echo "consol_ok=false" >> "$GITHUB_OUTPUT"
+                break ;;
+            esac
 
             if [[ $(date +%s) -gt $CONSOL_DEADLINE ]]; then
-              # A hard abort here would kill the chain if analysis is merely slow
-              # (e.g. large artifact download on a busy runner).  Emit timed_out so
-              # the self-dispatch step can warn without aborting (BUG 7 FIX).
-              echo "WARN 60 min timeout waiting for analysis of ${EXP} - marking as timed_out."
+              echo "WARN 60 min timeout waiting for analysis of ${EXP} — marking as timed_out."
               echo "consol_ok=timed_out" >> "$GITHUB_OUTPUT"
               break
             fi
@@ -437,7 +563,7 @@ jobs:
           fi
 
           if [[ "${CONSOL_OK}" == "timed_out" ]]; then
-            echo "::warning::Analysis of ${{ needs.resolve.outputs.experiment }} timed out after 30 min."
+            echo "::warning::Analysis of ${{ needs.resolve.outputs.experiment }} timed out after 90 min."
             echo "  The analysis run may still be in progress.  Continuing chain - monitor Actions UI."
           fi
 

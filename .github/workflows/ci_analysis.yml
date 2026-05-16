@@ -26,29 +26,27 @@
 #    hypatiax/data/results/{result_subdir}/_analysis.json
 #
 #  Triggering modes:
-#    1. Automatic (workflow_run): fires when ci_experiment.yml completes.
-#       Downloads the consolidated artifact from the triggering run; reads
-#       _checkpoint.json to recover exp_id and result_subdir.
+#    1. Scheduled chain (workflow_dispatch from ci_schedule_all.yml): called
+#       automatically after ci_experiment.yml completes.  Passes experiment
+#       and source_run_id; result_subdir is derived from the checkpoint.
 #    2. Manual (workflow_dispatch): re-runs analysis on an already-committed
-#       _merged.json without re-running the experiment.  Requires experiment
-#       and result_subdir; source_run_id is optional (uses committed file if
-#       omitted).
+#       _merged.json.  Requires experiment; result_subdir is optional (derived
+#       from experiment name if omitted); source_run_id optional.
+#
+#  NOTE: workflow_run trigger removed.  GitHub does not fire it when
+#  ci_experiment.yml is dispatched by ci_schedule_all.yml (chained workflows).
+#  ci_schedule_all.yml now dispatches ci_analysis.yml explicitly via
+#  gh workflow run after ci_experiment.yml completes.
 # ==============================================================================
 
 name: "HypatiaX - analysis"
-run-name: "HypatiaX - analysis . ${{ github.event.workflow_run.display_title || github.event.inputs.experiment }}"
+run-name: "HypatiaX - analysis . ${{ github.event.inputs.experiment }}"
 
 # -- Triggers ------------------------------------------------------------------
 on:
 
-  # Automatic: fires after ci_experiment.yml finishes (success OR failure —
-  # consolidate runs with if: always() so the artifact exists even on partial
-  # worker failures).
-  workflow_run:
-    workflows: ["HypatiaX - experiment runner . run_all.sh"]
-    types: [completed]
-
-  # Manual re-run: re-analyse an already-committed _merged.json.
+  # Dispatched explicitly by ci_schedule_all.yml after ci_experiment.yml
+  # completes, or run manually to re-analyse a committed _merged.json.
   workflow_dispatch:
     inputs:
 
@@ -71,9 +69,9 @@ on:
           - extrap
 
       result_subdir:
-        description: "Canonical result subdirectory (e.g. comparison_results/noise-noiseless/noiseless)"
-        required: true
-        type: string
+        description: "Canonical result subdirectory — leave blank to derive from experiment name"
+        required: false
+        default: ""
 
       source_run_id:
         description: "ci_experiment.yml run ID to download the consolidated artifact from (leave blank to use committed _merged.json)"
@@ -96,18 +94,11 @@ env:
 jobs:
 
   analysis:
-    name: "Analysis - ${{ github.event.workflow_run.name || github.event.inputs.experiment }}"
+    name: "Analysis - ${{ github.event.inputs.experiment }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    # Run regardless of whether the triggering workflow succeeded or failed —
-    # consolidate runs with if: always() so a partial-failure run still
-    # produces a consolidated artifact worth analysing.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       (github.event.workflow_run.conclusion == 'success' ||
-        github.event.workflow_run.conclusion == 'failure'))
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
 
@@ -133,31 +124,17 @@ jobs:
           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
 
       # -----------------------------------------------------------------------
-      # Download consolidated artifact from the triggering workflow run.
-      # The artifact name is "consolidated-{exp_id}-{run_id}" (see
-      # ci_experiment.yml consolidate job "Upload consolidated artifact" step).
-      # We use a wildcard pattern because we don't know exp_id upfront.
-      - name: Download consolidated artifact (workflow_run)
-        if: github.event_name == 'workflow_run'
+      # Download consolidated artifact from the ci_experiment.yml run.
+      # source_run_id is provided by ci_schedule_all.yml; omit when
+      # re-running analysis manually against an already-committed file.
+      - name: Download consolidated artifact
+        if: github.event.inputs.source_run_id != ''
         uses: actions/download-artifact@v8.0.1
         with:
-          run-id:       ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path:         consolidated_artifact
-          pattern:      "consolidated-*"
-          merge-multiple: true
-
-      # Manual dispatch variant: download from an explicit run ID if provided.
-      - name: Download consolidated artifact (manual dispatch with source_run_id)
-        if: >-
-          github.event_name == 'workflow_dispatch' &&
-          github.event.inputs.source_run_id != ''
-        uses: actions/download-artifact@v8.0.1
-        with:
-          run-id:       ${{ github.event.inputs.source_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path:         consolidated_artifact
-          pattern:      "consolidated-${{ github.event.inputs.experiment }}-*"
+          run-id:         ${{ github.event.inputs.source_run_id }}
+          github-token:   ${{ secrets.GITHUB_TOKEN }}
+          path:           consolidated_artifact
+          pattern:        "consolidated-${{ github.event.inputs.experiment }}-*"
           merge-multiple: true
 
       # -----------------------------------------------------------------------
@@ -188,12 +165,7 @@ jobs:
           v = d.get('experiment') or d.get('exp_id') or ''
           print(v.strip())
           ")
-            # BUG 5 FIX: _checkpoint.json was written without a result_subdir key
-            # so SUB was always empty when triggered via workflow_run, causing the
-            # "Cannot resolve experiment or result_subdir" abort.  We now derive
-            # result_subdir from the experiment name using the same mapping that
-            # ci_experiment.yml uses when writing the checkpoint, and only fall back
-            # to the raw experiment name if no mapping entry exists.
+            # Derive result_subdir from experiment name if not in checkpoint.
             SUB=$(python -c "
           import json, sys
           d = json.load(open('$CKPT'))
@@ -201,16 +173,7 @@ jobs:
           if not v:
               # Derive result_subdir from experiment name using the canonical mapping.
               exp = d.get('experiment') or d.get('exp_id') or ''
-            # BUG C FIX: the fallback mapping previously contained 12 fabricated
-            # paths (e.g. 'comparison_results/noise-noiseless/noisy' for exp1b,
-            # 'comparison_results/feynman/all' for exp2_feynman) that did not match
-            # the canonical values in ci_experiment_working.yml or
-            # ci_consolidate_experiment.yml.  Any automatic workflow_run trigger
-            # whose checkpoint omitted result_subdir would therefore write analysis
-            # outputs to a non-existent directory, producing a silent no-op commit.
-            # Replaced with the exact values from the ci_experiment_working.yml
-            # case statement and ci_consolidate_experiment.yml subdir_map, which
-            # are the single source of truth.
+            # Canonical mapping — single source of truth for result_subdir paths.
               mapping = {
                   'exp1':               'comparison_results/noise-noiseless/noiseless',
                   'exp1b':              'comparison_results/noise-noiseless/15',
@@ -236,10 +199,7 @@ jobs:
 
           if [[ -z "$EXP" || -z "$SUB" ]]; then
             echo "::error::Cannot resolve experiment or result_subdir."
-            echo "  If triggering via workflow_run, ensure _checkpoint.json is"
-            echo "  present in the consolidated artifact and contains 'experiment'"
-            echo "  and 'result_subdir' keys."
-            echo "  If triggering manually, provide both inputs."
+            echo "  Provide 'experiment' input (result_subdir is derived automatically)."
             exit 1
           fi
 
