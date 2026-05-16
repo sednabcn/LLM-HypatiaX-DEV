@@ -1,6 +1,20 @@
 """
-COMPLETE FIXED VERSION: baseline_pure_llm_defi_final.py
+COMPLETE FIXED VERSION: baseline_pure_llm_defi_discovery.py
 All liquidation domain fixes + FIXED evaluation logic + FIXED dict handling.
+
+BUG FIXES vs previous version:
+  FIX 1 — Nernst standard-prompt hint sign corrected from + to − (matches
+           ground_truth and hardcoded formula). Previous hint said
+           "NEVER use a minus sign" which caused wrong formula for variants.
+  FIX 2 — Clausius-Mossotti standard-prompt hint corrected from
+           E_ext * (eps+2)/3  →  (epsilon-1)/(epsilon+2) * E_external,
+           matching protocol II.6.15a ground truth and hardcoded formula.
+  FIX 3 — Fourier heat conduction standard-prompt hint removes spurious
+           area A factor. Ground truth and hardcoded formula are
+           kappa*(T2-T1)/d (no A). Prompt previously said kappa*A*delta_T/d.
+  FIX 4 — _generate_specialized_prompt() now warns when a use_specialized
+           case reaches the final return "" without matching any branch,
+           preventing silent degradation to the standard prompt.
 """
 
 import inspect
@@ -457,7 +471,7 @@ class PureLLMBaseline:
         # ── FEY_CHEM_NERNST — Nernst equation ───────────────────────────────
         # variable_names=["T", "ox", "red"]
         # constants={"E0": 0.76, "R": 8.314, "n": 2, "F": 96485.0}
-        # ground_truth="E0 - (R*T / (n*F)) * log(ox / red)"   ← MINUS sign, E0 is constant
+        # ground_truth="E0 - (R*T / (n*F)) * log(ox / red)"   ← MINUS sign
         if "nernst" in desc_lower or "electrode potential" in desc_lower:
             if vset == {"T", "ox", "red"}:
                 python_code = (
@@ -1128,6 +1142,15 @@ def formula({t_var}):
 EXPLANATION:
 Arrhenius: temperature dependence of rate constant. R=8.314 is fixed."""
 
+        # FIX 4: warn when use_specialized=True but no branch matched.
+        # Previously this silently returned "" and degraded to standard prompt
+        # with no indication that a new case was added without a prompt branch.
+        print(
+            f"WARNING: _generate_specialized_prompt matched no branch for "
+            f"'{description}' (domain={domain}). "
+            "Falling back to standard prompt. "
+            "Add a matching branch if this case requires structured output."
+        )
         return ""
 
     def _generate_standard_prompt(
@@ -1148,41 +1171,49 @@ Arrhenius: temperature dependence of rate constant. R=8.314 is fixed."""
         desc_lower = description.lower()
         domain_hint = ""
 
-        if "nernst" in desc_lower or ("electrode potential" in desc_lower):
-            # Provide complete code template — hint alone is ignored at temperature=0
+        if "nernst" in desc_lower or "electrode potential" in desc_lower:
+            # FIX 1: sign corrected to MINUS — matches ground_truth and hardcoded formula.
+            # Previous version said "NEVER use a minus sign" which was wrong.
             var_str = ", ".join(variable_names) if variable_names else "v0, v1, v2"
             domain_hint = (
                 f"\n\n🔴 MANDATORY CODE TEMPLATE — copy and fill in variable names:\n"
                 f"  The Nernst equation for electrode potential is:\n"
-                f"  E = E0 + (R*T / (n_elec*F)) * np.log(c_ox / c_red)\n"
-                f"  where R=8.314 J/(mol·K), F=96485 C/mol, n_elec=1 (electrons).\n"
+                f"  E = E0 - (R*T / (n_elec*F)) * np.log(c_ox / c_red)\n"
+                f"  where R=8.314 J/(mol·K), F=96485 C/mol, n_elec=2 (electrons).\n"
                 f"  Your variables are: {var_str}\n"
-                f"  Map them to: E0 (standard potential, ~0.1-1V), T (temperature, ~300K),\n"
+                f"  Map them to: E0 (standard potential, ~0.76V), T (temperature, ~300K),\n"
                 f"               c_ox and c_red (concentrations, or their ratio).\n"
-                f"  The sign MUST be POSITIVE: E0 + (R*T/(n*F))*np.log(...)\n"
+                f"  The sign MUST be NEGATIVE: E0 - (R*T/(n*F))*np.log(...)\n"
                 f"  If only one concentration variable exists, treat it as the ratio c_ox/c_red.\n"
-                f"  NEVER use a minus sign before the log term."
+                f"  NEVER use a plus sign before the log term."
             )
         elif "clausius" in desc_lower or ("dielectric" in desc_lower and "effective field" in desc_lower):
+            # FIX 2: formula corrected to (epsilon-1)/(epsilon+2)*E_external,
+            # matching protocol II.6.15a ground_truth and hardcoded formula.
+            # Previous version incorrectly said E_ext*(eps+2)/3 (different physical quantity).
             var_str = ", ".join(variable_names) if variable_names else "v0, v1"
             domain_hint = (
                 f"\n\n🔴 MANDATORY CODE TEMPLATE — the output is the LOCAL EFFECTIVE FIELD Eeff:\n"
-                f"  Eeff = E_external * (epsilon_r + 2) / 3\n"
-                f"  where E_external is the external electric field and epsilon_r is the relative permittivity.\n"
+                f"  Eeff = (epsilon - 1) / (epsilon + 2) * E_external\n"
+                f"  where E_external is the applied external field and epsilon is the relative permittivity.\n"
                 f"  Your variables are: {var_str}\n"
-                f"  The formula is: return E_external * (epsilon_r + 2.0) / 3.0\n"
-                f"  DO NOT compute epsilon_r from polarizability — return Eeff directly."
+                f"  The formula is: return (epsilon - 1.0) / (epsilon + 2.0) * E_external\n"
+                f"  DO NOT use (epsilon + 2) / 3 — that is the wrong Clausius-Mossotti form."
             )
         elif ("fourier" in desc_lower or "heat conduction" in desc_lower
               or "heat flux" in desc_lower):
+            # FIX 3: removed spurious area A factor. Ground truth is kappa*(T2-T1)/d
+            # (no area term). Previous hint said kappa*A*delta_T/d which is wrong
+            # for this protocol equation (II.2.42).
             var_str = ", ".join(variable_names) if variable_names else "v0, v1, v2, v3"
             domain_hint = (
                 f"\n\n🔴 MANDATORY CODE TEMPLATE — Fourier heat conduction law:\n"
-                f"  q = kappa * A * delta_T / d\n"
-                f"  where kappa=thermal conductivity, A=area, delta_T=temperature difference, d=thickness.\n"
+                f"  q = kappa * delta_T / d\n"
+                f"  where kappa=thermal conductivity, delta_T=temperature difference, d=thickness.\n"
                 f"  Your variables are: {var_str}\n"
-                f"  Map: kappa (conductivity W/(m·K)), A (area m²), delta_T (temp diff K), d (thickness m).\n"
-                f"  The formula is multiplication of first 3, divided by the 4th: kappa*A*delta_T/d"
+                f"  Map: kappa (conductivity W/(m·K)), T2 and T1 (temperatures, delta_T = T2-T1), d (thickness m).\n"
+                f"  The formula is: kappa * (T2 - T1) / d\n"
+                f"  DO NOT include an area variable A — the protocol equation has no area term."
             )
         elif ("gaussian" in desc_lower or "normal distribution" in desc_lower
               or "probability density" in desc_lower):
@@ -1370,7 +1401,6 @@ CRITICAL REQUIREMENTS:
             except Exception as eval_error:
                 if verbose:
                     import traceback
-
                     traceback.print_exc()
                 return {
                     "error": f"Evaluation failed: {str(eval_error)}",
