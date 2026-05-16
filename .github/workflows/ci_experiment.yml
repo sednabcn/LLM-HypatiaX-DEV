@@ -1482,32 +1482,6 @@ jobs:
             ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/_checkpoint.json
           if-no-files-found: error
 
-      # Stage merged outputs to canonical repo tree paths so both the
-      # hypatiax/data/results/ scratch copy AND the canonical copy at the
-      # bare result_subdir path are committed.  ci_consolidate_experiment.yml
-      # mirrors this step; changes here must be reflected there too.
-      - name: Stage results to canonical tree paths
-        env:
-          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-        run: |
-          set -euo pipefail
-          SRC="${OUT_BASE}/${RESULT_SUBDIR}"
-          DST="${RESULT_SUBDIR}"   # canonical path at repo root
-
-          if [[ "$SRC" == "$DST" ]]; then
-            echo "SRC == DST - no copy needed (already at canonical path)."
-          else
-            echo "Staging: $SRC  ->  $DST"
-            mkdir -p "$DST"
-            for f in _merged.json _merged.csv _stats.json _checkpoint.json; do
-              if [[ -f "$SRC/$f" ]]; then
-                cp -v "$SRC/$f" "$DST/$f"
-              else
-                echo "  WARN: $SRC/$f not found - skipping"
-              fi
-            done
-          fi
-
       - name: Commit and push consolidated results to master
         run: |
           git config user.name  "github-actions[bot]"
@@ -1522,15 +1496,13 @@ jobs:
           git reset HEAD 2>/dev/null || true
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
+          # Only commit under OUT_BASE (hypatiax/data/results/...) —
+          # never the bare SUB path at repo root.
           git add \
             "${OUT_BASE}/${SUB}/_merged.json"     \
             "${OUT_BASE}/${SUB}/_merged.csv"      \
             "${OUT_BASE}/${SUB}/_stats.json"      \
             "${OUT_BASE}/${SUB}/_checkpoint.json" \
-            "${SUB}/_merged.json"                 \
-            "${SUB}/_merged.csv"                  \
-            "${SUB}/_stats.json"                  \
-            "${SUB}/_checkpoint.json"             \
             2>/dev/null || true
 
           if git diff --cached --quiet; then
