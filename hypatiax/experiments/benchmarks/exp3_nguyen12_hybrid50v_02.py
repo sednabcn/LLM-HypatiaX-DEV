@@ -166,9 +166,15 @@ def _resolve_results_dir(repo_results_dir: pathlib.Path) -> pathlib.Path:
 
 # ── 1. Resolve repo root & set sys.path ───────────────────────────────────
 # Script lives at:  <repo>/hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py
-# Repo root is 3 levels up.
+# Repo root is 4 levels up (parents[3]):
+#   parents[0] = benchmarks/
+#   parents[1] = experiments/
+#   parents[2] = hypatiax/      <- was incorrectly used as repo root
+#   parents[3] = <repo>/        <- correct repo root
+# [BUG-ROOT-FIX] parents[2] pointed at hypatiax/ not the repo root, so
+# _REPRO_ROOT / "hypatiax" resolved to hypatiax/hypatiax/ (non-existent).
 _SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
-_REPO_ROOT  = _SCRIPT_DIR.parents[2]   # benchmarks/ -> experiments/ -> hypatiax/ -> repo root
+_REPO_ROOT  = _SCRIPT_DIR.parents[3]   # benchmarks/ -> experiments/ -> hypatiax/ -> repo root
 
 # Support override via environment variable (set by pipeline or notebook)
 _REPRO_ROOT = pathlib.Path(os.environ.get("REPRO_ROOT", str(_REPO_ROOT)))
@@ -325,8 +331,22 @@ def run(seed: int = 42):
     from pysr import PySRRegressor
     from sklearn.metrics import r2_score
 
-    # ── Import LLM warm-start (hypatia.py lives next to this script) ─────
+    # ── Import LLM warm-start ─────────────────────────────────────────────
+    # hypatia.py must be committed to the repo at:
+    #   hypatiax/experiments/benchmarks/hypatia.py   (next to this script)
+    # [BUG-HYPATIA-FIX] Previously the import silently failed in CI because
+    # hypatia.py was not committed to the repository. The bench_dir sys.path
+    # insertion is correct, but the file must actually exist there.
+    # We raise an explicit ImportError with a remediation message so the
+    # failure is actionable rather than a cryptic ModuleNotFoundError.
     _bench_dir = pathlib.Path(__file__).resolve().parent
+    _hypatia_path = _bench_dir / "hypatia.py"
+    if not _hypatia_path.exists():
+        raise ImportError(
+            f"hypatia.py not found at {_hypatia_path}\n"
+            "  Fix: commit hypatia.py to hypatiax/experiments/benchmarks/ in the repo.\n"
+            "  The file provides get_llm_prior() for the LLM warm-start prior."
+        )
     if str(_bench_dir) not in sys.path:
         sys.path.insert(0, str(_bench_dir))
     from hypatia import get_llm_prior
