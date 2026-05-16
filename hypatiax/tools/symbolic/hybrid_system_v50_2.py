@@ -1144,8 +1144,27 @@ class HybridDiscoverySystem:
                     _safe_names = discovery.get("variable_names", var_names)
                     _X_aug   = getattr(self.symbolic_engine, "_last_X_aug",    _X_for_rmse)
                     _aug_nms = getattr(self.symbolic_engine, "_last_aug_names", list(var_names))
+                    # FIX-RMSE-BARE: PySR expressions use bare function names
+                    # (exp, sqrt, log, sin, cos, abs) — not np.exp etc.
+                    # eval() with {"__builtins__": {}} raises NameError for
+                    # every bare name, leaving rmse=inf even when the formula
+                    # is correct.  Add numpy ufunc aliases to the namespace.
                     _ns: dict[str, Any] = {
                         "np": np,
+                        # bare PySR function names → numpy equivalents
+                        "exp":   np.exp,
+                        "log":   np.log,
+                        "sqrt":  np.sqrt,
+                        "sin":   np.sin,
+                        "cos":   np.cos,
+                        "tan":   np.tan,
+                        "abs":   np.abs,
+                        "asin":  np.arcsin,
+                        "acos":  np.arccos,
+                        "atan":  np.arctan,
+                        "arcsin": np.arcsin,
+                        "arccos": np.arccos,
+                        "arctan": np.arctan,
                         # base cols — use normalised X (matches what formula was fit to)
                         **{name: _X_aug[:, i] for i, name in enumerate(var_names)
                            if i < _X_aug.shape[1]},
