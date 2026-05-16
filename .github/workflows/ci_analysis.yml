@@ -401,6 +401,12 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Reset index and pull before staging — rebase refuses to run
+          # if the index contains staged entries (from checkout internals
+          # or files written into the repo tree by prior steps).
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+
           git add \
             "${OUT_BASE}/${SUB}/_report.md"      \
             "${OUT_BASE}/${SUB}/_analysis.json"  \
@@ -411,7 +417,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to analysis outputs - results unchanged from previous run."
           else
-            git pull --rebase origin "${{ github.ref_name }}"
             git commit -m "ci: ${EXP} analysis report - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed analysis outputs to master."
