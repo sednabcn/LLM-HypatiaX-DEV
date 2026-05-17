@@ -51,6 +51,11 @@ on:
         description: "Space-separated task IDs to run (blank = full experiment set) - forwarded to ci_experiment.yml"
         required: false
         default: ""
+      continue_chain:
+        description: "Automatically dispatch the next slot when this one finishes (uncheck to run a single slot only)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write   # needed by ci_consolidate_experiment.yml to commit merged results
@@ -85,6 +90,7 @@ jobs:
       next_index:              ${{ steps.resolve.outputs.next_index }}
       total:                   ${{ steps.resolve.outputs.total }}
       done:                    ${{ steps.resolve.outputs.done }}
+      analysis_only:           ${{ steps.resolve.outputs.analysis_only }}
       period_seconds:          ${{ steps.resolve.outputs.period_seconds }}
       cooldown_seconds:        ${{ steps.resolve.outputs.cooldown_seconds }}
       finalize_timeout_minutes: ${{ steps.resolve.outputs.finalize_timeout_minutes }}
@@ -103,11 +109,37 @@ jobs:
         run: |
           EXP_LIST=($ALL_EXPERIMENTS)
           TOTAL=${#EXP_LIST[@]}
+
+          # Parse experiment_index input.
+          #
+          #   Plain integer  (e.g. "2")  → run the full chain from that slot.
+          #   Integer + "a"  (e.g. "2a") → dispatch ci_analysis.yml for that
+          #                                 slot only; no experiment runner, no
+          #                                 cooldown, no self-dispatch.
+          #
+          ANALYSIS_ONLY=false
+          if [[ "$IDX" =~ ^([0-9]+)a$ ]]; then
+            IDX="${BASH_REMATCH[1]}"
+            ANALYSIS_ONLY=true
+            echo "-> Analysis-only mode detected (input contained 'a' suffix)."
+          elif ! [[ "$IDX" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: experiment_index must be a non-negative integer or NUMBERa for"
+            echo "  analysis-only mode (got: '${IDX}')."
+            echo "  Examples:  2  = run full chain from slot 2"
+            echo "             2a = re-run ci_analysis only for slot 2"
+            echo "  Experiments in order:"
+            for i in "${!EXP_LIST[@]}"; do
+              echo "    $i  / ${i}a  = ${EXP_LIST[$i]}"
+            done
+            exit 1
+          fi
+
           IDX=$(( IDX ))
 
           if [[ $IDX -ge $TOTAL ]]; then
             echo "OK All $TOTAL experiments complete - chain ends here."
-            echo "done=true"  >> "$GITHUB_OUTPUT"
+            echo "done=true"          >> "$GITHUB_OUTPUT"
+            echo "analysis_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -117,7 +149,8 @@ jobs:
           echo "experiment=$EXP"   >> "$GITHUB_OUTPUT"
           echo "next_index=$NEXT"  >> "$GITHUB_OUTPUT"
           echo "total=$TOTAL"      >> "$GITHUB_OUTPUT"
-          echo "done=false"        >> "$GITHUB_OUTPUT"
+          echo "done=false"          >> "$GITHUB_OUTPUT"
+          echo "analysis_only=$ANALYSIS_ONLY" >> "$GITHUB_OUTPUT"
           echo "-> Slot $IDX / $(( TOTAL - 1 )): $EXP  (next=$NEXT)"
 
           # ------------------------------------------------------------------
@@ -202,13 +235,12 @@ jobs:
   purge_old_runs:
     name: "Purge old runs before slot ${{ needs.resolve.outputs.experiment }}"
     needs: resolve
-    if: needs.resolve.outputs.done == 'false'
+    if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Delete older runs (experiment runner + scheduler)
-        env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO:     ${{ github.repository }}
           THIS_RUN: ${{ github.run_id }}
@@ -321,11 +353,9 @@ jobs:
   run-experiment:
     name: "Dispatch + wait - ${{ needs.resolve.outputs.experiment }}"
     needs: [resolve, purge_old_runs]
-    if: needs.resolve.outputs.done == 'false'
+    if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 355   # safely under the 360-min GitHub hard cap
-
-    outputs:
       exp_run_id:          ${{ steps.dispatch.outputs.exp_run_id }}
       exp_concluded_iso:   ${{ steps.wait_exp.outputs.exp_concluded_iso }}
       exp_ok:              ${{ steps.wait_exp.outputs.exp_ok }}
@@ -449,8 +479,126 @@ jobs:
             sleep 60
           done
 
+
   # ==========================================================
-  #  JOB C - wait for analysis, cooldown, self-dispatch
+  #  JOB D - analysis-only path (triggered by NUMBERa input)
+  #
+  #  Dispatches ci_analysis.yml directly against the already-committed
+  #  _merged.json for the chosen experiment.  No experiment runner is
+  #  launched, no cooldown is applied, and no self-dispatch fires.
+  #
+  #  Use this to re-run or inspect analysis without touching workers:
+  #    experiment_index = "2a"  →  re-analyse slot 2 (exp2_feynman)
+  # ==========================================================
+  run-analysis-only:
+    name: "Analysis-only - ${{ needs.resolve.outputs.experiment }}"
+    needs: resolve
+    if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75   # pip install ~8 min + analysis <10 s + locate + commit + 5 min buffer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      # -- D1. Dispatch ci_analysis.yml (no source_run_id — uses committed _merged.json)
+      - name: Dispatch ci_analysis.yml
+        id: dispatch_analysis
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXP:      ${{ needs.resolve.outputs.experiment }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "> Dispatching ci_analysis.yml for ${EXP} (analysis-only, no source_run_id)"
+          gh workflow run ci_analysis.yml \
+            --field experiment="${EXP}"
+
+          sleep 20   # give GitHub time to register the run
+
+          # Locate the run we just dispatched
+          ANALYSIS_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            ANALYSIS_RUN_ID=$(gh api \
+              "/repos/${REPO}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
+              --jq ".workflow_runs[]
+                    | select(.event == \"workflow_dispatch\")
+                    | select(.display_title | contains(\"${EXP}\"))
+                    | select(.created_at > \"${DISPATCH_ISO}\")
+                    | .id" \
+              | head -1)
+            [[ -n "$ANALYSIS_RUN_ID" ]] && break
+            echo "  Not found yet (attempt ${attempt}/20) — retrying in 15s ..."
+            sleep 15
+          done
+
+          if [[ -z "$ANALYSIS_RUN_ID" ]]; then
+            echo "::error::Could not locate dispatched ci_analysis.yml run for ${EXP}"
+            exit 1
+          fi
+          echo "Analysis run ID: ${ANALYSIS_RUN_ID}"
+          echo "analysis_run_id=${ANALYSIS_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      # -- D2. Poll until complete (up to 60 min)
+      - name: Wait for analysis to complete
+        env:
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          EXP:             ${{ needs.resolve.outputs.experiment }}
+          ANALYSIS_RUN_ID: ${{ steps.dispatch_analysis.outputs.analysis_run_id }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          DEADLINE=$(( $(date +%s) + 3600 ))
+
+          while true; do
+            STATUS=$(gh api \
+              "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}" \
+              --jq '"\\(.status) \\(.conclusion)"')
+
+            echo "  [analysis/${EXP}] $(date -u +%H:%M:%SZ)  run=${ANALYSIS_RUN_ID}  ${STATUS}"
+
+            case "$STATUS" in
+              "completed success")
+                echo "OK Analysis of ${EXP} succeeded."
+                exit 0 ;;
+              "completed failure"|"completed cancelled"|"completed timed_out")
+                echo "FAIL Analysis of ${EXP} concluded with: ${STATUS}"
+                exit 1 ;;
+            esac
+
+            if [[ $(date +%s) -gt $DEADLINE ]]; then
+              echo "FAIL 60 min timeout waiting for analysis of ${EXP}."
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+      # -- D3. Self-dispatch next slot as a plain number (full chain resumes)
+      #  Skipped when continue_chain is unchecked — analysis runs standalone.
+      - name: Self-dispatch next slot
+        if: ${{ github.event.inputs.continue_chain != 'false' }}
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          NEXT_INDEX:        ${{ needs.resolve.outputs.next_index }}
+          N_SHARDS:          ${{ github.event.inputs.n_shards || '4' }}
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+          TOTAL:             ${{ needs.resolve.outputs.total }}
+        run: |
+          set -euo pipefail
+          if [[ $NEXT_INDEX -lt $TOTAL ]]; then
+            echo "-> Dispatching next slot: index $NEXT_INDEX (full chain)"
+            gh workflow run ci_schedule_all.yml \
+              --field experiment_index="$NEXT_INDEX" \
+              --field n_shards="$N_SHARDS" \
+              --field task_ids_override="$TASK_IDS_OVERRIDE"
+          else
+            echo "OK All experiments dispatched — chain complete."
+          fi
+
+
   #
   #  timeout-minutes: 125 = 60 min analysis poll + 60 min cooldown + 5 min buffer
   #  Well under the 360-min GitHub hard cap.
@@ -613,7 +761,9 @@ jobs:
       #
       #  Note: exp_ok=false never reaches here because the `if` condition on this
       #  job already requires exp_ok == 'true'.  The check below is a safety net.
+      #  Skipped when continue_chain is unchecked — this slot runs standalone.
       - name: Self-dispatch next slot
+        if: ${{ github.event.inputs.continue_chain != 'false' }}
         env:
           GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
           NEXT_INDEX:        ${{ needs.resolve.outputs.next_index }}
