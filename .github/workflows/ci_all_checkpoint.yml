@@ -42,11 +42,60 @@
 #
 #  BUGS FIXED (from run_all_checkpoint.py)
 #  ----------------------------------------
-#  BUG-SUBDIR: EXP_RESULT_SUBDIR mapped exp1 → "comparison_results/extrapolation"
-#              and exp1b → "comparison_results/extrapolation".  Both are WRONG.
-#              Correct mapping (from ci_experiment.yml plan job):
-#                exp1  → comparison_results/noise-noiseless/noiseless
-#                exp1b → comparison_results/noise-noiseless/15
+#  BUG 1 — EXP_RESULT_SUBDIR: three wrong paths (CRITICAL)
+#    Used by qualify_experiment() to locate _merged.json.  Wrong paths cause
+#    exp1 / exp1b / exp2 to always fail qualification → audit-paper permanently
+#    blocked for those experiments.
+#    Wrong (run_all_checkpoint.py):
+#      exp1  → "comparison_results/extrapolation"
+#      exp1b → "comparison_results/extrapolation"
+#      exp2  → "comparison_results/feynman-tests/exp2"
+#    Fixed (matches ci_experiment.yml plan meta):
+#      exp1  → comparison_results/noise-noiseless/noiseless
+#      exp1b → comparison_results/noise-noiseless/15
+#      exp2  → comparison_results/feynman-tests/exp2_multi
+#    This file uses the correct values throughout (see SUBDIR dicts in jobs 1 & 3).
+#
+#  BUG 2 — exp3 / exp3b / suppA PostMove source = EXPERIMENTS_DIR (CRITICAL)
+#    run_all.sh comment: "FIX-DIR: script writes to RESULTS_DIR root — search
+#    must use RESULTS_DIR, not EXPERIMENTS_DIR."  All three PostMove entries in
+#    run_all_checkpoint.py use EXPERIMENTS_DIR as source.  The glob finds nothing
+#    → files are never moved → result subdirs stay empty → qualify fails.
+#    Fix (run_all_checkpoint.py):
+#      PostMove(EXPERIMENTS_DIR, "*nguyen*seed42*.json", ...)  →
+#      PostMove(RESULTS_DIR,     "*nguyen*seed42*.json", ...)
+#    Same fix applies to exp3b and suppA.
+#
+#  BUG 3 — extrap step: hardcoded wrong OOD parameters (CRITICAL)
+#    Wrong (non-paper values):
+#      "--extrap-multiplier", "3.0"
+#      "--extrap-train-frac", "0.4"
+#    Fixed (paper values, matches CI and run_all.sh defaults):
+#      "--extrap-multiplier", "2.0"
+#      "--extrap-train-frac", "0.8"
+#
+#  BUG 4 — exp1 / exp1b result_glob point to wrong directory
+#    step_already_complete() uses result_glob to decide whether to skip; wrong
+#    path means the step always reruns even when results exist.
+#    Wrong:
+#      exp1  result_glob="comparison_results/extrapolation/*.json"
+#      exp1b result_glob="comparison_results/extrapolation/*seed*.json"
+#    Fixed:
+#      exp1  result_glob="comparison_results/noise-noiseless/noiseless/*.json"
+#      exp1b result_glob="comparison_results/noise-noiseless/15/*.json"
+#
+#  BUG 5 — exp2 step: --protocol all30 and missing --output-dir
+#    Same --benchmark both fix applies (replaces --protocol all30).
+#    exp2 also passes no --output-dir, so results land in the script's default
+#    path rather than feynman-tests/exp2_multi/.
+#    Fix: add "--benchmark", "both" and "--output-dir", "<RESULTS_DIR>/feynman-tests/exp2_multi"
+#
+#  BUG 6 — exp2_feynman: missing --output-dir and --method-timeout
+#    No --output-dir (results may go to a wrong default).
+#    No --method-timeout (should be 120 given --skip-pysr).
+#    Both flags are present in the CI worker case; run_all_checkpoint.py omits them.
+#    Fix: add "--output-dir", "<RESULTS_DIR>/feynman-tests/exp2"
+#         and "--method-timeout", "120"
 #
 #  TIMEOUT CONTRACT
 #  ----------------
@@ -161,8 +210,9 @@ jobs:
           NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
 
           # ── Canonical subdir map (source of truth: ci_experiment.yml plan job)
-          # BUG-SUBDIR FIX: exp1 and exp1b were mapped to comparison_results/extrapolation
-          # in run_all_checkpoint.py.  Correct values are below.
+          # BUG 1 FIX: exp1 and exp1b were mapped to "comparison_results/extrapolation"
+          # and exp2 was mapped to "comparison_results/feynman-tests/exp2"
+          # in run_all_checkpoint.py.  All three are wrong; correct values are below.
           SUBDIR = {
               "exp1":              "comparison_results/noise-noiseless/noiseless",
               "exp1b":             "comparison_results/noise-noiseless/15",
@@ -456,7 +506,7 @@ jobs:
           COMPLETION   = json.loads(os.environ.get("COMPLETION_REPORT") or "{}")
           CHECK        = json.loads(os.environ.get("CHECK_REPORT")      or "{}")
 
-          # BUG-SUBDIR FIX: matches ci_experiment.yml and job 1 above
+          # BUG 1 FIX: matches ci_experiment.yml and job 1 above (exp1, exp1b, exp2 corrected)
           SUBDIR = {
               "exp1":              "comparison_results/noise-noiseless/noiseless",
               "exp1b":             "comparison_results/noise-noiseless/15",
