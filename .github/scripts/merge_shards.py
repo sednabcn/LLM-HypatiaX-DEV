@@ -78,6 +78,49 @@ DEFI_IDS = {
     "derivatives",
 }
 
+FEYNMAN_DOMAIN_IDS = {
+    "feynman_biology",
+    "feynman_chemistry",
+    "feynman_electrochemistry",
+    "feynman_electromagnetism",
+    "feynman_electrostatics",
+    "feynman_magnetism",
+    "feynman_mechanics",
+    "feynman_optics",
+    "feynman_probability",
+    "feynman_quantum",
+    "feynman_thermodynamics",
+}
+
+EXP2_DOMAIN_IDS = {
+    "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
+    "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
+}
+
+NGUYEN12_IDS = {f"N{i}" for i in range(1, 13)}
+
+HYBRID_ALL_DOMAIN_IDS = EXP2_DOMAIN_IDS  # same set
+
+# Maps experiment ID -> the set of valid canonical task_ids for that experiment.
+# Records whose task_id is NOT in this set are rejected during merge.
+# None means "no filter" (accept all task IDs -- used for experiments whose
+# task ID space cannot be enumerated statically, e.g. suppB noise-sweep).
+EXPERIMENT_TASK_IDS: "dict[str, set[str] | None]" = {
+    "exp1":               DEFI_IDS,
+    "exp1_ablation":      DEFI_IDS,
+    "exp1b":              None,   # portfolio_seed{N} IDs are dynamic
+    "exp2_feynman":       FEYNMAN_DOMAIN_IDS,
+    "exp2":               EXP2_DOMAIN_IDS,
+    "exp3":               NGUYEN12_IDS,
+    "exp3b":              NGUYEN12_IDS,
+    "suppA":              DEFI_IDS,
+    "suppB":              None,   # noise{nl}__{domain} IDs are dynamic
+    "suppB_sc":           None,   # sc_n{n}__{domain} IDs are dynamic
+    "hybrid_all_domains": HYBRID_ALL_DOMAIN_IDS,
+    "instability":        DEFI_IDS,
+    "extrap":             FEYNMAN_DOMAIN_IDS,
+}
+
 # Corrected mapping: human-readable equation_id → canonical DeFi protocol ID.
 # Verified against _get_test_cases() domain fields in hypatiax_defi_benchmark_v3c.py.
 #   "Annualised Portfolio tracking error"  -> risk_var  (was "amm"      in legacy versions)
@@ -261,6 +304,14 @@ def extract_rows(obj: Any) -> List[Dict[str, Any]]:
     that normalise into valid task rows.
 
     Walks into lists and dict values except META_KEYS subtrees.
+
+    BUG FIX: when a top-level record is successfully normalised, stop
+    recursing into its children.  Without this guard, the method sub-dicts
+    inside "results" (hybrid, pure_llm, neural_network) were also walked,
+    and each one -- having keys like "domain" or "decision" -- was emitted
+    as a phantom task record (e.g. task_id="llm" from hybrid.decision="llm").
+    Those phantom records appeared in _merged.json as "?" rows and polluted
+    the MW analysis with null-R² entries.
     """
     found: List[Dict[str, Any]] = []
 
@@ -273,7 +324,11 @@ def extract_rows(obj: Any) -> List[Dict[str, Any]]:
             return
         normalised = normalise_row(x)
         if normalised:
+            # Successfully normalised — emit and do NOT recurse further into
+            # children to avoid phantom records from method sub-dicts.
             found.append(normalised)
+            return
+        # Not a task record itself — recurse into values to find nested records.
         for k, v in x.items():
             if k not in META_KEYS:
                 walk(v)
@@ -302,13 +357,28 @@ def score_row(row: Dict[str, Any]) -> int:
     return score
 
 
-def merge_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Merge extracted rows; highest-score row wins per task_id."""
+def merge_rows(rows: Iterable[Dict[str, Any]], experiment: str = "") -> Dict[str, Dict[str, Any]]:
+    """Merge extracted rows; highest-score row wins per task_id.
+
+    BUG FIX: apply experiment-aware task ID allowlist so records from other
+    experiments (e.g. Feynman domain keys in an exp1 run, or phantom records
+    extracted from method sub-dicts) are rejected before they pollute the
+    merged output.  When the allowlist for an experiment is None (dynamic IDs
+    like suppB), all task IDs are accepted as before.
+    """
+    allowed = EXPERIMENT_TASK_IDS.get(experiment)  # None means accept all
     merged: Dict[str, Dict[str, Any]] = {}
+    rejected = 0
     for row in rows:
         tid = row["task_id"]
+        if allowed is not None and tid not in allowed:
+            rejected += 1
+            logger.debug(f"  REJECTED task_id={tid!r} (not in allowlist for {experiment!r})")
+            continue
         if tid not in merged or score_row(row) > score_row(merged[tid]):
             merged[tid] = row
+    if rejected:
+        logger.info(f"ALLOWLIST FILTER: rejected {rejected} row(s) with task IDs outside {experiment!r} expected set")
     return merged
 
 
@@ -459,7 +529,7 @@ def main() -> None:
         except Exception as e:
             logger.exception(f"FAILED TO READ: {path} :: {e}")
 
-    merged = merge_rows(all_rows)
+    merged = merge_rows(all_rows, experiment=config.experiment)
 
     logger.info("=" * 70)
     logger.info("MERGED TASKS")
