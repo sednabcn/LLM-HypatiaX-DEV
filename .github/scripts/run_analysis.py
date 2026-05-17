@@ -463,6 +463,29 @@ def _leave_one_out_sensitivity(records: list[dict]) -> list[dict]:
     return results
 
 
+def _mann_whitney(a: list[float], b: list[float]) -> dict:
+    """Two-sided Mann-Whitney U test. Returns stat, p, direction."""
+    if not _SCIPY_OK:
+        return {"available": False, "reason": "scipy not installed"}
+    if len(a) < 2 or len(b) < 2:
+        return {"available": False, "reason": "insufficient samples"}
+    try:
+        stat, p = mannwhitneyu(a, b, alternative="two-sided")
+        direction = "a_greater" if float(np.median(a)) > float(np.median(b)) else "b_greater"
+        return {
+            "available":      True,
+            "statistic":      round(float(stat), 4),
+            "p_value":        round(float(p), 6),
+            "significant_05": float(p) < 0.05,
+            "significant_01": float(p) < 0.01,
+            "direction":      direction,
+            "n_a":            len(a),
+            "n_b":            len(b),
+        }
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
 def analyse_ablation(records: list[dict], experiment: str) -> dict:
     """
     exp1_ablation / exp2_feynman_rf09 analysis.
@@ -1110,28 +1133,6 @@ def write_report_ablation(analysis: dict, path: Path) -> None:
         )
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-    """Two-sided Mann-Whitney U test. Returns stat, p, direction."""
-    if not _SCIPY_OK:
-        return {"available": False, "reason": "scipy not installed"}
-    if len(a) < 2 or len(b) < 2:
-        return {"available": False, "reason": "insufficient samples"}
-    try:
-        stat, p = mannwhitneyu(a, b, alternative="two-sided")
-        direction = "a_greater" if float(np.median(a)) > float(np.median(b)) else "b_greater"
-        return {
-            "available":      True,
-            "statistic":      round(float(stat), 4),
-            "p_value":        round(float(p), 6),
-            "significant_05": float(p) < 0.05,
-            "significant_01": float(p) < 0.01,
-            "direction":      direction,
-            "n_a":            len(a),
-            "n_b":            len(b),
-        }
-    except Exception as e:
-        return {"available": False, "reason": str(e)}
 
 
 # ---------------------------------------------------------------------------

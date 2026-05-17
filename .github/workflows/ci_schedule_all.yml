@@ -231,6 +231,17 @@ jobs:
   #    - all completed, failed, cancelled, timed_out runs
   #
   #  Non-fatal: a purge failure warns but never blocks the chain.
+  #
+  #  INTERACTION WITH ci_analysis.yml:
+  #    This purge fires at the START of each slot (before run-experiment).
+  #    The PREVIOUS slot's ci_experiment.yml run is "completed" by this point
+  #    and is NOT protected here (only this scheduler run is).  In the normal
+  #    case, run-finalize for the previous slot waited up to 60 min for
+  #    ci_analysis.yml to complete, so the artifact was already consumed.
+  #    In the edge case where run-finalize's poll timed out, ci_analysis.yml
+  #    may still be queued when this purge fires and deletes the artifact.
+  #    ci_analysis.yml uses continue-on-error on its download step and falls
+  #    back to the committed _merged.json, so the analysis still completes.
   # ==========================================================
   purge_old_runs:
     name: "Purge old runs before slot ${{ needs.resolve.outputs.experiment }}"

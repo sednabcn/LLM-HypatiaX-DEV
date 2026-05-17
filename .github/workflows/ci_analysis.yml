@@ -33,10 +33,27 @@
 #       _merged.json.  Requires experiment; result_subdir is optional (derived
 #       from experiment name if omitted); source_run_id optional.
 #
-#  NOTE: workflow_run trigger removed.  GitHub does not fire it when
-#  ci_experiment.yml is dispatched by ci_schedule_all.yml (chained workflows).
-#  ci_schedule_all.yml now dispatches ci_analysis.yml explicitly via
-#  gh workflow run after ci_experiment.yml completes.
+#  WHY ci_analysis.yml IS A STANDALONE WORKFLOW (not workflow_run):
+#    GitHub does NOT fire the workflow_run event when the triggering workflow
+#    was itself started by another workflow via gh workflow run / workflow_dispatch
+#    (chained dispatch).  Because ci_schedule_all.yml dispatches ci_experiment.yml
+#    programmatically, a workflow_run trigger on ci_experiment.yml would never
+#    fire in the normal scheduled pipeline.  ci_schedule_all.yml therefore
+#    dispatches ci_analysis.yml explicitly from its run-finalize job after
+#    ci_experiment.yml completes.  The standalone design also allows manual
+#    reruns without re-running the expensive experiment workers.
+#
+#  PURGE RESILIENCE:
+#    purge_old_runs in ci_experiment.yml and ci_schedule_all.yml can delete a
+#    completed ci_experiment.yml run (and its consolidated artifact) before a
+#    queued ci_analysis.yml job has had a chance to start and download it.
+#    To handle this, the "Download consolidated artifact" step uses
+#    continue-on-error: true.  The "Locate _merged.json" step falls back to
+#    the committed copy in the repository, which is always present because
+#    ci_experiment.yml's consolidate job commits _merged.json to master before
+#    ci_analysis.yml is ever dispatched.
+#    In manual mode, omit source_run_id entirely to use the committed file
+#    directly (the download step is skipped when source_run_id is blank).
 # ==============================================================================
 
 name: "HypatiaX - analysis"
@@ -137,10 +154,17 @@ jobs:
       # source_run_id is provided by ci_schedule_all.yml; omit when
       # re-running analysis manually against an already-committed file.
       # instability has no _merged.json — skip download entirely.
+      #
+      # PURGE RESILIENCE: continue-on-error: true prevents this step from
+      # hard-failing the job when the referenced run has been deleted by
+      # purge_old_runs before this queued ci_analysis.yml job started.
+      # The "Locate _merged.json" step below falls back to the committed copy.
       - name: Download consolidated artifact
         if: >
           github.event.inputs.source_run_id != '' &&
           github.event.inputs.experiment != 'instability'
+        continue-on-error: true
+        id: download_artifact
         uses: actions/download-artifact@v8.0.1
         with:
           run-id:         ${{ github.event.inputs.source_run_id }}
@@ -150,7 +174,20 @@ jobs:
           merge-multiple: true
 
       # -----------------------------------------------------------------------
-      # instability: no _merged.json exists — write stubs and exit early
+      - name: Log artifact download outcome
+        if: >
+          github.event.inputs.source_run_id != '' &&
+          github.event.inputs.experiment != 'instability'
+        run: |
+          if [[ "${{ steps.download_artifact.outcome }}" == "success" ]]; then
+            echo "Artifact downloaded from run ${{ github.event.inputs.source_run_id }}."
+          else
+            echo "::warning::Artifact download failed (run may have been purged by purge_old_runs)."
+            echo "  Falling back to committed _merged.json in the repository."
+            echo "  source_run_id=${{ github.event.inputs.source_run_id }}"
+          fi
+
+      # -----------------------------------------------------------------------
       # so all downstream steps (locate, analysis, verify) are skipped.
       - name: Short-circuit for instability experiment
         if: github.event.inputs.experiment == 'instability'
