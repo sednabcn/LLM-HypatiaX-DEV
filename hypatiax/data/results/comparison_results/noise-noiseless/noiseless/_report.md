@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp1`
 
 Experiment mode: **standard**
-N total: 16 | N standard: 16 | N intractable: 0
+N total: 3 | N standard: 3 | N intractable: 0
 R² success threshold: 0.8
 
 ## ✅ No Fatal Conditions
@@ -39,24 +39,11 @@ Hybrid wins:  3  (100.0%)
 NN wins:      0
 Tied:         0
 
-## Coverage Gaps (14 equations with best R² < 0.8)
+## Coverage Gaps (1 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
-| ? | None | None | N/A | N/A | N/A | N/A |
 | Portfolio Expected Shortfall for correlated | hard | quadratic_form | N/A | N/A | -2.4931 | 0.3760 |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
 
 ## R²≥0.80 Rate by Difficulty
 
@@ -65,7 +52,6 @@ Tied:         0
 | easy | 1 | 100.0% | 0.0% | 100.0% |
 | hard | 1 | 0.0% | 0.0% | 0.0% |
 | medium | 1 | 100.0% | 0.0% | 100.0% |
-| unknown | 0 | 0.0% | 0.0% | 0.0% |
 
 ## Median Test R² by Formula Type
 
@@ -74,7 +60,6 @@ Tied:         0
 | algebraic | 1 | 1.0000 | -3.1838 | 1.0000 |
 | quadratic_form | 1 | N/A | -2.4931 | 0.3760 |
 | rational | 1 | 1.0000 | -0.2925 | 1.0000 |
-| unknown | 0 | N/A | N/A | N/A |
 
 ## Extrapolation Gap (train R² − test R²)
 
