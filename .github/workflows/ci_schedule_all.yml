@@ -189,27 +189,27 @@ jobs:
           )
 
           declare -A COOLDOWN_TABLE=(
-            [exp1]=2700            [exp1b]=900
-            [exp2_feynman]=3600    [exp2]=3600
-            [exp3]=1800            [exp3b]=1800
-            [suppA]=1200           [suppB]=2700
-            [suppB_sc]=1800        [hybrid_all_domains]=2700
-            [instability]=600      [extrap]=1800
+            [exp1]=675             [exp1b]=225
+            [exp2_feynman]=1800    [exp2]=1800
+            [exp3]=450             [exp3b]=450
+            [suppA]=300            [suppB]=675
+            [suppB_sc]=450         [hybrid_all_domains]=675
+            [instability]=150      [extrap]=450
           )
 
           # finalize_timeout_minutes = 60 (analysis poll) + cooldown_min + 10 (buffer)
           declare -A FINALIZE_TABLE=(
-            [exp1]=115             [exp1b]=85
-            [exp2_feynman]=130     [exp2]=130
-            [exp3]=100             [exp3b]=100
-            [suppA]=90             [suppB]=115
-            [suppB_sc]=100         [hybrid_all_domains]=115
-            [instability]=80       [extrap]=100
+            [exp1]=82              [exp1b]=74
+            [exp2_feynman]=100     [exp2]=100
+            [exp3]=78              [exp3b]=78
+            [suppA]=75             [suppB]=82
+            [suppB_sc]=78          [hybrid_all_domains]=82
+            [instability]=73       [extrap]=78
           )
 
           PERIOD=${PERIOD_TABLE[$EXP]:-19800}
-          COOLDOWN=${COOLDOWN_TABLE[$EXP]:-3600}
-          FINALIZE=${FINALIZE_TABLE[$EXP]:-130}
+          COOLDOWN=${COOLDOWN_TABLE[$EXP]:-900}
+          FINALIZE=${FINALIZE_TABLE[$EXP]:-85}
 
           echo "period_seconds=$PERIOD"             >> "$GITHUB_OUTPUT"
           echo "cooldown_seconds=$COOLDOWN"         >> "$GITHUB_OUTPUT"
@@ -480,7 +480,7 @@ jobs:
 
 
   #
-  #  timeout-minutes: 125 = 60 min analysis poll + 60 min cooldown + 5 min buffer
+  #  timeout-minutes: 125 = 60 min analysis poll + 30 min cooldown (halved) + 5 min buffer
   #  Well under the 360-min GitHub hard cap.
   #
   #  Poll window expanded 30 -> 60 min (FIX: ci_analysis.yml fires via
@@ -583,8 +583,8 @@ jobs:
             sleep 30
           done
 
-      # -- C2. 1-hour cooldown -----------------------------------------------
-      - name: Cooldown (1 hour)
+      # -- C2. Cooldown (halved) -----------------------------------------------
+      - name: Cooldown (reduced)
         run: |
           COOLDOWN_SECS="${{ needs.resolve.outputs.cooldown_seconds }}"
           echo "Cooldown: sleeping ${COOLDOWN_SECS}s before dispatching the next experiment ..."
