@@ -59,9 +59,15 @@ export PYSR_CROSSOVER=0.9
 export PYSR_MUTATION=0.1
 export PYSR_PARETO_PRESSURE=0.001
 export PYSR_SEED=42
-# FIX-1: default was 2; CI uses 4 (workflow env PYSR_POPULATIONS: "4").
-# Local runs with 2 populations diverge from paper results — align to 4.
-export PYSR_POPULATIONS="${PYSR_POPULATIONS:-4}"
+# FIX-1: default was 2, then 4; CI and repro.yaml now use 30 (paper value).
+# Local runs with fewer populations diverge from paper results.
+export PYSR_POPULATIONS="${PYSR_POPULATIONS:-30}"
+
+# Method timeouts — mirrors ci_experiment.yml global env block.
+# METHOD_TIMEOUT: PySR methods 5/6 budget (repro.yaml timeouts.method_seconds).
+# LLM_METHOD_TIMEOUT: tight cap for LLM/NN-only steps that pass --skip-pysr.
+export METHOD_TIMEOUT="${METHOD_TIMEOUT:-900}"
+export LLM_METHOD_TIMEOUT="${LLM_METHOD_TIMEOUT:-120}"
 
 # Feynman benchmark defaults (Appendix A)
 # FIX-10: exported so subshells and child processes inherit the values.
@@ -407,6 +413,7 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" ba
     --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${LLM_METHOD_TIMEOUT} \
     --checkpoint-name feynman_exp2_checkpoint \
     --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
     --resume \
@@ -414,10 +421,12 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" ba
 "
 
 # ── STEP 6: exp2 ──────────────────────────────────────────────────────────────
-# FIX: --benchmark all30 was not a valid argparse choice.
-# FIX: exp2 uses ExperimentProtocolAll (30 multi-domain equations, Tab 19).
-#      --protocol all30 loads ExperimentProtocolAll from experiment_protocol_all_30.py.
-#      --benchmark is not passed (not applicable to the all30 protocol path).
+# FIX: --protocol all30 does not exist in run_comparative_suite_benchmark_v2.py
+#      argparse — it caused SystemExit(2) on every worker (confirmed in CI BUG 2 fix).
+#      Replaced with --benchmark both which runs both Feynman + SRBench protocols
+#      (ExperimentProtocolAll, 30 multi-domain equations, Tab 19).
+# FIX: --method-timeout now uses METHOD_TIMEOUT (900 s, repro.yaml value) instead
+#      of FEYNMAN_TIMEOUT (1100 s) — PySR methods 5/6 are skipped so 1100 s was excessive.
 # FIX: mkdir -p ensures tee target directory exists when this step runs
 #      standalone (--step exp2) without a prior env_check.
 # --skip-pysr: methods 5+6 (SymbolicEngine, HybridV50_2) not in Tab 19 comparison.
@@ -426,11 +435,11 @@ run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c 
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'
   python3 run_comparative_suite_benchmark_v2.py \
-    --protocol all30 \
+    --benchmark both \
     --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
-    --method-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${METHOD_TIMEOUT} \
     --checkpoint-name exp2_checkpoint \
     --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi' \
     --resume \

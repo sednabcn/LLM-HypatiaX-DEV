@@ -428,7 +428,9 @@ jobs:
 
           # -- C1a. Dispatch ci_analysis.yml explicitly ----------------------
           echo "> Dispatching ci_analysis.yml for ${EXP} (exp_run_id=${EXP_RUN_ID})"
-          gh workflow run ci_analysis.yml             --field experiment="${EXP}"             --field source_run_id="${EXP_RUN_ID}"
+          gh workflow run ci_analysis.yml \
+            --field experiment="${EXP}" \
+            --field source_run_id="${EXP_RUN_ID}"
 
           sleep 20   # give GitHub time to register the new run
 
@@ -436,10 +438,13 @@ jobs:
           DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           ANALYSIS_RUN_ID=""
           for attempt in $(seq 1 20); do
-            ANALYSIS_RUN_ID=$(gh api               "/repos/${REPO}/actions/workflows/ci_analysis.yml/runs?per_page=10"               --jq ".workflow_runs[]
+            ANALYSIS_RUN_ID=$(gh api \
+              "/repos/${REPO}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
+              --jq '.workflow_runs[]
                     | select(.event == "workflow_dispatch")
-                    | select(.display_title | contains("${EXP}"))
-                    | .id"               | head -1)
+                    | select(.display_title | contains("'"${EXP}"'"))
+                    | .id' \
+              | head -1)
             [[ -n "$ANALYSIS_RUN_ID" ]] && break
             echo "  Not found yet (attempt ${attempt}/20) — retrying in 15s ..."
             sleep 15
@@ -456,7 +461,9 @@ jobs:
           CONSOL_DEADLINE=$(( $(date +%s) + 3600 ))
 
           while true; do
-            CONSOL_STATUS=$(gh api               "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}"               --jq '"\(.status) \(.conclusion)"')
+            CONSOL_STATUS=$(gh api \
+              "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}" \
+              --jq '"\(.status) \(.conclusion)"')
 
             echo "  [analysis/${EXP}] $(date -u +%H:%M:%SZ)  run=${ANALYSIS_RUN_ID}  ${CONSOL_STATUS}"
 
