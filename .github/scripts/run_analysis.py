@@ -1112,7 +1112,6 @@ def write_report_ablation(analysis: dict, path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _mann_whitney(a: list[float], b: list[float]) -> dict:
     """Two-sided Mann-Whitney U test. Returns stat, p, direction."""
     if not _SCIPY_OK:
         return {"available": False, "reason": "scipy not installed"}
@@ -1234,7 +1233,7 @@ def analyse(records: list[dict], experiment: str) -> dict:
         }
 
     # -- Per-difficulty breakdown -----------------------------------------------
-    difficulties = sorted({r.get("difficulty", "unknown") for r in standard})
+    difficulties = sorted({r.get("difficulty") or "unknown" for r in standard})
     by_difficulty: dict[str, dict] = {}
     for diff in difficulties:
         sub = [r for r in standard if r.get("difficulty") == diff]
@@ -1248,7 +1247,7 @@ def analyse(records: list[dict], experiment: str) -> dict:
         }
 
     # -- Per-formula-type breakdown ---------------------------------------------
-    ftypes = sorted({r.get("formula_type", "unknown") for r in standard})
+    ftypes = sorted({r.get("formula_type") or "unknown" for r in standard})
     by_formula_type: dict[str, dict] = {}
     for ft in ftypes:
         sub = [r for r in standard if r.get("formula_type") == ft]
