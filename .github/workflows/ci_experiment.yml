@@ -1604,6 +1604,18 @@ jobs:
   #     older runs are all deleted.
   #   - Requires actions: write permission (set in global permissions block).
   #   - Non-fatal: a purge failure warns but never blocks the experiment.
+  #
+  # INTERACTION WITH ci_analysis.yml:
+  #   ci_analysis.yml is dispatched by ci_schedule_all.yml's run-finalize job
+  #   AFTER this workflow completes.  This purge job protects THIS_RUN so the
+  #   consolidated artifact (consolidated-{exp_id}-{run_id}) remains available
+  #   for ci_analysis.yml to download.
+  #   However, if ci_analysis.yml is still queued when ci_schedule_all.yml
+  #   dispatches the NEXT experiment slot (because run-finalize's 60-min poll
+  #   timed out), the next slot's purge_old_runs will NOT protect the previous
+  #   ci_experiment.yml run, potentially deleting its artifact mid-analysis.
+  #   ci_analysis.yml handles this with continue-on-error on the download step
+  #   and falls back to the committed _merged.json.  No action needed here.
   # ============================================================================
   purge_old_runs:
     name: "Purge old workflow runs"
