@@ -63,8 +63,9 @@ env:
     exp3 exp3b suppA suppB suppB_sc
     hybrid_all_domains instability extrap
 
-  # Experiment deadline: 5 h 30 m expressed in seconds (= worker timeout-minutes: 330).
-  # The run-experiment job (355 min) gives 25 min of headroom around this.
+  # Fallback experiment deadline (seconds) used only when resolve job has no
+  # per-experiment entry in its timing table.  Each experiment's actual deadline
+  # is emitted by the resolve job as period_seconds and consumed by Job B.
   PERIOD_SECONDS: "19800"
 
 # -------------------------------------------------------------
@@ -80,10 +81,13 @@ jobs:
     timeout-minutes: 5
 
     outputs:
-      experiment:  ${{ steps.resolve.outputs.experiment }}
-      next_index:  ${{ steps.resolve.outputs.next_index }}
-      total:       ${{ steps.resolve.outputs.total }}
-      done:        ${{ steps.resolve.outputs.done }}
+      experiment:              ${{ steps.resolve.outputs.experiment }}
+      next_index:              ${{ steps.resolve.outputs.next_index }}
+      total:                   ${{ steps.resolve.outputs.total }}
+      done:                    ${{ steps.resolve.outputs.done }}
+      period_seconds:          ${{ steps.resolve.outputs.period_seconds }}
+      cooldown_seconds:        ${{ steps.resolve.outputs.cooldown_seconds }}
+      finalize_timeout_minutes: ${{ steps.resolve.outputs.finalize_timeout_minutes }}
 
     steps:
       - name: Checkout
@@ -115,6 +119,69 @@ jobs:
           echo "total=$TOTAL"      >> "$GITHUB_OUTPUT"
           echo "done=false"        >> "$GITHUB_OUTPUT"
           echo "-> Slot $IDX / $(( TOTAL - 1 )): $EXP  (next=$NEXT)"
+
+          # ------------------------------------------------------------------
+          #  Per-experiment timing table
+          #
+          #  period_seconds   — how long Job B waits for ci_experiment.yml
+          #                     before declaring timeout and aborting the chain.
+          #                     Must satisfy: startup_overhead (~15 min) +
+          #                     period/60 <= 355 (job timeout-minutes: 355).
+          #                     Max safe value: (355 - 15) * 60 = 20400 s.
+          #
+          #  cooldown_seconds — pause in Job C between experiments.
+          #                     Gives GitHub's runner pool time to settle.
+          #                     Scale down for fast/small experiments.
+          #
+          #  finalize_timeout_minutes — Job C timeout-minutes.
+          #                     Formula: ceil(60 + cooldown/60 + 10)
+          #                     (60 min analysis poll + cooldown + 10 min buffer)
+          #
+          #  Update these values when an experiment's case count changes.
+          # ------------------------------------------------------------------
+
+          declare -A PERIOD_TABLE=(
+            [exp1]=19800           # large         — full noiseless suite   (5.5 h)
+            [exp1b]=19800          # large         — 15 % noise variant     (5.5 h)
+            [exp2_feynman]=19800   # large         — full Feynman benchmark  (5.5 h)
+            [exp2]=19800           # large         — multi-method full      (5.5 h)
+            [exp3]=12600           # medium        — Nguyen-12 PySR         (3.5 h)
+            [exp3b]=14400          # medium        — multi-seed PySR        (4 h)
+            [suppA]=10800          # small         — hybrid/defi subset     (3 h)
+            [suppB]=16200          # medium-large  — noise sweep            (4.5 h)
+            [suppB_sc]=12600       # medium        — sample-complexity      (3.5 h)
+            [hybrid_all_domains]=16200  # medium-large — all domains        (4.5 h)
+            [instability]=7200     # small         — no _merged.json, fast  (2 h)
+            [extrap]=12600         # medium        — extrapolation suite    (3.5 h)
+          )
+
+          declare -A COOLDOWN_TABLE=(
+            [exp1]=3600            [exp1b]=3600
+            [exp2_feynman]=3600    [exp2]=3600
+            [exp3]=1800            [exp3b]=1800
+            [suppA]=1200           [suppB]=2700
+            [suppB_sc]=1800        [hybrid_all_domains]=2700
+            [instability]=600      [extrap]=1800
+          )
+
+          # finalize_timeout_minutes = 60 (analysis poll) + cooldown_min + 10 (buffer)
+          declare -A FINALIZE_TABLE=(
+            [exp1]=130             [exp1b]=130
+            [exp2_feynman]=130     [exp2]=130
+            [exp3]=100             [exp3b]=100
+            [suppA]=90             [suppB]=115
+            [suppB_sc]=100         [hybrid_all_domains]=115
+            [instability]=80       [extrap]=100
+          )
+
+          PERIOD=${PERIOD_TABLE[$EXP]:-19800}
+          COOLDOWN=${COOLDOWN_TABLE[$EXP]:-3600}
+          FINALIZE=${FINALIZE_TABLE[$EXP]:-130}
+
+          echo "period_seconds=$PERIOD"             >> "$GITHUB_OUTPUT"
+          echo "cooldown_seconds=$COOLDOWN"         >> "$GITHUB_OUTPUT"
+          echo "finalize_timeout_minutes=$FINALIZE" >> "$GITHUB_OUTPUT"
+          echo "-> Timing: period=${PERIOD}s  cooldown=${COOLDOWN}s  finalize_job=${FINALIZE}min"
 
   # ==========================================================
   #  JOB PURGE - delete old runs of the experiment runner and
@@ -334,9 +401,10 @@ jobs:
       - name: Wait for experiment to complete
         id: wait_exp
         env:
-          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
-          EXP:        ${{ needs.resolve.outputs.experiment }}
-          EXP_RUN_ID: ${{ steps.dispatch.outputs.exp_run_id }}
+          GH_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          EXP:           ${{ needs.resolve.outputs.experiment }}
+          EXP_RUN_ID:    ${{ steps.dispatch.outputs.exp_run_id }}
+          PERIOD_SECONDS: ${{ needs.resolve.outputs.period_seconds }}  # per-experiment, from resolve job
         run: |
           set -euo pipefail
 
@@ -400,7 +468,7 @@ jobs:
     needs: [resolve, run-experiment]
     if: needs.resolve.outputs.done == 'false' && needs.run-experiment.outputs.exp_ok == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 130   # 60 min analysis poll + 60 min cooldown + 10 min buffer
+    timeout-minutes: ${{ fromJSON(needs.resolve.outputs.finalize_timeout_minutes) }}   # 60 min analysis poll + per-experiment cooldown + 10 min buffer
 
     outputs:
       consol_ok: ${{ steps.wait_consol.outputs.consol_ok }}
@@ -490,8 +558,9 @@ jobs:
       # -- C2. 1-hour cooldown -----------------------------------------------
       - name: Cooldown (1 hour)
         run: |
-          echo "Cooldown: sleeping 1 hour before dispatching the next experiment ..."
-          sleep 3600
+          COOLDOWN_SECS="${{ needs.resolve.outputs.cooldown_seconds }}"
+          echo "Cooldown: sleeping ${COOLDOWN_SECS}s before dispatching the next experiment ..."
+          sleep "$COOLDOWN_SECS"
           echo "Cooldown complete."
 
       # -- C3. Clean Actions cache for completed experiment ------------------
