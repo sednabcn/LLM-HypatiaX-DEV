@@ -66,8 +66,8 @@ Changelog v8.1 (2026-05-17):
       to feynman-tests/exp2_multi/ so results land in the correct subdir.
       Updated result_glob to match.
     FIX-BUG6-EXP2FEYNMAN: exp2_feynman step missing --output-dir (results
-      landing in script default) and --method-timeout 120 (required with
-      --skip-pysr; present in CI worker). Both flags added.
+      landing in script default) and --method-timeout 120 (CI worker value).
+      Both flags added. --skip-pysr also removed so all 6 methods run.
 
 Changelog v8.0 (2026-05-16):
     NEW-QUALIFY: Added Phase 5 with two new steps:
@@ -1410,8 +1410,7 @@ STEPS: list[Step] = [
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
           "--benchmark", "feynman",
           "--output-dir", str(RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2"),  # FIX-BUG6: was missing; results landed in script default
-          "--skip-pysr",
-          "--method-timeout", "120",      # FIX-BUG6: was missing; required with --skip-pysr (CI worker value)
+          "--method-timeout", "120",      # FIX-BUG6: was missing (CI worker value)
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
           "--checkpoint-name", "feynman_exp2_checkpoint",
@@ -1436,7 +1435,6 @@ STEPS: list[Step] = [
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
           "--benchmark", "both",          # FIX-BUG5: was --protocol all30 (unknown flag)
           "--output-dir", str(RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2_multi"),  # FIX-BUG5: was missing; results landed in script default
-          "--skip-pysr",
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
           "--checkpoint-name", "exp2_checkpoint",
