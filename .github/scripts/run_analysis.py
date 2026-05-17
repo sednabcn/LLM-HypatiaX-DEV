@@ -1236,7 +1236,7 @@ def analyse(records: list[dict], experiment: str) -> dict:
     difficulties = sorted({r.get("difficulty") or "unknown" for r in standard})
     by_difficulty: dict[str, dict] = {}
     for diff in difficulties:
-        sub = [r for r in standard if r.get("difficulty") == diff]
+        sub = [r for r in standard if (r.get("difficulty") or "unknown") == diff]
         by_difficulty[diff] = {
             m: {
                 "n":               len([r for r in sub if r.get("results", {}).get(m) is not None]),
@@ -1250,7 +1250,7 @@ def analyse(records: list[dict], experiment: str) -> dict:
     ftypes = sorted({r.get("formula_type") or "unknown" for r in standard})
     by_formula_type: dict[str, dict] = {}
     for ft in ftypes:
-        sub = [r for r in standard if r.get("formula_type") == ft]
+        sub = [r for r in standard if (r.get("formula_type") or "unknown") == ft]
         by_formula_type[ft] = {
             m: {
                 "n":               len([r for r in sub if r.get("results", {}).get(m) is not None]),
