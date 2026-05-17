@@ -45,11 +45,11 @@ Tied:         0
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
 | ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
+| Allometric Scaling | None | None | N/A | N/A | N/A | N/A |
+| Henderson-Hasselbalch | None | None | N/A | N/A | N/A | N/A |
+| Impermanent Loss | None | None | N/A | N/A | N/A | N/A |
+| Value at Risk 95% | None | None | N/A | N/A | N/A | N/A |
+| Kinetic Energy | None | None | N/A | N/A | N/A | N/A |
 
 ## R²≥0.80 Rate by Difficulty
 
