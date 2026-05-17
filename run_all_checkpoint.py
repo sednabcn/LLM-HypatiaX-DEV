@@ -42,6 +42,33 @@ Notes:
     qualify (Phase 5) checks ALL experiments passed every stage; blocks audit-paper.
     audit-paper (Phase 5) cross-checks every number in the paper against results/.
 
+Changelog v8.1 (2026-05-17):
+    FIX-BUG1-SUBDIR: EXP_RESULT_SUBDIR had three wrong paths (CRITICAL):
+      exp1  "comparison_results/extrapolation"       → "comparison_results/noise-noiseless/noiseless"
+      exp1b "comparison_results/extrapolation"       → "comparison_results/noise-noiseless/15"
+      exp2  "comparison_results/feynman-tests/exp2"  → "comparison_results/feynman-tests/exp2_multi"
+      Wrong paths caused qualify_experiment() to never find _merged.json for
+      exp1/exp1b/exp2, permanently blocking audit-paper for those experiments.
+    FIX-BUG2-POSTMOVE: exp3/exp3b/suppA PostMove source was EXPERIMENTS_DIR
+      (CRITICAL). run_all.sh comment "FIX-DIR: script writes to RESULTS_DIR root —
+      search must use RESULTS_DIR". Changed all three to RESULTS_DIR so globs
+      find the files and moves actually happen.
+    FIX-BUG3-EXTRAP: extrap step had non-paper OOD parameters (CRITICAL):
+      --extrap-multiplier 3.0 → 2.0  (paper value; matches CI and run_all.sh)
+      --extrap-train-frac 0.4 → 0.8  (paper value; matches CI and run_all.sh)
+    FIX-BUG4-RESULTGLOB: exp1/exp1b result_glob pointed to wrong directory.
+      step_already_complete() uses result_glob for idempotent-skip checks;
+      wrong path causes steps to always rerun even when results exist.
+      exp1  "comparison_results/extrapolation/*.json"        → "comparison_results/noise-noiseless/noiseless/*.json"
+      exp1b "comparison_results/extrapolation/*seed*.json"   → "comparison_results/noise-noiseless/15/*.json"
+    FIX-BUG5-EXP2: exp2 step used unknown --protocol all30 flag; fixed to
+      --benchmark both (matches CI worker). Added missing --output-dir pointing
+      to feynman-tests/exp2_multi/ so results land in the correct subdir.
+      Updated result_glob to match.
+    FIX-BUG6-EXP2FEYNMAN: exp2_feynman step missing --output-dir (results
+      landing in script default) and --method-timeout 120 (required with
+      --skip-pysr; present in CI worker). Both flags added.
+
 Changelog v8.0 (2026-05-16):
     NEW-QUALIFY: Added Phase 5 with two new steps:
       qualify     — per-experiment gate that verifies each exp is FULLY done:
@@ -218,10 +245,13 @@ SUPPB_SC_SAMPLE_COUNTS: list[str] = ["50", "100", "200", "500", "750", "1000"]
 # ── Experiment → result subdir map (mirrors ci_experiment.yml plan job) ─────
 # Used by qualify_experiment() to locate _merged.json for each exp.
 EXP_RESULT_SUBDIR: dict[str, str] = {
-    "exp1":              "comparison_results/extrapolation",
-    "exp1b":             "comparison_results/extrapolation",
+    # FIX-BUG1: exp1/exp1b were "comparison_results/extrapolation" (wrong);
+    #           exp2 was "comparison_results/feynman-tests/exp2" (wrong).
+    #           Correct values match ci_experiment.yml plan meta.
+    "exp1":              "comparison_results/noise-noiseless/noiseless",
+    "exp1b":             "comparison_results/noise-noiseless/15",
     "exp2_feynman":      "comparison_results/feynman-tests/exp2",
-    "exp2":              "comparison_results/feynman-tests/exp2",
+    "exp2":              "comparison_results/feynman-tests/exp2_multi",
     "exp3":              "extrapolation",
     "exp3b":             "extrapolation/multi_seed",
     "suppA":             "hybrid_pysr/defi",
@@ -1289,7 +1319,7 @@ STEPS: list[Step] = [
          phase="1 · Core experiments",
          slow=True,
          expected="Tab 9 OOD R²>0.85; Tab 10 DeFi 74-task solve rate; Tab 15 ablation",
-         result_glob="comparison_results/extrapolation/*.json",
+         result_glob="comparison_results/noise-noiseless/noiseless/*.json",  # FIX-BUG4: was extrapolation/
          env_extra={"SKIP_PKG_CHECK": "1"}),
 
     Step("exp1_analysis",
@@ -1310,7 +1340,7 @@ STEPS: list[Step] = [
          phase="1 · Core experiments",
          slow=True,
          expected="seed variance <5%; portfolio R² consistent across seeds",
-         result_glob="comparison_results/extrapolation/*seed*.json",
+         result_glob="comparison_results/noise-noiseless/15/*.json",  # FIX-BUG4: was extrapolation/*seed*/
          env_extra={"SKIP_PKG_CHECK": "1"}),
 
     Step("extrap",
@@ -1318,8 +1348,8 @@ STEPS: list[Step] = [
          [sys.executable,
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
           "--extrap",
-          "--extrap-multiplier", "3.0",
-          "--extrap-train-frac", "0.4",
+          "--extrap-multiplier", "2.0",   # FIX-BUG3: was 3.0 (non-paper value)
+          "--extrap-train-frac", "0.8",   # FIX-BUG3: was 0.4 (non-paper value)
           "--skip-pysr"],
          phase="1 · Core experiments",
          slow=True,
@@ -1379,7 +1409,9 @@ STEPS: list[Step] = [
          [sys.executable,
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
           "--benchmark", "feynman",
+          "--output-dir", str(RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2"),  # FIX-BUG6: was missing; results landed in script default
           "--skip-pysr",
+          "--method-timeout", "120",      # FIX-BUG6: was missing; required with --skip-pysr (CI worker value)
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
           "--checkpoint-name", "feynman_exp2_checkpoint",
@@ -1402,7 +1434,8 @@ STEPS: list[Step] = [
          "Exp 2 · Combined five-system comparison — all methods (§10.7 combined)",
          [sys.executable,
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
-          "--protocol", "all30",
+          "--benchmark", "both",          # FIX-BUG5: was --protocol all30 (unknown flag)
+          "--output-dir", str(RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2_multi"),  # FIX-BUG5: was missing; results landed in script default
           "--skip-pysr",
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
@@ -1410,7 +1443,7 @@ STEPS: list[Step] = [
           "--resume"],
          phase="1 · Core experiments",
          expected="9/30 (30%)  [fast after method-5/6 checkpoints ready]",
-         result_glob="comparison_results/**/*.json"),
+         result_glob="comparison_results/feynman-tests/exp2_multi/*.json"),  # FIX-BUG5: aligned with EXP_RESULT_SUBDIR
 
     Step("exp3",
          "Exp 3 · Nguyen-12 SEED=42 (§10.8 primary)",
@@ -1426,8 +1459,10 @@ STEPS: list[Step] = [
          result_glob="extrapolation/*nguyen*seed42*.json",
          env_extra={"SKIP_PKG_CHECK": "1"},
          post_move=[
-             PostMove(EXPERIMENTS_DIR, "*nguyen*seed42*.json", RESULTS_DIR / "extrapolation"),
-             PostMove(EXPERIMENTS_DIR, "*nguyen12*42*.json",   RESULTS_DIR / "extrapolation"),
+             # FIX-BUG2: script writes to RESULTS_DIR root (run_all.sh: "FIX-DIR");
+             #           glob must use RESULTS_DIR, not EXPERIMENTS_DIR.
+             PostMove(RESULTS_DIR, "*nguyen*seed42*.json", RESULTS_DIR / "extrapolation"),
+             PostMove(RESULTS_DIR, "*nguyen12*42*.json",   RESULTS_DIR / "extrapolation"),
          ]),
 
     Step("exp3b",
@@ -1447,7 +1482,8 @@ STEPS: list[Step] = [
          result_glob="extrapolation/multi_seed/*nguyen*.json",
          env_extra={"SKIP_PKG_CHECK": "1"},
          post_move=[
-             PostMove(EXPERIMENTS_DIR, "*nguyen*.json",
+             # FIX-BUG2: RESULTS_DIR, not EXPERIMENTS_DIR (same as exp3 above).
+             PostMove(RESULTS_DIR, "*nguyen*.json",
                       RESULTS_DIR / "extrapolation" / "multi_seed"),
          ]),
 
@@ -1464,9 +1500,10 @@ STEPS: list[Step] = [
              "HYPATIAX_CORE_OPTIONAL": "1",
          },
          post_move=[
-             PostMove(EXPERIMENTS_DIR, "consolidated_hybrid*.json",
+             # FIX-BUG2: RESULTS_DIR, not EXPERIMENTS_DIR (same fix as exp3/exp3b).
+             PostMove(RESULTS_DIR, "consolidated_hybrid*.json",
                       RESULTS_DIR / "hybrid_pysr" / "defi"),
-             PostMove(EXPERIMENTS_DIR, "hybrid_system*.json",
+             PostMove(RESULTS_DIR, "hybrid_system*.json",
                       RESULTS_DIR / "hybrid_pysr" / "defi"),
          ]),
 
