@@ -154,6 +154,7 @@ jobs:
       # so all downstream steps (locate, analysis, verify) are skipped.
       - name: Short-circuit for instability experiment
         if: github.event.inputs.experiment == 'instability'
+        id: short_circuit
         env:
           SUB: figures
         run: |
@@ -360,8 +361,8 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Commit and push analysis outputs to master
         env:
-          EXP: ${{ steps.meta.outputs.exp_id }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
+          EXP: ${{ steps.short_circuit.outputs.exp_id || steps.meta.outputs.exp_id }}
+          SUB: ${{ steps.short_circuit.outputs.result_subdir || steps.meta.outputs.result_subdir }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -395,7 +396,7 @@ jobs:
       # report is always available even when the run is aborted.
       - name: Abort on fatal conditions
         env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
+          SUB: ${{ steps.short_circuit.outputs.result_subdir || steps.meta.outputs.result_subdir }}
         run: |
           python - <<'PYEOF'
           import json, os, sys

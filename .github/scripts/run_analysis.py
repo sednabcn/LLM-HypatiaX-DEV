@@ -1112,6 +1112,7 @@ def write_report_ablation(analysis: dict, path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _mann_whitney(a: list[float], b: list[float]) -> dict:
     """Two-sided Mann-Whitney U test. Returns stat, p, direction."""
     if not _SCIPY_OK:
         return {"available": False, "reason": "scipy not installed"}
