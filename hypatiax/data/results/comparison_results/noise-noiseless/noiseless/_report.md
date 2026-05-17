@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp1`
 
 Experiment mode: **standard**
-N total: 15 | N standard: 15 | N intractable: 0
+N total: 16 | N standard: 16 | N intractable: 0
 R² success threshold: 0.8
 
 ## ✅ No Fatal Conditions
@@ -39,10 +39,11 @@ Hybrid wins:  3  (100.0%)
 NN wins:      0
 Tied:         0
 
-## Coverage Gaps (13 equations with best R² < 0.8)
+## Coverage Gaps (14 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
+| ? | None | None | N/A | N/A | N/A | N/A |
 | Portfolio Expected Shortfall for correlated | hard | quadratic_form | N/A | N/A | -2.4931 | 0.3760 |
 | ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
