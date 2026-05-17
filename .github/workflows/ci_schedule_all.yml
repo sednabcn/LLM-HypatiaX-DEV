@@ -357,6 +357,8 @@ jobs:
     if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 355   # safely under the 360-min GitHub hard cap
+
+    outputs:
       exp_run_id:          ${{ steps.dispatch.outputs.exp_run_id }}
       exp_concluded_iso:   ${{ steps.wait_exp.outputs.exp_concluded_iso }}
       exp_ok:              ${{ steps.wait_exp.outputs.exp_ok }}
@@ -556,7 +558,7 @@ jobs:
           while true; do
             STATUS=$(gh api \
               "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}" \
-              --jq '"\\(.status) \\(.conclusion)"')
+              --jq '"\(.status) \(.conclusion)"')
 
             echo "  [analysis/${EXP}] $(date -u +%H:%M:%SZ)  run=${ANALYSIS_RUN_ID}  ${STATUS}"
 
