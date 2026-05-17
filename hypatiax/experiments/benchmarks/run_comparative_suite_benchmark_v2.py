@@ -262,10 +262,41 @@ def _probe_hybrid_all() -> bool:
         return False
 
 HYBRID_ALL_AVAILABLE  = _probe_hybrid_all()
-SYM_ENGINE_AVAILABLE  = _probe("hypatiax.tools.symbolic.symbolic_engine",
-                                "SymbolicEngineWithLLM")
-HYBRID_V50_2_AVAILABLE  = _probe("hypatiax.tools.symbolic.hybrid_system_v50_2",
-                                "HybridDiscoverySystem")
+
+# Methods 5 & 6 (SymbolicEngine, HybridV50_2) MUST NOT be probed via importlib.
+# Both modules import pysr at the top level, which triggers juliacall in the main
+# process where torch is already loaded.  On GitHub Actions this causes juliacall
+# to raise a precompilation error that _probe() silently catches -> returns False ->
+# SYM_ENGINE_AVAILABLE = False for the entire run, even though Julia/PySR is fully
+# installed.  The actual PySR work always runs in a fresh subprocess (no torch),
+# so the main process never needs to import these modules directly.
+#
+# Fix: use a file-system probe — the module file must exist on disk AND pysr must
+# be importable (confirming Julia is set up).  This never triggers juliacall in
+# the main process.
+def _probe_pysr_method(module_path: str) -> bool:
+    """Check method availability by file presence + pysr importability.
+
+    Does NOT import the module (avoids juliacall/torch collision in main process).
+    """
+    import importlib.util
+    try:
+        spec = importlib.util.find_spec(module_path)
+        if spec is None or spec.origin is None:
+            return False
+        if not Path(spec.origin).exists():
+            return False
+        # Also confirm pysr itself is importable (confirms Julia depot is set up).
+        # pysr's top-level __init__ does NOT call juliacall — that only happens
+        # when a PySRRegressor is actually fitted, so this is safe.
+        import importlib as _il
+        _il.import_module("pysr")
+        return True
+    except Exception:
+        return False
+
+SYM_ENGINE_AVAILABLE    = _probe_pysr_method("hypatiax.tools.symbolic.symbolic_engine")
+HYBRID_V50_2_AVAILABLE  = _probe_pysr_method("hypatiax.tools.symbolic.hybrid_system_v50_2")
 
 
 # ============================================================================

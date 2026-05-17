@@ -207,6 +207,17 @@ random.seed(SEED)
 np.random.seed(SEED)
 os.environ["PYTHONHASHSEED"] = str(SEED)
 os.environ["JULIA_SEED"]     = str(SEED)   # PySR / Julia RNG
+
+# [FIX-SEGFAULT] juliacall MUST be imported before torch.
+# torch imported first causes segfault — PyTorch signal handlers clobber Julia's.
+# PYTHON_JULIACALL_HANDLE_SIGNALS=yes is already set in CI global env.
+# See: https://github.com/pytorch/pytorch/issues/78829
+os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
+try:
+    import juliacall  # noqa: F401  — must precede torch import
+except ImportError:
+    pass  # juliacall absent — PySR subprocess handles Julia init
+
 try:
     import torch
     torch.manual_seed(SEED)
@@ -325,7 +336,13 @@ def run(seed: int = 42):
     try:
         from hypatiax.protocols.experiment_protocol_nguyen12 import NguYenProtocol
     except ImportError:
-        from protocols.experiment_protocol_nguyen12 import NguYenProtocol
+        # [FIX-IMPORT] 'protocols' is a subpackage of hypatiax/, not standalone.
+        # Re-insert repo root and retry with the full dotted path.
+        import pathlib as _pl
+        _root = str(_pl.Path(__file__).resolve().parents[3])
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from hypatiax.protocols.experiment_protocol_nguyen12 import NguYenProtocol
 
     # ── Import SR engine ──────────────────────────────────────────────────
     from pysr import PySRRegressor

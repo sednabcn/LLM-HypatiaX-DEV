@@ -139,7 +139,8 @@ env:
   PYSR_POPULATIONS:    "${{ github.event.inputs.pysr_populations || '30' }}"  # repro.yaml pysr.populations
   FEYNMAN_SAMPLES:     "${{ github.event.inputs.n_samples || '200' }}"
   FEYNMAN_TIMEOUT:     "1100"  # repro.yaml timeouts.feynman_pysr_seconds
-  METHOD_TIMEOUT:      "900"   # repro.yaml timeouts.method_seconds → --method-timeout
+  METHOD_TIMEOUT:      "900"   # repro.yaml timeouts.method_seconds → --method-timeout (PySR methods 5/6)
+  LLM_METHOD_TIMEOUT:  "120"   # tight timeout for LLM/NN-only runs (methods 1-4, no PySR)
   PYSR_FIT_WALL_TIMEOUT: "1200" # repro.yaml timeouts.fit_wall_timeout → DiscoveryConfig
   PYSR_FIT_GRACE_SECS: "120"   # repro.yaml timeouts.fit_grace_secs → DiscoveryConfig
   FEYNMAN_NOISELESS_THRESHOLD: "0.9999"
@@ -879,7 +880,7 @@ jobs:
                 SHARD_IDS="${DOMAIN_ID}" \
                 FEYNMAN_SAMPLES="${FEYNMAN_SAMPLES}" \
                 FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
-                METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
+                METHOD_TIMEOUT="${LLM_METHOD_TIMEOUT}" \
                 PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
                 PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
                 JOB_DEADLINE="${JOB_DEADLINE}" \
@@ -889,7 +890,7 @@ jobs:
                     --skip-pysr \
                     --samples "${FEYNMAN_SAMPLES}" \
                     --pysr-timeout "${FEYNMAN_TIMEOUT}" \
-                    --method-timeout "${METHOD_TIMEOUT}" \
+                    --method-timeout "${LLM_METHOD_TIMEOUT}" \
                     --populations "${PYSR_POPULATIONS}" \
                     --parsimony 0.01 \
                     --noiseless \
