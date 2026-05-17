@@ -229,16 +229,22 @@ jobs:
 
           if [[ -n "$CKPT" ]]; then
             echo "Found checkpoint: $CKPT"
-            EXP=$(python -c "
-          import json, sys
-          d = json.load(open('$CKPT'))
+            # BUG FIX: pass checkpoint path via CKPT_PATH env var rather than
+            # interpolating $CKPT directly into the python -c "..." string.
+            # Shell string substitution inside double-quoted here-strings breaks
+            # under set -euo pipefail when the path contains special characters,
+            # and the interpolated value is also vulnerable to code injection.
+            # Using an env var is the canonical safe pattern for this.
+            EXP=$(CKPT_PATH="$CKPT" python -c "
+          import json, os
+          d = json.load(open(os.environ['CKPT_PATH']))
           v = d.get('experiment') or d.get('exp_id') or ''
           print(v.strip())
           ")
             # Derive result_subdir from experiment name if not in checkpoint.
-            SUB=$(python -c "
-          import json, sys
-          d = json.load(open('$CKPT'))
+            SUB=$(CKPT_PATH="$CKPT" python -c "
+          import json, os
+          d = json.load(open(os.environ['CKPT_PATH']))
           v = d.get('result_subdir') or ''
           if not v:
               # Derive result_subdir from experiment name using the canonical mapping.
@@ -270,8 +276,14 @@ jobs:
 
           # Derive result_subdir from experiment name when DISPATCH_SUB is blank
           # (the normal automated dispatch case — ci_schedule_all leaves it empty).
+          # BUG FIX: pass EXP via env var (EXP_ID) rather than interpolating
+          # $EXP into the python -c string. The interpolated form is fragile
+          # under set -euo pipefail and silently produces the wrong mapping
+          # when $EXP contains a value not present in the dict (it returns
+          # the literal string '$EXP' rather than the fallback value).
           if [[ -z "$SUB" && -n "$EXP" ]]; then
-            SUB=$(python -c "
+            SUB=$(EXP_ID="$EXP" python -c "
+          import os
           mapping = {
               'exp1':               'comparison_results/noise-noiseless/noiseless',
               'exp1_ablation':      'comparison_results/noise-noiseless/ablation',
@@ -287,7 +299,8 @@ jobs:
               'instability':        'figures',
               'extrap':             'comparison_results/extrapolation',
           }
-          print(mapping.get('$EXP', '$EXP'))
+          exp = os.environ['EXP_ID']
+          print(mapping.get(exp, exp))
           ")
           fi
 
