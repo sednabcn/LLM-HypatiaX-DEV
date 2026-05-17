@@ -65,7 +65,8 @@ export PYSR_POPULATIONS="${PYSR_POPULATIONS:-30}"
 
 # Method timeouts — mirrors ci_experiment.yml global env block.
 # METHOD_TIMEOUT: PySR methods 5/6 budget (repro.yaml timeouts.method_seconds).
-# LLM_METHOD_TIMEOUT: tight cap for LLM/NN-only steps that pass --skip-pysr.
+# LLM_METHOD_TIMEOUT: tight cap for LLM/NN-only steps (not used by exp2/exp2_feynman
+#   after --skip-pysr removal; retained for any custom invocations).
 export METHOD_TIMEOUT="${METHOD_TIMEOUT:-900}"
 export LLM_METHOD_TIMEOUT="${LLM_METHOD_TIMEOUT:-120}"
 
@@ -401,19 +402,16 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
 # ── STEP 5: exp2_feynman ──────────────────────────────────────────────────────
 # FIX: mkdir -p ensures tee target directory exists when this step runs
 #      standalone (--step exp2_feynman) without a prior env_check.
-# --skip-pysr: methods 5+6 (SymbolicEngine, HybridV50_2) are excluded.
-#   They are NOT in the paper's Tab 16-18 comparison.  Julia startup overhead
-#   (~150s per test × 30 tests = 75 min) would blow the 5h30m job deadline.
-#   Remove --skip-pysr here AND in ci_experiment.yml if you want them back.
+# All 6 methods active (--skip-pysr removed); METHOD_TIMEOUT (900s) used so
+# methods 5+6 (SymbolicEngine, HybridV50_2) have adequate PySR budget.
 run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
   python3 run_comparative_suite_benchmark_v2.py \
     --benchmark feynman \
-    --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
-    --method-timeout ${LLM_METHOD_TIMEOUT} \
+    --method-timeout ${METHOD_TIMEOUT} \
     --checkpoint-name feynman_exp2_checkpoint \
     --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
     --resume \
@@ -425,18 +423,15 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" ba
 #      argparse — it caused SystemExit(2) on every worker (confirmed in CI BUG 2 fix).
 #      Replaced with --benchmark both which runs both Feynman + SRBench protocols
 #      (ExperimentProtocolAll, 30 multi-domain equations, Tab 19).
-# FIX: --method-timeout now uses METHOD_TIMEOUT (900 s, repro.yaml value) instead
-#      of FEYNMAN_TIMEOUT (1100 s) — PySR methods 5/6 are skipped so 1100 s was excessive.
 # FIX: mkdir -p ensures tee target directory exists when this step runs
 #      standalone (--step exp2) without a prior env_check.
-# --skip-pysr: methods 5+6 (SymbolicEngine, HybridV50_2) not in Tab 19 comparison.
-#   Julia startup overhead (~150s per test × 30 tests) would exceed job deadline.
+# All 6 methods active (--skip-pysr removed); METHOD_TIMEOUT (900s) gives
+# methods 5+6 (SymbolicEngine, HybridV50_2) adequate PySR budget.
 run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'
   python3 run_comparative_suite_benchmark_v2.py \
     --benchmark both \
-    --skip-pysr \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
     --method-timeout ${METHOD_TIMEOUT} \
