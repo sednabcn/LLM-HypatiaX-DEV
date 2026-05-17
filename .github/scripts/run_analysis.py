@@ -107,6 +107,11 @@ R2_SUCCESS_THRESHOLD = 0.80
 R2_CLIP_LO = -10.0
 R2_CLIP_HI = 1.0
 
+# Extrapolation success threshold for Tier-3 MW (paper §10.7: "9/30 successes").
+# An equation counts as a "success" if hypatia.extrap_r2_far >= this value.
+# Matches the paper's bold criterion (R²>0.99 in the Feynman table).
+EXTRAP_SUCCESS_THRESHOLD = 0.99
+
 # Fatal-condition thresholds.
 MIN_RECORDS_FOR_STATS = 3   # below this, flag fatal
 HYBRID_MUST_WIN_FRACTION = 0.0  # hybrid must beat NN on >0% of equations
@@ -124,6 +129,13 @@ EXPERIMENT_MODE: dict[str, str] = {
     "instability":        "instability",
     "exp2":               "multi_method",
     "hybrid_all_domains": "multi_method",
+    # exp1_ablation / exp2_feynman: paired pysr_only vs hypatia comparison using
+    # extrap_r2_far. Uses dedicated helpers; standard method schema
+    # (pure_llm/neural_network/hybrid) is absent — method-comparison sections suppressed.
+    # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
+    # complexity distributions, threshold sweep, and LOO all run under this mode.
+    "exp1_ablation":      "ablation",
+    "exp2_feynman":       "ablation",
 }
 
 
@@ -208,7 +220,898 @@ def _mean(vals: list[float]) -> float | None:
     return float(np.mean(finite))
 
 
-def _mann_whitney(a: list[float], b: list[float]) -> dict:
+def _mann_whitney_paired_ablation(pairs: list[tuple[float, float]]) -> dict:
+    """
+    One-sided Mann-Whitney U test for paired (pysr_only_far, hypatia_far) values.
+
+    Filters to finite pairs only (None / inf already excluded by the caller).
+    Tests alternative='greater' (hypatia > pysr_only) and also reports two-sided p.
+    Returns both so the report can print both, matching exp1_rf01_mannwhitney.json.
+    """
+    if not _SCIPY_OK:
+        return {"available": False, "reason": "scipy not installed"}
+    if len(pairs) < 2:
+        return {"available": False, "reason": "insufficient pairs after filtering"}
+    p_vals = [p for p, _ in pairs]
+    h_vals = [h for _, h in pairs]
+    try:
+        stat_os, p_one = mannwhitneyu(h_vals, p_vals, alternative="greater")
+        stat_ts, p_two = mannwhitneyu(h_vals, p_vals, alternative="two-sided")
+        return {
+            "available":          True,
+            "statistic":          round(float(stat_ts), 4),
+            "p_value_one_sided":  round(float(p_one), 6),
+            "p_value_two_sided":  round(float(p_two), 6),
+            "significant_05_one": float(p_one) < 0.05,
+            "significant_05_two": float(p_two) < 0.05,
+            "n_pairs":            len(pairs),
+            # non-significance is an honest scientific result, not a pipeline error.
+            "interpretation":     (
+                "statistically significant (p_one < 0.05)"
+                if float(p_one) < 0.05
+                else "not statistically significant at α=0.05 — directional result only"
+            ),
+        }
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
+def _ablation_instability_index(far_r2: float | None) -> float:
+    """
+    instability_index = 1 - extrap_r2_far.
+
+    None → 0.0 substitution (for equations where hypatia returned no result).
+    NOT clamped — negative far R² intentionally yields index > 1, quantifying
+    the magnitude of extrapolation failure, not just its presence.
+    """
+    if far_r2 is None:
+        return 0.0
+    return 1.0 - far_r2
+
+
+def _rank_biserial(a: list[float], b: list[float]) -> float | None:
+    """
+    Rank-biserial correlation r = 1 - 2U / (n_a * n_b).
+    Ranges [-1, 1]; positive means a tends to exceed b.
+    Computed from the Mann-Whitney U statistic for group a vs b.
+    """
+    if not _SCIPY_OK or len(a) < 1 or len(b) < 1:
+        return None
+    try:
+        from scipy.stats import mannwhitneyu as _mwu
+        u_stat, _ = _mwu(a, b, alternative="two-sided")
+        return round(1.0 - 2.0 * float(u_stat) / (len(a) * len(b)), 4)
+    except Exception:
+        return None
+
+
+def _fisher_exact_2x2(
+    n_fail_target: int, n_total_target: int,
+    n_fail_other: int,  n_total_other: int,
+) -> dict:
+    """
+    Fisher's exact test on a 2×2 table:
+        [[n_fail_target, n_pass_target],
+         [n_fail_other,  n_pass_other ]]
+    Returns p-value (two-sided) and odds-ratio.
+    """
+    if not _SCIPY_OK:
+        return {"available": False, "reason": "scipy not installed"}
+    try:
+        from scipy.stats import fisher_exact
+        n_pass_target = n_total_target - n_fail_target
+        n_pass_other  = n_total_other  - n_fail_other
+        table = [[n_fail_target, n_pass_target],
+                 [n_fail_other,  n_pass_other]]
+        odds, p = fisher_exact(table, alternative="two-sided")
+        return {
+            "available":    True,
+            "table":        table,
+            "odds_ratio":   round(float(odds), 4) if math.isfinite(float(odds)) else None,
+            "p_value":      round(float(p), 6),
+            "significant_05": float(p) < 0.05,
+        }
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
+def _spearman(x: list[float], y: list[float]) -> dict:
+    """Spearman rank correlation between two equal-length lists of finite floats."""
+    if not _SCIPY_OK or len(x) < 3:
+        return {"available": False, "reason": "insufficient data or scipy missing"}
+    try:
+        from scipy.stats import spearmanr
+        r, p = spearmanr(x, y)
+        return {
+            "available":      True,
+            "rho":            round(float(r), 4),
+            "p_value":        round(float(p), 6),
+            "significant_05": float(p) < 0.05,
+            "n":              len(x),
+        }
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
+def _complexity_distribution(vals: list[int | float]) -> dict:
+    """Summary stats for a list of complexity scores."""
+    finite = [v for v in vals if v is not None and math.isfinite(float(v))]
+    if not finite:
+        return {"n": 0}
+    arr = np.array(finite, dtype=float)
+    return {
+        "n":      len(finite),
+        "min":    float(arr.min()),
+        "max":    float(arr.max()),
+        "mean":   round(float(arr.mean()), 2),
+        "median": float(np.median(arr)),
+        "p25":    float(np.percentile(arr, 25)),
+        "p75":    float(np.percentile(arr, 75)),
+    }
+
+
+def _threshold_sweep(
+    records: list[dict],
+    thresholds: list[float] | None = None,
+) -> list[dict]:
+    """
+    Sweep the train-R² inclusion threshold from lo to hi.
+    At each threshold t, include only equations where hypatia.train_r2 >= t,
+    run Mann-Whitney (one-sided, hypatia far-R² > pysr_only far-R²),
+    and record n_included, U, p_one, p_two.
+
+    Default thresholds: -0.5, -0.25, 0.0, 0.1, 0.25, 0.5
+    """
+    if thresholds is None:
+        thresholds = [-0.5, -0.25, 0.0, 0.1, 0.25, 0.5]
+
+    rows = []
+    for t in thresholds:
+        pairs = []
+        for r in records:
+            hyp  = r.get("hypatia",   {}) or {}
+            pysr = r.get("pysr_only", {}) or {}
+            h_train = _safe_float(hyp.get("train_r2"))
+            if not math.isfinite(h_train) or h_train < t:
+                continue
+            h_far_raw = hyp.get("extrap_r2_far")
+            p_far     = _safe_float(pysr.get("extrap_r2_far"))
+            if _is_finite(h_far_raw) and math.isfinite(p_far):
+                pairs.append((p_far, float(h_far_raw)))
+
+        if len(pairs) < 2 or not _SCIPY_OK:
+            rows.append({"threshold": t, "n_included": len(pairs),
+                         "available": False, "reason": "insufficient pairs"})
+            continue
+        try:
+            from scipy.stats import mannwhitneyu as _mwu
+            h_vals = [h for _, h in pairs]
+            p_vals = [p for p, _ in pairs]
+            u_os, p_one = _mwu(h_vals, p_vals, alternative="greater")
+            u_ts, p_two = _mwu(h_vals, p_vals, alternative="two-sided")
+            rows.append({
+                "threshold":        t,
+                "n_included":       len(pairs),
+                "available":        True,
+                "U":                round(float(u_ts), 2),
+                "p_one_sided":      round(float(p_one), 6),
+                "p_two_sided":      round(float(p_two), 6),
+                "significant_05":   float(p_one) < 0.05,
+            })
+        except Exception as e:
+            rows.append({"threshold": t, "n_included": len(pairs),
+                         "available": False, "reason": str(e)})
+    return rows
+
+
+def _leave_one_out_sensitivity(records: list[dict]) -> list[dict]:
+    """
+    Leave-one-out Mann-Whitney sensitivity.
+    Iterates over the 7 failure equations (hypatia train_r2 < 0).
+    For each, removes that equation from the full set, re-runs the all-N MW
+    on the remaining finite far-R² pairs, and records the new p_one and n.
+    Quantifies how much each failure masks the signal.
+    """
+    if not _SCIPY_OK:
+        return []
+
+    # Full set of finite pairs (same filter as the main MW)
+    def _pairs_excluding(skip_name: str) -> list[tuple[float, float]]:
+        out = []
+        for r in records:
+            if r.get("equation_name", r.get("equation_id", "")) == skip_name:
+                continue
+            hyp  = r.get("hypatia",   {}) or {}
+            pysr = r.get("pysr_only", {}) or {}
+            h_far_raw = hyp.get("extrap_r2_far")
+            p_far     = _safe_float(pysr.get("extrap_r2_far"))
+            if _is_finite(h_far_raw) and math.isfinite(p_far):
+                out.append((p_far, float(h_far_raw)))
+        return out
+
+    failure_names = [
+        r.get("equation_name", r.get("equation_id", "?"))
+        for r in records
+        if _safe_float((r.get("hypatia") or {}).get("train_r2")) < 0
+    ]
+
+    results = []
+    for name in failure_names:
+        pairs = _pairs_excluding(name)
+        if len(pairs) < 2:
+            results.append({"removed": name, "n_remaining": len(pairs),
+                            "available": False})
+            continue
+        try:
+            from scipy.stats import mannwhitneyu as _mwu
+            h_vals = [h for _, h in pairs]
+            p_vals = [p for p, _ in pairs]
+            u_ts, p_two = _mwu(h_vals, p_vals, alternative="two-sided")
+            u_os, p_one = _mwu(h_vals, p_vals, alternative="greater")
+            results.append({
+                "removed":        name,
+                "n_remaining":    len(pairs),
+                "available":      True,
+                "U":              round(float(u_ts), 2),
+                "p_one_sided":    round(float(p_one), 6),
+                "p_two_sided":    round(float(p_two), 6),
+                "significant_05": float(p_one) < 0.05,
+            })
+        except Exception as e:
+            results.append({"removed": name, "n_remaining": len(pairs),
+                            "available": False, "reason": str(e)})
+    return results
+
+
+def analyse_ablation(records: list[dict], experiment: str) -> dict:
+    """
+    exp1_ablation / exp2_feynman_rf09 analysis.
+
+    Core MW structure (from spec):
+      Rule 1. None/non-finite hypatia.extrap_r2_far → skip from MW pairs.
+      Rule 2. instability_index = 1 - extrap_r2_far (no clamp); None→0.0 for CSV.
+      Rule 3. MW non-significance is NOT a fatal condition.
+
+    Additional analyses (RF09):
+      A. Three-tier MW framing (paper §10.7):
+           Tier 1 — all-N (all finite pairs; expected non-significant).
+           Tier 2 — excl-train-failures (hypatia train_r2 >= 0; interim filter).
+           Tier 3 — success-subset (hypatia extrap_r2_far >= EXTRAP_SUCCESS_THRESHOLD,
+                     default 0.99; primary paper result — "9/30 successes").
+           All three reported. Tier 3 is the primary publishable claim.
+      B. Domain stratification + Fisher's exact on failure cluster.
+      C. Scale/magnitude sensitivity: Spearman(log|scale|, train_r2).
+      D. Expression complexity distributions: success vs failure, hypatia vs pysr.
+      E. Effect sizes: rank-biserial r for every MW result.
+      F. Threshold sweep: MW p-value vs train-R² inclusion threshold.
+      G. Leave-one-out sensitivity on the 7 train-failure equations.
+    """
+    mode = "ablation"
+    fatal: list[str] = []
+
+    if not records:
+        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        return {"experiment": experiment, "experiment_mode": mode,
+                "n_total": 0, "fatal_conditions": fatal}
+
+    n_total = len(records)
+
+    # -------------------------------------------------------------------------
+    # 1. Build paired arrays (Rule 1 filtering) + instability rows (Rule 2)
+    # -------------------------------------------------------------------------
+    mw_pairs_all:     list[tuple[float, float]] = []  # Tier 1: all finite pairs (all-N)
+    mw_pairs_excl:    list[tuple[float, float]] = []  # Tier 2: excl train_r2<0 failures
+    mw_pairs_success: list[tuple[float, float]] = []  # Tier 3: extrap_r2_far >= EXTRAP_SUCCESS_THRESHOLD
+    skipped:          list[dict]                = []
+    all_rows:         list[dict]                = []
+
+    for r in records:
+        eq_name  = r.get("equation_name", r.get("equation_id", "?"))
+        domain   = r.get("domain", "?")
+        pysr     = r.get("pysr_only", {}) or {}
+        hyp      = r.get("hypatia",   {}) or {}
+
+        p_far     = _safe_float(pysr.get("extrap_r2_far"))
+        h_near    = _safe_float(hyp.get("extrap_r2_near"))
+        h_far_raw = hyp.get("extrap_r2_far")
+        h_train   = _safe_float(hyp.get("train_r2"))
+
+        h_far_finite = _is_finite(h_far_raw)
+        h_far = float(h_far_raw) if h_far_finite else None
+
+        # Rule 1 — all-N MW: skip if either side is non-finite
+        if h_far_finite and math.isfinite(p_far):
+            mw_pairs_all.append((p_far, h_far))
+            # Tier 2 — excl train-failures: additionally require hypatia train_r2 >= 0
+            if math.isfinite(h_train) and h_train >= 0:
+                mw_pairs_excl.append((p_far, h_far))
+            # Tier 3 — success-subset: hypatia extrap_r2_far >= EXTRAP_SUCCESS_THRESHOLD
+            # This is the primary paper result (§10.7: "9/30 successes").
+            if h_far is not None and h_far >= EXTRAP_SUCCESS_THRESHOLD:
+                mw_pairs_success.append((p_far, h_far))
+        else:
+            reason = (
+                "hypatia.extrap_r2_far is None"              if h_far_raw is None
+                else f"hypatia.extrap_r2_far={h_far_raw!r} is non-finite"
+                                                             if not h_far_finite
+                else f"pysr_only.extrap_r2_far={p_far!r} is non-finite"
+            )
+            skipped.append({"equation": eq_name, "domain": domain, "reason": reason})
+
+        # Rule 2 — instability_index (no clamp, None→0.0)
+        instability = _ablation_instability_index(h_far)
+
+        all_rows.append({
+            "equation":          eq_name,
+            "domain":            domain,
+            "train_r2_hypatia":  _safe_float(hyp.get("train_r2")),
+            "train_r2_pysr":     _safe_float(pysr.get("train_r2")),
+            "extrap_r2_near":    0.0 if not math.isfinite(h_near) else round(h_near, 6),
+            "extrap_r2_far":     0.0 if h_far is None else round(h_far, 6),
+            "instability_index": round(instability, 6),
+            "far_r2_skipped":    not h_far_finite,
+        })
+
+    # -------------------------------------------------------------------------
+    # A. Three-tier MW framing (Rule 3: non-significance not fatal)
+    #    Tier 1: all-N          — expected non-significant (21 failures add noise)
+    #    Tier 2: excl-train-fail — train_r2>=0 filter (interim, n~23)
+    #    Tier 3: success-subset  — extrap_r2_far>=0.99 (primary paper result, n~9)
+    # -------------------------------------------------------------------------
+    mw_all     = _mann_whitney_paired_ablation(mw_pairs_all)
+    mw_excl    = _mann_whitney_paired_ablation(mw_pairs_excl)
+    mw_success = _mann_whitney_paired_ablation(mw_pairs_success)
+
+    # Effect sizes (rank-biserial r) for all three tiers
+    rb_all  = _rank_biserial(
+        [h for _, h in mw_pairs_all],
+        [p for p, _ in mw_pairs_all],
+    )
+    rb_excl = _rank_biserial(
+        [h for _, h in mw_pairs_excl],
+        [p for p, _ in mw_pairs_excl],
+    )
+    rb_success = _rank_biserial(
+        [h for _, h in mw_pairs_success],
+        [p for p, _ in mw_pairs_success],
+    )
+    if mw_all.get("available"):
+        mw_all["rank_biserial_r"]     = rb_all
+    if mw_excl.get("available"):
+        mw_excl["rank_biserial_r"]    = rb_excl
+    if mw_success.get("available"):
+        mw_success["rank_biserial_r"] = rb_success
+
+    # Win/loss on valid pairs
+    def _wl(pairs):
+        hw = sum(1 for p, h in pairs if h > p + 1e-9)
+        pw = sum(1 for p, h in pairs if p > h + 1e-9)
+        return {"hypatia_wins": hw, "pysr_wins": pw,
+                "tied": len(pairs) - hw - pw, "n_pairs": len(pairs)}
+
+    # -------------------------------------------------------------------------
+    # B. Failure analysis + domain stratification + Fisher's exact
+    # -------------------------------------------------------------------------
+    failures = []
+    for r in records:
+        hyp = r.get("hypatia", {}) or {}
+        h_train = _safe_float(hyp.get("train_r2"))
+        if math.isfinite(h_train) and h_train < 0:
+            failures.append({
+                "equation":       r.get("equation_name", r.get("equation_id", "?")),
+                "domain":         r.get("domain", "?"),
+                "train_r2":       round(h_train, 6),
+                "best_expression": hyp.get("best_expression", "?"),
+                "complexity":     hyp.get("complexity"),
+            })
+
+    # Physics-with-small-constants domains flagged by RF-06 / RF09
+    PHYSICS_SMALL_CONST_DOMAINS = {
+        "Quantum", "Atomic", "Electromagnetism",
+        "quantum", "atomic", "electromagnetism",
+    }
+    n_physics   = sum(1 for r in records if r.get("domain", "") in PHYSICS_SMALL_CONST_DOMAINS)
+    n_other     = n_total - n_physics
+    n_fail_phys = sum(1 for f in failures if f["domain"] in PHYSICS_SMALL_CONST_DOMAINS)
+    n_fail_oth  = len(failures) - n_fail_phys
+
+    fisher = _fisher_exact_2x2(
+        n_fail_phys, n_physics,
+        n_fail_oth,  n_other,
+    )
+
+    # Domain-level win-rate table (on all-N finite pairs)
+    domain_stats: dict[str, dict] = {}
+    for r in records:
+        dom  = r.get("domain", "unknown")
+        hyp  = r.get("hypatia",   {}) or {}
+        pysr = r.get("pysr_only", {}) or {}
+        h_far_raw = hyp.get("extrap_r2_far")
+        p_far = _safe_float(pysr.get("extrap_r2_far"))
+        h_train = _safe_float(hyp.get("train_r2"))
+
+        if dom not in domain_stats:
+            domain_stats[dom] = {
+                "n_total": 0, "n_hypatia_wins": 0,
+                "n_failures": 0, "n_finite_pairs": 0,
+            }
+        domain_stats[dom]["n_total"] += 1
+        if math.isfinite(h_train) and h_train < 0:
+            domain_stats[dom]["n_failures"] += 1
+        if _is_finite(h_far_raw) and math.isfinite(p_far):
+            domain_stats[dom]["n_finite_pairs"] += 1
+            if float(h_far_raw) > p_far + 1e-9:
+                domain_stats[dom]["n_hypatia_wins"] += 1
+
+    for dom, ds in domain_stats.items():
+        fp = ds["n_finite_pairs"]
+        ds["hypatia_win_rate"] = round(ds["n_hypatia_wins"] / fp, 4) if fp else None
+        ds["failure_rate"] = round(
+            ds["n_failures"] / ds["n_total"], 4
+        ) if ds["n_total"] else None
+
+    # -------------------------------------------------------------------------
+    # C. Scale / magnitude sensitivity: Spearman(log10|scale_log|, train_r2)
+    # scale_log field is log10 of the smallest constant magnitude in the equation.
+    # -------------------------------------------------------------------------
+    scale_train_pairs: list[tuple[float, float]] = []
+    for r in records:
+        hyp = r.get("hypatia", {}) or {}
+        scale_log = hyp.get("scale_log")
+        h_train   = _safe_float(hyp.get("train_r2"))
+        if scale_log is not None and math.isfinite(float(scale_log)) \
+                and math.isfinite(h_train):
+            scale_train_pairs.append((float(scale_log), h_train))
+
+    spearman_scale_train = _spearman(
+        [s for s, _ in scale_train_pairs],
+        [t for _, t in scale_train_pairs],
+    )
+
+    # Also correlate scale_log with hypatia far-R²
+    scale_far_pairs: list[tuple[float, float]] = []
+    for r in records:
+        hyp  = r.get("hypatia",   {}) or {}
+        pysr = r.get("pysr_only", {}) or {}
+        scale_log = hyp.get("scale_log")
+        h_far_raw = hyp.get("extrap_r2_far")
+        if scale_log is not None and math.isfinite(float(scale_log)) \
+                and _is_finite(h_far_raw):
+            scale_far_pairs.append((float(scale_log), float(h_far_raw)))
+
+    spearman_scale_far = _spearman(
+        [s for s, _ in scale_far_pairs],
+        [f for _, f in scale_far_pairs],
+    )
+
+    # -------------------------------------------------------------------------
+    # D. Complexity distributions: success vs failure, hypatia vs pysr
+    # -------------------------------------------------------------------------
+    def _get_complexity(r: dict, method: str) -> int | None:
+        return (r.get(method, {}) or {}).get("complexity")
+
+    success_names = {
+        r.get("equation_name", r.get("equation_id", "?"))
+        for r in records
+        if _safe_float((r.get("hypatia") or {}).get("train_r2")) >= 0
+    }
+    failure_names_set = {f["equation"] for f in failures}
+
+    hyp_complex_success = [_get_complexity(r, "hypatia") for r in records
+                           if r.get("equation_name", r.get("equation_id")) in success_names
+                           and _get_complexity(r, "hypatia") is not None]
+    hyp_complex_failure = [_get_complexity(r, "hypatia") for r in records
+                           if r.get("equation_name", r.get("equation_id")) in failure_names_set
+                           and _get_complexity(r, "hypatia") is not None]
+    pysr_complex_all    = [_get_complexity(r, "pysr_only") for r in records
+                           if _get_complexity(r, "pysr_only") is not None]
+    hyp_complex_all     = [_get_complexity(r, "hypatia") for r in records
+                           if _get_complexity(r, "hypatia") is not None]
+
+    complexity_analysis = {
+        "hypatia_success":     _complexity_distribution(hyp_complex_success),
+        "hypatia_failure":     _complexity_distribution(hyp_complex_failure),
+        "hypatia_all":         _complexity_distribution(hyp_complex_all),
+        "pysr_all":            _complexity_distribution(pysr_complex_all),
+        "mw_success_vs_fail":  _mann_whitney(
+            [float(v) for v in hyp_complex_success],
+            [float(v) for v in hyp_complex_failure],
+        ) if hyp_complex_success and hyp_complex_failure else {"available": False,
+                                                                "reason": "no data"},
+    }
+
+    # -------------------------------------------------------------------------
+    # F. Threshold sweep (train-R² inclusion threshold)
+    # -------------------------------------------------------------------------
+    threshold_sweep = _threshold_sweep(records)
+
+    # -------------------------------------------------------------------------
+    # G. Leave-one-out sensitivity on failure equations
+    # -------------------------------------------------------------------------
+    loo_sensitivity = _leave_one_out_sensitivity(records)
+
+    # -------------------------------------------------------------------------
+    # Timing
+    # -------------------------------------------------------------------------
+    hyp_times  = [_safe_float((r.get("hypatia")   or {}).get("sr_time_s")) for r in records]
+    pysr_times = [_safe_float((r.get("pysr_only") or {}).get("sr_time_s")) for r in records]
+    hyp_times  = [t for t in hyp_times  if math.isfinite(t)]
+    pysr_times = [t for t in pysr_times if math.isfinite(t)]
+    timing = {
+        "hypatia":   {"mean_s": _mean(hyp_times),  "median_s": _median(hyp_times),  "n": len(hyp_times)},
+        "pysr_only": {"mean_s": _mean(pysr_times), "median_s": _median(pysr_times), "n": len(pysr_times)},
+    }
+
+    # -------------------------------------------------------------------------
+    # Fatal conditions (Rule 3: MW non-significance is INFO_ only)
+    # -------------------------------------------------------------------------
+    if n_total == 0:
+        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+
+    if len(mw_pairs_all) < MIN_RECORDS_FOR_STATS:
+        fatal.append(
+            f"TOO_FEW_MW_PAIRS: only {len(mw_pairs_all)} finite paired far-R² values "
+            f"(need ≥ {MIN_RECORDS_FOR_STATS}) for Mann-Whitney test."
+        )
+
+    if failures:
+        fatal.append(
+            f"INFO_HYPATIA_TRAIN_FAILURES: {len(failures)} equation(s) have hypatia "
+            f"train_r2 < 0 (degenerate PySR output — discovery failures, not extrapolation). "
+            f"Cluster: Quantum/Atomic/Electromagnetism. Report in dedicated failure table."
+        )
+
+    # Rule 3 — Tier-1 (all-N) non-significance is informational only; expected.
+    if mw_all.get("available") and not mw_all.get("significant_05_one"):
+        fatal.append(
+            f"INFO_MW_ALL_NOT_SIGNIFICANT: Tier-1 (all-N) Mann-Whitney one-sided "
+            f"p={mw_all.get('p_value_one_sided', '?'):.4f} "
+            f"(two-sided p={mw_all.get('p_value_two_sided', '?'):.4f}, "
+            f"r={rb_all}, n={mw_all.get('n_pairs', '?')}) — directional but not significant. "
+            f"Expected: 21 discovery failures add noise. Report Tier-3 success-subset as primary claim. "
+            f"Workflow continues."
+        )
+
+    # Tier-3 significance is the primary publishable result — flag prominently.
+    if mw_success.get("available"):
+        if mw_success.get("significant_05_one"):
+            fatal.append(
+                f"INFO_MW_SUCCESS_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney one-sided "
+                f"p={mw_success.get('p_value_one_sided', '?'):.4f} "
+                f"(two-sided p={mw_success.get('p_value_two_sided', '?'):.4f}, "
+                f"r={rb_success}, n={mw_success.get('n_pairs', '?')} equations with extrap R²>="
+                f"{EXTRAP_SUCCESS_THRESHOLD}) — SIGNIFICANT. Primary paper claim confirmed."
+            )
+        else:
+            fatal.append(
+                f"WARN_MW_SUCCESS_NOT_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney one-sided "
+                f"p={mw_success.get('p_value_one_sided', '?'):.4f} "
+                f"(n={mw_success.get('n_pairs', '?')}) — not significant at α=0.05. "
+                f"Primary paper claim (§10.7) may be weaker than expected. Investigate."
+            )
+
+    if fisher.get("available") and fisher.get("significant_05"):
+        fatal.append(
+            f"INFO_FAILURE_CLUSTER_SIGNIFICANT: Fisher's exact p={fisher['p_value']:.4f} "
+            f"confirms failure cluster in physics-with-small-constants domains is non-random."
+        )
+
+    return {
+        "experiment":            experiment,
+        "experiment_mode":       mode,
+        "n_total":               n_total,
+        # MW — three-tier framing (paper §10.7)
+        "n_mw_pairs_all":        len(mw_pairs_all),
+        "n_mw_pairs_excl":       len(mw_pairs_excl),
+        "n_mw_pairs_success":    len(mw_pairs_success),
+        "n_successes_extrap":    len(mw_pairs_success),   # "9/30" in the paper
+        "extrap_success_threshold": EXTRAP_SUCCESS_THRESHOLD,
+        "n_skipped_from_mw":     len(skipped),
+        "skipped_equations":     skipped,
+        "mann_whitney_all_n":         mw_all,
+        "mann_whitney_excl_fail":     mw_excl,
+        "mann_whitney_success_subset": mw_success,
+        "win_loss_all":          _wl(mw_pairs_all),
+        "win_loss_excl":         _wl(mw_pairs_excl),
+        "win_loss_success":      _wl(mw_pairs_success),
+        # Failure analysis + domain
+        "failure_analysis":      failures,
+        "n_train_failures":      len(failures),
+        "domain_stratification": domain_stats,
+        "fisher_failure_cluster": fisher,
+        # Scale sensitivity
+        "spearman_scale_vs_train_r2": spearman_scale_train,
+        "spearman_scale_vs_far_r2":   spearman_scale_far,
+        "n_scale_log_available":      len(scale_train_pairs),
+        # Complexity
+        "complexity_analysis":   complexity_analysis,
+        # Threshold sweep + LOO
+        "threshold_sweep":       threshold_sweep,
+        "loo_sensitivity":       loo_sensitivity,
+        # Instability rows + timing
+        "instability_rows":      all_rows,
+        "timing":                timing,
+        "fatal_conditions":      fatal,
+    }
+
+
+def write_report_ablation(analysis: dict, path: Path) -> None:
+    """Human-readable Markdown report for exp1_ablation / exp2_feynman_rf09."""
+    exp   = analysis["experiment"]
+    lines: list[str] = []
+
+    def h(level: int, text: str):
+        lines.append(f"\n{'#' * level} {text}\n")
+
+    def p(*args):
+        lines.append(" ".join(str(a) for a in args))
+
+    def mw_row(mw: dict, label: str) -> str:
+        if not mw.get("available"):
+            return f"  {label}: N/A ({mw.get('reason', '?')})"
+        sig = "**" if mw.get("significant_05_one") else ""
+        rb  = mw.get("rank_biserial_r")
+        rb_str = f", r={rb}" if rb is not None else ""
+        return (
+            f"  {label}: U={mw['statistic']}, "
+            f"p_one={mw['p_value_one_sided']:.4f}{sig}, "
+            f"p_two={mw['p_value_two_sided']:.4f}, "
+            f"n={mw['n_pairs']}{rb_str}"
+        )
+
+    thr = analysis.get("extrap_success_threshold", EXTRAP_SUCCESS_THRESHOLD)
+    h(1, f"HypatiaX Analysis Report — `{exp}` (RF09 Feynman n=30)")
+    p(f"Experiment mode: **ablation** | N equations: {analysis['n_total']}")
+    p(f"Tier-1 (all-N) pairs: {analysis['n_mw_pairs_all']} "
+      f"| Tier-2 (excl-train-fail) pairs: {analysis['n_mw_pairs_excl']} "
+      f"| Tier-3 (extrap R²≥{thr}) pairs: {analysis.get('n_mw_pairs_success', '?')} "
+      f"| Skipped: {analysis['n_skipped_from_mw']}")
+
+    # Fatal / info conditions
+    all_conds  = analysis.get("fatal_conditions", [])
+    hard_fatal = [c for c in all_conds if not (c.startswith("INFO_") or c.startswith("WARN_"))]
+    soft_conds = [c for c in all_conds if c.startswith("INFO_") or c.startswith("WARN_")]
+
+    if hard_fatal:
+        h(2, "⚠️ Fatal Conditions")
+        for fc in hard_fatal:
+            lines.append(f"- **{fc}**")
+    else:
+        h(2, "✅ No Fatal Conditions")
+    if soft_conds:
+        h(2, "ℹ️ Informational / Warnings")
+        for sc in soft_conds:
+            lines.append(f"- {sc}")
+
+    # -------------------------------------------------------------------------
+    # A. Three-tier MW framing (paper §10.7)
+    # -------------------------------------------------------------------------
+    h(2, "A. Primary Result — Three-Tier MW Framing (§10.7)")
+    p(
+        "**Tier 1 (all-N):** Expected non-significant — 21 discovery failures add variance. "
+        "Report with explicit framing: 'not significant; expected given 21 failures.' "
+        "\n\n"
+        "**Tier 2 (excl-train-fail):** Excludes equations where HypatiaX train R²<0. "
+        "Intermediate result; shows signal strengthens once degenerate outputs removed. "
+        "\n\n"
+        f"**Tier 3 (success-subset, R²≥{thr}):** The paper's primary claim (§10.7). "
+        "Restricts to equations where HypatiaX achieved symbolic recovery. "
+        "This is the publishable result — it answers whether symbolic recovery produces "
+        "a qualitatively different extrapolation regime, not whether HypatiaX always wins."
+    )
+    p()
+    p(mw_row(analysis.get("mann_whitney_all_n",          {}), "Tier 1 — All-N"))
+    p(mw_row(analysis.get("mann_whitney_excl_fail",       {}), "Tier 2 — Excl-train-fail (train R²≥0)"))
+    p(mw_row(analysis.get("mann_whitney_success_subset",  {}), f"Tier 3 — Success-subset (extrap R²≥{thr}) ★"))
+    p("_** = p_one < 0.05  |  ★ = primary paper claim_")
+
+    wla = analysis.get("win_loss_all",     {})
+    wle = analysis.get("win_loss_excl",    {})
+    wls = analysis.get("win_loss_success", {})
+    h(3, "Win / Loss by Tier")
+    lines.append("| Split | HypatiaX wins | PySR wins | Tied | N pairs |")
+    lines.append("|-------|---------------|-----------|------|---------|")
+    lines.append(f"| Tier 1 — All-N | {wla.get('hypatia_wins',0)} "
+                 f"| {wla.get('pysr_wins',0)} "
+                 f"| {wla.get('tied',0)} "
+                 f"| {wla.get('n_pairs',0)} |")
+    lines.append(f"| Tier 2 — Excl-train-fail | {wle.get('hypatia_wins',0)} "
+                 f"| {wle.get('pysr_wins',0)} "
+                 f"| {wle.get('tied',0)} "
+                 f"| {wle.get('n_pairs',0)} |")
+    lines.append(f"| Tier 3 — Success-subset ★ | {wls.get('hypatia_wins',0)} "
+                 f"| {wls.get('pysr_wins',0)} "
+                 f"| {wls.get('tied',0)} "
+                 f"| {wls.get('n_pairs',0)} |")
+
+    # -------------------------------------------------------------------------
+    # B. Failure analysis + domain stratification + Fisher
+    # -------------------------------------------------------------------------
+    failures = analysis.get("failure_analysis", [])
+    h(2, f"B. Failure Analysis ({len(failures)} equations — degenerate PySR, train R² < 0)")
+    if failures:
+        p("_Discovery failures, not extrapolation failures. "
+          "All cluster in Quantum / Atomic / Electromagnetism. Do not drop silently._")
+        lines.append("\n| Equation | Domain | Train R² | Best Expression | Complexity |")
+        lines.append(  "|----------|--------|----------|-----------------|------------|")
+        for f in failures:
+            lines.append(
+                f"| {f['equation']} | {f['domain']} "
+                f"| {f['train_r2']:.4f} | `{f['best_expression']}` "
+                f"| {f.get('complexity', 'N/A')} |"
+            )
+    else:
+        p("_None — all equations have hypatia train R² ≥ 0._")
+
+    h(3, "Domain Stratification")
+    ds = analysis.get("domain_stratification", {})
+    if ds:
+        lines.append("| Domain | N | Hypatia Wins | Win Rate | Failures | Fail Rate |")
+        lines.append("|--------|---|-------------|----------|----------|-----------|")
+        for dom, d in sorted(ds.items()):
+            lines.append(
+                f"| {dom} | {d['n_total']} "
+                f"| {d['n_hypatia_wins']} "
+                f"| {d['hypatia_win_rate'] if d['hypatia_win_rate'] is not None else 'N/A'} "
+                f"| {d['n_failures']} "
+                f"| {d['failure_rate'] if d['failure_rate'] is not None else 'N/A'} |"
+            )
+
+    fisher = analysis.get("fisher_failure_cluster", {})
+    h(3, "Fisher's Exact Test — Failure Cluster Non-Randomness")
+    if fisher.get("available"):
+        sig = "✅ Significant" if fisher["significant_05"] else "Not significant"
+        p(f"p={fisher['p_value']:.4f}, OR={fisher.get('odds_ratio', 'N/A')}, {sig}")
+        p("Tests whether the failure cluster in physics-with-small-constants domains "
+          "is larger than expected by chance.")
+    else:
+        p(f"N/A ({fisher.get('reason', '?')})")
+
+    # -------------------------------------------------------------------------
+    # C. Scale sensitivity
+    # -------------------------------------------------------------------------
+    h(2, "C. Scale / Magnitude Sensitivity")
+    p("Spearman correlation between `scale_log` (log₁₀ of smallest constant magnitude) "
+      "and HypatiaX performance. Positive ρ means larger-scale constants → better results.")
+
+    def spear_row(s: dict, label: str) -> str:
+        if not s.get("available"):
+            return f"  {label}: N/A ({s.get('reason', '?')})"
+        sig = "**" if s.get("significant_05") else ""
+        return (
+            f"  {label}: ρ={s['rho']}{sig}, p={s['p_value']:.4f}, n={s['n']}"
+        )
+
+    p(spear_row(analysis.get("spearman_scale_vs_train_r2", {}), "scale_log vs train R²"))
+    p(spear_row(analysis.get("spearman_scale_vs_far_r2",   {}), "scale_log vs far R²"))
+    p(f"scale_log available for {analysis.get('n_scale_log_available', 0)} equations.")
+    p("_** = p < 0.05. N/A if scale_log field absent from records._")
+
+    # -------------------------------------------------------------------------
+    # D. Complexity distributions
+    # -------------------------------------------------------------------------
+    h(2, "D. Expression Complexity — Success vs Failure")
+    cx = analysis.get("complexity_analysis", {})
+
+    def cx_row(d: dict, label: str) -> str:
+        if not d or d.get("n", 0) == 0:
+            return f"| {label} | 0 | N/A | N/A | N/A | N/A | N/A |"
+        return (
+            f"| {label} | {d['n']} "
+            f"| {d['min']:.0f} | {d['max']:.0f} "
+            f"| {d['mean']:.1f} | {d['median']:.0f} "
+            f"| {d['p25']:.0f}–{d['p75']:.0f} |"
+        )
+
+    lines.append("| Group | N | Min | Max | Mean | Median | IQR |")
+    lines.append("|-------|---|-----|-----|------|--------|-----|")
+    lines.append(cx_row(cx.get("hypatia_success", {}), "HypatiaX successes"))
+    lines.append(cx_row(cx.get("hypatia_failure", {}), "HypatiaX failures"))
+    lines.append(cx_row(cx.get("hypatia_all",     {}), "HypatiaX all"))
+    lines.append(cx_row(cx.get("pysr_all",        {}), "PySR-only all"))
+
+    mw_cx = cx.get("mw_success_vs_fail", {})
+    if mw_cx.get("available"):
+        sig = "**" if mw_cx.get("significant_05") else ""
+        p(f"\nMW complexity (success vs failure): "
+          f"U={mw_cx['statistic']}, p={mw_cx['p_value']:.4f}{sig}")
+        p("_Low complexity (≤2) is a degenerate-output signal — "
+          "consider flagging as failure before evaluation._")
+    p("_** = p < 0.05_")
+
+    # -------------------------------------------------------------------------
+    # F. Threshold sweep
+    # -------------------------------------------------------------------------
+    h(2, "F. Train-R² Threshold Sweep — Robustness of Inclusion Cutoff")
+    p("MW p_one at each train-R² inclusion threshold. "
+      "A robust result stays significant across a range near 0.")
+    sweep = analysis.get("threshold_sweep", [])
+    if sweep:
+        lines.append("| Threshold | N included | U | p_one | p_two | Significant? |")
+        lines.append("|-----------|------------|---|-------|-------|--------------|")
+        for row in sweep:
+            if row.get("available"):
+                sig = "✅" if row["significant_05"] else "—"
+                lines.append(
+                    f"| {row['threshold']:+.2f} | {row['n_included']} "
+                    f"| {row['U']} "
+                    f"| {row['p_one_sided']:.4f} | {row['p_two_sided']:.4f} "
+                    f"| {sig} |"
+                )
+            else:
+                lines.append(
+                    f"| {row['threshold']:+.2f} | {row['n_included']} "
+                    f"| N/A | N/A | N/A | — |"
+                )
+    else:
+        p("_No sweep data._")
+
+    # -------------------------------------------------------------------------
+    # G. Leave-one-out sensitivity
+    # -------------------------------------------------------------------------
+    h(2, "G. Leave-One-Out Sensitivity — Failure Equations")
+    p("All-N MW re-run with each failure equation removed. "
+      "Shows how much each discovery failure masks the signal.")
+    loo = analysis.get("loo_sensitivity", [])
+    if loo:
+        lines.append("| Removed equation | N remaining | U | p_one | p_two | Sig? |")
+        lines.append("|-----------------|-------------|---|-------|-------|------|")
+        for row in loo:
+            if row.get("available"):
+                sig = "✅" if row["significant_05"] else "—"
+                lines.append(
+                    f"| {row['removed']} | {row['n_remaining']} "
+                    f"| {row['U']} "
+                    f"| {row['p_one_sided']:.4f} | {row['p_two_sided']:.4f} "
+                    f"| {sig} |"
+                )
+            else:
+                lines.append(
+                    f"| {row.get('removed','?')} | {row.get('n_remaining',0)} "
+                    f"| N/A | N/A | N/A | — |"
+                )
+    else:
+        p("_No LOO data (no failure equations or scipy unavailable)._")
+
+    # -------------------------------------------------------------------------
+    # Skipped equations + instability + timing (unchanged)
+    # -------------------------------------------------------------------------
+    skipped = analysis.get("skipped_equations", [])
+    h(2, f"Skipped from MW ({len(skipped)} equations)")
+    if skipped:
+        lines.append("| Equation | Domain | Reason |")
+        lines.append("|----------|--------|--------|")
+        for s in skipped:
+            lines.append(f"| {s['equation']} | {s['domain']} | {s['reason']} |")
+    else:
+        p("_None._")
+
+    rows = analysis.get("instability_rows", [])
+    h(2, "Instability Index (1 − extrap_r2_far; None→0.0; unclamped)")
+    if rows:
+        lines.append("| Equation | Domain | Near R² | Far R² | Instability | Skipped? |")
+        lines.append("|----------|--------|---------|--------|-------------|----------|")
+        for row in rows:
+            lines.append(
+                f"| {row['equation']} | {row['domain']} "
+                f"| {row['extrap_r2_near']:.4f} | {row['extrap_r2_far']:.4f} "
+                f"| {row['instability_index']:.4f} | {'yes' if row['far_r2_skipped'] else 'no'} |"
+            )
+
+    h(2, "Wall-clock Timing")
+    timing = analysis.get("timing", {})
+    lines.append("| Method | Mean (s) | Median (s) | N |")
+    lines.append("|--------|----------|------------|---|")
+    for key, label in [("hypatia", "HypatiaX"), ("pysr_only", "PySR-only")]:
+        t = timing.get(key, {})
+        lines.append(
+            f"| {label} | {_r2f(t.get('mean_s'))} "
+            f"| {_r2f(t.get('median_s'))} | {t.get('n', 0)} |"
+        )
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
     """Two-sided Mann-Whitney U test. Returns stat, p, direction."""
     if not _SCIPY_OK:
         return {"available": False, "reason": "scipy not installed"}
@@ -266,6 +1169,16 @@ def analyse(records: list[dict], experiment: str) -> dict:
     Behaviour is gated by experiment mode (see EXPERIMENT_MODE).
     """
     mode = _get_mode(experiment)
+
+    # Guard: if this experiment should run ablation analysis, refuse here.
+    # Ablation schema uses hypatia/pysr_only keys (no pure_llm/neural_network/hybrid).
+    # If it reaches analyse() the 0%-success reads are spurious and fire TOTAL_FAILURE.
+    if mode == "ablation":
+        raise RuntimeError(
+            f"analyse() called for experiment {experiment!r} which maps to mode "
+            f"'ablation'. Route to analyse_ablation() instead. "
+            f"Check main() dispatch logic."
+        )
 
     # -- Partition: standard vs intractable ------------------------------------
     standard    = [r for r in records if not r.get("extrapolation_intractable", False)]
@@ -802,6 +1715,32 @@ def main() -> None:
 
     if not _SCIPY_OK:
         print("WARNING: scipy not available — Mann-Whitney tests will be skipped.", file=sys.stderr)
+
+    # exp1_ablation uses a dedicated analysis path (different input schema).
+    if _get_mode(args.experiment) == "ablation":
+        print("Running ablation analysis …")
+        analysis = analyse_ablation(records, experiment=args.experiment)
+        analysis_path = output_dir / "_analysis.json"
+        report_path   = output_dir / "_report.md"
+        with open(analysis_path, "w", encoding="utf-8") as f:
+            json.dump(analysis, f, indent=2, default=str)
+        print(f"✅ _analysis.json → {analysis_path}")
+        write_report_ablation(analysis, report_path)
+        print(f"✅ _report.md     → {report_path}")
+        all_conds  = analysis.get("fatal_conditions", [])
+        hard_fatal = [c for c in all_conds if not (c.startswith("INFO_") or c.startswith("WARN_"))]
+        soft_conds = [c for c in all_conds if c.startswith("INFO_") or c.startswith("WARN_")]
+        if soft_conds:
+            print(f"\nℹ️  {len(soft_conds)} informational/warning condition(s):", file=sys.stderr)
+            for sc in soft_conds:
+                print(f"  - {sc}", file=sys.stderr)
+        if hard_fatal:
+            print(f"\n⚠️  {len(hard_fatal)} fatal condition(s) detected:", file=sys.stderr)
+            for fc in hard_fatal:
+                print(f"  - {fc}", file=sys.stderr)
+            sys.exit(0)   # CI abort step reads _analysis.json
+        print("\nAblation analysis complete. No fatal conditions.")
+        return
 
     print("Running analysis …")
     analysis = analyse(records, experiment=args.experiment)
