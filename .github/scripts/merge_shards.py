@@ -232,6 +232,17 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
       neural_network → nn
       test_r2        → extrap_r2  (inside model sub-dicts)
 
+    BUG 2 FIX: shard files from workers use display-name method keys
+    ("Hybrid System v40", "Neural Network", "Pure LLM (Enhanced)", etc.)
+    instead of the snake_case aliases ("pure_llm", "neural_network") that
+    the old rename logic expected.  As a result hypatia={} and nn={} were
+    always empty, build_stats() found no r2 values, and success_rate=0
+    triggered TOTAL_FAILURE in ci_analysis.yml.
+
+    Fix: map the display names to canonical keys BEFORE the snake_case
+    rename, and also build a per_method dict preserving r2/success for
+    every named method so downstream consumers can read all methods.
+
     BUG 3 FIX: the old return dict was hard-coded to 5 keys, so rows whose
     domain == "hybrid" were extracted correctly by extract_rows but then
     silently dropped here — the caller received a record with domain="hybrid"
@@ -249,8 +260,62 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
 
     row = dict(raw)
 
-    # Flatten nested "results" block if present.
+    # BUG 2 FIX: display-name → canonical alias mapping.
+    # Worker scripts write method results under human-readable keys like
+    # "Hybrid System v40" and "Neural Network".  Map them to the snake_case
+    # aliases that the rename block below expects, so hypatia/nn are populated.
+    # Keys are matched case-insensitively via .lower() for resilience.
+    _DISPLAY_TO_CANONICAL = {
+        # Pure LLM variants → hypatia
+        "pure llm (basic)":    "pure_llm",
+        "pure llm (enhanced)": "pure_llm",
+        "pure llm":            "pure_llm",
+        "integrated llm discovery v11.1": "pure_llm",
+        # Neural network variants → nn
+        "neural network":      "neural_network",
+        # Hybrid variants → hybrid  (preserved in per_method; also used as
+        # hypatia fallback when pure_llm is absent)
+        "hybrid system v40":             "hybrid",
+        "hybrid system v40 (fallback)":  "hybrid",
+        "llm+nn ensemble (simple)":      "hybrid",
+        "llm+nn ensemble (smart)":       "hybrid",
+    }
+
+    # Build per_method dict from any display-name or snake_case method key
+    # found at top level or inside a "results" block.
+    per_method: dict = {}
+
+    def _collect_methods(src: dict) -> None:
+        for k, v in src.items():
+            if not isinstance(v, dict):
+                continue
+            # Match display names
+            canon = _DISPLAY_TO_CANONICAL.get(k.lower())
+            method_key = canon or k  # keep original key if no mapping
+            r2 = v.get("r2") or v.get("extrap_r2") or v.get("test_r2") or v.get("train_r2")
+            success = v.get("success")
+            if r2 is not None or success is not None:
+                # Highest r2 wins if the same canonical key appears twice
+                if method_key not in per_method or (
+                    r2 is not None and (per_method[method_key].get("r2") or -999) < r2
+                ):
+                    per_method[method_key] = {
+                        "r2":      r2,
+                        "success": success,
+                        "formula": v.get("formula") or v.get("best_expression") or v.get("expression"),
+                        "time":    v.get("time") or v.get("elapsed_s"),
+                    }
+            # Also handle display-name alias injection into row for the
+            # snake_case rename block further below.
+            if canon and canon not in row:
+                row[canon] = v
+
+    _collect_methods(row)
     inner = row.get("results")
+    if isinstance(inner, dict):
+        _collect_methods(inner)
+
+    # Flatten nested "results" block if present.
     if isinstance(inner, dict):
         inner = dict(inner)
         if "pure_llm" in inner and "hypatia" not in inner:
@@ -265,8 +330,47 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
     if "neural_network" in row and "nn" not in row:
         row["nn"] = row.pop("neural_network")
 
+    # BUG 2 FIX cont.: if hypatia is still empty after the renames, fall back
+    # to the best hybrid method result so build_stats() always has an r2 to read.
     hyp = normalise_model_dict(row.get("hypatia") or {})
-    nn  = normalise_model_dict(row.get("nn") or {})
+    if not hyp.get("extrap_r2") and not hyp.get("train_r2") and not hyp.get("r2"):
+        # Try canonical hybrid fallback from per_method
+        for fallback_key in ("hybrid", "pure_llm"):
+            fb = per_method.get(fallback_key, {})
+            if fb.get("r2") is not None:
+                hyp = normalise_model_dict({
+                    "extrap_r2": fb["r2"],
+                    "train_r2":  fb["r2"],
+                    "r2":        fb["r2"],
+                    "success":   fb.get("success"),
+                    "best_expression": fb.get("formula"),
+                })
+                break
+        # Last resort: find the highest-r2 method in per_method
+        if not hyp.get("extrap_r2"):
+            best = max(
+                ((m, d) for m, d in per_method.items() if d.get("r2") is not None),
+                key=lambda x: x[1]["r2"],
+                default=(None, {}),
+            )
+            if best[1].get("r2") is not None:
+                hyp = normalise_model_dict({
+                    "extrap_r2": best[1]["r2"],
+                    "train_r2":  best[1]["r2"],
+                    "r2":        best[1]["r2"],
+                    "success":   best[1].get("success"),
+                    "best_expression": best[1].get("formula"),
+                })
+
+    nn = normalise_model_dict(row.get("nn") or {})
+    if not nn.get("extrap_r2") and not nn.get("r2"):
+        fb = per_method.get("neural_network", {})
+        if fb.get("r2") is not None:
+            nn = normalise_model_dict({
+                "extrap_r2": fb["r2"],
+                "r2":        fb["r2"],
+                "success":   fb.get("success"),
+            })
 
     task_id = canonical_task_id(row)
     # BUG 3 FIX: hybrid rows have domain="hybrid" but no equation_id /
@@ -283,13 +387,35 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
     # _PASSTHROUGH_FIELDS (difficulty, formula_type, extrapolation_intractable)
     # are therefore included automatically alongside any other unknown fields
     # that future schema versions may add.
+
+    # BUG 1 FIX: equation_id was never written into the output record.
+    # Derive it from the description field (human-readable equation name before
+    # the first separator) so downstream consumers (ci_analysis.yml, paper tables,
+    # _merged.csv) display "Allometric Scaling" instead of the bare domain key
+    # "biology".  Falls back to any existing equation_id field, then task_id.
+    desc = row.get("description", "")
+    eq_id = None
+    if desc:
+        for sep in (":", "—", " - ", "|"):
+            if sep in desc:
+                eq_id = desc.split(sep)[0].strip()
+                break
+        if not eq_id:
+            eq_id = desc.strip()
+    if not eq_id:
+        eq_id = row.get("equation_id") or task_id
+
     out = {k: v for k, v in row.items() if k not in META_KEYS}
     out.update({
-        "task_id": task_id,
-        "name":    row.get("name") or row.get("equation_id") or task_id,
-        "domain":  row.get("domain") or task_id,
-        "hypatia": hyp,
-        "nn":      nn,
+        "task_id":     task_id,
+        "equation_id": eq_id,
+        "name":        row.get("name") or eq_id or task_id,
+        "domain":      row.get("domain") or task_id,
+        "hypatia":     hyp,
+        "nn":          nn,
+        # per_method: flat dict of {method_key: {r2, success, formula, time}}
+        # preserves all named methods for downstream analysis / paper tables.
+        "per_method":  per_method if per_method else row.get("per_method") or {},
     })
     return out
 

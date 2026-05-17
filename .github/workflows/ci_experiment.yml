@@ -1523,6 +1523,103 @@ jobs:
             --output-dir    "${OUT_BASE}/${RESULT_SUBDIR}" \
             --result-subdir "${RESULT_SUBDIR}"
 
+      - name: Enrich _merged.json with equation_id
+        # merge_shards.py keys records by task_id (domain/seed string) but never
+        # populates the equation_id field, leaving it as "?" or absent entirely.
+        # This step patches _merged.json in-place so every record carries:
+        #
+        #   equation_id  — canonical equation identifier, derived in priority order:
+        #                  1. already present and not "?" → keep as-is
+        #                  2. "equation_id"/"eq_id"/"equation" inside per-method records
+        #                  3. description field parsed before first separator
+        #                     e.g. "Allometric Scaling: Y=a*M^b" → "Allometric Scaling"
+        #                         "I.6.2a — Gaussian density"    → "I.6.2a"
+        #                  4. top-level key of the record (= task_id, e.g. "biology",
+        #                     "feynman_mechanics", "portfolio_seed42", "N1_seed99")
+        #
+        # The patch is idempotent: re-running on an already-enriched file is a no-op.
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re, copy
+
+          merged_path = os.path.join(
+              os.environ["OUT_BASE"],
+              os.environ["RESULT_SUBDIR"],
+              "_merged.json",
+          )
+
+          if not os.path.exists(merged_path):
+              print(f"_merged.json not found at {merged_path} — skipping enrichment.")
+              exit(0)
+
+          with open(merged_path) as f:
+              data = json.load(f)
+
+          if not isinstance(data, dict):
+              print(f"_merged.json is not a dict (type={type(data).__name__}) — skipping.")
+              exit(0)
+
+          patched = 0
+          for top_key, record in data.items():
+              if not isinstance(record, dict):
+                  continue
+
+              # Already set and meaningful → leave it alone.
+              existing = record.get("equation_id", "")
+              if existing and existing != "?":
+                  continue
+
+              eq_id = None
+
+              # Priority 1: look inside any per-method result sub-record for
+              # an equation_id that a worker script may have embedded.
+              for v in record.values():
+                  if isinstance(v, dict):
+                      candidate = v.get("equation_id") or v.get("eq_id") or v.get("equation")
+                      if candidate and candidate != "?":
+                          eq_id = str(candidate)
+                          break
+
+              # Priority 2: parse the description field — this contains the actual
+              # equation name, e.g.:
+              #   "Allometric Scaling: Y = a*M^b"   → "Allometric Scaling"
+              #   "I.6.2a — Gaussian density"        → "I.6.2a"
+              #   "Portfolio VaR for two correlated" → full string (no separator)
+              # Preferred over the bare domain key because it is human-readable
+              # and matches the equation label used in the paper.
+              if not eq_id:
+                  desc = record.get("description", "")
+                  if desc:
+                      for sep in (":", "—", " - ", "|"):
+                          if sep in desc:
+                              eq_id = desc.split(sep)[0].strip()
+                              break
+                      if not eq_id:
+                          # No separator — description IS the equation name
+                          eq_id = desc.strip()
+
+              # Priority 3: fall back to the top-level dict key (= task_id).
+              # Always a stable machine identifier even if not human-readable,
+              # e.g. "biology", "feynman_mechanics", "portfolio_seed42", "N1_seed99".
+              if not eq_id:
+                  eq_id = top_key if top_key != "?" else None
+
+              if eq_id:
+                  record["equation_id"] = eq_id
+                  # Also ensure task_id is set consistently with the top-level key.
+                  if not record.get("task_id") or record.get("task_id") == "?":
+                      record["task_id"] = top_key
+                  patched += 1
+
+          with open(merged_path, "w") as f:
+              json.dump(data, f, indent=2)
+
+          total = sum(1 for v in data.values() if isinstance(v, dict))
+          print(f"equation_id enrichment complete: {patched}/{total} records patched → {merged_path}")
+          PYEOF
+
       - name: Verify merged outputs
         env:
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
@@ -1531,6 +1628,17 @@ jobs:
           test -f "${OUT_BASE}/${RESULT_SUBDIR}/_merged.json"
           test -f "${OUT_BASE}/${RESULT_SUBDIR}/_merged.csv"
           test -f "${OUT_BASE}/${RESULT_SUBDIR}/_checkpoint.json"
+          # Verify equation_id is now populated in every non-stub record
+          python3 - <<'PYEOF'
+          import json, os, sys
+          p = os.path.join(os.environ["OUT_BASE"], os.environ["RESULT_SUBDIR"], "_merged.json")
+          data = json.load(open(p))
+          missing = [k for k, v in data.items() if isinstance(v, dict) and not v.get("equation_id")]
+          if missing:
+              print(f"::warning::equation_id still missing in {len(missing)} record(s): {missing[:5]}")
+          else:
+              print(f"OK all {len(data)} records have equation_id set.")
+          PYEOF
           echo "All expected outputs present."
 
       - name: Upload consolidated artifact
@@ -1546,12 +1654,14 @@ jobs:
           if-no-files-found: error
 
       - name: Commit and push consolidated results to master
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          SUB="${{ needs.plan.outputs.result_subdir }}"
-          EXP="${{ needs.plan.outputs.exp_id }}"
+          SUB="${RESULT_SUBDIR}"
 
           # Reset index and pull before staging — rebase refuses to run
           # if the index contains staged entries (from checkout internals
@@ -1559,8 +1669,7 @@ jobs:
           git reset HEAD 2>/dev/null || true
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
-          # Only commit under OUT_BASE (hypatiax/data/results/...) —
-          # never the bare SUB path at repo root.
+          # ── Always: merge artefacts from merge_shards.py ─────────────────
           git add \
             "${OUT_BASE}/${SUB}/_merged.json"     \
             "${OUT_BASE}/${SUB}/_merged.csv"      \
@@ -1568,12 +1677,176 @@ jobs:
             "${OUT_BASE}/${SUB}/_checkpoint.json" \
             2>/dev/null || true
 
+          # ── Per-experiment raw result files ───────────────────────────────
+          # Each block stages exactly the files the worker scripts produce for
+          # that experiment (derived from move_matching blocks in the worker
+          # "Move results to RESULTS_DIR" step and run_all.sh output globs).
+          # git add on a glob or directory that doesn't exist is a no-op via
+          # the '|| true' guard, so partial runs don't break the commit step.
+          case "${EXP}" in
+
+            exp1)
+              # hypatiax_defi_benchmark_v3c.py → noiseless/
+              #   hypatiax_defi_benchmark_v3*results*.json
+              #   protocol_core_noiseless_*.json
+              # statistical_analysis.py → RESULTS_DIR root
+              #   ablation_*.json
+              #   exp1_rf01_mannwhitney*.json
+              #   defi_v3_*.json
+              git add \
+                "${OUT_BASE}/comparison_results/noise-noiseless/noiseless/"*.json \
+                "${OUT_BASE}"/ablation_*.json \
+                "${OUT_BASE}"/exp1_rf01_mannwhitney*.json \
+                "${OUT_BASE}"/defi_v3_*.json \
+                2>/dev/null || true
+              ;;
+
+            exp1b)
+              # hypatiax_defi_benchmark_v3c.py (portfolio filter) → 15/
+              #   hypatiax_defi_benchmark_v3*results*.json
+              #   comparison_FIXED_*.json / *.txt
+              # portfolio_variance_v3c2.py → 15/
+              #   *portfolio*variance*.json
+              #   defi_v3_*.json
+              git add \
+                "${OUT_BASE}/comparison_results/noise-noiseless/15/"*.json \
+                "${OUT_BASE}/comparison_results/noise-noiseless/15/"*.txt \
+                2>/dev/null || true
+              ;;
+
+            exp2_feynman)
+              # run_comparative_suite_benchmark_v2.py --benchmark feynman → exp2/
+              #   exp2_feynman_checkpoint_shard*.json
+              #   exp2_feynman_merged.* (json + csv)
+              #   exp2_feynman_stats.json
+              #   exp2_all*_checkpoint.json (in comparison_results/)
+              #   exp2_shard*_run.log  (tee target — kept for auditability)
+              git add \
+                "${OUT_BASE}/comparison_results/feynman-tests/exp2/"*.json \
+                "${OUT_BASE}/comparison_results/feynman-tests/exp2/"*.csv  \
+                "${OUT_BASE}/comparison_results/feynman-tests/exp2/"*.log  \
+                "${OUT_BASE}/comparison_results/"exp2_all*_checkpoint.json \
+                2>/dev/null || true
+              ;;
+
+            exp2)
+              # run_comparative_suite_benchmark_v2.py --benchmark both → exp2_multi/
+              #   exp2_checkpoint_shard*.json
+              #   exp2_merged.* (json + csv)
+              #   exp2_stats.json
+              #   exp2_run.log  (tee target)
+              git add \
+                "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi/"*.json \
+                "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi/"*.csv  \
+                "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi/"*.log  \
+                2>/dev/null || true
+              ;;
+
+            exp3)
+              # exp3_nguyen12_hybrid50v_02.py --seed 42 → extrapolation/
+              #   full_run_*.json
+              #   report_hybrid_*.json
+              #   hybrid_defi_*.json
+              #   experiment_registry.json
+              git add \
+                "${OUT_BASE}/extrapolation/"*.json \
+                2>/dev/null || true
+              ;;
+
+            exp3b)
+              # exp3_nguyen12_hybrid50v_02.py --seed {99,123,777,2024} → extrapolation/multi_seed/
+              #   full_run_*.json
+              #   report_hybrid_*.json
+              #   hybrid_defi_*.json
+              #   experiment_registry.json
+              git add \
+                "${OUT_BASE}/extrapolation/multi_seed/"*.json \
+                2>/dev/null || true
+              ;;
+
+            suppA)
+              # run_hybrid_system_benchmark.py → hybrid_pysr/defi/
+              #   consolidated_hybrid_*.json
+              #   hybrid_llm_nn_all_domains_*.json  (also copied to hybrid_llm_nn/all_domains/)
+              #   ablation_exp1_*.json              (RESULTS_DIR root)
+              #   hypatiax_defi_benchmark_v3_results* (RESULTS_DIR root)
+              git add \
+                "${OUT_BASE}/hybrid_pysr/defi/"*.json \
+                "${OUT_BASE}/hybrid_llm_nn/all_domains/"*.json \
+                "${OUT_BASE}"/ablation_exp1_*.json \
+                "${OUT_BASE}"/hypatiax_defi_benchmark_v3_results*.json \
+                2>/dev/null || true
+              ;;
+
+            suppB)
+              # run_noise_sweep_benchmark.py → comparison_results/feynman-tests/noise-sweep/
+              #   noise_sweep_*.json
+              #   noise_sweep_*.csv
+              # (per-equation subdirs are flattened up to noise-sweep/ by the worker move step)
+              git add \
+                "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/"*.json \
+                "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/"*.csv  \
+                2>/dev/null || true
+              ;;
+
+            suppB_sc)
+              # run_sample_complexity_benchmark.py → comparison_results/feynman-tests/sample-complexity/
+              #   sample_complexity_*.json
+              #   sample_complexity_*.csv
+              git add \
+                "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/"*.json \
+                "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/"*.csv  \
+                2>/dev/null || true
+              ;;
+
+            hybrid_all_domains)
+              # hybrid_system_llm_nn_all_domains.py → hybrid_llm_nn/all_domains/
+              #   hybrid_llm_nn_all_domains_*.json
+              git add \
+                "${OUT_BASE}/hybrid_llm_nn/all_domains/"*.json \
+                2>/dev/null || true
+              ;;
+
+            instability)
+              # run_instability_suite.py → figures/
+              #   instability_analysis.csv
+              #   instability_extrapolation.csv  (Stage 2, if benchmark JSON present)
+              #   fig_paper_complexity_vs_instability.{png,pdf}
+              #   fig_paper_instability_hist.{png,pdf}
+              #   fig_paper_regime_counts.{png,pdf}
+              #   hypatiax_instability_per_case.{png,pdf}
+              #   + 8 more figure stems (Groups A, B, C full set + EX)
+              git add \
+                "${OUT_BASE}/figures/"*.csv \
+                "${OUT_BASE}/figures/"*.png \
+                "${OUT_BASE}/figures/"*.pdf \
+                2>/dev/null || true
+              ;;
+
+            extrap)
+              # run_comparative_suite_benchmark_v2.py --extrap → comparison_results/extrapolation/
+              #   all_domains_extrap_v4_*.json
+              #   all_domains_extrap_v4_*.txt
+              #   extrap_shard*_run.log  (tee target)
+              # standalone LLM/NN outputs → standalone_llm_nn/
+              #   standalone_llm_nn_*.json
+              #   standalone_real_methods_*.json
+              git add \
+                "${OUT_BASE}/comparison_results/extrapolation/"*.json \
+                "${OUT_BASE}/comparison_results/extrapolation/"*.txt  \
+                "${OUT_BASE}/comparison_results/extrapolation/"*.log  \
+                "${OUT_BASE}/standalone_llm_nn/"*.json \
+                2>/dev/null || true
+              ;;
+
+          esac
+
           if git diff --cached --quiet; then
             echo "No changes - results unchanged from previous run."
           else
-            git commit -m "ci: ${EXP} consolidated results - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git commit -m "ci: ${EXP} results + consolidated - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed consolidated results to master."
+            echo "Pushed experiment results and consolidated artefacts to master."
           fi
 
       - name: Set consolidate outputs
