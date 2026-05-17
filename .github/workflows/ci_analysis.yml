@@ -187,6 +187,9 @@ jobs:
 
           CKPT=$(find consolidated_artifact -name "_checkpoint.json" 2>/dev/null | head -1)
 
+          EXP=""
+          SUB=""
+
           if [[ -n "$CKPT" ]]; then
             echo "Found checkpoint: $CKPT"
             EXP=$(python -c "
@@ -203,7 +206,7 @@ jobs:
           if not v:
               # Derive result_subdir from experiment name using the canonical mapping.
               exp = d.get('experiment') or d.get('exp_id') or ''
-            # Canonical mapping — single source of truth for result_subdir paths.
+              # Canonical mapping — single source of truth for result_subdir paths.
               mapping = {
                   'exp1':               'comparison_results/noise-noiseless/noiseless',
                   'exp1_ablation':      'comparison_results/noise-noiseless/ablation',
@@ -227,6 +230,29 @@ jobs:
           # Fall back to dispatch inputs (manual mode or checkpoint missing key).
           EXP="${EXP:-${DISPATCH_EXP}}"
           SUB="${SUB:-${DISPATCH_SUB}}"
+
+          # Derive result_subdir from experiment name when DISPATCH_SUB is blank
+          # (the normal automated dispatch case — ci_schedule_all leaves it empty).
+          if [[ -z "$SUB" && -n "$EXP" ]]; then
+            SUB=$(python -c "
+          mapping = {
+              'exp1':               'comparison_results/noise-noiseless/noiseless',
+              'exp1_ablation':      'comparison_results/noise-noiseless/ablation',
+              'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp2':               'comparison_results/feynman-tests/exp2_multi',
+              'exp3':               'extrapolation',
+              'exp3b':              'extrapolation/multi_seed',
+              'suppA':              'hybrid_pysr/defi',
+              'suppB':              'comparison_results/feynman-tests/noise-sweep',
+              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+              'instability':        'figures',
+              'extrap':             'comparison_results/extrapolation',
+          }
+          print(mapping.get('${EXP}', '${EXP}'))
+          ")
+          fi
 
           if [[ -z "$EXP" || -z "$SUB" ]]; then
             echo "::error::Cannot resolve experiment or result_subdir."
@@ -351,10 +377,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          name: analysis-${{ steps.meta.outputs.exp_id }}-${{ github.run_id }}
+          name: analysis-${{ steps.short_circuit.outputs.exp_id || steps.meta.outputs.exp_id }}-${{ github.run_id }}
           path: |
-            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/_report.md
-            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}/_analysis.json
+            ${{ env.OUT_BASE }}/${{ steps.short_circuit.outputs.result_subdir || steps.meta.outputs.result_subdir }}/_report.md
+            ${{ env.OUT_BASE }}/${{ steps.short_circuit.outputs.result_subdir || steps.meta.outputs.result_subdir }}/_analysis.json
           if-no-files-found: warn
           retention-days: 30
 
