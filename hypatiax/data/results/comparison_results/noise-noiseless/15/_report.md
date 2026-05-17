@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp1b`
 
 Experiment mode: **standard**
-N total: 5 | N standard: 5 | N intractable: 0
+N total: 6 | N standard: 6 | N intractable: 0
 R² success threshold: 0.8
 
 ## ⚠️ Fatal Conditions
@@ -40,10 +40,11 @@ Hybrid wins:  0  (N/A)
 NN wins:      0
 Tied:         0
 
-## Coverage Gaps (5 equations with best R² < 0.8)
+## Coverage Gaps (6 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
+| ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
