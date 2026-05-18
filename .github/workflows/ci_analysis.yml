@@ -103,6 +103,12 @@ permissions:
 # -- Global env ----------------------------------------------------------------
 env:
   OUT_BASE: hypatiax/data/results
+  # PySR fit timeout parameters — must match the values used by ci_experiment.yml
+  # workers.  Sourced from repository variables so both workflows share one
+  # definition.  Passed explicitly to run_analysis.py so it can record them in
+  # _analysis.json for reproducibility (not used to drive PySR here).
+  PYSR_FIT_WALL_TIMEOUT: ${{ vars.PYSR_FIT_WALL_TIMEOUT }}
+  PYSR_FIT_GRACE_SECS:   ${{ vars.PYSR_FIT_GRACE_SECS }}
 
 
 # ==============================================================================
@@ -397,6 +403,12 @@ jobs:
           EXP:         ${{ steps.meta.outputs.exp_id }}
           SUB:         ${{ steps.meta.outputs.result_subdir }}
           MERGED_JSON: ${{ steps.locate.outputs.merged_json }}
+          # Forward PySR timeout parameters so run_analysis.py can record them
+          # in _analysis.json for provenance.  The global env vars are already
+          # set above; re-declaring here is an explicit contract that makes the
+          # dependency visible at the step level and survives future env refactors.
+          PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
+          PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
         run: |
           set -euo pipefail
 

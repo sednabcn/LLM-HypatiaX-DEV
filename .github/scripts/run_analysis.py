@@ -164,6 +164,9 @@ RESULT_SUBDIR: dict[str, str] = {
     "hybrid_all_domains": "hybrid_llm_nn/all_domains",
     "instability":        "figures",
     "extrap":             "comparison_results/extrapolation",
+    # exp1_ablation: manual-only; no CI worker. Subdir mirrors merge_shards.py EXP_CONFIG.
+    # If promoted to CI, add entries in ci_experiment.yml and ci_analysis.yml too.
+    "exp1_ablation":      "comparison_results/feynman-tests/exp1_ablation",
 }
 
 
@@ -514,7 +517,8 @@ def _mann_whitney(a: list[float], b: list[float]) -> dict:
         return {"available": False, "reason": str(e)}
 
 
-def analyse_ablation(records: list[dict], experiment: str) -> dict:
+def analyse_ablation(records: list[dict], experiment: str,
+                     pysr_fit_params: dict | None = None) -> dict:
     """
     exp1_ablation / exp2_feynman_rf09 analysis.
 
@@ -882,6 +886,9 @@ def analyse_ablation(records: list[dict], experiment: str) -> dict:
         # Instability rows + timing
         "instability_rows":      all_rows,
         "timing":                timing,
+        # PySR fit parameters recorded for provenance (sourced from CI env vars).
+        # None when run outside CI or when vars are not set.
+        "pysr_fit_params":       pysr_fit_params or {},
         "fatal_conditions":      fatal,
     }
 
@@ -1190,7 +1197,8 @@ def _method_summary(standard: list[dict]) -> dict[str, dict]:
 # Core analysis
 # ---------------------------------------------------------------------------
 
-def analyse(records: list[dict], experiment: str) -> dict:
+def analyse(records: list[dict], experiment: str,
+            pysr_fit_params: dict | None = None) -> dict:
     """
     Run full statistical analysis on a list of merged records.
     Returns a dict written verbatim to _analysis.json.
@@ -1311,11 +1319,18 @@ def analyse(records: list[dict], experiment: str) -> dict:
             for r in standard
             if math.isfinite(_safe_float(r.get("results", {}).get(m, {}).get("time_s")))
         ]
+        # Count timed_out flags — present on neural_network records; absent (None)
+        # means "not applicable" for methods that don't use a wall-clock timeout.
+        n_timed_out = sum(
+            1 for r in standard
+            if r.get("results", {}).get(m, {}).get("timed_out") is True
+        )
         timing[m] = {
-            "mean_s":   _mean(times),
-            "median_s": _median(times),
-            "total_s":  round(sum(times), 2) if times else None,
-            "n":        len(times),
+            "mean_s":      _mean(times),
+            "median_s":    _median(times),
+            "total_s":     round(sum(times), 2) if times else None,
+            "n":           len(times),
+            "n_timed_out": n_timed_out,
         }
 
     # -- Hybrid decision breakdown ---------------------------------------------
@@ -1438,6 +1453,9 @@ def analyse(records: list[dict], experiment: str) -> dict:
         "timing":              timing,
         "hybrid_decisions":    decisions,
         "hybrid_vs_nn_headtohead": hybrid_vs_nn_headtohead,
+        # PySR fit parameters recorded for provenance (sourced from CI env vars).
+        # None when run outside CI or when vars are not set.
+        "pysr_fit_params":     pysr_fit_params or {},
         "fatal_conditions":    fatal,
     }
 
@@ -1738,6 +1756,34 @@ def main() -> None:
     with open(merged_path, encoding="utf-8") as f:
         raw = json.load(f)
 
+    # Read PySR fit timeout parameters from the environment.  Set by
+    # ci_analysis.yml from repository variables (vars.PYSR_FIT_WALL_TIMEOUT /
+    # vars.PYSR_FIT_GRACE_SECS), which mirror the values used in ci_experiment.yml
+    # workers.  Recorded in _analysis.json for provenance only; not used to
+    # drive any computation here.  Empty string / missing → None (not set in CI).
+    def _env_int_or_none(name: str) -> int | None:
+        raw_val = os.environ.get(name, "").strip()
+        if not raw_val:
+            return None
+        try:
+            return int(raw_val)
+        except ValueError:
+            print(f"WARNING: {name}={raw_val!r} is not an integer — recorded as null.",
+                  file=sys.stderr)
+            return None
+
+    pysr_fit_params: dict = {}
+    wall_timeout = _env_int_or_none("PYSR_FIT_WALL_TIMEOUT")
+    grace_secs   = _env_int_or_none("PYSR_FIT_GRACE_SECS")
+    if wall_timeout is not None:
+        pysr_fit_params["wall_timeout_s"] = wall_timeout
+    if grace_secs is not None:
+        pysr_fit_params["grace_secs"] = grace_secs
+    if pysr_fit_params:
+        print(f"  PySR fit params: {pysr_fit_params}")
+    else:
+        print("  PySR fit params: not set (PYSR_FIT_WALL_TIMEOUT / PYSR_FIT_GRACE_SECS absent)")
+
     # Handle all shapes merge_shards.py and legacy workers can produce:
     #   Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
     #            — canonical output of merge_shards.py (new).
@@ -1774,7 +1820,8 @@ def main() -> None:
     # exp1_ablation uses a dedicated analysis path (different input schema).
     if _get_mode(args.experiment) == "ablation":
         print("Running ablation analysis …")
-        analysis = analyse_ablation(records, experiment=args.experiment)
+        analysis = analyse_ablation(records, experiment=args.experiment,
+                                    pysr_fit_params=pysr_fit_params)
         analysis_path = output_dir / "_analysis.json"
         report_path   = output_dir / "_report.md"
         with open(analysis_path, "w", encoding="utf-8") as f:
@@ -1798,7 +1845,8 @@ def main() -> None:
         return
 
     print("Running analysis …")
-    analysis = analyse(records, experiment=args.experiment)
+    analysis = analyse(records, experiment=args.experiment,
+                       pysr_fit_params=pysr_fit_params)
 
     analysis_path = output_dir / "_analysis.json"
     report_path   = output_dir / "_report.md"
