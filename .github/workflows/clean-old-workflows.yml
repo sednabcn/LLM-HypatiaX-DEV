@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Cleanup Old Workflow Runs
         uses: actions/github-script@v8
+        env:
+          HOURS_THRESHOLD: ${{ github.event.inputs.hours_threshold || '72' }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN}}
           script: |
@@ -28,7 +30,7 @@ jobs:
 
             // Configuration - ULTRA aggressive cleanup
             const KEEP_RECENT_RUNS = 3;   // Keep only 3 runs per workflow MAX
-            const KEEP_HOURS = parseInt(context.payload.inputs?.hours_threshold || '72', 10); // Keep runs from last N hours
+            const KEEP_HOURS = parseInt(process.env.HOURS_THRESHOLD || '72', 10); // Keep runs from last N hours
             const MAX_TOTAL_RUNS = 25;    // STRICT global limit
             const MAX_PAGES = 30;         // Increase to catch all runs
 
