@@ -337,6 +337,189 @@ class DeFiExperimentProtocol:
              "note": "Explicit form of IL-breakeven; smooth U-shape min at r=1"},
         ))
 
+        # Test 14: Constant product formula (multivariate) — 3-token pool: z = k / (x * y)
+        # Represents a generalised constant-product invariant for three reserves.
+        # Extrapolation: split on reserve_x (idx 0) so the NN sees x values it
+        # hasn't trained on while y and k remain in-distribution.
+        rng_mv = np.random.default_rng(23)
+        reserve_mx = np.exp(rng_mv.uniform(np.log(1000), np.log(100000), n))
+        reserve_my = np.exp(rng_mv.uniform(np.log(1000), np.log(100000), n))
+        # invariant_mv = x * y * z  where z is in [1000, 100000] independently
+        reserve_mz_true = np.exp(rng_mv.uniform(np.log(1000), np.log(100000), n))
+        invariant_mv = reserve_mx * reserve_my * reserve_mz_true
+        # Target: z = k / (x * y)
+        reserve_mz = invariant_mv / (reserve_mx * reserve_my + 1e-10)
+
+        tests.append((
+            "Constant product formula (multivariate) for three-token pool reserve z given k and x and y",
+            np.column_stack([reserve_mx, reserve_my, invariant_mv]),
+            reserve_mz,
+            ["reserve_x", "reserve_y", "invariant_k"],
+            {
+                "domain": "amm",
+                "ground_truth": "k / (x * y)",
+                "extrapolation_test": False,
+                "note": "Generalized 3-asset constant-product; z = k / (x * y)",
+            },
+        ))
+
+        return tests
+        """Value at Risk test cases"""
+        tests = []
+
+        # Test 1: VaR 95% (EXTRAPOLATION TEST)
+        np.random.seed(43)
+        portfolio_value = np.linspace(10000, 1000000, n)
+        daily_vol = np.concatenate(
+            [
+                np.linspace(0.01, 0.03, n // 2),  # Training
+                np.linspace(0.035, 0.05, n // 2),  # Extrapolation
+            ]
+        )
+        np.random.shuffle(daily_vol)
+
+        z_95 = 1.645
+        var_95 = portfolio_value * daily_vol * z_95
+
+        tests.append(
+            (
+                "Parametric Value at Risk at 95% confidence (1-day)",
+                np.column_stack([portfolio_value, daily_vol]),
+                var_95,
+                ["portfolio_value", "daily_volatility"],
+                {
+                    "domain": "risk_var",
+                    "extrapolation_test": True,
+                    "ground_truth": "portfolio_value * volatility * 1.645",
+                    "constants": {"z_score_95": 1.645},
+                    "train_range": "vol 0.01-0.03",
+                    "test_range": "vol 0.035-0.05",
+                },
+            )
+        )
+
+        # Test 2: VaR 99%
+        portfolio_value = np.linspace(10000, 1000000, n)
+        daily_vol = np.linspace(0.01, 0.05, n)
+        z_99 = 2.326
+        var_99 = portfolio_value * daily_vol * z_99
+
+        tests.append(
+            (
+                "Parametric Value at Risk at 99% confidence (1-day)",
+                np.column_stack([portfolio_value, daily_vol]),
+                var_99,
+                ["portfolio_value", "daily_volatility"],
+                {
+                    "domain": "risk_var",
+                    "ground_truth": "portfolio_value * volatility * 2.326",
+                    "constants": {"z_score_99": 2.326},
+                    "extrapolation_test": False,
+                },
+            )
+        )
+
+        # Test 3: Multi-day VaR
+        var_1day = np.linspace(1000, 100000, n)
+        time_horizon = np.random.choice([5, 10, 21, 30], n)
+        var_multiday = var_1day * np.sqrt(time_horizon)
+
+        tests.append(
+            (
+                "Multi-day Value at Risk using square root of time rule",
+                np.column_stack([var_1day, time_horizon]),
+                var_multiday,
+                ["var_1day", "time_horizon_days"],
+                {
+                    "domain": "risk_var",
+                    "ground_truth": "var_1day * sqrt(days)",
+                    "extrapolation_test": False,
+                },
+            )
+        )
+
+        # Test 4: Portfolio VaR with correlation
+        var_asset1 = np.linspace(5000, 50000, n)
+        var_asset2 = np.linspace(3000, 30000, n)
+        correlation = np.linspace(-0.5, 0.9, n)
+
+        var_portfolio = np.sqrt(
+            var_asset1**2 + var_asset2**2 + 2 * correlation * var_asset1 * var_asset2
+        )
+
+        tests.append(
+            (
+                "Portfolio VaR for two correlated assets",
+                np.column_stack([var_asset1, var_asset2, correlation]),
+                var_portfolio,
+                ["var_asset1", "var_asset2", "correlation"],
+                {
+                    "domain": "risk_var",
+                    "ground_truth": "sqrt(var1^2 + var2^2 + 2*rho*var1*var2)",
+                    "extrapolation_test": False,
+                },
+            )
+        )
+
+        # Test 5: Annualised VaR from daily using sqrt-of-time
+        daily_var = np.linspace(1000, 100000, n)
+        trading_days = np.full(n, 252.0)
+        annual_var = daily_var * np.sqrt(trading_days)
+
+        tests.append((
+            "Annualised VaR from daily VaR using square-root-of-time rule",
+            daily_var.reshape(-1, 1),
+            annual_var,
+            ["daily_var"],
+            {"domain": "risk_var", "ground_truth": "daily_var * sqrt(252)",
+             "constants": {"trading_days": 252}, "extrapolation_test": False},
+        ))
+
+        # Test 6: Information ratio = active_return / tracking_error
+        active_return = np.linspace(-0.05, 0.15, n)
+        tracking_error = np.linspace(0.02, 0.20, n)
+        information_ratio = active_return / (tracking_error + 1e-10)
+
+        tests.append((
+            "Information ratio from active return over tracking error",
+            np.column_stack([active_return, tracking_error]),
+            information_ratio,
+            ["active_return", "tracking_error"],
+            {"domain": "risk_var", "ground_truth": "active_return / tracking_error",
+             "extrapolation_test": False},
+        ))
+
+        # Test 7: Portfolio tracking error volatility (annualised)
+        daily_te = np.linspace(0.002, 0.020, n)
+        ann_te = daily_te * np.sqrt(252)
+
+        tests.append((
+            "Annualised Portfolio tracking error volatility from daily TE",
+            daily_te.reshape(-1, 1),
+            ann_te,
+            ["daily_tracking_error"],
+            {"domain": "risk_var", "ground_truth": "daily_te * sqrt(252)",
+             "extrapolation_test": False},
+        ))
+
+        # Test 8: Incremental VaR = portfolio_var_new - portfolio_var_old
+        port_var_old = np.linspace(10000, 500000, n)
+        new_position_var = np.linspace(1000, 100000, n)
+        corr_new = np.linspace(-0.2, 0.6, n)
+        port_var_new = np.sqrt(port_var_old**2 + new_position_var**2
+                               + 2 * corr_new * port_var_old * new_position_var)
+        incremental_var = port_var_new - port_var_old
+
+        tests.append((
+            "Incremental VaR from adding new position to portfolio",
+            np.column_stack([port_var_old, new_position_var, corr_new]),
+            incremental_var,
+            ["portfolio_var", "position_var", "correlation"],
+            {"domain": "risk_var",
+             "ground_truth": "sqrt(v1^2+v2^2+2*rho*v1*v2) - v1",
+             "extrapolation_test": False},
+        ))
+
         return tests
 
     def _generate_var_tests(self, n: int) -> list[tuple]:
@@ -666,10 +849,29 @@ class DeFiExperimentProtocol:
              "extrapolation_test": False},
         ))
 
-        return tests
+        # Test 9: Concentrated liquidity position width (v2) — sqrt-price difference
+        # Distinct from v1 (P_upper / P_lower ratio): this is the Uniswap V3
+        # sqrt-price span sqrt(P_upper) - sqrt(P_lower), which scales the
+        # virtual token amounts in a concentrated position.
+        rng_v2 = np.random.default_rng(41)
+        p_low_v2 = np.sort(rng_v2.uniform(800, 3000, n))   # split var — sorted for aggressive split
+        p_high_v2 = p_low_v2 * rng_v2.uniform(1.05, 2.5, n)
+        sqrt_width_v2 = np.sqrt(p_high_v2) - np.sqrt(p_low_v2)
 
-    # ========================================================================
-    # EXPECTED SHORTFALL DOMAIN
+        tests.append((
+            "Concentrated liquidity position width (v2) using square-root price bounds",
+            np.column_stack([p_low_v2, p_high_v2]),
+            sqrt_width_v2,
+            ["price_lower", "price_upper"],
+            {
+                "domain": "liquidity",
+                "ground_truth": "sqrt(P_upper) - sqrt(P_lower)",
+                "extrapolation_test": False,
+                "note": "v2: sqrt-price span, distinct from v1 ratio P_upper/P_lower",
+            },
+        ))
+
+        return tests
     # ========================================================================
 
     def _generate_es_tests(self, n: int) -> list[tuple]:
@@ -1099,15 +1301,16 @@ class DeFiExperimentProtocol:
         tests.append(
             (
                 "Borrowing Interest accrued on borrowed amount (continuous compounding)",
-                np.column_stack([principal, rate]),
+                np.column_stack([principal, rate, time_years]),  # FIX: include time_years — formula depends on it
                 accrued_interest,
-                ["principal", "interest_rate"],
+                ["principal", "interest_rate", "time_years"],
                 {
                     "domain": "lending",
                     "ground_truth": "principal * (exp(rate * t) - 1)",
                     "extrapolation_test": True,
                     "train_range": "rate 0.02-0.10",
                     "test_range": "rate 0.12-0.20",
+                    "note": "FIX: time_years added to features; was causing ~0.31 R² ceiling",
                 },
             )
         )
@@ -1564,6 +1767,33 @@ class DeFiExperimentProtocol:
              "ground_truth": "var_95 * (2.326 / 1.645)",
              "constants": {"z_99": 2.326, "z_95": 1.645},
              "extrapolation_test": False},
+        ))
+
+        # Test 9: Funding rate cost (extended) — mark/index premium model
+        # Extends the basic funding rate by deriving the rate from the
+        # mark-price / index-price premium rather than taking it as given:
+        #   funding_rate = (mark_price - index_price) / index_price
+        #   cost = notional * funding_rate * periods
+        # This is the standard perpetual-futures funding mechanism.
+        rng_ext = np.random.default_rng(37)
+        notional_ext = np.exp(rng_ext.uniform(np.log(1000), np.log(1000000), n))
+        index_price_ext = np.exp(rng_ext.uniform(np.log(100), np.log(5000), n))
+        premium_pct = rng_ext.uniform(-0.005, 0.015, n)  # -0.5% to +1.5% typical range
+        mark_price_ext = index_price_ext * (1 + premium_pct)
+        periods_ext = rng_ext.choice([1, 3, 8, 24], n).astype(float)
+        funding_cost_ext = notional_ext * (mark_price_ext - index_price_ext) / (index_price_ext + 1e-10) * periods_ext
+
+        tests.append((
+            "Funding rate cost (extended) from mark-index premium over funding periods",
+            np.column_stack([notional_ext, mark_price_ext, index_price_ext, periods_ext]),
+            funding_cost_ext,
+            ["notional", "mark_price", "index_price", "periods"],
+            {
+                "domain": "trading",
+                "ground_truth": "notional * (mark - index) / index * periods",
+                "extrapolation_test": False,
+                "note": "Extended: funding rate derived from mark/index premium",
+            },
         ))
 
         return tests
