@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp1`
 
 Experiment mode: **standard**
-N total: 3 | N standard: 3 | N intractable: 0
+N total: 5 | N standard: 5 | N intractable: 0
 R² success threshold: 0.8
 
 ## ✅ No Fatal Conditions
@@ -12,30 +12,30 @@ R² success threshold: 0.8
 
 | Method | N | Success% (flag) | R²≥0.80% | Median test R² | Mean test R² |
 |--------|---|-----------------|----------|----------------|--------------|
-| Pure LLM | 3 | 66.7% | 100.0% | 1.0000 | 1.0000 |
-| Neural Net | 3 | 100.0% | 0.0% | -2.4931 | -1.9898 |
-| Hybrid | 3 | 100.0% | 66.7% | 1.0000 | 0.7920 |
+| Pure LLM | 5 | 80.0% | 100.0% | 1.0000 | 1.0000 |
+| Neural Net | 5 | 100.0% | 0.0% | -2.5607 | -2.2182 |
+| Hybrid | 5 | 100.0% | 80.0% | 1.0000 | 0.8752 |
 
 ## Mann-Whitney U Tests (two-sided, clipped R², standard equations)
 
 
 ### Hybrid vs Pure LLM
 
-  U=2.0,  p=0.7609,  direction=b_greater,  n=(3, 2)
+  U=8.0,  p=0.6605,  direction=b_greater,  n=(5, 4)
 
 ### Hybrid vs Neural Net
 
-  U=9.0,  p=0.1000,  direction=a_greater,  n=(3, 3)
+  U=25.0,  p=0.0109**,  direction=a_greater,  n=(5, 5)
 
 ### Neural Net vs Pure LLM
 
-  U=0.0,  p=0.2000,  direction=b_greater,  n=(3, 2)
+  U=0.0,  p=0.0175**,  direction=b_greater,  n=(5, 4)
 _** = p < 0.05_
 
 ## Hybrid vs Neural Net (head-to-head, equation level)
 
-Equations with both finite R²: 3
-Hybrid wins:  3  (100.0%)
+Equations with both finite R²: 5
+Hybrid wins:  5  (100.0%)
 NN wins:      0
 Tied:         0
 
@@ -50,35 +50,35 @@ Tied:         0
 | Difficulty | N | LLM R²≥0.80 | NN R²≥0.80 | Hybrid R²≥0.80 |
 |------------|---|-------------|------------|----------------|
 | easy | 1 | 100.0% | 0.0% | 100.0% |
-| hard | 1 | 0.0% | 0.0% | 0.0% |
-| medium | 1 | 100.0% | 0.0% | 100.0% |
+| hard | 2 | 100.0% | 0.0% | 50.0% |
+| medium | 2 | 100.0% | 0.0% | 100.0% |
 
 ## Median Test R² by Formula Type
 
 | Formula Type | N | LLM median R² | NN median R² | Hybrid median R² |
 |--------------|---|---------------|--------------|------------------|
-| algebraic | 1 | 1.0000 | -3.1838 | 1.0000 |
-| quadratic_form | 1 | N/A | -2.4931 | 0.3760 |
+| algebraic | 2 | 1.0000 | -2.8723 | 1.0000 |
+| quadratic_form | 2 | 1.0000 | -2.5269 | 0.6880 |
 | rational | 1 | 1.0000 | -0.2925 | 1.0000 |
 
 ## Extrapolation Gap (train R² − test R²)
 
 | Method | Mean gap | Median gap | N |
 |--------|----------|------------|---|
-| Pure LLM | 0.0000 | 0.0000 | 2 |
-| Neural Net | 2.9897 | 3.4930 | 3 |
-| Hybrid | 0.2028 | 0.0000 | 3 |
+| Pure LLM | 0.0000 | 0.0000 | 4 |
+| Neural Net | 3.2181 | 3.5606 | 5 |
+| Hybrid | 0.1217 | 0.0000 | 5 |
 
 ## Wall-clock Timing (standard equations)
 
 | Method | Mean (s) | Median (s) | Total (s) | N |
 |--------|----------|------------|-----------|---|
-| Pure LLM | 13.9910 | 13.5680 | 41.97 | 3 |
-| Neural Net | 10.4127 | 2.8090 | 31.24 | 3 |
-| Hybrid | 1.6397 | 1.4520 | 4.92 | 3 |
+| Pure LLM | 13.3088 | 12.3360 | 66.54 | 5 |
+| Neural Net | 7.3426 | 2.7850 | 36.71 | 5 |
+| Hybrid | 1.6014 | 1.4570 | 8.01 | 5 |
 
 ## Hybrid Routing Decisions
 
 | Decision | Count |
 |----------|-------|
-| llm | 3 |
+| llm | 5 |
