@@ -6,6 +6,8 @@ Checks that benchmark outputs match the expected values from the paper.
 Tolerances are generous to allow for hardware/seed variation.
 Exit 0 = pass, Exit 1 = fail.
 """
+
+import argparse
 import json
 import os
 import sys
@@ -196,8 +198,24 @@ def check_defi_duplicates():
         print("  ✅ No duplicate case names")
         PASS_COUNT += 1
 
+
+def build_summary():
+    return {
+        "pass": PASS_COUNT,
+        "fail": FAIL_COUNT,
+        "warn": WARN_COUNT,
+        "status": (
+            "failed"
+            if FAIL_COUNT > 0
+            else "warning"
+            if WARN_COUNT > 0
+            else "passed"
+        )
+    }
+
 # ── Main ──────────────────────────────────────────────────────────────────────
-def main():
+
+def main(report=False, report_file=None):
     print("═" * 65)
     print("  HypatiaX JMLR Result Verification")
     print("═" * 65)
@@ -208,19 +226,59 @@ def main():
     check_instability()
     check_defi_duplicates()
 
+    summary = build_summary()
+
     print("\n" + "═" * 65)
-    print(f"  PASS: {PASS_COUNT}   FAIL: {FAIL_COUNT}   WARN (missing): {WARN_COUNT}")
+    print(
+        f"  PASS: {summary['pass']}   "
+        f"FAIL: {summary['fail']}   "
+        f"WARN: {summary['warn']}"
+    )
     print("═" * 65)
 
+    if report:
+        print("\n── Verification report ─────────────────────────────")
+        print(json.dumps(summary, indent=2))
+
+    if report_file:
+        Path(report_file).write_text(
+            json.dumps(summary, indent=2)
+        )
+        print(f"\nReport written → {report_file}")
+
     if FAIL_COUNT > 0:
-        print("\n❌ Verification FAILED — check logs above")
+        print("\n❌ Verification FAILED")
         sys.exit(1)
-    elif WARN_COUNT > 0:
-        print("\n⚠  Verification passed with warnings (some files not yet generated)")
-        sys.exit(0)
-    else:
-        print("\n✅ All checks passed")
-        sys.exit(0)
+
+    print(
+        "\n⚠ Verification passed with warnings"
+        if WARN_COUNT > 0
+        else "\n✅ All checks passed"
+    )
+    sys.exit(0)
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Verify HypatiaX benchmark outputs"
+    )
+
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Print JSON summary report"
+    )
+
+    parser.add_argument(
+        "--report-file",
+        type=str,
+        default=None,
+        help="Write report to file"
+    )
+
+    args = parser.parse_args()
+
+    main(
+        report=args.report,
+        report_file=args.report_file
+    )

@@ -1526,6 +1526,24 @@ jobs:
             --result-subdir "${RESULT_SUBDIR}" \
             --run-id        "${{ github.run_id }}"
 
+      - name: Verify consolidated results
+        shell: bash
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x .github/scripts/verify_results.sh
+          .github/scripts/verify_results.sh
+          python3 scripts/patches/verify_results.py \
+            --report \
+            --report-file verification_summary.json
+
+      - name: Upload verification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-report
+          path: verification_summary.json
+
       - name: Enrich _merged.json with equation_id
         # merge_shards.py keys records by task_id (domain/seed string) but never
         # populates the equation_id field, leaving it as "?" or absent entirely.
