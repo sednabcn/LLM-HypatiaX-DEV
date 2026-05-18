@@ -70,6 +70,13 @@ export PYSR_POPULATIONS="${PYSR_POPULATIONS:-30}"
 export METHOD_TIMEOUT="${METHOD_TIMEOUT:-900}"
 export LLM_METHOD_TIMEOUT="${LLM_METHOD_TIMEOUT:-120}"
 
+# PySR fit-level wall timeout and grace seconds — mirrors ci_experiment.yml global env.
+# PYSR_FIT_WALL_TIMEOUT: hard per-fit wall-clock cap passed to DiscoveryConfig.
+# PYSR_FIT_GRACE_SECS:   extra grace seconds before forceful kill after timeout.
+# Both must be exported so worker sub-processes and Python scripts inherit them.
+export PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT:-1200}"
+export PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS:-120}"
+
 # Feynman benchmark defaults (Appendix A)
 # FIX-10: exported so subshells and child processes inherit the values.
 export FEYNMAN_SAMPLES=200
@@ -400,22 +407,48 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
 
 
 # ── STEP 5: exp2_feynman ──────────────────────────────────────────────────────
-# FIX: mkdir -p ensures tee target directory exists when this step runs
-#      standalone (--step exp2_feynman) without a prior env_check.
-# All 6 methods active (--skip-pysr removed); METHOD_TIMEOUT (900s) used so
-# methods 5+6 (SymbolicEngine, HybridV50_2) have adequate PySR budget.
-run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol (Tab 16-18)" bash -c "
+# SYNC-ci: per-domain loop matching ci_experiment.yml exp2_feynman worker step.
+# BUG 1 + BUG 4 FIX (ci parity): previous monolithic call ran ALL 11 Feynman
+#   domains on a single worker (no --domain filter) and omitted --output-dir,
+#   so results landed in the default comparison_results/ path rather than
+#   comparison_results/feynman-tests/exp2/ (RESULT_SUBDIR).
+# --skip-pysr: methods 5 (SymbolicEngine) and 6 (HybridV50_2) are excluded
+#   from exp2_feynman — not part of Tab 16-18 comparison. LLM_METHOD_TIMEOUT
+#   used (120s) for LLM/NN-only methods.
+# --noiseless --threshold 0.9999: exp2_feynman uses the noiseless Feynman
+#   protocol, matching FEYNMAN_NOISELESS_THRESHOLD from repro.yaml.
+# --parsimony 0.01 --populations: matches CI worker invocation exactly.
+# Domains: 11 Feynman sub-domains derived from experiment_protocol_benchmark_v2.py
+#   _build_domain_map() — same list as CI FEYNMAN_DOMAIN_IDS.
+FEYNMAN_DOMAINS="feynman_biology feynman_chemistry feynman_electrochemistry feynman_electromagnetism feynman_electrostatics feynman_mechanics feynman_optics feynman_quantum feynman_thermodynamics feynman_astronomy feynman_fluid_dynamics"
+run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab 16-18)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
-  python3 run_comparative_suite_benchmark_v2.py \
-    --benchmark feynman \
-    --samples ${FEYNMAN_SAMPLES} \
-    --pysr-timeout ${FEYNMAN_TIMEOUT} \
-    --method-timeout ${METHOD_TIMEOUT} \
-    --checkpoint-name feynman_exp2_checkpoint \
-    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
-    --resume \
-    2>&1 | tee '${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log'
+  for DOMAIN_ID in ${FEYNMAN_DOMAINS}; do
+    echo '=== exp2_feynman: domain='\${DOMAIN_ID}' ==='
+    FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
+    FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT} \
+    METHOD_TIMEOUT=${LLM_METHOD_TIMEOUT} \
+    PYSR_FIT_WALL_TIMEOUT=${PYSR_FIT_WALL_TIMEOUT} \
+    PYSR_FIT_GRACE_SECS=${PYSR_FIT_GRACE_SECS} \
+    JOB_DEADLINE=${JOB_DEADLINE} \
+      python3 run_comparative_suite_benchmark_v2.py \
+        --benchmark feynman \
+        --domain \"\${DOMAIN_ID}\" \
+        --skip-pysr \
+        --samples ${FEYNMAN_SAMPLES} \
+        --pysr-timeout ${FEYNMAN_TIMEOUT} \
+        --method-timeout ${LLM_METHOD_TIMEOUT} \
+        --populations ${PYSR_POPULATIONS} \
+        --parsimony 0.01 \
+        --noiseless \
+        --threshold ${FEYNMAN_NOISELESS_THRESHOLD} \
+        --checkpoint-name \"feynman_exp2_checkpoint_\${DOMAIN_ID}\" \
+        --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+        --resume \
+      2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_run.log' \
+    || echo 'WARNING: domain '\${DOMAIN_ID}' exited non-zero — continuing'
+  done
 "
 
 # ── STEP 6: exp2 ──────────────────────────────────────────────────────────────

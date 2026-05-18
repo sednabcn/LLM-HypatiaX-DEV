@@ -73,7 +73,7 @@ on:
 
       # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards - 4 (preferred) or 3 (quota-limited)"
+        description: "Number of parallel worker shards (1-4). Per-experiment defaults: exp1/exp1b=2, exp2/exp2_feynman=4, all others=1. Override here for manual runs only."
         required: false
         default: "4"
 
@@ -327,11 +327,11 @@ jobs:
 
           EXP          = os.environ["EXP"]
           N_SHARDS_RAW = int(os.environ["N_SHARDS"])
-          N_SHARDS     = max(3, min(4, N_SHARDS_RAW))  # 3 = quota-limited, 4 = preferred
+          N_SHARDS     = max(1, min(4, N_SHARDS_RAW))  # valid range: 1-4
           # BUG 5 FIX: make the clamp visible so callers are not silently misled.
           if N_SHARDS != N_SHARDS_RAW:
               print(f"::warning::n_shards input was {N_SHARDS_RAW}; clamped to {N_SHARDS} "
-                    f"(accepted range: 3-4). Update dispatch_experiment.sh call if intentional.")
+                    f"(accepted range: 1-4). Update dispatch call if intentional.")
           OVERRIDE     = os.environ["OVERRIDE"].split() if os.environ["OVERRIDE"].strip() else []
           SEEDS        = [s.strip() for s in os.environ["EFFECTIVE_SEEDS"].split(",") if s.strip()]
           NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
@@ -1517,11 +1517,14 @@ jobs:
           # so write_checkpoint() can embed result_subdir in _checkpoint.json,
           # allowing ci_analysis.yml to resolve the path on automatic triggers
           # without needing manual workflow_dispatch inputs (Bug 5 fix in merge_shards.py).
+          # --run-id passed explicitly so _checkpoint.json always carries the plan-job
+          # run_id rather than falling back to the consolidate job's $GITHUB_RUN_ID.
           python .github/scripts/merge_shards.py \
             --experiment    "${EXP}" \
             --input-root    downloaded_artifacts \
             --output-dir    "${OUT_BASE}/${RESULT_SUBDIR}" \
-            --result-subdir "${RESULT_SUBDIR}"
+            --result-subdir "${RESULT_SUBDIR}" \
+            --run-id        "${{ github.run_id }}"
 
       - name: Enrich _merged.json with equation_id
         # merge_shards.py keys records by task_id (domain/seed string) but never

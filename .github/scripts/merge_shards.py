@@ -42,14 +42,16 @@ from pathlib import Path
 EXP_CONFIG: dict[str, dict] = {
 
     # ── exp1: Core DeFi extrapolation (noiseless) ─────────────────────────────
-    # hypatiax_defi_benchmark_v3c.py writes:
-    #   hypatiax_defi_benchmark_v3*results*.json  (primary)
-    #   protocol_core_noiseless_*.json            (protocol-wrapper name)
-    #   defi_v3_*.json                            (legacy name)
+    # CI shard artifact contents (confirmed from CI log):
+    #   hypatiax_defi_benchmark_v3_results.json   ← primary result file
+    #   protocol_core_noiseless_<timestamp>.json  ← protocol-wrapper
+    #   _report.md                                ← skipped (not JSON)
     "exp1": dict(
         result_subdir="comparison_results/noise-noiseless/noiseless",
         shard_globs=[
-            "hypatiax_defi_benchmark_v3*results*.json",
+            "hypatiax_defi_benchmark_v3_results.json",   # exact name from CI
+            "hypatiax_defi_benchmark_v3*results*.json",  # any variant
+            "hypatiax_defi_benchmark_v3*.json",          # any v3 file
             "protocol_core_noiseless_*.json",
             "defi_v3_*.json",
         ],
@@ -59,11 +61,14 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── exp1b: DeFi seed sweep + portfolio variance (noise=15) ───────────────
+    # CI shard artifact contents (confirmed from CI log):
+    #   comparison_FIXED_<timestamp>.json  ← primary result file
+    #   _report.md                         ← skipped (not JSON)
     "exp1b": dict(
         result_subdir="comparison_results/noise-noiseless/15",
         shard_globs=[
-            "hypatiax_defi_benchmark_v3*results*.json",
-            "comparison_FIXED_*.json",
+            "comparison_FIXED_*.json",           # exact pattern from CI
+            "hypatiax_defi_benchmark_v3*.json",  # fallback if script name changes
             "*portfolio*variance*.json",
             "defi_v3_*.json",
         ],
@@ -79,6 +84,7 @@ EXP_CONFIG: dict[str, dict] = {
     # File names:  exp2_feynman_checkpoint_shard*.json  (checkpoint)
     #              exp2_feynman_merged.*                 (if script merges internally)
     #              exp2_feynman_stats.json
+    #              exp2_all*_checkpoint.json             (in comparison_results/ root)
     # The run_all_checkpoint.py isolated runner also writes per-equation:
     #   I_6_2a.json, II_11_27.json, ... (equation name with dots→underscores)
     #   exp2_results.json  (whole-run consolidated)
@@ -89,6 +95,7 @@ EXP_CONFIG: dict[str, dict] = {
             "exp2_feynman_merged*.json",
             "exp2_feynman_stats.json",
             "exp2_results.json",
+            "exp2_all*_checkpoint.json",  # written to comparison_results/ root by worker
             "I_*.json",
             "II_*.json",
             "III_*.json",
@@ -180,11 +187,14 @@ EXP_CONFIG: dict[str, dict] = {
 
     # ── suppB_sc: Sample-complexity sweep n ∈ {50…1000} × 30 equations ───────
     # run_sample_complexity_benchmark.py writes sample_complexity_*.json
+    # post_move (checkpoint): moves from feynman-tests/ root → sample-complexity/
+    #   recursive=True, exclude="sample-complexity"
     # task_id format: "sc_n{n}__{feynman_id}"  e.g. "sc_n200__I.6.20"
     "suppB_sc": dict(
         result_subdir="comparison_results/feynman-tests/sample-complexity",
         shard_globs=[
             "sample_complexity_*.json",
+            "sample_complexity_*.csv",   # post_move may also land CSV shards here
         ],
         merge_key="task_id",
         fallback_keys=["equation", "name", "equation_id"],
@@ -204,18 +214,24 @@ EXP_CONFIG: dict[str, dict] = {
         array_key="results",
     ),
 
-    # ── instability: Instability Index analysis ───────────────────────────────
-    # run_instability_suite.py writes CSVs + PNGs/PDFs to figures/
-    # No JSON merge — handled as CSV concatenation
-    "instability": dict(
-        result_subdir="figures",
+    # ── exp1_ablation: paired pysr_only vs hypatia ablation (manual-only) ────
+    # NOT dispatched by ci_experiment.yml or ci_schedule_all.yml.
+    # Kept here to support manual standalone runs alongside exp2_feynman.
+    # Uses the same ablation schema (hypatia/pysr_only keys, extrap_r2_far);
+    # routes to analyse_ablation() in run_analysis.py.
+    # If promoted to CI, entries are also needed in ci_experiment.yml and
+    # ci_analysis.yml (result_subdir mapping + dispatch menu).
+    "exp1_ablation": dict(
+        result_subdir="comparison_results/feynman-tests/exp1_ablation",
         shard_globs=[
-            "instability_analysis.csv",
-            "instability_extrapolation.csv",
+            "exp1_ablation_checkpoint_shard*.json",
+            "exp1_ablation_merged*.json",
+            "exp1_ablation_results.json",
+            "exp1_ablation_stats.json",
         ],
-        merge_key="case_id",
-        fallback_keys=["equation", "task_id"],
-        array_key=None,          # CSV-only
+        merge_key="equation",
+        fallback_keys=["equation_name", "equation_id", "task_id", "name"],
+        array_key="results",
     ),
 
     # ── extrap: OOD extrapolation comparative suite ───────────────────────────
@@ -243,25 +259,37 @@ EXP_CONFIG: dict[str, dict] = {
 
 def _find_shard_files(root: Path, globs: list[str]) -> list[Path]:
     """
-    Collect all files under `root` (recursively) matching any glob in `globs`.
-    Skips our own output files and CI checkpoint/stub files.
+    Collect all JSON files under `root` (recursively) matching any glob.
+    Skips:
+      · _report.md and any non-.json files (they are never result data)
+      · our own output files (_merged.json etc.)
+      · worker checkpoint/stub files
+    Each unique Path is returned once regardless of how many globs match it.
     """
     found: list[Path] = []
-    seen: set[Path] = set()
+    seen:  set[Path]  = set()
+
+    # Always skip these by name — they appear in every shard artifact dir
+    _SKIP_NAMES = frozenset({
+        "_report.md", "_merged.json", "_merged.csv",
+        "_stats.json", "_checkpoint.json",
+    })
+
     for pattern in globs:
         for match in sorted(root.rglob(pattern)):
             if not match.is_file():
                 continue
             if match in seen:
                 continue
-            name = match.name
-            # Skip our own outputs
-            if name in ("_merged.json", "_merged.csv", "_stats.json", "_checkpoint.json"):
+            if match.name in _SKIP_NAMES:
                 continue
-            if "_assembled" in name:
+            if match.suffix.lower() != ".json":
+                continue
+            if "_assembled" in match.name:
                 continue
             seen.add(match)
             found.append(match)
+
     return found
 
 
@@ -277,6 +305,30 @@ def _is_stub(raw: object) -> bool:
 def _is_worker_checkpoint(raw: object) -> bool:
     """True for checkpoint_worker_shard*.json files (task tracking, not results)."""
     return isinstance(raw, dict) and "completed" in raw and "run_id_map" in raw
+
+
+def _collect_run_id_map(shard_files: list[Path]) -> dict[str, str]:
+    """
+    Scan all shard files and collect the merged run_id_map from any worker
+    checkpoint files (which are otherwise skipped by _extract_records).
+
+    run_id_map is written by the worker step 'Set consolidate outputs' as:
+        {"task_id": "stable_run_id", ...}
+    and lets _enrich_equation_id patch task_id from the stable run identifier
+    so records are consistently keyed even when a shard re-runs under a new
+    GitHub run_id.
+    """
+    merged_map: dict[str, str] = {}
+    for fpath in shard_files:
+        try:
+            raw = json.loads(fpath.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        if _is_worker_checkpoint(raw):
+            run_id_map = raw.get("run_id_map", {})
+            if isinstance(run_id_map, dict):
+                merged_map.update(run_id_map)
+    return merged_map
 
 
 def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
@@ -534,8 +586,9 @@ def merge_experiment(
                                error="no_records_extracted")
         return 1
 
-    # ── 4. Enrich equation_id ───────────────────────────────────────────────
-    _enrich_equation_id(merged)
+    # ── 4. Enrich equation_id (and task_id via run_id_map) ─────────────────
+    run_id_map = _collect_run_id_map(shard_files)
+    _enrich_equation_id(merged, run_id_map=run_id_map)
 
     # ── 5. Compute stats ────────────────────────────────────────────────────
     stats = _compute_stats(merged)
@@ -576,15 +629,24 @@ def merge_experiment(
     return 0
 
 
-def _enrich_equation_id(merged: dict[str, dict]) -> None:
+def _enrich_equation_id(merged: dict[str, dict], run_id_map: dict[str, str] | None = None) -> None:
     """
-    Patch every record so equation_id is set.
+    Patch every record so equation_id is set, and backfill task_id from
+    run_id_map when present.
+
     Priority (mirrors ci_experiment.yml consolidate 'Enrich _merged.json' step):
       1. Already set and not "?"
       2. equation_id / eq_id / equation inside any per-method sub-record
       3. Parse 'description' field before first separator (: — - |)
       4. Top-level dict key (= task_id)
+
+    task_id patching (mirrors the Enrich step's run_id_map cross-reference):
+      · If run_id_map is provided and the top-level key is present in it,
+        set task_id to the stable run identifier from the map so records
+        remain consistently keyed across re-runs with different GitHub run_ids.
     """
+    if run_id_map is None:
+        run_id_map = {}
     for top_key, record in merged.items():
         if not isinstance(record, dict):
             continue
@@ -620,7 +682,8 @@ def _enrich_equation_id(merged: dict[str, dict]) -> None:
         if eq_id:
             record["equation_id"] = eq_id
             if not record.get("task_id") or record["task_id"] == "?":
-                record["task_id"] = top_key
+                # Prefer the stable run_id_map identifier over the raw top-level key.
+                record["task_id"] = run_id_map.get(top_key, top_key)
 
 
 def _write_checkpoint(
