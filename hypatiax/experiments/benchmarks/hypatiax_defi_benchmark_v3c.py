@@ -81,8 +81,32 @@ Fix 10  Strict LLM trust gate:
           - _formula_has_pathological_behavior() checks for "1/0", "np.inf",
             "nan", "**1000" patterns.
 
-Denominator fix
-───────────────
+What changed in v3.1
+─────────────────────
+Fix 11  Three previously skipped protocol cases now have matching test data:
+          - "Funding rate cost (extended)": mark/index premium model
+            (notional * (mark-index)/index * periods); 4 input features.
+          - "Concentrated liquidity position width (v2)": sqrt-price span
+            sqrt(P_upper) - sqrt(P_lower), distinct from the v1 ratio.
+          - "Constant product formula (multivariate)": 3-token pool z = k/(x*y).
+
+Fix 12  Borrowing Interest feature-matrix bug fixed.
+          time_years was sampled randomly and used in the ground-truth formula
+          principal * (exp(rate * t) - 1) but was NOT included as a feature,
+          making the function under-specified for any model.  This caused
+          the hard ~0.31 R² ceiling seen in the run log.  time_years is now
+          the third feature column; var_names updated to ["principal",
+          "interest_rate", "time_years"].
+
+Fix 13  LLM model updated: claude-sonnet-4-5 → claude-sonnet-4-6.
+
+Denominator fix (updated)
+──────────────────────────
+74 cases total; 0 intractable.  The 3 formerly skipped cases are now
+included in the denominator, raising it from the effective 71 in v3.0
+back to the intended 74.
+
+
 All aggregate R²>0.99 rates use a FIXED denominator of 74
 (74 total − 0 intractable) with NaN counted as failure.
 Previous headline figures (83.6 % LLM, 77.4 % Hybrid) used
@@ -96,7 +120,7 @@ Usage
   python hypatiax_defi_benchmark_v3.py --report-only # print report from saved JSON
 
 Author : HypatiaX Team
-Version: 3.0 — paper submission (v3 patch: fixes 6–10)
+Version: 3.1 — protocol fixes: 3 skipped cases added, Borrowing Interest time_years feature, model updated to claude-sonnet-4-6
 Date   : 2026
 """
 
@@ -636,7 +660,7 @@ def formula({var_list}):
 """
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
