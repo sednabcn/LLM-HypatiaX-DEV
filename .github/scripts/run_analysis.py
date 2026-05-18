@@ -34,8 +34,17 @@ Experiment modes
 ----------------
 Each experiment ID maps to a mode that controls which fatals fire:
 
-  "standard"     — exp1, exp1b, exp2_feynman, suppA, suppB, suppB_sc
+  "standard"     — exp1, exp1b, suppA, suppB, suppB_sc
                    Full analysis; all fatals active.
+
+  "ablation"     — exp2_feynman
+                   Paired pysr_only vs hypatia comparison on extrap_r2_far.
+                   Three-tier MW (all-N / excl-train-fail / success-subset),
+                   Fisher, Spearman, complexity distributions, threshold sweep,
+                   and LOO sensitivity.  Routes to analyse_ablation().
+                   NOTE: exp1_ablation is NOT dispatched by ci_experiment.yml
+                   or ci_schedule_all.yml — it has no worker or result_subdir.
+                   It is kept in EXPERIMENT_MODE for manual standalone use only.
 
   "ood"          — extrap
                    OOD/out-of-distribution run. Hybrid legitimately loses NN.
@@ -136,6 +145,25 @@ EXPERIMENT_MODE: dict[str, str] = {
     # complexity distributions, threshold sweep, and LOO all run under this mode.
     "exp1_ablation":      "ablation",
     "exp2_feynman":       "ablation",
+}
+
+# Canonical result_subdir for every CI-dispatched experiment.
+# Single source of truth — mirrors ci_experiment.yml plan meta step
+# and both mapping dicts in ci_analysis.yml "Resolve experiment metadata".
+# exp1_ablation intentionally absent: no worker, no result_subdir in CI.
+RESULT_SUBDIR: dict[str, str] = {
+    "exp1":               "comparison_results/noise-noiseless/noiseless",
+    "exp1b":              "comparison_results/noise-noiseless/15",
+    "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+    "exp2":               "comparison_results/feynman-tests/exp2_multi",
+    "exp3":               "extrapolation",
+    "exp3b":              "extrapolation/multi_seed",
+    "suppA":              "hybrid_pysr/defi",
+    "suppB":              "comparison_results/feynman-tests/noise-sweep",
+    "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+    "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+    "instability":        "figures",
+    "extrap":             "comparison_results/extrapolation",
 }
 
 
@@ -1656,9 +1684,15 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="HypatiaX post-consolidation statistical analysis."
     )
-    ap.add_argument("--experiment",  required=True, help="Experiment ID (e.g. exp1)")
-    ap.add_argument("--merged-json", required=True, help="Path to _merged.json")
-    ap.add_argument("--output-dir",  required=True, help="Directory to write outputs")
+    ap.add_argument("--experiment",  required=True,
+                    help="Experiment ID (e.g. exp1, exp2_feynman, extrap)")
+    ap.add_argument("--merged-json", required=True,
+                    help="Path to _merged.json produced by merge_shards.py")
+    ap.add_argument("--output-dir",  required=False, default=None,
+                    help=(
+                        "Directory to write _analysis.json and _report.md. "
+                        "Defaults to the directory containing --merged-json."
+                    ))
     return ap.parse_args()
 
 
@@ -1666,7 +1700,8 @@ def main() -> None:
     args = parse_args()
 
     merged_path = Path(args.merged_json)
-    output_dir  = Path(args.output_dir)
+    # Derive output_dir: explicit flag → same directory as _merged.json.
+    output_dir = Path(args.output_dir) if args.output_dir else merged_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # instability produces no _merged.json — the CI yml short-circuits before
@@ -1703,10 +1738,29 @@ def main() -> None:
     with open(merged_path, encoding="utf-8") as f:
         raw = json.load(f)
 
-    if isinstance(raw, dict):
-        records = list(raw.values())
+    # Handle all shapes merge_shards.py and legacy workers can produce:
+    #   Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
+    #            — canonical output of merge_shards.py (new).
+    #   Shape B  {task_id: record, ...}
+    #            — flat dict keyed by task_id (legacy).
+    #   Shape C  [record, ...]
+    #            — top-level list (legacy).
+    if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
+        # Shape A: the "results" value is the task-keyed dict.
+        records = [v for v in raw["results"].values() if isinstance(v, dict)]
+        print(f"  Shape A (_merged.json from merge_shards.py): "
+              f"{len(records)} records from 'results' key.")
+    elif isinstance(raw, dict):
+        # Shape B: flat dict — skip _meta / stats / _checkpoint sentinel keys.
+        records = [v for k, v in raw.items()
+                   if isinstance(v, dict)
+                   and not k.startswith("_")
+                   and k != "stats"]
+        print(f"  Shape B (flat dict): {len(records)} records.")
     elif isinstance(raw, list):
-        records = raw
+        # Shape C: top-level list.
+        records = [r for r in raw if isinstance(r, dict)]
+        print(f"  Shape C (list): {len(records)} records.")
     else:
         print(f"::error::Unexpected _merged.json top-level type: {type(raw)}", file=sys.stderr)
         sys.exit(1)
