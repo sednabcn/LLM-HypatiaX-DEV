@@ -109,6 +109,12 @@ import re
 import sys
 from pathlib import Path
 
+# Create results dir EARLY — before any other setup — so that the CI shell
+# runner's `tee hypatiax/data/results/exp1b_run.log` succeeds even when the
+# directory does not yet exist.  (RESULTS_DIR.mkdir() below would be too late
+# because the shell launches `tee` before Python reaches that line.)
+Path("hypatiax/data/results").mkdir(parents=True, exist_ok=True)
+
 # ── third-party ───────────────────────────────────────────────────────────────
 import numpy as np
 import torch
@@ -636,7 +642,7 @@ def formula({var_list}):
 """
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -958,6 +964,61 @@ def _get_test_cases() -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 7b — Case registry contract  (required by validate_case_registry.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sanitize_id(name: str) -> str:
+    """Convert a human-readable case name to a filesystem-safe ID.
+
+    Rules imposed by validate_case_registry.py:
+      • Only [A-Za-z0-9_-] allowed
+      • Spaces → underscores
+      • All other characters stripped
+    """
+    import re as _re
+    s = name.strip().replace(" ", "_")
+    s = _re.sub(r"[^A-Za-z0-9_\-]", "", s)
+    return s
+
+
+def build_cases() -> list[dict]:
+    """Return the benchmark case registry in the format required by CI.
+
+    Each entry::
+
+        {"id": "<filesystem-safe-id>", "args": ["--cases", "<name>"]}
+
+    The ``args`` list is passed verbatim to the benchmark script by the CI
+    worker, e.g.::
+
+        python hypatiax_defi_benchmark_v3c.py --cases "Black-Scholes Call Price"
+
+    Contract (enforced by validate_case_registry.py):
+      • returns a non-empty list
+      • every element is a dict with "id" (str) and "args" (list[str])
+      • all IDs are unique and match [A-Za-z0-9_-]+
+      • two calls return identical results (deterministic)
+    """
+    cases = []
+    seen_ids: set = set()
+    for tc in _get_test_cases():
+        raw_id = _sanitize_id(tc["name"])
+        # Guarantee uniqueness: append domain suffix on collision
+        unique_id = raw_id
+        if unique_id in seen_ids:
+            unique_id = f"{raw_id}_{_sanitize_id(tc['domain'])}"
+        if unique_id in seen_ids:
+            # Last resort: append difficulty
+            unique_id = f"{raw_id}_{_sanitize_id(tc['domain'])}_{tc['difficulty']}"
+        seen_ids.add(unique_id)
+        cases.append({
+            "id":   unique_id,
+            "args": ["--cases", tc["name"]],
+        })
+    return cases
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8 — Checkpoint helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1066,7 +1127,7 @@ def _generate_report(results: list):
         print(f"\n── Intractable cases ({len(intractable)}) ─────────────────────────────────────")
         for r in intractable:
             hy = r["results"].get("hybrid", {}).get("test_r2")
-            print(f"  {r['test_case'][:55]:<55}  hybrid test R² = "
+            print(f"  {r['equation_id'][:55]:<55}  hybrid test R² = "
                   f"{'nan' if hy is None or (isinstance(hy, float) and np.isnan(hy)) else f'{hy:.4f}'}")
 
     # By-difficulty breakdown
