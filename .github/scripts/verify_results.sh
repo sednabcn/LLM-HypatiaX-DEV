@@ -8,13 +8,16 @@
 
 set -euo pipefail
 
-RESULTS_DIR="${GITHUB_WORKSPACE}/hypatiax/data/results"
+# Use RESULTS_BASE when set by ci_experiment.yml (FIX-VERIFY); otherwise
+# default to the canonical repo-relative path so local runs still work.
+RESULTS_DIR="${RESULTS_BASE:-${GITHUB_WORKSPACE}/hypatiax/data/results}"
 
 export PATCHED_DATA_DIR="${RESULTS_DIR}"
 export VERIFY_RESULTS_DIR="${RESULTS_DIR}"
 export FAST="0"
 
 echo "── Verify results against paper targets ─────────────────────────────"
+echo "   RESULTS_DIR : ${RESULTS_DIR}"
 python3 scripts/patches/verify_results.py --report
 
 echo "── Hash-lock check ──────────────────────────────────────────────────"

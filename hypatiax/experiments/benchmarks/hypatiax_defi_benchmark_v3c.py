@@ -109,6 +109,12 @@ import re
 import sys
 from pathlib import Path
 
+# Create results dir EARLY — before any other setup — so that the CI shell
+# runner's `tee hypatiax/data/results/exp1b_run.log` succeeds even when the
+# directory does not yet exist.  (RESULTS_DIR.mkdir() below would be too late
+# because the shell launches `tee` before Python reaches that line.)
+Path("hypatiax/data/results").mkdir(parents=True, exist_ok=True)
+
 # ── third-party ───────────────────────────────────────────────────────────────
 import numpy as np
 import torch
@@ -636,7 +642,7 @@ def formula({var_list}):
 """
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1121,7 +1127,7 @@ def _generate_report(results: list):
         print(f"\n── Intractable cases ({len(intractable)}) ─────────────────────────────────────")
         for r in intractable:
             hy = r["results"].get("hybrid", {}).get("test_r2")
-            print(f"  {r['test_case'][:55]:<55}  hybrid test R² = "
+            print(f"  {r['equation_id'][:55]:<55}  hybrid test R² = "
                   f"{'nan' if hy is None or (isinstance(hy, float) and np.isnan(hy)) else f'{hy:.4f}'}")
 
     # By-difficulty breakdown

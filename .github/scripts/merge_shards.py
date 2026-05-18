@@ -22,6 +22,18 @@ Writes four canonical output files into --output-dir:
     _merged.csv         flat CSV view
     _stats.json         pre-aggregated counts + R² summaries
     _checkpoint.json    provenance / run metadata (consumed by ci_analysis.yml)
+
+Changes in current revision:
+  · instability added to EXP_CONFIG (array_key=None triggers CSV-only path).
+    Previously absent, --experiment instability failed the argparse choices check.
+  · _is_solved() replaces inline `r.get("status") == "ok"` in _compute_stats().
+    Handles all status-field variants used across benchmark scripts:
+      status ∈ {"ok","solved","success","passed"}, boolean/int solved/success/passed,
+      and an R²-threshold fallback (≥ 0.9999) when no status field is present.
+    Fixes n_solved=0 for exp1 which uses a non-"ok" status string.
+  · _compute_stats() now iterates r2/r2_score/r2_noiseless/best_r2 (first non-None wins).
+  · Zero-solve warning emitted to stderr when n_solved=0 and n_tasks>0 to catch
+    status field mismatches early rather than silently in downstream analysis.
 """
 
 from __future__ import annotations
@@ -234,6 +246,25 @@ EXP_CONFIG: dict[str, dict] = {
         array_key="results",
     ),
 
+    # ── instability: Instability Index S10.9 (CSV-only path) ─────────────────
+    # run_instability_suite.py writes:
+    #   instability_analysis.csv      → figures/
+    #   instability_extrapolation.csv → figures/ (Stage 2, if benchmark JSON present)
+    #   fig_paper_*.{png,pdf}         → figures/ (12 figure stems)
+    # array_key=None signals merge_experiment() to take the CSV-only branch
+    # (_merge_instability_csvs) instead of the JSON record path.
+    "instability": dict(
+        result_subdir="figures",
+        shard_globs=[
+            "instability_analysis.csv",
+            "instability_extrapolation.csv",
+            "instability_*.csv",
+        ],
+        merge_key="case_id",
+        fallback_keys=["equation", "name", "task_id"],
+        array_key=None,   # CSV-only: triggers _merge_instability_csvs()
+    ),
+
     # ── extrap: OOD extrapolation comparative suite ───────────────────────────
     # run_comparative_suite_benchmark_v2.py --extrap writes:
     #   all_domains_extrap_v4_*.json  → comparison_results/extrapolation/
@@ -407,21 +438,65 @@ def _task_id(record: dict, cfg: dict) -> str:
     return "unknown"
 
 
+def _is_solved(record: dict) -> bool:
+    """
+    Return True if a task record counts as solved.
+
+    Handles the status-field variations across HypatiaX benchmark scripts:
+      · "status"  : "ok" | "solved" | "success" | "passed"  (string)
+      · "solved"  : True | 1  (boolean / int flag)
+      · "success" : True | 1
+      · R²-threshold fallback: if none of the above fields exist, treat the
+        record as solved when its best r2/r2_score ≥ 0.9999 (paper threshold).
+    First-write-wins field priority matches the merge logic.
+    """
+    _OK_STRINGS = {"ok", "solved", "success", "passed"}
+
+    # String status field
+    status = record.get("status")
+    if status is not None:
+        return str(status).lower() in _OK_STRINGS
+
+    # Boolean / int flags written by some benchmark scripts
+    for flag_key in ("solved", "success", "passed"):
+        val = record.get(flag_key)
+        if val is not None:
+            if isinstance(val, bool):
+                return val
+            try:
+                return bool(int(val))
+            except (TypeError, ValueError):
+                pass
+
+    # Fallback: infer from R² if no explicit status field present
+    for r2_key in ("r2", "r2_score", "r2_noiseless", "best_r2"):
+        raw = record.get(r2_key)
+        if raw is not None:
+            try:
+                return float(raw) >= 0.9999
+            except (TypeError, ValueError):
+                pass
+
+    return False
+
+
 def _compute_stats(merged: dict[str, dict]) -> dict:
     records = list(merged.values())
     n       = len(records)
-    n_ok    = sum(1 for r in records if r.get("status") == "ok")
+    n_ok    = sum(1 for r in records if _is_solved(r))
     r2_vals = []
     for r in records:
-        raw = r.get("r2") or r.get("r2_score")
-        if raw is None:
-            continue
-        try:
-            v = float(raw)
-            if not (v != v):  # NaN check
-                r2_vals.append(v)
-        except (TypeError, ValueError):
-            pass
+        for r2_key in ("r2", "r2_score", "r2_noiseless", "best_r2"):
+            raw = r.get(r2_key)
+            if raw is None:
+                continue
+            try:
+                v = float(raw)
+                if not (v != v):  # NaN check
+                    r2_vals.append(v)
+                    break
+            except (TypeError, ValueError):
+                pass
 
     return {
         "n_tasks":         n,
@@ -597,6 +672,15 @@ def merge_experiment(
         print(f"    n_tasks     : {stats['n_tasks']}")
         print(f"    n_solved    : {stats['n_solved']}  "
               f"({stats['solve_rate']*100:.1f}%)")
+        if stats['n_solved'] == 0 and stats['n_tasks'] > 0:
+            print(
+                f"\n  ⚠  WARNING: n_solved=0.  This usually means the benchmark script\n"
+                f"     uses a status field name other than 'status'/'solved'/'success'.\n"
+                f"     Inspect a sample record from _merged.json and compare against\n"
+                f"     _is_solved() in merge_shards.py.  Also check that r2/r2_score\n"
+                f"     fields are present if the R²-threshold fallback is intended.",
+                file=sys.stderr,
+            )
         if stats["r2_mean"] is not None:
             print(f"    R² mean     : {stats['r2_mean']:.4f}")
             print(f"    R² ≥ 0.9999 : {stats['r2_ge_0_9999']}  "
