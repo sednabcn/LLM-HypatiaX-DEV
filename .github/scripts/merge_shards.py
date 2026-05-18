@@ -1,708 +1,756 @@
 #!/usr/bin/env python3
 """
-HypatiaX Unified Consolidation Engine
-=====================================
+.github/scripts/merge_shards.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HypatiaX  ·  Consolidate per-shard partial JSONs → final experiment result
 
-Canonical, experiment-agnostic shard merger.
+Called by ci_experiment.yml consolidate job (Job 3):
 
-Usage
------
-    python scripts/merge_shards.py \
-        --experiment   <exp_id>          \
-        --input-root   downloaded_artifacts \
-        --output-dir   hypatiax/data/results/<subdir>
+    python .github/scripts/merge_shards.py \\
+        --experiment    "${EXP}" \\
+        --input-root    downloaded_artifacts \\
+        --output-dir    "${OUT_BASE}/${RESULT_SUBDIR}" \\
+        --result-subdir "${RESULT_SUBDIR}"
 
-Outputs (all written to --output-dir)
---------------------------------------
-    _merged.json       Merged task records keyed by task_id
-    _merged.csv        Flat CSV view of the same records
-    _stats.json        Basic pre-aggregation counts and R² summaries
-    _checkpoint.json   Provenance / run metadata
+Source of truth: run_all_checkpoint.py v8.1
+  · EXP_CONFIG shard_globs   ← Step.result_glob + Step.post_move destinations
+  · merge_key per experiment  ← what each benchmark script writes as task ID
+  · result_subdir             ← EXP_RESULT_SUBDIR dict
 
-Design goals
-------------
-1. Canonical normalisation layer
-2. Deterministic task identity
-3. Recursive extraction
-4. Duplicate-safe merge policy (highest-score row wins)
-5. Basic aggregation stats only — no experiment-specific analysis
-6. Explicit diagnostics
-7. Schema-forward compatibility
-
-This script is the ONLY authoritative merge implementation.
-It is reused by both ci_experiment.yml (inline consolidate job)
-and ci_consolidate_experiment.yml (standalone re-consolidation).
+Writes four canonical output files into --output-dir:
+    _merged.json        all task records merged by task_id
+    _merged.csv         flat CSV view
+    _stats.json         pre-aggregated counts + R² summaries
+    _checkpoint.json    provenance / run metadata (consumed by ci_analysis.yml)
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
+import csv
 import json
-import logging
-import math
 import os
-from dataclasses import dataclass
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
 
-import numpy as np
+# ─────────────────────────────────────────────────────────────────────────────
+#  Per-experiment configuration
+#  Mirrors run_all_checkpoint.py: Step.result_glob, Step.post_move, and
+#  EXP_RESULT_SUBDIR; plus the merge_key each benchmark script uses.
+# ─────────────────────────────────────────────────────────────────────────────
+EXP_CONFIG: dict[str, dict] = {
 
+    # ── exp1: Core DeFi extrapolation (noiseless) ─────────────────────────────
+    # hypatiax_defi_benchmark_v3c.py writes:
+    #   hypatiax_defi_benchmark_v3*results*.json  (primary)
+    #   protocol_core_noiseless_*.json            (protocol-wrapper name)
+    #   defi_v3_*.json                            (legacy name)
+    "exp1": dict(
+        result_subdir="comparison_results/noise-noiseless/noiseless",
+        shard_globs=[
+            "hypatiax_defi_benchmark_v3*results*.json",
+            "protocol_core_noiseless_*.json",
+            "defi_v3_*.json",
+        ],
+        merge_key="task_id",
+        fallback_keys=["equation_id", "equation", "name"],
+        array_key="results",
+    ),
 
-# ============================================================
-# LOGGING
-# ============================================================
+    # ── exp1b: DeFi seed sweep + portfolio variance (noise=15) ───────────────
+    "exp1b": dict(
+        result_subdir="comparison_results/noise-noiseless/15",
+        shard_globs=[
+            "hypatiax_defi_benchmark_v3*results*.json",
+            "comparison_FIXED_*.json",
+            "*portfolio*variance*.json",
+            "defi_v3_*.json",
+        ],
+        merge_key="task_id",
+        fallback_keys=["equation_id", "equation", "name"],
+        array_key="results",
+    ),
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-logger = logging.getLogger("hypatiax.merge")
+    # ── exp2_feynman: comparative Feynman suite, LLM+NN only ─────────────────
+    # Workers write one JSON per domain via:
+    #   run_comparative_suite_benchmark_v2.py --benchmark feynman --domain <D>
+    #   --output-dir <RESULT_SUBDIR>
+    # File names:  exp2_feynman_checkpoint_shard*.json  (checkpoint)
+    #              exp2_feynman_merged.*                 (if script merges internally)
+    #              exp2_feynman_stats.json
+    # The run_all_checkpoint.py isolated runner also writes per-equation:
+    #   I_6_2a.json, II_11_27.json, ... (equation name with dots→underscores)
+    #   exp2_results.json  (whole-run consolidated)
+    "exp2_feynman": dict(
+        result_subdir="comparison_results/feynman-tests/exp2",
+        shard_globs=[
+            "exp2_feynman_checkpoint_shard*.json",
+            "exp2_feynman_merged*.json",
+            "exp2_feynman_stats.json",
+            "exp2_results.json",
+            "I_*.json",
+            "II_*.json",
+            "III_*.json",
+        ],
+        merge_key="equation",
+        fallback_keys=["name", "task_id", "equation_id"],
+        array_key="results",
+    ),
 
+    # ── exp2: Combined five-system comparison — all methods ───────────────────
+    # Workers write:
+    #   exp2_checkpoint_shard*.json
+    #   exp2_merged.json / exp2_merged.csv
+    #   exp2_stats.json
+    "exp2": dict(
+        result_subdir="comparison_results/feynman-tests/exp2_multi",
+        shard_globs=[
+            "exp2_checkpoint_shard*.json",
+            "exp2_merged*.json",
+            "exp2_stats.json",
+        ],
+        merge_key="equation",
+        fallback_keys=["task_id", "name", "equation_id"],
+        array_key="results",
+    ),
 
-# ============================================================
-# CONSTANTS
-# ============================================================
+    # ── exp3: Nguyen-12 SEED=42 ───────────────────────────────────────────────
+    # exp3_nguyen12_hybrid50v_02.py --seed 42 writes to RESULTS_DIR root,
+    # then post_move copies *nguyen*seed42*.json → extrapolation/
+    "exp3": dict(
+        result_subdir="extrapolation",
+        shard_globs=[
+            "*nguyen*seed42*.json",
+            "*nguyen12*42*.json",
+            "full_run_*.json",
+            "report_hybrid_*.json",
+            "hybrid_defi_*.json",
+        ],
+        merge_key="equation",
+        fallback_keys=["task_id", "name", "equation_id"],
+        array_key="results",
+    ),
 
-DEFI_IDS = {
-    "amm",
-    "risk_var",
-    "liquidity",
-    "expected_shortfall",
-    "liquidation",
-    "risk",
-    "lending",
-    "staking",
-    "trading",
-    "derivatives",
+    # ── exp3b: Nguyen-12 seeds 99/123/777/2024 ────────────────────────────────
+    # post_move: *nguyen*.json → extrapolation/multi_seed/
+    "exp3b": dict(
+        result_subdir="extrapolation/multi_seed",
+        shard_globs=[
+            "*nguyen*.json",
+            "full_run_*.json",
+            "report_hybrid_*.json",
+            "hybrid_defi_*.json",
+        ],
+        merge_key="equation",
+        fallback_keys=["task_id", "name", "equation_id"],
+        array_key="results",
+    ),
+
+    # ── suppA: Hybrid-PySR DeFi benchmark ────────────────────────────────────
+    # run_hybrid_system_benchmark.py + post_move:
+    #   consolidated_hybrid_*.json → hybrid_pysr/defi/
+    #   hybrid_system*.json        → hybrid_pysr/defi/
+    "suppA": dict(
+        result_subdir="hybrid_pysr/defi",
+        shard_globs=[
+            "consolidated_hybrid_*.json",
+            "hybrid_system*.json",
+            "hybrid_llm_nn_all_domains_*.json",
+            "ablation_exp1_*.json",
+        ],
+        merge_key="domain",
+        fallback_keys=["task_id", "equation", "name"],
+        array_key="results",
+    ),
+
+    # ── suppB: Noise sweep σ ∈ {0, 0.5, 1, 5, 10}% × 30 equations ───────────
+    # run_noise_sweep_benchmark.py writes noise_sweep_*.json
+    # task_id format: "noise{σ}__{feynman_id}"  e.g. "noise5.0__I.6.20"
+    "suppB": dict(
+        result_subdir="comparison_results/feynman-tests/noise-sweep",
+        shard_globs=[
+            "noise_sweep_*.json",
+            "suppB_*.json",
+        ],
+        merge_key="task_id",
+        fallback_keys=["equation", "name", "equation_id"],
+        array_key="results",
+    ),
+
+    # ── suppB_sc: Sample-complexity sweep n ∈ {50…1000} × 30 equations ───────
+    # run_sample_complexity_benchmark.py writes sample_complexity_*.json
+    # task_id format: "sc_n{n}__{feynman_id}"  e.g. "sc_n200__I.6.20"
+    "suppB_sc": dict(
+        result_subdir="comparison_results/feynman-tests/sample-complexity",
+        shard_globs=[
+            "sample_complexity_*.json",
+        ],
+        merge_key="task_id",
+        fallback_keys=["equation", "name", "equation_id"],
+        array_key="results",
+    ),
+
+    # ── hybrid_all_domains: LLM+NN all-domains one-shot ──────────────────────
+    # hybrid_system_llm_nn_all_domains.py --domains <subset>
+    # writes hybrid_llm_nn_all_domains_*.json per domain
+    "hybrid_all_domains": dict(
+        result_subdir="hybrid_llm_nn/all_domains",
+        shard_globs=[
+            "hybrid_llm_nn_all_domains_*.json",
+        ],
+        merge_key="domain",
+        fallback_keys=["task_id", "equation", "name"],
+        array_key="results",
+    ),
+
+    # ── instability: Instability Index analysis ───────────────────────────────
+    # run_instability_suite.py writes CSVs + PNGs/PDFs to figures/
+    # No JSON merge — handled as CSV concatenation
+    "instability": dict(
+        result_subdir="figures",
+        shard_globs=[
+            "instability_analysis.csv",
+            "instability_extrapolation.csv",
+        ],
+        merge_key="case_id",
+        fallback_keys=["equation", "task_id"],
+        array_key=None,          # CSV-only
+    ),
+
+    # ── extrap: OOD extrapolation comparative suite ───────────────────────────
+    # run_comparative_suite_benchmark_v2.py --extrap writes:
+    #   all_domains_extrap_v4_*.json  → comparison_results/extrapolation/
+    #   standalone_llm_nn_*.json      → standalone_llm_nn/
+    #   standalone_real_methods_*.json
+    "extrap": dict(
+        result_subdir="comparison_results/extrapolation",
+        shard_globs=[
+            "all_domains_extrap_v4_*.json",
+            "standalone_llm_nn_*.json",
+            "standalone_real_methods_*.json",
+        ],
+        merge_key="equation",
+        fallback_keys=["task_id", "name", "equation_id"],
+        array_key="results",
+    ),
 }
 
-FEYNMAN_DOMAIN_IDS = {
-    "feynman_biology",
-    "feynman_chemistry",
-    "feynman_electrochemistry",
-    "feynman_electromagnetism",
-    "feynman_electrostatics",
-    "feynman_magnetism",
-    "feynman_mechanics",
-    "feynman_optics",
-    "feynman_probability",
-    "feynman_quantum",
-    "feynman_thermodynamics",
-}
 
-EXP2_DOMAIN_IDS = {
-    "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
-    "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
-}
+# ─────────────────────────────────────────────────────────────────────────────
+#  Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-NGUYEN12_IDS = {f"N{i}" for i in range(1, 13)}
-
-HYBRID_ALL_DOMAIN_IDS = EXP2_DOMAIN_IDS  # same set
-
-# Maps experiment ID -> the set of valid canonical task_ids for that experiment.
-# Records whose task_id is NOT in this set are rejected during merge.
-# None means "no filter" (accept all task IDs -- used for experiments whose
-# task ID space cannot be enumerated statically, e.g. suppB noise-sweep).
-EXPERIMENT_TASK_IDS: "dict[str, set[str] | None]" = {
-    "exp1":               DEFI_IDS,
-    "exp1_ablation":      DEFI_IDS,
-    "exp1b":              None,   # portfolio_seed{N} IDs are dynamic
-    "exp2_feynman":       FEYNMAN_DOMAIN_IDS,
-    "exp2":               EXP2_DOMAIN_IDS,
-    "exp3":               NGUYEN12_IDS,
-    "exp3b":              NGUYEN12_IDS,
-    "suppA":              DEFI_IDS,
-    "suppB":              None,   # noise{nl}__{domain} IDs are dynamic
-    "suppB_sc":           None,   # sc_n{n}__{domain} IDs are dynamic
-    "hybrid_all_domains": HYBRID_ALL_DOMAIN_IDS,
-    "instability":        DEFI_IDS,
-    "extrap":             FEYNMAN_DOMAIN_IDS,
-}
-
-# Corrected mapping: human-readable equation_id → canonical DeFi protocol ID.
-# Verified against _get_test_cases() domain fields in hypatiax_defi_benchmark_v3c.py.
-#   "Annualised Portfolio tracking error"  -> risk_var  (was "amm"      in legacy versions)
-#   "Correlated Portfolio VaR"             -> risk      (was "risk_var"  in legacy versions)
-#   "Portfolio VaR for two correlated"     -> risk_var  (was "liquidity" in legacy versions)
-EQ_ID_TO_DEFI = {
-    "Annualised Portfolio tracking error":        "risk_var",
-    "Correlated Portfolio VaR":                   "risk",
-    "Portfolio VaR for two correlated":           "risk_var",
-    "Portfolio Expected Shortfall for correlated": "expected_shortfall",
-    "Portfolio Sharpe Ratio":                     "risk",
-    "Portfolio Sortino Ratio":                    "staking",
-    "Portfolio Beta":                             "lending",
-    "Portfolio Information Ratio":                "trading",
-    "Portfolio Maximum Drawdown":                 "derivatives",
-    "Portfolio Omega Ratio":                      "liquidation",
-}
-
-META_KEYS = {
-    "summary",
-    "metadata",
-    "generated_at",
-    "config",
-    "run_info",
-    "experiment",
-    "source_run_id",
-    "methods",
-    "timestamp",
-    "script",
-    "purelm_truncation_audit",
-    # Stats-file top-level keys — skip so merged stats files are never
-    # re-ingested as task records.
-    "n_total", "n_merged", "n_successes", "success_rate",
-    "hyp_extrap_mean", "hyp_extrap_median",
-    "nn_extrap_mean", "nn_extrap_median",
-}
-
-
-# ============================================================
-# CONFIG
-# ============================================================
-
-@dataclass
-class MergeConfig:
-    experiment: str
-    input_root: Path
-    output_dir: Path
-
-
-# ============================================================
-# UTILS
-# ============================================================
-
-def load_json(path: Path) -> Any:
-    with open(path, "r") as f:
-        return json.load(f)
-
-
-def safe_write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-
-
-def is_nan(v: Any) -> bool:
-    return isinstance(v, float) and math.isnan(v)
-
-
-# ============================================================
-# NORMALISATION
-# ============================================================
-
-def canonical_task_id(obj: Dict[str, Any]) -> Optional[str]:
-    """Return one deterministic task identity for a record."""
-    candidates = [
-        obj.get("task_id"),
-        obj.get("equation_id"),
-        obj.get("protocol"),
-        obj.get("domain"),
-        obj.get("id"),
-        obj.get("name"),
-    ]
-    for c in candidates:
-        if c:
-            return EQ_ID_TO_DEFI.get(str(c), str(c))
-    return None
-
-
-def normalise_model_dict(d: Any) -> Dict[str, Any]:
-    if not isinstance(d, dict):
-        return {}
-    out = dict(d)
-    # Unify test_r2 → extrap_r2 so downstream stats always read extrap_r2.
-    if "test_r2" in out and "extrap_r2" not in out:
-        out["extrap_r2"] = out["test_r2"]
-    return out
-
-
-def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
+def _find_shard_files(root: Path, globs: list[str]) -> list[Path]:
     """
-    Normalise one candidate record into the canonical task schema.
-
-    Handles:
-      Shape A  nested "results" dict  (DeFi v3 / suppA)
-      Shape B  flat top-level fields  (protocol_core_noiseless)
-
-    Renames:
-      pure_llm       → hypatia
-      neural_network → nn
-      test_r2        → extrap_r2  (inside model sub-dicts)
-
-    BUG 2 FIX: shard files from workers use display-name method keys
-    ("Hybrid System v40", "Neural Network", "Pure LLM (Enhanced)", etc.)
-    instead of the snake_case aliases ("pure_llm", "neural_network") that
-    the old rename logic expected.  As a result hypatia={} and nn={} were
-    always empty, build_stats() found no r2 values, and success_rate=0
-    triggered TOTAL_FAILURE in ci_analysis.yml.
-
-    Fix: map the display names to canonical keys BEFORE the snake_case
-    rename, and also build a per_method dict preserving r2/success for
-    every named method so downstream consumers can read all methods.
-
-    BUG 3 FIX: the old return dict was hard-coded to 5 keys, so rows whose
-    domain == "hybrid" were extracted correctly by extract_rows but then
-    silently dropped here — the caller received a record with domain="hybrid"
-    but normalise_row returned a dict that omitted nothing wrong structurally;
-    the real issue is that hybrid tasks have no canonical task_id derivation
-    path and were returning None from canonical_task_id.  They are now
-    included via a fallback task_id derived from the domain field.
-
-    BUG 4 FIX: difficulty, formula_type, and extrapolation_intractable were
-    never included in the hard-coded return dict and were silently dropped on
-    every row.  They are now explicitly preserved via _PASSTHROUGH_FIELDS.
+    Collect all files under `root` (recursively) matching any glob in `globs`.
+    Skips our own output files and CI checkpoint/stub files.
     """
-    if not isinstance(raw, dict):
-        return None
-
-    row = dict(raw)
-
-    # BUG 2 FIX: display-name → canonical alias mapping.
-    # Worker scripts write method results under human-readable keys like
-    # "Hybrid System v40" and "Neural Network".  Map them to the snake_case
-    # aliases that the rename block below expects, so hypatia/nn are populated.
-    # Keys are matched case-insensitively via .lower() for resilience.
-    _DISPLAY_TO_CANONICAL = {
-        # Pure LLM variants → hypatia
-        "pure llm (basic)":    "pure_llm",
-        "pure llm (enhanced)": "pure_llm",
-        "pure llm":            "pure_llm",
-        "integrated llm discovery v11.1": "pure_llm",
-        # Neural network variants → nn
-        "neural network":      "neural_network",
-        # Hybrid variants → hybrid  (preserved in per_method; also used as
-        # hypatia fallback when pure_llm is absent)
-        "hybrid system v40":             "hybrid",
-        "hybrid system v40 (fallback)":  "hybrid",
-        "llm+nn ensemble (simple)":      "hybrid",
-        "llm+nn ensemble (smart)":       "hybrid",
-    }
-
-    # Build per_method dict from any display-name or snake_case method key
-    # found at top level or inside a "results" block.
-    per_method: dict = {}
-
-    def _collect_methods(src: dict) -> None:
-        for k, v in src.items():
-            if not isinstance(v, dict):
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in globs:
+        for match in sorted(root.rglob(pattern)):
+            if not match.is_file():
                 continue
-            # Match display names
-            canon = _DISPLAY_TO_CANONICAL.get(k.lower())
-            method_key = canon or k  # keep original key if no mapping
-            r2 = v.get("r2") or v.get("extrap_r2") or v.get("test_r2") or v.get("train_r2")
-            success = v.get("success")
-            if r2 is not None or success is not None:
-                # Highest r2 wins if the same canonical key appears twice
-                if method_key not in per_method or (
-                    r2 is not None and (per_method[method_key].get("r2") or -999) < r2
-                ):
-                    per_method[method_key] = {
-                        "r2":      r2,
-                        "success": success,
-                        "formula": v.get("formula") or v.get("best_expression") or v.get("expression"),
-                        "time":    v.get("time") or v.get("elapsed_s"),
-                    }
-            # Also handle display-name alias injection into row for the
-            # snake_case rename block further below.
-            if canon and canon not in row:
-                row[canon] = v
-
-    _collect_methods(row)
-    inner = row.get("results")
-    if isinstance(inner, dict):
-        _collect_methods(inner)
-
-    # Flatten nested "results" block if present.
-    if isinstance(inner, dict):
-        inner = dict(inner)
-        if "pure_llm" in inner and "hypatia" not in inner:
-            inner["hypatia"] = inner.pop("pure_llm")
-        if "neural_network" in inner and "nn" not in inner:
-            inner["nn"] = inner.pop("neural_network")
-        row.update(inner)
-
-    # Rename flat-level aliases.
-    if "pure_llm" in row and "hypatia" not in row:
-        row["hypatia"] = row.pop("pure_llm")
-    if "neural_network" in row and "nn" not in row:
-        row["nn"] = row.pop("neural_network")
-
-    # BUG 2 FIX cont.: if hypatia is still empty after the renames, fall back
-    # to the best hybrid method result so build_stats() always has an r2 to read.
-    hyp = normalise_model_dict(row.get("hypatia") or {})
-    if not hyp.get("extrap_r2") and not hyp.get("train_r2") and not hyp.get("r2"):
-        # Try canonical hybrid fallback from per_method
-        for fallback_key in ("hybrid", "pure_llm"):
-            fb = per_method.get(fallback_key, {})
-            if fb.get("r2") is not None:
-                hyp = normalise_model_dict({
-                    "extrap_r2": fb["r2"],
-                    "train_r2":  fb["r2"],
-                    "r2":        fb["r2"],
-                    "success":   fb.get("success"),
-                    "best_expression": fb.get("formula"),
-                })
-                break
-        # Last resort: find the highest-r2 method in per_method
-        if not hyp.get("extrap_r2"):
-            best = max(
-                ((m, d) for m, d in per_method.items() if d.get("r2") is not None),
-                key=lambda x: x[1]["r2"],
-                default=(None, {}),
-            )
-            if best[1].get("r2") is not None:
-                hyp = normalise_model_dict({
-                    "extrap_r2": best[1]["r2"],
-                    "train_r2":  best[1]["r2"],
-                    "r2":        best[1]["r2"],
-                    "success":   best[1].get("success"),
-                    "best_expression": best[1].get("formula"),
-                })
-
-    nn = normalise_model_dict(row.get("nn") or {})
-    if not nn.get("extrap_r2") and not nn.get("r2"):
-        fb = per_method.get("neural_network", {})
-        if fb.get("r2") is not None:
-            nn = normalise_model_dict({
-                "extrap_r2": fb["r2"],
-                "r2":        fb["r2"],
-                "success":   fb.get("success"),
-            })
-
-    task_id = canonical_task_id(row)
-    # BUG 3 FIX: hybrid rows have domain="hybrid" but no equation_id /
-    # protocol that maps through EQ_ID_TO_DEFI, so canonical_task_id
-    # returned None and the row was discarded.  Fall back to domain so
-    # hybrid records survive the merge.
-    if not task_id:
-        task_id = row.get("domain") or row.get("id") or row.get("name")
-    if not task_id:
-        return None
-
-    # BUG 4 FIX: build the output from a copy of the full row so no fields
-    # are silently dropped, then overwrite the keys we explicitly manage.
-    # _PASSTHROUGH_FIELDS (difficulty, formula_type, extrapolation_intractable)
-    # are therefore included automatically alongside any other unknown fields
-    # that future schema versions may add.
-
-    # BUG 1 FIX: equation_id was never written into the output record.
-    # Derive it from the description field (human-readable equation name before
-    # the first separator) so downstream consumers (ci_analysis.yml, paper tables,
-    # _merged.csv) display "Allometric Scaling" instead of the bare domain key
-    # "biology".  Falls back to any existing equation_id field, then task_id.
-    desc = row.get("description", "")
-    eq_id = None
-    if desc:
-        for sep in (":", "—", " - ", "|"):
-            if sep in desc:
-                eq_id = desc.split(sep)[0].strip()
-                break
-        if not eq_id:
-            eq_id = desc.strip()
-    if not eq_id:
-        eq_id = row.get("equation_id") or task_id
-
-    out = {k: v for k, v in row.items() if k not in META_KEYS}
-    out.update({
-        "task_id":     task_id,
-        "equation_id": eq_id,
-        "name":        row.get("name") or eq_id or task_id,
-        "domain":      row.get("domain") or task_id,
-        "hypatia":     hyp,
-        "nn":          nn,
-        # per_method: flat dict of {method_key: {r2, success, formula, time}}
-        # preserves all named methods for downstream analysis / paper tables.
-        "per_method":  per_method if per_method else row.get("per_method") or {},
-    })
-    return out
-
-
-# ============================================================
-# EXTRACTION
-# ============================================================
-
-def extract_rows(obj: Any) -> List[Dict[str, Any]]:
-    """
-    Recursively walk an arbitrary JSON structure and collect all records
-    that normalise into valid task rows.
-
-    Walks into lists and dict values except META_KEYS subtrees.
-
-    BUG FIX: when a top-level record is successfully normalised, stop
-    recursing into its children.  Without this guard, the method sub-dicts
-    inside "results" (hybrid, pure_llm, neural_network) were also walked,
-    and each one -- having keys like "domain" or "decision" -- was emitted
-    as a phantom task record (e.g. task_id="llm" from hybrid.decision="llm").
-    Those phantom records appeared in _merged.json as "?" rows and polluted
-    the MW analysis with null-R² entries.
-    """
-    found: List[Dict[str, Any]] = []
-
-    def walk(x: Any) -> None:
-        if isinstance(x, list):
-            for item in x:
-                walk(item)
-            return
-        if not isinstance(x, dict):
-            return
-        normalised = normalise_row(x)
-        if normalised:
-            # Successfully normalised — emit and do NOT recurse further into
-            # children to avoid phantom records from method sub-dicts.
-            found.append(normalised)
-            return
-        # Not a task record itself — recurse into values to find nested records.
-        for k, v in x.items():
-            if k not in META_KEYS:
-                walk(v)
-
-    walk(obj)
+            if match in seen:
+                continue
+            name = match.name
+            # Skip our own outputs
+            if name in ("_merged.json", "_merged.csv", "_stats.json", "_checkpoint.json"):
+                continue
+            if "_assembled" in name:
+                continue
+            seen.add(match)
+            found.append(match)
     return found
 
 
-# ============================================================
-# MERGE POLICY
-# ============================================================
-
-def score_row(row: Dict[str, Any]) -> int:
-    """Higher score = more complete record; wins in duplicate resolution."""
-    score = 0
-    h = row.get("hypatia") or {}
-    n = row.get("nn") or {}
-    if h.get("extrap_r2") is not None:
-        score += 10
-    if h.get("train_r2") is not None:
-        score += 5
-    if h.get("best_expression"):
-        score += 3
-    if n.get("extrap_r2") is not None:
-        score += 2
-    return score
+def _is_stub(raw: object) -> bool:
+    """True for {"_meta": {"stub": true}} written by FIX-G6."""
+    return (
+        isinstance(raw, dict)
+        and isinstance(raw.get("_meta"), dict)
+        and raw["_meta"].get("stub") is True
+    )
 
 
-def merge_rows(rows: Iterable[Dict[str, Any]], experiment: str = "") -> Dict[str, Dict[str, Any]]:
-    """Merge extracted rows; highest-score row wins per task_id.
+def _is_worker_checkpoint(raw: object) -> bool:
+    """True for checkpoint_worker_shard*.json files (task tracking, not results)."""
+    return isinstance(raw, dict) and "completed" in raw and "run_id_map" in raw
 
-    BUG FIX: apply experiment-aware task ID allowlist so records from other
-    experiments (e.g. Feynman domain keys in an exp1 run, or phantom records
-    extracted from method sub-dicts) are rejected before they pollute the
-    merged output.  When the allowlist for an experiment is None (dynamic IDs
-    like suppB), all task IDs are accepted as before.
+
+def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
     """
-    allowed = EXPERIMENT_TASK_IDS.get(experiment)  # None means accept all
-    merged: Dict[str, Dict[str, Any]] = {}
-    rejected = 0
-    for row in rows:
-        tid = row["task_id"]
-        if allowed is not None and tid not in allowed:
-            rejected += 1
-            logger.debug(f"  REJECTED task_id={tid!r} (not in allowlist for {experiment!r})")
+    Load one partial result file and return a flat list of task record dicts.
+
+    Handles the four shapes the HypatiaX benchmark scripts produce:
+
+    A.  {"results": [ {...}, ... ]}          wrapper dict with list under array_key
+    B.  [ {...}, ... ]                       top-level list
+    C.  {"task_id": {...}, "task_id2": {...}} dict keyed by task identifiers
+    D.  { single record }                    one task record as a bare dict
+    """
+    try:
+        raw = json.loads(filepath.read_text(encoding="utf-8", errors="replace"))
+    except Exception as exc:
+        print(f"  ⚠  JSON error in {filepath.name}: {exc}", file=sys.stderr)
+        return []
+
+    if _is_stub(raw) or _is_worker_checkpoint(raw):
+        return []
+
+    array_key    = cfg.get("array_key")
+    merge_key    = cfg["merge_key"]
+    fallback_keys = cfg.get("fallback_keys", [])
+
+    # Shape A
+    if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), list):
+        return [r for r in raw[array_key] if isinstance(r, dict)]
+
+    # Shape B
+    if isinstance(raw, list):
+        return [r for r in raw if isinstance(r, dict)]
+
+    if isinstance(raw, dict):
+        values = [v for k, v in raw.items() if not k.startswith("_")]
+
+        # Shape C — every non-meta value is a dict  → dict-of-tasks
+        if values and all(isinstance(v, dict) for v in values):
+            records: list[dict] = []
+            for k, v in raw.items():
+                if k.startswith("_"):
+                    continue
+                rec = dict(v)
+                # Ensure merge_key is populated
+                if not rec.get(merge_key):
+                    for fb in fallback_keys:
+                        if rec.get(fb):
+                            rec[merge_key] = str(rec[fb])
+                            break
+                    else:
+                        rec[merge_key] = k
+                records.append(rec)
+            return records
+
+        # Shape D — single task record
+        has_id = raw.get(merge_key) or any(raw.get(k) for k in fallback_keys)
+        if has_id:
+            rec = dict(raw)
+            if not rec.get(merge_key):
+                for fb in fallback_keys:
+                    if rec.get(fb):
+                        rec[merge_key] = str(rec[fb])
+                        break
+            return [rec]
+
+    return []
+
+
+def _task_id(record: dict, cfg: dict) -> str:
+    """Return the stable unique string for a task record."""
+    for key in [cfg["merge_key"]] + cfg.get("fallback_keys", []) + ["task_id", "name"]:
+        val = record.get(key)
+        if val and str(val) not in ("", "?"):
+            return str(val)
+    return "unknown"
+
+
+def _compute_stats(merged: dict[str, dict]) -> dict:
+    records = list(merged.values())
+    n       = len(records)
+    n_ok    = sum(1 for r in records if r.get("status") == "ok")
+    r2_vals = []
+    for r in records:
+        raw = r.get("r2") or r.get("r2_score")
+        if raw is None:
             continue
-        if tid not in merged or score_row(row) > score_row(merged[tid]):
-            merged[tid] = row
-    if rejected:
-        logger.info(f"ALLOWLIST FILTER: rejected {rejected} row(s) with task IDs outside {experiment!r} expected set")
-    return merged
-
-
-# ============================================================
-# STATS  (basic pre-aggregation only — no experiment-specific tests)
-# ============================================================
-
-def build_stats(
-    experiment: str,
-    merged: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Produce basic aggregation stats for the consolidated dataset.
-
-    Intentionally limited to:
-      - record counts and coverage
-      - per-model R² mean / median
-
-    Mann-Whitney and other experiment-specific statistical tests are
-    performed downstream, after full consolidation, not here.
-    """
-    hyp_r2: List[float] = []
-    nn_r2:  List[float] = []
-    successes = 0
-
-    for row in merged.values():
-        hr2 = (row.get("hypatia") or {}).get("extrap_r2")
-        nr2 = (row.get("nn") or {}).get("extrap_r2")
-        if hr2 is not None and not is_nan(hr2):
-            hyp_r2.append(float(hr2))
-            if hr2 > 0.99:
-                successes += 1
-        if nr2 is not None and not is_nan(nr2):
-            nn_r2.append(float(nr2))
+        try:
+            v = float(raw)
+            if not (v != v):  # NaN check
+                r2_vals.append(v)
+        except (TypeError, ValueError):
+            pass
 
     return {
-        "experiment":        experiment,
-        "generated_at":      datetime.now(timezone.utc).isoformat(),
-        "n_merged":          len(merged),
-        "n_successes":       successes,
-        "success_rate":      (successes / len(merged)) if merged else None,
-        "hyp_extrap_mean":   float(np.mean(hyp_r2))   if hyp_r2 else None,
-        "hyp_extrap_median": float(np.median(hyp_r2)) if hyp_r2 else None,
-        "nn_extrap_mean":    float(np.mean(nn_r2))    if nn_r2  else None,
-        "nn_extrap_median":  float(np.median(nn_r2))  if nn_r2  else None,
+        "n_tasks":         n,
+        "n_solved":        n_ok,
+        "solve_rate":      round(n_ok / n, 4) if n else 0.0,
+        "r2_mean":         round(sum(r2_vals) / len(r2_vals), 4) if r2_vals else None,
+        "r2_median":       round(sorted(r2_vals)[len(r2_vals) // 2], 4) if r2_vals else None,
+        "r2_ge_0_99":      sum(1 for v in r2_vals if v >= 0.99),
+        "r2_ge_0_9999":    sum(1 for v in r2_vals if v >= 0.9999),
+        "n_with_r2":       len(r2_vals),
     }
 
 
-# ============================================================
-# CSV
-# ============================================================
-
-def write_csv(path: Path, merged: Dict[str, Any]) -> None:
-    rows = [
-        "task_id,name,domain,hyp_train_r2,hyp_extrap_r2,nn_extrap_r2,success,best_expression"
-    ]
-    for tid, row in sorted(merged.items()):
-        h  = row.get("hypatia") or {}
-        n  = row.get("nn") or {}
-        he = h.get("extrap_r2", "")
-        ok = isinstance(he, float) and he > 0.99
-        expr = str(h.get("best_expression", "")).replace(",", ";")
-        rows.append(
-            f'{tid},'
-            f'{row.get("name", "")},'
-            f'{row.get("domain", "")},'
-            f'{h.get("train_r2", "")},'
-            f'{he},'
-            f'{n.get("extrap_r2", "")},'
-            f'{ok},'
-            f'{expr}'
-        )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        f.write("\n".join(rows))
+def _write_csv(records: list[dict], path: Path) -> None:
+    if not records:
+        return
+    all_keys: list[str] = []
+    seen: set[str] = set()
+    for r in records:
+        for k in r:
+            if k not in seen:
+                all_keys.append(k)
+                seen.add(k)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(records)
 
 
-# ============================================================
-# CHECKPOINT
-# ============================================================
+# ─────────────────────────────────────────────────────────────────────────────
+#  instability: CSV-only path
+# ─────────────────────────────────────────────────────────────────────────────
 
-def write_checkpoint(path: Path, experiment: str, result_subdir: str, merged: Dict[str, Any]) -> None:
-    # BUG 5 FIX: _checkpoint.json previously omitted result_subdir, so
-    # ci_analysis.yml's "Resolve experiment metadata" step always fell through
-    # to the dispatch-input fallback and failed on automatic workflow_run
-    # triggers where no inputs are provided.  result_subdir is now written
-    # here — the consolidate job already has it in scope — so the analysis
-    # workflow can resolve it from the artifact without needing manual inputs.
+def _merge_instability_csvs(shard_files: list[Path], out_dir: Path) -> dict:
+    """
+    Concatenate instability_analysis.csv shards, deduplicate by case_id.
+    Writes _merged.csv, _stats.json, _checkpoint.json (no _merged.json).
+    """
+    all_rows: list[dict] = []
+    seen_ids: set[str] = set()
+    fieldnames: list[str] = []
+
+    for csv_path in shard_files:
+        if csv_path.suffix.lower() != ".csv":
+            continue
+        try:
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                if not fieldnames and reader.fieldnames:
+                    fieldnames = list(reader.fieldnames)
+                for row in reader:
+                    uid = row.get("case_id") or row.get("equation") or str(row)
+                    if uid not in seen_ids:
+                        seen_ids.add(uid)
+                        all_rows.append(row)
+        except Exception as exc:
+            print(f"  ⚠  CSV error {csv_path.name}: {exc}", file=sys.stderr)
+
+    if fieldnames and all_rows:
+        with open(out_dir / "_merged.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(all_rows)
+
+    stats = {"n_tasks": len(all_rows), "n_shard_files": len(shard_files)}
+    (out_dir / "_stats.json").write_text(json.dumps(stats, indent=2))
+    return stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Core merge
+# ─────────────────────────────────────────────────────────────────────────────
+
+def merge_experiment(
+    exp_id: str,
+    input_root: Path,
+    output_dir: Path,
+    result_subdir: str,
+    run_id: str = "",
+    verbose: bool = True,
+) -> int:
+    """
+    Merge all per-shard partial JSONs for `exp_id` found under `input_root`
+    into the four canonical output files in `output_dir`.
+
+    Returns 0 on success, 1 on error.
+    """
+    cfg = EXP_CONFIG.get(exp_id)
+    if cfg is None:
+        print(f"ERROR: unknown experiment '{exp_id}'", file=sys.stderr)
+        print(f"  Known: {', '.join(sorted(EXP_CONFIG))}", file=sys.stderr)
+        return 1
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print(f"\n{'═'*68}")
+        print(f"  merge_shards · [{exp_id}]")
+        print(f"  input_root  : {input_root}")
+        print(f"  output_dir  : {output_dir}")
+        print(f"  subdir      : {result_subdir}")
+        print(f"{'═'*68}")
+
+    # ── 1. Find all partial shard files ────────────────────────────────────
+    shard_files = _find_shard_files(input_root, cfg["shard_globs"])
+
+    if verbose:
+        print(f"\n  Shard files found: {len(shard_files)}")
+        for f in shard_files:
+            try:
+                rel = f.relative_to(input_root)
+            except ValueError:
+                rel = f
+            print(f"    · {rel}")
+
+    if not shard_files:
+        print(f"  ERROR: no partial result files found under {input_root}", file=sys.stderr)
+        print(f"         globs tried: {cfg['shard_globs']}", file=sys.stderr)
+        _write_stub_checkpoint(output_dir, exp_id, result_subdir, run_id,
+                               error="no_shard_files")
+        return 1
+
+    # ── 2. instability is CSV-only ──────────────────────────────────────────
+    if cfg.get("array_key") is None:
+        stats = _merge_instability_csvs(shard_files, output_dir)
+        _write_checkpoint(output_dir, exp_id, result_subdir, run_id,
+                          shard_files, stats, n_merged=stats["n_tasks"])
+        if verbose:
+            print(f"\n  ✅  instability: {stats['n_tasks']} rows assembled")
+        return 0
+
+    # ── 3. Extract + merge records ──────────────────────────────────────────
+    merged: dict[str, dict] = {}
+    total_raw = 0
+
+    for fpath in shard_files:
+        records = _extract_records(fpath, cfg)
+        total_raw += len(records)
+        for rec in records:
+            tid = _task_id(rec, cfg)
+            if tid == "unknown":
+                tid = f"{fpath.stem}_{len(merged)}"
+            # Set the merge key on the record if absent
+            if not rec.get(cfg["merge_key"]):
+                rec[cfg["merge_key"]] = tid
+            existing = merged.get(tid)
+            if existing is None:
+                merged[tid] = rec
+            else:
+                # First-write-wins for each field; fill blanks from later shards
+                for k, v in rec.items():
+                    if k not in existing or existing[k] in (None, "", "?"):
+                        existing[k] = v
+
+    if verbose:
+        print(f"\n  Raw records extracted : {total_raw}")
+        print(f"  Unique task IDs       : {len(merged)}")
+
+    if not merged:
+        print("  ERROR: no task records could be extracted.", file=sys.stderr)
+        _write_stub_checkpoint(output_dir, exp_id, result_subdir, run_id,
+                               error="no_records_extracted")
+        return 1
+
+    # ── 4. Enrich equation_id ───────────────────────────────────────────────
+    _enrich_equation_id(merged)
+
+    # ── 5. Compute stats ────────────────────────────────────────────────────
+    stats = _compute_stats(merged)
+    if verbose:
+        print(f"\n  Stats:")
+        print(f"    n_tasks     : {stats['n_tasks']}")
+        print(f"    n_solved    : {stats['n_solved']}  "
+              f"({stats['solve_rate']*100:.1f}%)")
+        if stats["r2_mean"] is not None:
+            print(f"    R² mean     : {stats['r2_mean']:.4f}")
+            print(f"    R² ≥ 0.9999 : {stats['r2_ge_0_9999']}  "
+                  f"(strict §10.8 threshold)")
+
+    # ── 6. Write _merged.json ───────────────────────────────────────────────
+    merged_json_path = output_dir / "_merged.json"
+    merged_json_path.write_text(
+        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # ── 7. Write _merged.csv ────────────────────────────────────────────────
+    merged_csv_path = output_dir / "_merged.csv"
+    _write_csv(list(merged.values()), merged_csv_path)
+
+    # ── 8. Write _stats.json ────────────────────────────────────────────────
+    stats_path = output_dir / "_stats.json"
+    stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+
+    # ── 9. Write _checkpoint.json ───────────────────────────────────────────
+    _write_checkpoint(output_dir, exp_id, result_subdir, run_id,
+                      shard_files, stats, n_merged=len(merged))
+
+    if verbose:
+        print(f"\n  ✅  Written to {output_dir}:")
+        for name in ("_merged.json", "_merged.csv", "_stats.json", "_checkpoint.json"):
+            size = (output_dir / name).stat().st_size
+            print(f"    {name:<22}  {size:>8,} bytes")
+
+    return 0
+
+
+def _enrich_equation_id(merged: dict[str, dict]) -> None:
+    """
+    Patch every record so equation_id is set.
+    Priority (mirrors ci_experiment.yml consolidate 'Enrich _merged.json' step):
+      1. Already set and not "?"
+      2. equation_id / eq_id / equation inside any per-method sub-record
+      3. Parse 'description' field before first separator (: — - |)
+      4. Top-level dict key (= task_id)
+    """
+    for top_key, record in merged.items():
+        if not isinstance(record, dict):
+            continue
+        if record.get("equation_id") and record["equation_id"] != "?":
+            continue
+
+        eq_id = None
+
+        # Priority 2
+        for v in record.values():
+            if isinstance(v, dict):
+                candidate = (v.get("equation_id") or v.get("eq_id")
+                             or v.get("equation"))
+                if candidate and candidate != "?":
+                    eq_id = str(candidate)
+                    break
+
+        # Priority 3
+        if not eq_id:
+            desc = record.get("description", "")
+            if desc:
+                for sep in (":", "—", " - ", "|"):
+                    if sep in desc:
+                        eq_id = desc.split(sep)[0].strip()
+                        break
+                if not eq_id:
+                    eq_id = desc.strip()
+
+        # Priority 4
+        if not eq_id:
+            eq_id = top_key if top_key not in ("", "?") else None
+
+        if eq_id:
+            record["equation_id"] = eq_id
+            if not record.get("task_id") or record["task_id"] == "?":
+                record["task_id"] = top_key
+
+
+def _write_checkpoint(
+    out_dir: Path,
+    exp_id: str,
+    result_subdir: str,
+    run_id: str,
+    shard_files: list[Path],
+    stats: dict,
+    n_merged: int,
+) -> None:
+    """
+    Write _checkpoint.json consumed by ci_analysis.yml via workflow_run event.
+    Fields match what ci_experiment.yml's 'Set consolidate outputs' step emits.
+    """
     checkpoint = {
-        "experiment":    experiment,
-        "result_subdir": result_subdir,
-        "generated_at":  datetime.now(timezone.utc).isoformat(),
-        "n_merged":      len(merged),
-        "task_ids":      sorted(merged.keys()),
+        "exp_id":         exp_id,
+        "result_subdir":  result_subdir,
+        "run_id":         run_id,
+        "merged_at":      datetime.now(timezone.utc).isoformat(),
+        "n_merged":       n_merged,
+        "stats":          stats,
+        "shard_files":    [str(f) for f in shard_files],
+        "n_shard_files":  len(shard_files),
     }
-    safe_write_json(path, checkpoint)
+    (out_dir / "_checkpoint.json").write_text(
+        json.dumps(checkpoint, indent=2), encoding="utf-8"
+    )
 
 
-# ============================================================
-# MAIN
-# ============================================================
+def _write_stub_checkpoint(
+    out_dir: Path,
+    exp_id: str,
+    result_subdir: str,
+    run_id: str,
+    error: str,
+) -> None:
+    """
+    Write a minimal _checkpoint.json even on failure (mirrors FIX-G6 stub pattern)
+    so actions/cache/save never fails on a missing path.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = {
+        "_meta":         {"stub": True},
+        "exp_id":        exp_id,
+        "result_subdir": result_subdir,
+        "run_id":        run_id,
+        "merged_at":     datetime.now(timezone.utc).isoformat(),
+        "n_merged":      0,
+        "error":         error,
+    }
+    (out_dir / "_checkpoint.json").write_text(
+        json.dumps(checkpoint, indent=2), encoding="utf-8"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  CLI  — matches the exact invocation in ci_experiment.yml consolidate job:
+#
+#    python .github/scripts/merge_shards.py \
+#        --experiment    "${EXP}" \
+#        --input-root    downloaded_artifacts \
+#        --output-dir    "${OUT_BASE}/${RESULT_SUBDIR}" \
+#        --result-subdir "${RESULT_SUBDIR}"
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Merge shard artifacts into consolidated outputs."
+        description="Merge HypatiaX per-shard partial JSONs → 4 canonical output files.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
     )
-    parser.add_argument("--experiment",  required=True,
-                        help="Experiment ID (e.g. exp1, exp2_feynman)")
-    parser.add_argument("--input-root",  required=True,
-                        help="Root directory containing downloaded shard artifacts")
-    parser.add_argument("--output-dir",  required=True,
-                        help="Directory to write _merged.json / _merged.csv / _stats.json / _checkpoint.json")
-    # BUG 5 FIX: result_subdir must be written into _checkpoint.json so
-    # ci_analysis.yml can resolve it without manual workflow_dispatch inputs.
-    parser.add_argument("--result-subdir", required=True,
-                        help="Canonical result subdirectory (e.g. comparison_results/noise-noiseless/noiseless)")
+    parser.add_argument(
+        "--experiment", "-e",
+        required=True,
+        metavar="EXP_ID",
+        choices=sorted(EXP_CONFIG),
+        help=f"Experiment ID. One of: {', '.join(sorted(EXP_CONFIG))}",
+    )
+    parser.add_argument(
+        "--input-root", "-i",
+        required=True,
+        metavar="DIR",
+        help=(
+            "Root directory that contains the downloaded shard artifact folders. "
+            "Searched recursively for files matching each experiment's shard globs."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir", "-o",
+        required=True,
+        metavar="DIR",
+        help=(
+            "Directory where _merged.json, _merged.csv, _stats.json and "
+            "_checkpoint.json are written. Created if absent."
+        ),
+    )
+    parser.add_argument(
+        "--result-subdir",
+        required=True,
+        metavar="SUBDIR",
+        help=(
+            "Relative result subdir (e.g. 'comparison_results/feynman-tests/exp2'). "
+            "Embedded in _checkpoint.json for ci_analysis.yml."
+        ),
+    )
+    parser.add_argument(
+        "--run-id",
+        default=os.environ.get("GITHUB_RUN_ID", ""),
+        metavar="ID",
+        help="GitHub Actions run_id (written to _checkpoint.json). "
+             "Defaults to $GITHUB_RUN_ID.",
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress progress output.",
+    )
+
     args = parser.parse_args()
 
-    config = MergeConfig(
-        experiment=args.experiment,
-        input_root=Path(args.input_root),
-        output_dir=Path(args.output_dir),
+    rc = merge_experiment(
+        exp_id        = args.experiment,
+        input_root    = Path(args.input_root).expanduser().resolve(),
+        output_dir    = Path(args.output_dir).expanduser().resolve(),
+        result_subdir = args.result_subdir,
+        run_id        = args.run_id,
+        verbose       = not args.quiet,
     )
-    result_subdir = args.result_subdir
-
-    logger.info("=" * 70)
-    logger.info("HypatiaX Unified Consolidation Engine")
-    logger.info("=" * 70)
-    logger.info(f"EXPERIMENT : {config.experiment}")
-    logger.info(f"INPUT_ROOT : {config.input_root}")
-    logger.info(f"OUTPUT_DIR : {config.output_dir}")
-
-    files = sorted(
-        glob.glob(f"{config.input_root}/**/*.json", recursive=True)
-    )
-    logger.info(f"JSON FILES FOUND: {len(files)}")
-
-    all_rows: List[Dict[str, Any]] = []
-
-    for path in files:
-        logger.info("-" * 70)
-        logger.info(f"READ: {path}")
-        try:
-            data = load_json(Path(path))
-            rows = list(extract_rows(data))
-            logger.info(f"ROWS EXTRACTED: {len(rows)}")
-            all_rows.extend(rows)
-        except Exception as e:
-            logger.exception(f"FAILED TO READ: {path} :: {e}")
-
-    merged = merge_rows(all_rows, experiment=config.experiment)
-
-    logger.info("=" * 70)
-    logger.info("MERGED TASKS")
-    logger.info("=" * 70)
-    for k in sorted(merged.keys()):
-        logger.info(f"  - {k}")
-
-    if not merged:
-        raise RuntimeError("FATAL: merge produced zero rows")
-
-    stats = build_stats(config.experiment, merged)
-
-    merged_path     = config.output_dir / "_merged.json"
-    csv_path        = config.output_dir / "_merged.csv"
-    stats_path      = config.output_dir / "_stats.json"
-    checkpoint_path = config.output_dir / "_checkpoint.json"
-
-    safe_write_json(merged_path, merged)
-    write_csv(csv_path, merged)
-    safe_write_json(stats_path, stats)
-    write_checkpoint(checkpoint_path, config.experiment, result_subdir, merged)
-
-    logger.info("=" * 70)
-    logger.info(f"WRITE OK: {merged_path}")
-    logger.info(f"WRITE OK: {csv_path}")
-    logger.info(f"WRITE OK: {stats_path}")
-    logger.info(f"WRITE OK: {checkpoint_path}")
-    logger.info("=" * 70)
-
-    n = stats["n_merged"]
-    sr = stats.get("success_rate")
-    hr2_mean = stats.get("hyp_extrap_mean")
-    logger.info(
-        f"SUMMARY: {n} tasks merged | "
-        f"success_rate={sr:.3f}" if sr is not None else f"SUMMARY: {n} tasks merged"
-    )
-    if hr2_mean is not None:
-        logger.info(
-            f"  HypatiaX R² mean={hr2_mean:.4f}  "
-            f"median={stats['hyp_extrap_median']:.4f}"
-        )
-    nn_mean = stats.get("nn_extrap_mean")
-    if nn_mean is not None:
-        logger.info(
-            f"  NN baseline  mean={nn_mean:.4f}  "
-            f"median={stats['nn_extrap_median']:.4f}"
-        )
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

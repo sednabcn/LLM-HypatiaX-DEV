@@ -480,12 +480,15 @@ jobs:
 
 
   #
-  #  timeout-minutes: 125 = 60 min analysis poll + 30 min cooldown (halved) + 5 min buffer
-  #  Well under the 360-min GitHub hard cap.
+  #  timeout-minutes: fromJSON(finalize_timeout_minutes) per-experiment value
+  #  from the resolve job timing table:
+  #    Formula: ceil(60 min analysis poll + cooldown_seconds/60 + 10 min buffer)
+  #    Range: 73 min (instability) to 100 min (exp2_feynman / exp2).
+  #  All values safely under the 360-min GitHub hard cap.
   #
-  #  Poll window expanded 30 -> 60 min (FIX: ci_analysis.yml fires via
-  #  workflow_run which can take >30 min to start on a busy runner pool,
-  #  causing systematic timed_out results).
+  #  Poll window is 60 min (3600 s). ci_analysis.yml fires via workflow_dispatch
+  #  which can take >30 min to start on a busy runner pool; 60 min avoids
+  #  systematic timed_out results.
   #
   #  This job only runs when run-experiment succeeds (exp_ok=true).
   #  If run-experiment exits 1, GitHub's `needs` mechanism skips this
@@ -555,7 +558,6 @@ jobs:
 
           # -- C1c. Poll until complete (up to 60 min) -----------------------
           CONSOL_DEADLINE=$(( $(date +%s) + 3600 ))
-
           while true; do
             CONSOL_STATUS=$(gh api \
               "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}" \

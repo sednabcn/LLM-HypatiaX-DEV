@@ -73,7 +73,6 @@ on:
         type: choice
         options:
           - exp1
-          - exp1_ablation
           - exp1b
           - exp2_feynman
           - exp2
@@ -250,9 +249,12 @@ jobs:
               # Derive result_subdir from experiment name using the canonical mapping.
               exp = d.get('experiment') or d.get('exp_id') or ''
               # Canonical mapping — single source of truth for result_subdir paths.
+              # Canonical mapping — single source of truth for result_subdir paths.
+              # Must stay in sync with ci_experiment.yml plan meta step and
+              # run_analysis.py RESULT_SUBDIR dict.
+              # exp1_ablation removed: no worker, no result_subdir in CI.
               mapping = {
                   'exp1':               'comparison_results/noise-noiseless/noiseless',
-                  'exp1_ablation':      'comparison_results/noise-noiseless/ablation',
                   'exp1b':              'comparison_results/noise-noiseless/15',
                   'exp2_feynman':       'comparison_results/feynman-tests/exp2',
                   'exp2':               'comparison_results/feynman-tests/exp2_multi',
@@ -274,19 +276,14 @@ jobs:
           EXP="${EXP:-${DISPATCH_EXP}}"
           SUB="${SUB:-${DISPATCH_SUB}}"
 
-          # Derive result_subdir from experiment name when DISPATCH_SUB is blank
-          # (the normal automated dispatch case — ci_schedule_all leaves it empty).
-          # BUG FIX: pass EXP via env var (EXP_ID) rather than interpolating
-          # $EXP into the python -c string. The interpolated form is fragile
-          # under set -euo pipefail and silently produces the wrong mapping
-          # when $EXP contains a value not present in the dict (it returns
-          # the literal string '$EXP' rather than the fallback value).
+          # Derive result_subdir from experiment name when DISPATCH_SUB is blank.
+          # BUG FIX: pass EXP via env var (EXP_ID) not shell interpolation inside
+          # the python -c string — interpolation breaks under set -euo pipefail.
           if [[ -z "$SUB" && -n "$EXP" ]]; then
             SUB=$(EXP_ID="$EXP" python -c "
           import os
           mapping = {
               'exp1':               'comparison_results/noise-noiseless/noiseless',
-              'exp1_ablation':      'comparison_results/noise-noiseless/ablation',
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
@@ -344,7 +341,7 @@ jobs:
             exit 1
           fi
 
-          # Sanity-check: file must be non-empty and valid JSON.
+          # Sanity-check: file must be non-empty valid JSON with at least one record.
           python -c "
           import json, sys
           path = '$MERGED_JSON'
@@ -353,8 +350,25 @@ jobs:
           except Exception as e:
               print(f'::error::_merged.json is not valid JSON: {e}')
               sys.exit(1)
-          n = len(data) if isinstance(data, (dict, list)) else '?'
-          print(f'_merged.json OK — {n} top-level entries.')
+          # Shape A: merge_shards.py wraps records under 'results' key.
+          # Shape B/C: flat dict or list (legacy).
+          if isinstance(data, dict) and isinstance(data.get('results'), dict):
+              n = len(data['results'])
+              label = f'{n} task records (merge_shards.py shape A)'
+          elif isinstance(data, dict):
+              n = sum(1 for k, v in data.items()
+                      if isinstance(v, dict) and not k.startswith('_') and k != 'stats')
+              label = f'{n} task records (flat dict shape B)'
+          elif isinstance(data, list):
+              n = len(data)
+              label = f'{n} task records (list shape C)'
+          else:
+              print(f'::error::_merged.json unexpected top-level type: {type(data).__name__}')
+              sys.exit(1)
+          if n == 0:
+              print('::error::_merged.json contains 0 task records.')
+              sys.exit(1)
+          print(f'_merged.json OK — {label}.')
           "
 
           echo "merged_json=${MERGED_JSON}" >> "$GITHUB_OUTPUT"
@@ -420,7 +434,29 @@ jobs:
           test -f "${OUT_DIR}/_report.md"    || { echo "::error::_report.md missing";    exit 1; }
           test -f "${OUT_DIR}/_analysis.json" || { echo "::error::_analysis.json missing"; exit 1; }
 
-          echo "All expected analysis outputs present."
+          # Verify _analysis.json is valid JSON and contains required top-level keys.
+          python -c "
+          import json, sys
+          path = '${OUT_DIR}/_analysis.json'
+          try:
+              d = json.load(open(path))
+          except Exception as e:
+              print(f'::error::_analysis.json is not valid JSON: {e}')
+              sys.exit(1)
+          required = ('experiment', 'experiment_mode', 'n_total', 'fatal_conditions')
+          missing  = [k for k in required if k not in d]
+          if missing:
+              print(f'::error::_analysis.json missing required keys: {missing}')
+              sys.exit(1)
+          hard = [c for c in d['fatal_conditions']
+                  if not (c.startswith('INFO_') or c.startswith('WARN_'))]
+          print(f'_analysis.json OK: experiment={d[\"experiment\"]}, '
+                f'mode={d[\"experiment_mode\"]}, n_total={d[\"n_total\"]}, '
+                f'fatal_conditions={len(d[\"fatal_conditions\"])} '
+                f'({len(hard)} hard, {len(d[\"fatal_conditions\"])-len(hard)} soft)')
+          "
+
+          echo "All expected analysis outputs present and valid."
 
       # -----------------------------------------------------------------------
       - name: Upload analysis artifact
