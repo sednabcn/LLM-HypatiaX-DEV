@@ -13,9 +13,26 @@ import os
 import sys
 from pathlib import Path
 
-ROOT        = Path(__file__).parent.parent
-RESULTS_DIR = ROOT / "hypatiax" / "data" / "results"
-PATCHED_DIR = ROOT / "hypatiax" / "data" / "patched"
+# ROOT is the repo root.  __file__ lives at scripts/patches/verify_results.py,
+# so .parent = scripts/patches/, .parent.parent = scripts/, .parent.parent.parent = repo root.
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+# verify_results.sh exports VERIFY_RESULTS_DIR and PATCHED_DATA_DIR pointing at
+# the actual results tree produced by merge_shards.py.  ci_experiment.yml also
+# exports RESULTS_BASE for the same purpose.  Fall back to the canonical
+# repo-relative path when running locally without those env vars set.
+_env_results = (
+    os.environ.get("VERIFY_RESULTS_DIR")
+    or os.environ.get("RESULTS_BASE")
+    or os.environ.get("PATCHED_DATA_DIR")
+)
+RESULTS_DIR = Path(_env_results) if _env_results else ROOT / "hypatiax" / "data" / "results"
+
+# PATCHED_DIR is a post-processed copy used for paper-final verification.
+# Falls back to RESULTS_DIR so the verifier works on raw CI outputs when the
+# patching pipeline has not run yet (all CI runs before paper submission).
+_env_patched = os.environ.get("PATCHED_DATA_DIR")
+PATCHED_DIR = Path(_env_patched) if _env_patched else RESULTS_DIR
 
 # ── Expected values from paper (v3.0) ─────────────────────────────────────────
 EXPECTED = {
@@ -177,24 +194,25 @@ def check_instability():
 # ── Duplicate case check ───────────────────────────────────────────────────────
 def check_defi_duplicates():
     """FIX-C1: verify no duplicate case names in DeFi benchmark source."""
+    global PASS_COUNT, FAIL_COUNT
+    import re
+    from collections import Counter
+
     print("\n── DeFi Duplicate Case Check (FIX-C1) ──────────────────────────────")
-    bench_files = list(Path(ROOT).rglob("hypatiax_defi_benchmark_v3c.py"))
+    # Search from repo ROOT so the script is found regardless of cwd.
+    bench_files = list(ROOT.rglob("hypatiax_defi_benchmark_v3c.py"))
     if not bench_files:
         warn_missing("hypatiax_defi_benchmark_v3c.py", "not found in repo")
         return
     src = bench_files[0].read_text()
-    import re
     names = re.findall(r'"name"\s*:\s*"([^"]+)"', src)
-    from collections import Counter
     dupes = {n: c for n, c in Counter(names).items() if c > 1}
     if dupes:
-        global FAIL_COUNT
         print("  ❌ Duplicate case names found (FIX-C1 not applied):")
         for name, count in dupes.items():
             print(f"       '{name}' appears {count}×")
         FAIL_COUNT += 1
     else:
-        global PASS_COUNT
         print("  ✅ No duplicate case names")
         PASS_COUNT += 1
 
@@ -215,9 +233,19 @@ def build_summary():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main(report=False, report_file=None):
+def main(report=False, report_file=None, results_dir=None):
+    global RESULTS_DIR, PATCHED_DIR
+
+    # --results-dir CLI flag (or RESULTS_BASE env var set by ci_experiment.yml)
+    # overrides module-level paths so all check_*() functions see the correct dir.
+    if results_dir:
+        RESULTS_DIR = Path(results_dir)
+        PATCHED_DIR = Path(results_dir)
+
     print("═" * 65)
     print("  HypatiaX JMLR Result Verification")
+    print(f"  RESULTS_DIR : {RESULTS_DIR}")
+    print(f"  PATCHED_DIR : {PATCHED_DIR}")
     print("═" * 65)
 
     check_defi()
@@ -276,9 +304,24 @@ if __name__ == "__main__":
         help="Write report to file"
     )
 
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Override the results directory used by all checks.  "
+            "Equivalent to setting VERIFY_RESULTS_DIR in the environment.  "
+            "When omitted, the env var VERIFY_RESULTS_DIR / RESULTS_BASE / "
+            "PATCHED_DATA_DIR is used, falling back to the repo-relative "
+            "hypatiax/data/results/ path."
+        ),
+    )
+
     args = parser.parse_args()
 
     main(
         report=args.report,
-        report_file=args.report_file
+        report_file=args.report_file,
+        results_dir=args.results_dir,
     )
