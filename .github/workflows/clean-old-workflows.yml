@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: '0 2 * * 0'  # Every Sunday at 02:00 UTC
   workflow_dispatch:
+    inputs:
+      hours_threshold:
+        description: 'Delete workflow runs older than this many hours'
+        required: false
+        default: '72'
+        type: string
 
 jobs:
   cleanup:
@@ -22,19 +28,19 @@ jobs:
 
             // Configuration - ULTRA aggressive cleanup
             const KEEP_RECENT_RUNS = 3;   // Keep only 3 runs per workflow MAX
-            const KEEP_DAYS = 3;          // Keep runs from last 3 days only
+            const KEEP_HOURS = parseInt(context.payload.inputs?.hours_threshold || '72', 10); // Keep runs from last N hours
             const MAX_TOTAL_RUNS = 25;    // STRICT global limit
             const MAX_PAGES = 30;         // Increase to catch all runs
 
             console.log('🧹 Starting ULTRA aggressive workflow cleanup...');
             console.log(`Policy: STRICT limit of ${MAX_TOTAL_RUNS} runs total (max ${KEEP_RECENT_RUNS} per workflow)`);
-            console.log(`Priority given to runs from last ${KEEP_DAYS} days`);
+            console.log(`Priority given to runs from last ${KEEP_HOURS} hours`);
             console.log(`Repository: ${owner}/${repo}`);
             console.log('================================');
 
             const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - KEEP_DAYS);
-            console.log(`Cutoff date: ${cutoffDate.toISOString()}`);
+            cutoffDate.setHours(cutoffDate.getHours() - KEEP_HOURS);
+            console.log(`Cutoff date: ${cutoffDate.toISOString()} (${KEEP_HOURS} hours ago)`);
 
             let totalDeleted = 0;
             let totalKept = 0;
@@ -115,13 +121,13 @@ jobs:
                   workflowRunCounts[workflowId] = 0;
                 }
 
-                const isWithinDays = runDate > cutoffDate;
+                const isWithinHours = runDate > cutoffDate;
                 const isWithinWorkflowLimit = workflowRunCounts[workflowId] < KEEP_RECENT_RUNS;
                 const isWithinGlobalLimit = runsToKeep.length < MAX_TOTAL_RUNS;
 
                 // STRICT global limit - only keep if within global limit
                 // Priority: recent runs within workflow limits, but NEVER exceed global limit
-                if (isWithinGlobalLimit && (isWithinDays || isWithinWorkflowLimit)) {
+                if (isWithinGlobalLimit && (isWithinHours || isWithinWorkflowLimit)) {
                   runsToKeep.push(run);
                   workflowRunCounts[workflowId]++;
                 } else {
@@ -143,7 +149,6 @@ jobs:
               }
 
               // Process deletions by workflow
-
               for (const [workflowId, runs] of Object.entries(deletesByWorkflow)) {
                 const workflowName = runs[0].workflow_name;
                 console.log(`\n🗑️  Deleting ${runs.length} runs from: ${workflowName}`);
@@ -217,7 +222,7 @@ jobs:
                 '### Policy Applied',
                 `- STRICT limit: Max ${MAX_TOTAL_RUNS} runs total across ALL workflows`,
                 `- Per-workflow limit: Max ${KEEP_RECENT_RUNS} runs per workflow`,
-                `- Priority: Runs from last ${KEEP_DAYS} days get preference`,
+                `- Priority: Runs from last ${KEEP_HOURS} hours get preference`,
                 `- Processed up to ${MAX_PAGES} pages per workflow`,
                 '',
                 '### Status',
