@@ -73,14 +73,35 @@ def load_json(path):
         return json.load(f)
 
 def find_result(subdir, filename_glob):
-    """Find the most recent matching result file."""
-    d = PATCHED_DIR / subdir
-    if not d.exists():
-        d = RESULTS_DIR / subdir
-    if not d.exists():
-        return None
-    candidates = sorted(d.glob(filename_glob), key=os.path.getmtime, reverse=True)
-    return candidates[0] if candidates else None
+    """Find the most recent matching result file.
+
+    Search order:
+      1. PATCHED_DIR / subdir  — post-processed / staged files (preferred)
+      2. RESULTS_DIR / subdir  — raw CI merge outputs
+    Within each directory, `filename_glob` is tried first; if it returns
+    nothing, two fallback globs are tried in order:
+      · _stats.json    (written by merge_shards.py for every experiment)
+      · _merged.json   (written by merge_shards.py for JSON experiments)
+    This lets check_*() functions work on raw CI outputs even when the full
+    patching pipeline has not yet produced a canonical benchmark_results.json.
+    """
+    _FALLBACKS = ("_stats.json", "_merged.json")
+
+    for base in (PATCHED_DIR, RESULTS_DIR):
+        d = base / subdir
+        if not d.exists():
+            continue
+        # Primary glob
+        candidates = sorted(d.glob(filename_glob), key=os.path.getmtime, reverse=True)
+        if candidates:
+            return candidates[0]
+        # Fallback globs
+        for fb in _FALLBACKS:
+            fb_candidates = sorted(d.glob(fb), key=os.path.getmtime, reverse=True)
+            if fb_candidates:
+                return fb_candidates[0]
+
+    return None
 
 def check(name, actual, expected, tol, fmt=".4f"):
     global PASS_COUNT, FAIL_COUNT
@@ -116,21 +137,38 @@ def check_defi():
         return
     data = load_json(f)
 
-    # Accuracy
-    acc = data.get("accuracy") or data.get("success_rate") or data.get("discovery_rate")
+    # Accuracy — paper field names first, then merge_shards.py _stats.json aliases
+    acc = (
+        data.get("accuracy")
+        or data.get("success_rate")
+        or data.get("discovery_rate")
+        or data.get("solve_rate")   # _stats.json from merge_shards.py
+    )
     if acc is not None:
         check("DeFi accuracy (§10.2)", acc, EXPECTED["defi"]["accuracy"], TOL["accuracy"])
     else:
         warn_missing("DeFi accuracy field", f)
 
-    # Case counts
-    total = data.get("total_cases") or data.get("n_cases")
+    # Case counts — paper field names first, then merge_shards.py aliases
+    total = data.get("total_cases") or data.get("n_cases") or data.get("n_tasks")
     if total is not None:
         check_int("DeFi total cases (§10.3)", total, EXPECTED["defi"]["total_cases"])
 
-    easy   = data.get("easy_cases")   or data.get("easy",   {}).get("count")
-    medium = data.get("medium_cases") or data.get("medium", {}).get("count")
-    hard   = data.get("hard_cases")   or data.get("hard",   {}).get("count")
+    def _difficulty_count(data, simple_key, nested_key):
+        """Return case count whether stored as int or {"count": N} dict."""
+        v = data.get(simple_key)
+        if isinstance(v, int):
+            return v
+        nested = data.get(nested_key)
+        if isinstance(nested, int):
+            return nested
+        if isinstance(nested, dict):
+            return nested.get("count")
+        return None
+
+    easy   = _difficulty_count(data, "easy_cases",   "easy")
+    medium = _difficulty_count(data, "medium_cases", "medium")
+    hard   = _difficulty_count(data, "hard_cases",   "hard")
     if easy is not None:
         check_int("DeFi easy cases",   easy,   EXPECTED["defi"]["easy_cases"])
     if medium is not None:
@@ -151,8 +189,13 @@ def check_feynman():
         data.get("successes")
         or data.get("n_success")
         or data.get("full_extrapolation_success")
+        or data.get("n_solved")   # _stats.json from merge_shards.py
     )
-    total = data.get("total") or data.get("n_cases")
+    total = (
+        data.get("total")
+        or data.get("n_cases")
+        or data.get("n_tasks")    # _stats.json from merge_shards.py
+    )
     if successes is not None:
         check_int("Feynman successes (§10.7)", successes, EXPECTED["feynman"]["successes"], tol=TOL["successes"])
     if total is not None:
@@ -177,19 +220,41 @@ def check_core15():
 # ── Instability checks ────────────────────────────────────────────────────────
 def check_instability():
     print("\n── Instability Benchmark (§10.9) ────────────────────────────────────")
-    f = find_result("instability", "*.json")
-    if not f:
-        warn_missing("Instability results", PATCHED_DIR / "instability/")
-        return
-    data = load_json(f)
 
-    tasks = (
-        data.get("total_tasks")
-        or data.get("n_tasks")
-        or len(data.get("tasks", data.get("results", [])))
-    )
-    if tasks:
-        check_int("Instability total tasks (§10.9)", tasks, EXPECTED["instability"]["total_tasks"])
+    # instability is a CSV-only experiment (array_key=None in merge_shards.py).
+    # merge_shards._merge_instability_csvs() writes:
+    #   _stats.json   → {"n_tasks": N, "n_shard_files": M}   ← preferred
+    #   _merged.csv   → concatenated CSV rows                 ← count fallback
+    # A canonical benchmark_results.json may also exist in the patched tree.
+    f = find_result("instability", "*.json")
+    if f:
+        data = load_json(f)
+        tasks = (
+            data.get("total_tasks")
+            or data.get("n_tasks")
+            or len(data.get("tasks", data.get("results", [])))
+        )
+        if tasks:
+            check_int("Instability total tasks (§10.9)", tasks, EXPECTED["instability"]["total_tasks"])
+        else:
+            warn_missing("Instability task count field", f)
+        return
+
+    # JSON not found — fall back to counting rows in _merged.csv
+    import csv as _csv
+    for base in (PATCHED_DIR, RESULTS_DIR):
+        csv_path = base / "instability" / "_merged.csv"
+        if csv_path.exists():
+            try:
+                with open(csv_path, newline="", encoding="utf-8") as fh:
+                    row_count = sum(1 for _ in _csv.DictReader(fh))
+                check_int("Instability total tasks (§10.9)", row_count,
+                          EXPECTED["instability"]["total_tasks"])
+                return
+            except Exception as exc:
+                print(f"  ⚠  Could not read {csv_path.name}: {exc}", file=sys.stderr)
+
+    warn_missing("Instability results", PATCHED_DIR / "instability/")
 
 # ── Duplicate case check ───────────────────────────────────────────────────────
 def check_defi_duplicates():
@@ -235,6 +300,11 @@ def build_summary():
 
 def main(report=False, report_file=None, results_dir=None):
     global RESULTS_DIR, PATCHED_DIR
+    global PASS_COUNT, FAIL_COUNT, WARN_COUNT
+
+    # Reset counters so repeated calls (tests, multiple invocations) don't
+    # accumulate across runs.
+    PASS_COUNT = FAIL_COUNT = WARN_COUNT = 0
 
     # --results-dir CLI flag (or RESULTS_BASE env var set by ci_experiment.yml)
     # overrides module-level paths so all check_*() functions see the correct dir.
