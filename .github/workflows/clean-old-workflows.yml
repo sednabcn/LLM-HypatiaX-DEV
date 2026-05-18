@@ -127,9 +127,9 @@ jobs:
                 const isWithinWorkflowLimit = workflowRunCounts[workflowId] < KEEP_RECENT_RUNS;
                 const isWithinGlobalLimit = runsToKeep.length < MAX_TOTAL_RUNS;
 
-                // STRICT global limit - only keep if within global limit
-                // Priority: recent runs within workflow limits, but NEVER exceed global limit
-                if (isWithinGlobalLimit && (isWithinHours || isWithinWorkflowLimit)) {
+                // Hours threshold is the PRIMARY filter.
+                // A run is only kept if it is within the hours window AND within both caps.
+                if (isWithinHours && isWithinWorkflowLimit && isWithinGlobalLimit) {
                   runsToKeep.push(run);
                   workflowRunCounts[workflowId]++;
                 } else {
