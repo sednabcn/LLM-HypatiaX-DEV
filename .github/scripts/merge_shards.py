@@ -34,6 +34,13 @@ Changes in current revision:
   · _compute_stats() now iterates r2/r2_score/r2_noiseless/best_r2 (first non-None wins).
   · Zero-solve warning emitted to stderr when n_solved=0 and n_tasks>0 to catch
     status field mismatches early rather than silently in downstream analysis.
+  · FIX-CSV: _find_shard_files() previously hard-filtered to .json only, silently
+    dropping every .csv match.  Experiments with CSV shard globs (instability,
+    suppB_sc) always returned 0 shard files as a result.
+    Fixed: allowed suffixes are now derived from each experiment's shard_globs —
+    any glob ending in .csv admits .csv files; .json is always included.
+    The _SKIP_NAMES set already included _merged.csv so canonical output files
+    remain protected.
 """
 
 from __future__ import annotations
@@ -290,12 +297,17 @@ EXP_CONFIG: dict[str, dict] = {
 
 def _find_shard_files(root: Path, globs: list[str]) -> list[Path]:
     """
-    Collect all JSON files under `root` (recursively) matching any glob.
+    Collect all JSON/CSV files under `root` (recursively) matching any glob.
     Skips:
-      · _report.md and any non-.json files (they are never result data)
-      · our own output files (_merged.json etc.)
+      · _report.md and any non-.json/.csv files (they are never result data)
+      · our own output files (_merged.json, _merged.csv etc.)
       · worker checkpoint/stub files
     Each unique Path is returned once regardless of how many globs match it.
+
+    NOTE: .csv files are allowed to support experiments whose shard_globs
+    explicitly include CSV patterns (instability, suppB_sc).  Previously the
+    hard .json-only filter silently discarded every CSV match, so those
+    experiments always returned 0 shard files.
     """
     found: list[Path] = []
     seen:  set[Path]  = set()
@@ -306,6 +318,14 @@ def _find_shard_files(root: Path, globs: list[str]) -> list[Path]:
         "_stats.json", "_checkpoint.json",
     })
 
+    # Derive allowed suffixes from the glob patterns; always include .json.
+    # Any glob that ends in ".csv" (case-insensitive) also admits .csv files.
+    _allowed_suffixes: frozenset[str] = frozenset({".json"} | {
+        Path(g).suffix.lower()
+        for g in globs
+        if Path(g).suffix.lower() in (".json", ".csv")
+    })
+
     for pattern in globs:
         for match in sorted(root.rglob(pattern)):
             if not match.is_file():
@@ -314,7 +334,7 @@ def _find_shard_files(root: Path, globs: list[str]) -> list[Path]:
                 continue
             if match.name in _SKIP_NAMES:
                 continue
-            if match.suffix.lower() != ".json":
+            if match.suffix.lower() not in _allowed_suffixes:
                 continue
             if "_assembled" in match.name:
                 continue
