@@ -307,7 +307,8 @@ jobs:
           PYSR_FIT_GRACE_SECS:   "120"   # repro.yaml timeouts.fit_grace_secs   -> DiscoveryConfig
           # Workflow filename as registered in .github/workflows/ on GitHub.
           # GitHub indexes by committed filename — update this after any rename.
-          # dispatch_experiment.sh must reference the same filename.
+          # Passed as $4 to dispatch_experiment.sh so the script targets this
+          # file instead of its internal default (ci_experiment.yml).
           EXP_WORKFLOW_FILE: "ci_experiment_simplify.yml"
         run: |
           set -euo pipefail
@@ -315,12 +316,10 @@ jobs:
           DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "> Dispatching $EXP at $DISPATCH_ISO (n_shards=$N_SHARDS)"
           echo "  Workflow file : ${EXP_WORKFLOW_FILE}"
-          # BUG 10 FIX (residual): dispatch_experiment.sh was fixed to treat $3
-          # as TASK_IDS_OVERRIDE (not --dry-run which is now a named flag).  The
-          # old call here passed 4 positional args: "EXP" "N_SHARDS" "" "TASK_IDS_OVERRIDE"
-          # which meant $3="" (empty) and $4=TASK_IDS_OVERRIDE was silently dropped.
-          # Updated to the new 3-arg signature: "EXP" "N_SHARDS" "TASK_IDS_OVERRIDE".
-          bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE"
+          # FIX: pass EXP_WORKFLOW_FILE as $4 so dispatch_experiment.sh targets
+          # ci_experiment_simplify.yml instead of its hardcoded ci_experiment.yml.
+          # Signature: "EXP" "N_SHARDS" "TASK_IDS_OVERRIDE" "WORKFLOW_FILE"
+          bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE"
 
           sleep 30   # give GitHub time to register the new run
 

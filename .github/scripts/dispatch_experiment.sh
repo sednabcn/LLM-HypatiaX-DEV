@@ -4,13 +4,15 @@
 # Dispatch a single HypatiaX experiment via the GitHub CLI.
 #
 # Usage:
-#   dispatch_experiment.sh <experiment_id> <n_shards> [--dry-run] [task_ids_override]
+#   dispatch_experiment.sh <experiment_id> <n_shards> [task_ids_override] [workflow_file] [--dry-run]
 #
 #   <experiment_id>      e.g. exp1, exp2_feynman, suppB
 #   <n_shards>           number of parallel worker shards (the only value you type)
 #                        Recommended: 4 (default). Use 3 only when GitHub quota is tight.
-#   --dry-run            print the gh command without executing it
 #   task_ids_override    space-separated task IDs to run (blank = full experiment set)
+#   workflow_file        workflow filename to dispatch (default: ci_experiment_simplify.yml)
+#                        e.g. ci_experiment_simplify.yml or ci_experiment.yml
+#   --dry-run            print the gh command without executing it (any position after $2)
 #
 # All other workflow inputs (pysr_generations, n_samples, noise_levels, …)
 # are read automatically from config/repro.yaml.
@@ -25,11 +27,20 @@
 set -euo pipefail
 
 # ── Args ──────────────────────────────────────────────────────────────────────
-EXP="${1:?Usage: dispatch_experiment.sh <experiment_id> <n_shards> [--dry-run] [task_ids_override]}"
+EXP="${1:?Usage: dispatch_experiment.sh <experiment_id> <n_shards> [task_ids_override] [workflow_file] [--dry-run]}"
 # Default to 4 shards; fall back to 3 only when the caller explicitly passes "3".
 N_SHARDS="${2:-4}"
-DRY_RUN="${3:-}"
-TASK_IDS_OVERRIDE="${4:-}"
+TASK_IDS_OVERRIDE="${3:-}"
+# $4: workflow file — defaults to ci_experiment_simplify.yml.
+# ci_schedule_simplify.yml passes EXP_WORKFLOW_FILE here so the scheduler
+# always targets the correct (simplify) runner, not the legacy ci_experiment.yml.
+WORKFLOW_FILE="${4:-ci_experiment_simplify.yml}"
+
+# --dry-run can appear at any position after $2 for manual use.
+DRY_RUN=""
+for arg in "$@"; do
+  [[ "$arg" == "--dry-run" ]] && DRY_RUN="--dry-run"
+done
 
 # Path to the repo's canonical repro config (relative to repo root).
 REPRO="${REPRO_CFG:-config/repro.yaml}"
@@ -68,6 +79,7 @@ TIMEOUT=$(get   feynman_timeout    "1100")
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "═══════════════════════════════════════════════════════"
 echo "  Experiment    : $EXP"
+echo "  Workflow file : $WORKFLOW_FILE"
 echo "  n_shards      : $N_SHARDS   (manual; recommended=4, minimum=3)"
 echo "  config source : $REPRO      (auto)"
 echo "───────────────────────────────────────────────────────"
@@ -83,7 +95,7 @@ echo "════════════════════════�
 # ── Dry-run guard ─────────────────────────────────────────────────────────────
 if [[ "$DRY_RUN" == "--dry-run" ]]; then
   echo "[DRY RUN] would execute:"
-  echo "  gh workflow run ci_experiment.yml \\"
+  echo "  gh workflow run $WORKFLOW_FILE \\"
   echo "    --field experiment=\"$EXP\" \\"
   echo "    --field n_shards=\"$N_SHARDS\" \\"
   echo "    --field pysr_generations=\"$PYSR_GEN\" \\"
@@ -98,7 +110,7 @@ if [[ "$DRY_RUN" == "--dry-run" ]]; then
 fi
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
-gh workflow run ci_experiment.yml \
+gh workflow run "$WORKFLOW_FILE" \
   --field experiment="$EXP" \
   --field n_shards="$N_SHARDS" \
   --field pysr_generations="$PYSR_GEN" \
@@ -110,4 +122,4 @@ gh workflow run ci_experiment.yml \
   --field resume="true" \
   --field dry_run="false"
 
-echo "✓ Dispatched $EXP (n_shards=$N_SHARDS)"
+echo "✓ Dispatched $EXP → $WORKFLOW_FILE (n_shards=$N_SHARDS)"
