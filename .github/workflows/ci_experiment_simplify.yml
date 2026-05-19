@@ -74,7 +74,7 @@ on:
 
       # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards (1-4). Per-experiment defaults: exp1/exp1b=1, exp2/exp2_feynman=4, all others=1. Override here for manual runs only."
+        description: "Number of parallel worker shards (1-4). Per-experiment defaults: exp1/exp1b/exp2_feynman=1, exp2=4, all others=1. Override here for manual runs only."
         required: false
         default: "4"
 
@@ -335,7 +335,10 @@ jobs:
           # dispatch_experiment.sh forwarded n_shards correctly.
           #   exp1                      → 1  (10 DeFi tasks — single shard)
           #   exp1b                     → 1  (portfolio seeds)
-          #   exp2 / exp2_feynman       → 4  (10-11 domain keys; max parallelism)
+          #   exp2_feynman              → 1  (all 11 domains run sequentially on one worker;
+          #                                    n_shards=1 avoids checkpoint collisions and
+          #                                    matches the sequential per-domain loop)
+          #   exp2                      → 4  (10 domain keys; full parallelism)
           #   all remaining experiments → 1  (suppA/B/B_sc, hybrid, instability,
           #                                    extrap, exp3, exp3b)
           # The dispatch input is only respected when it explicitly differs from
@@ -343,7 +346,7 @@ jobs:
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              1,
-              "exp2_feynman":       4,
+              "exp2_feynman":       1,
               "exp2":               4,
               "exp3":               1,
               "exp3b":              1,
@@ -947,8 +950,8 @@ jobs:
               #
               # Fix: read domain IDs from SHARD_IDS JSON, loop per-domain,
               # pass --domain and --output-dir explicitly on every invocation.
-              # --skip-pysr: methods 5 (SymbolicEngine) and 6 (HybridV50_2) are
-              # excluded from exp2_feynman — not part of Tab 16-18 comparison.
+              # All 6 methods active (--skip-pysr removed): methods 5+6 (SymbolicEngine,
+              # HybridV50_2) now run with METHOD_TIMEOUT (900s) for full PySR budget.
               readarray -t DOMAIN_LIST < <(python3 -c \
                 "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]")
               for DOMAIN_ID in "${DOMAIN_LIST[@]}"; do
@@ -958,17 +961,16 @@ jobs:
                 SHARD_IDS="${DOMAIN_ID}" \
                 FEYNMAN_SAMPLES="${FEYNMAN_SAMPLES}" \
                 FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
-                METHOD_TIMEOUT="${LLM_METHOD_TIMEOUT}" \
+                METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
                 PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
                 PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
                 JOB_DEADLINE="${JOB_DEADLINE}" \
                   python3 "${SCRIPT_PATH}" \
                     --benchmark feynman \
                     --domain "${DOMAIN_ID}" \
-                    --skip-pysr \
                     --samples "${FEYNMAN_SAMPLES}" \
                     --pysr-timeout "${FEYNMAN_TIMEOUT}" \
-                    --method-timeout "${LLM_METHOD_TIMEOUT}" \
+                    --method-timeout "${METHOD_TIMEOUT}" \
                     --populations "${PYSR_POPULATIONS}" \
                     --parsimony 0.01 \
                     --noiseless \
@@ -1300,11 +1302,20 @@ jobs:
               ;;
 
             # -- exp2_feynman: comparative Feynman suite -----------------------
+            # Now runs all 6 methods (--skip-pysr removed) on 1 shard.
+            # Per-domain outputs: protocol_core_*.json, benchmark_results.json,
+            # protocol_core_*_checkpoint.json (one per domain from --checkpoint-name).
+            # All are saved to TARGET so the verify step and artifact upload find them.
             exp2_feynman)
               move_matching "exp2_feynman_checkpoint_shard*.json" "${TARGET}"
               move_matching "exp2_feynman_merged.*"               "${TARGET}"
               move_matching "exp2_feynman_stats.json"             "${TARGET}"
               move_matching "exp2_all*_checkpoint.json"           "${RESULTS_DIR}/comparison_results"
+              # Primary per-domain outputs written by run_comparative_suite_benchmark_v2.py
+              move_matching "protocol_core_*.json"                "${TARGET}"
+              move_matching "protocol_core_*_checkpoint.json"     "${TARGET}"
+              move_matching "benchmark_results.json"              "${TARGET}"
+              move_matching "feynman_exp2_checkpoint_*.json"      "${TARGET}"
               ;;
 
             # -- exp2: multi-seed comparative suite ---------------------------
@@ -1509,7 +1520,121 @@ jobs:
           fi
           echo "  OK exp1b output files present in canonical path."
 
-      # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------      # tables-generator looks for noise_sweep_*.json (suppB) and
+      # -- Verify output files exist for ALL remaining experiments ------------
+      # ITEM 4 (ALL EXPERIMENTS): ensures every experiment's result files land
+      # in the canonical RESULT_SUBDIR before the artifact upload step.
+      # Each experiment verifies at least one file exists matching its primary
+      # output glob; fails loudly so path/naming mismatches surface immediately.
+      - name: Verify exp2_feynman output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
+          echo "=== exp2_feynman output verification ==="
+          echo "  Target dir       : ${TARGET}"
+          echo "  protocol_core_* / benchmark_results: ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::exp2_feynman produced NO output files in '${TARGET}'."
+            echo "  Expected: protocol_core_*.json or benchmark_results.json"
+            exit 1
+          fi
+          echo "  OK exp2_feynman output files present."
+
+      - name: Verify exp2 output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp2' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
+          echo "=== exp2 output verification ==="
+          echo "  Target dir   : ${TARGET}"
+          echo "  File count   : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::exp2 produced NO output files in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK exp2 output files present."
+
+      - name: Verify exp3/exp3b output files exist
+        if: ${{ (needs.plan.outputs.exp_id == 'exp3' || needs.plan.outputs.exp_id == 'exp3b') && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          EXP="${{ needs.plan.outputs.exp_id }}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" -name "*.json" 2>/dev/null | wc -l)
+          echo "=== ${EXP} output verification ==="
+          echo "  Target dir  : ${TARGET}"
+          echo "  JSON count  : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::${EXP} produced NO output files in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK ${EXP} output files present."
+
+      - name: Verify suppA output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'suppA' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" -name "*.json" 2>/dev/null | wc -l)
+          echo "=== suppA output verification ==="
+          echo "  Target dir: ${TARGET}  JSON files: ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::suppA produced NO output files in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK suppA output files present."
+
+      - name: Verify hybrid_all_domains output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'hybrid_all_domains' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" -name "hybrid_llm_nn_all_domains_*.json" 2>/dev/null | wc -l)
+          echo "=== hybrid_all_domains output verification ==="
+          echo "  Target dir: ${TARGET}"
+          echo "  hybrid_llm_nn_all_domains_*.json: ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::hybrid_all_domains produced NO output files in '${TARGET}'."
+            echo "  Expected: hybrid_llm_nn_all_domains_*.json"
+            exit 1
+          fi
+          echo "  OK hybrid_all_domains output files present."
+
+      - name: Verify instability output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'instability' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT_CSV=$(find "${TARGET}" -name "instability_analysis.csv" 2>/dev/null | wc -l)
+          COUNT_FIG=$(find "${TARGET}" \( -name "*.png" -o -name "*.pdf" \) 2>/dev/null | wc -l)
+          echo "=== instability output verification ==="
+          echo "  instability_analysis.csv : ${COUNT_CSV}"
+          echo "  Figure files (.png/.pdf) : ${COUNT_FIG}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT_CSV}" -eq 0 ]]; then
+            echo "::error::instability produced NO instability_analysis.csv in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK instability output files present."
+
+      - name: Verify extrap output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" \( -name "all_domains_extrap_v4_*.json" -o -name "protocol_core_*.json" \) 2>/dev/null | wc -l)
+          echo "=== extrap output verification ==="
+          echo "  Target dir   : ${TARGET}"
+          echo "  File count   : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::extrap produced NO output files in '${TARGET}'."
+            echo "  Expected: all_domains_extrap_v4_*.json or protocol_core_*.json"
+            exit 1
+          fi
+          echo "  OK extrap output files present."
+
+      # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------
       # sample_complexity_*.json (suppB_sc) under their respective result dirs.
       # If the benchmark scripts write files with a different prefix, all
       # generated tables will contain placeholder text.  This step surfaces

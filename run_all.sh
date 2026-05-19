@@ -445,9 +445,9 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
 #   domains on a single worker (no --domain filter) and omitted --output-dir,
 #   so results landed in the default comparison_results/ path rather than
 #   comparison_results/feynman-tests/exp2/ (RESULT_SUBDIR).
-# --skip-pysr: methods 5 (SymbolicEngine) and 6 (HybridV50_2) are excluded
-#   from exp2_feynman — not part of Tab 16-18 comparison. LLM_METHOD_TIMEOUT
-#   used (120s) for LLM/NN-only methods.
+# All 6 methods active (--skip-pysr removed from exp2_feynman).
+#   METHOD_TIMEOUT (900s) gives methods 5+6 (SymbolicEngine, HybridV50_2)
+#   adequate PySR budget.
 # --noiseless --threshold 0.9999: exp2_feynman uses the noiseless Feynman
 #   protocol, matching FEYNMAN_NOISELESS_THRESHOLD from repro.yaml.
 # --parsimony 0.01 --populations: matches CI worker invocation exactly.
@@ -461,17 +461,16 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
     echo '=== exp2_feynman: domain='\${DOMAIN_ID}' ==='
     FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
     FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT} \
-    METHOD_TIMEOUT=${LLM_METHOD_TIMEOUT} \
+    METHOD_TIMEOUT=${METHOD_TIMEOUT} \
     PYSR_FIT_WALL_TIMEOUT=${PYSR_FIT_WALL_TIMEOUT} \
     PYSR_FIT_GRACE_SECS=${PYSR_FIT_GRACE_SECS} \
     JOB_DEADLINE=${JOB_DEADLINE} \
       python3 run_comparative_suite_benchmark_v2.py \
         --benchmark feynman \
         --domain \"\${DOMAIN_ID}\" \
-        --skip-pysr \
         --samples ${FEYNMAN_SAMPLES} \
         --pysr-timeout ${FEYNMAN_TIMEOUT} \
-        --method-timeout ${LLM_METHOD_TIMEOUT} \
+        --method-timeout ${METHOD_TIMEOUT} \
         --populations ${PYSR_POPULATIONS} \
         --parsimony 0.01 \
         --noiseless \
