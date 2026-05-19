@@ -36,8 +36,9 @@ name: "HypatiaX-simplify-scheduled full run"
 #  n_shards input is IGNORED for scheduled / chained runs — it is retained
 #  only for manual single-slot overrides (continue_chain=false).
 #
-#  ci_experiment_simplify.yml clamps n_shards to [3, 4] — values of 1 or 2 will be
-#  SILENTLY CLAMPED UP TO 3 by the plan job Python script (BUG — see ISSUES).
+#  ci_experiment_simplify.yml resolves n_shards from a built-in per-experiment table:
+#  exp1/exp1b=2, exp2/exp2_feynman=4, all others=1. The dispatch n_shards input
+#  is only honoured when it explicitly differs from the workflow default (4).
 # -------------------------------------------------------------
 
 on:
@@ -227,9 +228,10 @@ jobs:
           #  exp3                 → 1  (single seed, 12 tasks; sequential OK)
           #  everything else      → 1  (small/medium experiments)
           #
-          #  NOTE: ci_experiment_simplify.yml clamps n_shards to [1,4].
-          #  Values of 1 and 2 are now accepted (clamp widened from [3,4]).
-          #  exp1/exp1b use 2 shards, exp3/supp*/instability/extrap use 1.
+          #  NOTE: ci_experiment_simplify.yml drives N_SHARDS from a built-in table
+          #  (exp1/exp1b=2, exp2/exp2_feynman=4, all others=1).  The n_shards
+          #  dispatch input is only respected when it differs from the default (4),
+          #  so the values in N_SHARDS_TABLE below are now the authoritative source.
           # ------------------------------------------------------------------
           declare -A N_SHARDS_TABLE=(
             [exp1]=2               [exp1b]=2

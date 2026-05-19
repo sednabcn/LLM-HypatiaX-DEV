@@ -328,11 +328,46 @@ jobs:
 
           EXP          = os.environ["EXP"]
           N_SHARDS_RAW = int(os.environ["N_SHARDS"])
-          N_SHARDS     = max(1, min(4, N_SHARDS_RAW))  # valid range: 1-4
-          # BUG 5 FIX: make the clamp visible so callers are not silently misled.
-          if N_SHARDS != N_SHARDS_RAW:
-              print(f"::warning::n_shards input was {N_SHARDS_RAW}; clamped to {N_SHARDS} "
-                    f"(accepted range: 1-4). Update dispatch call if intentional.")
+
+          # Per-experiment shard table — authoritative source of truth.
+          # Overrides whatever n_shards was passed to the workflow dispatch so
+          # single-node experiments always get exactly 1 worker and domain-parallel
+          # experiments always get the right parallelism, independently of whether
+          # dispatch_experiment.sh forwarded n_shards correctly.
+          #   exp1 / exp1b              → 2  (10 DeFi tasks / portfolio seeds)
+          #   exp2 / exp2_feynman       → 4  (10/11 domain keys; max parallelism)
+          #   all remaining experiments → 1  (suppA/B/B_sc, hybrid, instability,
+          #                                    extrap, exp3, exp3b — sequential OK)
+          # Manual overrides: if n_shards input != 0 AND the experiment is in the
+          # "always-parallel" set (exp2/exp2_feynman), the input is respected up to 4.
+          EXP_SHARD_TABLE = {
+              "exp1":              2,
+              "exp1b":             2,
+              "exp2_feynman":      4,
+              "exp2":              4,
+              "exp3":              1,
+              "exp3b":             1,
+              "suppA":             1,
+              "suppB":             1,
+              "suppB_sc":          1,
+              "instability":       1,
+              "hybrid_all_domains":1,
+              "extrap":            1,
+          }
+          N_SHARDS_DEFAULT = EXP_SHARD_TABLE.get(EXP, 1)
+          # Honour the dispatch input only when it was explicitly set to a
+          # value OTHER than the workflow default (4), clamped to [1,4].
+          # This lets ci_schedule_simplify.yml or a human override the table
+          # by passing a non-default value.  When the input is the default (4)
+          # and the table says 1, the table wins — avoiding wasted runners.
+          if N_SHARDS_RAW != 4:
+              N_SHARDS = max(1, min(4, N_SHARDS_RAW))
+              if N_SHARDS != N_SHARDS_DEFAULT:
+                  print(f"::notice::n_shards override: input={N_SHARDS_RAW} "
+                        f"table={N_SHARDS_DEFAULT} using={N_SHARDS}")
+          else:
+              N_SHARDS = N_SHARDS_DEFAULT
+          print(f"N_SHARDS={N_SHARDS} (table default={N_SHARDS_DEFAULT}, input={N_SHARDS_RAW})")
           OVERRIDE     = os.environ["OVERRIDE"].split() if os.environ["OVERRIDE"].strip() else []
           SEEDS        = [s.strip() for s in os.environ["EFFECTIVE_SEEDS"].split(",") if s.strip()]
           NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
@@ -1480,20 +1515,19 @@ jobs:
           retention-days: 30
 
       # ── Commit and push shard results directly to the repo ───────────────────
-      # The consolidate job is disabled in ci_experiment_simplify.yml, so each
-      # worker shard commits its own output files here.  Results are persisted
-      # in the repo without a separate merge step.
+      # The consolidate job is disabled in this workflow, so each worker shard
+      # must commit its own output files.  Without this step, results exist only
+      # as GitHub Actions artifacts (30-day TTL) and are invisible in the repo.
       #
-      # Strategy:
-      #   1. git pull --rebase so concurrent shard commits do not conflict.
-      #   2. git add the entire RESULT_SUBDIR tree for this shard.
-      #   3. Skip commit when nothing changed (idempotent on re-runs).
-      #   4. Push with --force-with-lease; retry once on conflict (race with
-      #      another shard committing at the same instant).
+      # Design:
+      #   1. git pull --rebase  — absorbs commits from concurrent shards before staging.
+      #   2. git add TARGET/    — stages every file produced by this shard.
+      #   3. diff --cached      — skips commit when nothing changed (idempotent).
+      #   4. push --force-with-lease — safe push; detected conflicts trigger one retry.
       #
-      # Runs if: always() — saves results even when earlier soft-failures
-      # occurred (e.g. exp1 wrote protocol_core_noiseless_*.json but 0
-      # hypatiax_defi_benchmark_v3*results*.json — still a valid result).
+      # if: always() — runs even when earlier soft-failures occurred (e.g. exp1
+      # produced protocol_core_noiseless_*.json but 0 primary benchmark JSONs —
+      # still a valid partial result that must be persisted).
       - name: Commit and push shard results to repo
         if: always()
         env:
@@ -1515,23 +1549,27 @@ jobs:
           fi
 
           commit_and_push() {
+            # Pull latest to avoid non-fast-forward rejection from concurrent shards.
             git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
+
+            # Stage all files written by this shard into the result subdirectory.
             git add "${TARGET}/" 2>/dev/null || true
 
             if git diff --cached --quiet; then
-              echo "No changes staged for shard ${SHARD} — nothing to commit."
+              echo "Shard ${SHARD}: no new files staged — nothing to commit."
               return 0
             fi
 
-            git commit -m "ci: ${EXP} shard${SHARD} results — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            STAGED=$(git diff --cached --name-only | wc -l)
+            git commit -m "ci: ${EXP} shard${SHARD} results (${STAGED} file(s)) — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push --force-with-lease origin "${{ github.ref_name }}"
-            echo "Pushed shard ${SHARD} results (${FILE_COUNT} file(s)) to ${{ github.ref_name }}."
+            echo "Pushed shard ${SHARD}: ${FILE_COUNT} file(s) in ${TARGET} → ${{ github.ref_name }}"
           }
 
-          # First attempt; retry once on concurrent-shard push conflict.
+          # First attempt; retry once after a short pause on concurrent-shard conflict.
           if ! commit_and_push; then
-            echo "Push failed (likely a concurrent shard) — waiting 15 s and retrying ..."
-            sleep 15
+            echo "Push conflict detected — waiting 20 s then retrying once ..."
+            sleep 20
             commit_and_push
           fi
 
