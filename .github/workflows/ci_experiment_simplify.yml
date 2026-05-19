@@ -1576,21 +1576,15 @@ jobs:
 # ==============================================================================
 #  JOB 3 - consolidate  [DISABLED]
 #
-#  Consolidation (merge_shards.py, equation_id enrichment, git commit) has been
-#  moved to ci_consolidate_experiment.yml, which fires as a standalone workflow
-#  after this workflow completes (workflow_run trigger).
+#  Consolidation (merge_shards.py, equation_id enrichment, git commit) is
+#  disabled.  Each worker shard commits its own results directly to the repo
+#  via the "Commit and push shard results to repo" step in the worker job.
 #
-#  Keeping merge logic in a dedicated workflow means:
-#    - ci_experiment_simplify.yml has a single responsibility: run workers and upload
-#      per-shard artifacts.  It no longer holds a 6-hour run hostage waiting
-#      for a merge step that doesn't need the runner.
-#    - ci_consolidate_experiment.yml can be re-triggered independently without
-#      re-running the 5.5-hour experiment, e.g. after a merge_shards.py fix.
-#    - ci_all_checkpoint.yml (qualify + audit) triggers on ci_experiment_simplify.yml
-#      completion; consolidation runs in parallel via ci_consolidate_experiment.yml,
-#      so both gates proceed without sequential blocking.
-#
-#  To restore this job: retrieve from git history and revert the workflow_run
-#  trigger in ci_consolidate_experiment.yml back to workflow_dispatch only.
+#  This means:
+#    - Results are stored in the repository tree immediately after each shard
+#      finishes — no separate merge step, no 30-day artifact TTL.
+#    - ci_consolidate_experiment.yml can still be triggered manually if a
+#      merged view (_merged.json / _merged.csv / _stats.json) is needed later.
+#    - To restore this job: retrieve from git history and re-enable.
 # ==============================================================================
-# consolidate: DISABLED — see ci_consolidate_experiment.yml
+# consolidate: DISABLED — results committed per-shard by worker job above
