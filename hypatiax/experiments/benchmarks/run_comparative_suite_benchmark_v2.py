@@ -278,21 +278,28 @@ def _probe_pysr_method(module_path: str) -> bool:
     """Check method availability by file presence + pysr importability.
 
     Does NOT import the module (avoids juliacall/torch collision in main process).
+    Prints a diagnostic line on failure so the cause is visible in the run log.
     """
     import importlib.util
     try:
         spec = importlib.util.find_spec(module_path)
         if spec is None or spec.origin is None:
+            print(f"⚠️  _probe_pysr_method({module_path!r}): module not found on sys.path")
             return False
         if not Path(spec.origin).exists():
+            print(f"⚠️  _probe_pysr_method({module_path!r}): file missing: {spec.origin}")
             return False
-        # Also confirm pysr itself is importable (confirms Julia depot is set up).
+        # Confirm pysr is importable (confirms Julia depot is set up).
         # pysr's top-level __init__ does NOT call juliacall — that only happens
         # when a PySRRegressor is actually fitted, so this is safe.
         import importlib as _il
         _il.import_module("pysr")
         return True
-    except Exception:
+    except ModuleNotFoundError as exc:
+        print(f"⚠️  _probe_pysr_method({module_path!r}): import check failed — {exc}")
+        return False
+    except Exception as exc:
+        print(f"⚠️  _probe_pysr_method({module_path!r}): unexpected error — {exc}")
         return False
 
 SYM_ENGINE_AVAILABLE    = _probe_pysr_method("hypatiax.tools.symbolic.symbolic_engine")
@@ -2141,6 +2148,8 @@ try:
     else:
         result = {"success": False, "error": f"Unknown method: {method}"}
 except Exception as exc:
+    import traceback as _tb
+    _tb.print_exc(file=sys.stderr)   # surfaces in parent's stderr_bytes → error field
     result = {"success": False, "error": str(exc)}
 
 # Serialise result — convert numpy scalars to Python natives
@@ -2230,7 +2239,7 @@ def _run_pysr_in_subprocess(
                 ),
             }
         if proc.returncode != 0:
-            stderr = stderr_bytes.decode(errors="replace")[-400:]
+            stderr = stderr_bytes.decode(errors="replace")[-1200:]
             return {"success": False, "error": f"subprocess exit {proc.returncode}: {stderr}"}
         stdout = stdout_bytes.decode(errors="replace").strip()
         stderr_out = stderr_bytes.decode(errors="replace").strip()
@@ -2321,15 +2330,14 @@ class SymbolicEngineMethod(BaseMethod):
 
     def __init__(self, verbose=False):
         super().__init__("SymbolicEngineWithLLM (tools)", verbose)
-        self._engine = None
-        if not SYM_ENGINE_AVAILABLE:
-            return
-        try:
-            from hypatiax.tools.symbolic.symbolic_engine import SymbolicEngineWithLLM
-            self._engine = SymbolicEngineWithLLM()
-            self._log("initialised ✅")
-        except Exception as exc:
-            self._log(f"init failed: {exc}")
+        # NOTE: do NOT import symbolic_engine or instantiate SymbolicEngineWithLLM here.
+        # Both modules import pysr/juliacall at the top level; loading them in the main
+        # process (where torch is already imported) triggers a juliacall/torch signal
+        # collision and segfaults.  All actual PySR work runs in an isolated subprocess
+        # via _run_pysr_in_subprocess().  Availability is confirmed by _probe_pysr_method()
+        # (file-existence + `import pysr` only — no juliacall).
+        if SYM_ENGINE_AVAILABLE:
+            self._log("probe OK ✅ (subprocess mode)")
 
     def run(self, description, X, y, var_names, metadata, verbose=False) -> MethodResult:
         if not SYM_ENGINE_AVAILABLE:
@@ -2439,19 +2447,12 @@ class HybridSystemV50_2Method(BaseMethod):
 
     def __init__(self, verbose=False):
         super().__init__("HybridDiscoverySystem v50_2 (tools)", verbose)
-        self._system = None
-        if not HYBRID_V50_2_AVAILABLE:
-            return
-        try:
-            from hypatiax.tools.symbolic.hybrid_system_v50_2 import HybridDiscoverySystem
-            self._system = HybridDiscoverySystem()
-            if not hasattr(self._system, "discover"):
-                self._log("⚠️  missing 'discover' method — disabled")
-                self._system = None
-            else:
-                self._log("initialised ✅")
-        except Exception as exc:
-            self._log(f"init failed: {exc}")
+        # NOTE: do NOT import hybrid_system_v50_2 or symbolic_engine here.
+        # Same reason as SymbolicEngineMethod: top-level pysr/juliacall import in the
+        # main process (torch already loaded) → juliacall/torch signal collision → segfault.
+        # All PySR work runs in an isolated subprocess via _run_pysr_in_subprocess().
+        if HYBRID_V50_2_AVAILABLE:
+            self._log("probe OK ✅ (subprocess mode)")
 
     def run(self, description, X, y, var_names, metadata, verbose=False) -> MethodResult:
         if not HYBRID_V50_2_AVAILABLE:

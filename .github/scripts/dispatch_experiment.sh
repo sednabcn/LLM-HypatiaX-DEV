@@ -8,7 +8,7 @@
 #
 #   <experiment_id>      e.g. exp1, exp2_feynman, suppB
 #   <n_shards>           number of parallel worker shards (the only value you type)
-#                        Recommended: 4 (default). Use 3 only when GitHub quota is tight.
+#                        Default: 1 (all experiments run single-shard).
 #   task_ids_override    space-separated task IDs to run (blank = full experiment set)
 #   workflow_file        workflow filename to dispatch (default: ci_experiment_simplify.yml)
 #                        e.g. ci_experiment_simplify.yml or ci_experiment.yml
@@ -28,8 +28,8 @@ set -euo pipefail
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 EXP="${1:?Usage: dispatch_experiment.sh <experiment_id> <n_shards> [task_ids_override] [workflow_file] [--dry-run]}"
-# Default to 4 shards; fall back to 3 only when the caller explicitly passes "3".
-N_SHARDS="${2:-4}"
+# Default to 1 shard for all experiments.
+N_SHARDS="${2:-1}"
 TASK_IDS_OVERRIDE="${3:-}"
 # $4: workflow file — defaults to ci_experiment_simplify.yml.
 # ci_schedule_simplify.yml passes EXP_WORKFLOW_FILE here so the scheduler
@@ -61,10 +61,10 @@ except Exception:
 PYEOF
 }
 
-# ── Validate n_shards (3 or 4 only) ──────────────────────────────────────────
-if [[ "$N_SHARDS" != "3" && "$N_SHARDS" != "4" ]]; then
-  echo "WARNING: n_shards=$N_SHARDS is outside the recommended range (3–4)."
-  echo "         Accepted values are 3 (quota-limited) or 4 (preferred)."
+# ── Validate n_shards (1–4) ───────────────────────────────────────────────────
+if ! [[ "$N_SHARDS" =~ ^[1-4]$ ]]; then
+  echo "WARNING: n_shards=$N_SHARDS is outside the accepted range (1–4)."
+  echo "         Accepted values: 1 (default, all experiments), 2, 3, 4."
   echo "         Proceeding with n_shards=$N_SHARDS as requested."
 fi
 
@@ -80,7 +80,7 @@ TIMEOUT=$(get   feynman_timeout    "1100")
 echo "═══════════════════════════════════════════════════════"
 echo "  Experiment    : $EXP"
 echo "  Workflow file : $WORKFLOW_FILE"
-echo "  n_shards      : $N_SHARDS   (manual; recommended=4, minimum=3)"
+echo "  n_shards      : $N_SHARDS   (default=1; all experiments single-shard)"
 echo "  config source : $REPRO      (auto)"
 echo "───────────────────────────────────────────────────────"
 echo "  pysr_generations  : $PYSR_GEN"
