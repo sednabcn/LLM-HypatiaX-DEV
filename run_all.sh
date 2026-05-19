@@ -504,20 +504,52 @@ run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c 
 
 # ── STEP 7: exp3 ──────────────────────────────────────────────────────────────
 # FIX: mkdir -p ensures results/extrapolation exists when running standalone.
-run exp3 "Nguyen-12 benchmark -- SEED=42 (tab:nguyen12 - SS10.8)" bash -c "
-  cd '${EXPERIMENTS_DIR}'
-  mkdir -p '${RESULTS_DIR}/extrapolation'
+run exp3 "Nguyen-12 benchmark -- SEED=42 (tab:nguyen12 - SS10.8)" bash -c '
+  cd '"'"'${EXPERIMENTS_DIR}'"'"'
+  mkdir -p '"'"'${RESULTS_DIR}/extrapolation'"'"'
+  echo "=== exp3 seed 1/1: seed=42 | equations: N1-N12 (12 total) ==="
   python3 exp3_nguyen12_hybrid50v_02.py \
     --seed 42 \
-    2>&1 | tee '${RESULTS_DIR}'/exp3_run.log
+    2>&1 | tee '"'"'${RESULTS_DIR}'"'"'/exp3_run.log \
+  || echo "WARNING: seed=42 exited non-zero — continuing"
   # FIX-4: CI RESULT_SUBDIR=extrapolation — move outputs to extrapolation/,
-  # not to ${RESULTS_DIR}/ root (was: -exec mv {} '${RESULTS_DIR}/' which lost the subdir).
-  # FIX-DIR: script writes to RESULTS_DIR root (via _resolve_results_dir), not
-  # EXPERIMENTS_DIR — search must use RESULTS_DIR, not EXPERIMENTS_DIR.
-  find '${RESULTS_DIR}' -maxdepth 1 \
-    \( -name '*nguyen*seed42*.json' -o -name '*nguyen12*42*.json' \) \
-    -exec mv -v {} '${RESULTS_DIR}/extrapolation/' \; 2>/dev/null || true
-"
+  # not to ${RESULTS_DIR}/ root.
+  find '"'"'${RESULTS_DIR}'"'"' -maxdepth 1 \
+    \( -name '"'"'*nguyen*seed42*.json'"'"' -o -name '"'"'*nguyen12*42*.json'"'"' \) \
+    -exec mv -v {} '"'"'${RESULTS_DIR}/extrapolation/'"'"' \; 2>/dev/null || true
+  # -- Partial results summary after seed=42 ----------------------------------
+  echo "--- exp3 partial results after seed=42 (1/1) ---"
+  RESULT_DIR='"'"'${RESULTS_DIR}/extrapolation'"'"' python3 - <<'"'"'PYEOF'"'"'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+run_files = (sorted(glob.glob(f"{result_dir}/**/full_run_*seed42*.json", recursive=True)) +
+             sorted(glob.glob(f"{result_dir}/**/*seed42*.json", recursive=True)))
+all_files = glob.glob(f"{result_dir}/**/*.json", recursive=True)
+print(f"  seed=42: {len(run_files)} result file(s)  |  total JSON in {result_dir}: {len(all_files)}")
+for f in run_files[-1:]:
+    try:
+        data = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        if isinstance(results, list) and results:
+            print(f"  Per-equation summary ({os.path.basename(f)}):")
+            for r in results:
+                eq   = r.get("equation") or r.get("eq_id") or r.get("name", "?")
+                r2   = r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                rmse = r.get("rmse") or r.get("rmse_test", "")
+                stat = r.get("status", "")
+                r2_s = f"{r2:.4f}" if isinstance(r2, float) else str(r2)
+                print(f"    {str(eq):10s}  R2={r2_s:8s}  rmse={rmse}  {stat}")
+        elif isinstance(results, dict):
+            print(f"  Per-equation summary ({os.path.basename(f)}):")
+            for eq, r in sorted(results.items()):
+                r2 = r.get("r2") or r.get("r2_test") if isinstance(r, dict) else r
+                r2_s = f"{r2:.4f}" if isinstance(r2, float) else str(r2)
+                print(f"    {str(eq):10s}  R2={r2_s}")
+    except Exception as e:
+        print(f"  (could not parse {os.path.basename(f)}: {e})")
+PYEOF
+  echo "--- end partial results seed=42 ---"
+'
 
 # ── STEP 8: exp3b ─────────────────────────────────────────────────────────────
 # BUG 2 FIX: exp3b now uses extrapolation/multi_seed/ as its RESULT_SUBDIR.
