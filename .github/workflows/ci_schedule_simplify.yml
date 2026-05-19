@@ -302,11 +302,16 @@ jobs:
           FEYNMAN_TIMEOUT:      "900"    # repro.yaml timeouts.feynman_pysr_seconds (capped at method budget)
           PYSR_FIT_WALL_TIMEOUT: "1200"  # repro.yaml timeouts.fit_wall_timeout -> DiscoveryConfig
           PYSR_FIT_GRACE_SECS:   "120"   # repro.yaml timeouts.fit_grace_secs   -> DiscoveryConfig
+          # Workflow filename as registered in .github/workflows/ on GitHub.
+          # GitHub indexes by committed filename — update this after any rename.
+          # dispatch_experiment.sh must reference the same filename.
+          EXP_WORKFLOW_FILE: "ci_experiment_simplify.yml"
         run: |
           set -euo pipefail
 
           DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "> Dispatching $EXP at $DISPATCH_ISO (n_shards=$N_SHARDS)"
+          echo "  Workflow file : ${EXP_WORKFLOW_FILE}"
           # BUG 10 FIX (residual): dispatch_experiment.sh was fixed to treat $3
           # as TASK_IDS_OVERRIDE (not --dry-run which is now a named flag).  The
           # old call here passed 4 positional args: "EXP" "N_SHARDS" "" "TASK_IDS_OVERRIDE"
@@ -319,23 +324,43 @@ jobs:
           echo "Locating run ID for $EXP dispatched after $DISPATCH_ISO ..."
           EXP_RUN_ID=""
           for attempt in $(seq 1 20); do
-            # Use display_title (set per-run by ci_experiment_simplify.yml, contains the experiment
-            # name) rather than .name (the static workflow file title "HypatiaX - experiment
-            # runner . ci_experiment_simplify", which never contains the experiment name).
-            EXP_RUN_ID=$(gh api \
-              "/repos/${{ github.repository }}/actions/workflows/ci_experiment_simplify.yml/runs?per_page=5" \
-              --jq ".workflow_runs[]
-                    | select(.display_title | startswith(\"HypatiaX - ${EXP}\"))
-                    | select(.created_at > \"$DISPATCH_ISO\")
-                    | .id" \
+            # Use display_title (set per-run by ci_experiment_simplify.yml, contains the
+            # experiment name) rather than .name (static workflow title, no experiment name).
+            # Capture raw response so API errors are visible, not silently swallowed.
+            #
+            # NOTE: EXP_WORKFLOW_FILE must match the filename currently committed in
+            # .github/workflows/ — GitHub indexes by filename, not the name: field.
+            RAW=$(gh api \
+              "/repos/${{ github.repository }}/actions/workflows/${EXP_WORKFLOW_FILE}/runs?per_page=10" \
+              2>&1) || true
+            EXP_RUN_ID=$(echo "$RAW" | jq -r --arg exp "$EXP" --arg ts "$DISPATCH_ISO" '
+              .workflow_runs[]?
+              | select(.display_title | startswith("HypatiaX - " + $exp))
+              | select(.created_at > $ts)
+              | .id' \
               | head -1)
-            [[ -n "$EXP_RUN_ID" ]] && break
+            if [[ -n "$EXP_RUN_ID" ]]; then
+              echo "  Found run ID: $EXP_RUN_ID (attempt $attempt)"
+              break
+            fi
+            # Debug: show visible runs to diagnose title/filename mismatches
+            if [[ $attempt -eq 1 || $attempt -eq 5 || $attempt -eq 10 ]]; then
+              echo "  [debug attempt $attempt] Recent runs in ${EXP_WORKFLOW_FILE}:"
+              echo "$RAW" | jq -r '.workflow_runs[]? | "    id=\(.id) title=\(.display_title) created=\(.created_at)"' \
+                2>/dev/null | head -6 || echo "    (no runs or API error: ${RAW:0:200})"
+            fi
             echo "  Not found yet (attempt $attempt/20) - retrying in 15 s ..."
             sleep 15
           done
 
           if [[ -z "$EXP_RUN_ID" ]]; then
-            echo "ERROR: could not locate the dispatched run for $EXP"; exit 1
+            echo "ERROR: could not locate the dispatched run for $EXP"
+            echo "  Workflow queried : ${EXP_WORKFLOW_FILE}"
+            echo "  dispatch_iso     : ${DISPATCH_ISO}"
+            echo "  display_title    : must startswith 'HypatiaX - ${EXP}'"
+            echo "  Hint: if the file was recently renamed, update EXP_WORKFLOW_FILE in B1."
+            echo "  Hint: verify dispatch_experiment.sh calls 'gh workflow run ${EXP_WORKFLOW_FILE}'."
+            exit 1
           fi
           echo "Experiment run ID: $EXP_RUN_ID"
           echo "exp_run_id=$EXP_RUN_ID"   >> "$GITHUB_OUTPUT"

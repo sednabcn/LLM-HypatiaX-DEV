@@ -262,7 +262,16 @@ except ImportError as _e:
     sys.exit(1)
 
 # ── output paths ──────────────────────────────────────────────────────────────
-RESULTS_DIR = Path("hypatiax/data/results")
+# Respect OUT_BASE env var when set by CI (ci_experiment_simplify.yml).
+# If OUT_BASE is set, write into OUT_BASE/RESULT_SUBDIR (canonical CI path).
+# RESULT_SUBDIR defaults to the noiseless subdir matching the plan job metadata.
+# When running locally (no OUT_BASE), behaviour is unchanged.
+_OUT_BASE      = os.environ.get("OUT_BASE", "").strip()
+_RESULT_SUBDIR = os.environ.get("RESULT_SUBDIR", "comparison_results/noise-noiseless/noiseless").strip()
+if _OUT_BASE:
+    RESULTS_DIR = Path(_OUT_BASE) / _RESULT_SUBDIR
+else:
+    RESULTS_DIR = Path("hypatiax/data/results")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 CHECKPOINT_FILE = RESULTS_DIR / "hypatiax_defi_benchmark_v3_checkpoint.json"
 FINAL_OUTPUT    = RESULTS_DIR / "hypatiax_defi_benchmark_v3_results.json"
