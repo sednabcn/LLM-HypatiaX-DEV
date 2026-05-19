@@ -65,12 +65,9 @@ export PYSR_POPULATIONS="${PYSR_POPULATIONS:-30}"
 
 # Method timeouts — mirrors ci_experiment.yml global env block.
 # METHOD_TIMEOUT: PySR methods 5/6 budget (repro.yaml timeouts.method_seconds).
-# LLM_METHOD_TIMEOUT: tight cap for LLM/NN-only steps (not used by exp2/exp2_feynman
-#   after --skip-pysr removal; retained for any custom invocations).
+# LLM_METHOD_TIMEOUT: tight cap for LLM/NN-only steps (retained for any custom invocations).
 export METHOD_TIMEOUT="${METHOD_TIMEOUT:-900}"
 export LLM_METHOD_TIMEOUT="${LLM_METHOD_TIMEOUT:-120}"
-
-# PySR fit-level wall timeout and grace seconds — mirrors ci_experiment.yml global env.
 # PYSR_FIT_WALL_TIMEOUT: hard per-fit wall-clock cap passed to DiscoveryConfig.
 # PYSR_FIT_GRACE_SECS:   extra grace seconds before forceful kill after timeout.
 # Both must be exported so worker sub-processes and Python scripts inherit them.
@@ -445,8 +442,7 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
 #   domains on a single worker (no --domain filter) and omitted --output-dir,
 #   so results landed in the default comparison_results/ path rather than
 #   comparison_results/feynman-tests/exp2/ (RESULT_SUBDIR).
-# All 6 methods active (--skip-pysr removed from exp2_feynman).
-#   METHOD_TIMEOUT (900s) gives methods 5+6 (SymbolicEngine, HybridV50_2)
+# All 6 methods active; METHOD_TIMEOUT (900s) gives methods 5+6 (SymbolicEngine, HybridV50_2)
 #   adequate PySR budget.
 # --noiseless --threshold 0.9999: exp2_feynman uses the noiseless Feynman
 #   protocol, matching FEYNMAN_NOISELESS_THRESHOLD from repro.yaml.
@@ -490,8 +486,8 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
 #      (ExperimentProtocolAll, 30 multi-domain equations, Tab 19).
 # FIX: mkdir -p ensures tee target directory exists when this step runs
 #      standalone (--step exp2) without a prior env_check.
-# All 6 methods active (--skip-pysr removed); METHOD_TIMEOUT (900s) gives
-# methods 5+6 (SymbolicEngine, HybridV50_2) adequate PySR budget.
+# All 6 methods active; METHOD_TIMEOUT (900s) gives methods 5+6 (SymbolicEngine, HybridV50_2)
+# adequate PySR budget.
 run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'

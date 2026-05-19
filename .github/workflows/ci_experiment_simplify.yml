@@ -74,9 +74,9 @@ on:
 
       # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards (1-4). Per-experiment defaults: exp1/exp1b/exp2_feynman=1, exp2=4, all others=1. Override here for manual runs only."
+        description: "Number of parallel worker shards (1-4). All experiments default to 1."
         required: false
-        default: "4"
+        default: "1"
 
       # -- Seeds / samples ---------------------------------------------------
       seeds:
@@ -317,7 +317,7 @@ jobs:
       - name: Compute pending task list and shard split
         id: split
         env:
-          N_SHARDS:       "${{ github.event.inputs.n_shards || '4' }}"
+          N_SHARDS:       "${{ github.event.inputs.n_shards || '1' }}"
           OVERRIDE:       "${{ github.event.inputs.task_ids_override }}"
           NOISE_LEVELS:   "${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}"
           EFFECTIVE_SEEDS: ${{ steps.meta.outputs.effective_seeds }}
@@ -330,24 +330,14 @@ jobs:
           N_SHARDS_RAW = int(os.environ["N_SHARDS"])
 
           # Per-experiment shard table — authoritative source.
-          # Prevents wasted runners: single-task experiments always get 1 worker;
-          # domain-parallel experiments always get full width, regardless of whether
-          # dispatch_experiment.sh forwarded n_shards correctly.
-          #   exp1                      → 1  (10 DeFi tasks — single shard)
-          #   exp1b                     → 1  (portfolio seeds)
-          #   exp2_feynman              → 1  (all 11 domains run sequentially on one worker;
-          #                                    n_shards=1 avoids checkpoint collisions and
-          #                                    matches the sequential per-domain loop)
-          #   exp2                      → 4  (10 domain keys; full parallelism)
-          #   all remaining experiments → 1  (suppA/B/B_sc, hybrid, instability,
-          #                                    extrap, exp3, exp3b)
-          # The dispatch input is only respected when it explicitly differs from
-          # the workflow default (4), so manual overrides still work.
+          # All experiments run with exactly 1 worker shard.
+          # Single-shard mode avoids checkpoint collisions, concurrent-push
+          # races, and wasted runner quota for all experiment sizes.
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              1,
               "exp2_feynman":       1,
-              "exp2":               4,
+              "exp2":               1,
               "exp3":               1,
               "exp3b":              1,
               "suppA":              1,
@@ -358,28 +348,22 @@ jobs:
               "extrap":             1,
           }
           N_SHARDS_DEFAULT = EXP_SHARD_TABLE.get(EXP, 1)
-          # ITEM 1 FIX — exp1b (and all other single-shard experiments) must
-          # ALWAYS run with exactly 1 worker, regardless of the dispatch input.
-          # Running exp1b with n_shards > 1 is wrong: the experiment has no
-          # intra-run task parallelism and produces a single output file per
-          # seed; concurrent workers would cause filename collisions and
-          # overwrite each other's results in the repo.
-          # Rule: if the authoritative shard table says 1, N_SHARDS is 1, full stop.
+          # All experiments use exactly 1 shard (N_SHARDS_DEFAULT == 1 always).
+          # Any dispatch input other than 1 is ignored to prevent concurrent-push
+          # races and checkpoint collisions.
           if N_SHARDS_DEFAULT == 1:
               N_SHARDS = 1
-              if N_SHARDS_RAW not in (1, 4):   # 4 is the workflow default — not a real override
+              if N_SHARDS_RAW not in (1,):
                   print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
-                        f"— this experiment is single-shard only (table=1). "
-                        f"Using N_SHARDS=1. Do not dispatch {EXP} with n_shards > 1.")
-          elif N_SHARDS_RAW != 4:
-              # Multi-shard experiment with an explicit user override — honour it.
+                        f"— all experiments are single-shard only (table=1). "
+                        f"Using N_SHARDS=1.")
+          else:
+              # Future: if a multi-shard experiment is added to the table,
+              # honour an explicit user override (capped at 4).
               N_SHARDS = max(1, min(4, N_SHARDS_RAW))
               if N_SHARDS != N_SHARDS_DEFAULT:
                   print(f"::notice::n_shards override: input={N_SHARDS_RAW} "
                         f"table={N_SHARDS_DEFAULT} using={N_SHARDS}")
-          else:
-              # Default input (4) — use the per-experiment table value.
-              N_SHARDS = N_SHARDS_DEFAULT
           print(f"N_SHARDS={N_SHARDS} (table={N_SHARDS_DEFAULT}, input={N_SHARDS_RAW})")
           OVERRIDE     = os.environ["OVERRIDE"].split() if os.environ["OVERRIDE"].strip() else []
           SEEDS        = [s.strip() for s in os.environ["EFFECTIVE_SEEDS"].split(",") if s.strip()]
@@ -1666,6 +1650,38 @@ jobs:
             echo "  WARN No output files yet (shard may have had no pending tasks)."
           fi
 
+      - name: Verify suppB output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'suppB' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
+          COUNT=$(find "${TARGET}" \( -name "noise_sweep_*.json" -o -name "noise_sweep_*.csv" \) 2>/dev/null | wc -l)
+          echo "=== suppB output verification ==="
+          echo "  Target dir : ${TARGET}"
+          echo "  File count : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::suppB produced NO output files in '${TARGET}'."
+            echo "  Expected: noise_sweep_*.json or noise_sweep_*.csv"
+            exit 1
+          fi
+          echo "  OK suppB output files present."
+
+      - name: Verify suppB_sc output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'suppB_sc' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
+          COUNT=$(find "${TARGET}" \( -name "sample_complexity_*.json" -o -name "sample_complexity_*.csv" \) 2>/dev/null | wc -l)
+          echo "=== suppB_sc output verification ==="
+          echo "  Target dir : ${TARGET}"
+          echo "  File count : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::suppB_sc produced NO output files in '${TARGET}'."
+            echo "  Expected: sample_complexity_*.json or sample_complexity_*.csv"
+            exit 1
+          fi
+          echo "  OK suppB_sc output files present."
+
       - name: Save shard checkpoint
         if: always()
         run: |
@@ -1860,12 +1876,12 @@ jobs:
           git ls-files "${TARGET}" 2>/dev/null | sort || true
 
           if [[ "${TRACKED}" -eq 0 ]]; then
-            echo "::error::ITEM 4 — shard ${SHARD} (${EXP}): NO files are git-tracked under '${TARGET}'."
+            echo "::error::shard ${SHARD} (${EXP}): NO files are git-tracked under '${TARGET}'."
             echo "  This means the commit-and-push step either skipped (nothing staged)"
             echo "  or the files were written to a path that does not match RESULT_SUBDIR."
             echo "  SEP and downstream builds will find no results for this shard."
             echo "  Check: 'Move results to RESULTS_DIR' and 'Commit and push' step logs."
-            # Non-fatal here — let the run finish; the error annotation is the signal.
+            exit 1
           else
             echo "  OK ${TRACKED} file(s) committed and visible in repo under ${TARGET}."
           fi
