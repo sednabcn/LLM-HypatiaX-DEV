@@ -817,7 +817,42 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # ── Optional tee logging ──────────────────────────────────────────────────
+    # ── CI env var overrides ──────────────────────────────────────────────────
+    # When the CI dispatches one process per (n, domain) task it sets:
+    #   TASK_ID   — domain key (e.g. "feynman_biology") or equation ID
+    #   N_SAMPLES — integer sample count for this task (e.g. "200")
+    # Apply them here so the script runs only the assigned slice rather than
+    # the full sweep across all equations and all sample sizes.
+    _ci_task_id  = os.environ.get("TASK_ID",   "").strip()
+    _ci_n_samples = os.environ.get("N_SAMPLES", "").strip()
+
+    _FEYNMAN_DOMAIN_PREFIX = "feynman_"
+    _KNOWN_DOMAINS = {
+        "feynman_biology", "feynman_chemistry", "feynman_electrochemistry",
+        "feynman_electromagnetism", "feynman_electrostatics", "feynman_magnetism",
+        "feynman_mechanics", "feynman_optics", "feynman_probability",
+        "feynman_quantum", "feynman_thermodynamics",
+    }
+
+    if _ci_task_id:
+        if _ci_task_id in _KNOWN_DOMAINS or _ci_task_id.startswith(_FEYNMAN_DOMAIN_PREFIX):
+            # Domain key — override args.domain so _build_sc_cmd forwards --domain
+            args.domain = _ci_task_id
+            print(f"  [CI] TASK_ID={_ci_task_id!r} is a domain key → args.domain={args.domain!r}")
+        else:
+            # Equation ID — override args.test so _build_sc_cmd forwards --test
+            args.test = _ci_task_id
+            print(f"  [CI] TASK_ID={_ci_task_id!r} is an equation ID → args.test={args.test!r}")
+
+    if _ci_n_samples:
+        try:
+            _n = int(_ci_n_samples)
+            args.sample_sizes = [_n]
+            print(f"  [CI] N_SAMPLES={_ci_n_samples!r} → args.sample_sizes={args.sample_sizes!r}")
+        except ValueError:
+            print(f"  [CI] WARNING: N_SAMPLES={_ci_n_samples!r} is not a valid integer — ignored")
+
+
     if args.log:
         log_path = Path(args.log)
         log_path.parent.mkdir(parents=True, exist_ok=True)

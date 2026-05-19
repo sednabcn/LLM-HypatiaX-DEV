@@ -210,14 +210,15 @@ jobs:
           # ------------------------------------------------------------------
           #  Per-experiment worker (shard) count
           #
-          #  All experiments use exactly 1 worker shard.
+          #  Most experiments use exactly 1 worker shard.
           #  Single-shard mode prevents concurrent-push races and checkpoint
           #  collisions across all experiment types.
+          #  Exception: exp3b uses 4 shards (multi-seed PySR, 4 h wall-clock).
           # ------------------------------------------------------------------
           declare -A N_SHARDS_TABLE=(
             [exp1]=1               [exp1b]=1
             [exp2_feynman]=1       [exp2]=1
-            [exp3]=1               [exp3b]=1
+            [exp3]=1               [exp3b]=4
             [suppA]=1              [suppB]=1
             [suppB_sc]=1           [hybrid_all_domains]=1
             [instability]=1        [extrap]=1
