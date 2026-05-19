@@ -185,6 +185,15 @@ SDKCHECK
   python3 -c "import yaml; print(\"PyYAML: ok\")" || { echo "ERROR: pyyaml not installed"; exit 1; }
   python3 -c "import matplotlib; print(\"matplotlib:\", matplotlib.__version__)" || { echo "ERROR: matplotlib not installed"; exit 1; }
   python3 -c "import pmlb; print(\"pmlb: ok\")" || { echo "ERROR: pmlb not installed"; exit 1; }
+  # ITEM 2 FIX: seaborn is required by statistical_analysis.py (exp1 step).
+  # If it is missing the script crashes before producing any figures or stats,
+  # leaving exp1 tables and PDFs empty.  Check here and self-heal so the run
+  # never reaches the analysis step without it.
+  python3 -c "import seaborn; print(\"seaborn:\", seaborn.__version__)" 2>/dev/null || {
+    echo "WARNING: seaborn not found — installing now (required by statistical_analysis.py)"
+    python3 -m pip install --quiet seaborn || { echo "ERROR: seaborn install failed"; exit 1; }
+    python3 -c "import seaborn; print(\"seaborn: installed\", seaborn.__version__)"
+  }
   [[ -n "${ANTHROPIC_API_KEY:-}" ]] || { echo "ERROR: ANTHROPIC_API_KEY not set"; exit 1; }
   echo "ANTHROPIC_API_KEY: set (${#ANTHROPIC_API_KEY} chars)"
   # FIX-13: echo all CI-parity env vars for auditability
@@ -227,6 +236,12 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
   python3 hypatiax_defi_benchmark_v3c.py \
     2>&1 | tee '${RESULTS_DIR}'/exp1_run.log
   cd '${ANALYSIS_DIR}'
+  # ITEM 2 FIX: guard seaborn immediately before statistical_analysis.py.
+  # This is the second line of defence after the env_check self-heal above;
+  # it fires even when exp1 is run standalone (--step exp1, skipping env_check).
+  python3 -c "import seaborn" 2>/dev/null || \
+    python3 -m pip install --quiet seaborn || \
+    { echo "ERROR: seaborn install failed — statistical_analysis.py will crash"; exit 1; }
   python3 statistical_analysis.py \
     2>&1 | tee -a '${RESULTS_DIR}'/exp1_run.log
   # ── Move exp1 outputs → RESULTS_DIR ──────────────────────────────────────
@@ -254,10 +269,28 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
   python3 portfolio_variance_v3c2.py \
     2>&1 | tee -a '${RESULTS_DIR}'/exp1b_run.log
   # ── Move exp1b outputs → RESULTS_DIR ─────────────────────────────────────
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'defi_v3_*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/15/' \;
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name '*portfolio*variance*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/15/' \;
+  # BUG A FIX: comparison_FIXED_<TS>.json filenames are not unique across shards
+  # or repeated runs — the second writer silently overwrites the first in the repo.
+  # Rename each file to include SHARD_INDEX (from CI env) and a short seed tag so
+  # every output has a distinct name.  SHARD_INDEX defaults to 0 for local runs.
+  _SHARD=\${SHARD_INDEX:-0}
+  _SEED_TAG=\$(echo \"\${DEFI_SEEDS:-42}\" | tr ',' '_')
+  dest15='${RESULTS_DIR}/comparison_results/noise-noiseless/15'
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 \( -name 'defi_v3_*.json' -o -name '*portfolio*variance*.json' \) | \
+  while IFS= read -r src; do
+    fname=\$(basename \"\$src\")
+    stem=\"\${fname%.*}\"; ext=\"\${fname##*.}\"
+    dst=\"\${dest15}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
+    mv -v \"\$src\" \"\$dst\" 2>/dev/null || true
+  done
+  # comparison_FIXED_* files are also written to EXPERIMENTS_DIR or CWD
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 \( -name 'comparison_FIXED_*.json' -o -name 'comparison_FIXED_*.txt' \) | \
+  while IFS= read -r src; do
+    fname=\$(basename \"\$src\")
+    stem=\"\${fname%.*}\"; ext=\"\${fname##*.}\"
+    dst=\"\${dest15}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
+    mv -v \"\$src\" \"\$dst\" 2>/dev/null || true
+  done
 "
 
 # ── STEP 3: extrap ────────────────────────────────────────────────────────────
