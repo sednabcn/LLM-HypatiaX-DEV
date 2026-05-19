@@ -355,8 +355,21 @@ jobs:
               "extrap":             1,
           }
           N_SHARDS_DEFAULT = EXP_SHARD_TABLE.get(EXP, 1)
-          if N_SHARDS_RAW != 4:
-              # Explicit override from dispatch — honour it (clamped to [1,4]).
+          # ITEM 1 FIX — exp1b (and all other single-shard experiments) must
+          # ALWAYS run with exactly 1 worker, regardless of the dispatch input.
+          # Running exp1b with n_shards > 1 is wrong: the experiment has no
+          # intra-run task parallelism and produces a single output file per
+          # seed; concurrent workers would cause filename collisions and
+          # overwrite each other's results in the repo.
+          # Rule: if the authoritative shard table says 1, N_SHARDS is 1, full stop.
+          if N_SHARDS_DEFAULT == 1:
+              N_SHARDS = 1
+              if N_SHARDS_RAW not in (1, 4):   # 4 is the workflow default — not a real override
+                  print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
+                        f"— this experiment is single-shard only (table=1). "
+                        f"Using N_SHARDS=1. Do not dispatch {EXP} with n_shards > 1.")
+          elif N_SHARDS_RAW != 4:
+              # Multi-shard experiment with an explicit user override — honour it.
               N_SHARDS = max(1, min(4, N_SHARDS_RAW))
               if N_SHARDS != N_SHARDS_DEFAULT:
                   print(f"::notice::n_shards override: input={N_SHARDS_RAW} "
@@ -596,6 +609,7 @@ jobs:
             pyyaml \
             python-dotenv \
             matplotlib \
+            seaborn \
             pmlb
 
       - name: Install Julia / SymbolicRegression (if needed)
@@ -874,22 +888,53 @@ jobs:
           TASK_IDS="$(cat /tmp/pending_ids.txt | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
           echo "TASK_IDS=${TASK_IDS}"
 
+          # Ensure log dir exists before run_all.sh tries to tee into it.
+          mkdir -p "${OUT_BASE}"
+
           case "${EXP}" in
 
             exp1)
+              # ITEM 2 FIX: verify seaborn is importable before run_all.sh reaches
+              # statistical_analysis.py.  seaborn is in the pip install step above,
+              # but an explicit guard here catches any packaging edge-case where the
+              # install succeeded without the package being importable (e.g. wrong
+              # Python interpreter, broken wheel).
+              python3 -c "import seaborn" || {
+                echo "seaborn not importable after pip install — re-installing"
+                python3 -m pip install --quiet seaborn
+              }
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
                 bash run_all.sh --step exp1
+              # -- Ghost-file diagnostic: show exactly where exp1 wrote its output --
+              echo "=== exp1 post-run file scan (repo-root-relative) ==="
+              find . -maxdepth 8 -name "hypatiax_defi_benchmark_v3*" -o \
+                                 -name "protocol_core_noiseless_*" 2>/dev/null | sort || true
+              echo "=== end scan ==="
               ;;
 
             exp1b)
+              # ITEM 3 FIX: pass RESULTS_DIR as an absolute path so run_all.sh always
+              # resolves it from workspace root, regardless of any cd inside the script.
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               DEFI_SEEDS="${EFFECTIVE_SEEDS}" \
               DEFI_TASK_FILTER="Portfolio" \
               PYSR_SEED="${PYSR_SEED}" \
+              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
                 bash run_all.sh --step exp1b
+              # -- exp1b post-run file scan: mirrors exp1 ghost-file diagnostic ----
+              # Shows exactly where hypatiax_defi_benchmark_v3c.py (portfolio mode)
+              # wrote its outputs so path mismatches are visible in the step log.
+              echo "=== exp1b post-run file scan (repo-root-relative) ==="
+              find . -maxdepth 8 \( \
+                -name "comparison_FIXED_*.json" -o \
+                -name "comparison_FIXED_*.txt"  -o \
+                -name "defi_v3_*.json"           -o \
+                -name "*portfolio*variance*.json" \
+              \) 2>/dev/null | sort || true
+              echo "=== end scan ==="
               ;;
 
             exp2_feynman)
@@ -1198,8 +1243,24 @@ jobs:
           move_matching() {
             local pattern="$1" dest="$2"
             mkdir -p "$dest"
-            find . -maxdepth 4 -not -path "./${RESULTS_DIR}/*" \
-              -name "$pattern" -exec mv -v {} "$dest/" \; 2>/dev/null || true
+            while IFS= read -r src; do
+              [[ -e "$src" ]] || continue
+              fname=$(basename "$src")
+              dst="${dest}/${fname}"
+              if [[ -e "$dst" ]]; then
+                # BUG A FIX (universal): collision on same filename across shards/runs.
+                # Insert _shard<N>_run<run_id> before the extension so no result is lost.
+                stem="${fname%.*}"; ext="${fname##*.}"
+                if [[ "$stem" == "$fname" ]]; then
+                  dst="${dest}/${fname}_shard${SHARD_INDEX}_run${{ github.run_id }}"
+                else
+                  dst="${dest}/${stem}_shard${SHARD_INDEX}_run${{ github.run_id }}.${ext}"
+                fi
+                echo "  COLLISION: ${fname} already in ${dest} — writing to $(basename "$dst")"
+              fi
+              mv -v "$src" "$dst" 2>/dev/null || true
+            done < <(find . -maxdepth 4 -not -path "./${RESULTS_DIR}/*" \
+                       -name "$pattern" 2>/dev/null)
           }
 
           case "${EXP}" in
@@ -1217,9 +1278,25 @@ jobs:
               ;;
 
             # -- exp1b: noisy DeFi benchmark (noise=15) -----------------------
+            # BUG A FIX: comparison_FIXED_<TS>.json files from concurrent or
+            # repeated shards collide if two runners produce the same timestamp.
+            # Rename each file to comparison_FIXED_<TS>_shard<N>_<runid>.json
+            # before moving so every shard's output has a unique repo path.
+            # The same logic applies to .txt companion files.
             exp1b)
-              move_matching "comparison_FIXED_*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/15"
-              move_matching "comparison_FIXED_*.txt"  "${RESULTS_DIR}/comparison_results/noise-noiseless/15"
+              DEST_15="${RESULTS_DIR}/comparison_results/noise-noiseless/15"
+              mkdir -p "${DEST_15}"
+              while IFS= read -r src; do
+                [[ -e "$src" ]] || continue
+                base=$(basename "$src")
+                stem="${base%.*}"; ext="${base##*.}"
+                # Insert _shard<N>_run<run_id> before the extension so the filename
+                # is unique across shards and across repeated workflow runs.
+                dest="${DEST_15}/${stem}_shard${SHARD_INDEX}_run${{ github.run_id }}.${ext}"
+                mv -v "$src" "$dest" || true
+              done < <(find . -maxdepth 4 -not -path "./${RESULTS_DIR}/*" \
+                         \( -name "comparison_FIXED_*.json" -o \
+                            -name "comparison_FIXED_*.txt" \) 2>/dev/null)
               ;;
 
             # -- exp2_feynman: comparative Feynman suite -----------------------
@@ -1347,11 +1424,23 @@ jobs:
             fname=$(basename "$f")
             # Skip merge_shards.py meta-files — these belong in root by design
             [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
-            # Skip if dest and src are the same path (already in subdir)
-            dest_f="${DEST}/${fname}"
+            # Skip if src is already inside DEST (already in subdir)
             [[ "$(realpath "$f")" == "$(realpath "${DEST}")"/* ]] && continue
-            [[ -e "$dest_f" ]] && continue   # already present — skip silently
-            cp -v "$f" "${DEST}/"
+            dest_f="${DEST}/${fname}"
+            if [[ -e "$dest_f" ]]; then
+              # BUG B FIX: do NOT silently skip — a file with the same name from a
+              # different shard or run already exists.  Disambiguate by inserting
+              # _shard<N>_run<run_id> before the extension so no data is lost.
+              stem="${fname%.*}"; ext="${fname##*.}"
+              if [[ "$stem" == "$fname" ]]; then
+                # no extension
+                dest_f="${DEST}/${fname}_shard${SHARD_INDEX}_run${{ github.run_id }}"
+              else
+                dest_f="${DEST}/${stem}_shard${SHARD_INDEX}_run${{ github.run_id }}.${ext}"
+              fi
+              echo "  COLLISION: ${fname} already in dest — storing as $(basename "$dest_f")"
+            fi
+            cp -v "$f" "${dest_f}"
             copied=$((copied + 1))
           done < <(find "${SRC}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \))
 
@@ -1385,6 +1474,40 @@ jobs:
             exit 1
           fi
           echo "  OK exp1 output files present."
+
+      # -- Verify exp1b output files exist before upload ------------------------
+      # ITEM 3 FIX: exp1b had no verification step — path mismatches were invisible.
+      # hypatiax_defi_benchmark_v3c.py (portfolio mode) writes comparison_FIXED_*.json.
+      # After move_matching they must land in:
+      #   hypatiax/data/results/comparison_results/noise-noiseless/15/
+      # If none are found, the artifact upload will be empty and the repo commit
+      # will contain nothing — silent data loss.
+      - name: Verify exp1b output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp1b' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${OUT_BASE}/comparison_results/noise-noiseless/15"
+          COUNT_FIXED=$(find "${TARGET}" -name "comparison_FIXED_*.json" 2>/dev/null | wc -l)
+          COUNT_DEFI=$(find  "${TARGET}" -name "defi_v3_*.json"          2>/dev/null | wc -l)
+          COUNT_PORT=$(find  "${TARGET}" -name "*portfolio*variance*.json" 2>/dev/null | wc -l)
+          COUNT_TOTAL=$(( COUNT_FIXED + COUNT_DEFI + COUNT_PORT ))
+          echo "=== exp1b output verification ==="
+          echo "  Target dir                    : ${TARGET}"
+          echo "  comparison_FIXED_*.json       : ${COUNT_FIXED}"
+          echo "  defi_v3_*.json                : ${COUNT_DEFI}"
+          echo "  *portfolio*variance*.json     : ${COUNT_PORT}"
+          echo "  Total                         : ${COUNT_TOTAL}"
+          echo "--- Directory listing ---"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT_TOTAL}" -eq 0 ]]; then
+            echo "::error::exp1b produced NO output files in '${TARGET}'."
+            echo "  Expected: comparison_FIXED_*.json, defi_v3_*.json, or *portfolio*variance*.json"
+            echo "  The script may have written to a different path.  Check:"
+            echo "    1. 'exp1b post-run file scan' in the Run experiment tasks log"
+            echo "    2. 'Move results to RESULTS_DIR' step log for exp1b"
+            echo "  Also confirm RESULTS_DIR env was set to $(pwd)/${OUT_BASE} (absolute)."
+            exit 1
+          fi
+          echo "  OK exp1b output files present in canonical path."
 
       # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------      # tables-generator looks for noise_sweep_*.json (suppB) and
       # sample_complexity_*.json (suppB_sc) under their respective result dirs.
@@ -1557,6 +1680,21 @@ jobs:
               return 0
             fi
 
+            # BUG A FIX: detect any MODIFIED (M) tracked files about to be committed.
+            # A modified tracked result file means this shard is overwriting a result
+            # from a previous shard or run — dangerous silent data loss.
+            OVERWRITTEN=$(git diff --cached --name-status | grep '^M' | awk '{print $2}' || true)
+            if [[ -n "$OVERWRITTEN" ]]; then
+              echo "::error::OVERWRITE DETECTED — shard ${SHARD} is about to overwrite committed result file(s)."
+              echo "  This means two shards or runs produced the same output filename."
+              echo "  Files at risk:"
+              echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
+              echo "  The move_matching / Store-results steps should have disambiguated"
+              echo "  filenames with _shard<N>_run<run_id>.  Check the Move results log above."
+              # Do NOT exit — push anyway so results aren't lost, but make the error loud.
+              echo "::warning::Proceeding with push despite overwrite — investigate filename uniqueness."
+            fi
+
             STAGED=$(git diff --cached --name-only | wc -l)
             git commit -m "ci: ${EXP} shard${SHARD} results (${STAGED} file(s)) — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push --force-with-lease origin "${{ github.ref_name }}"
@@ -1568,6 +1706,43 @@ jobs:
             echo "Push conflict — waiting 20 s then retrying ..."
             sleep 20
             commit_and_push
+          fi
+
+      # -- Verify results are visible in the repo after push (ITEM 4) ----------
+      # Checks that the files committed by this shard are actually present in the
+      # repo tree (not just in the local workspace).  A missing file here means
+      # the push silently failed or the file landed in the wrong path — downstream
+      # consumers (SEP, ci_consolidate, paper build) would find nothing.
+      - name: Verify results committed to repo
+        if: always()
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          SHARD:         ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+
+          # Count files that git now tracks under TARGET.
+          TRACKED=$(git ls-files "${TARGET}" 2>/dev/null | wc -l || echo 0)
+          # Count files present on disk under TARGET.
+          ON_DISK=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
+
+          echo "=== Repo commit verification: shard ${SHARD} | ${EXP} ==="
+          echo "  Path       : ${TARGET}"
+          echo "  Git-tracked: ${TRACKED} file(s)"
+          echo "  On disk    : ${ON_DISK} file(s)"
+          git ls-files "${TARGET}" 2>/dev/null | sort || true
+
+          if [[ "${TRACKED}" -eq 0 ]]; then
+            echo "::error::ITEM 4 — shard ${SHARD} (${EXP}): NO files are git-tracked under '${TARGET}'."
+            echo "  This means the commit-and-push step either skipped (nothing staged)"
+            echo "  or the files were written to a path that does not match RESULT_SUBDIR."
+            echo "  SEP and downstream builds will find no results for this shard."
+            echo "  Check: 'Move results to RESULTS_DIR' and 'Commit and push' step logs."
+            # Non-fatal here — let the run finish; the error annotation is the signal.
+          else
+            echo "  OK ${TRACKED} file(s) committed and visible in repo under ${TARGET}."
           fi
 
 
