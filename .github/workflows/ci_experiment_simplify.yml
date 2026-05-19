@@ -1479,6 +1479,62 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # ── Commit and push shard results directly to the repo ───────────────────
+      # The consolidate job is disabled in ci_experiment_simplify.yml, so each
+      # worker shard commits its own output files here.  Results are persisted
+      # in the repo without a separate merge step.
+      #
+      # Strategy:
+      #   1. git pull --rebase so concurrent shard commits do not conflict.
+      #   2. git add the entire RESULT_SUBDIR tree for this shard.
+      #   3. Skip commit when nothing changed (idempotent on re-runs).
+      #   4. Push with --force-with-lease; retry once on conflict (race with
+      #      another shard committing at the same instant).
+      #
+      # Runs if: always() — saves results even when earlier soft-failures
+      # occurred (e.g. exp1 wrote protocol_core_noiseless_*.json but 0
+      # hypatiax_defi_benchmark_v3*results*.json — still a valid result).
+      - name: Commit and push shard results to repo
+        if: always()
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          SHARD:         ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+
+          FILE_COUNT=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
+          if [[ "${FILE_COUNT}" -eq 0 ]]; then
+            echo "No files in ${TARGET} — skipping commit for shard ${SHARD}."
+            exit 0
+          fi
+
+          commit_and_push() {
+            git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
+            git add "${TARGET}/" 2>/dev/null || true
+
+            if git diff --cached --quiet; then
+              echo "No changes staged for shard ${SHARD} — nothing to commit."
+              return 0
+            fi
+
+            git commit -m "ci: ${EXP} shard${SHARD} results — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push --force-with-lease origin "${{ github.ref_name }}"
+            echo "Pushed shard ${SHARD} results (${FILE_COUNT} file(s)) to ${{ github.ref_name }}."
+          }
+
+          # First attempt; retry once on concurrent-shard push conflict.
+          if ! commit_and_push; then
+            echo "Push failed (likely a concurrent shard) — waiting 15 s and retrying ..."
+            sleep 15
+            commit_and_push
+          fi
+
 
 
 
