@@ -293,60 +293,32 @@ jobs:
 
           echo "> Dispatching $EXP (n_shards=$N_SHARDS)"
           echo "  Workflow file : ${EXP_WORKFLOW_FILE}"
+
+          # FIX: dispatch_experiment.sh now:
+          #   1. Captures DISPATCH_ISO *before* gh workflow run (5 s clock-skew guard)
+          #   2. Polls via gh run list (strategy-1: 20×20 s) then API filter
+          #      (strategy-2: 30×20 s = 10 min total) — up from the old 20×15 s = 5 min
+          #   3. Prints EXP_RUN_ID=<id> on stdout so we capture it here directly,
+          #      eliminating the need for a second polling loop in this step.
+          #
           # Signature: "EXP" "N_SHARDS" "TASK_IDS_OVERRIDE" "WORKFLOW_FILE"
-          bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE"
+          DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_experiment.sh \
+            "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE" 2>&1)
+          echo "$DISPATCH_OUTPUT"
 
-          # Capture DISPATCH_ISO *after* dispatch_experiment.sh returns so the
-          # timestamp is guaranteed to be <= the run's created_at in the API.
-          # (Capturing before the dispatch call risks created_at == DISPATCH_ISO
-          #  which the old `> $ts` filter would silently drop.)
-          DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "> Dispatched at $DISPATCH_ISO — waiting 90 s for GitHub to register the run ..."
-          sleep 90
-
-          echo "Locating run ID for $EXP dispatched at/after $DISPATCH_ISO ..."
-          EXP_RUN_ID=""
-          for attempt in $(seq 1 30); do
-            # Use display_title (set per-run by run-name in ci_experiment_simplify.yml).
-            # Filter: created_at >= DISPATCH_ISO (>= avoids dropping same-second runs).
-            # per_page=50 ensures recent runs are not truncated.
-            RAW=$(gh api \
-              "/repos/${{ github.repository }}/actions/workflows/${EXP_WORKFLOW_FILE}/runs?per_page=50" \
-              2>&1) || true
-            EXP_RUN_ID=$(echo "$RAW" | jq -r --arg exp "$EXP" --arg ts "$DISPATCH_ISO" '
-              .workflow_runs[]?
-              | select(.display_title | startswith("HypatiaX - " + $exp))
-              | select(.created_at >= $ts)
-              | .id' \
-              | head -1)
-            if [[ -n "$EXP_RUN_ID" ]]; then
-              echo "  Found run ID: $EXP_RUN_ID (attempt $attempt)"
-              break
-            fi
-            if (( attempt % 3 == 1 )); then
-              echo "  [debug attempt $attempt] Recent runs in ${EXP_WORKFLOW_FILE} (title startswith 'HypatiaX - ${EXP}', created >= ${DISPATCH_ISO}):"
-              echo "$RAW" | jq -r '.workflow_runs[]? | "    id=\(.id) title=\(.display_title) created=\(.created_at)"' \
-                2>/dev/null | head -10 || echo "    (no runs or API error: ${RAW:0:400})"
-              echo "  [fallback] gh run list output:"
-              gh run list --workflow="${EXP_WORKFLOW_FILE}" --limit 5 --json databaseId,displayTitle,createdAt \
-                2>/dev/null | jq -r '.[] | "    id=\(.databaseId) title=\(.displayTitle) created=\(.createdAt)"' \
-                | head -6 || echo "    (gh run list failed)"
-            fi
-            echo "  Not found yet (attempt $attempt/30) - retrying in 20 s ..."
-            sleep 20
-          done
+          # Extract the run ID emitted by dispatch_experiment.sh as "EXP_RUN_ID=<id>"
+          EXP_RUN_ID=$(echo "$DISPATCH_OUTPUT" | grep '^EXP_RUN_ID=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
 
           if [[ -z "$EXP_RUN_ID" ]]; then
-            echo "ERROR: could not locate the dispatched run for $EXP"
+            echo "ERROR: dispatch_experiment.sh did not emit EXP_RUN_ID for $EXP"
             echo "  Workflow queried : ${EXP_WORKFLOW_FILE}"
-            echo "  dispatch_iso     : ${DISPATCH_ISO}"
             echo "  display_title    : must startswith 'HypatiaX - ${EXP}'"
-            echo "  Hint: verify the run-name field in ci_experiment_simplify.yml."
+            echo "  Hint: check dispatch_experiment.sh output above for polling errors."
             exit 1
           fi
+
           echo "Experiment run ID: $EXP_RUN_ID"
-          echo "exp_run_id=$EXP_RUN_ID"     >> "$GITHUB_OUTPUT"
-          echo "dispatch_iso=$DISPATCH_ISO" >> "$GITHUB_OUTPUT"
+          echo "exp_run_id=$EXP_RUN_ID" >> "$GITHUB_OUTPUT"
 
       # -- B2. Wait for ci_experiment_simplify.yml to reach COMPLETED ----------------
       #

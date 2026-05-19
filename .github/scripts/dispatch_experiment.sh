@@ -95,6 +95,7 @@ echo "════════════════════════�
 # ── Dry-run guard ─────────────────────────────────────────────────────────────
 if [[ "$DRY_RUN" == "--dry-run" ]]; then
   echo "[DRY RUN] would execute:"
+  echo "  # 1. Capture DISPATCH_ISO 5 s before gh call (clock-skew fix)"
   echo "  gh workflow run $WORKFLOW_FILE \\"
   echo "    --field experiment=\"$EXP\" \\"
   echo "    --field n_shards=\"$N_SHARDS\" \\"
@@ -106,10 +107,20 @@ if [[ "$DRY_RUN" == "--dry-run" ]]; then
   echo "    --field task_ids_override=\"$TASK_IDS_OVERRIDE\" \\"
   echo "    --field resume=\"true\" \\"
   echo "    --field dry_run=\"false\""
+  echo "  # 2. Poll via gh run list (strategy-1: 20×20s) then API filter (strategy-2: 30×20s)"
+  echo "  # 3. Print EXP_RUN_ID=<id> for callers to capture"
   exit 0
 fi
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
+# Capture timestamp BEFORE dispatch so created_at >= DISPATCH_ISO is always true.
+# Subtract 5 s as a clock-skew safety margin (portable: pure bash arithmetic).
+_NOW_EPOCH=$(date -u +%s)
+_BEFORE_EPOCH=$(( _NOW_EPOCH - 5 ))
+DISPATCH_ISO=$(date -u -d "@${_BEFORE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -r "${_BEFORE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u +%Y-%m-%dT%H:%M:%SZ)   # fallback: current time (no subtraction)
+
 gh workflow run "$WORKFLOW_FILE" \
   --field experiment="$EXP" \
   --field n_shards="$N_SHARDS" \
@@ -123,3 +134,90 @@ gh workflow run "$WORKFLOW_FILE" \
   --field dry_run="false"
 
 echo "✓ Dispatched $EXP → $WORKFLOW_FILE (n_shards=$N_SHARDS)"
+echo "  dispatch_iso (pre-dispatch, -5s): $DISPATCH_ISO"
+
+# ── Locate the dispatched run ID ──────────────────────────────────────────────
+# Strategy (in order of preference):
+#   1. gh run list --workflow immediately after dispatch (most reliable — no
+#      timestamp filter needed, just grab the newest run whose display_title
+#      matches this experiment).
+#   2. Fallback: gh API timestamp filter (created_at >= DISPATCH_ISO) with
+#      30 attempts × 20 s = 10 min total (up from the old 20 × 15 s = 5 min).
+#
+# The run ID is printed as EXP_RUN_ID= so callers (ci_schedule_simplify.yml
+# Job B) can capture it with:
+#   EXP_RUN_ID=$(... dispatch_experiment.sh ... | grep '^EXP_RUN_ID=' | cut -d= -f2)
+
+echo "  Waiting 30 s for GitHub to register the run ..."
+sleep 30
+
+EXP_RUN_ID=""
+
+# -- Strategy 1: gh run list (title match, no timestamp filter) ---------------
+for attempt in $(seq 1 20); do
+  EXP_RUN_ID=$(gh run list \
+    --workflow="$WORKFLOW_FILE" \
+    --limit 10 \
+    --json databaseId,displayTitle,createdAt \
+    --jq --arg exp "$EXP" --arg ts "$DISPATCH_ISO" \
+      '.[] | select(.displayTitle | startswith("HypatiaX - " + $exp))
+           | select(.createdAt >= $ts)
+           | .databaseId' \
+    2>/dev/null | head -1 || true)
+
+  if [[ -n "$EXP_RUN_ID" ]]; then
+    echo "  [strategy-1] Found run ID: $EXP_RUN_ID (attempt $attempt/20)"
+    break
+  fi
+
+  # Debug output every 5 attempts
+  if (( attempt % 5 == 1 )); then
+    echo "  [debug attempt $attempt/20] Recent runs for $WORKFLOW_FILE:"
+    gh run list --workflow="$WORKFLOW_FILE" --limit 5 \
+      --json databaseId,displayTitle,createdAt \
+      --jq '.[] | "    id=\(.databaseId) title=\(.displayTitle) created=\(.createdAt)"' \
+      2>/dev/null | head -6 || echo "    (gh run list failed)"
+  fi
+
+  echo "  Not found yet (attempt $attempt/20) - retrying in 20 s ..."
+  sleep 20
+done
+
+# -- Strategy 2: API timestamp filter fallback --------------------------------
+if [[ -z "$EXP_RUN_ID" ]]; then
+  echo "  [strategy-1 exhausted] Falling back to API timestamp filter ..."
+  for attempt in $(seq 1 30); do
+    RAW=$(gh api \
+      "/repos/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/actions/workflows/${WORKFLOW_FILE}/runs?per_page=50" \
+      2>&1) || true
+    EXP_RUN_ID=$(echo "$RAW" | jq -r --arg exp "$EXP" --arg ts "$DISPATCH_ISO" '
+      .workflow_runs[]?
+      | select(.display_title | startswith("HypatiaX - " + $exp))
+      | select(.created_at >= $ts)
+      | .id' \
+      | head -1)
+    if [[ -n "$EXP_RUN_ID" ]]; then
+      echo "  [strategy-2] Found run ID: $EXP_RUN_ID (attempt $attempt/30)"
+      break
+    fi
+    if (( attempt % 5 == 1 )); then
+      echo "  [debug attempt $attempt/30] API response titles:"
+      echo "$RAW" | jq -r '.workflow_runs[]? | "    id=\(.id) title=\(.display_title) created=\(.created_at)"' \
+        2>/dev/null | head -10 || echo "    (jq parse failed: ${RAW:0:300})"
+    fi
+    echo "  Not found yet (strategy-2 attempt $attempt/30) - retrying in 20 s ..."
+    sleep 20
+  done
+fi
+
+if [[ -z "$EXP_RUN_ID" ]]; then
+  echo "ERROR: could not locate the dispatched run for $EXP" >&2
+  echo "  Workflow queried : $WORKFLOW_FILE"                  >&2
+  echo "  dispatch_iso     : $DISPATCH_ISO"                   >&2
+  echo "  display_title    : must startswith 'HypatiaX - $EXP'" >&2
+  echo "  Hint: verify the run-name field in $WORKFLOW_FILE." >&2
+  exit 1
+fi
+
+# Emit for callers to capture
+echo "EXP_RUN_ID=$EXP_RUN_ID"
