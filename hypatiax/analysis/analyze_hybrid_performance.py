@@ -39,17 +39,25 @@ class HybridPerformanceAnalyzer:
     def load_latest_results(self) -> bool:
         """Load the most recent results files"""
 
-        # Find latest hybrid results
-        hybrid_files = sorted(self.results_dir.glob("hybrid_defi_*.json"))
+        # Find latest hybrid results.
+        # Step 1 outputs to hybrid_pysr/defi/ (RESULT_SUBDIR); fall back to
+        # results_dir root for backwards compatibility with older runs.
+        defi_subdir = self.results_dir / "hybrid_pysr" / "defi"
+        hybrid_files = sorted(defi_subdir.glob("hybrid_defi_*.json"))
         if not hybrid_files:
-            print("❌ No hybrid results found")
+            # Fallback: check root results dir (pre-fix runs)
+            hybrid_files = sorted(self.results_dir.glob("hybrid_defi_*.json"))
+        if not hybrid_files:
+            print("❌ No hybrid results found in hybrid_pysr/defi/ or results root")
             return False
 
         latest_hybrid = hybrid_files[-1]
         print(f"📂 Loading hybrid results: {latest_hybrid.name}")
 
         with open(latest_hybrid) as f:
-            self.hybrid_results = json.load(f)
+            data = json.load(f)
+        # Step 1 wraps results in {"timestamp":..., "total":..., "results":[...]}
+        self.hybrid_results = data.get("results", data) if isinstance(data, dict) else data
 
         print(f"✅ Loaded {len(self.hybrid_results)} hybrid test cases")
 

@@ -11,6 +11,13 @@
 # FIX WARN-2     : HYBRID_ALL_DOMAINS_EXPECTED corrected to 10-domain list that
 #                  matches CI HYBRID_ALL_DOMAINS_IDS and ExperimentProtocolAll
 # FIX STEP-ORDER : removed exp2_sym / exp2_hyb (no run-blocks exist for them)
+# FIX-suppA-1    : suppA cd REPO_ROOT (not EXPERIMENTS_DIR) — fixes doubled-path
+#                  ENOENT on all three Python scripts (hypatiax/core/..., etc.)
+# FIX-suppA-2    : suppA mkdir -p results dirs before first tee — fixes
+#                  "tee: No such file or directory" when run standalone
+# FIX-suppA-3    : suppA runs all three scripts (run_hybrid_system_benchmark.py,
+#                  test_enhanced_defi_extrapolation.py, analyze_hybrid_performance.py)
+#                  with tee / tee -a into suppA_run.log
 # SYNC-ci (2026-05-14):
 #   — git push now uses HEAD:ref_name (not hardcoded master)
 #   — consolidate timeout-minutes: 30 added
@@ -576,10 +583,24 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
 "
 
 # ── STEP 9: suppA ─────────────────────────────────────────────────────────────
+# FIX-suppA-1: cd to REPO_ROOT (not EXPERIMENTS_DIR) so all repo-relative paths
+#   (hypatiax/core/..., hypatiax/experiments/..., hypatiax/analysis/...) resolve
+#   correctly.  Previously cd '${EXPERIMENTS_DIR}' caused a doubled path prefix,
+#   e.g. hypatiax/experiments/benchmarks/hypatiax/core/generation/... → ENOENT.
+# FIX-suppA-2: mkdir -p the results dir here so tee never fails with ENOENT.
+#   env_check creates the dirs, but suppA can be run standalone (--step suppA).
+# FIX-suppA-3: use tee -a on the two subsequent Python calls so all output goes
+#   to the same log file without truncating it.
 run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routing)" bash -c "
-  cd '${EXPERIMENTS_DIR}'
-  python3 run_hybrid_system_benchmark.py \
-    2>&1 | tee '${RESULTS_DIR}'/suppA_run.log
+  cd '${REPO_ROOT}'
+  mkdir -p '${RESULTS_DIR}/hybrid_pysr/defi' '${RESULTS_DIR}/figures' '${RESULTS_DIR}/tables'
+  python3 '${EXPERIMENTS_DIR}/run_hybrid_system_benchmark.py' \
+    2>&1 | tee    '${RESULTS_DIR}'/suppA_run.log
+  python3 hypatiax/experiments/tests/test_enhanced_defi_extrapolation.py \
+    2>&1 | tee -a '${RESULTS_DIR}'/suppA_run.log
+  python3 hypatiax/analysis/analyze_hybrid_performance.py \
+    --results-dir '${RESULTS_DIR}' \
+    2>&1 | tee -a '${RESULTS_DIR}'/suppA_run.log
   # FIX-2: CI RESULT_SUBDIR=hybrid_pysr/defi — move outputs there, not hybrid_llm_nn/defi/.
   # FIX-3: removed second mv of hybrid_system*.json to hybrid_llm_nn/all_domains/ —
   #         suppA is a DeFi routing run, not a hybrid_all_domains run; those files

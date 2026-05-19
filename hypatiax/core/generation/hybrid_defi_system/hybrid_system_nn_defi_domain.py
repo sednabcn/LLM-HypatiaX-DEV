@@ -597,7 +597,7 @@ class EnhancedHybridSystemDeFi:
       evaluate_llm_formula(result_dict, X, y, var_names, verbose) -> Dict
     """
 
-    def __init__(self, model: str = "claude-sonnet-4-6", no_cache: bool = False):
+    def __init__(self, model: str = "claude-sonnet-4-20250514", no_cache: bool = False):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
@@ -1031,11 +1031,13 @@ Expected Shortfall at 95% confidence for normal returns (ES multiplier = 2.063).
             "decision_margin": float(decision_margin),
             "decision":        decision,
 
-            # For "fitted_llm": apply fitted_code to X_test via _safe_exec_formula.
-            # For "ensemble":   w * _safe_exec_formula(fitted_code, X_test) + (1-w) * nn_predict(...)
-            "nn_model": nn_model if decision in ["nn", "ensemble"] else None,
-            "scaler_X": scaler_X if decision in ["nn", "ensemble"] else None,
-            "scaler_y": scaler_y if decision in ["nn", "ensemble"] else None,
+            # Always keep NN artefacts regardless of decision.  The extrapolation
+            # test (test_enhanced_defi_extrapolation.py) checks for a non-None
+            # nn_model as a fallback when the symbolic formula fails on held-out
+            # data.  Returning None when decision=="fitted_llm" broke that path.
+            "nn_model": nn_model,
+            "scaler_X": scaler_X,
+            "scaler_y": scaler_y,
 
             "evaluation": {
                 "r2":   float(final_r2),
@@ -1137,8 +1139,10 @@ def run_batch(verbose: bool = False):
 
             all_results.append(entry)
 
-    # Save results
-    out_dir = Path("hypatiax/data/results")
+    # Save results — must land under hybrid_pysr/defi/ so the CI
+    # commit-verification step (RESULT_SUBDIR=hypatiax/data/results/hybrid_pysr/defi)
+    # finds the files and the downstream SEP build can locate them.
+    out_dir = Path("hypatiax/data/results/hybrid_pysr/defi")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"hybrid_defi_{timestamp}.json"
 
@@ -1162,12 +1166,21 @@ def run_batch(verbose: bool = False):
         avg_hybrid = np.mean([r["hybrid_train_r2"] for r in successful])
         avg_llm = np.mean([r["llm_train_r2"] for r in successful])
         avg_nn = np.mean([r["nn_train_r2"] for r in successful])
-        decisions = {d: sum(1 for r in successful if r.get("decision") == d) for d in ["llm", "nn", "ensemble"]}
+        # "fitted_llm" is the primary symbolic-formula decision in hybrid_predict;
+        # it must be counted alongside the original "llm" key so the summary is
+        # not silently wrong and downstream analysis scripts see all decision types.
+        decisions = {
+            d: sum(1 for r in successful if r.get("decision") == d)
+            for d in ["llm", "fitted_llm", "nn", "ensemble"]
+        }
         print(f"\n📊 Summary ({len(successful)}/{len(all_results)} succeeded):")
         print(f"   Avg LLM R²:    {avg_llm:.4f}")
         print(f"   Avg NN R²:     {avg_nn:.4f}")
         print(f"   Avg Hybrid R²: {avg_hybrid:.4f}")
-        print(f"   Decisions: LLM={decisions['llm']}, NN={decisions['nn']}, Ensemble={decisions['ensemble']}")
+        print(
+            f"   Decisions: LLM={decisions['llm']}, FittedLLM={decisions['fitted_llm']}, "
+            f"NN={decisions['nn']}, Ensemble={decisions['ensemble']}"
+        )
 
     return all_results
 

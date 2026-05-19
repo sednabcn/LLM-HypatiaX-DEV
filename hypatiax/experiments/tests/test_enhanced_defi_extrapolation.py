@@ -16,15 +16,27 @@ Fixes vs the 20-case version
 
 3. create_aggressive_split() fixed for 1-D X arrays.
 
-4. Test suite expanded from 20 → 72 cases (drawn from 9 domains of the
+4. Test suite expanded from 20 → 73 cases (drawn from 9 domains of the
    updated experiment_protocol_defi.py that has 77 unique formulas).
 
-5. Output file renamed to extrapolation_72cases_enhanced.json.
+5. Output file named extrapolation_73cases_enhanced.json.
 
-6. argparse description updated to reflect 72 cases.
+6. argparse description updated to reflect 73 cases.
+
+7. _distance_llm_weight and _extrapolation_probe_degradation now guard
+   against 1-D X arrays (same fix applied to create_aggressive_split).
+
+8. na2 helper in the intractable-cases block moved outside the loop.
+
+9. description setdefault applied before test_method calls so the
+   correct description is used for formula generation.
+
+10. stability_score / extrapolation_gap initialised to NaN for all
+    results so downstream report code never hits a missing key.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,11 +48,16 @@ from sklearn.preprocessing import StandardScaler
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# FIX-suppA-1: honour $RESULTS_DIR env var so the script resolves output paths
+# correctly regardless of the CWD it is launched from.  Falls back to the
+# repo-relative default when not set (preserves local-run behaviour).
+_RESULTS_DIR = Path(os.environ.get("RESULTS_DIR", project_root / "hypatiax" / "data" / "results"))
+
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
 
 
 class EnhancedExtrapolationTest:
-    """72-case extrapolation test framework with statistical rigour and NaN-safe analysis."""
+    """73-case extrapolation test framework with statistical rigour and NaN-safe analysis."""
 
     def __init__(self):
         self.protocol = DeFiExperimentProtocol()
@@ -153,7 +170,9 @@ class EnhancedExtrapolationTest:
         n = len(X_train)
         split = int(n * (1 - probe_frac))
         # Sort by primary feature so probe = highest-value region
-        order   = np.argsort(X_train[:, 0])
+        # Guard: handle both 1-D and 2-D X_train (same fix as create_aggressive_split)
+        primary_col = X_train[:, 0] if X_train.ndim >= 2 else X_train.flatten()
+        order   = np.argsort(primary_col)
         X_sorted = X_train[order]
         y_sorted = y_train[order]
 
@@ -197,6 +216,11 @@ class EnhancedExtrapolationTest:
         base_weight : weight given to LLM even when test is fully in-distribution
         Returns a scalar in [base_weight, 1.0].
         """
+        # Guard: handle both 1-D and 2-D arrays (consistent with create_aggressive_split)
+        if X_test.ndim == 1:
+            X_test  = X_test.reshape(-1, 1)
+        if X_train.ndim == 1:
+            X_train = X_train.reshape(-1, 1)
         train_min = X_train.min(axis=0)
         train_max = X_train.max(axis=0)
         outside   = np.mean(
@@ -286,12 +310,12 @@ class EnhancedExtrapolationTest:
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 72 test-case catalogue
+    # 73 test-case catalogue
     # ─────────────────────────────────────────────────────────────────────────
 
     def get_test_cases(self):
         """
-        Return 72 extrapolation test cases covering all 9 protocol domains.
+        Return 73 extrapolation test cases covering all 9 protocol domains.
         'name' must be a case-insensitive substring of the matching protocol
         description so the substring lookup in run_full_test() succeeds.
         """
@@ -904,7 +928,9 @@ class EnhancedExtrapolationTest:
 
     @staticmethod
     def _checkpoint_path() -> Path:
-        return Path("hypatiax/data/results/extrapolation_73cases_enhanced.json")
+        # FIX-suppA-1: use env-aware _RESULTS_DIR so checkpoint resolves correctly
+        # regardless of CWD (i.e. when launched from REPO_ROOT via run_all.sh).
+        return _RESULTS_DIR / "extrapolation_73cases_enhanced.json"
 
     @classmethod
     def _load_checkpoint(cls):
@@ -1013,6 +1039,8 @@ class EnhancedExtrapolationTest:
                 metadata["extrapolation_test"] = True
                 metadata["difficulty"]         = test_case["difficulty"]
                 metadata["formula_type"]       = test_case["formula_type"]
+                # Set description BEFORE test_method calls so generate_formula
+                # receives the full protocol description, not just the short name.
                 test_case.setdefault("description", desc)
 
                 X_train, y_train, X_test, y_test = self.create_aggressive_split(
@@ -1029,6 +1057,11 @@ class EnhancedExtrapolationTest:
                             var_names, metadata,
                         )
                         results[method] = result
+
+                        # Always initialise these keys so the report never hits
+                        # a missing-key error even when success=False.
+                        result.setdefault("extrapolation_gap",  float("nan"))
+                        result.setdefault("stability_score",    float("nan"))
 
                         if result.get("success", False):
                             tr = result.get("train_r2", float("nan"))
@@ -1098,7 +1131,8 @@ class EnhancedExtrapolationTest:
                 return None
             raise TypeError(f"Not JSON serialisable: {type(obj).__name__}")
 
-        out = Path("hypatiax/data/results/extrapolation_73cases_enhanced.json")
+        # FIX-suppA-1: use env-aware _RESULTS_DIR (set at module level)
+        out = _RESULTS_DIR / "extrapolation_73cases_enhanced.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w") as f:
             json.dump(all_results, f, indent=2, default=_json_default)
@@ -1307,9 +1341,9 @@ class EnhancedExtrapolationTest:
             return float(np.median(v)) if len(v) else float("nan")
 
         sg_l, sg_n, sg_h = _sg("pure_llm"), _sg("neural_network"), _sg("hybrid")
-        def na(x):
+        def _na_sg(x):
             return f"{x:.4f}" if not np.isnan(x) else "nan"
-        print(f"  LLM={na(sg_l)},  NN={na(sg_n)},  Hybrid={na(sg_h)}")
+        print(f"  LLM={_na_sg(sg_l)},  NN={_na_sg(sg_n)},  Hybrid={_na_sg(sg_h)}")
 
         # ── Bootstrap CIs (clipped, standard, median-based) ───────────────────
         print("\nBootstrap 95% CIs (clipped test R2, standard cases, median-based):")
@@ -1346,14 +1380,16 @@ class EnhancedExtrapolationTest:
                 for tc in self.get_test_cases()
                 if tc.get("extrapolation_intractable")
             }
+
+            def na2(x):
+                return f"{x:.3f}" if (x is not None
+                                      and not np.isnan(x)) else "nan"
+
             for r in intractable:
                 name = r["test_case"]
                 h    = r["results"].get("hybrid", {})
                 lv   = r["results"].get("pure_llm", {})
                 nv   = r["results"].get("neural_network", {})
-                def na2(x):
-                    return f"{x:.3f}" if (x is not None
-                                                                  and not np.isnan(x)) else "nan"
                 print(f"\n  [{r['difficulty'].upper()}] {name}")
                 print(f"    LLM={na2(lv.get('test_r2'))}, "
                       f"NN={na2(nv.get('test_r2'))}, "
@@ -1385,7 +1421,9 @@ class EnhancedExtrapolationTest:
             )
 
         # ── LaTeX export ──────────────────────────────────────────────────────
-        results_dir = Path("hypatiax/data/results")
+        # FIX-suppA-1: use env-aware _RESULTS_DIR (set at module level) rather
+        # than a hardcoded relative path so the script works from any CWD.
+        results_dir = _RESULTS_DIR
         results_dir.mkdir(parents=True, exist_ok=True)
         (results_dir / "figures").mkdir(exist_ok=True)
 
@@ -1516,7 +1554,8 @@ if __name__ == "__main__":
         "--resume", action="store_true", default=False,
         help=(
             "Resume from the last checkpoint saved in "
-            "hypatiax/data/results/extrapolation_73cases_enhanced.json. "
+            "$RESULTS_DIR/extrapolation_73cases_enhanced.json "
+            "(defaults to hypatiax/data/results/ when $RESULTS_DIR is unset). "
             "Completed cases are skipped; the run continues from the first "
             "missing case."
         ),
