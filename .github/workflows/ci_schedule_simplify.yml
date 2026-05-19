@@ -26,7 +26,8 @@ name: "HypatiaX-simplify-scheduled full run"
 #
 #  WORKER COUNT (per-experiment)
 #  Each experiment has a fixed worker count based on its parallelism needs:
-#    exp1 / exp1b              → 2  (DeFi tasks / portfolio seeds)
+#    exp1                      → 1  (DeFi tasks — single shard)
+#    exp1b                     → 1  (portfolio seeds)
 #    exp2 / exp2_feynman       → 4  (10-11 domain keys; full parallelism required)
 #    exp3                      → 1  (single-seed Nguyen-12; sequential OK)
 #    all remaining experiments → 1  (suppA/B/B_sc, hybrid, instability, extrap, exp3b)
@@ -36,9 +37,9 @@ name: "HypatiaX-simplify-scheduled full run"
 #  n_shards input is IGNORED for scheduled / chained runs — it is retained
 #  only for manual single-slot overrides (continue_chain=false).
 #
-#  ci_experiment_simplify.yml resolves n_shards from a built-in per-experiment table:
-#  exp1/exp1b=2, exp2/exp2_feynman=4, all others=1. The dispatch n_shards input
-#  is only honoured when it explicitly differs from the workflow default (4).
+#  ci_experiment_simplify.yml resolves n_shards from a built-in per-experiment
+#  table: exp1=1, exp1b=1, exp2/exp2_feynman=4, all others=1. The dispatch
+#  n_shards input is only honoured when it differs from the default (4).
 # -------------------------------------------------------------
 
 on:
@@ -223,18 +224,20 @@ jobs:
           #  Per-experiment worker (shard) count
           #
           #  Drives the matrix width in ci_experiment_simplify.yml.
-          #  exp1 / exp1b         → 2  (10 DeFi tasks / portfolio seeds)
+          #  exp1                 → 1  (10 DeFi tasks — single shard)
+          #  exp1b                → 1  (portfolio seeds)
           #  exp2 / exp2_feynman  → 4  (10/11 domain keys; max parallelism)
           #  exp3                 → 1  (single seed, 12 tasks; sequential OK)
           #  everything else      → 1  (small/medium experiments)
           #
-          #  NOTE: ci_experiment_simplify.yml drives N_SHARDS from a built-in table
-          #  (exp1/exp1b=2, exp2/exp2_feynman=4, all others=1).  The n_shards
-          #  dispatch input is only respected when it differs from the default (4),
-          #  so the values in N_SHARDS_TABLE below are now the authoritative source.
+          #  NOTE: ci_experiment_simplify.yml now uses a built-in per-experiment
+          #  shard table (exp1=1, exp1b=1, exp2/exp2_feynman=4, all others=1).
+          #  The N_SHARDS_TABLE values below are the source of truth for
+          #  scheduled runs; the dispatch n_shards input is used only when
+          #  it explicitly differs from the workflow default (4).
           # ------------------------------------------------------------------
           declare -A N_SHARDS_TABLE=(
-            [exp1]=2               [exp1b]=2
+            [exp1]=1               [exp1b]=1
             [exp2_feynman]=4       [exp2]=4
             [exp3]=1               [exp3b]=1
             [suppA]=1              [suppB]=1
