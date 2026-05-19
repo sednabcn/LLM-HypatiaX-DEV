@@ -752,8 +752,8 @@ def main() -> None:
         "coulomb":         "I.12.2",
         "kinetic_energy":  "I.12.4",
         "kinetic":         "I.12.4",
-        "arrhenius":       "II.11.27",
-        "ideal_gas":       "II.11.28",
+        "arrhenius":       "FEY_CHEM_ARR",
+        "ideal_gas":       "FEY_THERMO_IG",
     }
     if getattr(args, "test", None):
         _canonical = _TEST_ALIASES.get(args.test.lower().replace(" ", "_"), args.test)

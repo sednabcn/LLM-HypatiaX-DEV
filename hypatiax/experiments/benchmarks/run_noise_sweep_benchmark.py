@@ -242,9 +242,9 @@ def _build_runner_cmd(
             "kinetic_energy":  "I.12.4",
             "kinetic":         "I.12.4",
             # Arrhenius  k = A*exp(-Ea/(R*T))
-            "arrhenius":       "II.11.27",
+            "arrhenius":       "FEY_CHEM_ARR",
             # Ideal gas  P*V = n*R*T
-            "ideal_gas":       "II.11.28",
+            "ideal_gas":       "FEY_THERMO_IG",
         }
         canonical = _TEST_ALIASES.get(args.test.lower().replace(" ", "_"), args.test)
         if canonical != args.test:
@@ -270,18 +270,30 @@ def _build_runner_cmd(
 
     # ── CI per-task equation filter ───────────────────────────────────────────
     # When the CI dispatches one process per (noise, equation) task, it sets
-    # TASK_ID to the Feynman equation ID (e.g. "I.12.1").  Forward it to the
-    # inner runner via --test so only that one equation is run, avoiding the
-    # full-30-equation sweep for every per-task subprocess.
+    # TASK_ID to either a Feynman equation ID (e.g. "I.12.1") or a domain key
+    # (e.g. "feynman_biology").  Domain keys must be forwarded as --domain;
+    # equation IDs as --test.  Passing a domain key to --test causes exit-code-1
+    # because the inner runner searches equation names and finds no match.
     _ci_task_id = os.environ.get("TASK_ID", "").strip()
-    if _ci_task_id and "--test" not in cmd:
-        _TEST_ALIASES_REV: dict = {
-            "I.12.1":   "I.12.1",   "I.12.2":  "I.12.2",   "I.12.4": "I.12.4",
-            "II.11.27": "II.11.27", "II.11.28": "II.11.28",
+    if _ci_task_id and "--test" not in cmd and "--domain" not in cmd:
+        _FEYNMAN_DOMAIN_PREFIX = "feynman_"
+        _KNOWN_DOMAINS = {
+            "feynman_biology", "feynman_chemistry", "feynman_electrochemistry",
+            "feynman_electromagnetism", "feynman_electrostatics", "feynman_magnetism",
+            "feynman_mechanics", "feynman_optics", "feynman_probability",
+            "feynman_quantum", "feynman_thermodynamics",
         }
-        canonical_ci = _TEST_ALIASES_REV.get(_ci_task_id, _ci_task_id)
-        cmd += ["--test", canonical_ci]
-        print(f"  [CI] TASK_ID={_ci_task_id!r} → --test {canonical_ci!r}")
+        if _ci_task_id in _KNOWN_DOMAINS or _ci_task_id.startswith(_FEYNMAN_DOMAIN_PREFIX):
+            cmd += ["--domain", _ci_task_id]
+            print(f"  [CI] TASK_ID={_ci_task_id!r} is a domain key → --domain {_ci_task_id!r}")
+        else:
+            _TEST_ALIASES_REV: dict = {
+                "I.12.1":   "I.12.1",   "I.12.2":  "I.12.2",   "I.12.4": "I.12.4",
+                "FEY_CHEM_ARR": "FEY_CHEM_ARR", "FEY_THERMO_IG": "FEY_THERMO_IG",
+            }
+            canonical_ci = _TEST_ALIASES_REV.get(_ci_task_id, _ci_task_id)
+            cmd += ["--test", canonical_ci]
+            print(f"  [CI] TASK_ID={_ci_task_id!r} → --test {canonical_ci!r}")
 
     return cmd, sigma_label
 
