@@ -276,20 +276,33 @@ def _build_runner_cmd(
     # Unique checkpoint per sigma — prevents noisy passes colliding.
     cmd += ["--checkpoint-name", f"noise_sweep_{sigma_label}_checkpoint"]
 
-    # ── CI per-task equation filter ───────────────────────────────────────────
-    # When the CI dispatches one process per (noise, equation) task, it sets
-    # TASK_ID to the Feynman equation ID (e.g. "I.12.1").  Forward it to the
-    # inner runner via --test so only that one equation is run, avoiding the
-    # full-30-equation sweep for every per-task subprocess.
-    _ci_task_id = os.environ.get("TASK_ID", "").strip()
-    if _ci_task_id and "--test" not in cmd:
-        _TEST_ALIASES_REV: dict = {
-            "I.12.1":   "I.12.1",   "I.12.2":  "I.12.2",   "I.12.4": "I.12.4",
-            "II.11.27": "II.11.27", "II.11.28": "II.11.28",
-        }
-        canonical_ci = _TEST_ALIASES_REV.get(_ci_task_id, _ci_task_id)
-        cmd += ["--test", canonical_ci]
-        print(f"  [CI] TASK_ID={_ci_task_id!r} → --test {canonical_ci!r}")
+    # NOTE: The TASK_ID env-var → --test forwarding block that previously lived
+    # here has been removed.  The CI suppB dispatch shards by feynman *domain*
+    # (e.g. "feynman_biology"), not by individual equation ID.  Forwarding the
+    # domain key as --test caused the inner runner to exit with code 1 because
+    # domain keys are not valid equation IDs in its registry.  The correct
+    # scoping is handled by DOMAIN_FILTER / --domain (see below) and by the
+    # YAML's per-noise-level loop; no per-equation TASK_ID injection is needed.
+
+    # ── CI domain filter ──────────────────────────────────────────────────────
+    # The CI suppB dispatch sets DOMAIN_FILTER to a space-separated list of
+    # feynman domain keys assigned to this shard (e.g. "feynman_biology
+    # feynman_chemistry").  The YAML loop calls this script once per noise
+    # level; each call should restrict the inner runner to the shard's domains.
+    # When DOMAIN_FILTER contains exactly one domain and --domain was not
+    # overridden on the CLI, honour it.  For multiple domains the inner runner
+    # sweeps all assigned equations in one pass (YAML does not loop per-domain
+    # for suppB), so we cannot express it as a single --domain flag — log and
+    # proceed with the full sweep for this shard's noise level.
+    _ci_domain_filter = os.environ.get("DOMAIN_FILTER", "").strip()
+    if _ci_domain_filter and getattr(args, "domain", "all_domains") == "all_domains":
+        _domains = _ci_domain_filter.split()
+        if len(_domains) == 1:
+            cmd += ["--domain", _domains[0]]
+            print(f"  [CI] DOMAIN_FILTER={_ci_domain_filter!r} → --domain {_domains[0]!r}")
+        else:
+            print(f"  [CI] DOMAIN_FILTER={_ci_domain_filter!r} — {len(_domains)} domains, "
+                  f"inner runner will sweep all assigned equations in one pass")
 
     return cmd, sigma_label
 
@@ -319,6 +332,13 @@ def _run_noise_level(
     cmd, _label = _build_runner_cmd(noise_level, args, runner)
     child_env   = os.environ.copy()
     child_env["HYPATIAX_NOISE_LEVEL"] = str(noise_level)
+    # Remove TASK_ID / TASK_IDS from the child environment.  These are set by
+    # the CI worker step and contain feynman domain keys (e.g. "feynman_biology")
+    # or compound shard IDs ("noise0.0__feynman_biology"), not equation IDs.
+    # Forwarding them into the inner runner would cause invalid --test injection
+    # if run_comparative_suite_benchmark_v2.py has its own TASK_ID-reading path.
+    child_env.pop("TASK_ID",  None)
+    child_env.pop("TASK_IDS", None)
 
     print(f"  Command: {' '.join(cmd)}\n")
     t_start = time.time()
@@ -718,11 +738,14 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── CI per-task noise injection ───────────────────────────────────────────
-    # The CI suppB dispatch sets NOISE_LEVEL (the numeric level string extracted
-    # from the task ID "noise{level}__{eq}") BEFORE launching this script.
-    # When present and args.noise_levels was not overridden on the CLI, restrict
-    # the sweep to exactly that one sigma so the per-task subprocess does not
-    # re-run all noise levels.
+    # The CI suppB dispatch sets NOISE_LEVEL (the numeric noise-level string
+    # extracted from the task ID "noise{level}__{domain}") before launching
+    # this script once per noise level.  When present and args.noise_levels
+    # was not overridden on the CLI, restrict the sweep to exactly that one
+    # sigma so this subprocess does not re-run all noise levels.
+    # Units: CI passes values matching the dispatch noise_levels input
+    # (e.g. "0.0", "0.5", "1.0", "5.0", "10.0"); values > 1 are treated as
+    # percentages and divided by 100 to get fractions.
     _ci_noise_env = os.environ.get("NOISE_LEVEL", "").strip()
     if _ci_noise_env:
         try:

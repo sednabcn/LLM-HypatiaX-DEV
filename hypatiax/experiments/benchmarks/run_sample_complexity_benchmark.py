@@ -273,6 +273,12 @@ def _run_sample_size(
     child_env = os.environ.copy()
     noise_val = 0.0 if noiseless else getattr(args, "fixed_noise", 0.05)
     child_env["HYPATIAX_NOISE_LEVEL"] = str(noise_val)
+    # Remove TASK_ID / TASK_IDS from the child environment.  The CI worker step
+    # sets these to compound shard IDs ("sc_n200__feynman_biology"), not equation
+    # IDs.  Forwarding them into run_comparative_suite_benchmark_v2.py would
+    # cause invalid --test injection if that script has its own TASK_ID-reading path.
+    child_env.pop("TASK_ID",  None)
+    child_env.pop("TASK_IDS", None)
 
     t0 = time.time()
     # EINTR-safe subprocess wrapper — Python 3.12 does not always retry
@@ -823,6 +829,57 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # ── CI env integration ────────────────────────────────────────────────────
+    # The CI suppB_sc dispatch sets three env vars before launching this script:
+    #
+    #   SC_SAMPLE_COUNTS  comma-separated sample counts extracted from task IDs
+    #                     of the form "sc_n{n}__{domain}" (e.g. "50,100,200,500")
+    #   DOMAIN_FILTER     space-separated feynman domain keys assigned to this
+    #                     shard (e.g. "feynman_biology feynman_chemistry")
+    #   NOISE_LEVEL       numeric noise level string matching the dispatch input
+    #                     (e.g. "5.0" for σ=5%); values > 1 treated as percentages
+    #
+    # Each var is only applied when the corresponding CLI arg was not explicitly
+    # overridden, following the same pattern as run_noise_sweep_benchmark.py.
+
+    # SC_SAMPLE_COUNTS → args.sample_sizes
+    _ci_sc_counts = os.environ.get("SC_SAMPLE_COUNTS", "").strip()
+    if _ci_sc_counts and args.sample_sizes == _DEFAULT_SAMPLE_SIZES:
+        try:
+            _parsed_counts = [int(x.strip()) for x in _ci_sc_counts.split(",") if x.strip()]
+            if _parsed_counts:
+                args.sample_sizes = _parsed_counts
+                print(f"  [CI] SC_SAMPLE_COUNTS={_ci_sc_counts!r} → sample_sizes={_parsed_counts}")
+        except ValueError:
+            print(f"  WARNING: could not parse SC_SAMPLE_COUNTS={_ci_sc_counts!r} "
+                  f"— using CLI default {args.sample_sizes}")
+
+    # DOMAIN_FILTER → args.domain (single-domain shards only)
+    _ci_domain_filter = os.environ.get("DOMAIN_FILTER", "").strip()
+    if _ci_domain_filter and args.domain == "all_domains":
+        _ci_domains = _ci_domain_filter.split()
+        if len(_ci_domains) == 1:
+            args.domain = _ci_domains[0]
+            print(f"  [CI] DOMAIN_FILTER={_ci_domain_filter!r} → --domain {args.domain!r}")
+        else:
+            # Multiple domains: inner runner sweeps all assigned equations in one
+            # pass; cannot express as a single --domain arg, so proceed with the
+            # full sweep.  The YAML does not loop per-domain for suppB_sc.
+            print(f"  [CI] DOMAIN_FILTER={_ci_domain_filter!r} — {len(_ci_domains)} domains, "
+                  f"inner runner will sweep all assigned equations in one pass")
+
+    # NOISE_LEVEL → args.fixed_noise (ignored when --noiseless is set)
+    _ci_noise_env = os.environ.get("NOISE_LEVEL", "").strip()
+    if _ci_noise_env and not args.noiseless:
+        try:
+            _nl = float(_ci_noise_env)
+            # Values > 1 are percentages (e.g. "5.0" → 0.05); fractions passed as-is.
+            args.fixed_noise = _nl / 100.0 if _nl > 1 else _nl
+            print(f"  [CI] NOISE_LEVEL={_ci_noise_env!r} → fixed_noise={args.fixed_noise:.4f}")
+        except ValueError:
+            print(f"  WARNING: could not parse NOISE_LEVEL={_ci_noise_env!r} "
+                  f"— using fixed_noise={args.fixed_noise}")
 
     # ── Optional tee logging ──────────────────────────────────────────────────
     if args.log:

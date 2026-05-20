@@ -144,7 +144,7 @@ env:
   LLM_METHOD_TIMEOUT:  "120"   # tight timeout for LLM/NN-only runs (methods 1-4, no PySR)
   PYSR_FIT_WALL_TIMEOUT: "1200" # repro.yaml timeouts.fit_wall_timeout → DiscoveryConfig
   PYSR_FIT_GRACE_SECS: "120"   # repro.yaml timeouts.fit_grace_secs → DiscoveryConfig
-  FEYNMAN_NOISELESS_THRESHOLD: "0.9999"
+  FEYNMAN_NOISELESS_THRESHOLD: "0.999999"  # matches run_noise_sweep_benchmark.py --threshold-noiseless default
   OUT_BASE:            "hypatiax/data/results"
   REPRO_CFG:           "${{ github.workspace }}/config/repro.yaml"
   PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
@@ -1040,8 +1040,8 @@ jobs:
               # FIX suppB-DISPATCH: plan task IDs have the form "noise{nl}__{domain}"
               # e.g. "noise0.0__feynman_biology".  The old per-task loop extracted EQ_ID
               # as "feynman_biology" (a domain key, not an equation ID) and passed it as
-              # TASK_ID to run_noise_sweep_benchmark.py, which then tried to look up
-              # "--test feynman_biology" in the equation registry → KeyError / crash.
+              # TASK_ID to run_noise_sweep_benchmark.py, which then forwarded it as
+              # "--test feynman_biology" to the inner runner → KeyError / crash.
               #
               # Fix: derive the unique set of NOISE_LEVEL values from the pending task
               # IDs and invoke the script once per noise level, passing NOISE_LEVEL and
@@ -1051,6 +1051,15 @@ jobs:
               #
               # DOMAIN_FILTER lets the script restrict to only the domains in this shard
               # (supporting future multi-shard suppB without re-architecting the loop).
+              #
+              # FIX: unset TASK_ID (singular) before invoking the script.  A stale
+              # TASK_ID in env (set earlier in this step, or inherited) would be read by
+              # run_noise_sweep_benchmark.py's legacy CI block and forwarded as --test
+              # with a domain key, crashing the inner runner.  The env var is no longer
+              # read by the script (the block was removed), but the unset is kept here
+              # as defence-in-depth in case run_comparative_suite_benchmark_v2.py has
+              # its own TASK_ID-reading path.
+              unset TASK_ID
               DOMAIN_FILTER=$(python3 -c "
 import json, os, sys
 tasks = open('/tmp/pending_ids.txt').read().splitlines()
@@ -1093,7 +1102,10 @@ print(' '.join(seen.keys()))
             # and invoke the script once (all counts in one call), passing SC_SAMPLE_COUNTS
             # and DOMAIN_FILTER as env vars.  The script enumerates equations per domain
             # itself, exactly as run_all.sh's suppB_sc step does.
+            #
+            # FIX: unset TASK_ID (singular) — same defence-in-depth as suppB above.
             suppB_sc)
+              unset TASK_ID
               DOMAIN_FILTER=$(python3 -c "
 import sys
 tasks = open('/tmp/pending_ids.txt').read().splitlines()
