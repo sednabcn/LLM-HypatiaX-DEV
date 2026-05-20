@@ -112,10 +112,12 @@ run-name: >-
   ${{ github.event.inputs.experiment || github.event.workflow_run.display_title || 'manual' }}
 
 on:
-  # -- Auto-trigger: fires when ANY ci_experiment.yml run finishes -----------
+  # -- Auto-trigger: fires when ANY ci_experiment_simplify.yml run finishes --
+  # FIX: name was "HypatiaX - experiment runner . run_all.sh" (old workflow).
+  # Must match the `name:` field in ci_experiment_simplify.yml exactly.
   workflow_run:
     workflows:
-      - "HypatiaX - experiment runner . run_all.sh"
+      - "HypatiaX -simplify-experiment runner . ci_experiment_simplify"
     types: [completed]
 
   # -- Manual trigger --------------------------------------------------------
@@ -242,57 +244,100 @@ jobs:
                   EXPERIMENT = m.group(1) if m else "all"
               target_exps = [EXPERIMENT] if EXPERIMENT in SUBDIR else list(SUBDIR.keys())
 
+          # FIX check-PRESENCE: the consolidate job is disabled in
+          # ci_experiment_simplify.yml — each worker shard commits its own
+          # result files directly.  _merged.json / _merged.csv / _checkpoint.json
+          # are NEVER written, so checking for them always reports MISSING.
+          #
+          # Instead, presence is determined by scanning the canonical RESULT_SUBDIR
+          # for non-meta data files (*.json / *.csv not starting with "_").
+          # This is consistent with the "Verify output files exist" steps in the
+          # worker job and with what ci_analysis.yml uses as its readiness signal.
+          #
+          # Per-experiment result file globs (primary output patterns):
+          RESULT_GLOBS = {
+              "exp1":              ["hypatiax_defi_benchmark_v3*results*.json",
+                                    "protocol_core_noiseless_*.json"],
+              "exp1b":             ["comparison_FIXED_*.json", "defi_v3_*.json",
+                                    "*portfolio*variance*.json"],
+              "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
+              "exp3":              ["full_run_*.json", "report_hybrid_*.json",
+                                    "hybrid_defi_*.json"],
+              "exp3b":             ["full_run_*.json", "report_hybrid_*.json",
+                                    "hybrid_defi_*.json"],
+              "suppA":             ["consolidated_hybrid_*.json", "hybrid_system*.json"],
+              "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              "suppB_sc":          ["sample_complexity_*.json", "sample_complexity_*.csv"],
+              "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
+              "instability":       ["instability_analysis.csv", "*.pdf", "*.png"],
+              "extrap":            ["all_domains_extrap_v4_*.json",
+                                    "protocol_core_*.json"],
+          }
+
+          import glob as _glob
+
           report = {}
           all_present = True
 
-          print(f"{'Experiment':<25} {'Subdir':<50} {'_merged.json':>14} {'_checkpoint.json':>18} {'_merged.csv':>13}")
-          print("-" * 125)
+          print(f"{'Experiment':<25} {'Subdir':<50} {'Result files':>14} {'_merged.json':>14}")
+          print("-" * 110)
 
           for exp_id in target_exps:
-              subdir = SUBDIR[exp_id]
+              subdir     = SUBDIR[exp_id]
               result_dir = OUT_BASE / subdir
+              globs      = RESULT_GLOBS.get(exp_id, ["*.json"])
 
-              merged_json  = result_dir / "_merged.json"
-              merged_csv   = result_dir / "_merged.csv"
-              checkpoint   = result_dir / "_checkpoint.json"
+              # Count non-meta result files matching any primary glob
+              data_files = []
+              if result_dir.exists():
+                  for pattern in globs:
+                      data_files.extend(
+                          f for f in result_dir.glob(pattern)
+                          if not f.name.startswith("_")
+                      )
+              data_files = list(set(data_files))  # deduplicate
 
-              present = merged_json.exists()
-              valid   = False
-              n_tasks = 0
+              present = len(data_files) > 0
+              valid   = present
+              n_tasks = len(data_files)
 
-              if present:
+              # _merged.json is optional (written only when consolidate ran manually)
+              merged_json = result_dir / "_merged.json"
+              merged_ok   = False
+              if merged_json.exists():
                   try:
-                      data    = json.loads(merged_json.read_text())
-                      valid   = True
-                      # n_tasks = number of task records (keys that are not meta)
-                      n_tasks = len([k for k in data if not k.startswith("_")])
+                      mdata   = json.loads(merged_json.read_text())
+                      merged_ok = True
+                      # If merged is present, prefer its task count
+                      n_tasks = len([k for k in mdata if not k.startswith("_")])
                   except Exception as e:
                       print(f"  !! {exp_id}: _merged.json parse error: {e}")
 
-              status_j = "✓" if present and valid else ("⚠ invalid" if present else "✗ MISSING")
-              status_c = "✓" if checkpoint.exists() else "✗"
-              status_v = "✓" if merged_csv.exists() else "✗"
+              status_r = f"✓ {n_tasks} file(s)" if present else "✗ MISSING"
+              status_m = "✓" if merged_ok else "— (not consolidated)"
 
-              print(f"  {exp_id:<23} {subdir:<50} {status_j:>14} {status_c:>18} {status_v:>13}"
-                    + (f"  ({n_tasks} tasks)" if n_tasks else ""))
+              print(f"  {exp_id:<23} {subdir:<50} {status_r:>14} {status_m:>14}")
 
               report[exp_id] = {
                   "present":     present,
                   "valid":       valid,
                   "n_tasks":     n_tasks,
                   "subdir":      subdir,
-                  "has_csv":     merged_csv.exists(),
-                  "has_ckpt":    checkpoint.exists(),
+                  "has_csv":     any((result_dir / "_merged.csv").exists()
+                                     for _ in [1]),
+                  "has_ckpt":    (result_dir / "_checkpoint.json").exists(),
+                  "has_merged":  merged_ok,
               }
               if not present:
                   all_present = False
 
           print()
-          n_ok      = sum(1 for v in report.values() if v["present"] and v["valid"])
+          n_ok      = sum(1 for v in report.values() if v["present"])
           n_missing = sum(1 for v in report.values() if not v["present"])
-          print(f"  {n_ok}/{len(report)} experiments have valid _merged.json")
+          print(f"  {n_ok}/{len(report)} experiments have committed result files")
           if n_missing:
-              print(f"  ⚠  {n_missing} experiment(s) missing merged output: "
+              print(f"  ⚠  {n_missing} experiment(s) missing output: "
                     + ", ".join(e for e, v in report.items() if not v["present"]))
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
@@ -382,6 +427,28 @@ jobs:
               "extrap":            FEYNMAN_DOMAINS,
           }
 
+          # FIX complete-DONESET: consolidate is disabled — _merged.json is never
+          # written by the worker.  The old code read _merged.json to build done_set,
+          # so done_set was always empty and every task showed as missing.
+          #
+          # Fix: build done_set by scanning the result subdir for committed files
+          # and matching their filenames against task IDs.  A task ID is considered
+          # done if any file in the subdir contains the sanitised task ID as a
+          # substring (the same heuristic used by the worker's Save shard checkpoint
+          # step).  If _merged.json is present (manual consolidation), it is used
+          # as an additional source and unioned in.
+          def _done_set_from_files(result_dir, all_ids):
+              """Return set of task IDs whose output file is present in result_dir."""
+              import glob as _g
+              done = set()
+              files = [f.name for f in result_dir.glob("*")
+                       if f.is_file() and not f.name.startswith("_")]
+              for tid in all_ids:
+                  safe = tid.replace("/", "_").replace(".", "_")
+                  if any(safe in fname for fname in files):
+                      done.add(tid)
+              return done
+
           completion = {}
           any_incomplete = False
 
@@ -392,26 +459,32 @@ jobs:
               all_ids = REGISTRY.get(exp_id, [])
               total   = len(all_ids)
 
-              if not info["present"] or not info["valid"]:
+              if not info["present"]:
                   missing = all_ids
                   done    = 0
               else:
-                  subdir  = info["subdir"]
-                  merged  = OUT_BASE / subdir / "_merged.json"
-                  try:
-                      data = json.loads(merged.read_text())
-                      # task records are keys not starting with "_"
-                      done_set = {k for k in data if not k.startswith("_")}
-                      # Also check _checkpoint.json completed list as a union
-                      ckpt = OUT_BASE / subdir / "_checkpoint.json"
-                      if ckpt.exists():
-                          try:
-                              cd = json.loads(ckpt.read_text())
-                              done_set |= set(cd.get("completed", []))
-                          except Exception:
-                              pass
-                  except Exception:
-                      done_set = set()
+                  subdir     = info["subdir"]
+                  result_dir = OUT_BASE / subdir
+                  done_set   = _done_set_from_files(result_dir, all_ids)
+
+                  # Union with _merged.json keys when consolidation ran manually
+                  merged = result_dir / "_merged.json"
+                  if merged.exists():
+                      try:
+                          mdata    = json.loads(merged.read_text())
+                          done_set |= {k for k in mdata if not k.startswith("_")}
+                      except Exception:
+                          pass
+
+                  # Union with per-subdir _checkpoint.json completed list
+                  ckpt = result_dir / "_checkpoint.json"
+                  if ckpt.exists():
+                      try:
+                          cd = json.loads(ckpt.read_text())
+                          done_set |= set(cd.get("completed", []))
+                      except Exception:
+                          pass
+
                   missing = [t for t in all_ids if t not in done_set]
                   done    = total - len(missing)
 
@@ -421,7 +494,6 @@ jobs:
               icon = "✓" if not missing else "⚠"
               print(f"  {icon} {exp_id:<23} {total:>7} {done:>7} {len(missing):>9}")
               if missing:
-                  # Print first 10 missing IDs; summarise the rest
                   shown = missing[:10]
                   print(f"      Missing: {shown}"
                         + (f" ... +{len(missing)-10} more" if len(missing) > 10 else ""))
@@ -556,21 +628,55 @@ jobs:
               checks.append(["result_files", len(data_files) > 0,
                              f"{len(data_files)} data file(s) in {subdir_rel or 'results/'}"])
 
-              # 3. _merged.json
+              # 3. _merged.json (optional — written only when consolidate ran manually)
+              # FIX qualify-DIM3: consolidate is disabled; _merged.json is never written
+              # by the worker.  Gate changed to: "result files present AND valid JSON"
+              # (at least one non-meta *.json in result_dir is parseable).
               merged_json = result_dir / "_merged.json"
-              checks.append(["_merged.json", merged_json.exists(),
-                             str(merged_json) if merged_json.exists() else f"missing: {merged_json}"])
+              if merged_json.exists():
+                  merged_ok = True
+                  merged_detail = str(merged_json)
+              else:
+                  # Accept if ≥1 non-meta JSON result file exists and is valid JSON
+                  json_files = [f for f in result_dir.glob("*.json")
+                                if not f.name.startswith("_")] if result_dir.exists() else []
+                  valid_json = False
+                  for jf in json_files[:3]:  # spot-check first 3
+                      try:
+                          json.loads(jf.read_text()); valid_json = True; break
+                      except Exception:
+                          pass
+                  merged_ok     = valid_json
+                  merged_detail = (f"{len(json_files)} result JSON(s) — no _merged.json (per-shard commit mode)"
+                                   if json_files else "no result JSON files found")
+              checks.append(["result_json_valid", merged_ok, merged_detail])
 
-              # 4. _merged.csv
+              # 4. _merged.csv (optional — generated by consolidate or tables step)
+              # FIX qualify-DIM4: _merged.csv is never written without consolidate.
+              # Gate changed to: CSV present in subdir OR instability_analysis.csv
+              # present in figures/ (for instability experiment).
               merged_csv = result_dir / "_merged.csv"
-              checks.append(["_merged.csv", merged_csv.exists(),
-                             str(merged_csv) if merged_csv.exists() else f"missing: {merged_csv}"])
+              csv_ok     = merged_csv.exists()
+              csv_detail = str(merged_csv) if csv_ok else ""
+              if not csv_ok:
+                  # Accept any *.csv in the result dir (noise_sweep_*.csv, sample_complexity_*.csv, etc.)
+                  csv_files = list(result_dir.glob("*.csv")) if result_dir.exists() else []
+                  csv_ok     = len(csv_files) > 0
+                  csv_detail = (f"{len(csv_files)} CSV(s) in {subdir_rel}"
+                                if csv_ok else f"no CSV files in {subdir_rel} (tables not yet generated)")
+              checks.append(["csv_or_tables", csv_ok, csv_detail])
 
               # 5. Committed to git (tracked + clean in HEAD)
+              # FIX qualify-DIM5: previously gated on merged_json.exists() — always
+              # False when consolidate is disabled.  Now checks the first non-meta
+              # result file in the subdir (or _merged.json when it exists).
               git_ok = False
               git_detail = "git unavailable"
-              if merged_json.exists():
-                  rel = str(merged_json)
+              probe_file = merged_json if merged_json.exists() else next(
+                  (f for f in (result_dir.glob("*.json") if result_dir.exists() else [])
+                   if not f.name.startswith("_")), None)
+              if probe_file:
+                  rel = str(probe_file)
                   try:
                       r1 = subprocess.run(
                           ["git", "ls-files", "--error-unmatch", rel],
@@ -587,6 +693,8 @@ jobs:
                           git_detail = "not tracked by git"
                   except FileNotFoundError:
                       git_detail = "git not found"
+              else:
+                  git_detail = "no result file to probe"
               checks.append(["committed_to_git", git_ok, git_detail])
 
               # 6. Figures present (shared across experiments)

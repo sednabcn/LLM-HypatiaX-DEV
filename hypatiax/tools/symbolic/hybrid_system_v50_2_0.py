@@ -1,52 +1,9 @@
 """
-HypatiaX Hybrid Discovery System v5.3
+HypatiaX Hybrid Discovery System v5.1
 ======================================
-Adds six engineering fixes (Issues 1-6) identified in the v5.2 code review
-on top of the v5.2 LLM-wiring + output-correctness rewrite.
-
-What v5.3 fixes (from v5.2 review)
-------------------------------------
-Issue-1 / FIX-A v5.3
-    RMSE inverse-transform missing for scale_log=True.
-    Gravity-style equations reported RMSE in log-space units rather than
-    original units.  Added: y_pred = sign(y_pred) * (10**|y_pred| - 1)
-    before the RMSE sqrt when _discover_scale_log=True.
-
-Issue-2 / FIX-A v5.3
-    eval() replaced with sympy.lambdify() in the RMSE path.
-    eval() with restricted builtins still allows pathological expressions
-    (__class__, nested exp explosions).  lambdify() compiles a numpy
-    function safely and is faster for repeated evaluation.
-
-Issue-3
-    _normalise_expression() no longer calls sympy.simplify().
-    Aggressive simplification in the evaluation path can change
-    mathematical domains (sqrt(x**2) → Abs(x); log(exp(x)) → x under
-    wrong assumptions), silently altering physical meaning.
-    A new _display_expression() method applies simplification for
-    human-readable output only.
-
-Issue-4
-    _last_X_aug / _last_aug_names accessed via getattr() with safe
-    defaults so AttributeError cannot surface if SymbolicEngine
-    internals change.  (Full fix requires engine to expose these in
-    its return dict; tracked as TODO.)
-
-Issue-5
-    llm_mode state machine split into:
-      self.requested_llm_mode — immutable intent set at __init__
-      self.llm_mode           — active mode (may degrade to "none" on
-                                missing key or construction failure)
-    Prevents the three-way requested/enabled/runtime confusion.
-
-Issue-6
-    Warm-start Phase 2 now applies operator constraints to a
-    copy.deepcopy of the engine config and swaps it in/out via a
-    try/finally block.  The original mutation pattern was thread-unsafe:
-    concurrent discover() calls could race on binary_operators.
-
-All earlier fixes (FIX-1 … FIX-6, FIX-A … FIX-D, FIX-C, FIX-POW,
-PROD-1 … PROD-7, PIN-1 … PIN-4) are preserved unchanged.
+Adds four output-correctness fixes (FIX-A … FIX-D) from v4.1 on top of the
+v5.0 LLM-wiring rewrite.  All v5.0 LLM fixes (FIX-1 … FIX-6) and PROD-1…7
+performance improvements are preserved.
 
 Bug history
 -----------
@@ -70,16 +27,56 @@ v4.2 / v4.2.1 (hybrid_system.py / v43)
 v5.0  LLM-wiring rewrite (FIX-1 … FIX-6).  Output-correctness bugs below
       were not addressed.
 
-v5.1  Output-correctness fixes (FIX-A … FIX-D) ported from v4.1.
+What v5.0 fixed (LLM wiring)
+-----------------------------
+FIX-1   Import SymbolicEngineWithLLM alongside SymbolicEngine.
+FIX-2   __init__ instantiates SymbolicEngineWithLLM when use_llm=True OR when
+        an LLM API key is available, passing llm_mode through correctly.
+FIX-3   discover_validate_interpret() now reads use_llm and routes to the
+        correct engine path.
+FIX-4   _discover_with_retry() respects the engine type already set —
+        no duplicate routing needed.
+FIX-5   _initialize_llm_providers() retained for the external
+        anthropic_provider / google_provider attributes (used by callers that
+        talk to LLM providers directly), but the discovery path now uses
+        SymbolicEngineWithLLM's internal IntegratedLLMEngine instead.
+FIX-6   use_llm=True now propagates through the discover() thin adapter so
+        benchmark runners can enable LLM guidance via metadata.
 
-v5.2  FIX-D threshold relaxed (6→4 OOM), FIX-POW, FIX-RATIO, FIX-SIMPLIFY
-      (aggressive simplification added — later found to be unsafe, reverted
-      in v5.3 Issue-3).
+What v5.1 fixes (output correctness — ported from v4.1)
+---------------------------------------------------------
+FIX-A   RMSE always Infinity in discover() return dict.
+        Root cause: discover() tried to read a "predictions" key that
+        _discover_with_retry() never writes.  Fix: compute RMSE directly
+        from the discovered expression string against the training y vector
+        using the same expression evaluator used for validation.
 
-v5.3  This version.  Six engineering issues from code review addressed
-      (see above).
+FIX-B   extrapolation_errors always 0.0 / extrap_r2 always wrong.
+        Root cause: the discover() thin adapter returned the expression only
+        under "final_formula"; test harnesses computing out-of-distribution
+        metrics looked for a "formula" key and got None.
+        Fix: return "formula", "expression", and "final_formula" all pointing
+        to the same string, and add a "variable_names" key so callers can
+        bind the expression without extra round-trips.
 
-Reproducibility pins (inherited from v4.0, preserved in v5.3)
+FIX-C   PySR non-determinism warning on every run.
+        Root cause: random_state was set without deterministic=True and
+        parallelism='serial'.  Fix: pass deterministic=True and
+        parallelism='serial' into the engine call when a random_state is
+        supplied (opt-out via allow_nondeterministic=True on __init__).
+
+FIX-D   Gravitational-force (and other extreme-scale equations) collapses
+        to a constant.
+        Root cause: PySR normalises internally but when feature magnitudes
+        span >6 orders of magnitude (e.g. 1e-9 charges vs 1e22 forces) the
+        search collapses to a constant before meaningful structure appears.
+        Fix: discover() detects extreme-scale inputs (log10 range > 6 across
+        any feature), applies per-feature signed-log10 scaling, fits on the
+        scaled space, and injects a scale_log=True flag into the result
+        metadata so callers know the returned expression is in log-space.
+        Raw RMSE is still computed in original units.
+
+Reproducibility pins (inherited from v4.0, preserved in v5.1)
 --------------------------------------------------------------
 PIN-1   max_retries default = 5  (matches v4 reference run).
 PIN-2   Default DiscoveryConfig niterations = 50.
@@ -290,11 +287,10 @@ class HybridDiscoverySystem:
         self.max_retries = max_retries
         self.enable_auto_config = enable_auto_config
         self.use_llm = use_llm
-        self.requested_llm_mode = llm_mode if use_llm else "none"  # Issue-5: immutable intent
-        self.llm_mode = self.requested_llm_mode                     # Issue-5: active mode (may degrade)
+        self.llm_mode = llm_mode if use_llm else "none"
 
         logger.info("=" * 70)
-        logger.info("HybridDiscoverySystem v5.3 — LLM WIRING + OUTPUT FIXES + ENGINEERING HARDENING")
+        logger.info("HybridDiscoverySystem v5.2 — LLM WIRING + OUTPUT FIXES + FIX-D/RATIO/SIMPLIFY")
         logger.info("=" * 70)
         logger.info(f"Domain: {domain}")
         logger.info(f"Discovery mode: {self.discovery_mode.value}")
@@ -372,7 +368,7 @@ class HybridDiscoverySystem:
                     exc_info=True,
                 )
                 self.symbolic_engine = SymbolicEngine(symbolic_config, domain=domain)
-                self.llm_mode = "none"  # active mode degraded; requested_llm_mode preserved
+                self.llm_mode = "none"
         else:
             # Pure-PySR path: identical to all previous versions.
             self.symbolic_engine = SymbolicEngine(symbolic_config, domain=domain)
@@ -382,7 +378,7 @@ class HybridDiscoverySystem:
                     "running pure PySR.  Set ANTHROPIC_API_KEY or pass "
                     "anthropic_api_key= to enable LLM guidance."
                 )
-                self.llm_mode = "none"  # active mode degraded; requested_llm_mode preserved
+                self.llm_mode = "none"
 
         try:
             self.validator = EnsembleValidator(
@@ -707,37 +703,23 @@ class HybridDiscoverySystem:
     @staticmethod
     def _normalise_expression(expression_str: str) -> str:
         """Replace PySR custom operator names — PROD-3: uses pre-compiled patterns.
-
-        Issue-3 fix (v5.3): aggressive SymPy simplification is removed from
-        the evaluation path.  simplify() can change mathematical domains
-        (e.g. sqrt(x**2) → Abs(x), log(exp(x)) → x under specific assumptions)
-        which alters the physical meaning of discovered expressions.
-        Simplification is now reserved for _display_expression() only.
+        FIX-SIMPLIFY v5.2: collapses log(exp(x))→x and exp(log(x))→x.
         """
         result = expression_str
-        result = result.replace("^", "**")
+        result = result.replace("^", "**")   # ← ADD THIS LINE (first thing)
         for pat, numpy_name in HybridDiscoverySystem._PYSR_OP_PATTERNS.values():
             result = pat.sub(numpy_name, result)
-        return result
-
-    @staticmethod
-    def _display_expression(expression_str: str) -> str:
-        """Return a human-readable simplified form of an expression (display-only).
-
-        Uses SymPy simplification but is NEVER called during RMSE computation
-        or validation — only for printing/logging.  Issue-3 fix (v5.3).
-        """
-        normalised = HybridDiscoverySystem._normalise_expression(expression_str)
         try:
             import sympy as _sp
-            _free = _sp.sympify(normalised).free_symbols
-            _assumptions = {str(s): _sp.Symbol(str(s), real=True, positive=False)
-                            for s in _free}
-            _sym = _sp.sympify(normalised, locals=_assumptions)
-            _simp = str(_sp.simplify(_sym))
-            return _simp if len(_simp) < len(normalised) else normalised
+            _free = _sp.sympify(result).free_symbols
+            _assumptions = {str(s): _sp.Symbol(str(s), real=True) for s in _free}
+            _sym = _sp.sympify(result, locals=_assumptions)
+            _simp_str = str(_sp.simplify(_sym))
+            if len(_simp_str) < len(result):
+                result = _simp_str
         except Exception:
-            return normalised
+            pass
+        return result
 
     def _safe_validate(
         self,
@@ -857,33 +839,33 @@ class HybridDiscoverySystem:
                 _orig_maxsize = self.symbolic_engine.config.maxsize
 
                 try:
-                    import copy as _copy
                     _ws_constraints = self.symbolic_engine._extract_operators_from_equation(
                         _p1_expr
                     )
-                    # Issue-6 fix (v5.3): apply constraints to a deep-copied config
-                    # so concurrent discover() calls cannot interfere with each other.
-                    _ws_config = _copy.deepcopy(self.symbolic_engine.config)
+                    # Temporarily tighten the engine config
+
                     if _ws_constraints.get("binary_operators"):
-                        _ws_config.binary_operators = _ws_constraints["binary_operators"]
+                        self.symbolic_engine.config.binary_operators = (
+                            _ws_constraints["binary_operators"]
+                        )
                     if _ws_constraints.get("unary_operators"):
-                        _ws_config.unary_operators = _ws_constraints["unary_operators"]
+                        self.symbolic_engine.config.unary_operators = (
+                            _ws_constraints["unary_operators"]
+                        )
                     if _ws_constraints.get("maxsize"):
-                        _ws_config.maxsize = _ws_constraints["maxsize"]
+                        self.symbolic_engine.config.maxsize = _ws_constraints["maxsize"]
 
                     logger.info(f"   [WARM-START] Constraints: {_ws_constraints}")
 
-                    # Temporarily swap config on the engine, run Phase 2, restore.
-                    _saved_config = self.symbolic_engine.config
-                    self.symbolic_engine.config = _ws_config
-                    try:
-                        _p2_result = self._discover_with_retry(
-                            X, y, variable_names, variable_descriptions, variable_units,
-                            equation_name=equation_name,
-                        )
-                    finally:
-                        # Always restore — even if _discover_with_retry raises.
-                        self.symbolic_engine.config = _saved_config
+                    _p2_result = self._discover_with_retry(
+                        X, y, variable_names, variable_descriptions, variable_units,
+                        equation_name=equation_name,
+                    )
+
+                    # Restore original config regardless of outcome
+                    self.symbolic_engine.config.binary_operators = _orig_binary
+                    self.symbolic_engine.config.unary_operators  = _orig_unary
+                    self.symbolic_engine.config.maxsize          = _orig_maxsize
 
                     _p2_r2 = _p2_result.get("r2_score", 0.0)
                     logger.info(
@@ -901,7 +883,11 @@ class HybridDiscoverySystem:
 
                 except Exception as _ws_err:
                     logger.warning(f"   [WARM-START] Phase 2 failed ({_ws_err}) — keeping Phase 1.")
-                    # Config is already restored by the inner try/finally above.
+                    # Config already restored inside the try block above;
+                    # if exception occurred before restore, reset defensively:
+                    self.symbolic_engine.config.binary_operators = _orig_binary
+                    self.symbolic_engine.config.unary_operators  = _orig_unary
+                    self.symbolic_engine.config.maxsize          = _orig_maxsize
 
             engine = discovery_result.get("discovery_engine", "unknown")
             llm_info = discovery_result.get("llm_mode", "")
@@ -979,7 +965,7 @@ class HybridDiscoverySystem:
                 "discovery_engine": discovery_result.get("discovery_engine"),
                 "llm_mode": self.llm_mode,
                 "equation_name": equation_name,
-                "version": "5.3",
+                "version": "5.1",
             },
         }
 
@@ -1140,55 +1126,60 @@ class HybridDiscoverySystem:
 
             formula = discovery.get("expression", "N/A")
 
-            # FIX-A v5.3: robust RMSE computation.
-            # Changes vs v5.2:
-            #   1. eval() → sympy.lambdify()  (Issue 2 / security)
-            #   2. inverse log-transform added when scale_log=True  (Issue 1)
-            #   3. inf → nan fallback  (nan = not computable; inf ≠ infinitely bad fit)
-            #   4. scalar predictions broadcast to vector
-            #   5. finite-mask validates both y_pred and y_orig before sqrt
-            #   6. failure cause logged at WARNING level
-            rmse = float("nan")
+            # FIX-A: compute RMSE from the expression string — the "predictions"
+            # key was never written by _discover_with_retry(), so the old code
+            # always returned inf.  Evaluate the expression directly against the
+            # *original* (unscaled) training y.
+            rmse = float("inf")
             _X_for_rmse = getattr(self, "_discover_X_orig", X)
             _y_for_rmse = getattr(self, "_discover_y_orig", y)
-            _scale_log  = getattr(self, "_discover_scale_log", False)
             if formula and formula not in (
                 "DISCOVERY_FAILED", "NO_VALID_EQUATIONS", "VALIDATION_FAILED", "N/A"
             ):
                 try:
-                    import sympy as _sp
                     _norm_expr = self._normalise_expression(formula)
+                    # FIX-RATIO v5.2: bind sanitised names, ratio/augmented features,
+                    # and use _X_aug (normalised) for base cols since the formula
+                    # was discovered on normalised X, not original-scale X.
                     _safe_names = discovery.get("variable_names", var_names)
                     _X_aug   = getattr(self.symbolic_engine, "_last_X_aug",    _X_for_rmse)
                     _aug_nms = getattr(self.symbolic_engine, "_last_aug_names", list(var_names))
-
-                    # Build variable → column mapping
-                    _vars_dict: dict[str, np.ndarray] = {}
-                    for _i, _nm in enumerate(var_names):
-                        if _i < _X_aug.shape[1]:
-                            _vars_dict[_nm] = _X_aug[:, _i]
-                    for _i, _nm in enumerate(_safe_names):
-                        if _i < _X_aug.shape[1] and _nm not in _vars_dict:
-                            _vars_dict[_nm] = _X_aug[:, _i]
-                    for _i, _nm in enumerate(_aug_nms):
-                        if _i < _X_aug.shape[1] and _nm not in _vars_dict:
-                            _vars_dict[_nm] = _X_aug[:, _i]
-
-                    # sympy.lambdify — safer than eval(), caches well for repeated calls
-                    _expr_sym = _sp.sympify(_norm_expr)
-                    _ordered_syms = [_sp.Symbol(k) for k in _vars_dict]
-                    _func = _sp.lambdify(_ordered_syms, _expr_sym, modules="numpy")
-                    _y_pred = _func(*[_vars_dict[k] for k in _vars_dict])
-                    _y_pred = np.asarray(_y_pred, dtype=np.float64)
-
-                    # Broadcast scalar prediction to vector
-                    if _y_pred.ndim == 0:
+                    # FIX-RMSE-BARE: PySR expressions use bare function names
+                    # (exp, sqrt, log, sin, cos, abs) — not np.exp etc.
+                    # eval() with {"__builtins__": {}} raises NameError for
+                    # every bare name, leaving rmse=inf even when the formula
+                    # is correct.  Add numpy ufunc aliases to the namespace.
+                    _ns: dict[str, Any] = {
+                        "np": np,
+                        # bare PySR function names → numpy equivalents
+                        "exp":   np.exp,
+                        "log":   np.log,
+                        "sqrt":  np.sqrt,
+                        "sin":   np.sin,
+                        "cos":   np.cos,
+                        "tan":   np.tan,
+                        "abs":   np.abs,
+                        "asin":  np.arcsin,
+                        "acos":  np.arccos,
+                        "atan":  np.arctan,
+                        "arcsin": np.arcsin,
+                        "arccos": np.arccos,
+                        "arctan": np.arctan,
+                        # base cols — use normalised X (matches what formula was fit to)
+                        **{name: _X_aug[:, i] for i, name in enumerate(var_names)
+                           if i < _X_aug.shape[1]},
+                        # sanitised name aliases (e.g. I_var for I)
+                        **{_safe_names[i]: _X_aug[:, i]
+                           for i in range(len(var_names))
+                           if i < _X_aug.shape[1] and _safe_names[i] != var_names[i]},
+                        # ratio_ and other engineered feature columns
+                        **{nm: _X_aug[:, i] for i, nm in enumerate(_aug_nms)
+                           if nm not in var_names and i < _X_aug.shape[1]},
+                    }
+                    _y_pred = eval(_norm_expr, {"__builtins__": {}}, _ns)  # noqa: S307
+                    _y_pred = np.asarray(_y_pred, dtype=float)
+                    if _y_pred.shape == ():
                         _y_pred = np.full(len(_y_for_rmse), float(_y_pred))
-
-                    # Issue 1: inverse log-transform predictions if they are in log-space
-                    if _scale_log:
-                        _y_pred = np.sign(_y_pred) * (10 ** np.abs(_y_pred) - 1)
-
                     _finite = np.isfinite(_y_pred) & np.isfinite(_y_for_rmse)
                     if _finite.sum() >= 2:
                         rmse = float(
@@ -1196,14 +1187,15 @@ class HybridDiscoverySystem:
                                 (_y_for_rmse[_finite] - _y_pred[_finite]) ** 2
                             ))
                         )
-                    else:
-                        rmse = float("nan")
                 except Exception as _rmse_err:
-                    logger.warning(f"[FIX-A] RMSE computation failed: {_rmse_err}")
+                    logger.debug(f"[FIX-A] RMSE eval failed ({_rmse_err}) — reporting inf")
 
             success = r2 > 0.0 and formula not in (
                 "DISCOVERY_FAILED", "NO_VALID_EQUATIONS", "VALIDATION_FAILED", "N/A"
             )
+
+            # FIX-D: report whether the expression is in log-space
+            _scale_log = getattr(self, "_discover_scale_log", False)
 
             return {
                 # FIX-B: all three key aliases test harnesses look for
@@ -1234,7 +1226,7 @@ class HybridDiscoverySystem:
             return {
                 "success": False,
                 "r2": 0.0,
-                "rmse": float("nan"),   # nan = not computable; inf would mean infinitely bad fit
+                "rmse": float("inf"),
                 "formula": "N/A",
                 "expression": "N/A",
                 "final_formula": "N/A",
@@ -1276,12 +1268,12 @@ class HybridDiscoverySystem:
         """Save results to JSON — PROD-4/5: single-pass serialisation."""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"discovery_results_v53_{timestamp}.json"
+            filename = f"discovery_results_v51_{timestamp}.json"
 
         results_list = [_to_serialisable(r) for r in self.results]
 
         output = {
-            "version": "5.3",
+            "version": "5.1",
             "timestamp": datetime.now().isoformat(),
             "domain": self.domain,
             "llm_mode": self.llm_mode,

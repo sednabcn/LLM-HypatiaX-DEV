@@ -1037,40 +1037,88 @@ jobs:
               ;;
 
             suppB)
-              while IFS= read -r task; do
-                [[ -z "$task" ]] && continue
-                NOISE="${task%%__*}"; NOISE="${NOISE#noise}"
-                EQ_ID="${task##*__}"
-                NOISE_LEVEL="${NOISE}" \
-                TASK_IDS="${task}" \
-                TASK_ID="${EQ_ID}" \
+              # FIX suppB-DISPATCH: plan task IDs have the form "noise{nl}__{domain}"
+              # e.g. "noise0.0__feynman_biology".  The old per-task loop extracted EQ_ID
+              # as "feynman_biology" (a domain key, not an equation ID) and passed it as
+              # TASK_ID to run_noise_sweep_benchmark.py, which then tried to look up
+              # "--test feynman_biology" in the equation registry → KeyError / crash.
+              #
+              # Fix: derive the unique set of NOISE_LEVEL values from the pending task
+              # IDs and invoke the script once per noise level, passing NOISE_LEVEL and
+              # DOMAIN_FILTER (space-separated list of feynman domain keys assigned to
+              # this shard).  The script enumerates all equations for each domain itself,
+              # exactly as run_all.sh's suppB step does (OUT_BASE + single invocation).
+              #
+              # DOMAIN_FILTER lets the script restrict to only the domains in this shard
+              # (supporting future multi-shard suppB without re-architecting the loop).
+              DOMAIN_FILTER=$(python3 -c "
+import json, os, sys
+tasks = open('/tmp/pending_ids.txt').read().splitlines()
+domains = sorted({t.split('__',1)[1] for t in tasks if '__' in t})
+print(' '.join(domains))
+")
+              NOISE_LIST=$(python3 -c "
+import os
+tasks = open('/tmp/pending_ids.txt').read().splitlines()
+# extract numeric noise level from 'noise{nl}__{domain}', preserving insertion order
+seen = {}
+for t in tasks:
+    nl = t.split('__',1)[0].lstrip('noise')
+    seen[nl] = True
+print(' '.join(seen.keys()))
+")
+              echo "suppB: noise levels = ${NOISE_LIST}"
+              echo "suppB: domains      = ${DOMAIN_FILTER}"
+              for NL in ${NOISE_LIST}; do
+                echo "=== suppB: NOISE_LEVEL=${NL} shard=${SHARD_INDEX} ==="
+                NOISE_LEVEL="${NL}" \
+                DOMAIN_FILTER="${DOMAIN_FILTER}" \
+                TASK_IDS="${TASK_IDS}" \
                 PYSR_SEED="${PYSR_SEED}" \
-                  python3 hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py
-              done < /tmp/pending_ids.txt
+                OUT_BASE="${RESULTS_DIR}" \
+                RESULTS_DIR="${RESULTS_DIR}" \
+                  python3 hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py \
+                  || echo "WARNING: suppB NOISE_LEVEL=${NL} exited non-zero — continuing"
+              done
               ;;
 
-            # <- FIX CRITICAL 2: new suppB_sc dispatch branch
-            # Task format: "sc_n{n}__{feynman_id}"  e.g. "sc_n200__I.6.20"
-            # N_SAMPLES and TASK_ID are extracted per task and passed as env vars.
-            # run_sample_complexity_benchmark.py reads N_SAMPLES (int) and
-            # TASK_ID (feynman_id string) and writes its result to RESULT_SUBDIR.
+            # FIX suppB_sc-DISPATCH: plan task IDs have the form "sc_n{n}__{domain}"
+            # e.g. "sc_n200__feynman_biology".  The old per-task loop extracted EQ_ID
+            # as "feynman_biology" (a domain key) and passed it as TASK_ID, causing the
+            # same registry-lookup crash as the suppB bug.  The comment
+            # "sc_n200__I.6.20" was aspirational, not actual — the plan builds IDs from
+            # FEYNMAN_DOMAINS (domain keys), not individual equation IDs.
+            #
+            # Fix: derive SC_SAMPLE_COUNTS and DOMAIN_FILTER from the pending task list
+            # and invoke the script once (all counts in one call), passing SC_SAMPLE_COUNTS
+            # and DOMAIN_FILTER as env vars.  The script enumerates equations per domain
+            # itself, exactly as run_all.sh's suppB_sc step does.
             suppB_sc)
-              while IFS= read -r task; do
-                [[ -z "$task" ]] && continue
-                # Strip "sc_n" prefix; split on "__"
-                NPART="${task%%__*}"; NPART="${NPART#sc_n}"
-                EQ_ID="${task##*__}"
-                if [[ -z "${NPART}" || -z "${EQ_ID}" ]]; then
-                  echo "WARNING: malformed suppB_sc task ID '${task}' - skipping"
-                  continue
-                fi
-                N_SAMPLES="${NPART}" \
-                TASK_ID="${EQ_ID}" \
-                TASK_IDS="${task}" \
-                PYSR_SEED="${PYSR_SEED}" \
-                RESULTS_DIR="${RESULTS_DIR}" \
-                  python3 hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py
-              done < /tmp/pending_ids.txt
+              DOMAIN_FILTER=$(python3 -c "
+import sys
+tasks = open('/tmp/pending_ids.txt').read().splitlines()
+domains = sorted({t.split('__',1)[1] for t in tasks if '__' in t})
+print(' '.join(domains))
+")
+              SC_COUNTS=$(python3 -c "
+tasks = open('/tmp/pending_ids.txt').read().splitlines()
+seen = {}
+for t in tasks:
+    n = t.split('__',1)[0][len('sc_n'):]
+    seen[n] = True
+print(','.join(seen.keys()))
+")
+              echo "suppB_sc: sample counts = ${SC_COUNTS}"
+              echo "suppB_sc: domains       = ${DOMAIN_FILTER}"
+              NOISE_LEVEL="5.0" \
+              SC_SAMPLE_COUNTS="${SC_COUNTS}" \
+              DOMAIN_FILTER="${DOMAIN_FILTER}" \
+              TASK_IDS="${TASK_IDS}" \
+              PYSR_SEED="${PYSR_SEED}" \
+              OUT_BASE="${RESULTS_DIR}" \
+              RESULTS_DIR="${RESULTS_DIR}" \
+                python3 hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py \
+                || echo "WARNING: suppB_sc exited non-zero"
               ;;
 
             # -- STEP 4a: instability -------------------------------------------------
@@ -1122,44 +1170,51 @@ jobs:
               ;;
 
             # -- STEP 3: all-domains OOD extrapolation comparative -----------------
-            # task_ids_override passes a subset of FEYNMAN_30 (space-separated).
-            # Each shard receives its slice via TASK_IDS / SHARD_IDS env vars.
-            # The script reads N_FEYNMAN_TASKS from env to limit equations when
-            # running a smoke-test (ONE_EQUATION=1 sets N_FEYNMAN_TASKS=1).
-            # Produces: comparison_results/extrapolation/all_domains_extrap_v4_*.json
+            # Plan task IDs are FEYNMAN_DOMAINS (e.g. "feynman_biology"), the same
+            # domain registry used by exp2_feynman.  The previous dispatch passed
+            # --domain all_domains hardcoded, which ignored TASK_IDS entirely and
+            # caused every shard to run the full 11-domain set instead of only its
+            # assigned slice.
+            #
+            # FIX extrap-DISPATCH: loop per domain from SHARD_IDS exactly as
+            # exp2_feynman does, passing --domain per invocation so each domain
+            # runs independently with its own checkpoint and output file.
             extrap)
-              # BUG 4 FIX: --output-dir was not passed, so outputs landed in the
-              # script's default comparison_results/ path instead of
-              # comparison_results/extrapolation/ (RESULT_SUBDIR).  The
-              # pre-upload artifact check found 0 files and the upload failed.
-              # Also added --benchmark feynman (extrap runs the Feynman protocol).
-              TASK_IDS="${TASK_IDS}" \
-              SHARD_IDS="${TASK_IDS}" \
-              PYSR_SEED="${PYSR_SEED}" \
-              FEYNMAN_SAMPLES="${FEYNMAN_SAMPLES}" \
-              FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
-              METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
-              PYSR_TIMEOUT="${FEYNMAN_TIMEOUT}" \
-              PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
-              PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
-              JOB_DEADLINE="${JOB_DEADLINE}" \
-              RESULTS_DIR="${RESULTS_DIR}" \
-                python3 hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py \
-                  --benchmark feynman \
-                  --extrap \
-                  --extrap-multiplier 2.0 \
-                  --extrap-train-frac 0.8 \
-                  --domain all_domains \
-                  --samples "${FEYNMAN_SAMPLES}" \
-                  --pysr-timeout "${FEYNMAN_TIMEOUT}" \
-                  --method-timeout "${METHOD_TIMEOUT}" \
-                  --populations "${PYSR_POPULATIONS}" \
-                  --parsimony 0.01 \
-                  --use-transcendental-compositions \
-                  --nn-seeds 3 \
-                  --no-llm-cache \
-                  --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
-                  2>&1 | tee "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run.log"
+              readarray -t DOMAIN_LIST < <(python3 -c \
+                "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]")
+              for DOMAIN_ID in "${DOMAIN_LIST[@]}"; do
+                [[ -z "${DOMAIN_ID}" ]] && continue
+                echo "=== extrap: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
+                TASK_IDS="${DOMAIN_ID}" \
+                SHARD_IDS="${DOMAIN_ID}" \
+                PYSR_SEED="${PYSR_SEED}" \
+                FEYNMAN_SAMPLES="${FEYNMAN_SAMPLES}" \
+                FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
+                METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
+                PYSR_TIMEOUT="${FEYNMAN_TIMEOUT}" \
+                PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
+                PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
+                JOB_DEADLINE="${JOB_DEADLINE}" \
+                RESULTS_DIR="${RESULTS_DIR}" \
+                  python3 hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py \
+                    --benchmark feynman \
+                    --extrap \
+                    --extrap-multiplier 2.0 \
+                    --extrap-train-frac 0.8 \
+                    --domain "${DOMAIN_ID}" \
+                    --samples "${FEYNMAN_SAMPLES}" \
+                    --pysr-timeout "${FEYNMAN_TIMEOUT}" \
+                    --method-timeout "${METHOD_TIMEOUT}" \
+                    --populations "${PYSR_POPULATIONS}" \
+                    --parsimony 0.01 \
+                    --use-transcendental-compositions \
+                    --nn-seeds 3 \
+                    --no-llm-cache \
+                    --checkpoint-name "extrap_checkpoint_${DOMAIN_ID}" \
+                    --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
+                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
+                  || echo "WARNING: extrap domain ${DOMAIN_ID} exited non-zero — continuing"
+              done
               ;;
 
           esac

@@ -70,7 +70,7 @@ fi
 
 # ── Read parameters from config/repro.yaml ────────────────────────────────────
 PYSR_GEN=$(get  pysr_generations   "10000")
-PYSR_POP=$(get  pysr_populations   "4")
+PYSR_POP=$(get  pysr_populations   "30")
 N_SAMPLES=$(get feynman_samples    "200")
 NOISE=$(get     noise_levels       "0.0,0.5,1.0,5.0,10.0")
 SEEDS=$(get     default_seeds      "")
