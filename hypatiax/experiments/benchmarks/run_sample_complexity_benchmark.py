@@ -240,6 +240,12 @@ def _build_runner_cmd(
     # ── Give each n its own checkpoint to prevent run collisions ─────────────
     cmd += ["--checkpoint-name", f"sample_complexity_n{n_samples:04d}_checkpoint"]
 
+    # Direct the inner runner to write protocol_core_*.json into the same
+    # directory that _find_result_written_after() globs — without this the
+    # inner runner writes to its default comparison_results/ root and the
+    # mtime scan finds nothing.
+    cmd += ["--output-dir", str(_RESULTS_DIR)]
+
     return cmd
 
 

@@ -273,6 +273,12 @@ def _build_runner_cmd(
     if getattr(args, "no_llm_cache", False):
         cmd.append("--no-llm-cache")
 
+    # Direct the inner runner to write protocol_core_*.json into the same
+    # directory that _find_result_written_after() globs — without this the
+    # inner runner writes to its default comparison_results/ root and the
+    # mtime scan finds nothing.
+    cmd += ["--output-dir", str(_RESULTS_DIR)]
+
     # Unique checkpoint per sigma — prevents noisy passes colliding.
     cmd += ["--checkpoint-name", f"noise_sweep_{sigma_label}_checkpoint"]
 
