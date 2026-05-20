@@ -1115,6 +1115,15 @@ jobs:
             # wanted, leave task_ids_override blank and the script runs all cases.
             # --benchmark-json is resolved to the most recent DeFi results JSON.
             instability)
+              # Pre-flight: instability is a post-processing step that reads exp1 output.
+              # If no DeFi results JSON exists yet, exp1 has not completed — exit 0 (skip)
+              # rather than exit 1 so the job does not block the pipeline with a false failure.
+              DEFI_JSON_COUNT=$(ls "${RESULTS_DIR}"/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | wc -l || echo 0)
+              if [[ "${DEFI_JSON_COUNT}" -eq 0 ]]; then
+                echo "::warning::instability skipped — no exp1 results found in '${RESULTS_DIR}'."
+                echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
+                exit 0
+              fi
               BENCH_JSON=$(ls -t "${RESULTS_DIR}"/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
               BENCH_ARG=""
               if [[ -n "${BENCH_JSON}" ]]; then
