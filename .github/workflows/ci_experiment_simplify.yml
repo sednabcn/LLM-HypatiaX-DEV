@@ -339,7 +339,7 @@ jobs:
               "exp2_feynman":       1,
               "exp2":               1,
               "exp3":               1,
-              "exp3b":              4,
+              "exp3b":              1,
               "suppA":              1,
               "suppB":              1,
               "suppB_sc":           1,
@@ -348,15 +348,14 @@ jobs:
               "extrap":             1,
           }
           N_SHARDS_DEFAULT = EXP_SHARD_TABLE.get(EXP, 1)
-          # Use the table value as the canonical shard count.
-          # A dispatch input > 1 is honoured only when the table also allows it
-          # (N_SHARDS_DEFAULT > 1); otherwise the input is ignored to prevent
-          # concurrent-push races and checkpoint collisions.
+          # All experiments use exactly 1 shard (N_SHARDS_DEFAULT == 1 always).
+          # Any dispatch input other than 1 is ignored to prevent concurrent-push
+          # races and checkpoint collisions.
           if N_SHARDS_DEFAULT == 1:
               N_SHARDS = 1
               if N_SHARDS_RAW not in (1,):
                   print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
-                        f"— experiment is single-shard only (table=1). "
+                        f"— all experiments are single-shard only (table=1). "
                         f"Using N_SHARDS=1.")
           else:
               # Future: if a multi-shard experiment is added to the table,
@@ -598,7 +597,8 @@ jobs:
             python-dotenv \
             matplotlib \
             seaborn \
-            pmlb
+            pmlb \
+            psutil
 
       - name: Install Julia / SymbolicRegression (if needed)
         if: ${{ needs.plan.outputs.needs_julia == 'true' }}

@@ -614,15 +614,11 @@ run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routin
 # FIX CRITICAL 2: noise sweep now its own step; sample-complexity in suppB_sc
 run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Supplement B)" bash -c "
   cd '${EXPERIMENTS_DIR}'
-  python3 run_noise_sweep_benchmark.py \
+  # OUT_BASE is exported so run_noise_sweep_benchmark.py writes directly to
+  # comparison_results/feynman-tests/noise-sweep/ (its _RESULTS_DIR default).
+  OUT_BASE='${RESULTS_DIR}' \
+    python3 run_noise_sweep_benchmark.py \
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
-  # ── Flatten per-equation subdirs → noise-sweep/ (CRITICAL 4 glob fix) ────
-  # run_noise_sweep_benchmark.py writes into per-equation subdirs
-  # (e.g. noise-sweep/I.12.1-correction/noise_sweep_*.json).
-  # generate_tables.py globs noise-sweep/noise_sweep_*.json — move up one level.
-  find '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep' \
-    -mindepth 2 -name 'noise_sweep_*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/' \;
 "
 
 # ── STEP 10b: suppB_sc — sample-complexity sweep ─────────────────────────────
@@ -632,19 +628,13 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 # Output dir: comparison_results/feynman-tests/sample-complexity/
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   cd '${EXPERIMENTS_DIR}'
+  # OUT_BASE is exported so run_sample_complexity_benchmark.py writes directly to
+  # comparison_results/feynman-tests/sample-complexity/ (its _RESULTS_DIR default).
   NOISE_LEVEL='5.0' \
   SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \
+  OUT_BASE='${RESULTS_DIR}' \
     python3 run_sample_complexity_benchmark.py \
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
-  # ── Move sample_complexity outputs → sample-complexity/ ──────────────────
-  # The script may share the noise-sweep output dir and write sample_complexity_*.json
-  # into per-equation subdirs alongside noise_sweep files. Move them to the
-  # dedicated sample-complexity/ dir that the validate step and tables-generator expect.
-  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
-  find '${RESULTS_DIR}/comparison_results/feynman-tests' \
-    -name 'sample_complexity_*.json' \
-    ! -path '*/sample-complexity/*' \
-    -exec mv -v {} '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity/' \;
 "
 
 # ── STEP 11: tables ──────────────────────────────────────────────────────────

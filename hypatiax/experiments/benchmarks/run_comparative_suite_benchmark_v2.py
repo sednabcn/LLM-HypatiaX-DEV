@@ -2052,6 +2052,15 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+# Ensure psutil is importable — install it inline if missing so that
+# symbolic_engine.py / hybrid_system_v50_2.py do not crash with
+# "No module named 'psutil'" when the parent environment lacks it.
+try:
+    import psutil  # noqa: F401
+except ImportError:
+    import subprocess as _sp
+    _sp.run([sys.executable, "-m", "pip", "install", "--quiet", "psutil"], check=False)
+
 # Receive pickled args via stdin
 import pickle, base64
 payload = pickle.loads(base64.b64decode(sys.stdin.buffer.read()))
@@ -3140,8 +3149,23 @@ class ProtocolBenchmarkSuite:
                     })
             _json_path = _OUTPUT_DIR / "benchmark_results.json"
             _json_path.parent.mkdir(parents=True, exist_ok=True)
+            # FIX: append/merge so multi-domain runs accumulate all results
+            _existing: list = []
+            if _json_path.exists():
+                try:
+                    with open(_json_path) as _jf_r:
+                        _existing = json.load(_jf_r)
+                    if not isinstance(_existing, list):
+                        _existing = []
+                except Exception:
+                    _existing = []
+            # Drop stale entries for tests being re-written by this run
+            _new_keys = {(r["test"], r["method"]) for r in _flat_records}
+            _existing = [r for r in _existing
+                         if (r.get("test"), r.get("method")) not in _new_keys]
+            _merged = _existing + _flat_records
             with open(_json_path, "w") as _jf:
-                json.dump(_flat_records, _jf, indent=2, default=str)
+                json.dump(_merged, _jf, indent=2, default=str)
             print(f"\n📄 Flat results exported → {_json_path}  ({len(_flat_records)} records)")
         except Exception as _je:
             print(f"\n⚠️  Could not export benchmark_results.json: {_je}")
@@ -3643,8 +3667,33 @@ Examples
                 for case in protocol.load_test_data(domain, num_samples=args.samples):
                     all_tests.append((*case, domain))
         else:
+            # ── Explicit alias map: maps short/legacy names to canonical domain keys ──
+            # Covers shard-list entries that do not follow the feynman_<name> pattern
+            # or whose Feynman equivalent does not exist in the protocol.
+            _DOMAIN_ALIASES: Dict[str, str] = {
+                # Physics sub-domains without a dedicated feynman_* key
+                "fluid_dynamics":    "feynman_electrostatics",   # closest available Feynman set
+                "quantum_mechanics": "feynman_quantum",
+                "classical_mechanics": "feynman_mechanics",
+                "electro":           "feynman_electromagnetism",
+                # General/PMLB domains
+                "mathematics":       "statistics",
+                "math":              "statistics",
+                "stats":             "statistics",
+                "econ":              "economics",
+                "bio":               "biology",
+                "chem":              "chemistry",
+                "phys":              "feynman_mechanics",
+            }
             available = protocol.get_all_domains()
             resolved  = args.domain
+            # 1. Try explicit alias
+            if resolved not in available and resolved in _DOMAIN_ALIASES:
+                alias = _DOMAIN_ALIASES[resolved]
+                if alias in available:
+                    print(f"ℹ️  Domain alias: '{resolved}' → '{alias}'")
+                    resolved = alias
+            # 2. Try feynman_<name> or any domain ending with _<name>
             if resolved not in available:
                 candidates = [d for d in available
                               if d == f"feynman_{args.domain}" or d.endswith(f"_{args.domain}")]

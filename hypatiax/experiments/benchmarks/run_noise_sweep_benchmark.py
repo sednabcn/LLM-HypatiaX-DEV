@@ -95,7 +95,15 @@ np.random.seed(42)
 _HERE        = Path(__file__).resolve().parent
 _PKG_ROOT    = _HERE.parent.parent
 _RUNNER      = _HERE / "run_comparative_suite_benchmark_v2.py"
-_RESULTS_DIR = _PKG_ROOT / "data/results/comparison_results"
+
+# OUT_BASE: set by CI worker (env OUT_BASE = hypatiax/data/results).
+# suppB output must land in feynman-tests/noise-sweep/ so that:
+#   • ci_experiment_simplify.yml move_matching "noise_sweep_*.json" finds them
+#   • the verify step glob comparison_results/feynman-tests/noise-sweep/*.json passes
+#   • the artifact upload path matches RESULT_SUBDIR
+# Fall back to the package-relative path when running locally without OUT_BASE.
+_OUT_BASE    = Path(os.environ["OUT_BASE"]) if "OUT_BASE" in os.environ else (_PKG_ROOT / "data/results")
+_RESULTS_DIR = _OUT_BASE / "comparison_results/feynman-tests/noise-sweep"
 _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Full 5-level sweep matching CI `noise_levels` default "0.0,0.5,1.0,5.0,10.0"
@@ -242,9 +250,9 @@ def _build_runner_cmd(
             "kinetic_energy":  "I.12.4",
             "kinetic":         "I.12.4",
             # Arrhenius  k = A*exp(-Ea/(R*T))
-            "arrhenius":       "FEY_CHEM_ARR",
+            "arrhenius":       "II.11.27",
             # Ideal gas  P*V = n*R*T
-            "ideal_gas":       "FEY_THERMO_IG",
+            "ideal_gas":       "II.11.28",
         }
         canonical = _TEST_ALIASES.get(args.test.lower().replace(" ", "_"), args.test)
         if canonical != args.test:
@@ -270,30 +278,18 @@ def _build_runner_cmd(
 
     # ── CI per-task equation filter ───────────────────────────────────────────
     # When the CI dispatches one process per (noise, equation) task, it sets
-    # TASK_ID to either a Feynman equation ID (e.g. "I.12.1") or a domain key
-    # (e.g. "feynman_biology").  Domain keys must be forwarded as --domain;
-    # equation IDs as --test.  Passing a domain key to --test causes exit-code-1
-    # because the inner runner searches equation names and finds no match.
+    # TASK_ID to the Feynman equation ID (e.g. "I.12.1").  Forward it to the
+    # inner runner via --test so only that one equation is run, avoiding the
+    # full-30-equation sweep for every per-task subprocess.
     _ci_task_id = os.environ.get("TASK_ID", "").strip()
-    if _ci_task_id and "--test" not in cmd and "--domain" not in cmd:
-        _FEYNMAN_DOMAIN_PREFIX = "feynman_"
-        _KNOWN_DOMAINS = {
-            "feynman_biology", "feynman_chemistry", "feynman_electrochemistry",
-            "feynman_electromagnetism", "feynman_electrostatics", "feynman_magnetism",
-            "feynman_mechanics", "feynman_optics", "feynman_probability",
-            "feynman_quantum", "feynman_thermodynamics",
+    if _ci_task_id and "--test" not in cmd:
+        _TEST_ALIASES_REV: dict = {
+            "I.12.1":   "I.12.1",   "I.12.2":  "I.12.2",   "I.12.4": "I.12.4",
+            "II.11.27": "II.11.27", "II.11.28": "II.11.28",
         }
-        if _ci_task_id in _KNOWN_DOMAINS or _ci_task_id.startswith(_FEYNMAN_DOMAIN_PREFIX):
-            cmd += ["--domain", _ci_task_id]
-            print(f"  [CI] TASK_ID={_ci_task_id!r} is a domain key → --domain {_ci_task_id!r}")
-        else:
-            _TEST_ALIASES_REV: dict = {
-                "I.12.1":   "I.12.1",   "I.12.2":  "I.12.2",   "I.12.4": "I.12.4",
-                "FEY_CHEM_ARR": "FEY_CHEM_ARR", "FEY_THERMO_IG": "FEY_THERMO_IG",
-            }
-            canonical_ci = _TEST_ALIASES_REV.get(_ci_task_id, _ci_task_id)
-            cmd += ["--test", canonical_ci]
-            print(f"  [CI] TASK_ID={_ci_task_id!r} → --test {canonical_ci!r}")
+        canonical_ci = _TEST_ALIASES_REV.get(_ci_task_id, _ci_task_id)
+        cmd += ["--test", canonical_ci]
+        print(f"  [CI] TASK_ID={_ci_task_id!r} → --test {canonical_ci!r}")
 
     return cmd, sigma_label
 
