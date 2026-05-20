@@ -598,7 +598,7 @@ jobs:
             matplotlib \
             seaborn \
             pmlb \
-            psutil
+            pint
 
       - name: Install Julia / SymbolicRegression (if needed)
         if: ${{ needs.plan.outputs.needs_julia == 'true' }}
@@ -1004,7 +1004,7 @@ jobs:
                     --checkpoint-name "exp2_checkpoint_${DOMAIN_ID}" \
                     --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
                     --resume \
-                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run.log" \
+                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
                   || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
               done
               ;;
@@ -1305,9 +1305,14 @@ jobs:
 
             # -- exp2: multi-seed comparative suite ---------------------------
             exp2)
-              move_matching "exp2_checkpoint_shard*.json" "${TARGET}"
-              move_matching "exp2_merged.*"               "${TARGET}"
-              move_matching "exp2_stats.json"             "${TARGET}"
+              move_matching "exp2_checkpoint_shard*.json"        "${TARGET}"
+              move_matching "exp2_merged.*"                      "${TARGET}"
+              move_matching "exp2_stats.json"                    "${TARGET}"
+              # Primary per-domain outputs written by run_comparative_suite_benchmark_v2.py
+              move_matching "protocol_core_*.json"               "${TARGET}"
+              move_matching "protocol_core_*_checkpoint.json"    "${TARGET}"
+              move_matching "benchmark_results.json"             "${TARGET}"
+              move_matching "exp2_checkpoint_*.json"             "${TARGET}"
               ;;
 
             # -- exp3: Nguyen12 extrapolation (single seed) -------------------

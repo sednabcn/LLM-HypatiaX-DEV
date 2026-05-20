@@ -2838,7 +2838,14 @@ class ProtocolBenchmarkSuite:
                     _rs = "0.000000" if _r == 0.0 else (
                         f"{_r:.4e}" if (abs(_r) < 0.001 or abs(_r) >= 1e9) else f"{_r:.6f}"
                     )
-                    print(f"R²={result.r2:.4f}  RMSE={_rs}  ({result.time:.1f}s)")
+                    # Guard non-finite R² — can reach -7e12 when PureLLM returns
+                    # garbage predictions that slip past the _safe_r2 clamping.
+                    _r2_display = (
+                        f"{result.r2:.4f}"
+                        if np.isfinite(result.r2)
+                        else ("-inf" if result.r2 < 0 else "nan")
+                    )
+                    print(f"R²={_r2_display}  RMSE={_rs}  ({result.time:.1f}s)")
                 else:
                     print(f"✗ {(result.error or 'failed')[:60]}")
 
@@ -3007,7 +3014,12 @@ class ProtocolBenchmarkSuite:
                 else:
                     _rmse_s  = f"{res.rmse:.3f}"
                     _nrmse_s = f"{res.rmse / denom:.4f}" if denom > 0 else "N/A"
-                print(f"  {name:<42} {res.r2:<8.4f} {_rmse_s:<16} {_nrmse_s:<8} "
+                _r2_s = (
+                    f"{res.r2:.4f}"
+                    if np.isfinite(res.r2)
+                    else ("-inf" if res.r2 < 0 else "nan")
+                )
+                print(f"  {name:<42} {_r2_s:<8} {_rmse_s:<16} {_nrmse_s:<8} "
                       f"{res.time:<8.1f} {rank}{tag}{_dup}", flush=True)
             else:
                 err = (res.error or "failed")[:40]
