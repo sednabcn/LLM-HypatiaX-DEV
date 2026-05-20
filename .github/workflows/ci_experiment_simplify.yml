@@ -1060,22 +1060,8 @@ jobs:
               # as defence-in-depth in case run_comparative_suite_benchmark_v2.py has
               # its own TASK_ID-reading path.
               unset TASK_ID
-              DOMAIN_FILTER=$(python3 -c "
-import json, os, sys
-tasks = open('/tmp/pending_ids.txt').read().splitlines()
-domains = sorted({t.split('__',1)[1] for t in tasks if '__' in t})
-print(' '.join(domains))
-")
-              NOISE_LIST=$(python3 -c "
-import os
-tasks = open('/tmp/pending_ids.txt').read().splitlines()
-# extract numeric noise level from 'noise{nl}__{domain}', preserving insertion order
-seen = {}
-for t in tasks:
-    nl = t.split('__',1)[0].lstrip('noise')
-    seen[nl] = True
-print(' '.join(seen.keys()))
-")
+              DOMAIN_FILTER=$(python3 -c "import sys; tasks=open('/tmp/pending_ids.txt').read().splitlines(); domains=sorted({t.split('__',1)[1] for t in tasks if '__' in t}); print(' '.join(domains))")
+              NOISE_LIST=$(python3 -c "import os; tasks=open('/tmp/pending_ids.txt').read().splitlines(); seen={}; [seen.__setitem__(t.split('__',1)[0].lstrip('noise'),1) for t in tasks]; print(' '.join(seen.keys()))")
               echo "suppB: noise levels = ${NOISE_LIST}"
               echo "suppB: domains      = ${DOMAIN_FILTER}"
               for NL in ${NOISE_LIST}; do
@@ -1106,20 +1092,8 @@ print(' '.join(seen.keys()))
             # FIX: unset TASK_ID (singular) — same defence-in-depth as suppB above.
             suppB_sc)
               unset TASK_ID
-              DOMAIN_FILTER=$(python3 -c "
-import sys
-tasks = open('/tmp/pending_ids.txt').read().splitlines()
-domains = sorted({t.split('__',1)[1] for t in tasks if '__' in t})
-print(' '.join(domains))
-")
-              SC_COUNTS=$(python3 -c "
-tasks = open('/tmp/pending_ids.txt').read().splitlines()
-seen = {}
-for t in tasks:
-    n = t.split('__',1)[0][len('sc_n'):]
-    seen[n] = True
-print(','.join(seen.keys()))
-")
+              DOMAIN_FILTER=$(python3 -c "import sys; tasks=open('/tmp/pending_ids.txt').read().splitlines(); domains=sorted({t.split('__',1)[1] for t in tasks if '__' in t}); print(' '.join(domains))")
+              SC_COUNTS=$(python3 -c "tasks=open('/tmp/pending_ids.txt').read().splitlines(); seen={}; [seen.__setitem__(t.split('__',1)[0][len('sc_n'):],1) for t in tasks]; print(','.join(seen.keys()))")
               echo "suppB_sc: sample counts = ${SC_COUNTS}"
               echo "suppB_sc: domains       = ${DOMAIN_FILTER}"
               NOISE_LEVEL="5.0" \
