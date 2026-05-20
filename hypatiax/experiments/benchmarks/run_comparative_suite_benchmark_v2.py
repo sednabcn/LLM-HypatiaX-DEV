@@ -217,26 +217,17 @@ HYBRID_DEFI_AVAILABLE = _probe("hypatiax.core.generation.hybrid_defi_system.hybr
                                 "EnhancedHybridSystemDeFi")
 def _probe_hybrid_all() -> bool:
     """The all-domains hybrid module may export a class under any name.
-    Accept the module as available only if it contains a class that is
-    genuinely defined inside the hypatiax package — not a stdlib re-export
-    (e.g. datetime, Enum, Path) that previously caused a false-positive when
-    the real model class was defined inside a function/conditional block and
-    did not appear at module top-level with __module__ == mod_name.
+
+    Identifies the correct class by matching against known hybrid class name
+    keywords rather than relying on __module__ membership (which also matches
+    protocol/helper classes like ExperimentProtocolAll that are NOT the model).
+    This prevents a false-positive where the wrong class is selected and later
+    silently instantiated, contaminating benchmark results.
     """
     import importlib
-    # Known stdlib / third-party names that may appear as top-level names in
-    # the module but are NOT the hybrid system implementation.
-    _STDLIB_NAMES = frozenset({
-        "datetime", "date", "time", "timedelta", "timezone",
-        "Path", "PurePath", "PosixPath",
-        "Enum", "IntEnum", "Flag", "IntFlag",
-        "ABC", "ABCMeta",
-        "Thread", "Lock", "Event",
-        "OrderedDict", "defaultdict", "Counter", "deque",
-        "Decimal", "Fraction",
-        "StringIO", "BytesIO",
-        "BaseException", "Exception",
-    })
+    # Ordered by specificity — most distinctive keywords first.
+    _HYBRID_KEYWORDS = ("HybridSystem", "HybridLLM", "HybridNN",
+                        "AllDomains", "EnhancedHybrid", "LLM_NN")
     try:
         mod = importlib.import_module(
             "hypatiax.core.generation.hybrid_all_domains_llm_nn"
@@ -247,18 +238,17 @@ def _probe_hybrid_all() -> bool:
             if (
                 isinstance(v, type)
                 and not v.__name__.startswith("_")
-                # Must be defined inside the hypatiax package — not a stdlib import
-                and "hypatiax" in getattr(v, "__module__", "")
-                # Belt-and-suspenders: also exclude by known stdlib class names
-                and v.__name__ not in _STDLIB_NAMES
+                and any(kw.lower() in v.__name__.lower() for kw in _HYBRID_KEYWORDS)
             )
         ]
         if classes:
-            print(f"\u2139\ufe0f  hybrid_all_domains module found \u2014 "
+            print(f"ℹ️  hybrid_all_domains module found — "
                   f"class: {classes[0].__name__}")
             return True
+        print("⚠️  hybrid_all_domains: no hybrid class found matching expected keywords")
         return False
-    except Exception:
+    except Exception as exc:
+        print(f"⚠️  _probe_hybrid_all(): {exc}")
         return False
 
 HYBRID_ALL_AVAILABLE  = _probe_hybrid_all()
@@ -275,11 +265,13 @@ HYBRID_ALL_AVAILABLE  = _probe_hybrid_all()
 # be importable (confirming Julia is set up).  This never triggers juliacall in
 # the main process.
 def _probe_pysr_method(module_path: str) -> bool:
-    """Check method availability by file presence + pysr importability.
+    """Check method availability by file presence + required dependency importability.
 
     Does NOT import the module (avoids juliacall/torch collision in main process).
+    Verifies all required runtime dependencies (pysr, pint) are present.
     Prints a diagnostic line on failure so the cause is visible in the run log.
     """
+    import importlib
     import importlib.util
     try:
         spec = importlib.util.find_spec(module_path)
@@ -289,11 +281,17 @@ def _probe_pysr_method(module_path: str) -> bool:
         if not Path(spec.origin).exists():
             print(f"⚠️  _probe_pysr_method({module_path!r}): file missing: {spec.origin}")
             return False
-        # Confirm pysr is importable (confirms Julia depot is set up).
+        # Confirm all required runtime dependencies are importable.
         # pysr's top-level __init__ does NOT call juliacall — that only happens
         # when a PySRRegressor is actually fitted, so this is safe.
-        import importlib as _il
-        _il.import_module("pysr")
+        # pint is a required downstream dep of symbolic_engine / hybrid_system_v50_2.
+        required_modules = ["pysr", "pint"]
+        for pkg in required_modules:
+            try:
+                importlib.import_module(pkg)
+            except ModuleNotFoundError:
+                print(f"⚠️  _probe_pysr_method({module_path!r}): missing dependency — {pkg}")
+                return False
         return True
     except ModuleNotFoundError as exc:
         print(f"⚠️  _probe_pysr_method({module_path!r}): import check failed — {exc}")
@@ -302,7 +300,22 @@ def _probe_pysr_method(module_path: str) -> bool:
         print(f"⚠️  _probe_pysr_method({module_path!r}): unexpected error — {exc}")
         return False
 
-SYM_ENGINE_AVAILABLE    = _probe_pysr_method("hypatiax.tools.symbolic.symbolic_engine")
+def _probe_symbolic_engine() -> bool:
+    """Import the actual SymbolicEngineWithLLM class rather than only probing the file.
+
+    This catches downstream dependency failures (e.g. missing pint) that
+    _probe_pysr_method() cannot detect because it never executes the module body.
+    Safe to call here: SymbolicEngineWithLLM defers juliacall until fit() time.
+    """
+    try:
+        from hypatiax.tools.symbolic.symbolic_engine import SymbolicEngineWithLLM  # noqa: F401
+        print("✅  SymbolicEngineWithLLM available")
+        return True
+    except Exception as exc:
+        print(f"⚠️  SymbolicEngine unavailable: {exc}")
+        return False
+
+SYM_ENGINE_AVAILABLE    = _probe_symbolic_engine()
 HYBRID_V50_2_AVAILABLE  = _probe_pysr_method("hypatiax.tools.symbolic.hybrid_system_v50_2")
 
 
@@ -353,7 +366,15 @@ class BaseMethod:
         raise NotImplementedError
 
     def _safe_r2(self, y_true, y_pred) -> float:
-        if not np.all(np.isfinite(y_pred)):
+        y_pred = np.asarray(y_pred, dtype=float)
+        # Guard: reject non-finite or astronomically large predictions before
+        # any arithmetic — these produce the R² = -7e12 class of results seen
+        # in PureLLM logs when the model returns garbage numerical output.
+        if np.any(~np.isfinite(y_pred)):
+            return float("-inf")
+        if np.any(np.abs(y_pred) > 1e100):
+            return float("-inf")
+        if np.std(y_pred) < 1e-30:
             return float("-inf")
         if len(y_true) < 2:
             return float("nan")
@@ -379,6 +400,10 @@ class BaseMethod:
             r2_flip = float(1 - ss_res_flip / ss_tot)
             if r2_flip > r2:
                 r2 = r2_flip
+        # Clamp catastrophic values that slip through (e.g. numerical overflow
+        # in ss_res when predictions are very large but still finite).
+        if r2 < -100:
+            r2 = float("-inf")
         return r2
 
     def _safe_rmse(self, y_true, y_pred) -> float:
