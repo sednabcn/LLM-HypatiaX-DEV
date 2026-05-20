@@ -822,7 +822,9 @@ jobs:
               try:
                   from hypatiax.core.generation.hybrid_all_domains_llm_nn \
                       .hybrid_system_llm_nn_all_domains import ExperimentProtocolAll
-                  actual = set(ExperimentProtocolAll().get_all_domains().keys())
+                  _domains = ExperimentProtocolAll().get_all_domains()
+                  # get_all_domains() returns a list, not a dict — iterate directly.
+                  actual = set(_domains.keys() if hasattr(_domains, "keys") else _domains)
               except Exception as e:
                   print(f"ERROR: could not resolve domain list from script: {e}")
                   sys.exit(1)
