@@ -273,7 +273,7 @@ jobs:
 
             # <- FIX CRITICAL 1: renamed from "instability"; RESULT_SUBDIR fixed (CRITICAL 3)
             hybrid_all_domains)
-              SCRIPT="hypatiax/experiments/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py"
+              SCRIPT="hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py"
               NEEDS_JULIA=false
               RESULT_SUBDIR="hybrid_llm_nn/all_domains"
               DEFAULT_SEEDS="42"
@@ -804,7 +804,7 @@ jobs:
           }
 
           script = pathlib.Path(
-              "hypatiax/experiments/generation/hybrid_all_domains_llm_nn/"
+              "hypatiax/core/generation/hybrid_all_domains_llm_nn/"
               "hybrid_system_llm_nn_all_domains.py"
           )
           spec = importlib.util.spec_from_file_location("hybrid_mod", script)
@@ -820,7 +820,7 @@ jobs:
           if actual is None:
               # Fallback: try importing ExperimentProtocolAll directly
               try:
-                  from hypatiax.experiments.generation.hybrid_all_domains_llm_nn \
+                  from hypatiax.core.generation.hybrid_all_domains_llm_nn \
                       .hybrid_system_llm_nn_all_domains import ExperimentProtocolAll
                   actual = set(ExperimentProtocolAll().get_all_domains().keys())
               except Exception as e:
@@ -1159,7 +1159,7 @@ jobs:
               SHARD_IDS="${TASK_IDS}" \
               ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
               RESULTS_DIR="${RESULTS_DIR}" \
-                python3 hypatiax/experiments/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py \
+                python3 hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py \
                   --domains ${TASK_IDS} \
                   --samples "${FEYNMAN_SAMPLES}"
               ;;
