@@ -243,7 +243,7 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
   # ITEM 2 FIX: guard seaborn immediately before statistical_analysis.py.
   # This is the second line of defence after the env_check self-heal above;
   # it fires even when exp1 is run standalone (--step exp1, skipping env_check).
-  python3 -c "import seaborn" 2>/dev/null || \
+  python3 -c 'import seaborn' 2>/dev/null || \
     python3 -m pip install --quiet seaborn || \
     { echo "ERROR: seaborn install failed — statistical_analysis.py will crash"; exit 1; }
   python3 statistical_analysis.py \
