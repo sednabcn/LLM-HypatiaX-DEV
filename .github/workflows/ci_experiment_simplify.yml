@@ -868,7 +868,7 @@ jobs:
           GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
           PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
           SHARD_CKPT:        checkpoint_worker_shard${{ matrix.shard }}.json
-          RESULTS_DIR:       ${{ env.OUT_BASE }}
+          RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
           REPRO_CFG:         ${{ env.REPRO_CFG }}
           RESUME:            ${{ github.event.inputs.resume || 'true' }}
         run: |
@@ -911,7 +911,7 @@ jobs:
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
-              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
+              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
                 bash run_all.sh --step exp1
               # -- exp1 post-run file scan: confirm where outputs landed -----------
               echo "=== exp1 post-run file scan (repo-root-relative) ==="
@@ -931,7 +931,7 @@ jobs:
               DEFI_SEEDS="${EFFECTIVE_SEEDS}" \
               DEFI_TASK_FILTER="Portfolio" \
               PYSR_SEED="${PYSR_SEED}" \
-              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
+              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
                 bash run_all.sh --step exp1b
               # -- exp1b post-run file scan: mirrors exp1 ghost-file diagnostic ----
               # Shows exactly where hypatiax_defi_benchmark_v3c.py (portfolio mode)
@@ -1053,7 +1053,7 @@ jobs:
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
-              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
+              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
                 bash run_all.sh --step suppA
               ;;
 
@@ -1335,7 +1335,7 @@ jobs:
         env:
           EXP:           ${{ needs.plan.outputs.exp_id }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-          RESULTS_DIR:   ${{ env.OUT_BASE }}
+          RESULTS_DIR:   ${{ github.workspace }}/${{ env.OUT_BASE }}
         run: |
           set -euo pipefail
           TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
@@ -1525,7 +1525,7 @@ jobs:
       - name: Store results in canonical RESULT_SUBDIR
         if: always()
         env:
-          RESULTS_DIR:   ${{ env.OUT_BASE }}
+          RESULTS_DIR:   ${{ github.workspace }}/${{ env.OUT_BASE }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           set -euo pipefail

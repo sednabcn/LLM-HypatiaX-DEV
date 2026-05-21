@@ -240,7 +240,13 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
 _exp1_body() {
   set -euo pipefail
   cd "${EXPERIMENTS_DIR}"
+  # FIX: pass --output-dir so hypatiax_defi_benchmark_v3c.py writes its JSON
+  # directly to the canonical RESULT_SUBDIR instead of constructing a path
+  # relative to CWD (EXPERIMENTS_DIR).  Without this flag the script writes to
+  # EXPERIMENTS_DIR/hypatiax/data/results/... — a doubled path that neither the
+  # post-run find nor the CI verification step can locate.
   python3 hypatiax_defi_benchmark_v3c.py \
+    --output-dir "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless" \
     2>&1 | tee "${RESULTS_DIR}/exp1_run.log"
   cd "${ANALYSIS_DIR}"
   # ITEM 2 FIX: guard seaborn immediately before statistical_analysis.py.
@@ -252,19 +258,19 @@ _exp1_body() {
   python3 statistical_analysis.py \
     2>&1 | tee -a "${RESULTS_DIR}/exp1_run.log" \
   || echo "WARNING: statistical_analysis.py exited non-zero — primary results already saved, continuing"
-  # ── Move exp1 outputs → RESULTS_DIR ──────────────────────────────────────
-  # Primary output: hypatiax_defi_benchmark_v3*results*.json
-  # Also capture protocol_core_noiseless_*.json (protocol wrapper variant)
-  # and ablation / mannwhitney JSON files.
-  # CI worker 'Move results to RESULTS_DIR' step matches all three globs; keep in sync.
-  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'hypatiax_defi_benchmark_v3*results*.json' \
-    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/" \;
-  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'protocol_core_noiseless_*.json' \
+  # ── Rescue any stray exp1 outputs not caught by --output-dir ─────────────
+  # protocol_core_noiseless_*.json (protocol wrapper variant) and ablation /
+  # mannwhitney JSONs are written to EXPERIMENTS_DIR root by their own scripts.
+  # Search up to maxdepth 8 so any doubled-path remnants are also caught.
+  find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'protocol_core_noiseless_*.json' \
+    ! -path "${RESULTS_DIR}/*" \
     -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'ablation_*.json' \
-    -exec mv -v {} "${RESULTS_DIR}/" \;
-  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'exp1_rf01_mannwhitney*.json' \
-    -exec mv -v {} "${RESULTS_DIR}/" \;
+  find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'ablation_*.json' \
+    ! -path "${RESULTS_DIR}/*" \
+    -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
+  find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'exp1_rf01_mannwhitney*.json' \
+    ! -path "${RESULTS_DIR}/*" \
+    -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
 }
 run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" _exp1_body
 
