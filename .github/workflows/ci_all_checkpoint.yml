@@ -712,7 +712,11 @@ jobs:
               checks.append(["tables_present", len(tex_files) > 0,
                              f"{len(tex_files)} table(s) in {tables_dir}"])
 
-              passed = all(ok for _, ok, _ in checks)
+              # Core gates: result files exist, are valid JSON, and are committed to git.
+              # checkpoint=pass, csv_or_tables, figures_present, tables_present are
+              # informational only — they depend on downstream steps not yet run.
+              core_gates = {"result_files", "result_json_valid", "committed_to_git"}
+              passed = all(ok for name, ok, _ in checks if name in core_gates)
               return {"passed": passed, "checks": checks}
 
           # ── Run all experiments ──────────────────────────────────────────────
@@ -1095,4 +1099,104 @@ jobs:
           print(SEP)
 
           sys.exit(0 if overall_ok else 1)
+          PYEOF
+
+
+# ==============================================================================
+#  JOB 6 — dispatch: launch missing experiments via gh workflow run
+#
+#  Reads the completion_report from JOB 2 and dispatches ci_experiment_simplify.yml
+#  for every experiment that has 0 done tasks (never launched).
+#  Experiments with partial results are skipped — use task_ids_override to resume.
+#  instability is skipped here — it depends on exp1 and is dispatched separately.
+#  Requires: gh CLI (pre-installed on ubuntu-latest) + GITHUB_TOKEN with Actions: write.
+# ==============================================================================
+  dispatch:
+    name: "Dispatch missing experiments"
+    needs: [complete, summary]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always() && github.event.inputs.experiment == 'all' || github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Dispatch experiments with 0 done tasks
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          COMPLETION_REPORT: ${{ needs.complete.outputs.completion_report }}
+          WORKFLOW_FILE:     ci_experiment_simplify.yml
+          # Pass through repro params so dispatched runs use the same config
+          PYSR_GENERATIONS:  ${{ github.event.inputs.pysr_generations || '10000' }}
+          PYSR_POPULATIONS:  ${{ github.event.inputs.pysr_populations || '30' }}
+          N_SAMPLES:         ${{ github.event.inputs.n_samples        || '200' }}
+          NOISE_LEVELS:      ${{ env.NOISE_LEVELS }}
+          SEEDS:             ${{ env.SEEDS }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, subprocess, sys, time
+
+          report   = json.loads(os.environ["COMPLETION_REPORT"])
+          wf       = os.environ["WORKFLOW_FILE"]
+          gh       = "gh"
+
+          # Experiments that cannot be auto-dispatched here:
+          #   instability — needs exp1 results first; launched manually after exp1.
+          SKIP = {"instability"}
+
+          # Dispatch order matters for dependency: exp1 before instability.
+          ORDER = ["exp1", "exp1b", "exp2_feynman", "exp3", "exp3b",
+                   "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "extrap"]
+
+          dispatched = []
+          skipped    = []
+
+          for exp_id in ORDER:
+              info = report.get(exp_id, {})
+              done    = info.get("done",  0)
+              total   = info.get("total", 0)
+              missing = info.get("missing", [])
+
+              if exp_id in SKIP:
+                  print(f"  ⏭  {exp_id:<25} skipped (dependency: run after exp1)")
+                  skipped.append(exp_id)
+                  continue
+
+              if done == total and total > 0:
+                  print(f"  ✅ {exp_id:<25} complete ({done}/{total}) — not dispatching")
+                  continue
+
+              if done > 0:
+                  print(f"  ⚠  {exp_id:<25} partial ({done}/{total} done) — skipping auto-dispatch; use task_ids_override to resume")
+                  skipped.append(exp_id)
+                  continue
+
+              # 0 done — never launched, safe to dispatch fresh
+              print(f"  🚀 {exp_id:<25} dispatching ({total} tasks) ...")
+              cmd = [
+                  gh, "workflow", "run", wf,
+                  "--field", f"experiment={exp_id}",
+                  "--field", f"n_shards=1",
+                  "--field", f"pysr_generations={os.environ['PYSR_GENERATIONS']}",
+                  "--field", f"pysr_populations={os.environ['PYSR_POPULATIONS']}",
+                  "--field", f"n_samples={os.environ['N_SAMPLES']}",
+                  "--field", f"noise_levels={os.environ['NOISE_LEVELS']}",
+                  "--field", f"seeds={os.environ['SEEDS']}",
+                  "--field", "resume=true",
+                  "--field", "dry_run=false",
+              ]
+              result = subprocess.run(cmd, capture_output=True, text=True)
+              if result.returncode == 0:
+                  print(f"       ✓ dispatched")
+                  dispatched.append(exp_id)
+              else:
+                  print(f"       ✗ FAILED: {result.stderr.strip()[:200]}")
+              time.sleep(3)   # avoid GitHub API rate limits
+
+          print()
+          print(f"  Dispatched : {dispatched}")
+          print(f"  Skipped    : {skipped}")
+          if not dispatched:
+              print("  Nothing dispatched — all experiments either complete or partial.")
           PYEOF
