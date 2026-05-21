@@ -1271,17 +1271,40 @@ jobs:
                   completed = []
 
               rescued = 0
-              for tid in completed:
-                  safe = tid.replace("/", "_").replace(".", "_")
-                  for pattern in (f"*{safe}*.json", f"*{safe}*.csv"):
-                      for src in glob.glob(pattern):
+              EXP = os.environ.get("EXP", "")
+              COMBINED_OUTPUT_EXPS = {"exp1", "exp1b"}
+
+              if EXP in COMBINED_OUTPUT_EXPS:
+                  # FIX-G5-EXP1: combined-output experiments write one file for all
+                  # tasks; checkpoint.completed is empty until "Save shard checkpoint"
+                  # runs, which comes AFTER this step.  Rescue by filename pattern
+                  # instead of by task ID so a crash-before-move is still handled.
+                  combined_globs = [
+                      "*hypatiax_defi_benchmark*results*.json",
+                      "*defi_benchmark*results*.json",
+                      "*comparison_FIXED_*.json",
+                  ]
+                  for pat in combined_globs:
+                      for src in glob.glob(pat):
                           dst = os.path.join(result_dir, os.path.basename(src))
-                          if src == dst or os.path.abspath(src) == os.path.abspath(dst):
+                          if os.path.abspath(src) == os.path.abspath(dst):
                               continue
                           if not os.path.exists(dst):
                               shutil.move(src, dst)
-                              print(f"  rescued: {src}  ->  {dst}")
+                              print(f"  rescued [{EXP}]: {src}  ->  {dst}")
                               rescued += 1
+              else:
+                  for tid in completed:
+                      safe = tid.replace("/", "_").replace(".", "_")
+                      for pattern in (f"*{safe}*.json", f"*{safe}*.csv"):
+                          for src in glob.glob(pattern):
+                              dst = os.path.join(result_dir, os.path.basename(src))
+                              if src == dst or os.path.abspath(src) == os.path.abspath(dst):
+                                  continue
+                              if not os.path.exists(dst):
+                                  shutil.move(src, dst)
+                                  print(f"  rescued: {src}  ->  {dst}")
+                                  rescued += 1
               print(f"Safety-net rescue complete: {rescued} file(s) moved for shard {shard_idx}")
           PYEOF
 
@@ -1788,20 +1811,65 @@ jobs:
                   pass
 
           done_set = set(completed)
-          # FIX: scan both the canonical RESULT_SUBDIR *and* the workspace root
-          # (CWD) so tasks are marked done even when the crash happened before
-          # move_matching relocated the files into RESULT_SUBDIR.
+
+          EXP = os.environ.get("EXP", "")
+          # FIX-CKPT-EXP1: experiments that write ONE combined result file for
+          # all tasks rather than one file per task ID.  The per-task-ID glob
+          # below never matches these filenames, so the checkpoint always records
+          # 0 completed tasks and every resume re-runs the full shard.
+          #
+          # Strategy: if any known combined output file is found in result_dir
+          # or CWD, mark EVERY task in the shard as done — the combined file
+          # implicitly covers all of them.
+          #
+          # Experiments in this set:
+          #   exp1  — hypatiax_defi_benchmark_v3c.py writes one aggregated JSON
+          #           named "hypatiax_defi_benchmark_v3_results.json"; task IDs
+          #           ("amm", "risk_var", …) never appear in the filename.
+          #   exp1b — same script in portfolio mode; writes comparison_FIXED_*.json
+          #           (filename contains a timestamp, not a task ID).
+          COMBINED_OUTPUT_EXPS = {"exp1", "exp1b"}
           search_dirs = [result_dir, "."]
-          for tid in shard_ids:
-              safe = tid.replace("/", "_").replace(".", "_")
-              matches = []
+
+          if EXP in COMBINED_OUTPUT_EXPS:
+              combined_globs = [
+                  "*hypatiax_defi_benchmark*results*.json",  # exp1 primary
+                  "*defi_benchmark*results*.json",           # exp1 variant names
+                  "*comparison_FIXED_*.json",                # exp1b portfolio mode
+              ]
+              found_combined = False
               for d in search_dirs:
-                  matches += (
-                      glob.glob(f"{d}/**/*{safe}*.json", recursive=True) +
-                      glob.glob(f"{d}/**/*{safe}*.csv",  recursive=True)
-                  )
-              if matches:
-                  done_set.add(tid)
+                  for pat in combined_globs:
+                      hits = (glob.glob(os.path.join(d, pat)) +
+                              glob.glob(os.path.join(d, "**", pat), recursive=True))
+                      if hits:
+                          print(f"  [{EXP}] Combined result file detected: {hits[0]}")
+                          found_combined = True
+                          break
+                  if found_combined:
+                      break
+              if found_combined:
+                  done_set.update(shard_ids)
+                  print(f"  [{EXP}] Marking all {len(shard_ids)} shard task(s) done"
+                        f" (combined-output mode).")
+              else:
+                  print(f"  [{EXP}] WARNING: combined result file NOT found in"
+                        f" {search_dirs} — 0 tasks marked done.")
+                  print(f"  [{EXP}]   Patterns searched: {combined_globs}")
+          else:
+              # FIX: scan both the canonical RESULT_SUBDIR *and* the workspace root
+              # (CWD) so tasks are marked done even when the crash happened before
+              # move_matching relocated the files into RESULT_SUBDIR.
+              for tid in shard_ids:
+                  safe = tid.replace("/", "_").replace(".", "_")
+                  matches = []
+                  for d in search_dirs:
+                      matches += (
+                          glob.glob(f"{d}/**/*{safe}*.json", recursive=True) +
+                          glob.glob(f"{d}/**/*{safe}*.csv",  recursive=True)
+                      )
+                  if matches:
+                      done_set.add(tid)
 
           with open(ckpt_path, "w") as f:
               json.dump({
