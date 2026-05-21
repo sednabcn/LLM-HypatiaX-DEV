@@ -47,7 +47,7 @@ if not env_loaded:
     load_dotenv()
 
 # Add project root to path
-project_root = Path(__file__).parent.parent.parent.parent.parent  # repo root (contains hypatiax/)
+project_root = Path(__file__).parent.parent.parent.parent.parent  # repo root: one level above hypatiax/
 sys.path.insert(0, str(project_root))
 
 # Import protocol

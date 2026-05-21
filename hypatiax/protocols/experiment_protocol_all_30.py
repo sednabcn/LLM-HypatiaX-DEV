@@ -82,7 +82,12 @@ class ExperimentProtocolAll:
         import os
         import warnings
 
-        raw = os.environ.get("SHARD_IDS", "").replace(",", " ").split()
+        _shard_raw = os.environ.get("SHARD_IDS", "").strip()
+        try:
+            import json as _json
+            raw = _json.loads(_shard_raw) if _shard_raw.startswith("[") else _shard_raw.replace(",", " ").split()
+        except Exception:
+            raw = _shard_raw.replace(",", " ").split()
         if not raw:
             return domains
         allowed = set(raw)
