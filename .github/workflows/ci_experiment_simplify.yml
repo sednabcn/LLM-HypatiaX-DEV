@@ -1157,8 +1157,12 @@ jobs:
             #               the assigned domains. TASK_IDS / SHARD_IDS are also
             #               exported for _resolve_domains_from_env() fallback path.
             hybrid_all_domains)
+              # Bug 1 fix: SHARD_IDS must be a JSON array — the protocol uses
+              # json.loads(os.environ["SHARD_IDS"]) so passing raw space-separated
+              # string produces malformed JSON and matches 0 domains.
+              SHARD_IDS_JSON=$(python3 -c "import json,os; print(json.dumps(os.environ['TASK_IDS'].split()))")
               TASK_IDS="${TASK_IDS}" \
-              SHARD_IDS="${TASK_IDS}" \
+              SHARD_IDS="${SHARD_IDS_JSON}" \
               ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
               RESULTS_DIR="${RESULTS_DIR}" \
                 python3 hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py \
