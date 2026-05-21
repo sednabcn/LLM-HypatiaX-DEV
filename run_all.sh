@@ -247,7 +247,8 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
     python3 -m pip install --quiet seaborn || \
     { echo "ERROR: seaborn install failed — statistical_analysis.py will crash"; exit 1; }
   python3 statistical_analysis.py \
-    2>&1 | tee -a '${RESULTS_DIR}'/exp1_run.log
+    2>&1 | tee -a '${RESULTS_DIR}'/exp1_run.log \
+  || echo "WARNING: statistical_analysis.py exited non-zero — primary results already saved, continuing"
   # ── Move exp1 outputs → RESULTS_DIR ──────────────────────────────────────
   # Primary output: hypatiax_defi_benchmark_v3*results*.json
   # Also capture protocol_core_noiseless_*.json (protocol wrapper variant)
@@ -333,7 +334,7 @@ run extrap "OOD extrapolation comparative run (Tab 9 OOD columns)" bash -c "
     --extrap-train-frac \${EXTRAP_TRAIN_FRAC:-0.8} \
     --samples ${FEYNMAN_SAMPLES} \
     --pysr-timeout ${FEYNMAN_TIMEOUT} \
-    --method-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${METHOD_TIMEOUT:-900} \
     --output-dir '${RESULTS_DIR}/comparison_results/extrapolation' \
     --no-llm-cache \
     2>&1 | tee '${RESULTS_DIR}'/extrap_run.log
@@ -456,7 +457,10 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
 # --parsimony 0.01 --populations: matches CI worker invocation exactly.
 # Domains: 11 Feynman sub-domains derived from experiment_protocol_benchmark_v2.py
 #   _build_domain_map() — same list as CI FEYNMAN_DOMAIN_IDS.
-FEYNMAN_DOMAINS="feynman_biology feynman_chemistry feynman_electrochemistry feynman_electromagnetism feynman_electrostatics feynman_mechanics feynman_optics feynman_quantum feynman_thermodynamics feynman_astronomy feynman_fluid_dynamics"
+# FIX-DOMAINS: removed feynman_astronomy + feynman_fluid_dynamics (don't exist in
+# BenchmarkProtocol._build_domain_map()); added feynman_magnetism + feynman_probability
+# (present in protocol). Matches CI FEYNMAN_DOMAINS authoritative list exactly.
+FEYNMAN_DOMAINS="feynman_biology feynman_chemistry feynman_electrochemistry feynman_electromagnetism feynman_electrostatics feynman_magnetism feynman_mechanics feynman_optics feynman_probability feynman_quantum feynman_thermodynamics"
 run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab 16-18)" bash -c "
   cd '${EXPERIMENTS_DIR}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'

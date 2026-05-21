@@ -906,11 +906,29 @@ jobs:
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
-                bash run_all.sh --step exp1
+                bash run_all.sh --step exp1 \
+              || {
+                # run_all.sh exited non-zero — check if the primary benchmark
+                # results were written before the failure (e.g. statistical_analysis.py
+                # post-processing crash after a successful experiment run).
+                # If results exist, treat as a soft failure and continue to the
+                # upload/commit steps so results are not lost.
+                # If no results exist, this is a hard failure — abort the step.
+                RESULT_COUNT=$(find "${RESULTS_DIR}" \
+                  \( -name "hypatiax_defi_benchmark_v3*results*.json" \
+                   -o -name "protocol_core_noiseless_*.json" \) \
+                  2>/dev/null | wc -l || echo 0)
+                if [[ "${RESULT_COUNT}" -gt 0 ]]; then
+                  echo "::warning::run_all.sh --step exp1 exited non-zero but ${RESULT_COUNT} result file(s) found — treating as soft failure; continuing to upload/commit"
+                else
+                  echo "::error::run_all.sh --step exp1 failed AND no result files found — hard failure"
+                  exit 1
+                fi
+              }
               # -- Ghost-file diagnostic: show exactly where exp1 wrote its output --
               echo "=== exp1 post-run file scan (repo-root-relative) ==="
-              find . -maxdepth 8 -name "hypatiax_defi_benchmark_v3*" -o \
-                                 -name "protocol_core_noiseless_*" 2>/dev/null | sort || true
+              find . -maxdepth 8 \( -name "hypatiax_defi_benchmark_v3*" -o \
+                                    -name "protocol_core_noiseless_*" \) 2>/dev/null | sort || true
               echo "=== end scan ==="
               ;;
 
