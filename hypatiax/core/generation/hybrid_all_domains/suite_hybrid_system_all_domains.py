@@ -184,6 +184,8 @@ class ExternalProtocolLoader:
             Path.cwd() / filename,
             Path(__file__).parent / filename,
             Path.cwd() / "protocols" / filename,
+            Path.cwd() / "hypatiax" / "protocols" / filename,
+            Path(__file__).parents[3] / "protocols" / filename,
         ]
         if protocol_path:
             search_paths.insert(0, Path(protocol_path))
