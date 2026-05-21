@@ -51,9 +51,11 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 RESULTS_DIR="${RESULTS_DIR:-${REPO_ROOT}/hypatiax/data/results}"
 EXPERIMENTS_DIR="${EXPERIMENTS_DIR:-${REPO_ROOT}/hypatiax/experiments/benchmarks}"
-# FIX-5: GENERATION_DIR aligns with CI script path hypatiax/experiments/generation/
-# (was CORE_DIR/generation which resolved to hypatiax/core/generation — wrong tree)
-GENERATION_DIR="${GENERATION_DIR:-${REPO_ROOT}/hypatiax/experiments/generation}"
+# FIX PATH-1: GENERATION_DIR corrected to hypatiax/core/generation/ to match
+# CI script_path: hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py
+# (was: hypatiax/experiments/generation — wrong tree; caused ENOENT on hybrid_all_domains step
+#  and FIX TASK 7 domain-list validation both in run_all.sh and CI parity check)
+GENERATION_DIR="${GENERATION_DIR:-${REPO_ROOT}/hypatiax/core/generation}"
 CORE_DIR="${CORE_DIR:-${REPO_ROOT}/hypatiax/core}"
 ANALYSIS_DIR="${ANALYSIS_DIR:-${REPO_ROOT}/hypatiax/analysis}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/scripts}"
@@ -85,7 +87,7 @@ export PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS:-120}"
 # FIX-10: exported so subshells and child processes inherit the values.
 export FEYNMAN_SAMPLES=200
 export FEYNMAN_TIMEOUT=1100        # FIX-G2: paper value 1100s (was 900)
-export FEYNMAN_NOISELESS_THRESHOLD=0.9999
+export FEYNMAN_NOISELESS_THRESHOLD=0.999999  # FIX-THRESHOLD: matches ci_experiment_simplify.yml (was 0.9999)
 
 # Julia signal handling — FIX-6 (FIX-G10): must be set before any juliacall
 # import so Julia segfaults produce traceable Python exceptions.
@@ -272,6 +274,8 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
   DEFI_TASK_FILTER=portfolio \
   DEFI_SEEDS='42,99,123,777,2024' \
     python3 hypatiax_defi_benchmark_v3c.py \
+      --noise-level 15 \
+      --output-dir '${RESULTS_DIR}/comparison_results/noise-noiseless/15' \
       2>&1 | tee '${RESULTS_DIR}'/exp1b_run.log
   python3 portfolio_variance_v3c2.py \
     2>&1 | tee -a '${RESULTS_DIR}'/exp1b_run.log
@@ -282,22 +286,62 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
   # every output has a distinct name.  SHARD_INDEX defaults to 0 for local runs.
   _SHARD=\${SHARD_INDEX:-0}
   _SEED_TAG=\$(echo \"\${DEFI_SEEDS:-42}\" | tr ',' '_')
+
   dest15='${RESULTS_DIR}/comparison_results/noise-noiseless/15'
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 \( -name 'defi_v3_*.json' -o -name '*portfolio*variance*.json' \) | \
-  while IFS= read -r src; do
-    fname=\$(basename \"\$src\")
-    stem=\"\${fname%.*}\"; ext=\"\${fname##*.}\"
-    dst=\"\${dest15}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
-    mv -v \"\$src\" \"\$dst\" 2>/dev/null || true
+
+  mkdir -p \"\${dest15}\"
+
+  # move primary outputs
+
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 \
+  \( \
+      -name 'defi_v3_*.json' \
+      -o -name '*portfolio*variance*.json' \
+      -o -name 'hypatiax_defi_benchmark_v3*results*.json' \
+  \) | while IFS= read -r src; do
+
+      fname=\$(basename \"\$src\")
+      stem=\"\${fname%.*}\"
+      ext=\"\${fname##*.}\"
+
+      dst=\"\${dest15}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
+
+      if [ -f \"\$src\" ]; then
+          mv -v \"\$src\" \"\$dst\" || true
+      fi
   done
-  # comparison_FIXED_* files are also written to EXPERIMENTS_DIR or CWD
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 \( -name 'comparison_FIXED_*.json' -o -name 'comparison_FIXED_*.txt' \) | \
-  while IFS= read -r src; do
-    fname=\$(basename \"\$src\")
-    stem=\"\${fname%.*}\"; ext=\"\${fname##*.}\"
-    dst=\"\${dest15}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
-    mv -v \"\$src\" \"\$dst\" 2>/dev/null || true
+
+  # move comparison files
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 \
+  \( \
+      -name 'comparison_FIXED_*.json' \
+      -o -name 'comparison_FIXED_*.txt' \
+  \) | while IFS= read -r src; do
+
+      fname=\$(basename \"\$src\")
+      stem=\"\${fname%.*}\"
+      ext=\"\${fname##*.}\"
+
+      dst=\"\${dest15}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
+
+      if [ -f \"\$src\" ]; then
+          mv -v \"\$src\" \"\$dst\" || true
+      fi
   done
+
+  # verification
+  echo '=== exp1b verification ==='
+
+  find \"\${dest15}\" -type f 2>/dev/null | sort
+
+  count=\$(find \"\${dest15}\" -type f 2>/dev/null | wc -l)
+
+  echo \"Files produced: \${count}\"
+
+  if [ \"\${count}\" -eq 0 ]; then
+      echo 'ERROR: exp1b generated no files'
+      exit 1
+  fi
 "
 
 # ── STEP 3: extrap ────────────────────────────────────────────────────────────
@@ -360,11 +404,12 @@ run hybrid_all_domains "Hybrid LLM+NN all-domains run -- 10 domains (SS10.9 hybr
   # ── FIX TASK 7: runtime domain-list validation ────────────────────────────
   ACTUAL_DOMAINS=\$(python3 - << 'PYEOF'
 import importlib.util, sys, pathlib
-# FIX-5: use GENERATION_DIR (hypatiax/experiments/generation/) — matches CI script path.
-# Previously used CORE_DIR/generation/ (hypatiax/core/generation/) — wrong tree.
+# PATH-1 FIX: GENERATION_DIR = hypatiax/core/generation (matches CI script_path).
+# Previously this comment said "hypatiax/experiments/generation/" — that was wrong.
 spec = importlib.util.spec_from_file_location(
     'hybrid_mod',
     pathlib.Path('${GENERATION_DIR}/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py')
+    # PATH-1 FIX: GENERATION_DIR = hypatiax/core/generation (matches CI script_path)
 )
 mod = importlib.util.module_from_spec(spec)
 try:
@@ -374,7 +419,7 @@ except SystemExit:
 domains = getattr(mod, 'DOMAINS', getattr(mod, 'ALL_DOMAINS', getattr(mod, 'DOMAIN_KEYS', None)))
 if domains is None:
     try:
-        from hypatiax.experiments.generation.hybrid_all_domains_llm_nn \
+        from hypatiax.core.generation.hybrid_all_domains_llm_nn \
             .hybrid_system_llm_nn_all_domains import ExperimentProtocolAll
         domains = set(ExperimentProtocolAll().get_all_domains().keys())
     except Exception as e:
@@ -391,10 +436,16 @@ PYEOF
     exit 1
   fi
   echo '[hybrid_all_domains] Domain-list OK: '\"\${ACTUAL_SORTED}\"
-  # ── Main experiment — FIX-5: cd to GENERATION_DIR (not CORE_DIR) ─────────
+  # ── Main experiment — cd to GENERATION_DIR (hypatiax/core/generation) ───────
+  # PATH-1 FIX: GENERATION_DIR now correctly points to hypatiax/core/generation/
+  # matching CI script_path. Previous stale comment said "not CORE_DIR" — reversed.
   cd '${GENERATION_DIR}/hybrid_all_domains_llm_nn'
+  # FIX-OUTDIR-1: --output-dir so outputs land in hybrid_llm_nn/all_domains/
+  # matching CI RESULT_SUBDIR and validate glob. Previously no --output-dir
+  # was passed; files landed in CWD and were never found by the validate check.
   python3 hybrid_system_llm_nn_all_domains.py \
     --samples '${FEYNMAN_SAMPLES}' \
+    --output-dir '${RESULTS_DIR}/hybrid_llm_nn/all_domains' \
     2>&1 | tee '${RESULTS_DIR}'/hybrid_all_domains_run.log
 "
 
@@ -521,15 +572,22 @@ run exp3 "Nguyen-12 benchmark -- SEED=42 (tab:nguyen12 - SS10.8)" bash -c '
   cd '"'"'${EXPERIMENTS_DIR}'"'"'
   mkdir -p '"'"'${RESULTS_DIR}/extrapolation'"'"'
   echo "=== exp3 seed 1/1: seed=42 | equations: N1-N12 (12 total) ==="
-  python3 exp3_nguyen12_hybrid50v_02.py \
+  RESULTS_DIR='${RESULTS_DIR}' \
+    python3 exp3_nguyen12_hybrid50v_02.py \
     --seed 42 \
     2>&1 | tee '"'"'${RESULTS_DIR}'"'"'/exp3_run.log \
   || echo "WARNING: seed=42 exited non-zero — continuing"
   # FIX-4: CI RESULT_SUBDIR=extrapolation — move outputs to extrapolation/,
   # not to ${RESULTS_DIR}/ root.
+  # FIX-OUTDIR-4: add CI-matching globs (full_run_*, report_hybrid_*, hybrid_defi_*)
+  # CI Move step exp3 moves all four patterns; run_all.sh only moved *nguyen*.json.
   find '"'"'${RESULTS_DIR}'"'"' -maxdepth 1 \
-    \( -name '"'"'*nguyen*seed42*.json'"'"' -o -name '"'"'*nguyen12*42*.json'"'"' \) \
+    \( -name '"'"'*nguyen*seed42*.json'"'"' -o -name '"'"'*nguyen12*42*.json'"'"' \
+       -o -name '"'"'full_run_*seed42*.json'"'"' -o -name '"'"'report_hybrid_*seed42*.json'"'"' \
+       -o -name '"'"'hybrid_defi_*seed42*.json'"'"' \) \
     -exec mv -v {} '"'"'${RESULTS_DIR}/extrapolation/'"'"' \; 2>/dev/null || true
+  find '"'"'${RESULTS_DIR}'"'"' -maxdepth 1 -name '"'"'experiment_registry.json'"'"' \
+    -exec cp -v {} '"'"'${RESULTS_DIR}/extrapolation/'"'"' \; 2>/dev/null || true
   # -- Partial results summary after seed=42 ----------------------------------
   echo "--- exp3 partial results after seed=42 (1/1) ---"
   RESULT_DIR='"'"'${RESULTS_DIR}/extrapolation'"'"' python3 - <<'"'"'PYEOF'"'"'
@@ -575,7 +633,8 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
   mkdir -p '${RESULTS_DIR}/extrapolation/multi_seed'
   for seed in 99 123 777 2024; do
     echo '--- exp3b seed='\$seed' ---'
-    python3 exp3_nguyen12_hybrid50v_02.py \
+    RESULTS_DIR='${RESULTS_DIR}' \
+      python3 exp3_nguyen12_hybrid50v_02.py \
       --seed \$seed \
       2>&1 | tee -a '${RESULTS_DIR}'/exp3b_run.log
   done
@@ -583,9 +642,15 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
   # Prevents overwriting the exp3 seed=42 outputs that live in extrapolation/.
   # FIX-DIR: script writes to RESULTS_DIR root — search RESULTS_DIR, not EXPERIMENTS_DIR.
   # FIX-GLOB: exclude seed42 explicitly so exp3 output is never swept here.
-  find '${RESULTS_DIR}' -maxdepth 1 -name '*nguyen*.json' \
+  # FIX-OUTDIR-3: add CI-matching globs for exp3b (full_run_*, report_hybrid_*, hybrid_defi_*)
+  # CI Move step moves all four patterns; run_all.sh was only moving *nguyen*.json.
+  find '${RESULTS_DIR}' -maxdepth 1 \
+    \( -name '*nguyen*.json' -o -name 'full_run_*.json' \
+       -o -name 'report_hybrid_*.json' -o -name 'hybrid_defi_*.json' \) \
     ! -name '*seed42*' ! -name '*nguyen12*42*' \
     -exec mv -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \;
+  find '${RESULTS_DIR}' -maxdepth 1 -name 'experiment_registry.json' \
+    -exec cp -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \; 2>/dev/null || true
 "
 
 # ── STEP 9: suppA ─────────────────────────────────────────────────────────────
@@ -614,16 +679,23 @@ run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routin
   find '${EXPERIMENTS_DIR}' -maxdepth 1 \
     \( -name 'consolidated_hybrid*.json' -o -name 'hybrid_system*.json' \) \
     -exec mv -v {} '${RESULTS_DIR}/hybrid_pysr/defi/' \;
+  # FIX-OUTDIR-2: CI Move step also rescues hybrid_llm_nn_all_domains_*.json → hybrid_llm_nn/all_domains/
+  # run_all.sh was missing this move; files from run_hybrid_system_benchmark.py stayed in EXPERIMENTS_DIR.
+  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'hybrid_llm_nn_all_domains_*.json' \
+    -exec mv -v {} '${RESULTS_DIR}/hybrid_llm_nn/all_domains/' \; 2>/dev/null || true
 "
 
 # ── STEP 10: suppB — noise sweep ─────────────────────────────────────────────
 # FIX CRITICAL 2: noise sweep now its own step; sample-complexity in suppB_sc
 run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Supplement B)" bash -c "
   cd '${EXPERIMENTS_DIR}'
-  # OUT_BASE is exported so run_noise_sweep_benchmark.py writes directly to
-  # comparison_results/feynman-tests/noise-sweep/ (its _RESULTS_DIR default).
+  # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
+  # Scripts that read either var will resolve to the same canonical path.
+  # --output-dir added to exactly match CI RESULT_SUBDIR=comparison_results/feynman-tests/noise-sweep
   OUT_BASE='${RESULTS_DIR}' \
+  RESULTS_DIR='${RESULTS_DIR}' \
     python3 run_noise_sweep_benchmark.py \
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep' \
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 "
 
@@ -634,12 +706,15 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 # Output dir: comparison_results/feynman-tests/sample-complexity/
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   cd '${EXPERIMENTS_DIR}'
-  # OUT_BASE is exported so run_sample_complexity_benchmark.py writes directly to
-  # comparison_results/feynman-tests/sample-complexity/ (its _RESULTS_DIR default).
+  # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
+  # Scripts that read either var will resolve to the same canonical path.
+  # --output-dir added to exactly match CI RESULT_SUBDIR=comparison_results/feynman-tests/sample-complexity
   NOISE_LEVEL='5.0' \
   SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \
   OUT_BASE='${RESULTS_DIR}' \
+  RESULTS_DIR='${RESULTS_DIR}' \
     python3 run_sample_complexity_benchmark.py \
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
 "
 
