@@ -38,6 +38,16 @@
 #    FIX-G10: PYTHON_JULIACALL_HANDLE_SIGNALS=yes set before any juliacall import
 #             so Julia segfaults produce traceable Python exceptions.
 #             Julia upgraded to 1.11 via julia-actions/setup-julia@v2.
+#
+#  FIX applied in this revision:
+#    FIX-TOY-EXP1: exp1 branch was a TOY stub that wrote a fake JSON then called
+#                  "exit 1" to simulate a post-save crash.  With set -euo pipefail
+#                  active in the run step, this unconditionally failed every exp1
+#                  run (exit code 1, "Process completed with exit code 1").
+#                  Fix: replaced TOY stub with the real run_all.sh --step exp1
+#                  invocation (matching ci_experiment.yml), passing RESULTS_DIR as
+#                  an absolute path so the script resolves outputs from workspace
+#                  root regardless of any cd inside run_all.sh.
 # ==============================================================================
 
 name: "HypatiaX -simplify-experiment runner . ci_experiment_simplify"
@@ -894,18 +904,23 @@ jobs:
           case "${EXP}" in
 
             exp1)
-              # ── TOY exp1 — path-tracing test (replace with real exp1 after fix) ──
-              echo "=== TOY exp1: CWD=$(pwd) ==="
-              echo "=== TOY exp1: OUT_BASE=${OUT_BASE} ==="
-              DEST_ABS="$(pwd)/${OUT_BASE}/comparison_results/noise-noiseless/noiseless"
-              mkdir -p "${DEST_ABS}"
-              FAKE="${DEST_ABS}/hypatiax_defi_benchmark_v3_results.json"
-              echo '{"results":[{"method":"hybrid_v40","r2_train":0.95}],"toy":true}' > "${FAKE}"
-              echo "TOY: wrote ${FAKE}"
-              echo "=== TOY exp1: files after write ==="
-              find . -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort
-              echo "TOY: simulating post-save crash (exit 1)"
-              exit 1
+              # FIX: replaced TOY stub (which did exit 1) with the real run_all.sh
+              # invocation, matching ci_experiment.yml.  RESULTS_DIR is passed as an
+              # absolute path (same pattern as exp1b below) so run_all.sh resolves it
+              # from workspace root regardless of any cd inside the script.
+              TASK_IDS="${TASK_IDS}" \
+              SHARD_IDS="${TASK_IDS}" \
+              PYSR_SEED="${PYSR_SEED}" \
+              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
+                bash run_all.sh --step exp1
+              # -- exp1 post-run file scan: confirm where outputs landed -----------
+              echo "=== exp1 post-run file scan (repo-root-relative) ==="
+              find . -maxdepth 8 \( \
+                -name "hypatiax_defi_benchmark_v3*results*.json" -o \
+                -name "protocol_core_noiseless_*.json"           -o \
+                -name "defi_v3_*.json" \
+              \) 2>/dev/null | sort || true
+              echo "=== end scan ==="
               ;;
 
             exp1b)
