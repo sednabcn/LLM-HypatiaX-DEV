@@ -911,15 +911,23 @@ jobs:
                 # run_all.sh exited non-zero — check if the primary benchmark
                 # results were written before the failure (e.g. statistical_analysis.py
                 # post-processing crash after a successful experiment run).
-                # If results exist, treat as a soft failure and continue to the
-                # upload/commit steps so results are not lost.
+                # If results exist, move them into RESULT_SUBDIR NOW so the
+                # checkpoint-save step can find them, then treat as soft failure.
                 # If no results exist, this is a hard failure — abort the step.
-                RESULT_COUNT=$(find "${RESULTS_DIR}" \
+                RESULT_COUNT=$(find "${RESULTS_DIR}" "${OUT_BASE}" . \
                   \( -name "hypatiax_defi_benchmark_v3*results*.json" \
                    -o -name "protocol_core_noiseless_*.json" \) \
                   2>/dev/null | wc -l || echo 0)
                 if [[ "${RESULT_COUNT}" -gt 0 ]]; then
-                  echo "::warning::run_all.sh --step exp1 exited non-zero but ${RESULT_COUNT} result file(s) found — treating as soft failure; continuing to upload/commit"
+                  echo "::warning::run_all.sh --step exp1 exited non-zero but ${RESULT_COUNT} result file(s) found — moving to RESULT_SUBDIR and treating as soft failure"
+                  # Move result files into canonical path NOW so checkpoint-save sees them
+                  DEST="${OUT_BASE}/comparison_results/noise-noiseless/noiseless"
+                  mkdir -p "${DEST}"
+                  find . -maxdepth 6 \
+                    \( -name "hypatiax_defi_benchmark_v3*results*.json" \
+                     -o -name "protocol_core_noiseless_*.json" \) \
+                    -not -path "./${DEST}/*" \
+                    -exec mv -v {} "${DEST}/" \; 2>/dev/null || true
                 else
                   echo "::error::run_all.sh --step exp1 failed AND no result files found — hard failure"
                   exit 1
@@ -1301,7 +1309,7 @@ jobs:
       # fails when a file already lives in the right place or when a subset of
       # tasks produced no output (partial shard).
       - name: Move results to RESULTS_DIR
-        if: ${{ steps.resolve_ids.outputs.has_work == 'true' }}
+        if: always()
         env:
           EXP:           ${{ needs.plan.outputs.exp_id }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
@@ -1491,7 +1499,7 @@ jobs:
       # cp is used (not mv) so the original file remains reachable during this
       # run in case another step still needs it; duplicates are harmless.
       - name: Store results in canonical RESULT_SUBDIR
-        if: ${{ steps.resolve_ids.outputs.has_work == 'true' }}
+        if: always()
         env:
           RESULTS_DIR:   ${{ env.OUT_BASE }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
@@ -1797,12 +1805,18 @@ jobs:
                   pass
 
           done_set = set(completed)
+          # FIX: scan both the canonical RESULT_SUBDIR *and* the workspace root
+          # (CWD) so tasks are marked done even when the crash happened before
+          # move_matching relocated the files into RESULT_SUBDIR.
+          search_dirs = [result_dir, "."]
           for tid in shard_ids:
               safe = tid.replace("/", "_").replace(".", "_")
-              matches = (
-                  glob.glob(f"{result_dir}/**/*{safe}*.json", recursive=True) +
-                  glob.glob(f"{result_dir}/**/*{safe}*.csv",  recursive=True)
-              )
+              matches = []
+              for d in search_dirs:
+                  matches += (
+                      glob.glob(f"{d}/**/*{safe}*.json", recursive=True) +
+                      glob.glob(f"{d}/**/*{safe}*.csv",  recursive=True)
+                  )
               if matches:
                   done_set.add(tid)
 
