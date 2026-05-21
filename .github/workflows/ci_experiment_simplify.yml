@@ -894,50 +894,18 @@ jobs:
           case "${EXP}" in
 
             exp1)
-              # ITEM 2 FIX: verify seaborn is importable before run_all.sh reaches
-              # statistical_analysis.py.  seaborn is in the pip install step above,
-              # but an explicit guard here catches any packaging edge-case where the
-              # install succeeded without the package being importable (e.g. wrong
-              # Python interpreter, broken wheel).
-              python3 -c "import seaborn" || {
-                echo "seaborn not importable after pip install — re-installing"
-                python3 -m pip install --quiet seaborn
-              }
-              TASK_IDS="${TASK_IDS}" \
-              SHARD_IDS="${TASK_IDS}" \
-              PYSR_SEED="${PYSR_SEED}" \
-                bash run_all.sh --step exp1 \
-              || {
-                # run_all.sh exited non-zero — check if the primary benchmark
-                # results were written before the failure (e.g. statistical_analysis.py
-                # post-processing crash after a successful experiment run).
-                # If results exist, move them into RESULT_SUBDIR NOW so the
-                # checkpoint-save step can find them, then treat as soft failure.
-                # If no results exist, this is a hard failure — abort the step.
-                RESULT_COUNT=$(find "${RESULTS_DIR}" "${OUT_BASE}" . \
-                  \( -name "hypatiax_defi_benchmark_v3*results*.json" \
-                   -o -name "protocol_core_noiseless_*.json" \) \
-                  2>/dev/null | wc -l || echo 0)
-                if [[ "${RESULT_COUNT}" -gt 0 ]]; then
-                  echo "::warning::run_all.sh --step exp1 exited non-zero but ${RESULT_COUNT} result file(s) found — moving to RESULT_SUBDIR and treating as soft failure"
-                  # Move result files into canonical path NOW so checkpoint-save sees them
-                  DEST="${OUT_BASE}/comparison_results/noise-noiseless/noiseless"
-                  mkdir -p "${DEST}"
-                  find . -maxdepth 6 \
-                    \( -name "hypatiax_defi_benchmark_v3*results*.json" \
-                     -o -name "protocol_core_noiseless_*.json" \) \
-                    -not -path "./${DEST}/*" \
-                    -exec mv -v {} "${DEST}/" \; 2>/dev/null || true
-                else
-                  echo "::error::run_all.sh --step exp1 failed AND no result files found — hard failure"
-                  exit 1
-                fi
-              }
-              # -- Ghost-file diagnostic: show exactly where exp1 wrote its output --
-              echo "=== exp1 post-run file scan (repo-root-relative) ==="
-              find . -maxdepth 8 \( -name "hypatiax_defi_benchmark_v3*" -o \
-                                    -name "protocol_core_noiseless_*" \) 2>/dev/null | sort || true
-              echo "=== end scan ==="
+              # ── TOY exp1 — path-tracing test (replace with real exp1 after fix) ──
+              echo "=== TOY exp1: CWD=$(pwd) ==="
+              echo "=== TOY exp1: OUT_BASE=${OUT_BASE} ==="
+              DEST_ABS="$(pwd)/${OUT_BASE}/comparison_results/noise-noiseless/noiseless"
+              mkdir -p "${DEST_ABS}"
+              FAKE="${DEST_ABS}/hypatiax_defi_benchmark_v3_results.json"
+              echo '{"results":[{"method":"hybrid_v40","r2_train":0.95}],"toy":true}' > "${FAKE}"
+              echo "TOY: wrote ${FAKE}"
+              echo "=== TOY exp1: files after write ==="
+              find . -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort
+              echo "TOY: simulating post-save crash (exit 1)"
+              exit 1
               ;;
 
             exp1b)
@@ -1255,6 +1223,21 @@ jobs:
 
           esac
 
+
+      # -- DIAGNOSTIC: find where result files actually landed on disk -----------
+      - name: Diagnostic - locate result files on disk
+        if: always()
+        run: |
+          echo "=== CWD ===" && pwd
+          echo "=== github.workspace ===" && echo "${{ github.workspace }}"
+          echo "=== OUT_BASE ===" && echo "${OUT_BASE}"
+          echo "=== OUT_BASE resolved ===" && realpath "${OUT_BASE}" 2>/dev/null || true
+          echo "=== ALL hypatiax_defi_benchmark_v3*results*.json on disk ==="
+          find / -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
+          echo "=== ALL protocol_core_noiseless_*.json on disk ==="
+          find / -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
+          echo "=== OUT_BASE full tree ==="
+          find "${OUT_BASE}" -type f 2>/dev/null | sort || echo "(empty or missing)"
 
       # -- FIX-G5: Safety-net extraction ----------------------------------------
       # Rescues computed results from the per-shard checkpoint into RESULTS_DIR
