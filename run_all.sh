@@ -235,34 +235,36 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
 '
 
 # ── STEP 1: exp1 ──────────────────────────────────────────────────────────────
-run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
-  cd '${EXPERIMENTS_DIR}'
+_exp1_body() {
+  set -euo pipefail
+  cd "${EXPERIMENTS_DIR}"
   python3 hypatiax_defi_benchmark_v3c.py \
-    2>&1 | tee '${RESULTS_DIR}'/exp1_run.log
-  cd '${ANALYSIS_DIR}'
+    2>&1 | tee "${RESULTS_DIR}/exp1_run.log"
+  cd "${ANALYSIS_DIR}"
   # ITEM 2 FIX: guard seaborn immediately before statistical_analysis.py.
   # This is the second line of defence after the env_check self-heal above;
   # it fires even when exp1 is run standalone (--step exp1, skipping env_check).
-  python3 -c 'import seaborn' 2>/dev/null || \
+  python3 -c "import seaborn" 2>/dev/null || \
     python3 -m pip install --quiet seaborn || \
     { echo "ERROR: seaborn install failed — statistical_analysis.py will crash"; exit 1; }
   python3 statistical_analysis.py \
-    2>&1 | tee -a '${RESULTS_DIR}'/exp1_run.log \
+    2>&1 | tee -a "${RESULTS_DIR}/exp1_run.log" \
   || echo "WARNING: statistical_analysis.py exited non-zero — primary results already saved, continuing"
   # ── Move exp1 outputs → RESULTS_DIR ──────────────────────────────────────
   # Primary output: hypatiax_defi_benchmark_v3*results*.json
   # Also capture protocol_core_noiseless_*.json (protocol wrapper variant)
   # and ablation / mannwhitney JSON files.
   # CI worker 'Move results to RESULTS_DIR' step matches all three globs; keep in sync.
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'hypatiax_defi_benchmark_v3*results*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/' \;
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'protocol_core_noiseless_*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/' \; 2>/dev/null || true
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'ablation_*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/' \;
-  find '${EXPERIMENTS_DIR}' -maxdepth 1 -name 'exp1_rf01_mannwhitney*.json' \
-    -exec mv -v {} '${RESULTS_DIR}/' \;
-"
+  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'hypatiax_defi_benchmark_v3*results*.json' \
+    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/" \;
+  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'protocol_core_noiseless_*.json' \
+    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/" \; 2>/dev/null || true
+  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'ablation_*.json' \
+    -exec mv -v {} "${RESULTS_DIR}/" \;
+  find "${EXPERIMENTS_DIR}" -maxdepth 1 -name 'exp1_rf01_mannwhitney*.json' \
+    -exec mv -v {} "${RESULTS_DIR}/" \;
+}
+run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" _exp1_body
 
 # ── STEP 2: exp1b ─────────────────────────────────────────────────────────────
 run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c "
