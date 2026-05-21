@@ -583,6 +583,15 @@ jobs:
         with:
           version: "1.11"
 
+      - name: Cache Julia depot
+        if: ${{ needs.plan.outputs.needs_julia == 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.julia
+          key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+          restore-keys: |
+            julia-depot-${{ runner.os }}-
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
@@ -1160,7 +1169,7 @@ jobs:
               # Bug 1 fix: SHARD_IDS must be a JSON array — the protocol uses
               # json.loads(os.environ["SHARD_IDS"]) so passing raw space-separated
               # string produces malformed JSON and matches 0 domains.
-              SHARD_IDS_JSON=$(python3 -c "import json,os; print(json.dumps(os.environ['TASK_IDS'].split()))")
+              SHARD_IDS_JSON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1].split()))" "${TASK_IDS}")
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${SHARD_IDS_JSON}" \
               ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
