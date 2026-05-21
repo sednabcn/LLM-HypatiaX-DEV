@@ -1350,7 +1350,8 @@ STEPS: list[Step] = [
           "--extrap",
           "--extrap-multiplier", "2.0",   # FIX-BUG3: was 3.0 (non-paper value)
           "--extrap-train-frac", "0.8",   # FIX-BUG3: was 0.4 (non-paper value)
-          "--skip-pysr"],
+          # --skip-pysr removed: CI worker runs all 6 methods (methods 5+6 active)
+          ],
          phase="1 · Core experiments",
          slow=True,
          expected="OOD extrapolation R² vs baseline; Tab 9 OOD columns reproduced",
@@ -1410,7 +1411,7 @@ STEPS: list[Step] = [
           "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py",
           "--benchmark", "feynman",
           "--output-dir", str(RESULTS_DIR / "comparison_results" / "feynman-tests" / "exp2"),  # FIX-BUG6: was missing; results landed in script default
-          "--method-timeout", "120",      # FIX-BUG6: was missing (CI worker value)
+          "--method-timeout", str(int(os.environ.get("METHOD_TIMEOUT", "900"))),  # FIX: was 120 (LLM-only timeout); CI worker uses METHOD_TIMEOUT=900s for all 6 methods incl. PySR methods 5+6
           "--samples",   str(int(os.environ.get("FEYNMAN_SAMPLES", "200"))),
           "--pysr-timeout", str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
           "--checkpoint-name", "feynman_exp2_checkpoint",
@@ -2149,7 +2150,7 @@ def main() -> None:
     if args.seed is not None:
         env["NN_SEED"] = env["PYSR_SEED"] = env["PYTHONHASHSEED"] = _seed_str
 
-    env.setdefault("LLM_MODEL",   _repro_config.get("llm_model",   "claude-sonnet-4-20250514"))
+    env.setdefault("LLM_MODEL",   _repro_config.get("llm_model",   "claude-sonnet-4-6"))
     env.setdefault("LLM_RETRIES", str(_repro_config.get("llm_retries", 3)))
     env.setdefault("LLM_K_RUNS",  "1")
 
