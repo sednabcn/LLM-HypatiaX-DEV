@@ -239,14 +239,16 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
 # ── STEP 1: exp1 ──────────────────────────────────────────────────────────────
 _exp1_body() {
   set -euo pipefail
-  cd "${EXPERIMENTS_DIR}"
-  # FIX: pass --output-dir so hypatiax_defi_benchmark_v3c.py writes its JSON
-  # directly to the canonical RESULT_SUBDIR instead of constructing a path
-  # relative to CWD (EXPERIMENTS_DIR).  Without this flag the script writes to
-  # EXPERIMENTS_DIR/hypatiax/data/results/... — a doubled path that neither the
-  # post-run find nor the CI verification step can locate.
-  python3 hypatiax_defi_benchmark_v3c.py \
-    --output-dir "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless" \
+  # ROOT CAUSE FIX: hypatiax_defi_benchmark_v3c.py hardcodes the relative path
+  # "hypatiax/data/results" from os.getcwd().  It does NOT read RESULTS_DIR from
+  # the environment.  When called after cd "${EXPERIMENTS_DIR}", CWD becomes
+  # .../hypatiax/experiments/benchmarks and the output lands in the doubled path
+  # .../benchmarks/hypatiax/data/results/... which nothing downstream can find.
+  #
+  # Fix: stay at REPO_ROOT and invoke the script by its full path.  Then
+  # os.getcwd() = REPO_ROOT and "hypatiax/data/results" resolves correctly.
+  cd "${REPO_ROOT}"
+  python3 "${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_v3c.py" \
     2>&1 | tee "${RESULTS_DIR}/exp1_run.log"
   cd "${ANALYSIS_DIR}"
   # ITEM 2 FIX: guard seaborn immediately before statistical_analysis.py.
@@ -258,7 +260,7 @@ _exp1_body() {
   python3 statistical_analysis.py \
     2>&1 | tee -a "${RESULTS_DIR}/exp1_run.log" \
   || echo "WARNING: statistical_analysis.py exited non-zero — primary results already saved, continuing"
-  # ── Rescue any stray exp1 outputs not caught by --output-dir ─────────────
+  # ── Rescue secondary exp1 outputs (protocol wrapper, ablation, mannwhitney) ──
   # protocol_core_noiseless_*.json (protocol wrapper variant) and ablation /
   # mannwhitney JSONs are written to EXPERIMENTS_DIR root by their own scripts.
   # Search up to maxdepth 8 so any doubled-path remnants are also caught.
