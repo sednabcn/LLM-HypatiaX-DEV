@@ -1614,7 +1614,9 @@ jobs:
 
       # -- Verify exp1b output files exist before upload ------------------------
       # ITEM 3 FIX: exp1b had no verification step — path mismatches were invisible.
-      # hypatiax_defi_benchmark_v3c.py (portfolio mode) writes comparison_FIXED_*.json.
+      # hypatiax_defi_benchmark_v3c.py (portfolio mode) writes:
+      #   hypatiax_defi_benchmark_v3_results.json  <- primary output (always present)
+      #   comparison_FIXED_*.json                  <- secondary (may be absent on first run)
       # After move_matching they must land in:
       #   hypatiax/data/results/comparison_results/noise-noiseless/15/
       # If none are found, the artifact upload will be empty and the repo commit
@@ -1626,21 +1628,24 @@ jobs:
         run: |
           set -euo pipefail
           TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/15"
+          COUNT_BENCHMARK=$(find "${TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
           COUNT_FIXED=$(find "${TARGET}" -name "comparison_FIXED_*.json" 2>/dev/null | wc -l)
           COUNT_DEFI=$(find  "${TARGET}" -name "defi_v3_*.json"          2>/dev/null | wc -l)
           COUNT_PORT=$(find  "${TARGET}" -name "*portfolio*variance*.json" 2>/dev/null | wc -l)
-          COUNT_TOTAL=$(( COUNT_FIXED + COUNT_DEFI + COUNT_PORT ))
+          COUNT_TOTAL=$(( COUNT_BENCHMARK + COUNT_FIXED + COUNT_DEFI + COUNT_PORT ))
           echo "=== exp1b output verification ==="
-          echo "  Target dir                    : ${TARGET}"
-          echo "  comparison_FIXED_*.json       : ${COUNT_FIXED}"
-          echo "  defi_v3_*.json                : ${COUNT_DEFI}"
-          echo "  *portfolio*variance*.json     : ${COUNT_PORT}"
-          echo "  Total                         : ${COUNT_TOTAL}"
+          echo "  Target dir                              : ${TARGET}"
+          echo "  hypatiax_defi_benchmark_v3*results*.json: ${COUNT_BENCHMARK}"
+          echo "  comparison_FIXED_*.json                 : ${COUNT_FIXED}"
+          echo "  defi_v3_*.json                          : ${COUNT_DEFI}"
+          echo "  *portfolio*variance*.json               : ${COUNT_PORT}"
+          echo "  Total                                   : ${COUNT_TOTAL}"
           echo "--- Directory listing ---"
           find "${TARGET}" -type f 2>/dev/null | sort || true
           if [[ "${COUNT_TOTAL}" -eq 0 ]]; then
             echo "::error::exp1b produced NO output files in '${TARGET}'."
-            echo "  Expected: comparison_FIXED_*.json, defi_v3_*.json, or *portfolio*variance*.json"
+            echo "  Expected: hypatiax_defi_benchmark_v3*results*.json, comparison_FIXED_*.json,"
+            echo "            defi_v3_*.json, or *portfolio*variance*.json"
             echo "  The script may have written to a different path.  Check:"
             echo "    1. 'exp1b post-run file scan' in the Run experiment tasks log"
             echo "    2. 'Move results to RESULTS_DIR' step log for exp1b"
