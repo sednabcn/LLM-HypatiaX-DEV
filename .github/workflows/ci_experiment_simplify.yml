@@ -961,7 +961,7 @@ jobs:
               # pass --domain and --output-dir explicitly on every invocation.
               # All 6 methods active (--skip-pysr removed): methods 5+6 (SymbolicEngine,
               # HybridV50_2) now run with METHOD_TIMEOUT (900s) for full PySR budget.
-              python3 -c "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]" > /tmp/domain_list.txt
+              python3 -c 'import json,os; [print(d) for d in json.loads(os.environ["SHARD_IDS"])]' > /tmp/domain_list.txt
               while IFS= read -r DOMAIN_ID; do
                 [[ -z "${DOMAIN_ID}" ]] && continue
                 echo "=== exp2_feynman: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
@@ -1002,7 +1002,7 @@ jobs:
               # Fix: use --benchmark both (runs both Feynman + SRBench protocols,
               # which is exp2's intent), loop per-domain from SHARD_IDS, and pass
               # --output-dir so outputs land in the expected RESULT_SUBDIR path.
-              python3 -c "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]" > /tmp/domain_list.txt
+              python3 -c 'import json,os; [print(d) for d in json.loads(os.environ["SHARD_IDS"])]' > /tmp/domain_list.txt
               while IFS= read -r DOMAIN_ID; do
                 [[ -z "${DOMAIN_ID}" ]] && continue
                 echo "=== exp2: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
@@ -1226,7 +1226,7 @@ jobs:
             # exp2_feynman does, passing --domain per invocation so each domain
             # runs independently with its own checkpoint and output file.
             extrap)
-              python3 -c "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]" > /tmp/domain_list.txt
+              python3 -c 'import json,os; [print(d) for d in json.loads(os.environ["SHARD_IDS"])]' > /tmp/domain_list.txt
               while IFS= read -r DOMAIN_ID; do
                 [[ -z "${DOMAIN_ID}" ]] && continue
                 echo "=== extrap: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
