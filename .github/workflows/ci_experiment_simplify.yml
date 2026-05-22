@@ -1687,6 +1687,8 @@ jobs:
       # output glob; fails loudly so path/naming mismatches surface immediately.
       - name: Verify exp2_feynman output files exist
         if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
@@ -1703,6 +1705,8 @@ jobs:
 
       - name: Verify exp2 output files exist
         if: ${{ needs.plan.outputs.exp_id == 'exp2' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
@@ -1748,6 +1752,8 @@ jobs:
 
       - name: Verify hybrid_all_domains output files exist
         if: ${{ needs.plan.outputs.exp_id == 'hybrid_all_domains' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" -name "hybrid_llm_nn_all_domains_*.json" 2>/dev/null | wc -l)
@@ -1764,15 +1770,20 @@ jobs:
 
       - name: Verify instability output files exist
         if: ${{ needs.plan.outputs.exp_id == 'instability' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT_CSV=$(find "${TARGET}" -name "instability_analysis.csv" 2>/dev/null | wc -l)
           COUNT_FIG=$(find "${TARGET}" \( -name "*.png" -o -name "*.pdf" \) 2>/dev/null | wc -l)
           echo "=== instability output verification ==="
+          echo "  Target dir               : ${TARGET}"
           echo "  instability_analysis.csv : ${COUNT_CSV}"
           echo "  Figure files (.png/.pdf) : ${COUNT_FIG}"
           find "${TARGET}" -type f 2>/dev/null | sort || true
           if [[ "${COUNT_CSV}" -eq 0 ]]; then
+            echo "=== locating instability_analysis.csv ==="
+            find "${{ github.workspace }}" -name "instability_analysis.csv" 2>/dev/null || true
             echo "::error::instability produced NO instability_analysis.csv in '${TARGET}'."
             exit 1
           fi
