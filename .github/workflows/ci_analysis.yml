@@ -2,10 +2,16 @@
 #  ci_analysis.yml - HypatiaX post-consolidation statistical analysis
 #
 #  Architecture contract (read before editing):
-#    This workflow runs AFTER ci_experiment.yml has completed and committed
-#    _merged.json to the repository.  It is the ONLY stage that may perform
-#    statistical analysis.  Workers and the consolidate job MUST NOT run
-#    statistical tests; see ci_experiment.yml for the architectural rationale.
+#    This workflow runs AFTER ci_experiment_simplify.yml has completed and
+#    committed result files to the repository.  It is the ONLY stage that may
+#    perform statistical analysis.  Workers MUST NOT run statistical tests;
+#    see ci_experiment_simplify.yml for the architectural rationale.
+#
+#  NOTE: ci_experiment_simplify.yml has NO consolidate job — each worker shard
+#    commits its own result files directly to the repo.  _merged.json is NOT
+#    automatically produced; run ci_consolidate_experiment.yml manually if a
+#    merged view is needed.  ci_analysis.yml therefore falls back to the
+#    committed shard files when _merged.json is absent.
 #
 #  Responsibilities:
 #    - Mann-Whitney U tests (per-method, cross-method)
@@ -27,32 +33,34 @@
 #
 #  Triggering modes:
 #    1. Scheduled chain (workflow_dispatch from ci_schedule_all.yml): called
-#       automatically after ci_experiment.yml completes.  Passes experiment
-#       and source_run_id; result_subdir is derived from the checkpoint.
-#    2. Manual (workflow_dispatch): re-runs analysis on an already-committed
-#       _merged.json.  Requires experiment; result_subdir is optional (derived
+#       automatically after ci_experiment_simplify.yml completes.  Passes
+#       experiment and source_run_id; result_subdir is derived from the
+#       checkpoint.
+#    2. Manual (workflow_dispatch): re-runs analysis on already-committed
+#       result files.  Requires experiment; result_subdir is optional (derived
 #       from experiment name if omitted); source_run_id optional.
 #
 #  WHY ci_analysis.yml IS A STANDALONE WORKFLOW (not workflow_run):
 #    GitHub does NOT fire the workflow_run event when the triggering workflow
 #    was itself started by another workflow via gh workflow run / workflow_dispatch
-#    (chained dispatch).  Because ci_schedule_all.yml dispatches ci_experiment.yml
-#    programmatically, a workflow_run trigger on ci_experiment.yml would never
-#    fire in the normal scheduled pipeline.  ci_schedule_all.yml therefore
-#    dispatches ci_analysis.yml explicitly from its run-finalize job after
-#    ci_experiment.yml completes.  The standalone design also allows manual
-#    reruns without re-running the expensive experiment workers.
+#    (chained dispatch).  Because ci_schedule_all.yml dispatches
+#    ci_experiment_simplify.yml programmatically, a workflow_run trigger on
+#    ci_experiment_simplify.yml would never fire in the normal scheduled
+#    pipeline.  ci_schedule_all.yml therefore dispatches ci_analysis.yml
+#    explicitly from its run-finalize job after ci_experiment_simplify.yml
+#    completes.  The standalone design also allows manual reruns without
+#    re-running the expensive experiment workers.
 #
 #  PURGE RESILIENCE:
-#    purge_old_runs in ci_experiment.yml and ci_schedule_all.yml can delete a
-#    completed ci_experiment.yml run (and its consolidated artifact) before a
-#    queued ci_analysis.yml job has had a chance to start and download it.
-#    To handle this, the "Download consolidated artifact" step uses
+#    purge_old_runs in ci_experiment_simplify.yml and ci_schedule_all.yml can
+#    delete a completed ci_experiment_simplify.yml run (and its shard artifact)
+#    before a queued ci_analysis.yml job has had a chance to start and download
+#    it.  To handle this, the "Download consolidated artifact" step uses
 #    continue-on-error: true.  The "Locate _merged.json" step falls back to
 #    the committed copy in the repository, which is always present because
-#    ci_experiment.yml's consolidate job commits _merged.json to master before
-#    ci_analysis.yml is ever dispatched.
-#    In manual mode, omit source_run_id entirely to use the committed file
+#    ci_experiment_simplify.yml worker shards commit their result files to
+#    master directly before ci_analysis.yml is ever dispatched.
+#    In manual mode, omit source_run_id entirely to use the committed files
 #    directly (the download step is skipped when source_run_id is blank).
 # ==============================================================================
 
@@ -91,7 +99,7 @@ on:
         default: ""
 
       source_run_id:
-        description: "ci_experiment.yml run ID to download the consolidated artifact from (leave blank to use committed _merged.json)"
+        description: "ci_experiment_simplify.yml run ID to download the shard artifact from (leave blank to use committed result files)"
         required: false
         default: ""
 
@@ -155,9 +163,9 @@ jobs:
           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
 
       # -----------------------------------------------------------------------
-      # Download consolidated artifact from the ci_experiment.yml run.
+      # Download shard artifact from the ci_experiment_simplify.yml run.
       # source_run_id is provided by ci_schedule_all.yml; omit when
-      # re-running analysis manually against an already-committed file.
+      # re-running analysis manually against already-committed files.
       # instability has no _merged.json — skip download entirely.
       #
       # PURGE RESILIENCE: continue-on-error: true prevents this step from
@@ -170,7 +178,7 @@ jobs:
           github.event.inputs.experiment != 'instability'
         continue-on-error: true
         id: download_artifact
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v4.3.6
         with:
           run-id:         ${{ github.event.inputs.source_run_id }}
           github-token:   ${{ secrets.GITHUB_TOKEN }}
@@ -343,7 +351,7 @@ jobs:
             echo "  Searched:"
             echo "    artifact:  consolidated_artifact/**/_merged.json"
             echo "    committed: ${COMMITTED_JSON}"
-            echo "  Ensure ci_experiment.yml consolidate job completed and committed results."
+            echo "  Ensure ci_experiment_simplify.yml worker shard committed results directly to the repo."
             exit 1
           fi
 

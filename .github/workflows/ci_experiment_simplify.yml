@@ -989,9 +989,41 @@ jobs:
                     --resume \
                   || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
               done
+              # -- Partial results summary ------------------------------------------
+              echo "--- exp2_feynman partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
+              RESULT_DIR="${RESULTS_DIR}/${RESULT_SUBDIR}" python3 - <<'PYEOF'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+all_files  = glob.glob(f"{result_dir}/**/*.json", recursive=True)
+print(f"  total JSON in {result_dir}: {len(all_files)}")
+domain_stats = {}
+for f in sorted(all_files):
+    try:
+        data    = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        domain  = data.get("domain") or data.get("benchmark_domain") or os.path.basename(f).split("_")[0]
+        r2s = []
+        if isinstance(results, list):
+            r2s = [r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                   for r in results if isinstance(r, dict)]
+        elif isinstance(results, dict):
+            r2s = [v.get("r2") or v.get("r2_test") if isinstance(v, dict) else v
+                   for v in results.values()]
+        r2s = [v for v in r2s if isinstance(v, float)]
+        if r2s:
+            domain_stats.setdefault(domain, []).extend(r2s)
+    except Exception:
+        pass
+if domain_stats:
+    print(f"  {'domain':<35s}  eqs  mean_R2   min_R2")
+    for dom, vals in sorted(domain_stats.items()):
+        mean_r2 = sum(vals) / len(vals)
+        print(f"  {dom:<35s}  {len(vals):3d}  {mean_r2:8.4f}  {min(vals):8.4f}")
+else:
+    print("  (no R2 values parseable yet)")
+PYEOF
+              echo "--- end exp2_feynman partial results ---"
               ;;
-
-            exp2)
               # BUG 2 + BUG 4 FIX:
               # Previous: passed --protocol all30 which does not exist in the script's
               # argparse -> SystemExit(2) crash at startup on every worker.
@@ -1031,6 +1063,40 @@ jobs:
                     2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
                   || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
               done
+              # -- Partial results summary ------------------------------------------
+              echo "--- exp2 partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
+              RESULT_DIR="${RESULTS_DIR}/${RESULT_SUBDIR}" python3 - <<'PYEOF'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+all_files  = glob.glob(f"{result_dir}/**/*.json", recursive=True)
+print(f"  total JSON in {result_dir}: {len(all_files)}")
+domain_stats = {}
+for f in sorted(all_files):
+    try:
+        data    = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        domain  = data.get("domain") or data.get("benchmark_domain") or os.path.basename(f).split("_")[0]
+        r2s = []
+        if isinstance(results, list):
+            r2s = [r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                   for r in results if isinstance(r, dict)]
+        elif isinstance(results, dict):
+            r2s = [v.get("r2") or v.get("r2_test") if isinstance(v, dict) else v
+                   for v in results.values()]
+        r2s = [v for v in r2s if isinstance(v, float)]
+        if r2s:
+            domain_stats.setdefault(domain, []).extend(r2s)
+    except Exception:
+        pass
+if domain_stats:
+    print(f"  {'domain':<35s}  eqs  mean_R2   min_R2")
+    for dom, vals in sorted(domain_stats.items()):
+        mean_r2 = sum(vals) / len(vals)
+        print(f"  {dom:<35s}  {len(vals):3d}  {mean_r2:8.4f}  {min(vals):8.4f}")
+else:
+    print("  (no R2 values parseable yet)")
+PYEOF
+              echo "--- end exp2 partial results ---"
               ;;
 
             exp3|exp3b)
@@ -1050,6 +1116,47 @@ jobs:
                   python3 hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py \
                     --seed "${SEED}"
               done
+              # -- Partial results summary (mirrors run_all.sh exp3 block) ------
+              # exp3  writes to extrapolation/         (seed=42)
+              # exp3b writes to extrapolation/multi_seed/  (seeds 99/123/777/2024)
+              if [[ "${EXP}" == "exp3b" ]]; then
+                _SUMMARY_DIR="${RESULTS_DIR}/extrapolation/multi_seed"
+              else
+                _SUMMARY_DIR="${RESULTS_DIR}/extrapolation"
+              fi
+              echo "--- ${EXP} partial results (${_SUMMARY_DIR}) ---"
+              RESULT_DIR="${_SUMMARY_DIR}" python3 - <<'PYEOF'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+run_files = (sorted(glob.glob(f"{result_dir}/**/full_run_*.json", recursive=True)) +
+             sorted(glob.glob(f"{result_dir}/**/*nguyen*.json", recursive=True)))
+all_files  = glob.glob(f"{result_dir}/**/*.json", recursive=True)
+seen = set()
+run_files  = [f for f in run_files if not (f in seen or seen.add(f))]
+print(f"  result files: {len(run_files)}  |  total JSON in {result_dir}: {len(all_files)}")
+for f in run_files:
+    try:
+        data    = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        label   = os.path.basename(f)
+        if isinstance(results, list) and results:
+            print(f"  {label}:")
+            for r in results:
+                eq   = r.get("equation") or r.get("eq_id") or r.get("name", "?")
+                r2   = r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                rmse = r.get("rmse") or r.get("rmse_test", "")
+                r2_s = f"{r2:.4f}" if isinstance(r2, float) else str(r2)
+                print(f"    {str(eq):10s}  R2={r2_s:8s}  rmse={rmse}")
+        elif isinstance(results, dict):
+            print(f"  {label}:")
+            for eq, r in sorted(results.items()):
+                r2   = r.get("r2") or r.get("r2_test") if isinstance(r, dict) else r
+                r2_s = f"{r2:.4f}" if isinstance(r2, float) else str(r2)
+                print(f"    {str(eq):10s}  R2={r2_s}")
+    except Exception as e:
+        print(f"  (could not parse {os.path.basename(f)}: {e})")
+PYEOF
+              echo "--- end ${EXP} partial results ---"
               ;;
 
             suppA)
@@ -1100,6 +1207,40 @@ jobs:
                   python3 hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py \
                   || echo "WARNING: suppB NOISE_LEVEL=${NL} exited non-zero — continuing"
               done
+              # -- Partial results summary ------------------------------------------
+              echo "--- suppB partial results (${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep) ---"
+              RESULT_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep" python3 - <<'PYEOF'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+all_files  = sorted(glob.glob(f"{result_dir}/**/*.json", recursive=True))
+print(f"  total JSON in {result_dir}: {len(all_files)}")
+noise_stats = {}
+for f in all_files:
+    try:
+        data    = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        nl      = data.get("noise_level") or data.get("noise") or "?"
+        r2s = []
+        if isinstance(results, list):
+            r2s = [r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                   for r in results if isinstance(r, dict)]
+        elif isinstance(results, dict):
+            r2s = [v.get("r2") or v.get("r2_test") if isinstance(v, dict) else v
+                   for v in results.values()]
+        r2s = [v for v in r2s if isinstance(v, float)]
+        if r2s:
+            noise_stats.setdefault(str(nl), []).extend(r2s)
+    except Exception:
+        pass
+if noise_stats:
+    print(f"  {'noise_level':<15s}  eqs  mean_R2   min_R2")
+    for nl, vals in sorted(noise_stats.items(), key=lambda x: float(x[0]) if x[0] != '?' else 999):
+        mean_r2 = sum(vals) / len(vals)
+        print(f"  {nl:<15s}  {len(vals):3d}  {mean_r2:8.4f}  {min(vals):8.4f}")
+else:
+    print("  (no R2 values parseable yet)")
+PYEOF
+              echo "--- end suppB partial results ---"
               ;;
 
             # FIX suppB_sc-DISPATCH: plan task IDs have the form "sc_n{n}__{domain}"
@@ -1130,6 +1271,40 @@ jobs:
               RESULTS_DIR="${RESULTS_DIR}" \
                 python3 hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py \
                 || echo "WARNING: suppB_sc exited non-zero"
+              # -- Partial results summary ------------------------------------------
+              echo "--- suppB_sc partial results (${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity) ---"
+              RESULT_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity" python3 - <<'PYEOF'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+all_files  = sorted(glob.glob(f"{result_dir}/**/*.json", recursive=True))
+print(f"  total JSON in {result_dir}: {len(all_files)}")
+sc_stats = {}
+for f in all_files:
+    try:
+        data    = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        n       = data.get("n_samples") or data.get("sample_count") or data.get("n") or "?"
+        r2s = []
+        if isinstance(results, list):
+            r2s = [r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                   for r in results if isinstance(r, dict)]
+        elif isinstance(results, dict):
+            r2s = [v.get("r2") or v.get("r2_test") if isinstance(v, dict) else v
+                   for v in results.values()]
+        r2s = [v for v in r2s if isinstance(v, float)]
+        if r2s:
+            sc_stats.setdefault(str(n), []).extend(r2s)
+    except Exception:
+        pass
+if sc_stats:
+    print(f"  {'n_samples':<12s}  eqs  mean_R2   min_R2")
+    for n, vals in sorted(sc_stats.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
+        mean_r2 = sum(vals) / len(vals)
+        print(f"  {n:<12s}  {len(vals):3d}  {mean_r2:8.4f}  {min(vals):8.4f}")
+else:
+    print("  (no R2 values parseable yet)")
+PYEOF
+              echo "--- end suppB_sc partial results ---"
               ;;
 
             # -- STEP 4a: instability -------------------------------------------------
@@ -1143,7 +1318,7 @@ jobs:
               # Pre-flight: instability is a post-processing step that reads exp1 output.
               # If no DeFi results JSON exists yet, exp1 has not completed — exit 0 (skip)
               # rather than exit 1 so the job does not block the pipeline with a false failure.
-              DEFI_JSON_COUNT=$(ls "${RESULTS_DIR}"/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | wc -l || echo 0)
+              DEFI_JSON_COUNT=$(find "${RESULTS_DIR}" -maxdepth 1 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
               if [[ "${DEFI_JSON_COUNT}" -eq 0 ]]; then
                 echo "::warning::instability skipped — no exp1 results found in '${RESULTS_DIR}'."
                 echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
@@ -1239,6 +1414,49 @@ jobs:
                     2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
                   || echo "WARNING: extrap domain ${DOMAIN_ID} exited non-zero — continuing"
               done
+              # -- Partial results summary ------------------------------------------
+              echo "--- extrap partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
+              RESULT_DIR="${RESULTS_DIR}/${RESULT_SUBDIR}" python3 - <<'PYEOF'
+import glob, json, os
+result_dir = os.environ.get("RESULT_DIR", "")
+all_files  = sorted(glob.glob(f"{result_dir}/**/*.json", recursive=True))
+print(f"  total JSON in {result_dir}: {len(all_files)}")
+domain_stats = {}
+for f in all_files:
+    try:
+        data    = json.load(open(f))
+        results = data.get("results") or data.get("equation_results") or []
+        domain  = data.get("domain") or data.get("benchmark_domain") or os.path.basename(f).split("_extrap")[0]
+        r2s_in, r2s_ex = [], []
+        if isinstance(results, list):
+            for r in results:
+                if not isinstance(r, dict): continue
+                v = r.get("r2") or r.get("r2_test") or r.get("r2_train")
+                e = r.get("extrap_r2") or r.get("extrap_r2_test")
+                if isinstance(v, float): r2s_in.append(v)
+                if isinstance(e, float): r2s_ex.append(e)
+        elif isinstance(results, dict):
+            for r in results.values():
+                if not isinstance(r, dict): continue
+                v = r.get("r2") or r.get("r2_test")
+                e = r.get("extrap_r2")
+                if isinstance(v, float): r2s_in.append(v)
+                if isinstance(e, float): r2s_ex.append(e)
+        if r2s_in or r2s_ex:
+            domain_stats[domain] = (r2s_in, r2s_ex)
+    except Exception:
+        pass
+if domain_stats:
+    print(f"  {'domain':<35s}  eqs  in_R2(mean)  extrap_R2(mean)")
+    for dom, (r2s_in, r2s_ex) in sorted(domain_stats.items()):
+        n    = max(len(r2s_in), len(r2s_ex))
+        in_s = f"{sum(r2s_in)/len(r2s_in):8.4f}" if r2s_in else "       ?"
+        ex_s = f"{sum(r2s_ex)/len(r2s_ex):8.4f}" if r2s_ex else "       ?"
+        print(f"  {dom:<35s}  {n:3d}  {in_s}      {ex_s}")
+else:
+    print("  (no result values parseable yet)")
+PYEOF
+              echo "--- end extrap partial results ---"
               ;;
 
           esac
@@ -1787,8 +2005,8 @@ jobs:
             GLOB_PATTERN="sample_complexity_*.json"
             LABEL="suppB_sc"
           fi
-          ALL=$(ls "${OUT_DIR}"/*.json 2>/dev/null | wc -l || echo 0)
-          MATCH=$(ls "${OUT_DIR}"/${GLOB_PATTERN} 2>/dev/null | wc -l || echo 0)
+          ALL=$(find "${OUT_DIR}" -maxdepth 1 -name "*.json" 2>/dev/null | wc -l)
+          MATCH=$(find "${OUT_DIR}" -maxdepth 1 -name "${GLOB_PATTERN}" 2>/dev/null | wc -l)
           echo "${LABEL}: ${OUT_DIR}"
           echo "  Total JSON files  : ${ALL}"
           echo "  Matching ${GLOB_PATTERN}: ${MATCH}"
