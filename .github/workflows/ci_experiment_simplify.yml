@@ -1166,19 +1166,28 @@ jobs:
               # Pre-flight: instability is a post-processing step that reads exp1 output.
               # If no DeFi results JSON exists yet, exp1 has not completed — exit 0 (skip)
               # rather than exit 1 so the job does not block the pipeline with a false failure.
-              DEFI_JSON_COUNT=$(find "${RESULTS_DIR}" -maxdepth 1 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
+              DEFI_JSON_COUNT=$(find "${RESULTS_DIR}" -maxdepth 4 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
               if [[ "${DEFI_JSON_COUNT}" -eq 0 ]]; then
                 echo "::warning::instability skipped — no exp1 results found in '${RESULTS_DIR}'."
                 echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
                 exit 0
               fi
-              BENCH_JSON=$(find "${RESULTS_DIR}" -maxdepth 1 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
+              BENCH_JSON=$(find "${RESULTS_DIR}" -maxdepth 4 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
               BENCH_ARG=""
               if [[ -n "${BENCH_JSON}" ]]; then
                 BENCH_ARG="--benchmark-json ${BENCH_JSON}"
                 echo "[instability] Stage 2 extrapolation merge enabled: ${BENCH_JSON}"
               else
                 echo "[instability] No benchmark JSON found - Stage 2 (EX figure) skipped."
+              fi
+              # Derive --results-dir from wherever the benchmark JSON actually lives.
+              # load_data scans --results-dir for input files; if the JSON was committed
+              # under a subdir (e.g. comparison_results/noise-noiseless/noiseless/) the
+              # root RESULTS_DIR scan would miss it.  Pass the parent dir explicitly.
+              INSTABILITY_DATA_DIR="${RESULTS_DIR}"
+              if [[ -n "${BENCH_JSON}" ]]; then
+                INSTABILITY_DATA_DIR="$(dirname "${BENCH_JSON}")"
+                echo "[instability] --results-dir set to: ${INSTABILITY_DATA_DIR}"
               fi
               TASK_IDS_FILTER=""
               if [[ -n "${TASK_IDS}" ]]; then
@@ -1191,7 +1200,7 @@ jobs:
               echo "=== instability pre-run: end ==="
               RESULTS_DIR="${RESULTS_DIR}" \
                 python3 hypatiax/experiments/benchmarks/run_instability_suite.py \
-                  --results-dir "${RESULTS_DIR}" \
+                  --results-dir "${INSTABILITY_DATA_DIR}" \
                   --out         "${RESULTS_DIR}/figures" \
                   --csv-out     "${RESULTS_DIR}/figures/instability_analysis.csv" \
                   ${BENCH_ARG} \
