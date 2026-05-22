@@ -2002,31 +2002,37 @@ jobs:
             exit 0
           fi
 
+          echo "--- Files to stage ---"
+          find "${TARGET}" -type f | sort
+
           commit_and_push() {
             # Rebase on any concurrent shard commits before staging.
             git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
 
             # Stage every result file produced by this shard.
-            git add "${TARGET}/" 2>/dev/null || true
+            # -f overrides any .gitignore rules that might exclude data/results/**
+            # without -f, git add silently no-ops on ignored paths.
+            git add -f "${TARGET}"
+
+            echo "--- git status after add ---"
+            git status --short || true
 
             if git diff --cached --quiet; then
               echo "Shard ${SHARD}: no new files staged — nothing to commit."
+              echo "  Possible causes:"
+              echo "    1. Files are already committed from a previous run (idempotent — OK)"
+              echo "    2. .gitignore excludes ${TARGET} and -f did not override (check .gitignore)"
               return 0
             fi
 
-            # BUG A FIX: detect any MODIFIED (M) tracked files about to be committed.
-            # A modified tracked result file means this shard is overwriting a result
-            # from a previous shard or run — dangerous silent data loss.
+            # Detect any MODIFIED (M) tracked files — means this shard would overwrite
+            # a result from a previous shard or run (silent data loss).
             OVERWRITTEN=$(git diff --cached --name-status | grep '^M' | awk '{print $2}' || true)
             if [[ -n "$OVERWRITTEN" ]]; then
-              echo "::error::OVERWRITE DETECTED — shard ${SHARD} is about to overwrite committed result file(s)."
-              echo "  This means two shards or runs produced the same output filename."
-              echo "  Files at risk:"
+              echo "::warning::OVERWRITE DETECTED — shard ${SHARD} is overwriting committed result file(s):"
               echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
-              echo "  The move_matching / Store-results steps should have disambiguated"
-              echo "  filenames with _shard<N>_run<run_id>.  Check the Move results log above."
-              # Do NOT exit — push anyway so results aren't lost, but make the error loud.
-              echo "::warning::Proceeding with push despite overwrite — investigate filename uniqueness."
+              echo "  The move_matching collision-guard should have disambiguated filenames."
+              echo "  Proceeding with push so results are not lost — investigate filename uniqueness."
             fi
 
             STAGED=$(git diff --cached --name-only | wc -l)
