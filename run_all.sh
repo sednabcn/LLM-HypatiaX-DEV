@@ -136,6 +136,14 @@ export JOB_DEADLINE="${JOB_DEADLINE:-19800}"
 #      added "fluid_dynamics" and "mathematics" (present in protocol).
 HYBRID_ALL_DOMAINS_EXPECTED="biology,chemistry,economics,electromagnetism,fluid_dynamics,mathematics,mechanics,optics,quantum,thermodynamics"
 
+# FIX-FEYNMAN_DOMAINS-HOIST: defined here (not at first use in exp2_feynman/extrap steps)
+# so bash does not hit an unbound-variable error when expanding double-quoted run()
+# arguments for those steps while running a different --step (e.g. exp1b).
+# With set -euo pipefail, bash expands ${FEYNMAN_DOMAINS} in the argument list of every
+# run() call that embeds it in a double-quoted string -- even when run() would skip the
+# step -- causing 'unbound variable' before run() is ever entered.
+FEYNMAN_DOMAINS="feynman_biology feynman_chemistry feynman_electrochemistry feynman_electromagnetism feynman_electrostatics feynman_magnetism feynman_mechanics feynman_optics feynman_probability feynman_quantum feynman_thermodynamics"
+
 # ── CLI parsing ───────────────────────────────────────────────────────────────
 ONLY_STEP=""
 FROM_STEP=""
