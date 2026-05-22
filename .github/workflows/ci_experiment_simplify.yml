@@ -872,15 +872,17 @@ jobs:
           RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
           REPRO_CFG:         ${{ env.REPRO_CFG }}
           RESUME:            ${{ github.event.inputs.resume || 'true' }}
+          DRY_RUN:           ${{ github.event.inputs.dry_run || 'false' }}
+          SHARD:             ${{ matrix.shard }}
         run: |
           set -euo pipefail
 
-          export ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}"
+          export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
           [[ -n "${ANTHROPIC_API_KEY}" ]] || { echo "ERROR: ANTHROPIC_API_KEY secret is empty"; exit 1; }
           echo "ANTHROPIC_API_KEY: enforced (${#ANTHROPIC_API_KEY} chars)"
 
-          if [[ "${{ github.event.inputs.dry_run || 'false' }}" == "true" ]]; then
-            echo "=== DRY RUN - shard ${{ matrix.shard }} | experiment: ${EXP} ==="
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "=== DRY RUN - shard ${SHARD} | experiment: ${EXP} ==="
             echo "${PENDING_IDS}" | python3 -c "import json,sys; [print(' ',t) for t in json.load(sys.stdin)]"
             echo "FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT}  FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES}"
             echo "PYSR_POPULATIONS=${PYSR_POPULATIONS}  PYSR_GENERATIONS=${PYSR_GENERATIONS}"
@@ -913,7 +915,6 @@ jobs:
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
               FEYNMAN_DOMAINS="" \
-              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
                 bash run_all.sh --step exp1
               # -- exp1 post-run file scan: confirm where outputs landed -----------
               echo "=== exp1 post-run file scan (repo-root-relative) ==="
@@ -934,7 +935,6 @@ jobs:
               DEFI_TASK_FILTER="Portfolio" \
               PYSR_SEED="${PYSR_SEED}" \
               FEYNMAN_DOMAINS="" \
-              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
                 bash run_all.sh --step exp1b
               # -- exp1b post-run file scan: mirrors exp1 ghost-file diagnostic ----
               # Shows exactly where hypatiax_defi_benchmark_v3c.py (portfolio mode)
@@ -1029,7 +1029,7 @@ jobs:
                     --checkpoint-name "exp2_checkpoint_${DOMAIN_ID}" \
                     --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
                     --resume \
-                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
+                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run${GITHUB_RUN_ID}.log" \
                   || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
               done < /tmp/domain_list.txt
               # -- Partial results summary ------------------------------------------
@@ -1073,7 +1073,6 @@ jobs:
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
               FEYNMAN_DOMAINS="" \
-              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
                 bash run_all.sh --step suppA
               ;;
 
@@ -1276,7 +1275,7 @@ jobs:
                     --no-llm-cache \
                     --checkpoint-name "extrap_checkpoint_${DOMAIN_ID}" \
                     --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
-                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
+                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run${GITHUB_RUN_ID}.log" \
                   || echo "WARNING: extrap domain ${DOMAIN_ID} exited non-zero — continuing"
               done < /tmp/domain_list.txt
               # -- Partial results summary ------------------------------------------
@@ -1292,13 +1291,13 @@ jobs:
         if: always()
         run: |
           echo "=== CWD ===" && pwd
-          echo "=== github.workspace ===" && echo "${{ github.workspace }}"
+          echo "=== github.workspace ===" && echo "${GITHUB_WORKSPACE}"
           echo "=== OUT_BASE ===" && echo "${OUT_BASE}"
           echo "=== OUT_BASE resolved ===" && realpath "${OUT_BASE}" 2>/dev/null || true
           echo "=== ALL hypatiax_defi_benchmark_v3*results*.json in workspace ==="
-          find "${{ github.workspace }}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
+          find "${GITHUB_WORKSPACE}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
           echo "=== ALL protocol_core_noiseless_*.json in workspace ==="
-          find "${{ github.workspace }}" -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
+          find "${GITHUB_WORKSPACE}" -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
           echo "=== OUT_BASE full tree ==="
           find "${OUT_BASE}" -type f 2>/dev/null | sort || echo "(empty or missing)"
 
