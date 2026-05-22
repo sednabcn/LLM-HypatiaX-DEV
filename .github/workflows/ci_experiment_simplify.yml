@@ -368,13 +368,14 @@ jobs:
                         f"— this experiment is single-shard only (table=1). "
                         f"Using N_SHARDS=1.")
           else:
-              # Future: if a multi-shard experiment is added to the table,
-              # honour an explicit user override (capped at 4).
-              N_SHARDS = max(1, min(4, N_SHARDS_RAW))
-              if N_SHARDS != N_SHARDS_DEFAULT:
-                  print(f"::notice::n_shards override: input={N_SHARDS_RAW} "
-                        f"table={N_SHARDS_DEFAULT} using={N_SHARDS}")
-          print(f"N_SHARDS={N_SHARDS} (table={N_SHARDS_DEFAULT}, input={N_SHARDS_RAW})")
+              # Table default is the minimum — user input cannot go below it.
+              # exp1b/exp3b always get at least 4 shards even if the dispatch
+              # form is left at its default value of "1".
+              N_SHARDS = max(N_SHARDS_DEFAULT, min(4, N_SHARDS_RAW))
+              if N_SHARDS != N_SHARDS_RAW:
+                  print(f"::notice::n_shards: input={N_SHARDS_RAW} "
+                        f"table={N_SHARDS_DEFAULT} using={N_SHARDS} "
+                        f"(table default enforced as minimum)")
           OVERRIDE     = os.environ["OVERRIDE"].split() if os.environ["OVERRIDE"].strip() else []
           SEEDS        = [s.strip() for s in os.environ["EFFECTIVE_SEEDS"].split(",") if s.strip()]
           NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
