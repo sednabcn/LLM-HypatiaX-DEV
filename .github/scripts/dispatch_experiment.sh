@@ -30,9 +30,9 @@ set -euo pipefail
 EXP="${1:?Usage: dispatch_experiment.sh <experiment_id> <n_shards> [task_ids_override] [workflow_file] [--dry-run]}"
 
 # Per-experiment shard defaults (overridden by explicit $2).
-# exp3b requires 3 shards; every other experiment runs single-shard.
+# exp1b and exp3b default to 4 shards (multi-seed runs); all others single-shard.
 _EXP_DEFAULT_SHARDS=1
-[[ "$EXP" == "exp3b" ]] && _EXP_DEFAULT_SHARDS=4
+[[ "$EXP" == "exp1b" || "$EXP" == "exp3b" ]] && _EXP_DEFAULT_SHARDS=4
 
 N_SHARDS="${2:-$_EXP_DEFAULT_SHARDS}"
 TASK_IDS_OVERRIDE="${3:-}"
@@ -85,7 +85,7 @@ TIMEOUT=$(get   feynman_timeout    "1100")
 echo "═══════════════════════════════════════════════════════"
 echo "  Experiment    : $EXP"
 echo "  Workflow file : $WORKFLOW_FILE"
-echo "  n_shards      : $N_SHARDS   (default=1; all experiments single-shard)"
+echo "  n_shards      : $N_SHARDS   (default=4 for exp1b/exp3b; 1 for all others)"
 echo "  config source : $REPRO      (auto)"
 echo "───────────────────────────────────────────────────────"
 echo "  pysr_generations  : $PYSR_GEN"

@@ -25,7 +25,7 @@ name: "HypatiaX-simplify-scheduled full run"
 #  The exp_ok output is also forwarded to Job C as a secondary guard.
 #
 #  WORKER COUNT (per-experiment)
-#  All experiments run with exactly 1 worker shard.
+#  All experiments run with 1 worker shard except exp3b (4 shards).
 #  Single-shard mode prevents concurrent-push races and checkpoint collisions.
 # -------------------------------------------------------------
 
@@ -210,14 +210,14 @@ jobs:
           # ------------------------------------------------------------------
           #  Per-experiment worker (shard) count
           #
-          #  All experiments use exactly 1 worker shard.
+          #  exp3b uses 4 shards; every other experiment runs single-shard.
           #  Single-shard mode prevents concurrent-push races and checkpoint
           #  collisions across all experiment types.
           # ------------------------------------------------------------------
           declare -A N_SHARDS_TABLE=(
             [exp1]=1               [exp1b]=1
             [exp2_feynman]=1       [exp2]=1
-            [exp3]=1               [exp3b]=1
+            [exp3]=1               [exp3b]=4
             [suppA]=1              [suppB]=1
             [suppB_sc]=1           [hybrid_all_domains]=1
             [instability]=1        [extrap]=1
@@ -489,7 +489,7 @@ jobs:
           set -euo pipefail
           if [[ $NEXT_INDEX -lt $TOTAL ]]; then
             echo "-> Dispatching next slot: index $NEXT_INDEX (full chain, n_shards resolved by next slot)"
-            gh workflow run ci_schedule_all.yml \
+            gh workflow run ci_schedule_simplify.yml \
               --field experiment_index="$NEXT_INDEX" \
               --field task_ids_override="$TASK_IDS_OVERRIDE"
           else
@@ -575,7 +575,7 @@ jobs:
           fi
           if [[ $NEXT_INDEX -lt $TOTAL ]]; then
             echo "-> Dispatching next slot: index $NEXT_INDEX"
-            gh workflow run ci_schedule_all.yml \
+            gh workflow run ci_schedule_simplify.yml \
               --field experiment_index="$NEXT_INDEX" \
               --field task_ids_override="$TASK_IDS_OVERRIDE"
           else
