@@ -868,7 +868,7 @@ jobs:
           GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
           PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
           SHARD_CKPT:        checkpoint_worker_shard${{ matrix.shard }}.json
-          RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
+          RESULTS_DIR:       ${{ env.OUT_BASE }}
           REPRO_CFG:         ${{ env.REPRO_CFG }}
           RESUME:            ${{ github.event.inputs.resume || 'true' }}
         run: |
@@ -911,7 +911,7 @@ jobs:
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
-              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
+              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
                 bash run_all.sh --step exp1
               # -- exp1 post-run file scan: confirm where outputs landed -----------
               echo "=== exp1 post-run file scan (repo-root-relative) ==="
@@ -931,7 +931,7 @@ jobs:
               DEFI_SEEDS="${EFFECTIVE_SEEDS}" \
               DEFI_TASK_FILTER="Portfolio" \
               PYSR_SEED="${PYSR_SEED}" \
-              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
+              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
                 bash run_all.sh --step exp1b
               # -- exp1b post-run file scan: mirrors exp1 ghost-file diagnostic ----
               # Shows exactly where hypatiax_defi_benchmark_v3c.py (portfolio mode)
@@ -980,7 +980,7 @@ jobs:
                     --populations "${PYSR_POPULATIONS}" \
                     --parsimony 0.01 \
                     --noiseless \
-                    --threshold "${FEYNMAN_NOISELESS_THRESHOLD}" \
+                    --threshold 0.9999 \
                     --checkpoint-name "feynman_exp2_checkpoint_${DOMAIN_ID}" \
                     --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
                     --resume \
@@ -1053,7 +1053,7 @@ jobs:
               TASK_IDS="${TASK_IDS}" \
               SHARD_IDS="${TASK_IDS}" \
               PYSR_SEED="${PYSR_SEED}" \
-              RESULTS_DIR="${{ github.workspace }}/${OUT_BASE}" \
+              RESULTS_DIR="$(pwd)/${OUT_BASE}" \
                 bash run_all.sh --step suppA
               ;;
 
@@ -1248,10 +1248,10 @@ jobs:
           echo "=== github.workspace ===" && echo "${{ github.workspace }}"
           echo "=== OUT_BASE ===" && echo "${OUT_BASE}"
           echo "=== OUT_BASE resolved ===" && realpath "${OUT_BASE}" 2>/dev/null || true
-          echo "=== ALL hypatiax_defi_benchmark_v3*results*.json in workspace ==="
-          find "${{ github.workspace }}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
-          echo "=== ALL protocol_core_noiseless_*.json in workspace ==="
-          find "${{ github.workspace }}" -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
+          echo "=== ALL hypatiax_defi_benchmark_v3*results*.json on disk ==="
+          find / -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
+          echo "=== ALL protocol_core_noiseless_*.json on disk ==="
+          find / -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
           echo "=== OUT_BASE full tree ==="
           find "${OUT_BASE}" -type f 2>/dev/null | sort || echo "(empty or missing)"
 
@@ -1335,7 +1335,7 @@ jobs:
         env:
           EXP:           ${{ needs.plan.outputs.exp_id }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-          RESULTS_DIR:   ${{ github.workspace }}/${{ env.OUT_BASE }}
+          RESULTS_DIR:   ${{ env.OUT_BASE }}
         run: |
           set -euo pipefail
           TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
@@ -1346,8 +1346,6 @@ jobs:
             mkdir -p "$dest"
             while IFS= read -r src; do
               [[ -e "$src" ]] || continue
-              # Skip if src is already inside dest (file already in canonical location)
-              [[ "$(realpath "$src" 2>/dev/null || echo "$src")" == "$(realpath "$dest" 2>/dev/null || echo "$dest")"/* ]] && continue
               fname=$(basename "$src")
               dst="${dest}/${fname}"
               if [[ -e "$dst" ]]; then
@@ -1362,7 +1360,7 @@ jobs:
                 echo "  COLLISION: ${fname} already in ${dest} — writing to $(basename "$dst")"
               fi
               mv -v "$src" "$dst" 2>/dev/null || true
-            done < <(find . -maxdepth 8 \
+            done < <(find . -maxdepth 4 -not -path "./${RESULTS_DIR}/*" \
                        -name "$pattern" 2>/dev/null)
           }
 
@@ -1397,7 +1395,7 @@ jobs:
                 # is unique across shards and across repeated workflow runs.
                 dest="${DEST_15}/${stem}_shard${SHARD_INDEX}_run${{ github.run_id }}.${ext}"
                 mv -v "$src" "$dest" || true
-              done < <(find . -maxdepth 8 \
+              done < <(find . -maxdepth 4 -not -path "./${RESULTS_DIR}/*" \
                          \( -name "comparison_FIXED_*.json" -o \
                             -name "comparison_FIXED_*.txt" \) 2>/dev/null)
               ;;
@@ -1464,7 +1462,7 @@ jobs:
               move_matching "noise_sweep_*.json" "${TARGET}"
               move_matching "noise_sweep_*.csv"  "${TARGET}"
               # Rescue per-equation sub-dirs preserving directory name
-              find . -maxdepth 8 \
+              find . -maxdepth 5 -not -path "./${RESULTS_DIR}/*" \
                 -path "*/noise-sweep/*" \( -name "*.json" -o -name "*.csv" \) \
                 | while IFS= read -r f; do
                     dir=$(basename "$(dirname "$f")")
@@ -1525,7 +1523,7 @@ jobs:
       - name: Store results in canonical RESULT_SUBDIR
         if: always()
         env:
-          RESULTS_DIR:   ${{ github.workspace }}/${{ env.OUT_BASE }}
+          RESULTS_DIR:   ${{ env.OUT_BASE }}
           RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
         run: |
           set -euo pipefail
@@ -1573,31 +1571,16 @@ jobs:
       # If none are found, the artifact upload will be empty and consolidate will abort.
       - name: Verify exp1 output files exist
         if: ${{ needs.plan.outputs.exp_id == 'exp1' && steps.resolve_ids.outputs.has_work == 'true' }}
-        env:
-          RESULTS_ROOT: ${{ github.workspace }}/hypatiax/data/results
         run: |
-          set -euo pipefail
-
-          TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/noiseless"
-
-          echo "PWD=$(pwd)"
-          echo "TARGET=${TARGET}"
-
-          if [[ ! -d "${TARGET}" ]]; then
-            echo "::error::Target directory does not exist: ${TARGET}"
-            exit 1
-          fi
-
+          TARGET="${OUT_BASE}/comparison_results/noise-noiseless/noiseless"
           COUNT_PRIMARY=$(find "${TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
           COUNT_LEGACY=$(find  "${TARGET}" -name "protocol_core_noiseless_*.json" 2>/dev/null | wc -l)
           COUNT_TOTAL=$((COUNT_PRIMARY + COUNT_LEGACY))
-
           echo "=== exp1 output verification ==="
-          echo "  Primary files : ${COUNT_PRIMARY}"
-          echo "  Legacy files  : ${COUNT_LEGACY}"
-          echo "  Total files   : ${COUNT_TOTAL}"
-          find "${TARGET}" -type f | sort || true
-
+          echo "  hypatiax_defi_benchmark_v3*results*.json : ${COUNT_PRIMARY}"
+          echo "  protocol_core_noiseless_*.json           : ${COUNT_LEGACY}"
+          echo "  Total                                    : ${COUNT_TOTAL}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
           if [[ "${COUNT_TOTAL}" -eq 0 ]]; then
             echo "::error::exp1 produced NO output files in '${TARGET}'."
             echo "  Expected: hypatiax_defi_benchmark_v3*results*.json or protocol_core_noiseless_*.json"
@@ -1605,8 +1588,7 @@ jobs:
             echo "  Check the 'Run experiment tasks' log for errors and actual output filenames."
             exit 1
           fi
-
-          echo "OK exp1 output files present."
+          echo "  OK exp1 output files present."
 
       # -- Verify exp1b output files exist before upload ------------------------
       # ITEM 3 FIX: exp1b had no verification step — path mismatches were invisible.
@@ -1617,11 +1599,8 @@ jobs:
       # will contain nothing — silent data loss.
       - name: Verify exp1b output files exist
         if: ${{ needs.plan.outputs.exp_id == 'exp1b' && steps.resolve_ids.outputs.has_work == 'true' }}
-        env:
-          RESULTS_ROOT: ${{ github.workspace }}/hypatiax/data/results
         run: |
-          set -euo pipefail
-          TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/15"
+          TARGET="${OUT_BASE}/comparison_results/noise-noiseless/15"
           COUNT_FIXED=$(find "${TARGET}" -name "comparison_FIXED_*.json" 2>/dev/null | wc -l)
           COUNT_DEFI=$(find  "${TARGET}" -name "defi_v3_*.json"          2>/dev/null | wc -l)
           COUNT_PORT=$(find  "${TARGET}" -name "*portfolio*variance*.json" 2>/dev/null | wc -l)
@@ -1653,7 +1632,7 @@ jobs:
       - name: Verify exp2_feynman output files exist
         if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
           echo "=== exp2_feynman output verification ==="
           echo "  Target dir       : ${TARGET}"
@@ -1669,7 +1648,7 @@ jobs:
       - name: Verify exp2 output files exist
         if: ${{ needs.plan.outputs.exp_id == 'exp2' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
           echo "=== exp2 output verification ==="
           echo "  Target dir   : ${TARGET}"
@@ -1685,7 +1664,7 @@ jobs:
         if: ${{ (needs.plan.outputs.exp_id == 'exp3' || needs.plan.outputs.exp_id == 'exp3b') && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
           EXP="${{ needs.plan.outputs.exp_id }}"
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" -name "*.json" 2>/dev/null | wc -l)
           echo "=== ${EXP} output verification ==="
           echo "  Target dir  : ${TARGET}"
@@ -1700,7 +1679,7 @@ jobs:
       - name: Verify suppA output files exist
         if: ${{ needs.plan.outputs.exp_id == 'suppA' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" -name "*.json" 2>/dev/null | wc -l)
           echo "=== suppA output verification ==="
           echo "  Target dir: ${TARGET}  JSON files: ${COUNT}"
@@ -1714,7 +1693,7 @@ jobs:
       - name: Verify hybrid_all_domains output files exist
         if: ${{ needs.plan.outputs.exp_id == 'hybrid_all_domains' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" -name "hybrid_llm_nn_all_domains_*.json" 2>/dev/null | wc -l)
           echo "=== hybrid_all_domains output verification ==="
           echo "  Target dir: ${TARGET}"
@@ -1730,7 +1709,7 @@ jobs:
       - name: Verify instability output files exist
         if: ${{ needs.plan.outputs.exp_id == 'instability' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT_CSV=$(find "${TARGET}" -name "instability_analysis.csv" 2>/dev/null | wc -l)
           COUNT_FIG=$(find "${TARGET}" \( -name "*.png" -o -name "*.pdf" \) 2>/dev/null | wc -l)
           echo "=== instability output verification ==="
@@ -1746,7 +1725,7 @@ jobs:
       - name: Verify extrap output files exist
         if: ${{ needs.plan.outputs.exp_id == 'extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT=$(find "${TARGET}" \( -name "all_domains_extrap_v4_*.json" -o -name "protocol_core_*.json" \) 2>/dev/null | wc -l)
           echo "=== extrap output verification ==="
           echo "  Target dir   : ${TARGET}"
@@ -1768,13 +1747,12 @@ jobs:
       - name: Verify suppB/suppB_sc output filename format (CRITICAL 4)
         if: ${{ (needs.plan.outputs.exp_id == 'suppB' || needs.plan.outputs.exp_id == 'suppB_sc') && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          WORKSPACE="${{ github.workspace }}"
           if [[ "${{ needs.plan.outputs.exp_id }}" == "suppB" ]]; then
-            OUT_DIR="${WORKSPACE}/${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
+            OUT_DIR="${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
             GLOB_PATTERN="noise_sweep_*.json"
             LABEL="suppB"
           else
-            OUT_DIR="${WORKSPACE}/${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
+            OUT_DIR="${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
             GLOB_PATTERN="sample_complexity_*.json"
             LABEL="suppB_sc"
           fi
@@ -1795,7 +1773,7 @@ jobs:
       - name: Verify suppB output files exist
         if: ${{ needs.plan.outputs.exp_id == 'suppB' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
+          TARGET="${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
           COUNT=$(find "${TARGET}" \( -name "noise_sweep_*.json" -o -name "noise_sweep_*.csv" \) 2>/dev/null | wc -l)
           echo "=== suppB output verification ==="
           echo "  Target dir : ${TARGET}"
@@ -1811,7 +1789,7 @@ jobs:
       - name: Verify suppB_sc output files exist
         if: ${{ needs.plan.outputs.exp_id == 'suppB_sc' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
+          TARGET="${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
           COUNT=$(find "${TARGET}" \( -name "sample_complexity_*.json" -o -name "sample_complexity_*.csv" \) 2>/dev/null | wc -l)
           echo "=== suppB_sc output verification ==="
           echo "  Target dir : ${TARGET}"
@@ -1994,51 +1972,45 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+
           FILE_COUNT=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
-          echo "Files in ${TARGET}: ${FILE_COUNT}"
           if [[ "${FILE_COUNT}" -eq 0 ]]; then
             echo "No files in ${TARGET} — skipping commit for shard ${SHARD}."
             exit 0
           fi
-
-          echo "--- Files to stage ---"
-          find "${TARGET}" -type f | sort
 
           commit_and_push() {
             # Rebase on any concurrent shard commits before staging.
             git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
 
             # Stage every result file produced by this shard.
-            # -f overrides any .gitignore rules that might exclude data/results/**
-            # without -f, git add silently no-ops on ignored paths.
-            git add -f "${TARGET}"
-
-            echo "--- git status after add ---"
-            git status --short || true
+            git add "${TARGET}/" 2>/dev/null || true
 
             if git diff --cached --quiet; then
               echo "Shard ${SHARD}: no new files staged — nothing to commit."
-              echo "  Possible causes:"
-              echo "    1. Files are already committed from a previous run (idempotent — OK)"
-              echo "    2. .gitignore excludes ${TARGET} and -f did not override (check .gitignore)"
               return 0
             fi
 
-            # Detect any MODIFIED (M) tracked files — means this shard would overwrite
-            # a result from a previous shard or run (silent data loss).
+            # BUG A FIX: detect any MODIFIED (M) tracked files about to be committed.
+            # A modified tracked result file means this shard is overwriting a result
+            # from a previous shard or run — dangerous silent data loss.
             OVERWRITTEN=$(git diff --cached --name-status | grep '^M' | awk '{print $2}' || true)
             if [[ -n "$OVERWRITTEN" ]]; then
-              echo "::warning::OVERWRITE DETECTED — shard ${SHARD} is overwriting committed result file(s):"
+              echo "::error::OVERWRITE DETECTED — shard ${SHARD} is about to overwrite committed result file(s)."
+              echo "  This means two shards or runs produced the same output filename."
+              echo "  Files at risk:"
               echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
-              echo "  The move_matching collision-guard should have disambiguated filenames."
-              echo "  Proceeding with push so results are not lost — investigate filename uniqueness."
+              echo "  The move_matching / Store-results steps should have disambiguated"
+              echo "  filenames with _shard<N>_run<run_id>.  Check the Move results log above."
+              # Do NOT exit — push anyway so results aren't lost, but make the error loud.
+              echo "::warning::Proceeding with push despite overwrite — investigate filename uniqueness."
             fi
 
             STAGED=$(git diff --cached --name-only | wc -l)
             git commit -m "ci: ${EXP} shard${SHARD} results (${STAGED} file(s)) — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push --force-with-lease origin "${{ github.ref_name }}"
-            echo "Pushed shard ${SHARD}: ${STAGED} file(s) → ${{ github.ref_name }}"
+            echo "Pushed shard ${SHARD}: ${FILE_COUNT} file(s) → ${{ github.ref_name }}"
           }
 
           # First attempt; retry once after a pause on concurrent-shard conflict.
@@ -2061,12 +2033,10 @@ jobs:
           SHARD:         ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
 
-          # git ls-files needs a path relative to the repo root (or an absolute
-          # path inside the worktree).  Use --full-name to be explicit.
-          REL_TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
-          TRACKED=$(git ls-files --full-name "${REL_TARGET}" 2>/dev/null | wc -l || echo 0)
+          # Count files that git now tracks under TARGET.
+          TRACKED=$(git ls-files "${TARGET}" 2>/dev/null | wc -l || echo 0)
           # Count files present on disk under TARGET.
           ON_DISK=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
 
@@ -2074,7 +2044,7 @@ jobs:
           echo "  Path       : ${TARGET}"
           echo "  Git-tracked: ${TRACKED} file(s)"
           echo "  On disk    : ${ON_DISK} file(s)"
-          git ls-files --full-name "${REL_TARGET}" 2>/dev/null | sort || true
+          git ls-files "${TARGET}" 2>/dev/null | sort || true
 
           if [[ "${TRACKED}" -eq 0 ]]; then
             echo "::error::shard ${SHARD} (${EXP}): NO files are git-tracked under '${TARGET}'."
