@@ -13,8 +13,20 @@ import argparse
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Repo-root bootstrap — must run before any `hypatiax` import.
+# This file lives at:
+#   hypatiax/core/generation/hybrid_defi_system/hybrid_system_nn_defi_domain.py
+# Walking up 4 levels (parents[4]) reaches the repo root where the top-level
+# `hypatiax/` package directory lives.
+# ---------------------------------------------------------------------------
+_repo_root = Path(__file__).resolve().parents[4]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 import numpy as np
 import torch
