@@ -1186,6 +1186,10 @@ jobs:
                 # Convert space-separated TASK_IDS to --cases arguments
                 TASK_IDS_FILTER="--cases ${TASK_IDS}"
               fi
+              echo "=== instability pre-run: input files in RESULTS_DIR ==="
+              echo "  RESULTS_DIR : ${RESULTS_DIR}"
+              find "${RESULTS_DIR}" -maxdepth 3 -type f | sort || true
+              echo "=== instability pre-run: end ==="
               RESULTS_DIR="${RESULTS_DIR}" \
                 python3 hypatiax/experiments/benchmarks/run_instability_suite.py \
                   --results-dir "${RESULTS_DIR}" \
@@ -1194,6 +1198,19 @@ jobs:
                   ${BENCH_ARG} \
                   ${TASK_IDS_FILTER} \
                   --format png pdf
+              INSTABILITY_EXIT=$?
+              echo "=== instability post-run: exit=${INSTABILITY_EXIT} ==="
+              echo "  figures dir contents:"
+              find "${RESULTS_DIR}/figures" -type f | sort || true
+              if [[ "${INSTABILITY_EXIT}" -ne 0 ]]; then
+                echo "::error::run_instability_suite.py exited ${INSTABILITY_EXIT}"
+                exit "${INSTABILITY_EXIT}"
+              fi
+              if [[ ! -f "${RESULTS_DIR}/figures/instability_analysis.csv" ]]; then
+                echo "::error::run_instability_suite.py exited 0 but wrote no instability_analysis.csv"
+                echo "  Check that --results-dir contains the expected input files (see pre-run scan above)."
+                exit 1
+              fi
               ;;
 
             # <- FIX CRITICAL 1: renamed case label from "instability" to "hybrid_all_domains"
