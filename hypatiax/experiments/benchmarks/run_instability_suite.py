@@ -141,7 +141,7 @@ _FIGURES_DIR_DEFAULT = Path("hypatiax/data/figures")
 
 _VARIANCE_JSON  = _RESULTS_DIR_DEFAULT / "hypatiax_defi_variance_results.json"
 _FINAL_JSON     = _RESULTS_DIR_DEFAULT / "hypatiax_defi_benchmark_v3_results.json"
-_MULTI_PATTERN  = re.compile(r"hypatiax_defi_benchmark_v3_results_\d{8}T\d{6}Z\.json$")
+_MULTI_PATTERN  = re.compile(r"hypatiax_defi_benchmark_v3\w*_results_\d{8}T\d{6}Z\.json$")
 
 REGIME_PALETTE: Dict[str, str] = {
     "A-Symbolic":   "#2ca02c",
@@ -294,10 +294,18 @@ def load_data(source: str, results_dir: Path) -> Dict:
     """
     Master loader.  source ∈ {"auto", "variance", "multi", "single"}.
     Returns {case_name: {"scores": List[float], "n_runs": int}}.
-    Priority: variance JSON > multi-run JSONs > single-run JSON.
+    Priority: variance JSON > multi-run JSONs > single-run JSON (any v3* variant).
     """
     variance_json = results_dir / "hypatiax_defi_variance_results.json"
+    # Exact canonical name kept as primary; glob fallback catches v3c, v3c2, etc.
     final_json    = results_dir / "hypatiax_defi_benchmark_v3_results.json"
+
+    print(f"  [load_data] results_dir={results_dir}  source={source}")
+    if results_dir.exists():
+        candidates = sorted(results_dir.glob("hypatiax_defi_benchmark_v3*.json"))
+        print(f"  [load_data] v3 JSON candidates: {[f.name for f in candidates]}")
+    else:
+        print(f"  [load_data] results_dir does not exist: {results_dir}")
 
     if source in ("variance", "auto") and variance_json.exists():
         data = _load_variance_json(variance_json)
@@ -309,11 +317,18 @@ def load_data(source: str, results_dir: Path) -> Dict:
         if data:
             print(f"  ✅ Loaded {len(data)} cases from timestamped multi-run JSONs")
             return data
-    if source in ("single", "auto") and final_json.exists():
-        data = _load_single_json(final_json)
-        if data:
-            print(f"  ⚠️  Single-run fallback: {final_json} ({len(data)} cases, II=0)")
-            return data
+    if source in ("single", "auto"):
+        # Try exact canonical name first, then any v3* benchmark result file.
+        single_candidates = (
+            [final_json] if final_json.exists()
+            else sorted(results_dir.glob("hypatiax_defi_benchmark_v3*results*.json"))
+            if results_dir.exists() else []
+        )
+        for candidate in single_candidates:
+            data = _load_single_json(candidate)
+            if data:
+                print(f"  ⚠️  Single-run fallback: {candidate} ({len(data)} cases, II=0)")
+                return data
     print("❌ No results data found. Run the benchmark first:")
     print("   python hypatiax_defi_benchmark_v3c2.py --variance")
     print("   python hypatiax_defi_benchmark_v3c2.py --multi-run 30")
@@ -1311,10 +1326,26 @@ def main():
             sys.exit(1)
         print(f"  Case filter active: {len(data)} case(s)")
 
-    df   = build_dataframe(data)
+    print("[DEBUG] about to build dataframe")
+    print(f"[DEBUG] data keys: {list(data.keys())[:10]}")
+    try:
+        df = build_dataframe(data)
+        print(f"[DEBUG] dataframe built: {len(df)} rows, columns={list(df.columns)}")
+    except Exception as e:
+        print(f"[DEBUG] dataframe build failed: {e}")
+        raise
     rows = df_to_rows(df)
 
-    df.to_csv(csv_path, index=False)
+    print(f"[DEBUG] csv_path = {csv_path}")
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        df.to_csv(csv_path, index=False)
+        print(f"[DEBUG] csv written, exists={csv_path.exists()}")
+        if not csv_path.exists():
+            raise RuntimeError(f"CSV was not created at {csv_path}")
+    except Exception as e:
+        print(f"[DEBUG] csv write failed: {e}")
+        raise
     print(f"  ✅ instability_analysis.csv → {csv_path}  ({len(df)} rows)")
     print_summary(df)
 
