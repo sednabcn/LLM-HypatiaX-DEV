@@ -1158,21 +1158,35 @@ jobs:
             # -- STEP 4a: instability -------------------------------------------------
             # run_instability_suite.py is a pure-analysis script - it reads pre-existing
             # benchmark JSONs from RESULTS_DIR and writes CSVs + figures to figures/.
-            # TASK_IDS / SHARD_IDS are passed so the script can filter to specific DeFi
-            # cases (Stage 1 case-filter path via --cases flag).  If the full set is
-            # wanted, leave task_ids_override blank and the script runs all cases.
-            # --benchmark-json is resolved to the most recent DeFi results JSON.
+            # TASK_IDS / SHARD_IDS are shard-planning domain names only (amm, risk_var, …);
+            # they are NOT forwarded to the script as --cases (see Fix 2 below).
+            # --benchmark-json is resolved to the most recent DeFi results JSON (Fix 1).
             instability)
               # Pre-flight: instability is a post-processing step that reads exp1 output.
               # If no DeFi results JSON exists yet, exp1 has not completed — exit 0 (skip)
               # rather than exit 1 so the job does not block the pipeline with a false failure.
-              DEFI_JSON_COUNT=$(find "${RESULTS_DIR}" -maxdepth 4 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
+              # Fix 1: exclude comparison_results/ subtree from the preflight scan.
+              # The glob hypatiax_defi_benchmark_v3*results*.json is too broad: it
+              # also matches Feynman outputs written by run_comparative_suite_benchmark_v2.py
+              # (e.g. comparison_results/noise-noiseless/noiseless/hypatiax_defi_benchmark_v3_results.json).
+              # Those files contain a single Feynman equation, not DeFi cases, so
+              # load_data loads 1 case and --cases then finds 0 DeFi name matches → sys.exit(1).
+              # Tightening to -not -path "*/comparison_results/*" restricts to files
+              # that hypatiax_defi_benchmark_v3c.py itself writes (at RESULTS_DIR root
+              # or a non-comparison_results subdir), which are the genuine exp1 outputs.
+              DEFI_JSON_COUNT=$(find "${RESULTS_DIR}" -maxdepth 4 \
+                -name "hypatiax_defi_benchmark_v3*results*.json" \
+                -not -path "*/comparison_results/*" \
+                2>/dev/null | wc -l)
               if [[ "${DEFI_JSON_COUNT}" -eq 0 ]]; then
                 echo "::warning::instability skipped — no exp1 results found in '${RESULTS_DIR}'."
                 echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
                 exit 0
               fi
-              BENCH_JSON=$(find "${RESULTS_DIR}" -maxdepth 4 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
+              BENCH_JSON=$(find "${RESULTS_DIR}" -maxdepth 4 \
+                -name "hypatiax_defi_benchmark_v3*results*.json" \
+                -not -path "*/comparison_results/*" \
+                2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
               BENCH_ARG=""
               if [[ -n "${BENCH_JSON}" ]]; then
                 BENCH_ARG="--benchmark-json ${BENCH_JSON}"
@@ -1189,11 +1203,15 @@ jobs:
                 INSTABILITY_DATA_DIR="$(dirname "${BENCH_JSON}")"
                 echo "[instability] --results-dir set to: ${INSTABILITY_DATA_DIR}"
               fi
-              TASK_IDS_FILTER=""
-              if [[ -n "${TASK_IDS}" ]]; then
-                # Convert space-separated TASK_IDS to --cases arguments
-                TASK_IDS_FILTER="--cases ${TASK_IDS}"
-              fi
+              # Fix 2: --cases is intentionally NOT passed here.
+              # TASK_IDS for the instability experiment are DeFi domain sharding
+              # names (amm, risk_var, liquidity, ...) used by the plan job to
+              # partition work -- they are NOT case-name substrings to filter on.
+              # run_instability_suite.py uses --cases as a substring filter against
+              # whatever load_data loaded; passing DeFi domain names against a
+              # Feynman-sourced dataset (or even a real DeFi dataset with different
+              # case name spelling) yields 0 matches and calls sys.exit(1).
+              # The script must run against all cases in whatever data load_data found.
               echo "=== instability pre-run: input files in RESULTS_DIR ==="
               echo "  RESULTS_DIR : ${RESULTS_DIR}"
               find "${RESULTS_DIR}" -maxdepth 3 -type f | sort || true
@@ -1204,7 +1222,6 @@ jobs:
                   --out         "${RESULTS_DIR}/figures" \
                   --csv-out     "${RESULTS_DIR}/figures/instability_analysis.csv" \
                   ${BENCH_ARG} \
-                  ${TASK_IDS_FILTER} \
                   --format png pdf
               INSTABILITY_EXIT=$?
               echo "=== instability post-run: exit=${INSTABILITY_EXIT} ==="
