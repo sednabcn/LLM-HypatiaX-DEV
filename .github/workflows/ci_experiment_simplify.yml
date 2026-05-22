@@ -1995,6 +1995,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          FILE_COUNT=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
+          echo "Files in ${TARGET}: ${FILE_COUNT}"
           if [[ "${FILE_COUNT}" -eq 0 ]]; then
             echo "No files in ${TARGET} — skipping commit for shard ${SHARD}."
             exit 0
@@ -2030,7 +2032,7 @@ jobs:
             STAGED=$(git diff --cached --name-only | wc -l)
             git commit -m "ci: ${EXP} shard${SHARD} results (${STAGED} file(s)) — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push --force-with-lease origin "${{ github.ref_name }}"
-            echo "Pushed shard ${SHARD}: ${FILE_COUNT} file(s) → ${{ github.ref_name }}"
+            echo "Pushed shard ${SHARD}: ${STAGED} file(s) → ${{ github.ref_name }}"
           }
 
           # First attempt; retry once after a pause on concurrent-shard conflict.
@@ -2055,8 +2057,10 @@ jobs:
           set -euo pipefail
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
 
-          # Count files that git now tracks under TARGET.
-          TRACKED=$(git ls-files "${TARGET}" 2>/dev/null | wc -l || echo 0)
+          # git ls-files needs a path relative to the repo root (or an absolute
+          # path inside the worktree).  Use --full-name to be explicit.
+          REL_TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          TRACKED=$(git ls-files --full-name "${REL_TARGET}" 2>/dev/null | wc -l || echo 0)
           # Count files present on disk under TARGET.
           ON_DISK=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
 
@@ -2064,7 +2068,7 @@ jobs:
           echo "  Path       : ${TARGET}"
           echo "  Git-tracked: ${TRACKED} file(s)"
           echo "  On disk    : ${ON_DISK} file(s)"
-          git ls-files "${TARGET}" 2>/dev/null | sort || true
+          git ls-files --full-name "${REL_TARGET}" 2>/dev/null | sort || true
 
           if [[ "${TRACKED}" -eq 0 ]]; then
             echo "::error::shard ${SHARD} (${EXP}): NO files are git-tracked under '${TARGET}'."
