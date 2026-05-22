@@ -991,35 +991,7 @@ jobs:
               done
               # -- Partial results summary ------------------------------------------
               echo "--- exp2_feynman partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
-              RESULT_DIR="${RESULTS_DIR}/${RESULT_SUBDIR}" python3 -c "
-import glob, json, os
-result_dir = os.environ.get('RESULT_DIR', '')
-all_files  = glob.glob(result_dir + '/**/*.json', recursive=True)
-print('  total JSON in ' + result_dir + ': ' + str(len(all_files)))
-domain_stats = {}
-for f in sorted(all_files):
-    try:
-        data    = json.load(open(f))
-        results = data.get('results') or data.get('equation_results') or []
-        domain  = data.get('domain') or data.get('benchmark_domain') or os.path.basename(f).split('_')[0]
-        r2s = []
-        if isinstance(results, list):
-            r2s = [r.get('r2') or r.get('r2_test') or r.get('r2_train') for r in results if isinstance(r, dict)]
-        elif isinstance(results, dict):
-            r2s = [v.get('r2') or v.get('r2_test') if isinstance(v, dict) else v for v in results.values()]
-        r2s = [v for v in r2s if isinstance(v, float)]
-        if r2s:
-            domain_stats.setdefault(domain, []).extend(r2s)
-    except Exception:
-        pass
-if domain_stats:
-    print('  {:<35s}  eqs  mean_R2   min_R2'.format('domain'))
-    for dom, vals in sorted(domain_stats.items()):
-        mean_r2 = sum(vals) / len(vals)
-        print('  {:<35s}  {:3d}  {:8.4f}  {:8.4f}'.format(dom, len(vals), mean_r2, min(vals)))
-else:
-    print('  (no R2 values parseable yet)')
-"
+              echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end exp2_feynman partial results ---"
               ;;
               # BUG 2 + BUG 4 FIX:
@@ -1063,35 +1035,7 @@ else:
               done
               # -- Partial results summary ------------------------------------------
               echo "--- exp2 partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
-              RESULT_DIR="${RESULTS_DIR}/${RESULT_SUBDIR}" python3 -c "
-import glob, json, os
-result_dir = os.environ.get('RESULT_DIR', '')
-all_files  = glob.glob(result_dir + '/**/*.json', recursive=True)
-print('  total JSON in ' + result_dir + ': ' + str(len(all_files)))
-domain_stats = {}
-for f in sorted(all_files):
-    try:
-        data    = json.load(open(f))
-        results = data.get('results') or data.get('equation_results') or []
-        domain  = data.get('domain') or data.get('benchmark_domain') or os.path.basename(f).split('_')[0]
-        r2s = []
-        if isinstance(results, list):
-            r2s = [r.get('r2') or r.get('r2_test') or r.get('r2_train') for r in results if isinstance(r, dict)]
-        elif isinstance(results, dict):
-            r2s = [v.get('r2') or v.get('r2_test') if isinstance(v, dict) else v for v in results.values()]
-        r2s = [v for v in r2s if isinstance(v, float)]
-        if r2s:
-            domain_stats.setdefault(domain, []).extend(r2s)
-    except Exception:
-        pass
-if domain_stats:
-    print('  {:<35s}  eqs  mean_R2   min_R2'.format('domain'))
-    for dom, vals in sorted(domain_stats.items()):
-        mean_r2 = sum(vals) / len(vals)
-        print('  {:<35s}  {:3d}  {:8.4f}  {:8.4f}'.format(dom, len(vals), mean_r2, min(vals)))
-else:
-    print('  (no R2 values parseable yet)')
-"
+              echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end exp2 partial results ---"
               ;;
 
@@ -1121,37 +1065,7 @@ else:
                 _SUMMARY_DIR="${RESULTS_DIR}/extrapolation"
               fi
               echo "--- ${EXP} partial results (${_SUMMARY_DIR}) ---"
-              RESULT_DIR="${_SUMMARY_DIR}" python3 -c "
-import glob, json, os
-result_dir = os.environ.get('RESULT_DIR', '')
-run_files = (sorted(glob.glob(result_dir + '/**/full_run_*.json', recursive=True)) +
-             sorted(glob.glob(result_dir + '/**/*nguyen*.json', recursive=True)))
-all_files  = glob.glob(result_dir + '/**/*.json', recursive=True)
-seen = set()
-run_files  = [f for f in run_files if not (f in seen or seen.add(f))]
-print('  result files: ' + str(len(run_files)) + '  |  total JSON in ' + result_dir + ': ' + str(len(all_files)))
-for f in run_files:
-    try:
-        data    = json.load(open(f))
-        results = data.get('results') or data.get('equation_results') or []
-        label   = os.path.basename(f)
-        if isinstance(results, list) and results:
-            print('  ' + label + ':')
-            for r in results:
-                eq   = r.get('equation') or r.get('eq_id') or r.get('name', '?')
-                r2   = r.get('r2') or r.get('r2_test') or r.get('r2_train')
-                rmse = r.get('rmse') or r.get('rmse_test', '')
-                r2_s = '{:.4f}'.format(r2) if isinstance(r2, float) else str(r2)
-                print('    {:<10s}  R2={:<8s}  rmse={}'.format(str(eq), r2_s, rmse))
-        elif isinstance(results, dict):
-            print('  ' + label + ':')
-            for eq, r in sorted(results.items()):
-                r2   = r.get('r2') or r.get('r2_test') if isinstance(r, dict) else r
-                r2_s = '{:.4f}'.format(r2) if isinstance(r2, float) else str(r2)
-                print('    {:<10s}  R2={}'.format(str(eq), r2_s))
-    except Exception as e:
-        print('  (could not parse ' + os.path.basename(f) + ': ' + str(e) + ')')
-"
+              echo "  JSON files: $(find "${_SUMMARY_DIR}" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end ${EXP} partial results ---"
               ;;
 
@@ -1205,35 +1119,7 @@ for f in run_files:
               done
               # -- Partial results summary ------------------------------------------
               echo "--- suppB partial results (${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep) ---"
-              RESULT_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep" python3 -c "
-import glob, json, os
-result_dir = os.environ.get('RESULT_DIR', '')
-all_files  = sorted(glob.glob(result_dir + '/**/*.json', recursive=True))
-print('  total JSON in ' + result_dir + ': ' + str(len(all_files)))
-noise_stats = {}
-for f in all_files:
-    try:
-        data    = json.load(open(f))
-        results = data.get('results') or data.get('equation_results') or []
-        nl      = data.get('noise_level') or data.get('noise') or '?'
-        r2s = []
-        if isinstance(results, list):
-            r2s = [r.get('r2') or r.get('r2_test') or r.get('r2_train') for r in results if isinstance(r, dict)]
-        elif isinstance(results, dict):
-            r2s = [v.get('r2') or v.get('r2_test') if isinstance(v, dict) else v for v in results.values()]
-        r2s = [v for v in r2s if isinstance(v, float)]
-        if r2s:
-            noise_stats.setdefault(str(nl), []).extend(r2s)
-    except Exception:
-        pass
-if noise_stats:
-    print('  {:<15s}  eqs  mean_R2   min_R2'.format('noise_level'))
-    for nl, vals in sorted(noise_stats.items(), key=lambda x: float(x[0]) if x[0] != '?' else 999):
-        mean_r2 = sum(vals) / len(vals)
-        print('  {:<15s}  {:3d}  {:8.4f}  {:8.4f}'.format(nl, len(vals), mean_r2, min(vals)))
-else:
-    print('  (no R2 values parseable yet)')
-"
+              echo "  JSON files: $(find "${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end suppB partial results ---"
               ;;
 
@@ -1267,35 +1153,7 @@ else:
                 || echo "WARNING: suppB_sc exited non-zero"
               # -- Partial results summary ------------------------------------------
               echo "--- suppB_sc partial results (${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity) ---"
-              RESULT_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity" python3 -c "
-import glob, json, os
-result_dir = os.environ.get('RESULT_DIR', '')
-all_files  = sorted(glob.glob(result_dir + '/**/*.json', recursive=True))
-print('  total JSON in ' + result_dir + ': ' + str(len(all_files)))
-sc_stats = {}
-for f in all_files:
-    try:
-        data    = json.load(open(f))
-        results = data.get('results') or data.get('equation_results') or []
-        n       = data.get('n_samples') or data.get('sample_count') or data.get('n') or '?'
-        r2s = []
-        if isinstance(results, list):
-            r2s = [r.get('r2') or r.get('r2_test') or r.get('r2_train') for r in results if isinstance(r, dict)]
-        elif isinstance(results, dict):
-            r2s = [v.get('r2') or v.get('r2_test') if isinstance(v, dict) else v for v in results.values()]
-        r2s = [v for v in r2s if isinstance(v, float)]
-        if r2s:
-            sc_stats.setdefault(str(n), []).extend(r2s)
-    except Exception:
-        pass
-if sc_stats:
-    print('  {:<12s}  eqs  mean_R2   min_R2'.format('n_samples'))
-    for n, vals in sorted(sc_stats.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
-        mean_r2 = sum(vals) / len(vals)
-        print('  {:<12s}  {:3d}  {:8.4f}  {:8.4f}'.format(n, len(vals), mean_r2, min(vals)))
-else:
-    print('  (no R2 values parseable yet)')
-"
+              echo "  JSON files: $(find "${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end suppB_sc partial results ---"
               ;;
 
@@ -1408,46 +1266,7 @@ else:
               done
               # -- Partial results summary ------------------------------------------
               echo "--- extrap partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
-              RESULT_DIR="${RESULTS_DIR}/${RESULT_SUBDIR}" python3 -c "
-import glob, json, os
-result_dir = os.environ.get('RESULT_DIR', '')
-all_files  = sorted(glob.glob(result_dir + '/**/*.json', recursive=True))
-print('  total JSON in ' + result_dir + ': ' + str(len(all_files)))
-domain_stats = {}
-for f in all_files:
-    try:
-        data    = json.load(open(f))
-        results = data.get('results') or data.get('equation_results') or []
-        domain  = data.get('domain') or data.get('benchmark_domain') or os.path.basename(f).split('_extrap')[0]
-        r2s_in, r2s_ex = [], []
-        if isinstance(results, list):
-            for r in results:
-                if not isinstance(r, dict): continue
-                v = r.get('r2') or r.get('r2_test') or r.get('r2_train')
-                e = r.get('extrap_r2') or r.get('extrap_r2_test')
-                if isinstance(v, float): r2s_in.append(v)
-                if isinstance(e, float): r2s_ex.append(e)
-        elif isinstance(results, dict):
-            for r in results.values():
-                if not isinstance(r, dict): continue
-                v = r.get('r2') or r.get('r2_test')
-                e = r.get('extrap_r2')
-                if isinstance(v, float): r2s_in.append(v)
-                if isinstance(e, float): r2s_ex.append(e)
-        if r2s_in or r2s_ex:
-            domain_stats[domain] = (r2s_in, r2s_ex)
-    except Exception:
-        pass
-if domain_stats:
-    print('  {:<35s}  eqs  in_R2(mean)  extrap_R2(mean)'.format('domain'))
-    for dom, (r2s_in, r2s_ex) in sorted(domain_stats.items()):
-        n    = max(len(r2s_in), len(r2s_ex))
-        in_s = '{:8.4f}'.format(sum(r2s_in)/len(r2s_in)) if r2s_in else '       ?'
-        ex_s = '{:8.4f}'.format(sum(r2s_ex)/len(r2s_ex)) if r2s_ex else '       ?'
-        print('  {:<35s}  {:3d}  {}      {}'.format(dom, n, in_s, ex_s))
-else:
-    print('  (no result values parseable yet)')
-"
+              echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end extrap partial results ---"
               ;;
 
