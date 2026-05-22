@@ -1174,7 +1174,7 @@ jobs:
                 echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
                 exit 0
               fi
-              BENCH_JSON=$(ls -t "${RESULTS_DIR}"/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
+              BENCH_JSON=$(find "${RESULTS_DIR}" -maxdepth 1 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
               BENCH_ARG=""
               if [[ -n "${BENCH_JSON}" ]]; then
                 BENCH_ARG="--benchmark-json ${BENCH_JSON}"
