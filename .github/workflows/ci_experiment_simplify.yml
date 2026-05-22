@@ -961,9 +961,8 @@ jobs:
               # pass --domain and --output-dir explicitly on every invocation.
               # All 6 methods active (--skip-pysr removed): methods 5+6 (SymbolicEngine,
               # HybridV50_2) now run with METHOD_TIMEOUT (900s) for full PySR budget.
-              readarray -t DOMAIN_LIST < <(python3 -c \
-                "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]")
-              for DOMAIN_ID in "${DOMAIN_LIST[@]}"; do
+              python3 -c "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]" > /tmp/domain_list.txt
+              while IFS= read -r DOMAIN_ID; do
                 [[ -z "${DOMAIN_ID}" ]] && continue
                 echo "=== exp2_feynman: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
                 TASK_IDS="${DOMAIN_ID}" \
@@ -988,10 +987,9 @@ jobs:
                     --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
                     --resume \
                   || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
-              done
+              done < /tmp/domain_list.txt
               # -- Partial results summary ------------------------------------------
               echo "--- exp2_feynman partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
-              echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end exp2_feynman partial results ---"
               ;;
               # BUG 2 + BUG 4 FIX:
@@ -1004,9 +1002,8 @@ jobs:
               # Fix: use --benchmark both (runs both Feynman + SRBench protocols,
               # which is exp2's intent), loop per-domain from SHARD_IDS, and pass
               # --output-dir so outputs land in the expected RESULT_SUBDIR path.
-              readarray -t DOMAIN_LIST < <(python3 -c \
-                "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]")
-              for DOMAIN_ID in "${DOMAIN_LIST[@]}"; do
+              python3 -c "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]" > /tmp/domain_list.txt
+              while IFS= read -r DOMAIN_ID; do
                 [[ -z "${DOMAIN_ID}" ]] && continue
                 echo "=== exp2: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
                 TASK_IDS="${DOMAIN_ID}" \
@@ -1032,7 +1029,7 @@ jobs:
                     --resume \
                     2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
                   || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
-              done
+              done < /tmp/domain_list.txt
               # -- Partial results summary ------------------------------------------
               echo "--- exp2 partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
               echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
@@ -1229,9 +1226,8 @@ jobs:
             # exp2_feynman does, passing --domain per invocation so each domain
             # runs independently with its own checkpoint and output file.
             extrap)
-              readarray -t DOMAIN_LIST < <(python3 -c \
-                "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]")
-              for DOMAIN_ID in "${DOMAIN_LIST[@]}"; do
+              python3 -c "import json,os; [print(d) for d in json.loads(os.environ['SHARD_IDS'])]" > /tmp/domain_list.txt
+              while IFS= read -r DOMAIN_ID; do
                 [[ -z "${DOMAIN_ID}" ]] && continue
                 echo "=== extrap: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
                 TASK_IDS="${DOMAIN_ID}" \
@@ -1263,10 +1259,9 @@ jobs:
                     --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
                     2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run${{ github.run_id }}.log" \
                   || echo "WARNING: extrap domain ${DOMAIN_ID} exited non-zero — continuing"
-              done
+              done < /tmp/domain_list.txt
               # -- Partial results summary ------------------------------------------
               echo "--- extrap partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
-              echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end extrap partial results ---"
               ;;
 
