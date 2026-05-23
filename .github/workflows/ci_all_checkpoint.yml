@@ -423,12 +423,9 @@ jobs:
               "exp3b":             [f"nguyen12_seed{s}" for s in SEEDS if s != "42"],
               # suppA committed extrapolation_73cases_enhanced.json (all domains combined).
               "suppA":             ["73cases_enhanced"],
-              # suppB task IDs use sig-style names matching the checkpoint filenames
-              # (noise_sweep_sig{NNNN}_checkpoint.json) — not noise{nl}__{eq}.
-              # Map NOISE_LEVELS (0.0, 0.05, 0.1, 0.5, 1.0) → sig suffixes.
-              _NOISE_SIG = {"0.0": "sig0000", "0.05": "sig0050",
-                            "0.1": "sig0100", "0.5": "sig0500", "1.0": "sig1000"}
-              "suppB":             [_NOISE_SIG.get(nl, f"sig{nl}") for nl in NOISE_LEVELS],
+              # suppB: checkpoint files are noise_sweep_sig{NNNN}_checkpoint.json.
+              # The sig suffixes are fixed regardless of NOISE_LEVELS ordering.
+              "suppB":             ["sig0000", "sig0050", "sig0100", "sig0500", "sig1000"],
               # suppB_sc done-set: checkpoint files are sample_complexity_n{NNNN}_checkpoint.json
               # Use zero-padded n-values that are substrings of those filenames.
               "suppB_sc":          [f"n{int(n):04d}" for n in SUPPB_SC_COUNTS],
