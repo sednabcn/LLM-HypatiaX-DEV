@@ -196,6 +196,8 @@ jobs:
       - name: Checkout master
         uses: actions/checkout@v4.2.2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
           fetch-depth: 1
 
       - name: Set up Python 3.12
@@ -376,6 +378,8 @@ jobs:
       - name: Checkout master
         uses: actions/checkout@v4.2.2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
           fetch-depth: 1
 
       - name: Set up Python 3.12
@@ -580,6 +584,8 @@ jobs:
       - name: Checkout master
         uses: actions/checkout@v4.2.2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
           fetch-depth: 1
 
       - name: Set up Python 3.12
@@ -841,6 +847,8 @@ jobs:
       - name: Checkout master
         uses: actions/checkout@v4.2.2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
           fetch-depth: 1
 
       - name: Set up Python 3.12
@@ -1073,7 +1081,7 @@ jobs:
           print(f"  Audit summary: {n_pass} PASS  {n_warn} WARN  {n_fail} FAIL  "
                 f"{n_missing} MISSING  {n_skip} SKIP  ({len(findings)} total claims)")
           
-          audit_pass = (n_fail == 0 and n_missing == 0)
+          audit_pass = (n_fail == 0 and n_missing == 0 and len(findings) > 0)
           
           out = Path("logs/paper_audit_findings.json")
           out.parent.mkdir(parents=True, exist_ok=True)
@@ -1083,6 +1091,8 @@ jobs:
           print()
           if audit_pass:
               print("  ✅  Audit PASSED — all claims within tolerance.")
+          elif len(findings) == 0:
+              print("  ⚠   Audit SKIPPED — no claims found (commit scripts/patches/paper_targets.json).")
           else:
               fails = [f for f in findings if f["status"] in ("FAIL", "MISSING")]
               print(f"  ❌  Audit has {len(fails)} FAIL/MISSING claim(s) — see details above.")
@@ -1152,7 +1162,13 @@ jobs:
           print(f"  {'1. Outputs committed':<30}  {'✅ ALL PRESENT' if present  else '❌ SOME MISSING'}")
           print(f"  {'2. Task completion':<30}  {'✅ ALL COMPLETE' if complete else '⚠  GAPS EXIST'}")
           print(f"  {'3. Qualification (7-dim)':<30}  {'✅ ALL QUALIFIED' if qual    else '❌ UNQUALIFIED EXPS'}")
-          print(f"  {'4. Paper audit':<30}  {'✅ ALL PASS' if audit else f'❌ {n_fail} FAIL  {n_miss} MISSING  {n_warn} WARN'}")
+          if audit:
+              gate4_status = "✅ ALL PASS"
+          elif n_fail == 0 and n_miss == 0 and n_pass == 0 and n_warn == 0:
+              gate4_status = "⚠  NO CLAIMS (paper_targets.json missing or empty)"
+          else:
+              gate4_status = f"❌ {n_fail} FAIL  {n_miss} MISSING  {n_warn} WARN"
+          print(f"  {'4. Paper audit':<30}  {gate4_status}")
           print(SEP)
 
           # Summarise incomplete experiments
@@ -1179,7 +1195,7 @@ jobs:
                       print(f"    {exp:<25} FAILED: {', '.join(fails)}")
 
           print()
-          overall_ok = present and qual and audit
+          overall_ok = present and qual and (audit or (n_fail == 0 and n_miss == 0 and n_pass == 0))
           if overall_ok:
               print("  ✅  Overall: PIPELINE HEALTHY — ready for submission.")
           else:
