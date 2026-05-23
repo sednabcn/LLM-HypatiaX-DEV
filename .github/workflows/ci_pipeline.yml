@@ -584,6 +584,7 @@ jobs:
           EXP:          ${{ needs.resolve.outputs.experiment }}
           STARTED_AT:   ${{ needs.resolve.outputs.started_at }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -601,6 +602,7 @@ jobs:
           # workflow inputs in run-list JSON, so we match on the run-name
           # (set via run-name: field in ci_runner.yml to include the experiment ID).
           PRIOR=$(gh run list \
+            --repo "${REPO}" \
             --workflow ci_runner.yml \
             --status success \
             --limit 20 \
@@ -631,6 +633,7 @@ jobs:
           SAMPLES:   ${{ github.event.inputs.n_samples || '200' }}
           NOISE:     ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
           DRY_RUN:   ${{ github.event.inputs.dry_run || 'false' }}
+          REPO:      ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -639,6 +642,7 @@ jobs:
           echo "Dispatching ci_runner.yml for experiment=${EXP} at ${BEFORE_TS}"
 
           gh workflow run ci_runner.yml \
+            --repo "${REPO}" \
             --field experiment="${EXP}" \
             --field n_shards="${N_SHARDS}" \
             --field seeds="${SEEDS}" \
@@ -654,6 +658,7 @@ jobs:
           DISPATCHED_ID=""
           for attempt in 1 2 3 4 5 6; do
             DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
               --workflow ci_runner.yml \
               --event workflow_dispatch \
               --limit 5 \
@@ -672,7 +677,7 @@ jobs:
           if [[ -z "${DISPATCHED_ID}" ]]; then
             echo "::error::Could not determine the dispatched run ID for ci_runner.yml."
             echo "  Falling back to polling most-recent run (less reliable)."
-            DISPATCHED_ID=$(gh run list --workflow ci_runner.yml --limit 1 \
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_runner.yml --limit 1 \
               --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
           fi
 
@@ -687,6 +692,7 @@ jobs:
           SLEEP=30
           while true; do
             RUN_JSON=$(gh run view "${DISPATCHED_ID}" \
+              --repo "${REPO}" \
               --json status,conclusion 2>/dev/null || echo '{"status":"unknown","conclusion":"none"}')
             READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
             CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
@@ -742,6 +748,7 @@ jobs:
           EXP:          ${{ needs.resolve.outputs.experiment }}
           STARTED_AT:   ${{ needs.resolve.outputs.started_at }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -751,6 +758,7 @@ jobs:
           fi
 
           PRIOR=$(gh run list \
+            --repo "${REPO}" \
             --workflow ci_analysis.yml \
             --status success \
             --limit 20 \
@@ -778,6 +786,7 @@ jobs:
           # Empty when run-experiment was skipped (already_done) — ci_analysis.yml
           # handles blank source_run_id gracefully (uses committed files).
           SOURCE_RUN_ID:   ${{ needs.run-experiment.outputs.runner_run_id || '' }}
+          REPO:            ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -785,6 +794,7 @@ jobs:
           echo "Dispatching ci_analysis.yml for experiment=${EXP} at ${BEFORE_TS}"
 
           gh workflow run ci_analysis.yml \
+            --repo "${REPO}" \
             --field experiment="${EXP}" \
             --field source_run_id="${SOURCE_RUN_ID}"
 
@@ -793,6 +803,7 @@ jobs:
           DISPATCHED_ID=""
           for attempt in 1 2 3 4 5 6; do
             DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
               --workflow ci_analysis.yml \
               --event workflow_dispatch \
               --limit 5 \
@@ -807,7 +818,7 @@ jobs:
 
           if [[ -z "${DISPATCHED_ID}" ]]; then
             echo "::warning::Could not pin run ID — falling back to most-recent run."
-            DISPATCHED_ID=$(gh run list --workflow ci_analysis.yml --limit 1 \
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_analysis.yml --limit 1 \
               --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
           fi
           [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
@@ -816,7 +827,7 @@ jobs:
           DEADLINE=$(( $(date +%s) + 1800 ))
           SLEEP=20
           while true; do
-            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --json status,conclusion 2>/dev/null \
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
               || echo '{"status":"unknown","conclusion":"none"}')
             READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
             CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
@@ -857,6 +868,7 @@ jobs:
           GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
           EXP:          ${{ needs.resolve.outputs.experiment }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -866,6 +878,7 @@ jobs:
           fi
 
           PRIOR=$(gh run list \
+            --repo "${REPO}" \
             --workflow ci_postprocess.yml \
             --status success \
             --limit 20 \
@@ -887,6 +900,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXP:      ${{ needs.resolve.outputs.experiment }}
+          REPO:     ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -894,6 +908,7 @@ jobs:
           echo "Dispatching ci_postprocess.yml for experiment=${EXP} at ${BEFORE_TS}"
 
           gh workflow run ci_postprocess.yml \
+            --repo "${REPO}" \
             --field experiment="${EXP}"
 
           sleep 8
@@ -901,6 +916,7 @@ jobs:
           DISPATCHED_ID=""
           for attempt in 1 2 3 4 5 6; do
             DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
               --workflow ci_postprocess.yml \
               --event workflow_dispatch \
               --limit 5 \
@@ -915,7 +931,7 @@ jobs:
 
           if [[ -z "${DISPATCHED_ID}" ]]; then
             echo "::warning::Could not pin run ID — falling back to most-recent run."
-            DISPATCHED_ID=$(gh run list --workflow ci_postprocess.yml --limit 1 \
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_postprocess.yml --limit 1 \
               --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
           fi
           [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
@@ -924,7 +940,7 @@ jobs:
           DEADLINE=$(( $(date +%s) + 1800 ))
           SLEEP=20
           while true; do
-            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --json status,conclusion 2>/dev/null \
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
               || echo '{"status":"unknown","conclusion":"none"}')
             READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
             CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
@@ -967,6 +983,7 @@ jobs:
           GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
           EXP:          ${{ needs.resolve.outputs.experiment }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -976,6 +993,7 @@ jobs:
           fi
 
           PRIOR=$(gh run list \
+            --repo "${REPO}" \
             --workflow ci_pipeline_check.yml \
             --status success \
             --limit 20 \
@@ -1005,6 +1023,7 @@ jobs:
           # and produces incorrect missing-task diffs when non-default values were used.
           SEEDS:              ${{ github.event.inputs.seeds || '42,99,123,777,2024' }}
           NOISE_LEVELS:       ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          REPO:               ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -1012,6 +1031,7 @@ jobs:
           echo "Dispatching ci_pipeline_check.yml for experiment=${EXP} fail_on_incomplete=${FAIL_ON_INCOMPLETE}"
 
           gh workflow run ci_pipeline_check.yml \
+            --repo "${REPO}" \
             --field experiment="${EXP}" \
             --field fail_on_incomplete="${FAIL_ON_INCOMPLETE}" \
             --field seeds="${SEEDS}" \
@@ -1022,6 +1042,7 @@ jobs:
           DISPATCHED_ID=""
           for attempt in 1 2 3 4 5 6; do
             DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
               --workflow ci_pipeline_check.yml \
               --event workflow_dispatch \
               --limit 5 \
@@ -1036,7 +1057,7 @@ jobs:
 
           if [[ -z "${DISPATCHED_ID}" ]]; then
             echo "::warning::Could not pin run ID — falling back to most-recent run."
-            DISPATCHED_ID=$(gh run list --workflow ci_pipeline_check.yml --limit 1 \
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_pipeline_check.yml --limit 1 \
               --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
           fi
           [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
@@ -1045,7 +1066,7 @@ jobs:
           DEADLINE=$(( $(date +%s) + 1200 ))
           SLEEP=15
           while true; do
-            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --json status,conclusion 2>/dev/null \
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
               || echo '{"status":"unknown","conclusion":"none"}')
             READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
             CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
@@ -1091,6 +1112,7 @@ jobs:
           SEEDS:            ${{ github.event.inputs.seeds || '' }}
           SAMPLES:          ${{ github.event.inputs.n_samples || '200' }}
           NOISE:            ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          REPO:             ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -1108,6 +1130,7 @@ jobs:
 
           echo "Dispatching ci_pipeline.yml for next slot=${NEXT_SLOT}"
           gh workflow run ci_pipeline.yml \
+            --repo "${REPO}" \
             --field experiment_index="${NEXT_SLOT}" \
             --field n_shards="${N_SHARDS}" \
             --field seeds="${SEEDS}" \
