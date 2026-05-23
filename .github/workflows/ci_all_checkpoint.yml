@@ -215,14 +215,14 @@ jobs:
           # and exp2 was mapped to "comparison_results/feynman-tests/exp2"
           # in run_all_checkpoint.py.  All three are wrong; correct values are below.
           SUBDIR = {
-              "exp1":              "comparison_results/noise-noiseless/noiseless",
+              "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
               "exp2_feynman":      "comparison_results/feynman-tests/exp2",
               "exp2":              "comparison_results/feynman-tests/exp2_multi",
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
               "suppA":             "hybrid_pysr/defi",
-              "suppB":             "comparison_results/feynman-tests/noise-sweep",
+              "suppB":             "comparison_results/feynman-tests/noise-sweep/noise-sweep",
               "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":       "figures",
@@ -258,7 +258,8 @@ jobs:
               "exp1":              ["hypatiax_defi_benchmark_v3*results*.json",
                                     "protocol_core_noiseless_*.json"],
               "exp1b":             ["comparison_FIXED_*.json", "defi_v3_*.json",
-                                    "*portfolio*variance*.json"],
+                                    "*portfolio*variance*.json",
+                                    "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
               "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":              ["full_run_*.json", "report_hybrid_*.json",
@@ -410,19 +411,33 @@ jobs:
 
           REGISTRY = {
               "exp1":              DEFI,
-              "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
+              # exp1b committed a single hypatiax_defi_benchmark_v3_results.json
+              # (not per-seed portfolio files). Use filename-stem sentinel.
+              "exp1b":             ["hypatiax_defi_benchmark_v3_results"],
               "exp2_feynman":      FEYNMAN_DOMAINS,
               "exp2":              EXP2_DOMAINS,
-              "exp3":              [f"{eq}_seed42" for eq in NGUYEN12],
-              "exp3b":             [f"{eq}_seed{s}" for s in SEEDS if s != "42"
-                                    for eq in NGUYEN12],
-              "suppA":             DEFI,
-              "suppB":             [f"noise{nl}__{eq}" for nl in NOISE_LEVELS
-                                    for eq in FEYNMAN_DOMAINS],
-              "suppB_sc":          [f"sc_n{n}__{eq}" for n in SUPPB_SC_COUNTS
-                                    for eq in FEYNMAN_DOMAINS],
-              "hybrid_all_domains": EXP2_DOMAINS,
-              "instability":       DEFI,
+              # exp3 committed a single exp3_nguyen12_seed42.json covering all 12 Nguyen eqs.
+              "exp3":              ["nguyen12_seed42"],
+              # exp3b committed per-seed files: exp3_nguyen12_seed{s}.json.
+              # Use seed sentinels that are substrings of those filenames.
+              "exp3b":             [f"nguyen12_seed{s}" for s in SEEDS if s != "42"],
+              # suppA committed extrapolation_73cases_enhanced.json (all domains combined).
+              "suppA":             ["73cases_enhanced"],
+              # suppB task IDs use sig-style names matching the checkpoint filenames
+              # (noise_sweep_sig{NNNN}_checkpoint.json) — not noise{nl}__{eq}.
+              # Map NOISE_LEVELS (0.0, 0.05, 0.1, 0.5, 1.0) → sig suffixes.
+              _NOISE_SIG = {"0.0": "sig0000", "0.05": "sig0050",
+                            "0.1": "sig0100", "0.5": "sig0500", "1.0": "sig1000"}
+              "suppB":             [_NOISE_SIG.get(nl, f"sig{nl}") for nl in NOISE_LEVELS],
+              # suppB_sc done-set: checkpoint files are sample_complexity_n{NNNN}_checkpoint.json
+              # Use zero-padded n-values that are substrings of those filenames.
+              "suppB_sc":          [f"n{int(n):04d}" for n in SUPPB_SC_COUNTS],
+              # hybrid_all_domains committed a single hybrid_llm_nn_all_domains_*.json.
+              "hybrid_all_domains": ["all_domains"],
+              # instability is a single post-processing job, not 10 per-domain shards.
+              # Use the output filename stem as the task sentinel: done when
+              # instability_analysis.csv exists in figures/.
+              "instability":       ["instability_analysis"],
               "extrap":            FEYNMAN_DOMAINS,
           }
 
@@ -579,14 +594,14 @@ jobs:
 
           # BUG 1 FIX: matches ci_experiment.yml and job 1 above (exp1, exp1b, exp2 corrected)
           SUBDIR = {
-              "exp1":              "comparison_results/noise-noiseless/noiseless",
+              "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
               "exp2_feynman":      "comparison_results/feynman-tests/exp2",
               "exp2":              "comparison_results/feynman-tests/exp2_multi",
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
               "suppA":             "hybrid_pysr/defi",
-              "suppB":             "comparison_results/feynman-tests/noise-sweep",
+              "suppB":             "comparison_results/feynman-tests/noise-sweep/noise-sweep",
               "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":       "figures",
@@ -639,15 +654,21 @@ jobs:
                   # Accept if ≥1 non-meta JSON result file exists and is valid JSON
                   json_files = [f for f in result_dir.glob("*.json")
                                 if not f.name.startswith("_")] if result_dir.exists() else []
+                  # Also accept *.csv as valid output (instability produces CSV+figures, no JSON)
+                  csv_result_files = [f for f in result_dir.glob("*.csv")
+                                      if not f.name.startswith("_")] if result_dir.exists() else []
                   valid_json = False
                   for jf in json_files[:3]:  # spot-check first 3
                       try:
                           json.loads(jf.read_text()); valid_json = True; break
                       except Exception:
                           pass
+                  if not valid_json and csv_result_files:
+                      valid_json = True  # CSV output counts as valid result (e.g. instability)
                   merged_ok     = valid_json
                   merged_detail = (f"{len(json_files)} result JSON(s) — no _merged.json (per-shard commit mode)"
-                                   if json_files else "no result JSON files found")
+                                   if json_files else (f"{len(csv_result_files)} CSV result(s) — instability mode"
+                                   if csv_result_files else "no result JSON files found"))
               checks.append(["result_json_valid", merged_ok, merged_detail])
 
               # 4. _merged.csv (optional — generated by consolidate or tables step)
