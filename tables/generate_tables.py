@@ -434,8 +434,9 @@ def gen_ablation() -> None:
     if not equations:
         equations = PAPER_EQUATIONS
 
-    mw_p = (data or {}).get("mw_p", (data or {}).get("mann_whitney_p", 0.2948))
-    mw_u = (data or {}).get("mw_u", (data or {}).get("mann_whitney_u", 126.0))
+    _d = data if isinstance(data, dict) else {}
+    mw_p = _d.get("mw_p", _d.get("mann_whitney_p", 0.2948))
+    mw_u = _d.get("mw_u", _d.get("mann_whitney_u", 126.0))
 
     def _r(v, clip=None):
         if not isinstance(v, (int, float)) or v != v:
@@ -1118,12 +1119,12 @@ def gen_repro_macros() -> None:
     macros: dict[str, str] = {}
     data, _ = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
                         extra_subdirs=["defi"])
-    if data:
+    if isinstance(data, dict):
         acc = data.get("accuracy", data.get("success_rate", 0))
         macros["defiAccuracy"]   = f"{acc:.1%}"
         macros["defiTotalCases"] = str(data.get("total_cases", 74))
     data, _ = load_best("exp1_ablation", "*.json")
-    if data:
+    if isinstance(data, dict):
         mw_p = data.get("mw_p", data.get("mann_whitney_p", ""))
         mw_u = data.get("mw_u", data.get("mann_whitney_u", ""))
         if mw_p:
