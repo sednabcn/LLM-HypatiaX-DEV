@@ -278,7 +278,9 @@ jobs:
               "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv"],
               "suppB_sc":          ["sample_complexity_*.json", "sample_complexity_*.csv"],
               "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
-              "instability":       ["instability_analysis.csv", "*.pdf", "*.png"],
+              "instability":       ["instability_analysis.csv", "instability_extrapolation.csv",
+                                    "fig_paper_*.pdf", "fig_paper_*.png",
+                                    "hypatiax_instability_*.pdf", "hypatiax_instability_*.png"],
               "extrap":            ["all_domains_extrap_v4_*.json",
                                     "protocol_core_*.json"],
           }
@@ -423,9 +425,15 @@ jobs:
               # exp1 committed a single hypatiax_defi_benchmark_v3_results.json
               # (not per-task files). Use filename-stem sentinel — same pattern as exp1b.
               "exp1":              ["hypatiax_defi_benchmark_v3_results"],
-              # exp1b committed a single hypatiax_defi_benchmark_v3_results.json
-              # (not per-seed portfolio files). Use filename-stem sentinel.
-              "exp1b":             ["hypatiax_defi_benchmark_v3_results"],
+              # exp1b task IDs in the runner are [f"portfolio_seed{s}" for s in SEEDS].
+              # The committed filenames are comparison_FIXED_*_shard{N}_run{ID}.json —
+              # they contain a timestamp+shard suffix, not the seed ID.  The file-scan
+              # heuristic (substring match) therefore cannot mark seeds done from filenames
+              # alone.  The _checkpoint_shard{N}.json files copied into RESULT_SUBDIR by
+              # the runner's "Copy shard checkpoint into result subdir" step are the
+              # authoritative done-set source; the sentinel here just needs to match what
+              # the runner puts in checkpoint.completed ("portfolio_seed{s}").
+              "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
               "exp2_feynman":      FEYNMAN_DOMAINS,
               "exp2":              EXP2_DOMAINS,
               # exp3 committed a single exp3_nguyen12_seed42.json covering all 12 Nguyen eqs.
@@ -470,6 +478,18 @@ jobs:
                   safe = tid.replace("/", "_").replace(".", "_")
                   if any(safe in fname for fname in files):
                       done.add(tid)
+              # FIX exp1b done-set: for experiments where committed filenames do not
+              # contain the task ID as a substring (exp1b writes comparison_FIXED_*_shard{N}_
+              # run{ID}.json — no seed ID in the name), the file-scan above produces an
+              # empty done set even on a successful run.  The runner's "Copy shard checkpoint
+              # into result subdir" step writes _checkpoint_shard{N}.json files whose
+              # completed list is the authoritative record.  Union those in here.
+              for ckpt_file in result_dir.glob("_checkpoint_shard*.json"):
+                  try:
+                      cd = json.loads(ckpt_file.read_text())
+                      done |= set(cd.get("completed", []))
+                  except Exception:
+                      pass
               return done
 
           completion = {}
@@ -643,6 +663,26 @@ jobs:
                       ckpt_detail = f"status={cd.get('status','?')} completed={len(cd.get('completed',[]))}"
                   except Exception as e:
                       ckpt_detail = f"parse error: {e}"
+              if not ckpt_ok:
+                  # FIX qualify-DIM1: consolidate is disabled and _checkpoint.json is never
+                  # written by the worker.  exp1b (and any multi-shard experiment) writes
+                  # _checkpoint_shard{N}.json files (copied into RESULT_SUBDIR by the runner's
+                  # "Copy shard checkpoint into result subdir" step).  Accept dim① as passing
+                  # if any per-shard checkpoint records at least one completed task.
+                  shard_ckpts = list(result_dir.glob("_checkpoint_shard*.json")) if result_dir.exists() else []
+                  if shard_ckpts:
+                      total_completed = 0
+                      for sc in shard_ckpts:
+                          try:
+                              scd = json.loads(sc.read_text())
+                              total_completed += len(scd.get("completed", []))
+                          except Exception:
+                              pass
+                      if total_completed > 0:
+                          ckpt_ok = True
+                          ckpt_detail = f"per-shard checkpoints: {len(shard_ckpts)} file(s), {total_completed} task(s) completed"
+                      else:
+                          ckpt_detail = f"per-shard checkpoints present ({len(shard_ckpts)}) but 0 tasks completed"
               checks.append(["checkpoint=pass", ckpt_ok, ckpt_detail])
 
               # 2. Result files (non-meta JSON/CSV)

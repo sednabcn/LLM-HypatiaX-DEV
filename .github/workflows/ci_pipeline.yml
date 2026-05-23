@@ -1104,6 +1104,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: |
+      always() &&
       needs.resolve.outputs.run_full == 'true' &&
       needs.run-checkpoint.result == 'success'
 
@@ -1141,9 +1142,9 @@ jobs:
             --field seeds="${SEEDS}" \
             --field n_samples="${SAMPLES}" \
             --field noise_levels="${NOISE}" \
-            --field fail_on_incomplete="${{ github.event.inputs.fail_on_incomplete || 'false' }}"
+            --field fail_on_incomplete="${{ github.event.inputs.fail_on_incomplete || 'false' }}" \
+            --field dry_run="${{ github.event.inputs.dry_run || 'false' }}"
           # Note: force_rerun is intentionally NOT forwarded to the next slot —
           # only the slot that was explicitly force-rerun should bypass the guard.
-          # Note: dry_run is intentionally NOT forwarded — next slots should execute.
 
           echo "Self-dispatch succeeded — slot ${NEXT_SLOT} queued."

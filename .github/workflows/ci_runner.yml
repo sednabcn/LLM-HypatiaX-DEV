@@ -258,12 +258,16 @@ jobs:
 
             suppB)
               SCRIPT="hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py"
-              # TASK-6 (HIGH): Verify before submission. If run_noise_sweep_benchmark.py
-              # invokes PySR via the EHD/M3 symbolic-regression path, set NEEDS_JULIA=true
-              # and add a Julia install step for suppB.  Current assumption: the noise sweep
-              # runs LLM+NN methods only (M3 = EHD ensemble, M4 = HSL) without juliacall.
-              # Confirm by: grep -n 'juliacall\|import pysr\|PySR' run_noise_sweep_benchmark.py
-              NEEDS_JULIA=false
+              # TASK-6 FIX: resolve NEEDS_JULIA at runtime by inspecting the script
+              # rather than assuming false.  If juliacall/PySR is imported, the worker
+              # must have Julia installed or methods 5/6 will crash silently with N/A.
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${SCRIPT}" 2>/dev/null; then
+                NEEDS_JULIA=true
+                echo "::notice::suppB: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
+              else
+                NEEDS_JULIA=false
+                echo "suppB: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
+              fi
               RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
               DEFAULT_SEEDS="42"
               ;;
@@ -292,9 +296,14 @@ jobs:
             # <- FIX CRITICAL 2: new experiment entry for sample-complexity sweep
             suppB_sc)
               SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
-              # TASK-6 (HIGH): Same NEEDS_JULIA caveat as suppB - verify whether
-              # run_sample_complexity_benchmark.py invokes PySR/EHD before setting false.
-              NEEDS_JULIA=false
+              # TASK-6 FIX: resolve NEEDS_JULIA at runtime (same guard as suppB).
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${SCRIPT}" 2>/dev/null; then
+                NEEDS_JULIA=true
+                echo "::notice::suppB_sc: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
+              else
+                NEEDS_JULIA=false
+                echo "suppB_sc: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
+              fi
               RESULT_SUBDIR="comparison_results/feynman-tests/sample-complexity"
               DEFAULT_SEEDS="42"
               ;;
@@ -1503,6 +1512,11 @@ jobs:
               move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation"
               move_matching "hybrid_defi_*.json"       "${RESULTS_DIR}/extrapolation"
               move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation"
+              # ISSUE 2 FIX: xref lists exp3_nguyen12_*.json and *nguyen*seed*.json as
+              # expected outputs (tab:nguyen12) but these were never moved — files stayed
+              # at workspace root and were silently lost before artifact upload.
+              move_matching "exp3_nguyen12_*.json"     "${RESULTS_DIR}/extrapolation"
+              move_matching "*nguyen*seed*.json"       "${RESULTS_DIR}/extrapolation"
               ;;
 
             # BUG 2 FIX: exp3b outputs now go to extrapolation/multi_seed to avoid
@@ -1512,6 +1526,9 @@ jobs:
               move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation/multi_seed"
               move_matching "hybrid_defi_*.json"       "${RESULTS_DIR}/extrapolation/multi_seed"
               move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation/multi_seed"
+              # ISSUE 2 FIX: same missing nguyen globs as exp3 — add them here too.
+              move_matching "exp3_nguyen12_*.json"     "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "*nguyen*seed*.json"       "${RESULTS_DIR}/extrapolation/multi_seed"
               ;;
 
             # -- suppA: hybrid PySR/DeFi benchmark ----------------------------
@@ -1519,6 +1536,13 @@ jobs:
             # match so the artifact upload and consolidate job find the files.
             suppA)
               move_matching "consolidated_hybrid_*.json"          "${RESULTS_DIR}/hybrid_pysr/defi"
+              # ISSUE 3 FIX: xref lists hybrid_system*.json and extrapolation_73cases*.json
+              # / *73cases*.json as primary suppA outputs (Tab 11-13) but these patterns
+              # were missing from the move block — files were never relocated to the
+              # canonical subdir and would be absent from the artifact upload.
+              move_matching "hybrid_system*.json"                 "${RESULTS_DIR}/hybrid_pysr/defi"
+              move_matching "extrapolation_73cases*.json"         "${RESULTS_DIR}/hybrid_pysr/defi"
+              move_matching "*73cases*.json"                      "${RESULTS_DIR}/hybrid_pysr/defi"
               move_matching "hybrid_llm_nn_all_domains_*.json"    "${RESULTS_DIR}/hybrid_llm_nn/all_domains"
               move_matching "ablation_exp1_*.json"                "${RESULTS_DIR}"
               move_matching "hypatiax_defi_benchmark_v3_results*" "${RESULTS_DIR}"
@@ -1553,9 +1577,17 @@ jobs:
 
             # -- instability: instability index figures + CSVs -----------------
             instability)
-              move_matching "instability_analysis.csv" "${RESULTS_DIR}/figures"
-              move_matching "*.png"                    "${RESULTS_DIR}/figures"
-              move_matching "*.pdf"                    "${RESULTS_DIR}/figures"
+              move_matching "instability_analysis.csv"     "${RESULTS_DIR}/figures"
+              # ISSUE 5a FIX: instability_extrapolation.csv (Stage 2 output, tab:instability)
+              # was never moved — add it alongside instability_analysis.csv.
+              move_matching "instability_extrapolation.csv" "${RESULTS_DIR}/figures"
+              # ISSUE 5b FIX: *.png and *.pdf globs were workspace-wide (maxdepth 8),
+              # which risks capturing runner debug images or Julia precompile artifacts.
+              # Scope to the canonical figure name stems produced by run_instability_suite.py.
+              move_matching "fig_paper_*.pdf"              "${RESULTS_DIR}/figures"
+              move_matching "fig_paper_*.png"              "${RESULTS_DIR}/figures"
+              move_matching "hypatiax_instability_*.pdf"   "${RESULTS_DIR}/figures"
+              move_matching "hypatiax_instability_*.png"   "${RESULTS_DIR}/figures"
               ;;
 
             # -- extrap: OOD extrapolation comparative -------------------------
@@ -1563,6 +1595,10 @@ jobs:
             extrap)
               move_matching "all_domains_extrap_v4_*.json" "${RESULTS_DIR}/comparison_results/extrapolation"
               move_matching "all_domains_extrap_v4_*.txt"  "${RESULTS_DIR}/comparison_results/extrapolation"
+              # ISSUE 4 FIX: xref lists protocol_core_*.json as an extrap output
+              # (Tab 9 OOD columns) but this pattern was absent from the move block.
+              # The verify step (line ~1840) already checks for it; now actually move it.
+              move_matching "protocol_core_*.json"         "${RESULTS_DIR}/comparison_results/extrapolation"
               move_matching "standalone_llm_nn_*.json"      "${RESULTS_DIR}/standalone_llm_nn"
               move_matching "standalone_real_methods_*.json" "${RESULTS_DIR}/standalone_llm_nn"
               ;;
@@ -2018,6 +2054,35 @@ jobs:
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key: checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
+
+      # -- Copy shard checkpoint into RESULT_SUBDIR so qualify / complete can read it -----
+      # checkpoint_worker_shard{N}.json is written to the workspace root (not RESULT_SUBDIR)
+      # and is therefore absent from the repo checkout that ci_pipeline_check.yml uses.
+      # qualify dim① checks for _checkpoint.json in RESULT_SUBDIR; the complete job
+      # unions in _checkpoint.json from the same path.  For exp1b in particular the
+      # task-ID done_set file-scanning heuristic fails because filenames contain a
+      # timestamp+shard suffix (comparison_FIXED_*_shard{N}_run{ID}.json) not the
+      # seed-based task ID ("portfolio_seed42"), so the checkpoint union is the only
+      # reliable done-set source.
+      #
+      # Fix: copy checkpoint_worker_shard{N}.json → RESULT_SUBDIR/_checkpoint_shard{N}.json
+      # (per-shard name avoids races when 4 shards commit concurrently).
+      # The "Commit and push shard results" step already stages all files under TARGET,
+      # so no additional git add is needed.
+      - name: Copy shard checkpoint into result subdir
+        if: always()
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          SHARD:         ${{ matrix.shard }}
+        run: |
+          CKPT_SRC="checkpoint_worker_shard${SHARD}.json"
+          CKPT_DEST="${OUT_BASE}/${RESULT_SUBDIR}/_checkpoint_shard${SHARD}.json"
+          if [[ -f "${CKPT_SRC}" ]]; then
+            cp "${CKPT_SRC}" "${CKPT_DEST}"
+            echo "Copied ${CKPT_SRC} → ${CKPT_DEST}"
+          else
+            echo "::warning::Shard checkpoint not found at ${CKPT_SRC} — skipping copy."
+          fi
 
       - name: Pre-upload artifact file count check
         if: always()
