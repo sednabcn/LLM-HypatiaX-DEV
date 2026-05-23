@@ -1611,6 +1611,14 @@ jobs:
             [[ "$(realpath "$f")" == "$(realpath "${DEST}")"/* ]] && continue
             dest_f="${DEST}/${fname}"
             if [[ -e "$dest_f" ]]; then
+              # If the colliding file is already git-tracked it is a committed
+              # result from a prior run, not a stray output from this run.
+              # Renaming it produces a double-suffixed corrupted file on re-run.
+              # Skip it; the move block gave this run's output a unique name.
+              if git ls-files --error-unmatch "${dest_f}" >/dev/null 2>&1; then
+                echo "  SKIP: ${fname} is git-tracked in dest — committed prior result, skipping."
+                continue
+              fi
               # BUG B FIX: do NOT silently skip — a file with the same name from a
               # different shard or run already exists.  Disambiguate by inserting
               # _shard<N>_run<run_id> before the extension so no data is lost.
