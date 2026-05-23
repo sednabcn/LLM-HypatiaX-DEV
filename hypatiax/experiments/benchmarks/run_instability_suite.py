@@ -239,7 +239,7 @@ def _load_variance_json(path: Path) -> Dict:
     raw = json.loads(path.read_text())
     out: Dict = {}
     for rec in raw:
-        name   = rec.get("test_case", rec.get("name", "?"))
+        name   = rec.get("test_case", rec.get("name", rec.get("equation_id", "?")))
         n_runs = rec.get("n_runs", len(rec.get("runs", [])))
         scores = [
             r["test_r2"] for r in rec.get("runs", [])
@@ -262,7 +262,7 @@ def _load_multi_run_jsons(results_dir: Path) -> Dict:
         raw   = json.loads(fpath.read_text())
         cases = raw["cases"] if isinstance(raw, dict) else raw
         for rec in cases:
-            name   = rec.get("test_case", rec.get("name", "?"))
+            name   = rec.get("test_case", rec.get("name", rec.get("equation_id", "?")))
             res    = rec.get("results", {})
             r2_raw = (res.get("pure_llm") or res.get("llm_only") or {}).get("test_r2")
             case_attempts[name] = case_attempts.get(name, 0) + 1
@@ -281,7 +281,7 @@ def _load_single_json(path: Path) -> Dict:
     cases = raw["cases"] if isinstance(raw, dict) else raw
     out: Dict = {}
     for rec in cases:
-        name   = rec.get("test_case", rec.get("name", "?"))
+        name   = rec.get("test_case", rec.get("name", rec.get("equation_id", "?")))
         res    = rec.get("results", {})
         r2_raw = (res.get("pure_llm") or res.get("llm_only") or {}).get("test_r2")
         if r2_raw is None or (isinstance(r2_raw, float) and np.isnan(r2_raw)):

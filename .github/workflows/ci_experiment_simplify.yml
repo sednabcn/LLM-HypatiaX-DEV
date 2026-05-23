@@ -205,7 +205,7 @@ jobs:
             exp1)
               SCRIPT="hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
               NEEDS_JULIA=false
-              RESULT_SUBDIR="comparison_results/noise-noiseless/noiseless"
+              RESULT_SUBDIR="comparison_results/noise-noiseless/noiseless/defi"
               DEFAULT_SEEDS="42"
               ;;
 
@@ -740,7 +740,7 @@ jobs:
             "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi" \
             "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep" \
             "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
-            "${OUT_BASE}/comparison_results/noise-noiseless/noiseless" \
+            "${OUT_BASE}/comparison_results/noise-noiseless/noiseless/defi" \
             "${OUT_BASE}/comparison_results/noise-noiseless/15" \
             "${OUT_BASE}/comparison_results/extrapolation" \
             "${OUT_BASE}/extrapolation" \
@@ -1165,27 +1165,23 @@ jobs:
               # Pre-flight: instability is a post-processing step that reads exp1 output.
               # If no DeFi results JSON exists yet, exp1 has not completed — exit 0 (skip)
               # rather than exit 1 so the job does not block the pipeline with a false failure.
-              # Fix 1: exclude comparison_results/ subtree from the preflight scan.
-              # The glob hypatiax_defi_benchmark_v3*results*.json is too broad: it
-              # also matches Feynman outputs written by run_comparative_suite_benchmark_v2.py
-              # (e.g. comparison_results/noise-noiseless/noiseless/hypatiax_defi_benchmark_v3_results.json).
-              # Those files contain a single Feynman equation, not DeFi cases, so
-              # load_data loads 1 case and --cases then finds 0 DeFi name matches → sys.exit(1).
-              # Tightening to -not -path "*/comparison_results/*" restricts to files
-              # that hypatiax_defi_benchmark_v3c.py itself writes (at RESULTS_DIR root
-              # or a non-comparison_results subdir), which are the genuine exp1 outputs.
-              DEFI_JSON_COUNT=$(find "${RESULTS_DIR}" -maxdepth 4 \
+              #
+              # Fix 1 (proper): point find at the canonical exp1 output directory
+              # comparison_results/noise-noiseless/noiseless/defi/ — the dedicated
+              # subdir that RESULT_SUBDIR and move_matching now route exp1 outputs to.
+              # Feynman outputs in adjacent dirs (noiseless/, feynman-tests/, …) are
+              # structurally isolated and can never match this exact path.
+              DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+              DEFI_JSON_COUNT=$(find "${DEFI_DIR}" -maxdepth 1 \
                 -name "hypatiax_defi_benchmark_v3*results*.json" \
-                -not -path "*/comparison_results/*" \
                 2>/dev/null | wc -l)
               if [[ "${DEFI_JSON_COUNT}" -eq 0 ]]; then
-                echo "::warning::instability skipped — no exp1 results found in '${RESULTS_DIR}'."
+                echo "::warning::instability skipped — no exp1 results found in '${DEFI_DIR}'."
                 echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
                 exit 0
               fi
-              BENCH_JSON=$(find "${RESULTS_DIR}" -maxdepth 4 \
+              BENCH_JSON=$(find "${DEFI_DIR}" -maxdepth 1 \
                 -name "hypatiax_defi_benchmark_v3*results*.json" \
-                -not -path "*/comparison_results/*" \
                 2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
               BENCH_ARG=""
               if [[ -n "${BENCH_JSON}" ]]; then
@@ -1194,15 +1190,10 @@ jobs:
               else
                 echo "[instability] No benchmark JSON found - Stage 2 (EX figure) skipped."
               fi
-              # Derive --results-dir from wherever the benchmark JSON actually lives.
-              # load_data scans --results-dir for input files; if the JSON was committed
-              # under a subdir (e.g. comparison_results/noise-noiseless/noiseless/) the
-              # root RESULTS_DIR scan would miss it.  Pass the parent dir explicitly.
-              INSTABILITY_DATA_DIR="${RESULTS_DIR}"
-              if [[ -n "${BENCH_JSON}" ]]; then
-                INSTABILITY_DATA_DIR="$(dirname "${BENCH_JSON}")"
-                echo "[instability] --results-dir set to: ${INSTABILITY_DATA_DIR}"
-              fi
+              # --results-dir points at the canonical exp1 subdir so load_data finds
+              # the DeFi benchmark JSON directly without guessing or dirname tricks.
+              INSTABILITY_DATA_DIR="${DEFI_DIR}"
+              echo "[instability] --results-dir set to: ${INSTABILITY_DATA_DIR}"
               # Fix 2: --cases is intentionally NOT passed here.
               # TASK_IDS for the instability experiment are DeFi domain sharding
               # names (amm, risk_var, liquidity, ...) used by the plan job to
@@ -1447,8 +1438,8 @@ jobs:
             #   defi_v3_<TS>.json                              ← legacy name
             # All three patterns are moved so the artifact upload finds them.
             exp1)
-              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless"
-              move_matching "protocol_core_noiseless_*.json"           "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless"
+              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+              move_matching "protocol_core_noiseless_*.json"           "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
               move_matching "defi_v3_*.json"                           "${RESULTS_DIR}"
               ;;
 
@@ -1650,7 +1641,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/noiseless"
+          TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/noiseless/defi"
 
           echo "PWD=$(pwd)"
           echo "TARGET=${TARGET}"

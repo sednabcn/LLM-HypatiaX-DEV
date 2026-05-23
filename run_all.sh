@@ -262,7 +262,7 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
   # and bare extrapolation/ (exp3 RESULT_SUBDIR) — both present in the CI mkdir
   # step but absent here, causing tee/mv failures when those steps run standalone.
   # Mirrors ci_experiment.yml Create results directory structure step exactly.
-  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
+  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless/defi,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
   mkdir -p '"${RESULTS_DIR}"'/extrapolation
   echo "Directory structure: ok"
 '
@@ -295,9 +295,17 @@ _exp1_body() {
   # protocol_core_noiseless_*.json (protocol wrapper variant) and ablation /
   # mannwhitney JSONs are written to EXPERIMENTS_DIR root by their own scripts.
   # Search up to maxdepth 8 so any doubled-path remnants are also caught.
+  #
+  # Move primary benchmark output from RESULTS_DIR root → noiseless/defi/.
+  # hypatiax_defi_benchmark_v3c.py hardcodes its write path to RESULTS_DIR root;
+  # move_matching in CI and this block below relocate it to the canonical subdir
+  # so the instability preflight and artifact upload find it in the right place.
+  find "${RESULTS_DIR}" -maxdepth 1 \
+    -name 'hypatiax_defi_benchmark_v3*results*.json' \
+    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/" \; 2>/dev/null || true
   find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'protocol_core_noiseless_*.json' \
     ! -path "${RESULTS_DIR}/*" \
-    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/" \; 2>/dev/null || true
+    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/" \; 2>/dev/null || true
   find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'ablation_*.json' \
     ! -path "${RESULTS_DIR}/*" \
     -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
@@ -346,7 +354,7 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
   # FIX-exp1b-4: only run portfolio_variance_v3c2.py when its input JSON exists.
   # It needs hypatiax_defi_benchmark_v3*results*.json in RESULTS_DIR or
   # portfolio_variance_seed_sweep.json — both written by the step above.
-  _BENCH_JSON=\$(ls -t '${RESULTS_DIR}'/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
+  _BENCH_JSON=\$(ls -t '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
   if [[ -z \"\${_BENCH_JSON}\" ]]; then
     echo 'WARNING: portfolio_variance_v3c2.py skipped — benchmark JSON not found in ${RESULTS_DIR}.'
     echo '         This is expected on the first shard run when hypatiax_defi_benchmark_v3c.py'
@@ -593,21 +601,24 @@ PYEOF
 run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/C - Groups A-C + EX)" bash -c "
   mkdir -p '${RESULTS_DIR}/figures'
 
-  # Locate the most recent DeFi benchmark JSON produced by STEP 1 (exp1) for
-  # Stage 2 extrapolation merge and the EX figure.
-  BENCH_JSON=\$(ls -t '${RESULTS_DIR}'/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
+  # Canonical exp1 output directory (matches RESULT_SUBDIR in CI YAML).
+  # All hypatiax_defi_benchmark_v3*results*.json from exp1 are moved here
+  # by the _exp1_body move block and CI move_matching.
+  DEFI_DIR='${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'
+
+  BENCH_JSON=\$(ls -t \"\${DEFI_DIR}\"/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
 
   if [[ -n \"\${BENCH_JSON}\" ]]; then
     echo '[instability] Stage 2 extrapolation merge enabled: '\"\${BENCH_JSON}\"
     BENCH_ARG=\"--benchmark-json \${BENCH_JSON}\"
   else
-    echo '[instability] No benchmark JSON found -- Stage 2 (EX figure) skipped.'
+    echo '[instability] No benchmark JSON found in '\"\${DEFI_DIR}\"' -- Stage 2 (EX figure) skipped.'
     echo '              Run STEP 1 (exp1) first to enable the EX figure.'
     BENCH_ARG=\"\"
   fi
 
   python3 '${EXPERIMENTS_DIR}/run_instability_suite.py' \
-    --results-dir '${RESULTS_DIR}' \
+    --results-dir \"\${DEFI_DIR}\" \
     --out         '${RESULTS_DIR}/figures' \
     --csv-out     '${RESULTS_DIR}/figures/instability_analysis.csv' \
     \${BENCH_ARG} \
@@ -928,8 +939,8 @@ print("\n=== Validating key numerical results against JMLR v3.0 ===\n")
 
 # --- exp1 noiseless ---
 noiseless_files = (
-    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/hypatiax_defi_benchmark_v3*results*.json")) +
-    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json"))
+    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/defi/hypatiax_defi_benchmark_v3*results*.json")) +
+    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/defi/protocol_core_noiseless_*.json"))
 )
 if noiseless_files:
     with open(noiseless_files[-1]) as f: data = json.load(f)
