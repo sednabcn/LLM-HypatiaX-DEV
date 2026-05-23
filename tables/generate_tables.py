@@ -521,7 +521,9 @@ def gen_five_system() -> None:
         ("System 3 LLM+Fallback",  0, "---",  "---",    "1.000", "0.0002", "Robustness"),
     ]
 
-    def _extract(d: dict):
+    def _extract(d):
+        if not isinstance(d, dict):
+            return []
         rows = []
         for entry in d.get("five_system", d.get("system_comparison", [])):
             rows.append((
@@ -582,7 +584,9 @@ def gen_runtime() -> None:
         ("HypatiaX (LLM-routed only)", None, None, 68, "1.73× faster"),
     ]
 
-    def _extract(d: dict):
+    def _extract(d):
+        if not isinstance(d, dict):
+            return []
         timing = d.get("timing", d.get("runtime", {}))
         rows = []
         for name, key in [("Pure LLM", "pure_llm"), ("Neural MLP", "neural_mlp"),
@@ -660,7 +664,9 @@ def gen_portfolio_seed_sweep() -> None:
         (2024, -12.109,  +1.000, "exact",     True,  True),
     ]
 
-    def _extract(d: dict):
+    def _extract(d):
+        if not isinstance(d, dict):
+            return []
         seeds = d.get("seeds", d.get("results", []))
         if not isinstance(seeds, list) or len(seeds) < 5:
             return []
@@ -760,7 +766,9 @@ def gen_feynman_results() -> None:
         ("Larmor frequency",     "Nuclear",         0.998,   1.000,  -1.40),
     ]
 
-    def _extract(d: dict):
+    def _extract(d):
+        if not isinstance(d, dict):
+            return []
         eqs = d.get("equations", d.get("results", []))
         if not isinstance(eqs, list) or len(eqs) < 10:
             return []
@@ -867,7 +875,9 @@ def gen_nguyen12() -> None:
          0.9987, -1.056, 0.9994, -1.054, 0.9985, -1.198),
     ]
 
-    def _extract(d: dict):
+    def _extract(d):
+        if not isinstance(d, dict):
+            return []
         eqs = d.get("equations", d.get("results", []))
         if not isinstance(eqs, list) or len(eqs) < 12:
             return []
@@ -979,7 +989,9 @@ def gen_timing_detail() -> None:
         ("LLM-routed only ($n=68$)",    None, 2.7, 1.56,  "Hybrid 1.73× faster than NN"),
     ]
 
-    def _extract(d: dict):
+    def _extract(d):
+        if not isinstance(d, dict):
+            return []
         td = d.get("timing_detail", d.get("timing", {}))
         rows = []
         for label, key in [("Mean (all 74 cases)", "mean_all"),
