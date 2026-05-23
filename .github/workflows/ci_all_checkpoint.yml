@@ -263,10 +263,13 @@ jobs:
               "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
               "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":              ["full_run_*.json", "report_hybrid_*.json",
-                                    "hybrid_defi_*.json"],
+                                    "hybrid_defi_*.json",
+                                    "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "exp3b":             ["full_run_*.json", "report_hybrid_*.json",
-                                    "hybrid_defi_*.json"],
-              "suppA":             ["consolidated_hybrid_*.json", "hybrid_system*.json"],
+                                    "hybrid_defi_*.json",
+                                    "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "suppA":             ["consolidated_hybrid_*.json", "hybrid_system*.json",
+                                    "extrapolation_73cases*.json", "*73cases*.json"],
               "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv"],
               "suppB_sc":          ["sample_complexity_*.json", "sample_complexity_*.csv"],
               "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
@@ -410,7 +413,9 @@ jobs:
           SUPPB_SC_COUNTS = ["50", "100", "200", "500", "750", "1000"]
 
           REGISTRY = {
-              "exp1":              DEFI,
+              # exp1 committed a single hypatiax_defi_benchmark_v3_results.json
+              # (not per-task files). Use filename-stem sentinel — same pattern as exp1b.
+              "exp1":              ["hypatiax_defi_benchmark_v3_results"],
               # exp1b committed a single hypatiax_defi_benchmark_v3_results.json
               # (not per-seed portfolio files). Use filename-stem sentinel.
               "exp1b":             ["hypatiax_defi_benchmark_v3_results"],
@@ -691,7 +696,12 @@ jobs:
               git_detail = "git unavailable"
               probe_file = merged_json if merged_json.exists() else next(
                   (f for f in (result_dir.glob("*.json") if result_dir.exists() else [])
-                   if not f.name.startswith("_")), None)
+                   if not f.name.startswith("_")),
+                  # Fallback: probe a CSV result file (e.g. instability_analysis.csv)
+                  next(
+                      (f for f in (result_dir.glob("*.csv") if result_dir.exists() else [])
+                       if not f.name.startswith("_")), None)
+              )
               if probe_file:
                   rel = str(probe_file)
                   try:
