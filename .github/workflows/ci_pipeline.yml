@@ -580,7 +580,7 @@ jobs:
       - name: Check if ci_runner.yml already completed for this experiment
         id: check_runner
         env:
-          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
           EXP:          ${{ needs.resolve.outputs.experiment }}
           STARTED_AT:   ${{ needs.resolve.outputs.started_at }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
@@ -626,7 +626,7 @@ jobs:
         if: steps.check_runner.outputs.already_done != 'true'
         id: dispatch_runner
         env:
-          GH_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:  ${{ secrets.PAT_TOKEN }}
           EXP:       ${{ needs.resolve.outputs.experiment }}
           N_SHARDS:  ${{ github.event.inputs.n_shards || '1' }}
           SEEDS:     ${{ github.event.inputs.seeds || '' }}
@@ -745,7 +745,7 @@ jobs:
       - name: Check if ci_analysis.yml already completed for this experiment
         id: check_analysis
         env:
-          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
           EXP:          ${{ needs.resolve.outputs.experiment }}
           STARTED_AT:   ${{ needs.resolve.outputs.started_at }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
@@ -779,7 +779,7 @@ jobs:
       - name: Dispatch and wait for ci_analysis.yml
         if: steps.check_analysis.outputs.already_done != 'true'
         env:
-          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:        ${{ secrets.PAT_TOKEN }}
           EXP:             ${{ needs.resolve.outputs.experiment }}
           # P2 FIX: forward the ci_runner.yml run ID so ci_analysis.yml can
           # download the shard artifact directly (fast-path) rather than always
@@ -867,7 +867,7 @@ jobs:
       - name: Check if ci_postprocess.yml already completed for this experiment
         id: check_postprocess
         env:
-          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
           EXP:          ${{ needs.resolve.outputs.experiment }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
           REPO:         ${{ github.repository }}
@@ -900,7 +900,7 @@ jobs:
       - name: Dispatch and wait for ci_postprocess.yml
         if: steps.check_postprocess.outputs.already_done != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
           EXP:      ${{ needs.resolve.outputs.experiment }}
           REPO:     ${{ github.repository }}
         run: |
@@ -983,7 +983,7 @@ jobs:
       - name: Check if ci_pipeline_check.yml already passed for this experiment
         id: check_checkpoint
         env:
-          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
           EXP:          ${{ needs.resolve.outputs.experiment }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
           REPO:         ${{ github.repository }}
@@ -1017,7 +1017,7 @@ jobs:
 
       - name: Dispatch and wait for ci_pipeline_check.yml
         env:
-          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:           ${{ secrets.PAT_TOKEN }}
           EXP:                ${{ needs.resolve.outputs.experiment }}
           FAIL_ON_INCOMPLETE: ${{ github.event.inputs.fail_on_incomplete || 'false' }}
           # P3 FIX: forward seeds and noise_levels so ci_pipeline_check.yml's
@@ -1110,7 +1110,7 @@ jobs:
     steps:
       - name: Dispatch next pipeline slot
         env:
-          GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:         ${{ secrets.PAT_TOKEN }}
           CURRENT_SLOT:     ${{ needs.resolve.outputs.slot }}
           N_SHARDS:         ${{ github.event.inputs.n_shards || '1' }}
           SEEDS:            ${{ github.event.inputs.seeds || '' }}
