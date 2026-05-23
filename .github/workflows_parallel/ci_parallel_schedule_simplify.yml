@@ -1,0 +1,671 @@
+# ==============================================================================
+#  ci_parallel_schedule_simplify.yml  —  HypatiaX wave-parallel scheduled run
+#                                        (was: ci_schedule_simplify.yml, single-slot chain)
+#
+#  ARCHITECTURE
+#  ─────────────────────────────────────────────────────────────────────────────
+#  Sequential ci_schedule_simplify.yml runs each experiment one after the other
+#  (~73 h wall-clock for all 12 experiments).
+#
+#  This workflow exploits the DAG encoded in parallel_dispatch_dag.svg:
+#
+#    Wave 1  ─── exp1                                             (~5.5 h)
+#    Wave 2+3 ── exp1b · exp2_feynman · exp2 · hybrid_all_domains
+#                exp3  · exp3b       · extrap · suppA · suppB · suppB_sc
+#                                              (run in parallel, ~5.5 h wall)
+#    Wave 4  ─── instability  (needs Wave 1 exp1 JSON output)   (~2 h)
+#    Wave 5  ─── tables · figures  (triggered after all above)  (~0.5 h)
+#
+#  Wall-clock estimate: ~5.5 h (W1) + 0 (W2+3 overlaps) + 2 h (W4) ≈ 13–14 h
+#  vs. 73 h sequential — ~5× speed-up.
+#
+#  DISPATCH MECHANISM
+#  ─────────────────────────────────────────────────────────────────────────────
+#  n_shards = 1 (default):
+#    Each experiment is dispatched as a single ci_experiment_simplify.yml run
+#    via .github/scripts/dispatch_experiment.sh.  The plan job inside that
+#    workflow handles internal task splitting via its matrix strategy.
+#
+#  n_shards > 1 (future, when ci_experiment_simplify.yml gains shard_index input):
+#    Each experiment is dispatched as N parallel ci_experiment_simplify.yml runs
+#    via .github/scripts/dispatch_parallel_experiment.sh.  Both scripts are
+#    supported; the dispatch step auto-selects based on matrix.n_shards.
+#
+#  CRASH-STOP
+#  ─────────────────────────────────────────────────────────────────────────────
+#  If any experiment job exits 1 (failure, cancelled, or deadline), its
+#  downstream `needs` dependants are skipped by GitHub, halting the wave chain.
+#  Wave 2+3 uses fail-fast: false so one failing experiment does not cancel
+#  others in the same wave; the finalize job checks needs.wave-23.result.
+#
+#  TIMEOUTS
+#  ─────────────────────────────────────────────────────────────────────────────
+#  Each job has timeout-minutes set safely under GitHub's 360-min hard cap.
+#  The inner PERIOD_SECONDS deadline governs how long the step waits for a
+#  dispatched run before declaring a timeout and exiting 1.
+#
+#  WORKER COUNT
+#  ─────────────────────────────────────────────────────────────────────────────
+#  All experiments default to n_shards=1.  Bump individual matrix entries to
+#  2–4 once ci_experiment_simplify.yml supports the shard_index dispatch input.
+# ==============================================================================
+
+name: "HypatiaX-parallel-scheduled full run"
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: "10 9 * * 1"   # Monday   09:10 UTC (10:10 BST)
+    - cron: "0 11 * * 4"   # Thursday 11:00 UTC (12:00 BST)
+
+  workflow_dispatch:
+    inputs:
+      skip_wave_1:
+        description: "Skip Wave 1 (exp1) — use when exp1 results already exist in repo"
+        required: false
+        type: boolean
+        default: false
+      skip_wave_23:
+        description: "Skip Wave 2+3 independent experiments — use when results already exist"
+        required: false
+        type: boolean
+        default: false
+      task_ids_override:
+        description: "Space-separated task IDs to run (blank = full set) — forwarded to all dispatched experiments"
+        required: false
+        default: ""
+      continue_chain:
+        description: "Dispatch Wave 5 (tables + figures) when all experiment waves complete"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions:  write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  EXP_WORKFLOW_FILE: "ci_experiment_simplify.yml"
+
+
+# ==============================================================================
+#  JOB 1 — wave-1
+#  Runs exp1 (core noiseless DeFi benchmark) alone.
+#  instability (Wave 4) reads exp1's committed JSON; it cannot start until this
+#  job completes successfully.
+#  Wave 2+3 starts in PARALLEL — no `needs` dependency on this job.
+# ==============================================================================
+jobs:
+  wave-1:
+    name: "Wave 1 — exp1 (core noiseless)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 355    # safely under the 360-min GitHub hard cap
+
+    if: ${{ github.event.inputs.skip_wave_1 != 'true' }}
+
+    outputs:
+      exp_run_ids: ${{ steps.dispatch.outputs.run_ids }}
+      exp_ok:      ${{ steps.wait.outputs.exp_ok }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      # -- W1-1. Dispatch ci_experiment_simplify.yml for exp1 ---------------------
+      # n_shards=1 → uses dispatch_experiment.sh (single run).
+      # Bump n_shards here (and in dispatch_parallel_experiment.sh) once
+      # ci_experiment_simplify.yml gains a shard_index dispatch input.
+      - name: Dispatch exp1
+        id: dispatch
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+        run: |
+          set -euo pipefail
+
+          EXP="exp1"
+          N_SHARDS="1"
+
+          echo "> Dispatching Wave 1: ${EXP} (n_shards=${N_SHARDS})"
+
+          # n_shards=1 → dispatch_experiment.sh (emits EXP_RUN_ID=<id>)
+          DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_experiment.sh \
+            "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE" 2>&1)
+          echo "$DISPATCH_OUTPUT"
+
+          EXP_RUN_ID=$(echo "$DISPATCH_OUTPUT" \
+            | grep '^EXP_RUN_ID=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+
+          if [[ -z "$EXP_RUN_ID" ]]; then
+            echo "::error::dispatch_experiment.sh did not emit EXP_RUN_ID for ${EXP}."
+            echo "  Workflow : ${EXP_WORKFLOW_FILE}"
+            echo "  Check dispatch_experiment.sh output above for polling errors."
+            exit 1
+          fi
+
+          echo "Wave 1 run ID: $EXP_RUN_ID"
+          echo "run_ids=$EXP_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      # -- W1-2. Wait for exp1 to reach COMPLETED -----------------------------------
+      - name: Wait for exp1
+        id: wait
+        env:
+          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
+          RUN_IDS:    ${{ steps.dispatch.outputs.run_ids }}
+          PERIOD_SECONDS: "19800"    # 5.5 h — exp1 deadline
+        run: |
+          set -euo pipefail
+
+          DEADLINE=$(( $(date +%s) + PERIOD_SECONDS ))
+          IFS=',' read -ra IDS <<< "$RUN_IDS"
+          declare -A DONE=()
+          for rid in "${IDS[@]}"; do DONE[$rid]=0; done
+          DONE_COUNT=0; FAIL_COUNT=0
+
+          while (( DONE_COUNT < ${#IDS[@]} )); do
+            for rid in "${IDS[@]}"; do
+              [[ "${DONE[$rid]}" == "1" ]] && continue
+              STATUS=$(gh api \
+                "/repos/${{ github.repository }}/actions/runs/$rid" \
+                --jq '"\\(.status) \\(.conclusion)"' 2>/dev/null || echo "unknown unknown")
+              echo "  [exp1 run=$rid] $(date -u +%H:%M:%SZ)  $STATUS"
+              case "$STATUS" in
+                "completed success")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true
+                  echo "  ✓ run $rid SUCCEEDED" ;;
+                "completed failure"|"completed cancelled"|"completed timed_out")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true; (( FAIL_COUNT++ )) || true
+                  echo "  ✗ run $rid FAILED: $STATUS" ;;
+              esac
+            done
+
+            if [[ $(date +%s) -gt $DEADLINE && $DONE_COUNT -lt ${#IDS[@]} ]]; then
+              echo "::error::exp1 deadline (${PERIOD_SECONDS}s) exceeded — ABORTING Wave 1."
+              FAIL_COUNT=$(( FAIL_COUNT + ${#IDS[@]} - DONE_COUNT ))
+              break
+            fi
+
+            (( DONE_COUNT < ${#IDS[@]} )) && sleep 60
+          done
+
+          if (( FAIL_COUNT > 0 )); then
+            echo "exp_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "exp_ok=true" >> "$GITHUB_OUTPUT"
+          echo "Wave 1 (exp1) completed successfully."
+
+
+# ==============================================================================
+#  JOB 2 — wave-23
+#  All experiments with NO upstream data dependencies run simultaneously via a
+#  matrix strategy.  GitHub dispatches each matrix entry as a parallel runner,
+#  giving true concurrent experiment execution.
+#
+#  No `needs` dependency → starts immediately alongside Wave 1.
+#
+#  fail-fast: false ensures one failing experiment does not cancel the others.
+#  finalize (Job 4) uses `needs.wave-23.result` to detect any failure.
+#
+#  n_shards per experiment:
+#    All currently 1 — bump to 2–4 when ci_experiment_simplify.yml supports
+#    the shard_index dispatch input and dispatch_parallel_experiment.sh
+#    can locate individual shard runs by their run-name pattern.
+# ==============================================================================
+  wave-23:
+    name: "Wave 2+3 — ${{ matrix.experiment }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 355    # safely under the 360-min GitHub hard cap
+
+    if: ${{ github.event.inputs.skip_wave_23 != 'true' }}
+
+    strategy:
+      fail-fast: false      # one experiment failure does not cancel sibling experiments
+      matrix:
+        include:
+          # ── Wave 2: independent, no Julia ─────────────────────────────────
+          - experiment: exp1b
+            period_seconds: 19800   # 5.5 h — multi-seed DeFi noise run
+            n_shards: 1
+
+          # ── Wave 2: independent, Julia required ───────────────────────────
+          - experiment: exp2_feynman
+            period_seconds: 19800   # 5.5 h — full Feynman benchmark
+            n_shards: 1
+
+          - experiment: exp2
+            period_seconds: 19800   # 5.5 h — multi-method all30 run
+            n_shards: 1
+
+          # ── Wave 2: LLM+NN all-domains ────────────────────────────────────
+          - experiment: hybrid_all_domains
+            period_seconds: 16200   # 4.5 h — 10-domain LLM+NN pass
+            n_shards: 1
+
+          # ── Wave 3: Julia, medium ──────────────────────────────────────────
+          - experiment: exp3
+            period_seconds: 12600   # 3.5 h — Nguyen-12 single seed
+            n_shards: 1
+
+          - experiment: exp3b
+            period_seconds: 14400   # 4 h — Nguyen-12 multi-seed
+            n_shards: 1
+
+          - experiment: extrap
+            period_seconds: 12600   # 3.5 h — OOD extrapolation (Feynman domains)
+            n_shards: 1
+
+          # ── Wave 3: supplement experiments ───────────────────────────────
+          - experiment: suppA
+            period_seconds: 10800   # 3 h — hybrid PySR DeFi subset
+            n_shards: 1
+
+          - experiment: suppB
+            period_seconds: 16200   # 4.5 h — noise sweep (11 domains × 5 levels)
+            n_shards: 1
+
+          - experiment: suppB_sc
+            period_seconds: 12600   # 3.5 h — sample-complexity sweep
+            n_shards: 1
+
+    outputs:
+      # IMPORTANT: for matrix jobs GitHub only propagates the output value from
+      # the LAST-completing matrix entry — needs.wave-23.outputs.exp_ok is
+      # therefore unreliable.  Consumers MUST use needs.wave-23.result (the
+      # GitHub-aggregated status) rather than this output.  The output is kept
+      # for step-level introspection only.
+      exp_ok: ${{ steps.wait.outputs.exp_ok }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      # -- W23-1. Dispatch experiment (n_shards-aware) -------------------------
+      # n_shards = 1  → dispatch_experiment.sh  (emits EXP_RUN_ID=<id>)
+      # n_shards > 1  → dispatch_parallel_experiment.sh  (emits PARALLEL_RUN_IDS=<id,...>)
+      #
+      # Both emit their IDs on stdout; this step normalises to a comma-separated
+      # `run_ids` output regardless of which script was used.
+      - name: Dispatch ${{ matrix.experiment }}
+        id: dispatch
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          EXP:               ${{ matrix.experiment }}
+          N_SHARDS:          ${{ matrix.n_shards }}
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+        run: |
+          set -euo pipefail
+
+          echo "> Dispatching Wave 2+3: ${EXP} (n_shards=${N_SHARDS})"
+
+          if [[ "$N_SHARDS" -gt 1 ]]; then
+            # Multi-shard: each shard becomes a separate workflow run.
+            # Requires ci_experiment_simplify.yml to support shard_index input
+            # and run-name pattern: "HypatiaX - <exp> (shard N/M)".
+            DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_parallel_experiment.sh \
+              "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE" 2>&1)
+            echo "$DISPATCH_OUTPUT"
+
+            RUN_IDS=$(echo "$DISPATCH_OUTPUT" \
+              | grep '^PARALLEL_RUN_IDS=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+
+            if [[ -z "$RUN_IDS" ]]; then
+              echo "::error::dispatch_parallel_experiment.sh did not emit PARALLEL_RUN_IDS for ${EXP}."
+              exit 1
+            fi
+          else
+            # Single-shard: one workflow run; plan job handles internal sharding.
+            DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_experiment.sh \
+              "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE" 2>&1)
+            echo "$DISPATCH_OUTPUT"
+
+            RUN_IDS=$(echo "$DISPATCH_OUTPUT" \
+              | grep '^EXP_RUN_ID=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+
+            if [[ -z "$RUN_IDS" ]]; then
+              echo "::error::dispatch_experiment.sh did not emit EXP_RUN_ID for ${EXP}."
+              echo "  Workflow : ${EXP_WORKFLOW_FILE}"
+              echo "  Check dispatch_experiment.sh output above for polling errors."
+              exit 1
+            fi
+          fi
+
+          echo "${EXP} run ID(s): $RUN_IDS"
+          echo "run_ids=$RUN_IDS" >> "$GITHUB_OUTPUT"
+
+      # -- W23-2. Wait for all dispatched run(s) to complete --------------------
+      # Polls all run IDs (comma-separated) in a round-robin loop until every
+      # run reaches a terminal state or the per-experiment deadline elapses.
+      # Exits 1 on any failure/cancellation/timeout → GitHub skips downstream
+      # `needs` dependants for this matrix entry only (fail-fast: false).
+      - name: Wait for ${{ matrix.experiment }}
+        id: wait
+        env:
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          EXP:            ${{ matrix.experiment }}
+          RUN_IDS:        ${{ steps.dispatch.outputs.run_ids }}
+          PERIOD_SECONDS: ${{ matrix.period_seconds }}
+        run: |
+          set -euo pipefail
+
+          # FIX-S6: stagger poll-start across 10 simultaneous wave-23 runners.
+          # Without jitter all 10 runners fire their first gh api call at the
+          # same second, reliably triggering GitHub's secondary rate limits
+          # (429 responses) which surface as spurious "unknown unknown" statuses.
+          JITTER=$(( RANDOM % 30 ))
+          echo "  [${EXP}] Poll jitter: sleeping ${JITTER}s to stagger API calls ..."
+          sleep $JITTER
+
+          DEADLINE=$(( $(date +%s) + PERIOD_SECONDS ))
+          IFS=',' read -ra IDS <<< "$RUN_IDS"
+          N_RUNS=${#IDS[@]}
+
+          declare -A DONE=()
+          declare -A RESULT=()
+          for rid in "${IDS[@]}"; do
+            DONE[$rid]=0
+            RESULT[$rid]="pending"
+          done
+          DONE_COUNT=0; FAIL_COUNT=0
+
+          while (( DONE_COUNT < N_RUNS )); do
+            for rid in "${IDS[@]}"; do
+              [[ "${DONE[$rid]}" == "1" ]] && continue
+
+              STATUS=$(gh api \
+                "/repos/${{ github.repository }}/actions/runs/$rid" \
+                --jq '"\\(.status) \\(.conclusion)"' 2>/dev/null || echo "unknown unknown")
+
+              echo "  [${EXP} run=$rid] $(date -u +%H:%M:%SZ)  $STATUS"
+
+              case "$STATUS" in
+                "completed success")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true
+                  RESULT[$rid]="success"
+                  echo "  ✓ ${EXP} run $rid SUCCEEDED ($DONE_COUNT/$N_RUNS done)" ;;
+                "completed failure"|"completed cancelled"|"completed timed_out")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true; (( FAIL_COUNT++ )) || true
+                  RESULT[$rid]="failure"
+                  echo "  ✗ ${EXP} run $rid FAILED: $STATUS  ($DONE_COUNT/$N_RUNS done)" ;;
+              esac
+            done
+
+            if [[ $(date +%s) -gt $DEADLINE && $DONE_COUNT -lt $N_RUNS ]]; then
+              REMAINING=$(( N_RUNS - DONE_COUNT ))
+              echo "::error::${EXP} deadline (${PERIOD_SECONDS}s) exceeded — $REMAINING run(s) still in-progress. Aborting."
+              FAIL_COUNT=$(( FAIL_COUNT + REMAINING ))
+              break
+            fi
+
+            (( DONE_COUNT < N_RUNS )) && sleep 60
+          done
+
+          echo ""
+          echo "=== ${EXP} completion report ==="
+          for rid in "${IDS[@]}"; do
+            echo "  run $rid → ${RESULT[$rid]:-unknown}"
+          done
+
+          if (( FAIL_COUNT > 0 )); then
+            echo "::error::${EXP}: $FAIL_COUNT / $N_RUNS run(s) failed."
+            echo "exp_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "exp_ok=true" >> "$GITHUB_OUTPUT"
+          echo "${EXP} completed successfully ($N_RUNS / $N_RUNS runs OK)."
+
+
+# ==============================================================================
+#  JOB 3 — wave-4
+#  Dispatches instability after exp1 has committed its JSON to the repo.
+#
+#  `needs: [wave-1]` blocks this job until wave-1 finishes or is skipped.
+#
+#  If skip_wave_1=true (exp1 results already exist), the `if` condition still
+#  passes (wave-1 result == 'skipped') so instability can run against the
+#  pre-existing committed JSON.
+# ==============================================================================
+  wave-4:
+    name: "Wave 4 — instability (needs exp1 JSON)"
+    needs: [wave-1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150    # cooldown margin; instability runtime ≤2h
+
+    # Proceed when wave-1 succeeded OR was skipped (pre-existing results).
+    # Do NOT proceed when wave-1 failed — instability would read stale/absent JSON.
+    if: |
+      always() &&
+      (needs.wave-1.result == 'success' || needs.wave-1.result == 'skipped')
+
+    outputs:
+      exp_run_ids: ${{ steps.dispatch.outputs.run_ids }}
+      exp_ok:      ${{ steps.wait.outputs.exp_ok }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      # -- W4-1. Dispatch instability -------------------------------------------
+      - name: Dispatch instability
+        id: dispatch
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+        run: |
+          set -euo pipefail
+
+          EXP="instability"
+          N_SHARDS="1"
+
+          echo "> Dispatching Wave 4: ${EXP} (n_shards=${N_SHARDS})"
+
+          DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_experiment.sh \
+            "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE" 2>&1)
+          echo "$DISPATCH_OUTPUT"
+
+          EXP_RUN_ID=$(echo "$DISPATCH_OUTPUT" \
+            | grep '^EXP_RUN_ID=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+
+          if [[ -z "$EXP_RUN_ID" ]]; then
+            echo "::error::dispatch_experiment.sh did not emit EXP_RUN_ID for ${EXP}."
+            exit 1
+          fi
+
+          echo "Wave 4 run ID: $EXP_RUN_ID"
+          echo "run_ids=$EXP_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      # -- W4-2. Wait for instability to complete --------------------------------
+      - name: Wait for instability
+        id: wait
+        env:
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          RUN_IDS:        ${{ steps.dispatch.outputs.run_ids }}
+          PERIOD_SECONDS: "7200"    # 2 h — instability is analysis-only, fast
+        run: |
+          set -euo pipefail
+
+          EXP="instability"
+          DEADLINE=$(( $(date +%s) + PERIOD_SECONDS ))
+          IFS=',' read -ra IDS <<< "$RUN_IDS"
+          declare -A DONE=()
+          for rid in "${IDS[@]}"; do DONE[$rid]=0; done
+          DONE_COUNT=0; FAIL_COUNT=0
+
+          while (( DONE_COUNT < ${#IDS[@]} )); do
+            for rid in "${IDS[@]}"; do
+              [[ "${DONE[$rid]}" == "1" ]] && continue
+              STATUS=$(gh api \
+                "/repos/${{ github.repository }}/actions/runs/$rid" \
+                --jq '"\\(.status) \\(.conclusion)"' 2>/dev/null || echo "unknown unknown")
+              echo "  [${EXP} run=$rid] $(date -u +%H:%M:%SZ)  $STATUS"
+              case "$STATUS" in
+                "completed success")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true
+                  echo "  ✓ run $rid SUCCEEDED" ;;
+                "completed failure"|"completed cancelled"|"completed timed_out")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true; (( FAIL_COUNT++ )) || true
+                  echo "  ✗ run $rid FAILED: $STATUS" ;;
+              esac
+            done
+
+            if [[ $(date +%s) -gt $DEADLINE && $DONE_COUNT -lt ${#IDS[@]} ]]; then
+              echo "::error::instability deadline (${PERIOD_SECONDS}s) exceeded — ABORTING Wave 4."
+              FAIL_COUNT=$(( FAIL_COUNT + ${#IDS[@]} - DONE_COUNT ))
+              break
+            fi
+
+            (( DONE_COUNT < ${#IDS[@]} )) && sleep 60
+          done
+
+          if (( FAIL_COUNT > 0 )); then
+            echo "exp_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "exp_ok=true" >> "$GITHUB_OUTPUT"
+          echo "Wave 4 (instability) completed successfully."
+
+
+# ==============================================================================
+#  JOB 4 — finalize
+#  Runs after Waves 2+3 AND Wave 4 are both done.
+#
+#  Steps:
+#    F1. Verify all waves produced results (summary table)
+#    F2. Clean Actions cache for all experiments
+#    F3. Dispatch ci_tables.yml + ci_figures.yml (Wave 5) if continue_chain=true
+#
+#  Uses `always()` so it runs even when skip_wave_1 + skip_wave_23 bypass
+#  upstream jobs, but gates on result checks to avoid a false-green signal.
+# ==============================================================================
+  finalize:
+    name: "Finalize — cache clean + Wave 5 dispatch"
+    needs: [wave-1, wave-23, wave-4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    if: |
+      always() &&
+      needs.wave-1.result  != 'cancelled' &&
+      needs.wave-23.result != 'cancelled' &&
+      needs.wave-4.result  != 'cancelled'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      # -- F1. Wave completion summary -----------------------------------------
+      - name: Wave completion summary
+        env:
+          WAVE_1_RESULT:  ${{ needs.wave-1.result  }}
+          WAVE_23_RESULT: ${{ needs.wave-23.result }}
+          WAVE_4_RESULT:  ${{ needs.wave-4.result  }}
+        run: |
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "  HypatiaX parallel schedule — wave completion summary"
+          echo "───────────────────────────────────────────────────────────────"
+          echo "  Wave 1   (exp1)           : ${WAVE_1_RESULT:-skipped}"
+          echo "  Wave 2+3 (10 experiments) : ${WAVE_23_RESULT:-skipped}"
+          echo "  Wave 4   (instability)    : ${WAVE_4_RESULT}"
+          echo "═══════════════════════════════════════════════════════════════"
+
+          # Surface any experiment failures as a warning.
+          if [[ "$WAVE_23_RESULT" == "failure" || "$WAVE_4_RESULT" == "failure" ]]; then
+            echo "::warning::One or more experiment waves reported failure."
+            echo "  Check individual wave job logs for details."
+          fi
+
+      # -- F2. Clean Actions cache for all completed experiments ---------------
+      - name: Clean experiment caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          ALL_EXPERIMENTS="exp1 exp1b exp2_feynman exp2 hybrid_all_domains exp3 exp3b extrap suppA suppB suppB_sc instability"
+
+          TOTAL_DELETED=0
+          for EXP in $ALL_EXPERIMENTS; do
+            CACHE_IDS=$(gh cache list \
+              --repo "$REPO" \
+              --limit 100 \
+              --json id,key \
+              --jq ".[] | select(.key | startswith(\"checkpoint-worker-${EXP}-\")) | .id" \
+              2>/dev/null || true)
+
+            if [[ -z "$CACHE_IDS" ]]; then
+              echo "  [${EXP}] No worker caches to delete."
+              continue
+            fi
+
+            COUNT=$(echo "$CACHE_IDS" | wc -l | tr -d ' ')
+            echo "  [${EXP}] Deleting ${COUNT} cache(s) ..."
+            while IFS= read -r cid; do
+              [[ -z "$cid" ]] && continue
+              gh cache delete "$cid" --repo "$REPO" \
+                && TOTAL_DELETED=$(( TOTAL_DELETED + 1 )) \
+                || echo "    WARN could not delete cache $cid (may have already expired)"
+            done <<< "$CACHE_IDS"
+          done
+
+          echo "Cache clean complete: ${TOTAL_DELETED} cache(s) deleted."
+
+      # -- F3. Dispatch Wave 5 (tables + figures) if continue_chain is set -----
+      # ci_tables.yml and ci_figures.yml are post-processing workflows that
+      # read committed result JSONs and write LaTeX tables / PDF figures.
+      # They are optional; the chain stops here if continue_chain is false or
+      # if either workflow file does not exist in .github/workflows/.
+      - name: Dispatch Wave 5 — tables + figures
+        if: ${{ github.event.inputs.continue_chain != 'false' }}
+        env:
+          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+          WAVE_23_RESULT:     ${{ needs.wave-23.result }}
+          WAVE_4_RESULT:      ${{ needs.wave-4.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$WAVE_23_RESULT" == "failure" || "$WAVE_4_RESULT" == "failure" ]]; then
+            echo "::warning::Wave 2+3 or Wave 4 reported failure — skipping Wave 5 (tables/figures)."
+            echo "  Fix failing experiments and re-trigger manually."
+            exit 0
+          fi
+
+          REPO="${{ github.repository }}"
+          DISPATCHED=0
+
+          for WF in ci_tables.yml ci_figures.yml; do
+            # Check if the workflow file exists in .github/workflows/
+            if gh workflow view "$WF" --repo "$REPO" &>/dev/null 2>&1; then
+              echo "> Dispatching ${WF} ..."
+              gh workflow run "$WF" --repo "$REPO" && DISPATCHED=$(( DISPATCHED + 1 )) \
+                || echo "  WARN: Failed to dispatch ${WF} — it may not be enabled."
+            else
+              echo "  [${WF}] Not found in .github/workflows/ — skipping."
+            fi
+          done
+
+          if [[ $DISPATCHED -gt 0 ]]; then
+            echo "Wave 5 dispatched: ${DISPATCHED} workflow(s) triggered."
+          else
+            echo "Wave 5: no post-processing workflows dispatched (none found / none enabled)."
+          fi
+          echo "OK parallel schedule run complete."

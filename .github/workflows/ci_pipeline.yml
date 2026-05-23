@@ -1085,14 +1085,18 @@ jobs:
     steps:
       - name: Dispatch next pipeline slot
         env:
-          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
-          NEXT_SLOT:  ${{ fromJSON(needs.resolve.outputs.slot) + 1 }}
-          N_SHARDS:   ${{ github.event.inputs.n_shards || '1' }}
-          SEEDS:      ${{ github.event.inputs.seeds || '' }}
-          SAMPLES:    ${{ github.event.inputs.n_samples || '200' }}
-          NOISE:      ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_SLOT:     ${{ needs.resolve.outputs.slot }}
+          N_SHARDS:         ${{ github.event.inputs.n_shards || '1' }}
+          SEEDS:            ${{ github.event.inputs.seeds || '' }}
+          SAMPLES:          ${{ github.event.inputs.n_samples || '200' }}
+          NOISE:            ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
         run: |
           set -euo pipefail
+
+          # Compute next slot using shell arithmetic (GitHub Actions expressions
+          # do not support the + operator; fromJSON(...) + 1 is a syntax error).
+          NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
 
           # Keep in sync with len(QUEUE) in the resolve job.
           QUEUE_SIZE=12
