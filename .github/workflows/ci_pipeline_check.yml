@@ -115,20 +115,14 @@
 #  All four fit comfortably within GitHub's 360-min hard cap.
 # ==============================================================================
 
-name: "HypatiaX - checkpoint / completion / qualify / audit"
+name: "HypatiaX - checkpoint"
 run-name: >-
   HypatiaX ckpt·complete·qualify·audit —
-  ${{ github.event.inputs.experiment || github.event.workflow_run.display_title || 'manual' }}
+  ${{ github.event.inputs.experiment || 'manual' }}
 
 on:
-  # -- Auto-trigger: fires when ANY ci_experiment_simplify.yml run finishes --
-  # NOTE: name must match the `name:` field in ci_experiment_simplify.yml exactly.
-  workflow_run:
-    workflows:
-      - "HypatiaX -simplify-experiment runner . ci_experiment_simplify"
-    types: [completed]
-
-  # -- Manual trigger --------------------------------------------------------
+  # -- Standalone: triggered manually or dispatched by ci_pipeline.yml (C3) --
+  # Not auto-triggered by any other workflow.
   workflow_dispatch:
     inputs:
       experiment:
@@ -211,7 +205,7 @@ jobs:
           EXPERIMENT:   ${{ github.event.inputs.experiment || 'all' }}
           SEEDS:        ${{ env.SEEDS }}
           NOISE_LEVELS: ${{ env.NOISE_LEVELS }}
-          WF_TITLE:     ${{ github.event.workflow_run.display_title || '' }}
+          WF_TITLE:     ""
         run: |
           python3 - <<'PYEOF'
           import json, os, sys
@@ -255,7 +249,7 @@ jobs:
               target_exps = [EXPERIMENT] if EXPERIMENT in SUBDIR else list(SUBDIR.keys())
 
           # FIX check-PRESENCE: the consolidate job is disabled in
-          # ci_experiment_simplify.yml — each worker shard commits its own
+          # ci_runner.yml — each worker shard commits its own
           # result files directly.  _merged.json / _merged.csv / _checkpoint.json
           # are NEVER written, so checking for them always reports MISSING.
           #
@@ -1336,7 +1330,7 @@ jobs:
 # ==============================================================================
 #  JOB 6 — dispatch: launch missing experiments via gh workflow run
 #
-#  Reads the completion_report from JOB 2 and dispatches ci_experiment_simplify.yml
+#  Reads the completion_report from JOB 2 and dispatches ci_runner.yml
 #  for every experiment that has 0 done tasks (never launched).
 #  Experiments with partial results are skipped — use task_ids_override to resume.
 #  instability is skipped here — it depends on exp1 and is dispatched separately.
@@ -1347,7 +1341,13 @@ jobs:
     needs: [complete, summary]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: always() && github.event.inputs.experiment == 'all' || github.event_name == 'workflow_dispatch'
+    # P6 FIX: The original condition had an operator-precedence bug:
+    #   always() && exp=='all' || event=='workflow_dispatch'
+    # evaluates as (always() && exp=='all') || (event=='workflow_dispatch'),
+    # which is ALWAYS true on workflow_dispatch — causing the dispatch job
+    # to fire on every ci_pipeline.yml C3 call, potentially launching
+    # duplicate runners.  Fix: restrict to experiment=='all' only.
+    if: always() && github.event.inputs.experiment == 'all'
     permissions:
       actions: write
       contents: read
@@ -1357,7 +1357,7 @@ jobs:
         env:
           GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
           COMPLETION_REPORT: ${{ needs.complete.outputs.completion_report }}
-          WORKFLOW_FILE:     ci_experiment_simplify.yml
+          WORKFLOW_FILE:     ci_runner.yml
           # Pass through repro params so dispatched runs use the same config
           PYSR_GENERATIONS:  ${{ github.event.inputs.pysr_generations || '10000' }}
           PYSR_POPULATIONS:  ${{ github.event.inputs.pysr_populations || '30' }}
