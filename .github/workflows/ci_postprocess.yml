@@ -41,7 +41,7 @@ jobs:
             SUB=$(EXP_ID="$DISPATCH_EXP" python3 -c "
           import os
           mapping = {
-              'exp1':               'comparison_results/noise-noiseless/noiseless',
+              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
@@ -65,20 +65,20 @@ jobs:
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
-          # ISSUE 3 FIX: pass the resolved per-experiment subdir, not the
-          # entire results tree, so figures are scoped to this experiment.
           python figures/generate_figures.py \
-            --results-dir "hypatiax/data/results/${SUB}" \
-            --output-dir  "hypatiax/data/results/${SUB}/figures"
+            --repo-root   "hypatiax/data/results/${SUB}" \
+            --figures-dir "hypatiax/data/results/${SUB}/figures" \
+            --source auto
 
       - name: Generate tables
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
-          # ISSUE 3 FIX: same scoping as Generate figures above.
+          # NOTE: flags below inferred from generate_figures.py pattern.
+          # Share generate_tables.py to confirm --results-dir and --tables-dir are correct.
           python tables/generate_tables.py \
             --results-dir "hypatiax/data/results/${SUB}" \
-            --output-dir  "hypatiax/data/results/${SUB}/tables"
+            --tables-dir  "hypatiax/data/results/${SUB}/tables"
 
       - name: Commit outputs
         env:
