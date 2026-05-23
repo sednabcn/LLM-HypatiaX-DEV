@@ -1118,28 +1118,57 @@ jobs:
                   continue
           
               actual = float(raw)
+              min_bound = bool(claim.get("min_bound", False))
           
-              if absol:
+              if min_bound:
+                  # One-sided check: PASS if actual >= paper_value, FAIL otherwise
+                  if actual >= pv:
+                      status = "PASS"
+                      diff   = actual - pv          # how far above the threshold
+                      tol1   = 0.0                  # not meaningful for one-sided
+                  else:
+                      status = "FAIL"
+                      diff   = pv - actual          # how far below the threshold
+                      tol1   = 0.0
+              elif absol:
                   diff = abs(actual - pv)
                   tol1, tol3 = tol, tol * 3
+                  if diff <= tol1:   status = "PASS"
+                  elif diff <= tol3: status = "WARN"
+                  else:              status = "FAIL"
               else:
                   base = abs(pv) if pv != 0 else 1.0
                   diff = abs(actual - pv)
                   tol1, tol3 = tol * base, tol * 3 * base
+                  if diff <= tol1:   status = "PASS"
+                  elif diff <= tol3: status = "WARN"
+                  else:              status = "FAIL"
           
-              if diff <= tol1:
-                  status = "PASS"
-              elif diff <= tol3:
-                  status = "WARN"
+              if min_bound:
+                  direction = "≥" if actual >= pv else "<"
+                  detail = (f"paper≥{pv}  actual={actual:.4f}  ({direction}{pv})  margin={diff:.4f}"
+                            + (f"  [{note}]" if note else ""))
               else:
-                  status = "FAIL"
-          
-              detail = (f"paper={pv}  actual={actual:.4f}  diff={diff:.4f}  tol={tol1:.4f}"
-                        + (f"  [{note}]" if note else ""))
+                  detail = (f"paper={pv}  actual={actual:.4f}  diff={diff:.4f}  tol={tol1:.4f}"
+                            + (f"  [{note}]" if note else ""))
               icons = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌"}
               print(f"  {icons.get(status,'?')} {exp:<23} {metric:<35} {status:<8}  {detail}")
-              if _cdebug and status in ("FAIL", "WARN"):
+              if _cdebug:
                   print(f"       compute info: {_cdebug}")
+              if status == "FAIL":
+                  # Dump structure to help diagnose wrong values
+                  if isinstance(data, list):
+                      print(f"       JSON struct: list[{len(data)}], first item keys={list(data[0].keys())[:8] if data else []}")
+                  elif isinstance(data, dict):
+                      print(f"       JSON struct: dict keys={list(data.keys())[:8]}")
+                      for ck in list(data.keys())[:3]:
+                          cv = data[ck]
+                          if isinstance(cv, (int, float, str, bool)):
+                              print(f"         {ck}: {cv}")
+                          elif isinstance(cv, list) and cv:
+                              print(f"         {ck}: list[{len(cv)}], first={cv[0] if not isinstance(cv[0], dict) else list(cv[0].keys())[:5]}")
+                          elif isinstance(cv, dict):
+                              print(f"         {ck}: dict keys={list(cv.keys())[:5]}")
               findings.append({"exp": exp, "metric": metric, "status": status,
                                "paper_value": pv, "actual": actual, "detail": detail})
           
@@ -1273,6 +1302,24 @@ jobs:
                   if not qr.get("passed"):
                       fails = [c[0] for c in qr.get("checks", []) if not c[1]]
                       print(f"    {exp:<25} FAILED: {', '.join(fails)}")
+
+          # Print audit FAIL details inline (reads the artifact written by audit job)
+          from pathlib import Path as _P
+          audit_findings_path = _P("logs/paper_audit_findings.json")
+          if not (n_fail == 0 and n_miss == 0):
+              print("\n  Audit FAIL/MISSING details:")
+              if audit_findings_path.exists():
+                  try:
+                      findings_data = json.loads(audit_findings_path.read_text())
+                      for f in findings_data:
+                          if f.get("status") in ("FAIL", "MISSING"):
+                              print(f"    ❌  exp={f['exp']}  metric={f['metric']}")
+                              print(f"        {f['detail']}")
+                  except Exception as e:
+                      print(f"    (could not read audit findings: {e})")
+              else:
+                  print(f"    (logs/paper_audit_findings.json not found — upload artifact to see details)")
+                  print(f"    Hint: check the 'Audit results against paper claims' step in Job 4 above.")
 
           print()
           overall_ok = present and qual and (audit or (n_fail == 0 and n_miss == 0 and n_pass == 0))
