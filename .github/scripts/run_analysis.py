@@ -152,7 +152,7 @@ EXPERIMENT_MODE: dict[str, str] = {
 # and both mapping dicts in ci_analysis.yml "Resolve experiment metadata".
 # exp1_ablation intentionally absent: no worker, no result_subdir in CI.
 RESULT_SUBDIR: dict[str, str] = {
-    "exp1":               "comparison_results/noise-noiseless/noiseless",
+    "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
     "exp1b":              "comparison_results/noise-noiseless/15",
     "exp2_feynman":       "comparison_results/feynman-tests/exp2",
     "exp2":               "comparison_results/feynman-tests/exp2_multi",

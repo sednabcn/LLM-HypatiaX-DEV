@@ -178,7 +178,7 @@ jobs:
           github.event.inputs.experiment != 'instability'
         continue-on-error: true
         id: download_artifact
-        uses: actions/download-artifact@v4.3.6
+        uses: actions/download-artifact@v4
         with:
           run-id:         ${{ github.event.inputs.source_run_id }}
           github-token:   ${{ secrets.GITHUB_TOKEN }}
@@ -351,12 +351,26 @@ jobs:
             MERGED_JSON="$COMMITTED_JSON"
             echo "Using committed copy: $MERGED_JSON"
           else
-            echo "::error::_merged.json not found."
-            echo "  Searched:"
-            echo "    artifact:  consolidated_artifact/**/_merged.json"
-            echo "    committed: ${COMMITTED_JSON}"
-            echo "  Ensure ci_runner.yml worker shard committed results directly to the repo."
-            exit 1
+            # Fallback: locate the primary committed shard result file.
+            # Only exp1b and exp3b produce a _merged.json via merge_shards.py;
+            # all other experiments commit individual shard files directly.
+            # run_analysis.py accepts shapes A/B/C so a shard file is valid input.
+            # Files starting with "_" are pipeline metadata (_analysis.json etc) — skip them.
+            SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
+              ! -name "_*.json" 2>/dev/null | sort | head -1 || true)
+            if [[ -n "$SHARD_JSON" && -f "$SHARD_JSON" ]]; then
+              MERGED_JSON="$SHARD_JSON"
+              echo "No _merged.json found — using primary shard result file: $MERGED_JSON"
+            else
+              echo "::error::No input JSON found for experiment '${SUB}'."
+              echo "  Searched:"
+              echo "    artifact:   consolidated_artifact/**/_merged.json"
+              echo "    committed:  ${COMMITTED_JSON}"
+              echo "    shard file: ${OUT_BASE}/${SUB}/*.json (excluding _*.json)"
+              echo "  Ensure ci_runner.yml worker shard committed results to the repo,"
+              echo "  or run ci_consolidate_experiment.yml to produce _merged.json first."
+              exit 1
+            fi
           fi
 
           # Sanity-check: file must be non-empty valid JSON with at least one record.
@@ -485,7 +499,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Upload analysis artifact
         if: always()
-        uses: actions/upload-artifact@v4.3.6
+        uses: actions/upload-artifact@v4
         with:
           name: analysis-${{ steps.short_circuit.outputs.exp_id || steps.meta.outputs.exp_id }}-${{ github.run_id }}
           path: |
