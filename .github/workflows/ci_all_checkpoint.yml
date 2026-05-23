@@ -25,10 +25,11 @@
 #                  Unqualified experiments block the audit step.
 #
 #    4. AUDIT    — Cross-check every number in paper_targets.json against the
-#                  actual _merged.json / _stats.json values.
+#                  actual result file values.
 #                  Emits PASS / WARN / FAIL / MISSING per claim with diff and
-#                  tolerance.  Mirrors audit_against_paper() from
-#                  run_all_checkpoint.py.
+#                  tolerance.  Supports exact result_path, glob patterns
+#                  (result_glob / result_glob_alt), and computed metrics
+#                  (list_field_mean, list_distinct_count, dict_nested_mean).
 #
 #  TRIGGER STRATEGY
 #  ----------------
@@ -89,6 +90,14 @@
 #    exp2 also passes no --output-dir, so results land in the script's default
 #    path rather than feynman-tests/exp2_multi/.
 #    Fix: add "--benchmark", "both" and "--output-dir", "<RESULTS_DIR>/feynman-tests/exp2_multi"
+#
+#  BUG 7 — audit job: result_path always pointed to _merged.json (CRITICAL)
+#    consolidate job is disabled — _merged.json is NEVER written by workers.
+#    All 5 built-in audit claims used result_path → _merged.json, so every
+#    claim reported MISSING.
+#    Fix: audit job now loads scripts/patches/paper_targets.json which uses
+#    result_glob patterns matching actual shard filenames, plus a compute field
+#    for aggregate metrics (list_field_mean, list_distinct_count, dict_nested_mean).
 #
 #  BUG 6 — exp2_feynman: missing --output-dir and --method-timeout
 #    No --output-dir (results may go to a wrong default).
@@ -790,7 +799,6 @@ jobs:
 # ==============================================================================
 #  JOB 4 — audit: cross-check paper_targets.json against actual result values
 #
-#  Mirrors audit_against_paper() from run_all_checkpoint.py v8.0.
 #  Only qualified experiments are audited (unqualified → SKIP).
 #
 #  PASS    : |actual - paper_value| ≤ tolerance
@@ -799,8 +807,19 @@ jobs:
 #  MISSING : result file or JSON key not found
 #  SKIP    : experiment not qualified
 #
-#  Reads paper_targets.json from scripts/patches/paper_targets.json.
-#  Falls back to a built-in minimal set (5 key claims) if the file is absent.
+#  Reads scripts/patches/paper_targets.json.  Each claim supports:
+#    result_path      — exact file path relative to OUT_BASE
+#    result_glob      — glob pattern relative to OUT_BASE (first match used)
+#    result_glob_alt  — fallback glob if result_glob finds nothing
+#    json_key         — dot-notation key path into the JSON (e.g. "summary.h_rate")
+#    compute          — aggregate metric type when json_key is insufficient:
+#                         list_field_mean     mean of a bool/float field across a list
+#                         list_distinct_count count of distinct non-null field values
+#                         dict_nested_mean    mean of a leaf across a nested dict
+#    compute_field    — field name for list_field_mean / list_distinct_count
+#    compute_method   — method key for dict_nested_mean
+#    compute_leaf     — leaf key for dict_nested_mean (default: "recovery_rate")
+#
 #  Writes findings to logs/paper_audit_findings.json and uploads as an artifact.
 # ==============================================================================
   audit:
@@ -838,15 +857,16 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import json, os, sys
+          import glob as _glob
           from pathlib import Path
-
+          
           OUT_BASE       = Path(os.environ["OUT_BASE"])
           QUALIFY_REPORT = json.loads(os.environ.get("QUALIFY_REPORT") or "{}")
           QUALIFIED_EXPS = set(json.loads(os.environ.get("QUALIFIED_EXPS") or "[]"))
-
-          # ── Load paper_targets.json (or fall back to built-in minimal set) ──
+          
+          # ── Load paper_targets.json ──────────────────────────────────────────────────
           PAPER_TARGETS = Path("scripts/patches/paper_targets.json")
-
+          
           def load_claims():
               if PAPER_TARGETS.exists():
                   try:
@@ -854,45 +874,35 @@ jobs:
                       print(f"  Loaded {len(raw)} claim(s) from {PAPER_TARGETS}")
                       return raw
                   except Exception as e:
-                      print(f"  ⚠  Failed to load paper_targets.json: {e}")
-                      print("      Falling back to built-in minimal set.")
-
-              # Mirrors load_paper_targets() in run_all_checkpoint.py
-              return [
-                  # exp3 — Nguyen-12 primary (4-decimal rounding, paper abstract)
-                  {"exp": "exp3",  "metric": "nguyen12_solve_rate_4dec",
-                   "paper_value": 0.917, "tolerance": 0.02,
-                   "result_path": "extrapolation/_merged.json",
-                   "json_key": "summary.solve_rate_4decimal", "absolute": False,
-                   "note": "11/12 = 91.7% (4-decimal rounding) §10.8 / abstract"},
-                  # exp3 — strict R²≥0.9999
-                  {"exp": "exp3",  "metric": "nguyen12_solve_rate_strict",
-                   "paper_value": 0.333, "tolerance": 0.02,
-                   "result_path": "extrapolation/_merged.json",
-                   "json_key": "summary.solve_rate_strict", "absolute": False,
-                   "note": "4/12 = 33.3% (strict R²≥0.9999) §10.8 transparency caveat"},
-                  # exp2 — Feynman solve rate ≥30%
-                  {"exp": "exp2",  "metric": "feynman30_solve_rate",
-                   "paper_value": 0.30, "tolerance": 0.05,
-                   "result_path": "comparison_results/feynman-tests/exp2_multi/_merged.json",
-                   "json_key": "summary.solve_rate", "absolute": False,
-                   "note": "≥9/30 solved §10.7"},
-                  # suppB — EHD noise robustness 100% at all σ
-                  {"exp": "suppB", "metric": "ehd_noise_robust_100pct",
-                   "paper_value": 1.00, "tolerance": 0.01,
-                   "result_path": "comparison_results/feynman-tests/noise-sweep/_merged.json",
-                   "json_key": "summary.ehd_success_rate", "absolute": False,
-                   "note": "EHD 100% at all noise levels §SuppB"},
-                  # hybrid_all_domains — coverage check
-                  {"exp": "hybrid_all_domains", "metric": "all_domains_coverage",
-                   "paper_value": 10.0, "tolerance": 0.0,
-                   "result_path": "hybrid_llm_nn/all_domains/_merged.json",
-                   "json_key": "summary.n_domains_completed", "absolute": True,
-                   "note": "10 domains must all complete §10.9"},
-              ]
-
-          # ── Dot-notation key resolver ────────────────────────────────────────
+                      print(f"  ⚠  Failed to load paper_targets.json: {e} — using built-in fallback.")
+              # Minimal built-in fallback (intentionally empty — paper_targets.json must exist)
+              print("  ⚠  scripts/patches/paper_targets.json not found. Commit it to the repo.")
+              return []
+          
+          # ── File resolver: result_path → result_glob → result_glob_alt ──────────────
+          def resolve_result_file(claim):
+              rpath = claim.get("result_path", "")
+              if rpath:
+                  p = OUT_BASE / rpath
+                  if p.exists():
+                      return p
+                  alt = p.parent / "_stats.json"
+                  if alt.exists():
+                      return alt
+          
+              for key in ("result_glob", "result_glob_alt"):
+                  pattern = claim.get(key, "")
+                  if not pattern:
+                      continue
+                  matches = sorted(_glob.glob(str(OUT_BASE / pattern)))
+                  if matches:
+                      return Path(matches[0])
+              return None
+          
+          # ── Dot-notation key resolver (handles dict + list by index) ─────────────────
           def resolve_key(data, dot_key):
+              if not dot_key:
+                  return None
               node = data
               for p in dot_key.split("."):
                   if isinstance(node, dict):
@@ -907,43 +917,94 @@ jobs:
                   if node is None:
                       return None
               return node
-
-          claims  = load_claims()
+          
+          # ── Compute helpers for aggregate / non-scalar JSON structures ───────────────
+          def compute_metric(data, claim):
+              """
+              Called when claim has a 'compute' field.
+              Returns float or None.
+          
+              Supported compute types:
+                list_field_mean      — mean of a boolean/numeric field across a list
+                                       (True → 1.0, False → 0.0).
+                                       Requires: compute_field
+                list_distinct_count  — count of distinct non-null values of a field.
+                                       Requires: compute_field
+                dict_nested_mean     — navigate cross_noise_summary-style structure:
+                                       data[compute_method][noise_level][compute_leaf],
+                                       average across all noise levels.
+                                       Requires: compute_method, compute_leaf
+              """
+              compute = claim.get("compute", "")
+          
+              if compute == "list_field_mean":
+                  field = claim.get("compute_field", "")
+                  if not isinstance(data, list) or not data:
+                      return None
+                  vals = [float(item[field]) for item in data
+                          if isinstance(item, dict) and field in item]
+                  return sum(vals) / len(vals) if vals else None
+          
+              elif compute == "list_distinct_count":
+                  field = claim.get("compute_field", "")
+                  if not isinstance(data, list):
+                      return None
+                  distinct = {item.get(field) for item in data
+                              if isinstance(item, dict) and item.get(field) is not None}
+                  return float(len(distinct))
+          
+              elif compute == "dict_nested_mean":
+                  method = claim.get("compute_method", "")
+                  leaf   = claim.get("compute_leaf", "recovery_rate")
+                  if not isinstance(data, dict):
+                      return None
+                  cn = data.get("cross_noise_summary", data)   # suppB top-level is already the noise-sweep dict
+                  method_data = cn.get(method, {})
+                  if not method_data:
+                      # Fallback: try first available method key
+                      if cn:
+                          method_data = next(iter(cn.values()), {})
+                  rates = [v.get(leaf) for v in method_data.values()
+                           if isinstance(v, dict) and v.get(leaf) is not None]
+                  return sum(rates) / len(rates) if rates else None
+          
+              return None
+          
+          # ── Main audit loop ──────────────────────────────────────────────────────────
+          claims   = load_claims()
           findings = []
-
+          
           print(f"\n  {'Exp':<25} {'Metric':<35} {'Status':<8}  Detail")
           print("  " + "─" * 100)
-
+          
           for claim in claims:
+              if "_EXCLUDED" in claim or "exp" not in claim:
+                  continue  # skip comment/excluded entries
               exp    = claim["exp"]
               metric = claim["metric"]
               pv     = float(claim["paper_value"])
               tol    = float(claim.get("tolerance", 0.01))
-              rpath  = claim["result_path"]
-              jkey   = claim["json_key"]
+              jkey   = claim.get("json_key", "")
               absol  = bool(claim.get("absolute", False))
               note   = claim.get("note", "")
-
+              has_compute = bool(claim.get("compute", ""))
+          
               if exp not in QUALIFIED_EXPS:
                   findings.append({"exp": exp, "metric": metric, "status": "SKIP",
                                    "paper_value": pv, "actual": None,
                                    "detail": f"{exp} not qualified — audit skipped"})
                   print(f"  ↩  {exp:<23} {metric:<35} {'SKIP':<8}  {exp} not qualified")
                   continue
-
-              result_file = OUT_BASE / rpath
-              if not result_file.exists():
-                  # Try _stats.json fallback
-                  alt = result_file.parent / "_stats.json"
-                  if alt.exists():
-                      result_file = alt
-                  else:
-                      findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                                       "paper_value": pv, "actual": None,
-                                       "detail": f"file not found: {rpath}"})
-                      print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {rpath}")
-                      continue
-
+          
+              result_file = resolve_result_file(claim)
+              if result_file is None:
+                  rpath_disp = claim.get("result_path") or claim.get("result_glob") or "?"
+                  findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                                   "paper_value": pv, "actual": None,
+                                   "detail": f"no result file found ({rpath_disp})"})
+                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {rpath_disp}")
+                  continue
+          
               try:
                   data = json.loads(result_file.read_text())
               except Exception as e:
@@ -952,80 +1013,80 @@ jobs:
                                    "detail": f"JSON parse error: {e}"})
                   print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  parse error: {e}")
                   continue
-
-              raw = resolve_key(data, jkey)
+          
+              # Resolve the metric value
+              raw = None
+              if has_compute:
+                  raw = compute_metric(data, claim)
+              else:
+                  raw = resolve_key(data, jkey)
+                  if raw is None and isinstance(data, dict):
+                      raw = data.get(jkey.split(".")[-1])   # flat-key fallback
+          
               if raw is None:
-                  # Flat key fallback
-                  raw = data.get(jkey.split(".")[-1])
-
-              if raw is None:
+                  detail = (f"key '{jkey}' not found" if not has_compute
+                            else f"compute='{claim['compute']}' returned None")
                   findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                                   "paper_value": pv, "actual": None,
-                                   "detail": f"key '{jkey}' not found in {rpath}"})
-                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  key '{jkey}' not found")
+                                   "paper_value": pv, "actual": None, "detail": detail})
+                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {detail}")
                   continue
-
+          
               actual = float(raw)
-
+          
               if absol:
                   diff = abs(actual - pv)
-                  tol1 = tol
-                  tol3 = tol * 3
+                  tol1, tol3 = tol, tol * 3
               else:
                   base = abs(pv) if pv != 0 else 1.0
                   diff = abs(actual - pv)
-                  tol1 = tol * base
-                  tol3 = tol * 3 * base
-
+                  tol1, tol3 = tol * base, tol * 3 * base
+          
               if diff <= tol1:
                   status = "PASS"
               elif diff <= tol3:
                   status = "WARN"
               else:
                   status = "FAIL"
-
+          
               detail = (f"paper={pv}  actual={actual:.4f}  diff={diff:.4f}  tol={tol1:.4f}"
                         + (f"  [{note}]" if note else ""))
-
               icons = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌"}
               print(f"  {icons.get(status,'?')} {exp:<23} {metric:<35} {status:<8}  {detail}")
               findings.append({"exp": exp, "metric": metric, "status": status,
                                "paper_value": pv, "actual": actual, "detail": detail})
-
-          # ── Nguyen-12 dual-threshold caveat (always printed) ─────────────────
+          
+          # ── Nguyen-12 dual-threshold caveat ─────────────────────────────────────────
           if any(f["exp"] == "exp3" for f in findings):
               print()
               print("  ⚠  Nguyen-12 dual-threshold caveat (exp3/exp3b):")
-              print("       Paper abstract  : 11/12 (91.7%) — 4-decimal rounding (Uy et al.)")
-              print("       Strict R²≥0.9999: 4/12  (33.3%) — both must appear in §10.8 / abstract.")
-
-          # ── Summary counts ───────────────────────────────────────────────────
+              print("       Paper abstract  : 11/12 (91.7%) — 4-decimal rounding")
+              print("       Strict R²≥0.9999: 4/12  (33.3%) — both must appear in §10.8.")
+          
+          # ── Summary counts ───────────────────────────────────────────────────────────
           n_pass    = sum(1 for f in findings if f["status"] == "PASS")
           n_warn    = sum(1 for f in findings if f["status"] == "WARN")
           n_fail    = sum(1 for f in findings if f["status"] == "FAIL")
           n_missing = sum(1 for f in findings if f["status"] == "MISSING")
           n_skip    = sum(1 for f in findings if f["status"] == "SKIP")
-
+          
           print()
           print(f"  Audit summary: {n_pass} PASS  {n_warn} WARN  {n_fail} FAIL  "
                 f"{n_missing} MISSING  {n_skip} SKIP  ({len(findings)} total claims)")
-
+          
           audit_pass = (n_fail == 0 and n_missing == 0)
-
-          # ── Persist findings ─────────────────────────────────────────────────
+          
           out = Path("logs/paper_audit_findings.json")
           out.parent.mkdir(parents=True, exist_ok=True)
           out.write_text(json.dumps(findings, indent=2))
           print(f"\n  Audit findings → {out}")
-
-          # Emit overall status
+          
           print()
           if audit_pass:
               print("  ✅  Audit PASSED — all claims within tolerance.")
           else:
               fails = [f for f in findings if f["status"] in ("FAIL", "MISSING")]
               print(f"  ❌  Audit has {len(fails)} FAIL/MISSING claim(s) — see details above.")
-
+          
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"audit_pass={'true' if audit_pass else 'false'}\n")
               fh.write(f"n_pass={n_pass}\n")
