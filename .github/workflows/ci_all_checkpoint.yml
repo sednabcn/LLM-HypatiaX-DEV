@@ -927,14 +927,61 @@ jobs:
               return node
           
           # ── Compute helpers for aggregate / non-scalar JSON structures ───────────────
+          def _coerce_bool(val):
+              """Coerce bool/int/str to float for list_field_mean."""
+              if isinstance(val, bool):   return float(val)
+              if isinstance(val, (int, float)): return float(val)
+              if isinstance(val, str):
+                  if val.lower() in ("true", "yes", "1"):  return 1.0
+                  if val.lower() in ("false", "no", "0"): return 0.0
+              return None
+
+          def _fuzzy_match_method(cn, method):
+              """
+              Return the best-matching key from dict cn for the requested method name.
+              Strategy (in order):
+                1. Exact match
+                2. Case-insensitive match
+                3. cn key is a substring of method (or vice-versa)
+                4. First key whose words overlap significantly with method words
+              Returns (matched_key, method_data_dict) or (None, {}).
+              """
+              if not cn or not isinstance(cn, dict):
+                  return None, {}
+              # 1. Exact
+              if method in cn:
+                  return method, cn[method]
+              # 2. Case-insensitive
+              ml = method.lower()
+              for k in cn:
+                  if k.lower() == ml:
+                      return k, cn[k]
+              # 3. Substring
+              for k in cn:
+                  kl = k.lower()
+                  if kl in ml or ml in kl:
+                      return k, cn[k]
+              # 4. Word-overlap (≥2 words in common)
+              m_words = set(ml.split())
+              best_k, best_score = None, 0
+              for k in cn:
+                  score = len(set(k.lower().split()) & m_words)
+                  if score > best_score:
+                      best_k, best_score = k, score
+              if best_score >= 2:
+                  return best_k, cn[best_k]
+              # 5. Last resort: first key
+              first_k = next(iter(cn))
+              return first_k, cn[first_k]
+
           def compute_metric(data, claim):
               """
               Called when claim has a 'compute' field.
-              Returns float or None.
-          
+              Returns (float_or_None, debug_str).
+
               Supported compute types:
                 list_field_mean      — mean of a boolean/numeric field across a list
-                                       (True → 1.0, False → 0.0).
+                                       (True/"true"/1 → 1.0, False/"false"/0 → 0.0).
                                        Requires: compute_field
                 list_distinct_count  — count of distinct non-null values of a field.
                                        Requires: compute_field
@@ -944,39 +991,67 @@ jobs:
                                        Requires: compute_method, compute_leaf
               """
               compute = claim.get("compute", "")
-          
+
               if compute == "list_field_mean":
                   field = claim.get("compute_field", "")
-                  if not isinstance(data, list) or not data:
-                      return None
-                  vals = [float(item[field]) for item in data
+                  # data may be the top-level dict; look for a list inside it
+                  lst = data if isinstance(data, list) else None
+                  if lst is None and isinstance(data, dict):
+                      # Try common wrapper keys
+                      for wk in ("results", "items", "equations", "tasks", "data"):
+                          if isinstance(data.get(wk), list):
+                              lst = data[wk]; break
+                  if not lst:
+                      return None, f"list_field_mean: no list found (top-level type={type(data).__name__})"
+                  vals = [_coerce_bool(item[field]) for item in lst
                           if isinstance(item, dict) and field in item]
-                  return sum(vals) / len(vals) if vals else None
-          
+                  vals = [v for v in vals if v is not None]
+                  if not vals:
+                      sample = [item.get(field) for item in lst[:3] if isinstance(item, dict)]
+                      return None, f"list_field_mean: field '{field}' empty/missing; sample={sample}"
+                  return sum(vals)/len(vals), f"list_field_mean({field}) over {len(vals)} items"
+
               elif compute == "list_distinct_count":
                   field = claim.get("compute_field", "")
-                  if not isinstance(data, list):
-                      return None
-                  distinct = {item.get(field) for item in data
+                  lst = data if isinstance(data, list) else None
+                  if lst is None and isinstance(data, dict):
+                      for wk in ("results", "items", "equations", "tasks", "data"):
+                          if isinstance(data.get(wk), list):
+                              lst = data[wk]; break
+                  if not lst:
+                      return None, f"list_distinct_count: no list found (type={type(data).__name__})"
+                  distinct = {item.get(field) for item in lst
                               if isinstance(item, dict) and item.get(field) is not None}
-                  return float(len(distinct))
-          
+                  return float(len(distinct)), f"list_distinct_count({field}): {sorted(str(x) for x in distinct)}"
+
               elif compute == "dict_nested_mean":
                   method = claim.get("compute_method", "")
                   leaf   = claim.get("compute_leaf", "recovery_rate")
                   if not isinstance(data, dict):
-                      return None
-                  cn = data.get("cross_noise_summary", data)   # suppB top-level is already the noise-sweep dict
-                  method_data = cn.get(method, {})
-                  if not method_data:
-                      # Fallback: try first available method key
-                      if cn:
-                          method_data = next(iter(cn.values()), {})
+                      return None, f"dict_nested_mean: data is {type(data).__name__}, not dict"
+                  # suppB: top-level may be the noise-sweep dict directly, or wrapped
+                  cn = data.get("cross_noise_summary", data)
+                  matched_key, method_data = _fuzzy_match_method(cn, method)
+                  if not matched_key:
+                      return None, f"dict_nested_mean: no method key matched '{method}'; keys={list(cn.keys())[:5]}"
                   rates = [v.get(leaf) for v in method_data.values()
                            if isinstance(v, dict) and v.get(leaf) is not None]
-                  return sum(rates) / len(rates) if rates else None
-          
-              return None
+                  if not rates:
+                      # Try one level deeper (some files wrap per-noise in another dict)
+                      for noise_val in method_data.values():
+                          if isinstance(noise_val, dict):
+                              for sub in noise_val.values():
+                                  if isinstance(sub, dict) and sub.get(leaf) is not None:
+                                      rates.append(sub[leaf])
+                  if not rates:
+                      sample_keys = [list(v.keys())[:4] for v in list(method_data.values())[:2]
+                                     if isinstance(v, dict)]
+                      return None, (f"dict_nested_mean: leaf '{leaf}' not found under "
+                                    f"'{matched_key}'; sample sub-keys={sample_keys}")
+                  return sum(rates)/len(rates), (f"dict_nested_mean(method='{matched_key}', "
+                                                 f"leaf='{leaf}') over {len(rates)} noise levels")
+
+              return None, f"unknown compute type: '{compute}'"
           
           # ── Main audit loop ──────────────────────────────────────────────────────────
           claims   = load_claims()
@@ -1024,16 +1099,19 @@ jobs:
           
               # Resolve the metric value
               raw = None
+              _cdebug = ""
               if has_compute:
-                  raw = compute_metric(data, claim)
+                  raw, _cdebug = compute_metric(data, claim)
               else:
                   raw = resolve_key(data, jkey)
                   if raw is None and isinstance(data, dict):
                       raw = data.get(jkey.split(".")[-1])   # flat-key fallback
           
               if raw is None:
-                  detail = (f"key '{jkey}' not found" if not has_compute
-                            else f"compute='{claim['compute']}' returned None")
+                  if has_compute:
+                      detail = f"compute='{claim['compute']}' returned None: {_cdebug}"
+                  else:
+                      detail = f"key '{jkey}' not found in {result_file.name}"
                   findings.append({"exp": exp, "metric": metric, "status": "MISSING",
                                    "paper_value": pv, "actual": None, "detail": detail})
                   print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {detail}")
@@ -1060,6 +1138,8 @@ jobs:
                         + (f"  [{note}]" if note else ""))
               icons = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌"}
               print(f"  {icons.get(status,'?')} {exp:<23} {metric:<35} {status:<8}  {detail}")
+              if _cdebug and status in ("FAIL", "WARN"):
+                  print(f"       compute info: {_cdebug}")
               findings.append({"exp": exp, "metric": metric, "status": status,
                                "paper_value": pv, "actual": actual, "detail": detail})
           
