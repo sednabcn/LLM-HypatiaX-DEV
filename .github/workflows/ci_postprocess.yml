@@ -31,7 +31,10 @@ jobs:
       - uses: actions/setup-python@v5.3.0
         with: { python-version: "3.12" }
 
-      - run: pip install numpy scipy pandas matplotlib seaborn
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn
 
       # ISSUE 3 FIX: resolve result_subdir from experiment name (same canonical
       # mapping used by ci_analysis.yml) so the scripts receive the correct
@@ -72,6 +75,9 @@ jobs:
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
+          # Pre-create output dir — plot_results.py may not create it itself,
+          # and git add must find the path even when no figures are produced.
+          mkdir -p "hypatiax/data/results/${SUB}/figures"
           python figures/generate_figures.py \
             --repo-root   "hypatiax/data/results/${SUB}" \
             --figures-dir "hypatiax/data/results/${SUB}/figures" \
@@ -92,21 +98,29 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # ISSUE 4 FIX: rebase onto the current branch (github.ref_name),
-          # not the hardcoded 'master'.  Matches ci_analysis.yml behaviour.
+          # Reset index before rebasing — matches ci_analysis.yml pattern.
+          # Without this, a dirty index from prior steps causes rebase to refuse.
+          git reset HEAD 2>/dev/null || true
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
-          # Stage only the outputs for this experiment's subdir.
-          git add \
-            "hypatiax/data/results/${SUB}/figures/" \
-            "hypatiax/data/results/${SUB}/tables/"  \
-            2>/dev/null || true
+          # Stage outputs; warn explicitly if either directory is empty or missing
+          # rather than hiding it with a bare || true.
+          FIGS="hypatiax/data/results/${SUB}/figures"
+          TABS="hypatiax/data/results/${SUB}/tables"
+
+          if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
+            echo "::warning::figures directory is empty or missing: ${FIGS}"
+          fi
+          if [[ ! -d "$TABS" ]] || [[ -z "$(ls -A "$TABS" 2>/dev/null)" ]]; then
+            echo "::warning::tables directory is empty or missing: ${TABS}"
+          fi
+
+          git add "${FIGS}/" "${TABS}/" 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No changes to post-process outputs — results unchanged from previous run."
           else
             git commit -m "ci: figures+tables for ${{ github.event.inputs.experiment }} - run ${{ github.run_id }}"
-            # ISSUE 4 FIX: push to the triggering branch, not hardcoded master.
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed figures+tables for ${{ github.event.inputs.experiment }}."
           fi
