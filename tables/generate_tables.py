@@ -237,7 +237,6 @@ def gen_defi_main() -> None:
 
     def _extract_rows(d) -> list[tuple]:
         """Try to read 3-method rows from various JSON shapes."""
-        # Shape C: top-level list — not a summary dict; cannot extract rows.
         if not isinstance(d, dict):
             return []
         rows = []
@@ -320,7 +319,9 @@ def gen_defi_tiers() -> None:
         ("Overall",74, 62.2,  89.2, +27.0),
     ]
 
-    def _extract_tiers(d: dict):
+    def _extract_tiers(d):
+        if not isinstance(d, dict):
+            return []
         tiers = []
         for label, key, n_default in [
             ("Easy",    "easy",    24),
@@ -405,7 +406,9 @@ def gen_ablation() -> None:
     ]
 
     # Try to read per-equation data from JSON
-    def _extract_equations(d: dict):
+    def _extract_equations(d):
+        if not isinstance(d, dict):
+            return []
         eqs = d.get("equations", d.get("cases", d.get("results", [])))
         if not isinstance(eqs, list) or len(eqs) < 15:
             return []
