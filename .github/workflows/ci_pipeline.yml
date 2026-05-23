@@ -643,6 +643,7 @@ jobs:
 
           gh workflow run ci_runner.yml \
             --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
             --field experiment="${EXP}" \
             --field n_shards="${N_SHARDS}" \
             --field seeds="${SEEDS}" \
@@ -795,6 +796,7 @@ jobs:
 
           gh workflow run ci_analysis.yml \
             --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
             --field experiment="${EXP}" \
             --field source_run_id="${SOURCE_RUN_ID}"
 
@@ -909,6 +911,7 @@ jobs:
 
           gh workflow run ci_postprocess.yml \
             --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
             --field experiment="${EXP}"
 
           sleep 8
@@ -1032,6 +1035,7 @@ jobs:
 
           gh workflow run ci_pipeline_check.yml \
             --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
             --field experiment="${EXP}" \
             --field fail_on_incomplete="${FAIL_ON_INCOMPLETE}" \
             --field seeds="${SEEDS}" \
@@ -1131,6 +1135,7 @@ jobs:
           echo "Dispatching ci_pipeline.yml for next slot=${NEXT_SLOT}"
           gh workflow run ci_pipeline.yml \
             --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
             --field experiment_index="${NEXT_SLOT}" \
             --field n_shards="${N_SHARDS}" \
             --field seeds="${SEEDS}" \
