@@ -3,7 +3,7 @@
 generate_tables.py — Auto-generate LaTeX tables from JSON results
 
 Reads patched JSON outputs and writes .tex table fragments to paper/tables/.
-These are \input{}-ed by the main paper and supplements so NO manual numbers
+These are \\input{}-ed by the main paper and supplements so NO manual numbers
 appear in the LaTeX source.
 
 Tables generated  (main paper)
@@ -235,8 +235,11 @@ def gen_defi_main() -> None:
         ("HypatiaX",   1.0000, +0.8721, 89.2, 89.2, 0),
     ]
 
-    def _extract_rows(d: dict) -> list[tuple]:
+    def _extract_rows(d) -> list[tuple]:
         """Try to read 3-method rows from various JSON shapes."""
+        # Shape C: top-level list — not a summary dict; cannot extract rows.
+        if not isinstance(d, dict):
+            return []
         rows = []
         # Shape 1: d["methods"] = [{name, median_r2, mean_r2, ...}, ...]
         if "methods" in d and isinstance(d["methods"], list):
