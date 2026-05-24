@@ -39,6 +39,8 @@ _merged.json  — produced by scripts/merge_shards.py
       Shape A  {"_meta":{}, "results":{task_id: record}}  — merge_shards.py output
       Shape B  {task_id: record, ...}                     — flat dict (legacy)
       Shape C  [record, ...]                              — top-level list (legacy)
+      Shape D  {"results": [...]} or {"equations": [...]} — Nguyen shard (exp3/exp3b)
+               results/equations value is a LIST, not a dict (checked before Shape A)
 
 Experiment modes
 ----------------
@@ -1829,12 +1831,30 @@ def main() -> None:
 
     # Handle all shapes merge_shards.py and legacy workers can produce:
     #   Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
-    #            — canonical output of merge_shards.py (new).
+    #            — canonical output of merge_shards.py.
+    #            results value is a DICT keyed by task_id.
     #   Shape B  {task_id: record, ...}
     #            — flat dict keyed by task_id (legacy).
     #   Shape C  [record, ...]
     #            — top-level list (legacy).
-    if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
+    #   Shape D  {"results": [...], ...}  or  {"equations": [...], ...}
+    #            — Nguyen / single-equation shard file (exp3, exp3b direct
+    #              shard from exp3_nguyen12_*.py). results value is a LIST.
+    #            Must be checked BEFORE Shape A — both have a "results" key;
+    #            only the type (list vs dict) distinguishes them.
+    _ARRAY_KEYS = ("results", "equations", "runs", "data")
+    if isinstance(raw, dict) and isinstance(raw.get("results"), list):
+        # Shape D (results list) — exp3/exp3b Nguyen shard.
+        records = [r for r in raw["results"] if isinstance(r, dict)]
+        print(f"  Shape D (Nguyen shard): {len(records)} records from 'results' list.")
+    elif isinstance(raw, dict) and any(
+        k != "results" and isinstance(raw.get(k), list) for k in _ARRAY_KEYS
+    ):
+        # Shape D (other array key) — equations/runs/data list wrapper.
+        _k = next(k for k in _ARRAY_KEYS if k != "results" and isinstance(raw.get(k), list))
+        records = [r for r in raw[_k] if isinstance(r, dict)]
+        print(f"  Shape D (array key '{_k}'): {len(records)} records.")
+    elif isinstance(raw, dict) and isinstance(raw.get("results"), dict):
         # Shape A: the "results" value is the task-keyed dict.
         records = [v for v in raw["results"].values() if isinstance(v, dict)]
         print(f"  Shape A (_merged.json from merge_shards.py): "
