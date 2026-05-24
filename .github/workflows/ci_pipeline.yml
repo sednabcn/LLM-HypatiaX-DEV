@@ -302,7 +302,7 @@ jobs:
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
               "suppA":              "hybrid_pysr/defi",
-              "suppB":              "comparison_results/feynman-tests/noise-sweep",
+              "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
               "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":        "figures",
@@ -379,48 +379,20 @@ jobs:
                   return False
 
           def check_analysis_outputs(exp_id):
-              """Return (present, valid, workflow_sha_match) for _report.md and _analysis.json.
-
-              workflow_sha_match is True when the ci_analysis.yml SHA recorded in
-              _analysis.json matches the current HEAD SHA of that file.  When False
-              the outputs are from an older version of ci_analysis.yml and must be
-              treated as stale — classify_analysis() will return "stale" so the
-              run-analysis job re-runs even if the file is otherwise valid.
-              """
+              """Return (present, valid) for _report.md and _analysis.json."""
               subdir  = SUBDIR.get(exp_id, "")
               rdir    = OUT_BASE / subdir
               report  = rdir / "_report.md"
               afile   = rdir / "_analysis.json"
               present = report.exists() and afile.exists()
               valid   = False
-              workflow_sha_match = True   # default: assume match when no SHA stored
               if present:
                   try:
                       d = json.loads(afile.read_text())
                       valid = "experiment" in d and "fatal_conditions" in d
-                      # Compare stored ci_analysis.yml SHA against HEAD SHA.
-                      # _analysis.json records it under "ci_analysis_sha" when
-                      # written by a pipeline-aware version of run_analysis.py.
-                      stored_sha = d.get("ci_analysis_sha", "")
-                      if stored_sha:
-                          try:
-                              r = subprocess.run(
-                                  ["git", "log", "-1", "--format=%H",
-                                   ".github/workflows/ci_analysis.yml"],
-                                  capture_output=True, text=True, cwd="."
-                              )
-                              head_sha = r.stdout.strip()
-                              workflow_sha_match = (stored_sha == head_sha)
-                              if not workflow_sha_match:
-                                  print(f"  ⚠  ci_analysis.yml SHA mismatch for {exp_id}:")
-                                  print(f"       stored : {stored_sha}")
-                                  print(f"       HEAD   : {head_sha}")
-                                  print(f"     → treating analysis outputs as STALE")
-                          except Exception:
-                              pass   # git unavailable; assume match
                   except Exception:
                       pass
-              return present, valid, workflow_sha_match
+              return present, valid
 
           def check_postprocess_outputs(exp_id):
               """Return (figures_present, tables_present)."""

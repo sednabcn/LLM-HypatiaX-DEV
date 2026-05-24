@@ -174,7 +174,31 @@ jobs:
           if [[ -n "${INPUT_RESULT_SUBDIR}" ]]; then
             RESULT_SUBDIR="${INPUT_RESULT_SUBDIR}"
           else
-            RESULT_SUBDIR="${EXPERIMENT}"
+            # Canonical mapping — must stay in sync with ci_runner.yml plan job
+            # and ci_pipeline.yml diagnose SUBDIR dict.
+            RESULT_SUBDIR=$(python3 << 'PYEOF'
+import os, sys
+MAPPING = {
+    "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+    "exp1b":              "comparison_results/noise-noiseless/15",
+    "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+    "exp2":               "comparison_results/feynman-tests/exp2_multi",
+    "exp3":               "extrapolation",
+    "exp3b":              "extrapolation/multi_seed",
+    "suppA":              "hybrid_pysr/defi",
+    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+    "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+    "instability":        "figures",
+    "extrap":             "comparison_results/extrapolation",
+}
+exp = os.environ["EXPERIMENT"]
+result = MAPPING.get(exp, exp)
+if result == exp:
+    print(f"::warning::No canonical subdir mapping for '{exp}' — using experiment name as subdir.", file=sys.stderr)
+print(result)
+PYEOF
+)
           fi
 
           RESULT_DIR="hypatiax/data/results/${RESULT_SUBDIR}"
@@ -182,7 +206,8 @@ jobs:
           echo "RESULT_SUBDIR=${RESULT_SUBDIR}" >> "$GITHUB_ENV"
           echo "RESULT_DIR=${RESULT_DIR}"       >> "$GITHUB_ENV"
 
-          echo "Resolved RESULT_DIR=${RESULT_DIR}"
+          echo "Resolved: experiment=${EXPERIMENT}  subdir=${RESULT_SUBDIR}"
+          echo "          RESULT_DIR=${RESULT_DIR}"
 
       # -----------------------------------------------------------------------
       # Optional artifact download
