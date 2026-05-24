@@ -48,6 +48,11 @@ _merged.json  — produced by scripts/merge_shards.py
       Shape C  [record, ...]                              — top-level list (legacy)
       Shape D  {"results": [...]} or {"equations": [...]} — Nguyen shard (exp3/exp3b)
                results/equations value is a LIST, not a dict (checked before Shape A)
+      Shape E  {"results": {"hypatiax": [...], "pysr": [...]}}
+               — Nguyen method-arrays (exp3/exp3b direct shard).
+               results is a dict whose values are per-method LISTS.
+               FIX: previously misidentified as Shape A → 0 records → EMPTY_DATASET.
+               Now unpacked: lists are zipped by index into per-equation records.
 
 Experiment modes
 ----------------
@@ -2076,6 +2081,43 @@ def main() -> None:
         _k = next(k for k in _ARRAY_KEYS if k != "results" and isinstance(raw.get(k), list))
         records = [r for r in raw[_k] if isinstance(r, dict)]
         print(f"  Shape D (array key '{_k}'): {len(records)} records.")
+    elif (isinstance(raw, dict)
+          and isinstance(raw.get("results"), dict)
+          and raw["results"]
+          and all(isinstance(v, list) for v in raw["results"].values())):
+        # Shape E — Nguyen method-arrays schema (exp3/exp3b):
+        #   {"results": {"hypatiax": [eq0, eq1, ...], "pysr": [eq0, eq1, ...]}, ...}
+        # "results" is a dict whose values are per-method result LISTS.  Each list
+        # entry corresponds to one equation.  Previously misidentified as Shape A
+        # (results is a dict → extract values as records → values are lists not dicts
+        # → 0 records → EMPTY_DATASET).
+        #
+        # Correct handling: zip the per-method lists by index into one record per
+        # equation, setting top-level keys from the longest-common-index position.
+        # The per-equation dict from each method list becomes the method sub-key.
+        _method_arrays = raw["results"]           # {"hypatiax":[...], "pysr":[...]}
+        _method_keys   = list(_method_arrays.keys())
+        _n_eq          = max(len(v) for v in _method_arrays.values())
+        records = []
+        for _i in range(_n_eq):
+            _rec: dict = {}
+            for _mk in _method_keys:
+                _arr = _method_arrays[_mk]
+                if _i < len(_arr) and isinstance(_arr[_i], dict):
+                    _entry = _arr[_i]
+                    # Hoist shared identity fields from the first method entry seen.
+                    if not _rec:
+                        for _id_key in ("equation_id", "equation", "name",
+                                        "description", "domain", "difficulty",
+                                        "formula_type", "extrapolation_intractable"):
+                            if _id_key in _entry:
+                                _rec[_id_key] = _entry[_id_key]
+                    # Store the per-method entry under its method key.
+                    _rec[_mk] = _entry
+            if _rec:
+                records.append(_rec)
+        print(f"  Shape E (Nguyen method-arrays): methods={_method_keys}, "
+              f"{len(records)} per-equation records unpacked.")
     elif isinstance(raw, dict) and isinstance(raw.get("results"), dict):
         # Shape A: the "results" value is the task-keyed dict.
         results_dict = raw["results"]

@@ -411,12 +411,15 @@ jobs:
 
           # Sanity-check: valid JSON with at least one record.
           # Handles all shapes merge_shards.py and the workers produce:
-          #   A. {results: dict}      - legacy merge_shards shape A key
-          #   B. dict of task records - _merged.json keyed by equation_id
-          #   C. list of task records - flat list from some workers
-          #   D. {array_key: [...]}   - wrapper with list under a known key
-          #      (covers exp3/exp3b Nguyen schema: {results: [...]})
-          #   P. {tests: [...]}       - protocol_core shape (pre-merge)
+          #   A. {results: dict-of-task-records} - merge_shards Shape A output
+          #   B. dict of task records             - _merged.json keyed by equation_id
+          #   C. list of task records             - flat list from some workers
+          #   D. {array_key: [task, ...]}         - wrapper with task LIST under known key
+          #   E. {results: {method: [...]}}       - Nguyen exp3 method-arrays schema
+          #      results dict values are method-result LISTS, not task dicts.
+          #      Previously misidentified as Shape A, triggering the non-dict-values
+          #      guard and aborting with a misleading error.
+          #   P. {tests: [...]}                   - protocol_core shape (pre-merge)
           INPUT_JSON_PATH="${INPUT_JSON}" python3 - <<'SANITY_PYEOF'
           import json, os, sys
           path = os.environ["INPUT_JSON_PATH"]
@@ -474,7 +477,25 @@ jobs:
                               print(f"  First item type: {type(first_val).__name__ if first_val else 'N/A'}  sample: {repr(first_val)[:200]}")
                           break
               sys.exit(1)
-          if isinstance(data, dict) and isinstance(data.get("results"), dict):
+          # Shape E — Nguyen method-arrays schema (exp3/exp3b):
+          #   {"results": {"hypatiax": [...], "pysr": [...]}}
+          # results is a dict but its values are method-result LISTS, not task-record dicts.
+          # run_analysis.py Shape B (flat dict) reads the top-level keys as task records,
+          # but here the top-level non-underscore value IS the results dict itself — so
+          # run_analysis.py Shape B will pick it up as 1 record keyed "results".
+          # Detect this and count the method-array length as n instead; mark it valid.
+          # run_analysis.py handles this via its Shape B path which reads the wrapper dict.
+          _is_nguyen_method_arrays = (
+              isinstance(data, dict)
+              and isinstance(data.get("results"), dict)
+              and all(isinstance(v, list) for v in data["results"].values())
+              and bool(data["results"])
+          )
+          if _is_nguyen_method_arrays:
+              _method_n = max(len(v) for v in data["results"].values())
+              print(f"Input JSON OK - {_method_n} records (shape E - Nguyen method-arrays "
+                    f"{list(data['results'].keys())}).")
+          elif isinstance(data, dict) and isinstance(data.get("results"), dict):
               non_dict_vals = [(k, type(v).__name__)
                                for k, v in list(data["results"].items())[:10]
                                if not isinstance(v, dict)]
@@ -484,10 +505,11 @@ jobs:
                   print(f"  Sample non-dict entries (key: type):")
                   for k, t in non_dict_vals[:5]:
                       print(f"    {k!r}: {t}")
-                  print("  For exp3/exp3b the shard must have {results:[{...},...]} (list).")
                   print("  Check the worker output schema.")
                   sys.exit(1)
-          print(f"Input JSON OK - {label}.")
+              print(f"Input JSON OK - {label}.")
+          else:
+              print(f"Input JSON OK - {label}.")
           SANITY_PYEOF
 
           echo "input_json=${INPUT_JSON}" >> "$GITHUB_OUTPUT"
