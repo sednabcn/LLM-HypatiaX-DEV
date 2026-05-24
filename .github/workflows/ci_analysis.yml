@@ -347,57 +347,58 @@ jobs:
 
           # Sanity-check: valid JSON with at least one record.
           # Handles all shapes merge_shards.py and the workers produce:
-          #   A. {"results": dict}          — legacy merge_shards shape A key
-          #   B. dict of task records       — _merged.json keyed by equation_id
-          #   C. list of task records       — flat list from some workers
-          #   D. {array_key: [...]}         — wrapper with known array key
-          #      (covers exp3/exp3b Nguyen: {"results": [...]})
-          #   P. {"tests": [...]}           — protocol_core shape (pre-merge)
-          python3 -c "
-          import json, sys
-          path = '${INPUT_JSON}'
+          #   A. {results: dict}      - legacy merge_shards shape A key
+          #   B. dict of task records - _merged.json keyed by equation_id
+          #   C. list of task records - flat list from some workers
+          #   D. {array_key: [...]}   - wrapper with list under a known key
+          #      (covers exp3/exp3b Nguyen schema: {results: [...]})
+          #   P. {tests: [...]}       - protocol_core shape (pre-merge)
+          INPUT_JSON_PATH="${INPUT_JSON}" python3 - <<'SANITY_PYEOF'
+          import json, os, sys
+          path = os.environ["INPUT_JSON_PATH"]
           try:
               data = json.load(open(path))
           except Exception as e:
-              print(f'::error::Input JSON is not valid: {e}')
+              print(f"::error::Input JSON is not valid: {e}")
               sys.exit(1)
           n = 0
-          label = ''
+          label = ""
+          ARRAY_KEYS = ("results", "equations", "runs", "data")
           if isinstance(data, list):
               n = len(data)
-              label = f'{n} records (shape C — top-level list)'
+              label = f"{n} records (shape C - top-level list)"
           elif isinstance(data, dict):
-              # Shape P: protocol_core wrapper {tests:[...]}
-              if isinstance(data.get('tests'), list):
-                  n = len(data['tests'])
-                  label = f'{n} records (shape P — protocol tests[])'
-              # Shape D: any other array-key wrapper e.g. {results:[...]} from Nguyen
-              elif any(isinstance(data.get(k), list) for k in ('results','equations','runs','data')):
-                  for k in ('results','equations','runs','data'):
-                      if isinstance(data.get(k), list):
-                          n = len(data[k])
-                          label = f'{n} records (shape D — {k}[])'
-                          break
-              # Shape A: results is a dict (legacy merge_shards)
-              elif isinstance(data.get('results'), dict):
-                  n = len(data['results'])
-                  label = f'{n} records (shape A — results dict)'
+              if isinstance(data.get("tests"), list):
+                  n = len(data["tests"])
+                  label = f"{n} records (shape P - protocol tests[])"
               else:
-                  # Shape B: dict of task records keyed by equation_id
-                  n = sum(1 for k, v in data.items()
-                          if isinstance(v, dict) and not k.startswith('_')
-                          and k not in ('stats','_meta','_checkpoint'))
-                  label = f'{n} records (shape B — dict of task records)'
+                  for _k in ARRAY_KEYS:
+                      if isinstance(data.get(_k), list):
+                          n = len(data[_k])
+                          label = f"{n} records (shape D - {_k}[])"
+                          break
+                  if not label:
+                      if isinstance(data.get("results"), dict):
+                          n = len(data["results"])
+                          label = f"{n} records (shape A - results dict)"
+                      else:
+                          n = sum(
+                              1 for k, v in data.items()
+                              if isinstance(v, dict)
+                              and not k.startswith("_")
+                              and k not in ("stats", "_meta", "_checkpoint")
+                          )
+                          label = f"{n} records (shape B - dict of task records)"
           else:
-              print(f'::error::Unexpected top-level type: {type(data).__name__}')
+              print(f"::error::Unexpected top-level type: {type(data).__name__}")
               sys.exit(1)
           if n == 0:
-              print(f'::error::Input JSON contains 0 task records (tried all shapes).')
-              print(f'  File: {path}')
-              print(f'  Top-level keys: {list(data.keys()) if isinstance(data, dict) else "(list)"}')
+              print("::error::Input JSON contains 0 task records (tried all shapes).")
+              print(f"  File: {path}")
+              print(f"  Top-level keys: {list(data.keys()) if isinstance(data, dict) else '(list)'}")
               sys.exit(1)
-          print(f'Input JSON OK — {label}.')
-          "
+          print(f"Input JSON OK - {label}.")
+          SANITY_PYEOF
 
           echo "input_json=${INPUT_JSON}" >> "$GITHUB_OUTPUT"
 
