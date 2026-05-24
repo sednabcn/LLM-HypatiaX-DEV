@@ -1264,22 +1264,56 @@ def analyse(records: list[dict], experiment: str,
     # Guard: pysr/instability — emit a clean empty-dataset error if records is
     # empty so the message matches what the CI abort step checks for, and add a
     # diagnostic suggesting the most common cause (wrong shard file picked up).
+    #
+    # IMPORTANT: the returned dict must include every key that write_report()
+    # accesses unconditionally (r2_success_threshold, n_standard, n_intractable,
+    # method_summary, mann_whitney, coverage_gaps, hybrid_vs_nn_headtohead,
+    # extrapolation_gap_summary, timing, hybrid_decisions, by_difficulty,
+    # by_formula_type) — even as empty/null sentinels — so write_report() never
+    # KeyErrors on a partial analysis dict.
     if not records and mode in ("pysr", "instability"):
         fatal: list[str] = [
             "EMPTY_DATASET: _merged.json contains 0 records. "
             f"Experiment mode={mode!r}. "
             "Most likely cause: 'Locate input JSON' step picked a stub or empty file "
-            "(e.g. benchmark_results.json) instead of the primary shard. "
-            "Check the 'Using committed shard file' log line and confirm the file "
-            "contains a non-empty 'results' list."
+            "(e.g. benchmark_results.json) instead of the primary shard, OR the shard "
+            "file has an empty 'results' key (dict or list). "
+            "Check the 'Shape A/D ... records' log line above and inspect the file."
         ]
+        _empty_method = {m: {"n_records": 0, "n_success_flag": 0,
+                              "success_rate_flag": 0.0, "n_r2_above_80": 0,
+                              "r2_above_80_rate": 0.0, "median_test_r2": None,
+                              "mean_test_r2": None, "n_finite_r2": 0}
+                         for m in METHODS}
+        _empty_mw     = {"available": False, "reason": "empty dataset"}
         return {
-            "experiment":      experiment,
-            "experiment_mode": mode,
-            "n_total":         0,
-            "n_standard":      0,
-            "n_intractable":   0,
-            "fatal_conditions": fatal,
+            "experiment":              experiment,
+            "experiment_mode":         mode,
+            "n_total":                 0,
+            "n_standard":              0,
+            "n_intractable":           0,
+            "r2_success_threshold":    R2_SUCCESS_THRESHOLD,
+            "method_summary":          _empty_method,
+            "mann_whitney":            {
+                "hybrid_vs_llm": _empty_mw,
+                "hybrid_vs_nn":  _empty_mw,
+                "nn_vs_llm":     _empty_mw,
+            },
+            "coverage_gaps":           [],
+            "n_coverage_gaps":         0,
+            "by_difficulty":           {},
+            "by_formula_type":         {},
+            "extrapolation_gap_summary": {m: {"mean_gap": None, "median_gap": None, "n": 0}
+                                          for m in METHODS},
+            "timing":                  {m: {"mean_s": None, "median_s": None,
+                                            "total_s": None, "n": 0, "n_timed_out": 0}
+                                        for m in METHODS},
+            "hybrid_decisions":        {},
+            "hybrid_vs_nn_headtohead": {"n_equations_both_finite": 0,
+                                        "hybrid_wins": 0, "nn_wins": 0,
+                                        "tied": 0, "hybrid_win_rate": None},
+            "pysr_fit_params":         pysr_fit_params or {},
+            "fatal_conditions":        fatal,
         }
 
     # -- Partition: standard vs intractable ------------------------------------
@@ -1595,9 +1629,9 @@ def write_report(analysis: dict, path: Path) -> None:
     h(1, f"HypatiaX Analysis Report — `{exp}`")
     p(f"Experiment mode: **{mode}**")
     p(f"N total: {analysis['n_total']} "
-      f"| N standard: {analysis['n_standard']} "
-      f"| N intractable: {analysis['n_intractable']}")
-    p(f"R² success threshold: {analysis['r2_success_threshold']}")
+      f"| N standard: {analysis.get('n_standard', 'N/A')} "
+      f"| N intractable: {analysis.get('n_intractable', 'N/A')}")
+    p(f"R² success threshold: {analysis.get('r2_success_threshold', R2_SUCCESS_THRESHOLD)}")
 
     # -- Mode-specific header note -----------------------------------------------
     if mode == "ood":
@@ -1698,7 +1732,8 @@ def write_report(analysis: dict, path: Path) -> None:
 
     # -- Coverage gaps -----------------------------------------------------------
     gaps = analysis.get("coverage_gaps", [])
-    h(2, f"Coverage Gaps ({len(gaps)} equations with best R² < {analysis['r2_success_threshold']})")
+    _thr = analysis.get("r2_success_threshold", R2_SUCCESS_THRESHOLD)
+    h(2, f"Coverage Gaps ({len(gaps)} equations with best R² < {_thr})")
     if gaps:
         lines.append("| Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |")
         lines.append("|----------|------------|------|---------|-----|----|----|")
