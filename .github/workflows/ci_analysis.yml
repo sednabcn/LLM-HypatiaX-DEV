@@ -306,9 +306,14 @@ jobs:
             echo
             echo "Shard mode activated"
 
+            # maxdepth 2: some experiments (e.g. suppB / noise-sweep) store
+            # their shard JSONs one level deeper than RESULT_DIR, in a same-named
+            # subdirectory (noise-sweep/noise-sweep/*.json).  Depth 2 catches both
+            # flat layouts (depth 1) and that one nested layout without over-reaching.
+            # Tables subdirs contain only .tex files, so no false positives.
             mapfile -t SHARD_FILES < <(
               find "$RESULT_DIR" \
-                -maxdepth 1 \
+                -maxdepth 2 \
                 -type f \
                 -name '*.json' \
                 ! -name '_*.json' \
@@ -327,7 +332,7 @@ jobs:
               echo "  results_part_a.json"
               echo
               echo "Searched:"
-              echo "  ${RESULT_DIR}/*.json"
+              echo "  ${RESULT_DIR}/**/*.json (maxdepth 2)"
               echo "  excluding _*.json and benchmark_results.json"
 
               exit 1
