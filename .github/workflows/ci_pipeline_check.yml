@@ -205,7 +205,6 @@ jobs:
           EXPERIMENT:   ${{ github.event.inputs.experiment || 'all' }}
           SEEDS:        ${{ env.SEEDS }}
           NOISE_LEVELS: ${{ env.NOISE_LEVELS }}
-          WF_TITLE:     ""
         run: |
           python3 - <<'PYEOF'
           import json, os, sys
@@ -235,18 +234,15 @@ jobs:
           }
 
           # Resolve which experiments to check
-          EXPERIMENT = os.environ["EXPERIMENT"]
-          WF_TITLE   = os.environ.get("WF_TITLE", "")
+          EXPERIMENT = os.environ["EXPERIMENT"].strip()
 
-          if EXPERIMENT == "all" or not EXPERIMENT:
+          if EXPERIMENT in ("all", ""):
               target_exps = list(SUBDIR.keys())
+          elif EXPERIMENT in SUBDIR:
+              target_exps = [EXPERIMENT]
           else:
-              # If auto-triggered, parse experiment from workflow display_title
-              if not EXPERIMENT and WF_TITLE:
-                  import re
-                  m = re.search(r"HypatiaX - (\S+)", WF_TITLE)
-                  EXPERIMENT = m.group(1) if m else "all"
-              target_exps = [EXPERIMENT] if EXPERIMENT in SUBDIR else list(SUBDIR.keys())
+              print(f"::error::Unknown experiment '{EXPERIMENT}' — not in SUBDIR map.")
+              sys.exit(1)
 
           # FIX check-PRESENCE: the consolidate job is disabled in
           # ci_runner.yml — each worker shard commits its own
@@ -403,6 +399,37 @@ jobs:
           CHECK_REPORT = json.loads(os.environ["CHECK_REPORT"])
           FAIL         = os.environ.get("FAIL_ON_INCOMPLETE", "false").lower() == "true"
 
+          # BUG 1 FIX: complete job must apply the same EXPERIMENT filter that
+          # job 1 (check) applies, so completion_report only contains the
+          # experiment(s) actually in scope for this run.
+          #
+          # Without this filter, when ci_pipeline.yml dispatches for a single
+          # experiment (e.g. exp1b), CHECK_REPORT contains only {exp1b: ...}.
+          # The dispatch job (job 6) iterates a hardcoded ORDER of 10 experiments
+          # and calls report.get(exp_id, {}) for each.  For every experiment NOT
+          # in the single-experiment completion_report, info={} → done=0, total=0,
+          # total>0 is False → falls to the "0 done / never launched" branch →
+          # fires a fresh runner for every experiment in the queue.
+          #
+          # Fix: restrict the loop to the same target_exps set job 1 built.
+          # When EXPERIMENT is a known single experiment, iterate only that.
+          # When EXPERIMENT is "all" or blank, iterate everything in CHECK_REPORT.
+          _KNOWN_EXPS = [
+              "exp1", "exp1b", "exp2_feynman", "exp2", "exp3", "exp3b",
+              "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "instability", "extrap",
+          ]
+          _exp_input = os.environ.get("EXPERIMENT", "all").strip()
+          if _exp_input in ("all", ""):
+              _target_exps = list(CHECK_REPORT.keys())
+          elif _exp_input in _KNOWN_EXPS:
+              _target_exps = [_exp_input] if _exp_input in CHECK_REPORT else []
+              if not _target_exps:
+                  print(f"::error::Experiment '{_exp_input}' not in CHECK_REPORT — check job may have failed.")
+                  sys.exit(1)
+          else:
+              print(f"::error::Unknown experiment '{_exp_input}' — not in known experiment list.")
+              sys.exit(1)
+
           # ── Task registries (mirrors ci_experiment.yml plan job + split step)
           FEYNMAN_DOMAINS = [
               "feynman_biology", "feynman_chemistry", "feynman_electrochemistry",
@@ -443,12 +470,15 @@ jobs:
               "exp3b":             [f"nguyen12_seed{s}" for s in SEEDS if s != "42"],
               # suppA committed extrapolation_73cases_enhanced.json (all domains combined).
               "suppA":             ["73cases_enhanced"],
-              # suppB: checkpoint files are noise_sweep_sig{NNNN}_checkpoint.json.
-              # The sig suffixes are fixed regardless of NOISE_LEVELS ordering.
-              "suppB":             ["sig0000", "sig0050", "sig0100", "sig0500", "sig1000"],
-              # suppB_sc done-set: checkpoint files are sample_complexity_n{NNNN}_checkpoint.json
-              # Use zero-padded n-values that are substrings of those filenames.
-              "suppB_sc":          [f"n{int(n):04d}" for n in SUPPB_SC_COUNTS],
+              # suppB: result files are noise_sweep_*.json / noise_sweep_*.csv.
+              # The filenames encode noise level as a float string (e.g. noise_sweep_0.0.csv).
+              # Use the noise-level float strings as sentinels — these are substrings of
+              # both the result filenames and the checkpoint filenames.
+              # Format: zero-remove trailing zeros to match "0.0", "0.5", "1.0", "5.0", "10.0".
+              "suppB":             [str(float(l)) for l in NOISE_LEVELS],
+              # suppB_sc done-set: result files are sample_complexity_n{N}.json / *.csv.
+              # Use the sample-count strings as sentinels.
+              "suppB_sc":          list(SUPPB_SC_COUNTS),
               # hybrid_all_domains committed a single hybrid_llm_nn_all_domains_*.json.
               "hybrid_all_domains": ["all_domains"],
               # instability is a single post-processing job, not 10 per-domain shards.
@@ -498,7 +528,8 @@ jobs:
           print(f"\n{'Experiment':<25} {'Total':>7} {'Done':>7} {'Missing':>9}")
           print("-" * 55)
 
-          for exp_id, info in CHECK_REPORT.items():
+          for exp_id in _target_exps:
+              info    = CHECK_REPORT.get(exp_id, {"present": False, "subdir": ""})
               all_ids = REGISTRY.get(exp_id, [])
               total   = len(all_ids)
 
@@ -613,6 +644,7 @@ jobs:
           OUT_BASE:          ${{ env.OUT_BASE }}
           COMPLETION_REPORT: ${{ needs.complete.outputs.completion_report }}
           CHECK_REPORT:      ${{ needs.check.outputs.check_report }}
+          EXPERIMENT_INPUT:  ${{ github.event.inputs.experiment || 'all' }}
         run: |
           python3 - <<'PYEOF'
           import json, os, subprocess, sys
@@ -639,7 +671,43 @@ jobs:
               "extrap":            "comparison_results/extrapolation",
           }
 
-          QUALIFIABLE = list(SUBDIR.keys())
+          # Respect the EXPERIMENT input: when a single experiment is specified,
+          # qualify only that experiment. "all" or blank qualifies everything.
+          # This prevents unrelated experiments (e.g. suppB) from blocking the
+          # gate when ci_pipeline.yml calls this workflow for a specific slot.
+          EXPERIMENT_INPUT = os.environ.get("EXPERIMENT_INPUT", "all").strip()
+          if EXPERIMENT_INPUT in ("all", ""):
+              QUALIFIABLE = list(SUBDIR.keys())
+          elif EXPERIMENT_INPUT in SUBDIR:
+              QUALIFIABLE = [EXPERIMENT_INPUT]
+          else:
+              print(f"::error::Unknown experiment '{EXPERIMENT_INPUT}' — not in SUBDIR map.")
+              sys.exit(1)
+
+          # Per-experiment primary result file globs — mirrors Job 1 RESULT_GLOBS.
+          # Used by qualify dim 2 and dim 3 so CSV-only experiments (suppB, suppB_sc,
+          # instability) are not penalised for having no *.json result files.
+          RESULT_GLOBS = {
+              "exp1":              ["hypatiax_defi_benchmark_v3*results*.json",
+                                    "protocol_core_noiseless_*.json"],
+              "exp1b":             ["comparison_FIXED_*.json", "defi_v3_*.json",
+                                    "*portfolio*variance*.json",
+                                    "hypatiax_defi_benchmark_v3*results*.json"],
+              "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
+              "exp3":              ["full_run_*.json", "report_hybrid_*.json",
+                                    "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "exp3b":             ["full_run_*.json", "report_hybrid_*.json",
+                                    "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "suppA":             ["consolidated_hybrid_*.json", "hybrid_system*.json",
+                                    "extrapolation_73cases*.json", "*73cases*.json"],
+              "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              "suppB_sc":          ["sample_complexity_*.json", "sample_complexity_*.csv"],
+              "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
+              "instability":       ["instability_analysis.csv", "instability_extrapolation.csv",
+                                    "*.pdf", "*.png"],
+              "extrap":            ["all_domains_extrap_v4_*.json", "protocol_core_*.json"],
+          }
 
           def qualify_experiment(exp_id: str) -> dict:
               checks = []
@@ -685,41 +753,43 @@ jobs:
                           ckpt_detail = f"per-shard checkpoints present ({len(shard_ckpts)}) but 0 tasks completed"
               checks.append(["checkpoint=pass", ckpt_ok, ckpt_detail])
 
-              # 2. Result files (non-meta JSON/CSV)
+              # 2. Result files — use per-experiment RESULT_GLOBS for accuracy.
+              # Generic *.json + *.csv would miss CSV-only experiments (suppB_sc, instability)
+              # if the glob pattern doesn't match any *.json but there ARE *.csv files.
               data_files = []
               if result_dir.exists():
-                  all_files = list(result_dir.glob("*.json")) + list(result_dir.glob("*.csv"))
-                  data_files = [f for f in all_files if not f.name.startswith("_")]
+                  exp_globs = RESULT_GLOBS.get(exp_id, ["*.json", "*.csv"])
+                  for pattern in exp_globs:
+                      data_files.extend(
+                          f for f in result_dir.glob(pattern)
+                          if not f.name.startswith("_")
+                      )
+              data_files = list(set(data_files))
               checks.append(["result_files", len(data_files) > 0,
                              f"{len(data_files)} data file(s) in {subdir_rel or 'results/'}"])
 
-              # 3. _merged.json (optional — written only when consolidate ran manually)
-              # FIX qualify-DIM3: consolidate is disabled; _merged.json is never written
-              # by the worker.  Gate changed to: "result files present AND valid JSON"
-              # (at least one non-meta *.json in result_dir is parseable).
+              # 3. Result files valid — at least one result file is valid JSON or is a CSV.
+              # _merged.json is accepted when present (manual consolidation ran).
+              # For CSV-only experiments (suppB, suppB_sc, instability): CSV presence = valid.
               merged_json = result_dir / "_merged.json"
               if merged_json.exists():
-                  merged_ok = True
+                  merged_ok     = True
                   merged_detail = str(merged_json)
               else:
-                  # Accept if ≥1 non-meta JSON result file exists and is valid JSON
-                  json_files = [f for f in result_dir.glob("*.json")
-                                if not f.name.startswith("_")] if result_dir.exists() else []
-                  # Also accept *.csv as valid output (instability produces CSV+figures, no JSON)
-                  csv_result_files = [f for f in result_dir.glob("*.csv")
-                                      if not f.name.startswith("_")] if result_dir.exists() else []
+                  json_files = [f for f in data_files if f.suffix == ".json"]
+                  csv_files  = [f for f in data_files if f.suffix == ".csv"]
                   valid_json = False
-                  for jf in json_files[:3]:  # spot-check first 3
+                  for jf in json_files[:3]:
                       try:
                           json.loads(jf.read_text()); valid_json = True; break
                       except Exception:
                           pass
-                  if not valid_json and csv_result_files:
-                      valid_json = True  # CSV output counts as valid result (e.g. instability)
+                  if not valid_json and csv_files:
+                      valid_json = True   # CSV output counts (suppB, suppB_sc, instability)
                   merged_ok     = valid_json
-                  merged_detail = (f"{len(json_files)} result JSON(s) — no _merged.json (per-shard commit mode)"
-                                   if json_files else (f"{len(csv_result_files)} CSV result(s) — instability mode"
-                                   if csv_result_files else "no result JSON files found"))
+                  merged_detail = (f"{len(json_files)} result JSON(s) — per-shard commit mode"
+                                   if json_files else (f"{len(csv_files)} CSV result(s)"
+                                   if csv_files else "no result files found"))
               checks.append(["result_json_valid", merged_ok, merged_detail])
 
               # 4. _merged.csv (optional — generated by consolidate or tables step)
@@ -738,19 +808,12 @@ jobs:
               checks.append(["csv_or_tables", csv_ok, csv_detail])
 
               # 5. Committed to git (tracked + clean in HEAD)
-              # FIX qualify-DIM5: previously gated on merged_json.exists() — always
-              # False when consolidate is disabled.  Now checks the first non-meta
-              # result file in the subdir (or _merged.json when it exists).
+              # Probe the first result file from data_files (already populated by dim 2).
+              # _merged.json is used when present; otherwise the first data file is probed.
               git_ok = False
               git_detail = "git unavailable"
-              probe_file = merged_json if merged_json.exists() else next(
-                  (f for f in (result_dir.glob("*.json") if result_dir.exists() else [])
-                   if not f.name.startswith("_")),
-                  # Fallback: probe a CSV result file (e.g. instability_analysis.csv)
-                  next(
-                      (f for f in (result_dir.glob("*.csv") if result_dir.exists() else [])
-                       if not f.name.startswith("_")), None)
-              )
+              probe_file = (merged_json if merged_json.exists()
+                            else (data_files[0] if data_files else None))
               if probe_file:
                   rel = str(probe_file)
                   try:
@@ -773,16 +836,25 @@ jobs:
                   git_detail = "no result file to probe"
               checks.append(["committed_to_git", git_ok, git_detail])
 
-              # 6. Figures present (shared across experiments)
-              figs_dir  = OUT_BASE / "figures"
+              # 6. Figures present
+              # Check per-experiment result_dir/figures/ first (written by ci_postprocess.yml),
+              # then fall back to shared OUT_BASE/figures/.
+              per_exp_figs_dir = result_dir / "figures"
+              shared_figs_dir  = OUT_BASE / "figures"
+              figs_dir  = per_exp_figs_dir if per_exp_figs_dir.exists() else shared_figs_dir
               fig_files = (list(figs_dir.glob("*.pdf")) + list(figs_dir.glob("*.png"))
                            if figs_dir.exists() else [])
               checks.append(["figures_present", len(fig_files) > 0,
-                             f"{len(fig_files)} figure(s) in results/figures/"])
+                             f"{len(fig_files)} figure(s) in {figs_dir}"])
 
               # 7. Tables present
-              tables_dir = OUT_BASE / "tables"
-              if not tables_dir.exists() or not any(tables_dir.glob("*.tex")):
+              # Check per-experiment result_dir/tables/ first, then shared paths.
+              per_exp_tables_dir = result_dir / "tables"
+              if per_exp_tables_dir.exists() and any(per_exp_tables_dir.glob("*.tex")):
+                  tables_dir = per_exp_tables_dir
+              elif (OUT_BASE / "tables").exists() and any((OUT_BASE / "tables").glob("*.tex")):
+                  tables_dir = OUT_BASE / "tables"
+              else:
                   tables_dir = REPO_ROOT / "paper" / "tables"
               tex_files = list(tables_dir.glob("*.tex")) if tables_dir.exists() else []
               checks.append(["tables_present", len(tex_files) > 0,

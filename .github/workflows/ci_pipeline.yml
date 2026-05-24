@@ -46,10 +46,8 @@ run-name: >-
   ${{ github.event.inputs.experiment_index || 'scheduled' }}
 
 on:
-  schedule:
-    # Daily at 02:00 UTC — runs slot 0 of the experiment queue
-    - cron: "0 2 * * *"
-
+  # Scheduled runs are kicked off by ci_schedule_simplify.yml (slot 0 only).
+  # This workflow then chains itself slot-by-slot via the next-slot job (C4).
   workflow_dispatch:
     inputs:
       experiment_index:
@@ -1097,6 +1095,9 @@ jobs:
   #
   #  Only runs in full-pipeline mode (not Na/Nf/Nc manual phases).
   #  Only runs when run-checkpoint passes — qualification failure aborts chain.
+  #  always() is required: without it GitHub's skip-propagation kills this job
+  #  whenever any upstream job was skipped (e.g. run-experiment skipped because
+  #  results were already committed), even if run-checkpoint succeeded.
   # ============================================================================
   next-slot:
     name: "C4 · Advance to next slot"
@@ -1121,12 +1122,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Compute next slot using shell arithmetic (GitHub Actions expressions
-          # do not support the + operator; fromJSON(...) + 1 is a syntax error).
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
-
-          # Keep in sync with len(QUEUE) in the resolve job.
-          QUEUE_SIZE=12
+          QUEUE_SIZE=12   # keep in sync with len(QUEUE) in the resolve job
 
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
             echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."
@@ -1144,7 +1141,7 @@ jobs:
             --field noise_levels="${NOISE}" \
             --field fail_on_incomplete="${{ github.event.inputs.fail_on_incomplete || 'false' }}" \
             --field dry_run="${{ github.event.inputs.dry_run || 'false' }}"
-          # Note: force_rerun is intentionally NOT forwarded to the next slot —
-          # only the slot that was explicitly force-rerun should bypass the guard.
+          # force_rerun intentionally NOT forwarded — only the explicitly triggered
+          # slot should bypass the idempotency guard.
 
           echo "Self-dispatch succeeded — slot ${NEXT_SLOT} queued."

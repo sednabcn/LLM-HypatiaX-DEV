@@ -238,145 +238,42 @@ jobs:
           echo "-> Timing: period=${PERIOD}s  cooldown=${COOLDOWN}s  finalize_job=${FINALIZE}min  n_shards=${N_SHARDS_EXP}"
 
   # ==========================================================
-  #  JOB B - dispatch ci_experiment_simplify.yml and wait for it
+  #  JOB B - kick off ci_pipeline.yml at slot 0
   #
-  #  timeout-minutes: 355 = 5 h 55 m
-  #  < GitHub's 6 h (360 min) hard limit, with 5 min to spare.
-  #  The worker deadline (PERIOD_SECONDS=19800 = 5 h 30 m) fits
-  #  inside this with 25 min of headroom for startup + API calls.
+  #  Fire-and-forget: dispatches ci_pipeline.yml for the requested
+  #  slot and exits immediately.  ci_pipeline.yml chains itself
+  #  through all subsequent slots via its own next-slot (C4) job,
+  #  so no polling or self-dispatch is needed here.
   #
-  #  CRASH-STOP: exits 1 on failure/cancelled/timed_out so that
-  #  run-finalize is skipped by GitHub (needs: dependency) and the
-  #  self-dispatch in C3 never fires.
+  #  All run history appears as "HypatiaX pipeline — N" entries
+  #  under ci_pipeline.yml — no duplicate name series.
   # ==========================================================
   run-experiment:
-    name: "Dispatch + wait - ${{ needs.resolve.outputs.experiment }}"
+    name: "Kick off pipeline slot ${{ github.event.inputs.experiment_index || '0' }}"
     needs: [resolve]
     if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 355   # safely under the 360-min GitHub hard cap
+    timeout-minutes: 5
 
     outputs:
-      exp_run_id:          ${{ steps.dispatch.outputs.exp_run_id }}
-      exp_concluded_iso:   ${{ steps.wait_exp.outputs.exp_concluded_iso }}
-      exp_ok:              ${{ steps.wait_exp.outputs.exp_ok }}
+      exp_ok: "true"   # fire-and-forget; finalize always proceeds
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.2.2
-
-      - name: Install PyYAML
-        run: pip install pyyaml --quiet
-
-      # -- B1. Dispatch ci_experiment_simplify.yml ------------------------------------
-      - name: Dispatch experiment
-        id: dispatch
+      - name: Dispatch ci_pipeline.yml
         env:
-          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
-          EXP:               ${{ needs.resolve.outputs.experiment }}
-          N_SHARDS:          ${{ needs.resolve.outputs.n_shards }}
-          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
-          # Paper-quality timeouts from repro.yaml (method_seconds / feynman_pysr_seconds).
-          # Read by run_comparative_suite_benchmark_v2.py BUG-6-FIX env-override block.
-          # Low-RAM machines: method_seconds=900 gives Julia 90 s startup + 600 s search.
-          METHOD_TIMEOUT:       "900"    # repro.yaml timeouts.method_seconds
-          FEYNMAN_TIMEOUT:      "900"    # repro.yaml timeouts.feynman_pysr_seconds (capped at method budget)
-          PYSR_FIT_WALL_TIMEOUT: "1200"  # repro.yaml timeouts.fit_wall_timeout -> DiscoveryConfig
-          PYSR_FIT_GRACE_SECS:   "120"   # repro.yaml timeouts.fit_grace_secs   -> DiscoveryConfig
-          # Workflow filename as registered in .github/workflows/ on GitHub.
-          # GitHub indexes by committed filename — update this after any rename.
-          # Passed as $4 to dispatch_experiment.sh so the script targets this
-          # file instead of its internal default (ci_experiment.yml).
-          EXP_WORKFLOW_FILE: "ci_experiment_simplify.yml"
+          GH_TOKEN:  ${{ secrets.PAT_TOKEN }}
+          EXP_INDEX: ${{ github.event.inputs.experiment_index || '0' }}
+          N_SHARDS:  ${{ needs.resolve.outputs.n_shards }}
+          REPO:      ${{ github.repository }}
         run: |
           set -euo pipefail
-
-          echo "> Dispatching $EXP (n_shards=$N_SHARDS)"
-          echo "  Workflow file : ${EXP_WORKFLOW_FILE}"
-
-          # FIX: dispatch_experiment.sh now:
-          #   1. Captures DISPATCH_ISO *before* gh workflow run (5 s clock-skew guard)
-          #   2. Polls via gh run list (strategy-1: 20×20 s) then API filter
-          #      (strategy-2: 30×20 s = 10 min total) — up from the old 20×15 s = 5 min
-          #   3. Prints EXP_RUN_ID=<id> on stdout so we capture it here directly,
-          #      eliminating the need for a second polling loop in this step.
-          #
-          # Signature: "EXP" "N_SHARDS" "TASK_IDS_OVERRIDE" "WORKFLOW_FILE"
-          DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_experiment.sh \
-            "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE" "$EXP_WORKFLOW_FILE" 2>&1)
-          echo "$DISPATCH_OUTPUT"
-
-          # Extract the run ID emitted by dispatch_experiment.sh as "EXP_RUN_ID=<id>"
-          EXP_RUN_ID=$(echo "$DISPATCH_OUTPUT" | grep '^EXP_RUN_ID=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
-
-          if [[ -z "$EXP_RUN_ID" ]]; then
-            echo "ERROR: dispatch_experiment.sh did not emit EXP_RUN_ID for $EXP"
-            echo "  Workflow queried : ${EXP_WORKFLOW_FILE}"
-            echo "  display_title    : must startswith 'HypatiaX - ${EXP}'"
-            echo "  Hint: check dispatch_experiment.sh output above for polling errors."
-            exit 1
-          fi
-
-          echo "Experiment run ID: $EXP_RUN_ID"
-          echo "exp_run_id=$EXP_RUN_ID" >> "$GITHUB_OUTPUT"
-
-      # -- B2. Wait for ci_experiment_simplify.yml to reach COMPLETED ----------------
-      #
-      #  exp_ok values:
-      #    true      -> completed success  -> Job C proceeds normally
-      #    false     -> failure/cancelled  -> exit 1 halts the chain here
-      #    timed_out -> PERIOD_SECONDS elapsed before GitHub reported done
-      #                 -> treated as a crash; exit 1 halts the chain
-      - name: Wait for experiment to complete
-        id: wait_exp
-        env:
-          GH_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
-          EXP:           ${{ needs.resolve.outputs.experiment }}
-          EXP_RUN_ID:    ${{ steps.dispatch.outputs.exp_run_id }}
-          PERIOD_SECONDS: ${{ needs.resolve.outputs.period_seconds }}  # per-experiment, from resolve job
-        run: |
-          set -euo pipefail
-
-          EXP_DEADLINE=$(( $(date +%s) + PERIOD_SECONDS ))
-
-          while true; do
-            EXP_STATUS=$(gh api \
-              "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
-              --jq '"\(.status) \(.conclusion)"')
-
-            echo "  [exp/$EXP] $(date -u +%H:%M:%SZ)  $EXP_STATUS"
-
-            case "$EXP_STATUS" in
-              "completed success")
-                EXP_CONCLUDED_ISO=$(gh api \
-                  "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
-                  --jq '.updated_at')
-                echo "OK Experiment $EXP succeeded."
-                echo "exp_concluded_iso=$EXP_CONCLUDED_ISO" >> "$GITHUB_OUTPUT"
-                echo "exp_ok=true"                          >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-              "completed failure"|"completed cancelled"|"completed timed_out")
-                EXP_CONCLUDED_ISO=$(gh api \
-                  "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
-                  --jq '.updated_at')
-                echo "FAIL Experiment $EXP concluded with: $EXP_STATUS - ABORTING CHAIN."
-                echo "  Re-trigger manually from slot ${{ github.event.inputs.experiment_index || '0' }} once fixed."
-                echo "exp_concluded_iso=$EXP_CONCLUDED_ISO" >> "$GITHUB_OUTPUT"
-                echo "exp_ok=false"                         >> "$GITHUB_OUTPUT"
-                exit 1   # kills Job B -> GitHub skips Job C -> chain stops
-                ;;
-            esac
-
-            if [[ $(date +%s) -gt $EXP_DEADLINE ]]; then
-              echo "FAIL ${PERIOD_SECONDS}s deadline reached for $EXP with no success - ABORTING CHAIN."
-              echo "exp_concluded_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-              echo "exp_ok=timed_out"                                   >> "$GITHUB_OUTPUT"
-              exit 1   # treat deadline expiry as a crash
-            fi
-
-            sleep 60
-          done
+          echo "Dispatching ci_pipeline.yml for slot=${EXP_INDEX} n_shards=${N_SHARDS}"
+          gh workflow run ci_pipeline.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment_index="${EXP_INDEX}" \
+            --field n_shards="${N_SHARDS}"
+          echo "Dispatched — ci_pipeline.yml will chain through remaining slots autonomously."
 
 
   # ==========================================================
@@ -404,7 +301,7 @@ jobs:
       - name: Dispatch ci_analysis.yml
         id: dispatch_analysis
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
           EXP:      ${{ needs.resolve.outputs.experiment }}
         run: |
           set -euo pipefail
@@ -443,7 +340,7 @@ jobs:
       # -- D2. Poll until complete (up to 60 min)
       - name: Wait for analysis to complete
         env:
-          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:        ${{ secrets.PAT_TOKEN }}
           EXP:             ${{ needs.resolve.outputs.experiment }}
           ANALYSIS_RUN_ID: ${{ steps.dispatch_analysis.outputs.analysis_run_id }}
         run: |
@@ -481,7 +378,7 @@ jobs:
       - name: Self-dispatch next slot
         if: ${{ github.event.inputs.continue_chain != 'false' }}
         env:
-          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:          ${{ secrets.PAT_TOKEN }}
           NEXT_INDEX:        ${{ needs.resolve.outputs.next_index }}
           TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
           TOTAL:             ${{ needs.resolve.outputs.total }}
@@ -497,87 +394,7 @@ jobs:
           fi
 
 
-  # ==========================================================
-  #  JOB C - run-finalize: cooldown + cache clean + self-dispatch
-  #
-  #  timeout-minutes: fromJSON(finalize_timeout_minutes) per-experiment value
-  #  from the resolve job timing table:
-  #    Formula: cooldown_seconds/60 + 10 min buffer
-  #    Range: 13 min (instability) to 40 min (exp2_feynman / exp2).
-  #  All values safely under the 360-min GitHub hard cap.
-  #
-  #  This job only runs when run-experiment succeeds (exp_ok=true).
-  #  If run-experiment exits 1, GitHub's `needs` mechanism skips this
-  #  job entirely, so the self-dispatch in C3 never fires.
-  # ==========================================================
-  run-finalize:
-    name: "Cooldown + next slot - ${{ needs.resolve.outputs.experiment }}"
-    needs: [resolve, run-experiment]
-    if: needs.resolve.outputs.done == 'false' && needs.run-experiment.outputs.exp_ok == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(needs.resolve.outputs.finalize_timeout_minutes) }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4.2.2
-
-      # -- C1. Cooldown -------------------------------------------------------
-      - name: Cooldown
-        run: |
-          COOLDOWN_SECS="${{ needs.resolve.outputs.cooldown_seconds }}"
-          echo "Cooldown: sleeping ${COOLDOWN_SECS}s before dispatching the next experiment ..."
-          sleep "$COOLDOWN_SECS"
-          echo "Cooldown complete."
-
-      # -- C2. Clean Actions cache for completed experiment -------------------
-      - name: Clean experiment cache
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXP:      ${{ needs.resolve.outputs.experiment }}
-          REPO:     ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          echo "Listing caches matching 'checkpoint-worker-${EXP}-' ..."
-          CACHE_IDS=$(gh cache list \
-            --repo "$REPO" \
-            --limit 100 \
-            --json id,key \
-            --jq ".[] | select(.key | startswith(\"checkpoint-worker-${EXP}-\")) | .id" \
-            2>/dev/null || true)
-          if [[ -z "$CACHE_IDS" ]]; then
-            echo "No caches found for experiment '${EXP}' - nothing to delete."
-          else
-            COUNT=$(echo "$CACHE_IDS" | wc -l | tr -d ' ')
-            echo "Deleting ${COUNT} cache(s) for '${EXP}' ..."
-            while IFS= read -r cid; do
-              [[ -z "$cid" ]] && continue
-              gh cache delete "$cid" --repo "$REPO" \
-                && echo "  OK deleted cache $cid" \
-                || echo "  WARN could not delete cache $cid (may have already expired)"
-            done <<< "$CACHE_IDS"
-            echo "Cache clean complete for '${EXP}'."
-          fi
-
-      # -- C3. Self-dispatch next slot ----------------------------------------
-      - name: Self-dispatch next slot
-        if: ${{ github.event.inputs.continue_chain != 'false' }}
-        env:
-          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
-          NEXT_INDEX:        ${{ needs.resolve.outputs.next_index }}
-          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
-          TOTAL:             ${{ needs.resolve.outputs.total }}
-          EXP_OK:            ${{ needs.run-experiment.outputs.exp_ok }}
-        run: |
-          set -euo pipefail
-          if [[ "${EXP_OK}" != "true" ]]; then
-            echo "FAIL Experiment did not succeed (exp_ok=${EXP_OK}) - CHAIN ABORTED."
-            exit 1
-          fi
-          if [[ $NEXT_INDEX -lt $TOTAL ]]; then
-            echo "-> Dispatching next slot: index $NEXT_INDEX"
-            gh workflow run ci_schedule_simplify.yml \
-              --field experiment_index="$NEXT_INDEX" \
-              --field task_ids_override="$TASK_IDS_OVERRIDE"
-          else
-            echo "OK All experiments dispatched - chain complete."
-          fi
+  # NOTE: run-finalize (cooldown + cache-clean + self-dispatch) has been removed.
+  # ci_pipeline.yml chains itself slot-by-slot via its next-slot (C4) job.
+  # Cache cleanup can be added as an optional step inside ci_pipeline.yml's
+  # next-slot job if needed.
