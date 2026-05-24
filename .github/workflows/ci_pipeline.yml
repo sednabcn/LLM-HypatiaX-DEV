@@ -46,8 +46,10 @@ run-name: >-
   ${{ github.event.inputs.experiment_index || 'scheduled' }}
 
 on:
-  # Scheduled runs are kicked off by ci_schedule_simplify.yml (slot 0 only).
-  # This workflow then chains itself slot-by-slot via the next-slot job (C4).
+  schedule:
+    # Daily at 02:00 UTC — runs slot 0 of the experiment queue
+    - cron: "0 2 * * *"
+
   workflow_dispatch:
     inputs:
       experiment_index:
@@ -80,21 +82,24 @@ on:
         default: "0.0,0.5,1.0,5.0,10.0"
 
       dry_run:
-        description: "Dry-run — print commands without executing (true/false)"
+        description: "Dry-run — print commands without executing"
         required: false
         default: "false"
+        type: boolean
 
       fail_on_incomplete:
-        description: "Fail pipeline if checkpoint finds missing tasks (true/false)"
+        description: "Fail pipeline if checkpoint finds missing tasks"
         required: false
         default: "false"
+        type: boolean
 
       force_rerun:
         description: >
           Skip the already-done guard and re-run all stages even if they
-          completed successfully in a prior run (true/false).
+          completed successfully in a prior run.
         required: false
         default: "false"
+        type: boolean
 
 permissions:
   contents: write
@@ -312,7 +317,7 @@ jobs:
               "exp1":               ["hypatiax_defi_benchmark_v3*results*.json",
                                      "protocol_core_noiseless_*.json"],
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json",
-                                     "*portfolio*variance*.json"],
+                                     "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":               ["exp3_nguyen12_*.json", "*nguyen*seed*.json",
@@ -333,7 +338,7 @@ jobs:
           # in ci_runner.yml plan job — used to distinguish PARTIAL from DONE)
           MIN_TASKS = {
               "exp1":               1,    # single-shard, ~1 protocol JSON
-              "exp1b":              5,    # 5 seeds (42,99,123,777,2024) — one comparison_FIXED_* per seed
+              "exp1b":              4,    # 5 seeds × multi-shard
               "exp2_feynman":       1,
               "exp2":               1,
               "exp3":               1,
@@ -1095,9 +1100,6 @@ jobs:
   #
   #  Only runs in full-pipeline mode (not Na/Nf/Nc manual phases).
   #  Only runs when run-checkpoint passes — qualification failure aborts chain.
-  #  always() is required: without it GitHub's skip-propagation kills this job
-  #  whenever any upstream job was skipped (e.g. run-experiment skipped because
-  #  results were already committed), even if run-checkpoint succeeded.
   # ============================================================================
   next-slot:
     name: "C4 · Advance to next slot"
@@ -1122,8 +1124,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Compute next slot using shell arithmetic (GitHub Actions expressions
+          # do not support the + operator; fromJSON(...) + 1 is a syntax error).
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
-          QUEUE_SIZE=12   # keep in sync with len(QUEUE) in the resolve job
+
+          # Keep in sync with len(QUEUE) in the resolve job.
+          QUEUE_SIZE=12
 
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
             echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."
@@ -1141,7 +1147,7 @@ jobs:
             --field noise_levels="${NOISE}" \
             --field fail_on_incomplete="${{ github.event.inputs.fail_on_incomplete || 'false' }}" \
             --field dry_run="${{ github.event.inputs.dry_run || 'false' }}"
-          # force_rerun intentionally NOT forwarded — only the explicitly triggered
-          # slot should bypass the idempotency guard.
+          # Note: force_rerun is intentionally NOT forwarded to the next slot —
+          # only the slot that was explicitly force-rerun should bypass the guard.
 
           echo "Self-dispatch succeeded — slot ${NEXT_SLOT} queued."
