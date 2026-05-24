@@ -1931,11 +1931,45 @@ def main() -> None:
     #              shard from exp3_nguyen12_*.py). results value is a LIST.
     #            Must be checked BEFORE Shape A — both have a "results" key;
     #            only the type (list vs dict) distinguishes them.
+
+    # Always log the raw top-level structure so CI logs contain enough context
+    # to diagnose 0-records failures without needing to fetch the file manually.
+    if isinstance(raw, dict):
+        top_keys = list(raw.keys())
+        print(f"  File top-level type: dict  keys={top_keys}")
+        for probe in ("results", "tests", "equations", "runs", "data"):
+            val = raw.get(probe)
+            if val is not None:
+                if isinstance(val, list):
+                    first = val[0] if val else None
+                    print(f"  raw[{probe!r}]: list  len={len(val)}  "
+                          f"first_item_type={type(first).__name__ if first is not None else 'N/A'}")
+                    if first is not None and isinstance(first, dict):
+                        print(f"  first item keys: {list(first.keys())[:12]}")
+                elif isinstance(val, dict):
+                    first_v = next(iter(val.values()), None)
+                    print(f"  raw[{probe!r}]: dict  len={len(val)}  "
+                          f"first_value_type={type(first_v).__name__ if first_v is not None else 'N/A'}")
+                    if isinstance(first_v, dict):
+                        print(f"  first value keys: {list(first_v.keys())[:12]}")
+                    elif first_v is not None:
+                        print(f"  first value sample: {repr(first_v)[:120]}")
+                break  # only probe the first matching key
+    elif isinstance(raw, list):
+        first = raw[0] if raw else None
+        print(f"  File top-level type: list  len={len(raw)}  "
+              f"first_item_type={type(first).__name__ if first is not None else 'N/A'}")
+        if isinstance(first, dict):
+            print(f"  first item keys: {list(first.keys())[:12]}")
+
     _ARRAY_KEYS = ("results", "equations", "runs", "data")
     if isinstance(raw, dict) and isinstance(raw.get("results"), list):
         # Shape D (results list) — exp3/exp3b Nguyen shard.
         records = [r for r in raw["results"] if isinstance(r, dict)]
         print(f"  Shape D (Nguyen shard): {len(records)} records from 'results' list.")
+        if len(records) == 0 and raw["results"]:
+            non_dict = [type(x).__name__ for x in raw["results"][:5]]
+            print(f"  WARNING: list items are not dicts — types: {non_dict}", file=sys.stderr)
     elif isinstance(raw, dict) and any(
         k != "results" and isinstance(raw.get(k), list) for k in _ARRAY_KEYS
     ):
@@ -1950,23 +1984,11 @@ def main() -> None:
         print(f"  Shape A (_merged.json from merge_shards.py): "
               f"{len(records)} records from 'results' key.")
         if len(records) == 0 and results_dict:
-            # All values in results are non-dict — expose the actual value types
-            # so the CI log shows the real file structure without manual inspection.
             sample_items = list(results_dict.items())[:5]
             print(f"  WARNING: 'results' dict has {len(results_dict)} keys but "
-                  "no dict values — run_analysis will get 0 records.",
-                  file=sys.stderr)
-            print(f"  This usually means the file uses a flat scalar map "
-                  "(e.g. {{equation: r2_value}}) rather than task-record dicts.",
-                  file=sys.stderr)
-            print(f"  Sample entries (key → type: value):", file=sys.stderr)
+                  "no dict values — 0 records.", file=sys.stderr)
             for k, v in sample_items:
-                print(f"    {k!r}: {type(v).__name__} = {repr(v)[:120]}",
-                      file=sys.stderr)
-            print(f"  Full top-level keys: {list(raw.keys())}", file=sys.stderr)
-            print(f"  ACTION: check the worker script that wrote this file and "
-                  "confirm it uses the expected task-record schema.",
-                  file=sys.stderr)
+                print(f"    {k!r}: {type(v).__name__} = {repr(v)[:120]}", file=sys.stderr)
     elif isinstance(raw, dict):
         # Shape B: flat dict — skip _meta / stats / _checkpoint sentinel keys.
         records = [v for k, v in raw.items()
@@ -1974,6 +1996,11 @@ def main() -> None:
                    and not k.startswith("_")
                    and k != "stats"]
         print(f"  Shape B (flat dict): {len(records)} records.")
+        if len(records) == 0:
+            non_dict = [(k, type(v).__name__) for k, v in list(raw.items())[:5]
+                        if not k.startswith("_") and k != "stats"]
+            if non_dict:
+                print(f"  WARNING: non-dict top-level values: {non_dict}", file=sys.stderr)
     elif isinstance(raw, list):
         # Shape C: top-level list.
         records = [r for r in raw if isinstance(r, dict)]
@@ -1984,6 +2011,66 @@ def main() -> None:
 
     print(f"  {len(records)} records loaded.")
     print(f"  Experiment mode: {_get_mode(args.experiment)}")
+
+    # Hard-exit when 0 records are loaded. Continuing into analyse() would
+    # produce an EMPTY_DATASET fatal with no file-structure context; exiting
+    # here ensures the shape dump above is the last thing in the log, making
+    # the root cause immediately visible.
+    if len(records) == 0:
+        print(f"::error::0 records loaded from {merged_path} — cannot run analysis.",
+              file=sys.stderr)
+        print(f"  See file structure dump above to identify the schema mismatch.",
+              file=sys.stderr)
+        print(f"  Expected for exp3/exp3b: {{\"results\": [{{...}}, ...]}}  (list of task dicts)",
+              file=sys.stderr)
+        print(f"  Got shape: see 'File top-level type' and 'raw[...]' lines above.",
+              file=sys.stderr)
+        # Write minimal _analysis.json so downstream steps don't crash on missing file.
+        mode = _get_mode(args.experiment)
+        _empty_mw = {"available": False, "reason": "empty dataset"}
+        analysis = {
+            "experiment":          args.experiment,
+            "experiment_mode":     mode,
+            "n_total":             0,
+            "n_standard":          0,
+            "n_intractable":       0,
+            "r2_success_threshold": R2_SUCCESS_THRESHOLD,
+            "method_summary":      {m: {"n_records": 0, "n_success_flag": 0,
+                                        "success_rate_flag": 0.0, "n_r2_above_80": 0,
+                                        "r2_above_80_rate": 0.0, "median_test_r2": None,
+                                        "mean_test_r2": None, "n_finite_r2": 0}
+                                    for m in METHODS},
+            "mann_whitney":        {"hybrid_vs_llm": _empty_mw,
+                                    "hybrid_vs_nn":  _empty_mw,
+                                    "nn_vs_llm":     _empty_mw},
+            "coverage_gaps":       [],
+            "n_coverage_gaps":     0,
+            "by_difficulty":       {},
+            "by_formula_type":     {},
+            "extrapolation_gap_summary": {m: {"mean_gap": None, "median_gap": None, "n": 0}
+                                          for m in METHODS},
+            "timing":              {m: {"mean_s": None, "median_s": None,
+                                        "total_s": None, "n": 0, "n_timed_out": 0}
+                                    for m in METHODS},
+            "hybrid_decisions":    {},
+            "hybrid_vs_nn_headtohead": {"n_equations_both_finite": 0, "hybrid_wins": 0,
+                                        "nn_wins": 0, "tied": 0, "hybrid_win_rate": None},
+            "pysr_fit_params":     pysr_fit_params,
+            "fatal_conditions": [
+                "EMPTY_DATASET: 0 records loaded from input file. "
+                f"Experiment={args.experiment!r} mode={mode!r}. "
+                f"Input file: {merged_path}. "
+                "See CI log for file structure dump (lines starting with "
+                "'File top-level type' and 'raw[...]' above this error)."
+            ],
+        }
+        analysis_path = output_dir / "_analysis.json"
+        report_path   = output_dir / "_report.md"
+        with open(analysis_path, "w", encoding="utf-8") as fh:
+            json.dump(analysis, fh, indent=2, default=str)
+        write_report(analysis, report_path)
+        print(f"  Wrote diagnostic _analysis.json and _report.md to {output_dir}")
+        sys.exit(0)  # let ci_analysis.yml abort step handle the fatal condition
 
     if not _SCIPY_OK:
         print("WARNING: scipy not available — Mann-Whitney tests will be skipped.", file=sys.stderr)
