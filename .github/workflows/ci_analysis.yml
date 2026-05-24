@@ -413,7 +413,33 @@ jobs:
               print("::error::Input JSON contains 0 task records (tried all shapes).")
               print(f"  File: {path}")
               print(f"  Top-level keys: {list(data.keys()) if isinstance(data, dict) else '(list)'}")
+              if isinstance(data, dict):
+                  for probe_key in ("results", "tests", "equations"):
+                      probe = data.get(probe_key)
+                      if probe is not None:
+                          if isinstance(probe, dict):
+                              first_val = next(iter(probe.values()), None)
+                              print(f"  data[{probe_key!r}] is a dict with {len(probe)} keys.")
+                              print(f"  First value type: {type(first_val).__name__}  sample: {repr(first_val)[:200]}")
+                          elif isinstance(probe, list):
+                              first_val = probe[0] if probe else None
+                              print(f"  data[{probe_key!r}] is a list with {len(probe)} items.")
+                              print(f"  First item type: {type(first_val).__name__ if first_val else 'N/A'}  sample: {repr(first_val)[:200]}")
+                          break
               sys.exit(1)
+          if isinstance(data, dict) and isinstance(data.get("results"), dict):
+              non_dict_vals = [(k, type(v).__name__)
+                               for k, v in list(data["results"].items())[:10]
+                               if not isinstance(v, dict)]
+              if non_dict_vals:
+                  print("::error::Shape A 'results' dict has non-dict values — run_analysis.py will yield 0 records.")
+                  print(f"  File: {path}")
+                  print(f"  Sample non-dict entries (key: type):")
+                  for k, t in non_dict_vals[:5]:
+                      print(f"    {k!r}: {t}")
+                  print("  For exp3/exp3b the shard must have {results:[{...},...]} (list).")
+                  print("  Check the worker output schema.")
+                  sys.exit(1)
           print(f"Input JSON OK - {label}.")
           SANITY_PYEOF
 

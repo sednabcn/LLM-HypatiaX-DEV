@@ -1945,9 +1945,28 @@ def main() -> None:
         print(f"  Shape D (array key '{_k}'): {len(records)} records.")
     elif isinstance(raw, dict) and isinstance(raw.get("results"), dict):
         # Shape A: the "results" value is the task-keyed dict.
-        records = [v for v in raw["results"].values() if isinstance(v, dict)]
+        results_dict = raw["results"]
+        records = [v for v in results_dict.values() if isinstance(v, dict)]
         print(f"  Shape A (_merged.json from merge_shards.py): "
               f"{len(records)} records from 'results' key.")
+        if len(records) == 0 and results_dict:
+            # All values in results are non-dict — expose the actual value types
+            # so the CI log shows the real file structure without manual inspection.
+            sample_items = list(results_dict.items())[:5]
+            print(f"  WARNING: 'results' dict has {len(results_dict)} keys but "
+                  "no dict values — run_analysis will get 0 records.",
+                  file=sys.stderr)
+            print(f"  This usually means the file uses a flat scalar map "
+                  "(e.g. {{equation: r2_value}}) rather than task-record dicts.",
+                  file=sys.stderr)
+            print(f"  Sample entries (key → type: value):", file=sys.stderr)
+            for k, v in sample_items:
+                print(f"    {k!r}: {type(v).__name__} = {repr(v)[:120]}",
+                      file=sys.stderr)
+            print(f"  Full top-level keys: {list(raw.keys())}", file=sys.stderr)
+            print(f"  ACTION: check the worker script that wrote this file and "
+                  "confirm it uses the expected task-record schema.",
+                  file=sys.stderr)
     elif isinstance(raw, dict):
         # Shape B: flat dict — skip _meta / stats / _checkpoint sentinel keys.
         records = [v for k, v in raw.items()
