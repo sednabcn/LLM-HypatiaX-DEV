@@ -4,6 +4,11 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HypatiaX  ·  Consolidate per-shard partial JSONs → final experiment result
 
+MERGE_REQUIRED experiments (called by ci_runner.yml consolidate job OR
+ci_analysis.yml inline): exp1b, exp3b, exp2_feynman.
+All other experiments are single-worker and do NOT use this script in CI
+(exp3 uses a direct shard-file read path in ci_analysis.yml).
+
 Called by ci_experiment.yml consolidate job (Job 3):
 
     python .github/scripts/merge_shards.py \\
@@ -179,8 +184,12 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── exp3: Nguyen-12 SEED=42 ───────────────────────────────────────────────
-    # exp3_nguyen12_hybrid50v_02.py --seed 42 writes its own JSON schema
-    # (not the protocol_core wrapper). Globs unchanged; pysr mode in run_analysis.py
+    # Single-worker experiment — merge_shards.py is NOT called by ci_analysis.yml.
+    # ci_runner.yml commits exp3_nguyen12_seed42.json directly; ci_analysis.yml
+    # reads it via the shard-file fallback path (no _merged.json produced).
+    # This EXP_CONFIG entry supports manual standalone invocations only.
+    # exp3_nguyen12_hybrid50v_02.py writes its own JSON schema under array_key
+    # "results" (not the protocol_core wrapper). pysr mode in run_analysis.py
     # means no method-name normalisation is applied.
     "exp3": dict(
         result_subdir="extrapolation",
@@ -197,7 +206,8 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── exp3b: Nguyen-12 seeds 99/123/777/2024 ────────────────────────────────
-    # 4-worker experiment → merge_shards.py is called → _merged.json produced.
+    # 4-worker experiment → merge_shards.py IS called by ci_runner.yml consolidate
+    # job → _merged.json committed to repo → ci_analysis.yml reads it directly.
     # Each shard writes *nguyen*seed<N>*.json via exp3_nguyen12_hybrid50v_02.py.
     "exp3b": dict(
         result_subdir="extrapolation/multi_seed",

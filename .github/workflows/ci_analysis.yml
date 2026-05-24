@@ -6,19 +6,22 @@
 #    files to the repository.  It is the ONLY stage that may perform statistical
 #    analysis.  Workers MUST NOT run statistical tests.
 #
-#  Single-worker vs multi-worker experiments:
+#  Experiments that require merge_shards.py:
 #    exp1b, exp3b  — 4 workers each.  ci_runner.yml runs merge_shards.py in its
 #                    consolidate job and commits _merged.json to the repo.
 #                    ci_analysis.yml reads that _merged.json directly.
-#    exp2_feynman  — 1 worker.  Worker commits benchmark_results.json (raw
-#                    runner output).  ci_analysis.yml runs merge_shards.py
-#                    inline to produce _merged.json with the ablation schema
-#                    (hypatia/pysr_only keys + extrap_r2_far) that
-#                    analyse_ablation() requires.  No separate consolidation
-#                    job needed or used.
+#    exp2_feynman  — 1 worker, but requires inline merge to normalise the
+#                    protocol_core_*.json wrapper shape (tests:[...]) into
+#                    canonical per-equation records (multi_method mode).
+#                    ci_analysis.yml runs merge_shards.py inline here.
 #    all others    — 1 worker.  Worker commits a shard result file directly.
 #                    ci_analysis.yml reads that file as-is (run_analysis.py
 #                    accepts shapes A/B/C).  No merging needed or performed.
+#
+#  MERGE_REQUIRED = {exp1b, exp3b, exp2_feynman}
+#  All other experiments (including exp3, exp3b) use their committed shard
+#  file directly — exp3/exp3b _merged.json is produced by ci_runner.yml and
+#  read by the artifact/committed path, not re-merged here.
 #
 #  Responsibilities:
 #    - Mann-Whitney U tests (per-method, cross-method)
@@ -147,7 +150,9 @@ jobs:
       # ci_runner.yml already ran merge_shards.py and committed _merged.json.
       # Download that artifact here when source_run_id is provided; fall back
       # to the committed copy when running manually without source_run_id.
-      # All other experiments are single-worker — no artifact download needed.
+      # exp2_feynman is single-worker but uses an inline merge step below.
+      # All other experiments (including exp3) are single-worker — no artifact
+      # download or merge needed; committed shard file is used directly.
       - name: Download merged artifact (exp1b / exp3b only)
         if: >
           (github.event.inputs.experiment == 'exp1b' ||
@@ -258,10 +263,11 @@ jobs:
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
       # -----------------------------------------------------------------------
-      # exp2_feynman — single worker, ablation schema required.
-      # The worker commits benchmark_results.json (raw runner output).
-      # run_analysis.py in ablation mode needs hypatia/pysr_only keys and
-      # extrap_r2_far — produced only by merge_shards.py normalisation.
+      # exp2_feynman — single worker, but inline merge required.
+      # The worker commits protocol_core_noiseless_*.json (Shape P {tests:[...]}).
+      # run_analysis.py in multi_method mode needs canonical per-equation records
+      # (pure_llm / neural_network / hybrid keys) — produced by
+      # merge_shards.py _normalise_protocol_record().
       # Run merge_shards.py inline here; no separate consolidation job needed.
       - name: Produce _merged.json for exp2_feynman (inline merge)
         if: github.event.inputs.experiment == 'exp2_feynman'
@@ -340,6 +346,13 @@ jobs:
           fi
 
           # Sanity-check: valid JSON with at least one record.
+          # Handles all shapes merge_shards.py and the workers produce:
+          #   A. {"results": dict}          — legacy merge_shards shape A key
+          #   B. dict of task records       — _merged.json keyed by equation_id
+          #   C. list of task records       — flat list from some workers
+          #   D. {array_key: [...]}         — wrapper with known array key
+          #      (covers exp3/exp3b Nguyen: {"results": [...]})
+          #   P. {"tests": [...]}           — protocol_core shape (pre-merge)
           python3 -c "
           import json, sys
           path = '${INPUT_JSON}'
@@ -348,21 +361,40 @@ jobs:
           except Exception as e:
               print(f'::error::Input JSON is not valid: {e}')
               sys.exit(1)
-          if isinstance(data, dict) and isinstance(data.get('results'), dict):
-              n = len(data['results'])
-              label = f'{n} records (shape A)'
-          elif isinstance(data, dict):
-              n = sum(1 for k, v in data.items()
-                      if isinstance(v, dict) and not k.startswith('_') and k != 'stats')
-              label = f'{n} records (shape B)'
-          elif isinstance(data, list):
+          n = 0
+          label = ''
+          if isinstance(data, list):
               n = len(data)
-              label = f'{n} records (shape C)'
+              label = f'{n} records (shape C — top-level list)'
+          elif isinstance(data, dict):
+              # Shape P: protocol_core wrapper {tests:[...]}
+              if isinstance(data.get('tests'), list):
+                  n = len(data['tests'])
+                  label = f'{n} records (shape P — protocol tests[])'
+              # Shape D: any other array-key wrapper e.g. {results:[...]} from Nguyen
+              elif any(isinstance(data.get(k), list) for k in ('results','equations','runs','data')):
+                  for k in ('results','equations','runs','data'):
+                      if isinstance(data.get(k), list):
+                          n = len(data[k])
+                          label = f'{n} records (shape D — {k}[])'
+                          break
+              # Shape A: results is a dict (legacy merge_shards)
+              elif isinstance(data.get('results'), dict):
+                  n = len(data['results'])
+                  label = f'{n} records (shape A — results dict)'
+              else:
+                  # Shape B: dict of task records keyed by equation_id
+                  n = sum(1 for k, v in data.items()
+                          if isinstance(v, dict) and not k.startswith('_')
+                          and k not in ('stats','_meta','_checkpoint'))
+                  label = f'{n} records (shape B — dict of task records)'
           else:
               print(f'::error::Unexpected top-level type: {type(data).__name__}')
               sys.exit(1)
           if n == 0:
-              print('::error::Input JSON contains 0 task records.')
+              print(f'::error::Input JSON contains 0 task records (tried all shapes).')
+              print(f'  File: {path}')
+              print(f'  Top-level keys: {list(data.keys()) if isinstance(data, dict) else "(list)"}')
               sys.exit(1)
           print(f'Input JSON OK — {label}.')
           "
