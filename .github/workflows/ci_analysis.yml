@@ -2,35 +2,16 @@
 #  ci_analysis.yml - HypatiaX post-consolidation statistical analysis
 #
 #  Architecture contract (read before editing):
-#    This workflow runs AFTER ci_runner.yml has completed and committed result
-#    files to the repository.  It is the ONLY stage that may perform statistical
-#    analysis.  Workers MUST NOT run statistical tests.
+#    This workflow runs AFTER ci_runner.yml has completed and
+#    committed result files to the repository.  It is the ONLY stage that may
+#    perform statistical analysis.  Workers MUST NOT run statistical tests;
+#    see ci_runner.yml for the architectural rationale.
 #
-#  Experiments that require merge_shards.py:
-#    exp1b, exp3b  — 4 workers each.  ci_runner.yml runs merge_shards.py in its
-#                    consolidate job and commits _merged.json to the repo.
-#                    ci_analysis.yml reads that _merged.json directly.
-#    exp1, exp2, exp2_feynman, extrap, hybrid_all_domains, suppB, suppB_sc
-#                  — 1 worker each, but require inline merge because the worker
-#                    commits protocol_core_*.json (Shape P: {tests:[...]}) or
-#                    another shape that run_analysis.py cannot read natively.
-#                    ci_analysis.yml runs merge_shards.py inline to produce
-#                    _merged.json before the locate and analysis steps.
-#                    FIX: previously only exp2_feynman had inline merge; all
-#                    other protocol-file experiments passed the raw shard file
-#                    directly to run_analysis.py, which has no Shape P handler,
-#                    causing EMPTY_DATASET on every run for those experiments.
-#    exp3          — 1 worker.  Commits *nguyen*seed42*.json (Shape D results:[]).
-#                    run_analysis.py Shape D handles it directly; no merge needed.
-#    suppA         — 1 worker.  Commits extrapolation_*enhanced*.json (Shape D).
-#                    run_analysis.py Shape D handles it directly; no merge needed.
-#
-#  MERGE_REQUIRED (inline, this workflow) = {exp1, exp2, exp2_feynman, extrap,
-#                                             hybrid_all_domains, suppB, suppB_sc}
-#  MERGE_REQUIRED (ci_runner.yml, pre-committed) = {exp1b, exp3b}
-#  All other experiments (including exp3, exp3b) use their committed shard
-#  file directly — exp3/exp3b _merged.json is produced by ci_runner.yml and
-#  read by the artifact/committed path, not re-merged here.
+#  NOTE: ci_runner.yml has NO consolidate job — each worker shard
+#    commits its own result files directly to the repo.  _merged.json is NOT
+#    automatically produced; run ci_consolidate_experiment.yml manually if a
+#    merged view is needed.  ci_analysis.yml therefore falls back to the
+#    committed shard files when _merged.json is absent.
 #
 #  Responsibilities:
 #    - Mann-Whitney U tests (per-method, cross-method)
@@ -43,24 +24,44 @@
 #    - Markdown report (_report.md) and structured output (_analysis.json)
 #    - Fatal-condition abort (exits non-zero; PR merge blocked by branch protection)
 #
+#  Inputs:
+#    _merged.json ONLY.  Never reads raw shard artifacts.
+#
 #  Outputs committed to master:
 #    hypatiax/data/results/{result_subdir}/_report.md
 #    hypatiax/data/results/{result_subdir}/_analysis.json
 #
 #  Triggering modes:
 #    1. Scheduled chain (workflow_dispatch from ci_schedule_all.yml): called
-#       automatically after ci_runner.yml completes.  Passes experiment and
-#       source_run_id; result_subdir is derived from experiment name.
+#       automatically after ci_runner.yml completes.  Passes
+#       experiment and source_run_id; result_subdir is derived from the
+#       checkpoint.
 #    2. Manual (workflow_dispatch): re-runs analysis on already-committed
-#       result files.  Requires experiment; result_subdir derived automatically.
+#       result files.  Requires experiment; result_subdir is optional (derived
+#       from experiment name if omitted); source_run_id optional.
 #
-#  COMMIT RESILIENCE:
-#    Uses save-to-/tmp → git reset --hard → restore pattern instead of
-#    git pull --rebase --autostash.  Hard reset unconditionally wipes untracked
-#    ghost files left by prior failed runs, eliminating the recurring
-#    "would be overwritten by merge / Aborting" error.  Safe because all
-#    experiment result files are committed to master by ci_runner.yml before
-#    this workflow ever runs.
+#  WHY ci_analysis.yml IS A STANDALONE WORKFLOW (not workflow_run):
+#    GitHub does NOT fire the workflow_run event when the triggering workflow
+#    was itself started by another workflow via gh workflow run / workflow_dispatch
+#    (chained dispatch).  Because ci_schedule_all.yml dispatches
+#    ci_runner.yml programmatically, a workflow_run trigger on
+#    ci_runner.yml would never fire in the normal scheduled
+#    pipeline.  ci_schedule_all.yml therefore dispatches ci_analysis.yml
+#    explicitly from its run-finalize job after ci_runner.yml
+#    completes.  The standalone design also allows manual reruns without
+#    re-running the expensive experiment workers.
+#
+#  PURGE RESILIENCE:
+#    purge_old_runs in ci_runner.yml and ci_schedule_all.yml can
+#    delete a completed ci_runner.yml run (and its shard artifact)
+#    before a queued ci_analysis.yml job has had a chance to start and download
+#    it.  To handle this, the "Download consolidated artifact" step uses
+#    continue-on-error: true.  The "Locate _merged.json" step falls back to
+#    the committed copy in the repository, which is always present because
+#    ci_runner.yml worker shards commit their result files to
+#    master directly before ci_analysis.yml is ever dispatched.
+#    In manual mode, omit source_run_id entirely to use the committed files
+#    directly (the download step is skipped when source_run_id is blank).
 # ==============================================================================
 
 name: "HypatiaX - analysis"
@@ -68,6 +69,9 @@ run-name: "HypatiaX - analysis . ${{ github.event.inputs.experiment }}"
 
 # -- Triggers ------------------------------------------------------------------
 on:
+
+  # Dispatched explicitly by ci_schedule_all.yml after ci_experiment.yml
+  # completes, or run manually to re-analyse a committed _merged.json.
   workflow_dispatch:
     inputs:
 
@@ -95,18 +99,22 @@ on:
         default: ""
 
       source_run_id:
-        description: "ci_runner.yml run ID to download the merged artifact from (exp1b/exp3b only; leave blank to use committed files)"
+        description: "ci_runner.yml run ID to download the shard artifact from (leave blank to use committed result files)"
         required: false
         default: ""
 
 # -- Permissions ---------------------------------------------------------------
 permissions:
   contents: write   # commit report + analysis outputs
-  actions:  read    # download artifacts from ci_runner.yml (exp1b/exp3b)
+  actions:  read    # download artifacts from triggering workflow run
 
 # -- Global env ----------------------------------------------------------------
 env:
   OUT_BASE: hypatiax/data/results
+  # PySR fit timeout parameters — must match the values used by ci_experiment.yml
+  # workers.  Sourced from repository variables so both workflows share one
+  # definition.  Passed explicitly to run_analysis.py so it can record them in
+  # _analysis.json for reproducibility (not used to drive PySR here).
   PYSR_FIT_WALL_TIMEOUT: ${{ vars.PYSR_FIT_WALL_TIMEOUT }}
   PYSR_FIT_GRACE_SECS:   ${{ vars.PYSR_FIT_GRACE_SECS }}
 
@@ -119,7 +127,7 @@ jobs:
   analysis:
     name: "Analysis - ${{ github.event.inputs.experiment }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 15   # pip cache hit: ~3 min; cache miss: ~8 min; analysis itself: <10s
 
     if: github.event_name == 'workflow_dispatch'
 
@@ -151,82 +159,73 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           # scipy required for Mann-Whitney U tests (this is the ONLY job
-          # that installs scipy; workers must not use it).
+          # that installs scipy; workers and consolidate must not use it).
           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
 
       # -----------------------------------------------------------------------
-      # exp1b and exp3b are the ONLY multi-worker experiments.
-      # ci_runner.yml already ran merge_shards.py and committed _merged.json.
-      # Download that artifact here when source_run_id is provided; fall back
-      # to the committed copy when running manually without source_run_id.
-      # All other experiments use the inline merge step below (single-worker)
-      # or the direct shard-file path (exp3, suppA).
-      # All other experiments (including exp3) are single-worker — no artifact
-      # download or merge needed; committed shard file is used directly.
-      - name: Download merged artifact (exp1b / exp3b only)
+      # Download shard artifact from the ci_runner.yml run.
+      # source_run_id is provided by ci_schedule_all.yml; omit when
+      # re-running analysis manually against already-committed files.
+      # instability has no _merged.json — skip download entirely.
+      #
+      # PURGE RESILIENCE: continue-on-error: true prevents this step from
+      # hard-failing the job when the referenced run has been deleted by
+      # purge_old_runs before this queued ci_analysis.yml job started.
+      # The "Locate _merged.json" step below falls back to the committed copy.
+      - name: Download consolidated artifact
         if: >
-          (github.event.inputs.experiment == 'exp1b' ||
-           github.event.inputs.experiment == 'exp3b') &&
-          github.event.inputs.source_run_id != ''
+          github.event.inputs.source_run_id != '' &&
+          github.event.inputs.experiment != 'instability'
         continue-on-error: true
         id: download_artifact
         uses: actions/download-artifact@v4
         with:
           run-id:         ${{ github.event.inputs.source_run_id }}
           github-token:   ${{ secrets.GITHUB_TOKEN }}
-          path:           merged_artifact
-          pattern:        "merged-${{ github.event.inputs.experiment }}-*"
+          path:           consolidated_artifact
+          pattern:        "consolidated-${{ github.event.inputs.experiment }}-*"
           merge-multiple: true
 
       # -----------------------------------------------------------------------
       - name: Log artifact download outcome
         if: >
-          (github.event.inputs.experiment == 'exp1b' ||
-           github.event.inputs.experiment == 'exp3b') &&
-          github.event.inputs.source_run_id != ''
+          github.event.inputs.source_run_id != '' &&
+          github.event.inputs.experiment != 'instability'
         run: |
           if [[ "${{ steps.download_artifact.outcome }}" == "success" ]]; then
             echo "Artifact downloaded from run ${{ github.event.inputs.source_run_id }}."
           else
-            echo "::warning::Artifact download failed — falling back to committed _merged.json."
+            echo "::warning::Artifact download failed (run may have been purged by purge_old_runs)."
+            echo "  Falling back to committed _merged.json in the repository."
+            echo "  source_run_id=${{ github.event.inputs.source_run_id }}"
           fi
 
       # -----------------------------------------------------------------------
-      # instability has no _merged.json and no method analysis.
-      # Write stub outputs and short-circuit all downstream steps.
+      # so all downstream steps (locate, analysis, verify) are skipped.
       - name: Short-circuit for instability experiment
         if: github.event.inputs.experiment == 'instability'
         id: short_circuit
+        env:
+          SUB: figures
         run: |
           set -euo pipefail
           OUT_DIR="${OUT_BASE}/figures"
           mkdir -p "${OUT_DIR}"
-          python3 -c '
-          import json, os
-          out = os.environ["OUT_BASE"] + "/figures"
-          stub = {
-            "experiment": "instability",
-            "experiment_mode": "instability",
-            "n_total": 0,
-            "fatal_conditions": [
-              "WARN_INSTABILITY_NO_MERGED_JSON: instability outputs are CSVs/figures only; statistical method analysis was skipped."
-            ]
-          }
-          open(out + "/_analysis.json", "w").write(json.dumps(stub, indent=2))
-          open(out + "/_report.md", "w").write(
-            "# HypatiaX Analysis Report -- instability\n\n"
-            "Instability experiment: method comparison analysis not applicable.\n"
-            "See figures/instability_analysis.csv for results.\n"
-          )
-          print("Stub outputs written -- instability short-circuit done.")
-          '
+          python3 -c 'import json,os; out=os.environ["OUT_BASE"]+"/figures"; stub={"experiment":"instability","experiment_mode":"instability","n_total":0,"fatal_conditions":["WARN_INSTABILITY_NO_MERGED_JSON: instability outputs are CSVs/figures only; statistical method analysis was skipped."]}; open(out+"/_analysis.json","w").write(json.dumps(stub,indent=2)); open(out+"/_report.md","w").write("# HypatiaX Analysis Report -- instability\n\nInstability experiment: method comparison analysis not applicable.\nSee figures/instability_analysis.csv for results.\n"); print("Stub outputs written -- instability short-circuit done.")'
           echo "result_subdir=figures" >> "$GITHUB_OUTPUT"
-          echo "exp_id=instability"    >> "$GITHUB_OUTPUT"
+          echo "exp_id=instability" >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # Resolve exp_id and result_subdir from workflow_dispatch inputs.
-      # Single source of truth for result_subdir paths — mirrors
-      # run_analysis.py RESULT_SUBDIR and ci_runner.yml plan meta step.
+      - name: List downloaded artifact tree
+        if: github.event.inputs.experiment != 'instability'
+        run: |
+          echo "=== consolidated_artifact tree ==="
+          find consolidated_artifact -type f 2>/dev/null | sort || echo "(empty or not downloaded)"
+
+      # -----------------------------------------------------------------------
+      # Resolve exp_id and result_subdir from:
+      #   1. _checkpoint.json in the downloaded artifact (authoritative)
+      #   2. workflow_dispatch inputs (fallback / manual mode)
       - name: Resolve experiment metadata
         if: github.event.inputs.experiment != 'instability'
         id: meta
@@ -234,17 +233,74 @@ jobs:
           DISPATCH_EXP: ${{ github.event.inputs.experiment }}
           DISPATCH_SUB: ${{ github.event.inputs.result_subdir }}
         run: |
-          set -euo pipefail
+          set -euxo pipefail
 
-          EXP="${DISPATCH_EXP}"
+          CKPT=$(find consolidated_artifact -name "_checkpoint.json" 2>/dev/null | head -1 || true)
 
-          # Derive result_subdir from experiment name when not provided.
-          if [[ -n "${DISPATCH_SUB}" ]]; then
-            SUB="${DISPATCH_SUB}"
-          else
-            SUB=$(EXP_ID="${EXP}" python3 -c "
+          EXP=""
+          SUB=""
+
+          if [[ -n "$CKPT" ]]; then
+            echo "Found checkpoint: $CKPT"
+            # BUG FIX: pass checkpoint path via CKPT_PATH env var rather than
+            # interpolating $CKPT directly into the python -c "..." string.
+            # Shell string substitution inside double-quoted here-strings breaks
+            # under set -euo pipefail when the path contains special characters,
+            # and the interpolated value is also vulnerable to code injection.
+            # Using an env var is the canonical safe pattern for this.
+            EXP=$(CKPT_PATH="$CKPT" python -c "
+          import json, os
+          d = json.load(open(os.environ['CKPT_PATH']))
+          v = d.get('experiment') or d.get('exp_id') or ''
+          print(v.strip())
+          ")
+            # Derive result_subdir from experiment name if not in checkpoint.
+            SUB=$(CKPT_PATH="$CKPT" python -c "
+          import json, os
+          d = json.load(open(os.environ['CKPT_PATH']))
+          v = d.get('result_subdir') or ''
+          if not v:
+              # Derive result_subdir from experiment name using the canonical mapping.
+              exp = d.get('experiment') or d.get('exp_id') or ''
+              # Canonical mapping — single source of truth for result_subdir paths.
+              # Must stay in sync with ci_experiment.yml plan meta step and
+              # run_analysis.py RESULT_SUBDIR dict.
+              # exp1_ablation removed: no worker, no result_subdir in CI.
+              mapping = {
+                  # ISSUE 1 FIX: ci_runner.yml plan writes exp1 results to
+                  # .../noiseless/defi/ (line: RESULT_SUBDIR="comparison_results/noise-noiseless/noiseless/defi")
+                  # The previous mapping stopped one level short (.../noiseless/),
+                  # so _merged.json was never found for exp1 in automated runs.
+                  'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+                  'exp1b':              'comparison_results/noise-noiseless/15',
+                  'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+                  'exp2':               'comparison_results/feynman-tests/exp2_multi',
+                  'exp3':               'extrapolation',
+                  'exp3b':              'extrapolation/multi_seed',
+                  'suppA':              'hybrid_pysr/defi',
+                  'suppB':              'comparison_results/feynman-tests/noise-sweep',
+                  'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+                  'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+                  'instability':        'figures',
+                  'extrap':             'comparison_results/extrapolation',
+              }
+              v = mapping.get(exp, exp)
+          print(v.strip())
+          ")
+          fi
+
+          # Fall back to dispatch inputs (manual mode or checkpoint missing key).
+          EXP="${EXP:-${DISPATCH_EXP}}"
+          SUB="${SUB:-${DISPATCH_SUB}}"
+
+          # Derive result_subdir from experiment name when DISPATCH_SUB is blank.
+          # BUG FIX: pass EXP via env var (EXP_ID) not shell interpolation inside
+          # the python -c string — interpolation breaks under set -euo pipefail.
+          if [[ -z "$SUB" && -n "$EXP" ]]; then
+            SUB=$(EXP_ID="$EXP" python -c "
           import os
           mapping = {
+              # ISSUE 1 FIX: /defi leaf added — must match ci_runner.yml plan RESULT_SUBDIR.
               'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
@@ -263,99 +319,21 @@ jobs:
           ")
           fi
 
-          if [[ -z "${EXP}" || -z "${SUB}" ]]; then
+          if [[ -z "$EXP" || -z "$SUB" ]]; then
             echo "::error::Cannot resolve experiment or result_subdir."
+            echo "  Provide 'experiment' input (result_subdir is derived automatically)."
             exit 1
           fi
 
-          echo "exp_id=${EXP}"        >> "$GITHUB_OUTPUT"
-          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
+          echo "exp_id=${EXP}"         >> "$GITHUB_OUTPUT"
+          echo "result_subdir=${SUB}"  >> "$GITHUB_OUTPUT"
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
       # -----------------------------------------------------------------------
-      # FIX: Inline merge for ALL single-worker experiments whose workers emit
-      # protocol_core_*.json (Shape P {tests:[...]}) or any other shard shape
-      # that merge_shards.py knows how to normalise.
-      #
-      # ROOT CAUSE OF ALL NON-EXP1B/EXP3B FAILURES:
-      #   run_analysis.py has no Shape P handler.  When ci_analysis.yml passed
-      #   a raw protocol_core_*.json directly as --merged-json, run_analysis.py
-      #   fell through every shape branch (A/B/C/D) to Shape B (flat dict),
-      #   found 0 dict values under the top-level "tests" key, and emitted
-      #   EMPTY_DATASET.  The sanity check in the locate step counted Shape P
-      #   records correctly, masking the mismatch until run_analysis.py ran.
-      #
-      # FIX: run merge_shards.py inline for every single-worker experiment
-      # that requires normalisation, producing a canonical _merged.json that
-      # run_analysis.py can read via its existing Shape A/D handlers.
-      #
-      # Experiments covered by this step:
-      #   exp1           — protocol_core_noiseless_*.json  (Shape P, standard mode)
-      #   exp2           — protocol_core_noiseless_*.json  (Shape P, multi_method)
-      #   exp2_feynman   — protocol_core_noiseless_*.json  (Shape P, multi_method)
-      #   extrap         — protocol_core_noisy_*.json      (Shape P, ood mode)
-      #   hybrid_all_domains — hybrid_llm_nn_all_domains_*.json (Shape B/D)
-      #   suppB          — noise_sweep_*.json or protocol_core_*.json
-      #   suppB_sc       — sample_complexity_*.json or protocol_core_*.json
-      #
-      # Experiments intentionally excluded (already work without this step):
-      #   exp1b / exp3b  — _merged.json committed by ci_runner.yml consolidation
-      #   exp3           — Nguyen shard (*nguyen*seed42*.json, Shape D results:[])
-      #                    run_analysis.py Shape D handles it directly
-      #   suppA          — extrapolation_*enhanced*.json (Shape D results:[])
-      #                    run_analysis.py Shape D handles it directly
-      #   instability    — CSV-only; short-circuited before this step
-      - name: Produce _merged.json (inline merge for single-worker experiments)
-        if: >
-          github.event.inputs.experiment == 'exp1'              ||
-          github.event.inputs.experiment == 'exp2'              ||
-          github.event.inputs.experiment == 'exp2_feynman'      ||
-          github.event.inputs.experiment == 'extrap'            ||
-          github.event.inputs.experiment == 'hybrid_all_domains'||
-          github.event.inputs.experiment == 'suppB'             ||
-          github.event.inputs.experiment == 'suppB_sc'
-        env:
-          EXP: ${{ steps.meta.outputs.exp_id }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          set -euo pipefail
-
-          OUT_DIR="${OUT_BASE}/${SUB}"
-          STAGE_DIR="/tmp/inline_merge_input_${EXP}"
-          echo "=== Inline merge_shards for ${EXP} ==="
-          echo "  Input dir:  ${OUT_DIR}"
-          echo "  Stage dir:  ${STAGE_DIR}"
-
-          # Stage all non-underscore JSON/CSV files (exclude pipeline metadata).
-          mkdir -p "${STAGE_DIR}"
-          find "${OUT_DIR}" -maxdepth 1 -type f \
-            \( -name "*.json" -o -name "*.csv" \) \
-            ! -name "_*.json" ! -name "_*.csv" \
-            -exec cp {} "${STAGE_DIR}/" \;
-
-          echo "  Staged files:"
-          ls -lah "${STAGE_DIR}/"
-
-          python .github/scripts/merge_shards.py \
-            --experiment    "${EXP}"       \
-            --input-root    "${STAGE_DIR}" \
-            --output-dir    "${OUT_DIR}"   \
-            --result-subdir "${SUB}"
-
-          echo "  _merged.json produced:"
-          ls -lah "${OUT_DIR}/_merged.json"
-
-      # -----------------------------------------------------------------------
-      # Locate the input JSON for run_analysis.py.
-      #
-      # Priority order:
-      #   1. Downloaded artifact _merged.json  (exp1b/exp3b with source_run_id)
-      #   2. Committed _merged.json            (exp1b/exp3b manual; exp2_feynman
-      #                                         after inline merge above)
-      #   3. Primary committed shard file      (all other single-worker exps)
-      #
-      # Files starting with "_" are pipeline metadata — never used as input.
-      - name: Locate input JSON
+      # Locate _merged.json: prefer the downloaded artifact copy (guaranteed
+      # consistent with the run that produced it), fall back to the committed
+      # file (manual dispatch without source_run_id).
+      - name: Locate _merged.json
         if: github.event.inputs.experiment != 'instability'
         id: locate
         env:
@@ -363,165 +341,103 @@ jobs:
         run: |
           set -euo pipefail
 
-          ARTIFACT_JSON=$(find merged_artifact -name "_merged.json" 2>/dev/null | head -1 || true)
+          ARTIFACT_JSON=$(find consolidated_artifact -name "_merged.json" 2>/dev/null | head -1 || true)
           COMMITTED_JSON="${OUT_BASE}/${SUB}/_merged.json"
 
-          if [[ -f "${ARTIFACT_JSON}" ]]; then
-            INPUT_JSON="${ARTIFACT_JSON}"
-            echo "Using artifact _merged.json: ${INPUT_JSON}"
-          elif [[ -f "${COMMITTED_JSON}" ]]; then
-            INPUT_JSON="${COMMITTED_JSON}"
-            echo "Using committed _merged.json: ${INPUT_JSON}"
+          if [[ -f "$ARTIFACT_JSON" ]]; then
+            MERGED_JSON="$ARTIFACT_JSON"
+            echo "Using artifact copy: $MERGED_JSON"
+          elif [[ -f "$COMMITTED_JSON" ]]; then
+            MERGED_JSON="$COMMITTED_JSON"
+            echo "Using committed copy: $MERGED_JSON"
           else
-            # Single-worker experiment with no _merged.json — use shard file directly.
-            # run_analysis.py accepts shapes A (merge_shards output), B (flat dict),
-            # C (list), and D ({results:[...]}), so any committed shard file is valid.
-            #
-            # FIX: use EXP_CONFIG shard_globs priority order instead of naive
-            # sort|head-1.  sort|head-1 could pick benchmark_results.json (empty
-            # stub) or any other lexicographically-early file before the real shard.
-            # We try each glob from the experiment's EXP_CONFIG in order; the first
-            # non-empty match wins.  Falls back to any non-underscore .json.
-            EXP="${{ steps.meta.outputs.exp_id }}"
-            SHARD_JSON=""
-
-            # Delegate shard-file selection to merge_shards.py which already
-            # owns the EXP_CONFIG shard_globs.  --pick-shard-file prints the
-            # best matching non-empty file path to stdout (exit 0) or exits 1.
-            # This keeps the glob table in a single place instead of duplicating
-            # it here.
-            SHARD_JSON=$(python3 .github/scripts/merge_shards.py \
-              --pick-shard-file "${EXP}" "${OUT_BASE}/${SUB}" 2>/dev/null || true)
-
-            if [[ -n "${SHARD_JSON}" && -f "${SHARD_JSON}" ]]; then
-              INPUT_JSON="${SHARD_JSON}"
-              echo "Using committed shard file (glob-ranked): ${INPUT_JSON}"
+            # Fallback: locate the primary committed shard result file.
+            # Only exp1b and exp3b produce a _merged.json via merge_shards.py;
+            # all other experiments commit individual shard files directly.
+            # run_analysis.py accepts shapes A/B/C so a shard file is valid input.
+            # Files starting with "_" are pipeline metadata (_analysis.json etc) — skip them.
+            SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
+              ! -name "_*.json" 2>/dev/null | sort | head -1 || true)
+            if [[ -n "$SHARD_JSON" && -f "$SHARD_JSON" ]]; then
+              MERGED_JSON="$SHARD_JSON"
+              echo "No _merged.json found — using primary shard result file: $MERGED_JSON"
             else
-              echo "::error::No input JSON found for experiment '${EXP}' in '${OUT_BASE}/${SUB}'."
+              echo "::error::No input JSON found for experiment '${SUB}'."
               echo "  Searched:"
-              echo "    artifact:   merged_artifact/**/_merged.json"
+              echo "    artifact:   consolidated_artifact/**/_merged.json"
               echo "    committed:  ${COMMITTED_JSON}"
-              echo "    shard file: ${OUT_BASE}/${SUB}/*.json (glob-ranked, excluding _*.json and stubs)"
-              echo "  Files present in directory:"
-              ls -lah "${OUT_BASE}/${SUB}/" 2>/dev/null || echo "    (directory does not exist)"
-              echo "  Ensure ci_runner.yml worker committed results to the repo."
+              echo "    shard file: ${OUT_BASE}/${SUB}/*.json (excluding _*.json)"
+              echo "  Ensure ci_runner.yml worker shard committed results to the repo,"
+              echo "  or run ci_consolidate_experiment.yml to produce _merged.json first."
               exit 1
             fi
           fi
 
-          # Sanity-check: valid JSON with at least one record.
-          # Handles all shapes merge_shards.py and the workers produce:
-          #   A. {results: dict-of-task-records} - merge_shards Shape A output
-          #   B. dict of task records             - _merged.json keyed by equation_id
-          #   C. list of task records             - flat list from some workers
-          #   D. {array_key: [task, ...]}         - wrapper with task LIST under known key
-          #   E. {results: {method: [...]}}       - Nguyen exp3 method-arrays schema
-          #      results dict values are method-result LISTS, not task dicts.
-          #      Previously misidentified as Shape A, triggering the non-dict-values
-          #      guard and aborting with a misleading error.
-          #   P. {tests: [...]}                   - protocol_core shape (pre-merge)
-          INPUT_JSON_PATH="${INPUT_JSON}" python3 - <<'SANITY_PYEOF'
-          import json, os, sys
-          path = os.environ["INPUT_JSON_PATH"]
+          # Sanity-check: file must be non-empty valid JSON with at least one record.
+          python -c "
+          import json, sys
+          path = '$MERGED_JSON'
           try:
               data = json.load(open(path))
           except Exception as e:
-              print(f"::error::Input JSON is not valid: {e}")
+              print(f'::error::_merged.json is not valid JSON: {e}')
               sys.exit(1)
-          n = 0
-          label = ""
-          ARRAY_KEYS = ("results", "equations", "runs", "data")
-          if isinstance(data, list):
-              n = len(data)
-              label = f"{n} records (shape C - top-level list)"
+          # Shape A: merge_shards.py wraps records under 'results' key.
+          # Shape B/C: flat dict or list (legacy).
+          if isinstance(data, dict) and isinstance(data.get('results'), dict):
+              n = len(data['results'])
+              label = f'{n} task records (merge_shards.py shape A)'
           elif isinstance(data, dict):
-              if isinstance(data.get("tests"), list):
-                  n = len(data["tests"])
-                  label = f"{n} records (shape P - protocol tests[])"
-              else:
-                  for _k in ARRAY_KEYS:
-                      if isinstance(data.get(_k), list):
-                          n = len(data[_k])
-                          label = f"{n} records (shape D - {_k}[])"
-                          break
-                  if not label:
-                      if isinstance(data.get("results"), dict):
-                          n = len(data["results"])
-                          label = f"{n} records (shape A - results dict)"
-                      else:
-                          n = sum(
-                              1 for k, v in data.items()
-                              if isinstance(v, dict)
-                              and not k.startswith("_")
-                              and k not in ("stats", "_meta", "_checkpoint")
-                          )
-                          label = f"{n} records (shape B - dict of task records)"
+              n = sum(1 for k, v in data.items()
+                      if isinstance(v, dict) and not k.startswith('_') and k != 'stats')
+              label = f'{n} task records (flat dict shape B)'
+          elif isinstance(data, list):
+              n = len(data)
+              label = f'{n} task records (list shape C)'
           else:
-              print(f"::error::Unexpected top-level type: {type(data).__name__}")
+              print(f'::error::_merged.json unexpected top-level type: {type(data).__name__}')
               sys.exit(1)
+          exp = '${{ github.event.inputs.experiment }}'
           if n == 0:
-              print("::error::Input JSON contains 0 task records (tried all shapes).")
-              print(f"  File: {path}")
-              print(f"  Top-level keys: {list(data.keys()) if isinstance(data, dict) else '(list)'}")
-              if isinstance(data, dict):
-                  for probe_key in ("results", "tests", "equations"):
-                      probe = data.get(probe_key)
-                      if probe is not None:
-                          if isinstance(probe, dict):
-                              first_val = next(iter(probe.values()), None)
-                              print(f"  data[{probe_key!r}] is a dict with {len(probe)} keys.")
-                              print(f"  First value type: {type(first_val).__name__}  sample: {repr(first_val)[:200]}")
-                          elif isinstance(probe, list):
-                              first_val = probe[0] if probe else None
-                              print(f"  data[{probe_key!r}] is a list with {len(probe)} items.")
-                              print(f"  First item type: {type(first_val).__name__ if first_val else 'N/A'}  sample: {repr(first_val)[:200]}")
-                          break
-              sys.exit(1)
-          # Shape E — Nguyen method-arrays schema (exp3/exp3b):
-          #   {"results": {"hypatiax": [...], "pysr": [...]}}
-          # results is a dict but its values are method-result LISTS, not task-record dicts.
-          # run_analysis.py Shape B (flat dict) reads the top-level keys as task records,
-          # but here the top-level non-underscore value IS the results dict itself — so
-          # run_analysis.py Shape B will pick it up as 1 record keyed "results".
-          # Detect this and count the method-array length as n instead; mark it valid.
-          # run_analysis.py handles this via its Shape B path which reads the wrapper dict.
-          _is_nguyen_method_arrays = (
-              isinstance(data, dict)
-              and isinstance(data.get("results"), dict)
-              and all(isinstance(v, list) for v in data["results"].values())
-              and bool(data["results"])
-          )
-          if _is_nguyen_method_arrays:
-              _method_n = max(len(v) for v in data["results"].values())
-              print(f"Input JSON OK - {_method_n} records (shape E - Nguyen method-arrays "
-                    f"{list(data['results'].keys())}).")
-          elif isinstance(data, dict) and isinstance(data.get("results"), dict):
-              non_dict_vals = [(k, type(v).__name__)
-                               for k, v in list(data["results"].items())[:10]
-                               if not isinstance(v, dict)]
-              if non_dict_vals:
-                  print("::error::Shape A 'results' dict has non-dict values — run_analysis.py will yield 0 records.")
-                  print(f"  File: {path}")
-                  print(f"  Sample non-dict entries (key: type):")
-                  for k, t in non_dict_vals[:5]:
-                      print(f"    {k!r}: {t}")
-                  print("  Check the worker output schema.")
+              if exp in ('exp1b', 'exp3b'):
+                  print('::error::_merged.json contains 0 task records.')
                   sys.exit(1)
-              print(f"Input JSON OK - {label}.")
+              else:
+                  print(f'::warning::_merged.json contains 0 task records for {exp} — non-fatal, continuing.')
           else:
-              print(f"Input JSON OK - {label}.")
-          SANITY_PYEOF
+              print(f'_merged.json OK — {label}.')
+          "
 
-          echo "input_json=${INPUT_JSON}" >> "$GITHUB_OUTPUT"
+          echo "merged_json=${MERGED_JSON}" >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
+      # REPORT step: run full statistical analysis via .github/scripts/run_analysis.py
+      #
+      # scripts/run_analysis.py is responsible for:
+      #   - Loading _merged.json
+      #   - Mann-Whitney U tests (per-method and cross-method comparisons)
+      #   - R² distribution analysis and per-method success rates
+      #   - Method summary tables (coverage %, median R², rank)
+      #   - Coverage gap detection (equations with no successful method)
+      #   - Instability / domain-consistency metrics (instability, hybrid_all_domains)
+      #   - Extrapolation OOD checks (extrap)
+      #   - Writing _report.md  (Markdown, human-readable)
+      #   - Writing _analysis.json (structured, machine-readable)
+      #     including a "fatal_conditions" list for the abort check below.
+      #
+      # The script receives OUT_DIR so it can write to the correct location.
+      # It must not commit anything — that is this workflow's responsibility.
       - name: Run statistical analysis and write report
         if: github.event.inputs.experiment != 'instability'
         id: run_analysis
         env:
-          EXP:        ${{ steps.meta.outputs.exp_id }}
-          SUB:        ${{ steps.meta.outputs.result_subdir }}
-          INPUT_JSON: ${{ steps.locate.outputs.input_json }}
+          EXP:         ${{ steps.meta.outputs.exp_id }}
+          SUB:         ${{ steps.meta.outputs.result_subdir }}
+          MERGED_JSON: ${{ steps.locate.outputs.merged_json }}
+          # Forward PySR timeout parameters so run_analysis.py can record them
+          # in _analysis.json for provenance.  The global env vars are already
+          # set above; re-declaring here is an explicit contract that makes the
+          # dependency visible at the step level and survives future env refactors.
           PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
           PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
         run: |
@@ -531,12 +447,19 @@ jobs:
           mkdir -p "${OUT_DIR}"
 
           echo "=== Running analysis for ${EXP} ==="
-          echo "  Input:  ${INPUT_JSON}"
+          echo "  Input:  ${MERGED_JSON}"
           echo "  Output: ${OUT_DIR}"
 
+          # BUG B FIX: --method-aliases and --r2-field were added to this call
+          # but run_analysis.py's argparse only accepts --experiment, --merged-json,
+          # and --output-dir.  The extra flags caused argparse to error out,
+          # meaning every analysis run failed immediately after the consolidate
+          # commit.  Removed: run_analysis.py already uses the correct canonical
+          # method names (pure_llm / neural_network / hybrid) and field path
+          # (results.<method>.test_r2) natively — no translation flags are needed.
           python .github/scripts/run_analysis.py \
-            --experiment  "${EXP}"        \
-            --merged-json "${INPUT_JSON}" \
+            --experiment  "${EXP}"       \
+            --merged-json "${MERGED_JSON}" \
             --output-dir  "${OUT_DIR}"
 
       # -----------------------------------------------------------------------
@@ -551,10 +474,11 @@ jobs:
           echo "=== Output directory ==="
           ls -lah "${OUT_DIR}"
 
-          test -f "${OUT_DIR}/_report.md"     || { echo "::error::_report.md missing";    exit 1; }
+          test -f "${OUT_DIR}/_report.md"    || { echo "::error::_report.md missing";    exit 1; }
           test -f "${OUT_DIR}/_analysis.json" || { echo "::error::_analysis.json missing"; exit 1; }
 
-          python3 -c "
+          # Verify _analysis.json is valid JSON and contains required top-level keys.
+          python -c "
           import json, sys
           path = '${OUT_DIR}/_analysis.json'
           try:
@@ -574,6 +498,7 @@ jobs:
                 f'fatal_conditions={len(d[\"fatal_conditions\"])} '
                 f'({len(hard)} hard, {len(d[\"fatal_conditions\"])-len(hard)} soft)')
           "
+
           echo "All expected analysis outputs present and valid."
 
       # -----------------------------------------------------------------------
@@ -589,44 +514,29 @@ jobs:
           retention-days: 30
 
       # -----------------------------------------------------------------------
-      # COMMIT RESILIENCE — save → hard-reset → restore → commit.
-      #
-      # Replaces git pull --rebase --autostash which aborts when ghost
-      # _analysis.json / _report.md files exist as untracked (left by a prior
-      # run that wrote outputs but failed before committing).
-      #
-      # The hard reset is safe: all experiment result files are already
-      # committed to master by ci_runner.yml before this workflow runs.
       - name: Commit and push analysis outputs to master
         env:
           EXP: ${{ steps.short_circuit.outputs.exp_id || steps.meta.outputs.exp_id }}
           SUB: ${{ steps.short_circuit.outputs.result_subdir || steps.meta.outputs.result_subdir }}
         run: |
-          set -euo pipefail
-
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Step 1 — save freshly generated outputs before touching the git tree.
-          cp "${OUT_BASE}/${SUB}/_analysis.json" /tmp/_analysis.json
-          cp "${OUT_BASE}/${SUB}/_report.md"     /tmp/_report.md
+          # Reset index and pull before staging — rebase refuses to run
+          # if the index contains staged entries (from checkout internals
+          # or files written into the repo tree by prior steps).
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
 
-          # Step 2 — hard-reset to origin/master, eliminating all untracked
-          # files and unstaged changes unconditionally.
-          git fetch origin "${{ github.ref_name }}"
-          git reset --hard origin/"${{ github.ref_name }}"
-
-          # Step 3 — restore outputs into the clean tree and commit.
-          mkdir -p "${OUT_BASE}/${SUB}"
-          cp /tmp/_analysis.json "${OUT_BASE}/${SUB}/_analysis.json"
-          cp /tmp/_report.md     "${OUT_BASE}/${SUB}/_report.md"
-
+          # Only commit under OUT_BASE (hypatiax/data/results/...) —
+          # never the bare SUB path at repo root.
           git add \
-            "${OUT_BASE}/${SUB}/_report.md"     \
-            "${OUT_BASE}/${SUB}/_analysis.json"
+            "${OUT_BASE}/${SUB}/_report.md"      \
+            "${OUT_BASE}/${SUB}/_analysis.json"  \
+            2>/dev/null || true
 
           if git diff --cached --quiet; then
-            echo "No changes to analysis outputs — results unchanged from previous run."
+            echo "No changes to analysis outputs - results unchanged from previous run."
           else
             git commit -m "ci: ${EXP} analysis report - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
@@ -634,13 +544,16 @@ jobs:
           fi
 
       # -----------------------------------------------------------------------
-      # Abort on hard fatal conditions only.
-      # INFO_ and WARN_ conditions are logged but do not fail the workflow.
+      # Abort on fatal conditions flagged by scripts/run_analysis.py.
+      # _analysis.json["fatal_conditions"] is a list of strings (empty = OK).
+      # Non-zero exit here fails the workflow, which can block PR merges via
+      # branch protection rules.  This step runs AFTER the commit so the
+      # report is always available even when the run is aborted.
       - name: Abort on fatal conditions
         env:
           SUB: ${{ steps.short_circuit.outputs.result_subdir || steps.meta.outputs.result_subdir }}
         run: |
-          python3 - <<'PYEOF'
+          python - <<'PYEOF'
           import json, os, sys
 
           sub      = os.environ["SUB"]
@@ -654,21 +567,23 @@ jobs:
           with open(path) as f:
               analysis = json.load(f)
 
-          all_conds = analysis.get("fatal_conditions", [])
-          hard = [c for c in all_conds if not (c.startswith("INFO_") or c.startswith("WARN_"))]
-          soft = [c for c in all_conds if c.startswith("INFO_") or c.startswith("WARN_")]
+          fatal = analysis.get("fatal_conditions", [])
+          experiment = analysis.get("experiment", "")
 
-          if soft:
-              print(f"Informational/warning conditions ({len(soft)}):")
-              for i, c in enumerate(soft, 1):
-                  print(f"  {i}. {c}")
+          # Hard fatals: anything not prefixed INFO_ or WARN_.
+          hard_fatal = [c for c in fatal
+                        if not (c.startswith("INFO_") or c.startswith("WARN_"))]
 
-          if not hard:
+          if not hard_fatal:
+              if fatal:
+                  print(f"Soft conditions only ({len(fatal)}):")
+                  for i, cond in enumerate(fatal, 1):
+                      print(f"  {i}. {cond}")
               print("No fatal conditions detected. Analysis complete.")
               sys.exit(0)
 
-          print(f"::error::Fatal conditions detected ({len(hard)}):")
-          for i, cond in enumerate(hard, 1):
+          print(f"::error::Fatal conditions detected ({len(hard_fatal)}):")
+          for i, cond in enumerate(hard_fatal, 1):
               print(f"  {i}. {cond}")
           print()
           print("Review _report.md for full diagnostic details.")
