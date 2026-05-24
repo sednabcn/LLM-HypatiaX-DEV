@@ -268,7 +268,7 @@ jobs:
                 NEEDS_JULIA=false
                 echo "suppB: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
               fi
-              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
+              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep/noise-sweep"
               DEFAULT_SEEDS="42"
               ;;
 
@@ -747,7 +747,7 @@ jobs:
           mkdir -p \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2" \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi" \
-            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep" \
+            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
             "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
             "${OUT_BASE}/comparison_results/noise-noiseless/noiseless/defi" \
             "${OUT_BASE}/comparison_results/noise-noiseless/15" \
@@ -1125,8 +1125,8 @@ jobs:
                   || echo "WARNING: suppB NOISE_LEVEL=${NL} exited non-zero — continuing"
               done
               # -- Partial results summary ------------------------------------------
-              echo "--- suppB partial results (${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep) ---"
-              echo "  JSON files: $(find "${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep" -name '*.json' 2>/dev/null | wc -l)"
+              echo "--- suppB partial results (${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep) ---"
+              echo "  JSON files: $(find "${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep" -name '*.json' 2>/dev/null | wc -l)"
               echo "--- end suppB partial results ---"
               ;;
 
@@ -1896,7 +1896,7 @@ jobs:
         run: |
           WORKSPACE="${{ github.workspace }}"
           if [[ "${{ needs.plan.outputs.exp_id }}" == "suppB" ]]; then
-            OUT_DIR="${WORKSPACE}/${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
+            OUT_DIR="${WORKSPACE}/${OUT_BASE}/${{ needs.plan.outputs.result_subdir }}"
             GLOB_PATTERN="noise_sweep_*.json"
             LABEL="suppB"
           else
@@ -1921,7 +1921,7 @@ jobs:
       - name: Verify suppB output files exist
         if: ${{ needs.plan.outputs.exp_id == 'suppB' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${{ needs.plan.outputs.result_subdir }}"
           COUNT=$(find "${TARGET}" \( -name "noise_sweep_*.json" -o -name "noise_sweep_*.csv" \) 2>/dev/null | wc -l)
           echo "=== suppB output verification ==="
           echo "  Target dir : ${TARGET}"
