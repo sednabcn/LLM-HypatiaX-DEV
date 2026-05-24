@@ -388,19 +388,28 @@ jobs:
             # subdirectories.  This handles suppB (and any other experiment)
             # whose runner commits outputs under per-equation subdirectories
             # that are invisible to a flat find -maxdepth 1.
+            #
+            # NOTE: stderr NOT suppressed — --pick-shard-file prints its own
+            # recursive file listing on failure, essential for diagnosing glob
+            # mismatches without a separate debug run.
+            SHARD_DIR="${OUT_BASE}/${SUB}"
+            echo "--- Locate: scanning ${SHARD_DIR} (recursive) ---"
+            find "${SHARD_DIR}" -type f 2>/dev/null | sort || echo "  (directory missing or empty)"
+            echo "--- End scan ---"
             SHARD_JSON=$(python .github/scripts/merge_shards.py \
-              --pick-shard-file "$EXP" "${OUT_BASE}/${SUB}" 2>/dev/null || true)
+              --pick-shard-file "$EXP" "${SHARD_DIR}" || true)
             if [[ -n "$SHARD_JSON" && -f "$SHARD_JSON" ]]; then
               MERGED_JSON="$SHARD_JSON"
               echo "No _merged.json found — using primary shard result file: $MERGED_JSON"
             else
-              echo "::error::No input JSON found for experiment '${SUB}'."
+              echo "::error::No input JSON found for experiment '${EXP}' (subdir: ${SUB})."
               echo "  Searched:"
               if [[ "$EXP" == "exp1b" || "$EXP" == "exp3b" ]]; then
                 echo "    artifact (exp1b/exp3b only): consolidated_artifact/**/_merged.json"
               fi
-              echo "    committed:  ${COMMITTED_JSON}"
-              echo "    shard file: ${OUT_BASE}/${SUB}/*.json (excluding _*.json)"
+              echo "    committed:   ${COMMITTED_JSON}"
+              echo "    shard file:  merge_shards.py --pick-shard-file ${EXP} ${SHARD_DIR}"
+              echo "  See directory scan above for what is actually present."
               echo "  Ensure ci_runner.yml worker shard committed results to the repo,"
               echo "  or run ci_consolidate_experiment.yml to produce _merged.json first."
               exit 1
