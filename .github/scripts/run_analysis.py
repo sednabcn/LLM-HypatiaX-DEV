@@ -545,7 +545,16 @@ def analyse_ablation(records: list[dict], experiment: str,
     fatal: list[str] = []
 
     if not records:
-        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        # Hard fatal only for exp1b and exp3b; other experiments use WARN_ so
+        # the workflow continues when no records are merged.
+        if experiment in ("exp1b", "exp3b"):
+            fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        else:
+            fatal.append(
+                f"WARN_EMPTY_DATASET: _merged.json contains 0 records for experiment "
+                f"'{experiment}'. This is non-fatal for this experiment type. "
+                "Workflow continues."
+            )
         return {"experiment": experiment, "experiment_mode": mode,
                 "n_total": 0, "fatal_conditions": fatal}
 
@@ -801,7 +810,14 @@ def analyse_ablation(records: list[dict], experiment: str,
     # Fatal conditions (Rule 3: MW non-significance is INFO_ only)
     # -------------------------------------------------------------------------
     if n_total == 0:
-        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        if experiment in ("exp1b", "exp3b"):
+            fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        else:
+            fatal.append(
+                f"WARN_EMPTY_DATASET: _merged.json contains 0 records for experiment "
+                f"'{experiment}'. This is non-fatal for this experiment type. "
+                "Workflow continues."
+            )
 
     if len(mw_pairs_all) < MIN_RECORDS_FOR_STATS:
         fatal.append(
@@ -1372,9 +1388,19 @@ def analyse(records: list[dict], experiment: str,
     #   WARN_   → warning; logged, workflow continues.
     fatal: list[str] = []
 
-    # Always active regardless of mode.
+    # EMPTY_DATASET: hard fatal only for exp1b and exp3b (those experiments must
+    # produce records; an empty merge indicates a genuine pipeline failure).
+    # All other experiments (e.g. exp3) may legitimately produce no merged records
+    # and receive a WARN_ instead so the workflow continues.
     if n_total == 0:
-        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        if experiment in ("exp1b", "exp3b"):
+            fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        else:
+            fatal.append(
+                f"WARN_EMPTY_DATASET: _merged.json contains 0 records for experiment "
+                f"'{experiment}'. This is non-fatal for this experiment type. "
+                "Workflow continues."
+            )
 
     if n_standard == 0 and n_total > 0:
         fatal.append(
