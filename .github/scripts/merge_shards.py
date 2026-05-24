@@ -122,18 +122,24 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── exp2_feynman: ablation — paired pysr_only vs hypatia on Feynman n=30 ──
-    # Worker writes one protocol_core_noiseless_<timestamp>.json per domain shard
-    # (--benchmark feynman --domain <D> --output-dir <RESULT_SUBDIR>).
-    # Actual checkpoint files in the tree: feynman_exp2_checkpoint_feynman_<domain>.json
-    # These are the per-domain protocol wrappers written by _save(); the primary
-    # data lives in protocol_core_noiseless_*.json (Shape {tests:[...]}).
+    # Single-worker experiment. Worker commits directly to the repo — no
+    # consolidation job runs.  ci_analysis.yml runs merge_shards.py inline
+    # to produce _merged.json before calling run_analysis.py.
+    #
+    # Actual files committed by the worker:
+    #   benchmark_results.json                    ← flat list (Shape B) — PRIMARY
+    #   protocol_core_noiseless_<timestamp>.json  ← protocol wrapper (Shape P)
+    #   feynman_exp2_checkpoint_feynman_<domain>.json  ← per-domain checkpoint
+    #
     # NOTE: exp2_feynman uses ablation analysis (hypatia/pysr_only schema), so
     # run_analysis.py routes to analyse_ablation() — method name normalisation
     # is NOT applied here; records must preserve the ablation field names.
+    # _extract_records passes ablation records through unchanged (is_ablation=True).
     "exp2_feynman": dict(
         result_subdir="comparison_results/feynman-tests/exp2",
         shard_globs=[
-            "protocol_core_noiseless_*.json",    # primary per-shard output
+            "benchmark_results.json",            # PRIMARY — actual worker output (flat list)
+            "protocol_core_noiseless_*.json",    # protocol wrapper fallback
             "protocol_core_noisy_*.json",
             "feynman_exp2_checkpoint_feynman_*.json",  # actual checkpoint names in tree
             "exp2_feynman_checkpoint_*.json",    # legacy naming
