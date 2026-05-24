@@ -20,6 +20,7 @@ on:
           - "experiment runner only"
           - "scheduler only"
           - "analysis only"
+          - "pipeline only"
         default: "all HypatiaX workflows"
 
       dry_run:
@@ -62,18 +63,21 @@ jobs:
             ["experiment runner"]="HypatiaX - experiment runner . run_all.sh"
             ["scheduler"]="HypatiaX - scheduled full run"
             ["analysis"]="HypatiaX - analysis"
+            ["pipeline"]="HypatiaX - pipeline"
           )
 
           TARGET_KEYS=()
           case "${WORKFLOWS_FILTER}" in
             "all HypatiaX workflows")
-              TARGET_KEYS=(experiment\ runner scheduler analysis) ;;
+              TARGET_KEYS=(experiment\ runner scheduler analysis pipeline) ;;
             "experiment runner only")
               TARGET_KEYS=(experiment\ runner) ;;
             "scheduler only")
               TARGET_KEYS=(scheduler) ;;
             "analysis only")
               TARGET_KEYS=(analysis) ;;
+            "pipeline only")
+              TARGET_KEYS=(pipeline) ;;
           esac
 
           TOTAL_DELETED=0
