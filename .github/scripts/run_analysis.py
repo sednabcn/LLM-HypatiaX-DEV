@@ -47,7 +47,7 @@ Each experiment ID maps to a mode that controls which fatals fire:
   "standard"     — exp1, exp1b, suppA, suppB, suppB_sc
                    Full analysis; all fatals active.
 
-  "ablation"     — exp2_feynman, exp1_ablation
+  "ablation"     — exp1_ablation only.
                    Paired pysr_only vs hypatia comparison on extrap_r2_far.
                    Records use hypatia/pysr_only keys, NOT pure_llm/neural_network/hybrid.
                    merge_shards.py does NOT normalise ablation records.
@@ -69,13 +69,18 @@ Each experiment ID maps to a mode that controls which fatals fire:
                    TOTAL_FAILURE and HYBRID_NEVER_BEATS_NN fatals suppressed.
                    Method-comparison sections written as N/A.
 
-  "multi_method" — exp2, hybrid_all_domains
-                   All six method keys present (pure_llm, neural_network, hybrid,
-                   hybrid_all_domains, symbolic_engine, hybrid_v50_2).
+  "multi_method" — exp2, exp2_feynman, hybrid_all_domains
+                   All six method keys may be present (pure_llm, neural_network,
+                   hybrid, hybrid_all_domains, symbolic_engine, hybrid_v50_2).
                    METHODS = [pure_llm, neural_network, hybrid] are analysed;
-                   extra keys are present but not compared.
+                   extra keys (symbolic_engine, hybrid_v50_2, hybrid_all_domains)
+                   are retained in records but excluded from MW tests and summary.
                    TOTAL_FAILURE and HYBRID_NEVER_BEATS_NN active.
                    WARN_MULTI_METHOD appended (non-blocking).
+                   exp2_feynman uses this mode: the worker is
+                   run_comparative_suite_benchmark_v2.py (same as exp2) and
+                   produces PureLLM/ImprovedNN/Hybrid/SymbolicEngine method keys,
+                   NOT the hypatia/pysr_only ablation schema.
 
   "instability"  — instability
                    Writes only CSVs/figures; no _merged.json with method results.
@@ -155,13 +160,21 @@ EXPERIMENT_MODE: dict[str, str] = {
     "instability":        "instability",
     "exp2":               "multi_method",
     "hybrid_all_domains": "multi_method",
-    # exp1_ablation / exp2_feynman: paired pysr_only vs hypatia comparison using
-    # extrap_r2_far. Uses dedicated helpers; standard method schema
-    # (pure_llm/neural_network/hybrid) is absent — method-comparison sections suppressed.
+    # exp1_ablation: paired pysr_only vs hypatia comparison using extrap_r2_far.
+    # Uses dedicated helpers; standard method schema (pure_llm/neural_network/hybrid)
+    # is absent — method-comparison sections suppressed.
     # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
     # complexity distributions, threshold sweep, and LOO all run under this mode.
     "exp1_ablation":      "ablation",
-    "exp2_feynman":       "ablation",
+    # exp2_feynman: Feynman SR noisy benchmark — same runner as exp1/exp2.
+    # Worker produces protocol_core_*.json with PureLLM/ImprovedNN/Hybrid/SymbolicEngine
+    # method keys; merge_shards.py normalises these to canonical slugs.
+    # Treated as multi_method (like exp2/hybrid_all_domains): all six method keys
+    # may be present; pure_llm, neural_network, hybrid drive MW tests and summary
+    # tables; extra keys (symbolic_engine, hybrid_v50_2, hybrid_all_domains) are
+    # retained in records but excluded from METHODS comparisons.
+    # WARN_MULTI_METHOD is appended (non-blocking) so the report is self-documenting.
+    "exp2_feynman":       "multi_method",
 }
 
 # Canonical result_subdir for every CI-dispatched experiment.
@@ -1452,10 +1465,11 @@ def analyse(records: list[dict], experiment: str,
     # translates method names before this analysis runs.
     if mode == "multi_method":
         fatal.append(
-            "WARN_MULTI_METHOD: six method keys present in records "
+            "WARN_MULTI_METHOD: up to six method keys may be present in records "
             "(pure_llm, neural_network, hybrid, hybrid_all_domains, symbolic_engine, hybrid_v50_2). "
             "Only METHODS = [pure_llm, neural_network, hybrid] drive MW tests and summary tables. "
-            "Extra keys are retained in records for completeness."
+            "Extra keys (symbolic_engine / hybrid_all_domains / hybrid_v50_2) are retained "
+            "in records for completeness but excluded from all statistical comparisons."
         )
 
     # -- Assemble output -------------------------------------------------------
@@ -1544,14 +1558,16 @@ def write_report(analysis: dict, path: Path) -> None:
         )
     elif mode == "multi_method":
         p(
-            "\n> **Multi-method experiment**: six method keys are present in the raw "
-            "output (`PureLLM Baseline`, `ImprovedNN`, `EnhancedHybridSystemDeFi`, "
+            "\n> **Multi-method experiment**: up to six method keys may be present in "
+            "the raw output (`PureLLM Baseline`, `ImprovedNN`, `EnhancedHybridSystemDeFi`, "
             "`HybridSystemLLMNN all-domains`, `SymbolicEngineWithLLM`, "
             "`HybridDiscoverySystem v50_2`). `merge_shards.py` normalises these to "
             "canonical slugs; only `pure_llm`, `neural_network`, and `hybrid` are "
             "included in METHODS and drive all statistical comparisons. The remaining "
-            "three keys (`hybrid_all_domains`, `symbolic_engine`, `hybrid_v50_2`) are "
-            "present in records but excluded from MW tests and method summary tables."
+            "keys (`hybrid_all_domains`, `symbolic_engine`, `hybrid_v50_2`) are "
+            "present in records but excluded from MW tests and method summary tables. "
+            f"For `{exp}`: `symbolic_engine` (SymbolicEngineWithLLM) and any PySR-only "
+            "variants are retained in records for completeness but not compared."
         )
 
     # -- Fatal conditions --------------------------------------------------------

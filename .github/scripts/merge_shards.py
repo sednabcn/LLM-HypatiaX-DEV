@@ -48,10 +48,11 @@ Changes in current revision:
     keys run_analysis.py reads ("pure_llm", "neural_network", "hybrid").
     Also maps field names: r2→test_r2, time→time_s.
     Applied automatically when _is_protocol_file() detects Shape P.
-    Skipped for ablation experiments (exp1_ablation, exp2_feynman) where
-    run_analysis.py uses the raw hypatia/pysr_only schema.
+    Skipped only for exp1_ablation (hypatia/pysr_only schema). exp2_feynman
+    is normalised like exp2 — it uses the same v2 worker method schema.
   · FIX-EXP-ID: _exp_id injected into cfg in merge_experiment() so
     _extract_records() can gate ablation-vs-standard normalisation per-file.
+    Only exp1_ablation is in _ABLATION_EXPERIMENTS; exp2_feynman is standard.
   · _extract_records() gains Shape P (protocol wrapper) before existing
     Shape A/B/C/D, with explicit _is_protocol_file() guard.
   · instability added to EXP_CONFIG (array_key=None triggers CSV-only path).
@@ -121,26 +122,29 @@ EXP_CONFIG: dict[str, dict] = {
         array_key="tests",
     ),
 
-    # ── exp2_feynman: ablation — paired pysr_only vs hypatia on Feynman n=30 ──
-    # Single-worker experiment. Worker commits directly to the repo — no
-    # consolidation job runs.  ci_analysis.yml runs merge_shards.py inline
-    # to produce _merged.json before calling run_analysis.py.
+    # ── exp2_feynman: Feynman SR noisy benchmark — standard multi-method runner ──
+    # Single-worker experiment using run_comparative_suite_benchmark_v2.py
+    # (same runner as exp1, exp2, extrap). Worker commits directly to the repo;
+    # ci_analysis.yml runs merge_shards.py inline to produce _merged.json.
     #
     # Actual files committed by the worker:
-    #   benchmark_results.json                    ← flat list (Shape B) — PRIMARY
-    #   protocol_core_noiseless_<timestamp>.json  ← protocol wrapper (Shape P)
+    #   protocol_core_noiseless_<timestamp>.json  ← Shape P {tests:[...]}  PRIMARY
+    #   benchmark_results.json                    ← flat list (Shape B) fallback
     #   feynman_exp2_checkpoint_feynman_<domain>.json  ← per-domain checkpoint
     #
-    # NOTE: exp2_feynman uses ablation analysis (hypatia/pysr_only schema), so
-    # run_analysis.py routes to analyse_ablation() — method name normalisation
-    # is NOT applied here; records must preserve the ablation field names.
-    # _extract_records passes ablation records through unchanged (is_ablation=True).
+    # OPTION A FIX: exp2_feynman is NOT ablation. The worker never produces
+    # hypatia/pysr_only/extrap_r2_far keys. It outputs PureLLM Baseline (core),
+    # ImprovedNN (core), EnhancedHybridSystemDeFi (core), SymbolicEngineWithLLM
+    # (tools) — the same method schema as exp2.
+    # _normalise_protocol_record() maps these to canonical slugs (pure_llm,
+    # neural_network, hybrid, symbolic_engine); run_analysis.py routes to
+    # analyse() in multi_method mode. _extract_records is_ablation=False.
     "exp2_feynman": dict(
         result_subdir="comparison_results/feynman-tests/exp2",
         shard_globs=[
-            "benchmark_results.json",            # PRIMARY — actual worker output (flat list)
-            "protocol_core_noiseless_*.json",    # protocol wrapper fallback
-            "protocol_core_noisy_*.json",
+            "protocol_core_noiseless_*.json",    # PRIMARY — Shape P {tests:[...]} from v2 worker
+            "protocol_core_noisy_*.json",        # noisy variant
+            "benchmark_results.json",            # flat list fallback (Shape B)
             "feynman_exp2_checkpoint_feynman_*.json",  # actual checkpoint names in tree
             "exp2_feynman_checkpoint_*.json",    # legacy naming
             "exp2_feynman_merged*.json",
@@ -149,9 +153,9 @@ EXP_CONFIG: dict[str, dict] = {
             "II_*.json",
             "III_*.json",
         ],
-        merge_key="equation",
-        fallback_keys=["name", "task_id", "equation_id", "description"],
-        array_key="tests",
+        merge_key="equation_id",   # set by _normalise_protocol_record() on Shape P
+        fallback_keys=["equation", "description", "task_id", "name"],
+        array_key="tests",   # Shape P: {tests:[{description, domain, results:{...}}]}
     ),
 
     # ── exp2: Combined five-system comparison — all methods ───────────────────
@@ -445,7 +449,11 @@ _RAW_METHOD_TO_CANONICAL: dict[str, str] = {
 # Experiments whose records must NOT be normalised: the ablation schema uses
 # hypatia/pysr_only keys and extrap_r2_far — run_analysis.py reads them
 # directly via analyse_ablation(), so re-shaping would break it.
-_ABLATION_EXPERIMENTS = {"exp1_ablation", "exp2_feynman"}
+# exp2_feynman is NOT ablation: it uses run_comparative_suite_benchmark_v2.py
+# and produces the standard PureLLM/ImprovedNN/Hybrid/SymbolicEngine schema.
+# merge_shards.py normalises it to canonical slugs; run_analysis.py routes it
+# to multi_method mode (same as exp2).
+_ABLATION_EXPERIMENTS = {"exp1_ablation"}
 
 
 def _is_protocol_file(raw: object) -> bool:
