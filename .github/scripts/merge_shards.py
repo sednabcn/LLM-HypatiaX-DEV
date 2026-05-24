@@ -12,10 +12,11 @@ Called by ci_experiment.yml consolidate job (Job 3):
         --output-dir    "${OUT_BASE}/${RESULT_SUBDIR}" \\
         --result-subdir "${RESULT_SUBDIR}"
 
-Source of truth: run_all_checkpoint.py v8.1
-  · EXP_CONFIG shard_globs   ← Step.result_glob + Step.post_move destinations
-  · merge_key per experiment  ← what each benchmark script writes as task ID
-  · result_subdir             ← EXP_RESULT_SUBDIR dict
+Source of truth: run_comparative_suite_benchmark_v2.py
+  · EXP_CONFIG shard_globs   ← actual output filenames produced by the worker
+  · array_key per experiment  ← "tests" for protocol_core_*.json files,
+                                 "results" for legacy shapes
+  · result_subdir             ← canonical per-experiment output path
 
 Writes four canonical output files into --output-dir:
     _merged.json        all task records merged by task_id
@@ -24,23 +25,41 @@ Writes four canonical output files into --output-dir:
     _checkpoint.json    provenance / run metadata (consumed by ci_analysis.yml)
 
 Changes in current revision:
+  · FIX-GLOBS: EXP_CONFIG shard_globs updated for every experiment to match
+    the actual filenames written by run_comparative_suite_benchmark_v2.py:
+      - exp1/exp1b/exp2/exp2_feynman/extrap: primary output is
+        protocol_core_{noiseless|noisy}_<timestamp>.json (Shape {tests:[...]}).
+        Previous globs matched zero files for extrap, exp2, exp2_feynman.
+      - exp2/exp2_feynman checkpoints: named exp2_checkpoint_<domain>.json and
+        feynman_exp2_checkpoint_feynman_<domain>.json respectively — not the
+        _shard* suffix that was previously listed.
+      - suppA: actual file is extrapolation_*enhanced*.json; previous globs
+        (consolidated_hybrid_*.json etc.) matched nothing.
+      - suppB/suppB_sc: added protocol_core_*.json as fallback.
+      - exp1 result_subdir corrected: noiseless/defi (was noiseless/).
+      - suppB result_subdir corrected: noise-sweep/noise-sweep (tree has nested dir).
+  · FIX-ARRAY-KEY: array_key changed from "results" to "tests" for all
+    experiments that use the protocol_core_*.json wrapper shape
+    (exp1, exp1b, exp2, exp2_feynman, extrap, hybrid_all_domains, suppB, suppB_sc).
+    Previous array_key="results" caused _extract_records to find no list,
+    fall through to Shape C/D, and misread the structure entirely.
+  · FIX-METHOD-NAMES: _normalise_protocol_record() added. Translates raw method
+    strings from the worker ("PureLLM Baseline (core)" etc.) to the canonical
+    keys run_analysis.py reads ("pure_llm", "neural_network", "hybrid").
+    Also maps field names: r2→test_r2, time→time_s.
+    Applied automatically when _is_protocol_file() detects Shape P.
+    Skipped for ablation experiments (exp1_ablation, exp2_feynman) where
+    run_analysis.py uses the raw hypatia/pysr_only schema.
+  · FIX-EXP-ID: _exp_id injected into cfg in merge_experiment() so
+    _extract_records() can gate ablation-vs-standard normalisation per-file.
+  · _extract_records() gains Shape P (protocol wrapper) before existing
+    Shape A/B/C/D, with explicit _is_protocol_file() guard.
   · instability added to EXP_CONFIG (array_key=None triggers CSV-only path).
-    Previously absent, --experiment instability failed the argparse choices check.
-  · _is_solved() replaces inline `r.get("status") == "ok"` in _compute_stats().
-    Handles all status-field variants used across benchmark scripts:
-      status ∈ {"ok","solved","success","passed"}, boolean/int solved/success/passed,
-      and an R²-threshold fallback (≥ 0.9999) when no status field is present.
-    Fixes n_solved=0 for exp1 which uses a non-"ok" status string.
-  · _compute_stats() now iterates r2/r2_score/r2_noiseless/best_r2 (first non-None wins).
-  · Zero-solve warning emitted to stderr when n_solved=0 and n_tasks>0 to catch
-    status field mismatches early rather than silently in downstream analysis.
-  · FIX-CSV: _find_shard_files() previously hard-filtered to .json only, silently
-    dropping every .csv match.  Experiments with CSV shard globs (instability,
-    suppB_sc) always returned 0 shard files as a result.
-    Fixed: allowed suffixes are now derived from each experiment's shard_globs —
-    any glob ending in .csv admits .csv files; .json is always included.
-    The _SKIP_NAMES set already included _merged.csv so canonical output files
-    remain protected.
+  · _is_solved() replaces inline r.get("status") == "ok" in _compute_stats().
+  · _compute_stats() iterates r2/r2_score/r2_noiseless/best_r2; also checks
+    normalised test_r2 field produced by _normalise_protocol_record().
+  · Zero-solve warning emitted to stderr when n_solved=0 and n_tasks>0.
+  · FIX-CSV: _find_shard_files() allowed suffixes derived from shard_globs.
 """
 
 from __future__ import annotations
@@ -61,89 +80,98 @@ from pathlib import Path
 EXP_CONFIG: dict[str, dict] = {
 
     # ── exp1: Core DeFi extrapolation (noiseless) ─────────────────────────────
-    # CI shard artifact contents (confirmed from CI log):
-    #   hypatiax_defi_benchmark_v3_results.json   ← primary result file
-    #   protocol_core_noiseless_<timestamp>.json  ← protocol-wrapper
-    #   _report.md                                ← skipped (not JSON)
+    # Worker (run_comparative_suite_benchmark_v2.py) writes to --output-dir:
+    #   protocol_core_noiseless_<timestamp>.json  ← Shape: {tests:[...]}  ← PRIMARY
+    #   benchmark_results.json                    ← flat list (FIX-7 convenience export)
+    #   hypatiax_defi_benchmark_v3_results*.json  ← if present from legacy run
+    # array_key="tests" matches the {tests:[...]} wrapper shape.
+    # _normalise_protocol_record() pivots each tests[] entry into the canonical
+    # per-equation schema run_analysis.py expects.
     "exp1": dict(
-        result_subdir="comparison_results/noise-noiseless/noiseless",
+        result_subdir="comparison_results/noise-noiseless/noiseless/defi",
         shard_globs=[
-            "hypatiax_defi_benchmark_v3_results.json",   # exact name from CI
-            "hypatiax_defi_benchmark_v3*results*.json",  # any variant
-            "hypatiax_defi_benchmark_v3*.json",          # any v3 file
-            "protocol_core_noiseless_*.json",
+            "protocol_core_noiseless_*.json",    # primary output from v2 worker
+            "protocol_core_noisy_*.json",        # noisy variant fallback
+            "hypatiax_defi_benchmark_v3_results.json",   # exact legacy name
+            "hypatiax_defi_benchmark_v3*results*.json",  # any legacy variant
+            "hypatiax_defi_benchmark_v3*.json",
             "defi_v3_*.json",
         ],
-        merge_key="task_id",
-        fallback_keys=["equation_id", "equation", "name"],
-        array_key="results",
+        merge_key="equation_id",
+        fallback_keys=["task_id", "equation", "name", "description"],
+        array_key="tests",   # {tests:[{description, domain, results:{method:{r2,...}}}]}
     ),
 
     # ── exp1b: DeFi seed sweep + portfolio variance (noise=15) ───────────────
-    # CI shard artifact contents (confirmed from CI log):
-    #   comparison_FIXED_<timestamp>.json  ← primary result file
-    #   _report.md                         ← skipped (not JSON)
+    # 4-worker experiment → merge_shards.py is called → _merged.json produced.
+    # Each shard writes protocol_core_noiseless_<timestamp>.json (Shape {tests:[...]})
+    # plus comparison_FIXED_<timestamp>.json from the portfolio-variance path.
     "exp1b": dict(
         result_subdir="comparison_results/noise-noiseless/15",
         shard_globs=[
-            "comparison_FIXED_*.json",           # exact pattern from CI
-            "hypatiax_defi_benchmark_v3*.json",  # fallback if script name changes
+            "protocol_core_noiseless_*.json",    # primary shard output
+            "protocol_core_noisy_*.json",
+            "comparison_FIXED_*.json",           # portfolio-variance output
+            "hypatiax_defi_benchmark_v3*.json",
             "*portfolio*variance*.json",
             "defi_v3_*.json",
         ],
-        merge_key="task_id",
-        fallback_keys=["equation_id", "equation", "name"],
-        array_key="results",
+        merge_key="equation_id",
+        fallback_keys=["task_id", "equation", "name", "description"],
+        array_key="tests",
     ),
 
-    # ── exp2_feynman: comparative Feynman suite, LLM+NN only ─────────────────
-    # Workers write one JSON per domain via:
-    #   run_comparative_suite_benchmark_v2.py --benchmark feynman --domain <D>
-    #   --output-dir <RESULT_SUBDIR>
-    # File names:  exp2_feynman_checkpoint_shard*.json  (checkpoint)
-    #              exp2_feynman_merged.*                 (if script merges internally)
-    #              exp2_feynman_stats.json
-    #              exp2_all*_checkpoint.json             (in comparison_results/ root)
-    # The run_all_checkpoint.py isolated runner also writes per-equation:
-    #   I_6_2a.json, II_11_27.json, ... (equation name with dots→underscores)
-    #   exp2_results.json  (whole-run consolidated)
+    # ── exp2_feynman: ablation — paired pysr_only vs hypatia on Feynman n=30 ──
+    # Worker writes one protocol_core_noiseless_<timestamp>.json per domain shard
+    # (--benchmark feynman --domain <D> --output-dir <RESULT_SUBDIR>).
+    # Actual checkpoint files in the tree: feynman_exp2_checkpoint_feynman_<domain>.json
+    # These are the per-domain protocol wrappers written by _save(); the primary
+    # data lives in protocol_core_noiseless_*.json (Shape {tests:[...]}).
+    # NOTE: exp2_feynman uses ablation analysis (hypatia/pysr_only schema), so
+    # run_analysis.py routes to analyse_ablation() — method name normalisation
+    # is NOT applied here; records must preserve the ablation field names.
     "exp2_feynman": dict(
         result_subdir="comparison_results/feynman-tests/exp2",
         shard_globs=[
-            "exp2_feynman_checkpoint_shard*.json",
+            "protocol_core_noiseless_*.json",    # primary per-shard output
+            "protocol_core_noisy_*.json",
+            "feynman_exp2_checkpoint_feynman_*.json",  # actual checkpoint names in tree
+            "exp2_feynman_checkpoint_*.json",    # legacy naming
             "exp2_feynman_merged*.json",
-            "exp2_feynman_stats.json",
             "exp2_results.json",
-            "exp2_all*_checkpoint.json",  # written to comparison_results/ root by worker
             "I_*.json",
             "II_*.json",
             "III_*.json",
         ],
         merge_key="equation",
-        fallback_keys=["name", "task_id", "equation_id"],
-        array_key="results",
+        fallback_keys=["name", "task_id", "equation_id", "description"],
+        array_key="tests",
     ),
 
     # ── exp2: Combined five-system comparison — all methods ───────────────────
-    # Workers write:
-    #   exp2_checkpoint_shard*.json
-    #   exp2_merged.json / exp2_merged.csv
-    #   exp2_stats.json
+    # Worker writes protocol_core_noiseless_<timestamp>.json (Shape {tests:[...]})
+    # and per-domain checkpoints: exp2_checkpoint_<domain>.json (NOT _shard suffix).
+    # multi_method mode: run_analysis.py expects canonical method names.
+    # _normalise_protocol_record() maps raw method strings → canonical keys.
     "exp2": dict(
         result_subdir="comparison_results/feynman-tests/exp2_multi",
         shard_globs=[
-            "exp2_checkpoint_shard*.json",
+            "protocol_core_noiseless_*.json",    # primary per-shard output
+            "protocol_core_noisy_*.json",
+            "exp2_checkpoint_*.json",            # actual checkpoint names in tree (no _shard)
+            "exp2_checkpoint_shard*.json",       # legacy naming fallback
             "exp2_merged*.json",
             "exp2_stats.json",
         ],
-        merge_key="equation",
-        fallback_keys=["task_id", "name", "equation_id"],
-        array_key="results",
+        merge_key="equation_id",
+        fallback_keys=["equation", "task_id", "name", "description"],
+        array_key="tests",
     ),
 
     # ── exp3: Nguyen-12 SEED=42 ───────────────────────────────────────────────
-    # exp3_nguyen12_hybrid50v_02.py --seed 42 writes to RESULTS_DIR root,
-    # then post_move copies *nguyen*seed42*.json → extrapolation/
+    # exp3_nguyen12_hybrid50v_02.py --seed 42 writes its own JSON schema
+    # (not the protocol_core wrapper). Globs unchanged; pysr mode in run_analysis.py
+    # means no method-name normalisation is applied.
     "exp3": dict(
         result_subdir="extrapolation",
         shard_globs=[
@@ -159,7 +187,8 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── exp3b: Nguyen-12 seeds 99/123/777/2024 ────────────────────────────────
-    # post_move: *nguyen*.json → extrapolation/multi_seed/
+    # 4-worker experiment → merge_shards.py is called → _merged.json produced.
+    # Each shard writes *nguyen*seed<N>*.json via exp3_nguyen12_hybrid50v_02.py.
     "exp3b": dict(
         result_subdir="extrapolation/multi_seed",
         shard_globs=[
@@ -174,29 +203,37 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── suppA: Hybrid-PySR DeFi benchmark ────────────────────────────────────
-    # run_hybrid_system_benchmark.py + post_move:
-    #   consolidated_hybrid_*.json → hybrid_pysr/defi/
-    #   hybrid_system*.json        → hybrid_pysr/defi/
+    # Tree shows: extrapolation_73cases_enhanced.json in hybrid_pysr/defi/
+    # Previous globs (consolidated_hybrid_*.json, hybrid_system*.json) did not
+    # match. Added extrapolation_*enhanced*.json and *extrapolation*.json as
+    # primary globs alongside the legacy names.
     "suppA": dict(
         result_subdir="hybrid_pysr/defi",
         shard_globs=[
+            "extrapolation_*enhanced*.json",     # actual file: extrapolation_73cases_enhanced.json
+            "extrapolation_*.json",              # any extrapolation result
             "consolidated_hybrid_*.json",
             "hybrid_system*.json",
             "hybrid_llm_nn_all_domains_*.json",
             "ablation_exp1_*.json",
         ],
-        merge_key="domain",
-        fallback_keys=["task_id", "equation", "name"],
+        merge_key="equation_id",
+        fallback_keys=["domain", "task_id", "equation", "name"],
         array_key="results",
     ),
 
     # ── suppB: Noise sweep σ ∈ {0, 0.5, 1, 5, 10}% × 30 equations ───────────
-    # run_noise_sweep_benchmark.py writes noise_sweep_*.json
+    # run_noise_sweep_benchmark.py writes:
+    #   noise_sweep_<timestamp>.json  ← consolidated result (Shape: list or {results:[...]})
+    #   noise_sweep_sig<N>_checkpoint.json  ← per-sigma checkpoint
+    #   protocol_core_noisy_<timestamp>.json  ← if using v2 worker
     # task_id format: "noise{σ}__{feynman_id}"  e.g. "noise5.0__I.6.20"
     "suppB": dict(
-        result_subdir="comparison_results/feynman-tests/noise-sweep",
+        result_subdir="comparison_results/feynman-tests/noise-sweep/noise-sweep",
         shard_globs=[
             "noise_sweep_*.json",
+            "protocol_core_noisy_*.json",
+            "protocol_core_noiseless_*.json",
             "suppB_*.json",
         ],
         merge_key="task_id",
@@ -205,15 +242,18 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── suppB_sc: Sample-complexity sweep n ∈ {50…1000} × 30 equations ───────
-    # run_sample_complexity_benchmark.py writes sample_complexity_*.json
-    # post_move (checkpoint): moves from feynman-tests/ root → sample-complexity/
-    #   recursive=True, exclude="sample-complexity"
+    # run_sample_complexity_benchmark.py writes:
+    #   sample_complexity_<timestamp>.json  ← consolidated result
+    #   sample_complexity_n<N>_checkpoint.json  ← per-n checkpoint
+    #   protocol_core_noisy_<timestamp>.json  ← if using v2 worker
     # task_id format: "sc_n{n}__{feynman_id}"  e.g. "sc_n200__I.6.20"
     "suppB_sc": dict(
         result_subdir="comparison_results/feynman-tests/sample-complexity",
         shard_globs=[
             "sample_complexity_*.json",
-            "sample_complexity_*.csv",   # post_move may also land CSV shards here
+            "sample_complexity_*.csv",
+            "protocol_core_noisy_*.json",
+            "protocol_core_noiseless_*.json",
         ],
         merge_key="task_id",
         fallback_keys=["equation", "name", "equation_id"],
@@ -221,15 +261,18 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── hybrid_all_domains: LLM+NN all-domains one-shot ──────────────────────
-    # hybrid_system_llm_nn_all_domains.py --domains <subset>
-    # writes hybrid_llm_nn_all_domains_*.json per domain
+    # hybrid_system_llm_nn_all_domains.py writes hybrid_llm_nn_all_domains_*.json
+    # Glob already matches actual file (hybrid_llm_nn_all_domains_20260522_200646.json).
+    # multi_method mode: _normalise_protocol_record() maps method names.
     "hybrid_all_domains": dict(
         result_subdir="hybrid_llm_nn/all_domains",
         shard_globs=[
             "hybrid_llm_nn_all_domains_*.json",
+            "protocol_core_noiseless_*.json",
+            "protocol_core_noisy_*.json",
         ],
-        merge_key="domain",
-        fallback_keys=["task_id", "equation", "name"],
+        merge_key="equation_id",
+        fallback_keys=["domain", "task_id", "equation", "name"],
         array_key="results",
     ),
 
@@ -273,20 +316,27 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── extrap: OOD extrapolation comparative suite ───────────────────────────
-    # run_comparative_suite_benchmark_v2.py --extrap writes:
-    #   all_domains_extrap_v4_*.json  → comparison_results/extrapolation/
-    #   standalone_llm_nn_*.json      → standalone_llm_nn/
-    #   standalone_real_methods_*.json
+    # run_comparative_suite_benchmark_v2.py --extrap --output-dir <RESULT_SUBDIR>
+    # writes to the output dir:
+    #   protocol_core_noisy_<timestamp>.json     ← Shape {tests:[...]}  PRIMARY
+    #   extrap_checkpoint_feynman_<domain>.json  ← per-domain checkpoint (actual in tree)
+    #   benchmark_results.json                   ← flat convenience export (FIX-7)
+    # Previous globs (all_domains_extrap_v4_*.json etc.) matched NO files in the tree.
+    # ood mode: _normalise_protocol_record() maps raw method names → canonical.
     "extrap": dict(
         result_subdir="comparison_results/extrapolation",
         shard_globs=[
-            "all_domains_extrap_v4_*.json",
+            "protocol_core_noisy_*.json",        # primary shard output
+            "protocol_core_noiseless_*.json",    # noiseless variant
+            "extrap_checkpoint_feynman_*.json",  # actual per-domain checkpoint names in tree
+            "extrap_checkpoint_*.json",          # any extrap checkpoint
+            "all_domains_extrap_v4_*.json",      # legacy naming
             "standalone_llm_nn_*.json",
             "standalone_real_methods_*.json",
         ],
-        merge_key="equation",
-        fallback_keys=["task_id", "name", "equation_id"],
-        array_key="results",
+        merge_key="equation_id",
+        fallback_keys=["equation", "task_id", "name", "description"],
+        array_key="tests",
     ),
 }
 
@@ -358,6 +408,113 @@ def _is_worker_checkpoint(raw: object) -> bool:
     return isinstance(raw, dict) and "completed" in raw and "run_id_map" in raw
 
 
+# ---------------------------------------------------------------------------
+# Protocol-file normalisation
+# ---------------------------------------------------------------------------
+# run_comparative_suite_benchmark_v2.py writes:
+#   { "tests": [ { "description": str, "domain": str,
+#                  "results": { "<RawMethodName>": { "r2", "success", "time", ... } },
+#                  "winner": str, "timestamp": str } ] }
+#
+# run_analysis.py expects each record to look like:
+#   { "equation_id": str, "difficulty": str, "formula_type": str,
+#     "extrapolation_intractable": bool,
+#     "results": { "pure_llm":       { "test_r2", "success", "time_s", ... },
+#                  "neural_network": { ..., "timed_out": bool },
+#                  "hybrid":         { ..., "decision": str } } }
+#
+# This mapping translates raw method strings → canonical keys.
+# Extra methods (symbolic_engine, hybrid_v50_2, hybrid_all_domains) are kept
+# under their canonical slugs so multi_method mode can see them; standard/ood
+# analysis only reads pure_llm/neural_network/hybrid.
+_RAW_METHOD_TO_CANONICAL: dict[str, str] = {
+    "PureLLM Baseline (core)":              "pure_llm",
+    "ImprovedNN (core)":                    "neural_network",
+    "EnhancedHybridSystemDeFi (core)":      "hybrid",
+    "HybridSystemLLMNN all-domains (core)": "hybrid_all_domains",
+    "SymbolicEngineWithLLM (tools)":        "symbolic_engine",
+    "HybridDiscoverySystem v50_2 (tools)":  "hybrid_v50_2",
+}
+
+# Experiments whose records must NOT be normalised: the ablation schema uses
+# hypatia/pysr_only keys and extrap_r2_far — run_analysis.py reads them
+# directly via analyse_ablation(), so re-shaping would break it.
+_ABLATION_EXPERIMENTS = {"exp1_ablation", "exp2_feynman"}
+
+
+def _is_protocol_file(raw: object) -> bool:
+    """True when raw is a protocol_core_*.json top-level wrapper {tests:[...]}."""
+    return (
+        isinstance(raw, dict)
+        and isinstance(raw.get("tests"), list)
+        and raw.get("tests")
+        and isinstance(raw["tests"][0], dict)
+        and "results" in raw["tests"][0]
+        and isinstance(raw["tests"][0]["results"], dict)
+        # Distinguish from other {tests:[...]} shapes by checking a method value
+        # is itself a dict with r2/success (not a list of equation records).
+        and any(
+            isinstance(v, dict) and ("r2" in v or "success" in v)
+            for v in raw["tests"][0]["results"].values()
+        )
+    )
+
+
+def _normalise_protocol_record(test: dict) -> dict:
+    """
+    Convert one entry from protocol_core_*.json tests[] into the canonical
+    per-equation record shape that run_analysis.py expects.
+
+    Input:  { description, domain, results: {RawMethodName: {r2, success, time, ...}} }
+    Output: { equation_id, equation, domain, difficulty, formula_type,
+              extrapolation_intractable,
+              results: { canonical_method: {test_r2, train_r2, success, time_s,
+                                            extrapolation_gap, stability_score} } }
+    """
+    desc   = test.get("description", "")
+    domain = test.get("domain", "")
+
+    # Derive equation_id from description: take text before first separator.
+    eq_id = desc
+    for sep in (" — ", " - ", ": ", " | "):
+        if sep in desc:
+            eq_id = desc.split(sep)[0].strip()
+            break
+
+    canonical_results: dict = {}
+    for raw_name, res in test.get("results", {}).items():
+        if not isinstance(res, dict):
+            continue
+        canonical = _RAW_METHOD_TO_CANONICAL.get(raw_name)
+        if canonical is None:
+            # Unknown method: keep under a slugified name so it's not lost.
+            canonical = raw_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
+        canonical_results[canonical] = {
+            "train_r2":          None,               # not produced by v2 worker
+            "test_r2":           res.get("r2"),
+            "success":           res.get("success", False),
+            "time_s":            res.get("time"),
+            "extrapolation_gap": res.get("extrap_r2"),  # present in --extrap runs
+            "stability_score":   None,
+            # Preserve extra fields that run_analysis.py may read conditionally.
+            "timed_out":         res.get("metadata", {}).get("timed_out", False)
+                                 if isinstance(res.get("metadata"), dict) else False,
+            "decision":          res.get("decision"),
+        }
+
+    return {
+        "equation_id":              eq_id,
+        "equation":                 eq_id,
+        "description":              desc,
+        "domain":                   domain,
+        "difficulty":               test.get("difficulty"),
+        "formula_type":             test.get("formula_type"),
+        "extrapolation_intractable": test.get("extrapolation_intractable", False),
+        "winner":                   test.get("winner"),
+        "results":                  canonical_results,
+    }
+
+
 def _collect_run_id_map(shard_files: list[Path]) -> dict[str, str]:
     """
     Scan all shard files and collect the merged run_id_map from any worker
@@ -386,8 +543,11 @@ def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
     """
     Load one partial result file and return a flat list of task record dicts.
 
-    Handles the four shapes the HypatiaX benchmark scripts produce:
+    Handles the shapes the HypatiaX benchmark scripts produce:
 
+    P.  {"tests": [ {description, domain, results:{RawMethod:{r2,...}}} ]}
+                                 protocol_core_*.json from run_comparative_suite_benchmark_v2.py
+                                 Normalised to canonical schema unless experiment is ablation.
     A.  {"results": [ {...}, ... ]}          wrapper dict with list under array_key
     B.  [ {...}, ... ]                       top-level list
     C.  {"task_id": {...}, "task_id2": {...}} dict keyed by task identifiers
@@ -402,15 +562,38 @@ def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
     if _is_stub(raw) or _is_worker_checkpoint(raw):
         return []
 
-    array_key    = cfg.get("array_key")
-    merge_key    = cfg["merge_key"]
+    array_key     = cfg.get("array_key")
+    merge_key     = cfg["merge_key"]
     fallback_keys = cfg.get("fallback_keys", [])
+    exp_id        = cfg.get("_exp_id", "")   # injected by merge_experiment()
+    is_ablation   = exp_id in _ABLATION_EXPERIMENTS
 
-    # Shape A
+    # Shape P — protocol_core_*.json: {tests:[{description, domain, results:{method:{...}}}]}
+    # Apply only when array_key is "tests" AND the file is actually a protocol wrapper.
+    # Ablation experiments skip normalisation (their records use hypatia/pysr_only keys).
+    if array_key == "tests" and _is_protocol_file(raw):
+        records = []
+        for test in raw["tests"]:
+            if not isinstance(test, dict):
+                continue
+            if is_ablation:
+                # Ablation: pass through raw test record; run_analysis.py reads it directly.
+                rec = dict(test)
+                if not rec.get(merge_key):
+                    for fb in fallback_keys:
+                        if rec.get(fb):
+                            rec[merge_key] = str(rec[fb])
+                            break
+                records.append(rec)
+            else:
+                records.append(_normalise_protocol_record(test))
+        return records
+
+    # Shape A — wrapper dict with list under array_key
     if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), list):
         return [r for r in raw[array_key] if isinstance(r, dict)]
 
-    # Shape B
+    # Shape B — top-level list
     if isinstance(raw, list):
         return [r for r in raw if isinstance(r, dict)]
 
@@ -488,9 +671,31 @@ def _is_solved(record: dict) -> bool:
             except (TypeError, ValueError):
                 pass
 
-    # Fallback: infer from R² if no explicit status field present
+    # Fallback: infer from R² if no explicit status field present.
+    # Check both top-level r2 fields (legacy) and normalised test_r2 in results
+    # sub-dicts (produced by _normalise_protocol_record).
     for r2_key in ("r2", "r2_score", "r2_noiseless", "best_r2"):
         raw = record.get(r2_key)
+        if raw is not None:
+            try:
+                return float(raw) >= 0.9999
+            except (TypeError, ValueError):
+                pass
+
+    # Normalised records: check any canonical method's test_r2.
+    for method_res in record.get("results", {}).values():
+        if not isinstance(method_res, dict):
+            continue
+        # success flag in sub-dict takes priority over R² threshold.
+        sub_success = method_res.get("success")
+        if sub_success is not None:
+            if isinstance(sub_success, bool):
+                return sub_success
+            try:
+                return bool(int(sub_success))
+            except (TypeError, ValueError):
+                pass
+        raw = method_res.get("test_r2")
         if raw is not None:
             try:
                 return float(raw) >= 0.9999
@@ -506,6 +711,8 @@ def _compute_stats(merged: dict[str, dict]) -> dict:
     n_ok    = sum(1 for r in records if _is_solved(r))
     r2_vals = []
     for r in records:
+        # Check top-level r2 fields (legacy / Nguyen scripts).
+        found = False
         for r2_key in ("r2", "r2_score", "r2_noiseless", "best_r2"):
             raw = r.get(r2_key)
             if raw is None:
@@ -514,9 +721,25 @@ def _compute_stats(merged: dict[str, dict]) -> dict:
                 v = float(raw)
                 if not (v != v):  # NaN check
                     r2_vals.append(v)
+                    found = True
                     break
             except (TypeError, ValueError):
                 pass
+        # Check normalised results sub-dicts (protocol_core_*.json after normalisation).
+        if not found:
+            for method_res in r.get("results", {}).values():
+                if not isinstance(method_res, dict):
+                    continue
+                raw = method_res.get("test_r2")
+                if raw is None:
+                    continue
+                try:
+                    v = float(raw)
+                    if not (v != v):
+                        r2_vals.append(v)
+                        break
+                except (TypeError, ValueError):
+                    pass
 
     return {
         "n_tasks":         n,
@@ -652,8 +875,11 @@ def merge_experiment(
     merged: dict[str, dict] = {}
     total_raw = 0
 
+    # Inject exp_id into cfg so _extract_records can gate ablation logic.
+    cfg_with_id = {**cfg, "_exp_id": exp_id}
+
     for fpath in shard_files:
-        records = _extract_records(fpath, cfg)
+        records = _extract_records(fpath, cfg_with_id)
         total_raw += len(records)
         for rec in records:
             tid = _task_id(rec, cfg)

@@ -10,25 +10,35 @@ NEVER called by workers or the consolidate job.
 Input
 -----
 _merged.json  — produced by scripts/merge_shards.py
-    List of records (one per equation / task), each with shape:
+    Dict keyed by task_id (Shape A from merge_shards.py), each value with shape:
 
     {
         "equation_id":               str,
-        "difficulty":                str,   # "easy" | "medium" | "hard"
-        "formula_type":              str,   # "rational" | "transcendental" | ...
-        "extrapolation_intractable": bool,
+        "difficulty":                str,   # "easy" | "medium" | "hard" | null
+        "formula_type":              str,   # "rational" | "transcendental" | ... | null
+        "extrapolation_intractable": bool,  # absent → False
         "results": {
             "pure_llm":       { "train_r2": float|null, "test_r2": float|null,
-                                "success": bool, "time_s": float,
+                                "success": bool, "time_s": float|null,
                                 "extrapolation_gap": float|null,
                                 "stability_score":   float|null },
             "neural_network": { ..., "timed_out": bool },
-            "hybrid":         { ..., "decision": str }
+            "hybrid":         { ..., "decision": str|null }
         }
     }
 
+    Produced by merge_shards._normalise_protocol_record() from
+    run_comparative_suite_benchmark_v2.py protocol_core_*.json output.
+    train_r2 is null for all protocol-file experiments (worker does not
+    produce a training split R²); only test_r2 is meaningful for MW tests.
+
     Records with "extrapolation_intractable": true are excluded from
     primary method comparisons (counted separately).
+
+    Top-level shapes accepted (handled in main()):
+      Shape A  {"_meta":{}, "results":{task_id: record}}  — merge_shards.py output
+      Shape B  {task_id: record, ...}                     — flat dict (legacy)
+      Shape C  [record, ...]                              — top-level list (legacy)
 
 Experiment modes
 ----------------
@@ -37,26 +47,33 @@ Each experiment ID maps to a mode that controls which fatals fire:
   "standard"     — exp1, exp1b, suppA, suppB, suppB_sc
                    Full analysis; all fatals active.
 
-  "ablation"     — exp2_feynman
+  "ablation"     — exp2_feynman, exp1_ablation
                    Paired pysr_only vs hypatia comparison on extrap_r2_far.
+                   Records use hypatia/pysr_only keys, NOT pure_llm/neural_network/hybrid.
+                   merge_shards.py does NOT normalise ablation records.
                    Three-tier MW (all-N / excl-train-fail / success-subset),
                    Fisher, Spearman, complexity distributions, threshold sweep,
                    and LOO sensitivity.  Routes to analyse_ablation().
                    NOTE: exp1_ablation is NOT dispatched by ci_experiment.yml
-                   or ci_schedule_all.yml — it has no worker or result_subdir.
-                   It is kept in EXPERIMENT_MODE for manual standalone use only.
+                   or ci_schedule_all.yml — no worker, no result_subdir in CI.
+                   Kept in EXPERIMENT_MODE for manual standalone use only.
 
   "ood"          — extrap
                    OOD/out-of-distribution run. Hybrid legitimately loses NN.
                    HYBRID_NEVER_BEATS_NN is demoted to INFO_ (non-blocking).
+                   train_r2 is null (protocol-file experiment); extrapolation_gap
+                   is populated from extrap_r2 field when --extrap flag was used.
 
   "pysr"         — exp3, exp3b
-                   Nguyen-12 / PySR runs. No hybrid key in schema.
+                   Nguyen-12 / PySR runs. No hybrid/NN/LLM key in schema.
                    TOTAL_FAILURE and HYBRID_NEVER_BEATS_NN fatals suppressed.
                    Method-comparison sections written as N/A.
 
   "multi_method" — exp2, hybrid_all_domains
-                   4-method output (HybridSystemLLMNN all-domains unmapped).
+                   All six method keys present (pure_llm, neural_network, hybrid,
+                   hybrid_all_domains, symbolic_engine, hybrid_v50_2).
+                   METHODS = [pure_llm, neural_network, hybrid] are analysed;
+                   extra keys are present but not compared.
                    TOTAL_FAILURE and HYBRID_NEVER_BEATS_NN active.
                    WARN_MULTI_METHOD appended (non-blocking).
 
@@ -159,7 +176,7 @@ RESULT_SUBDIR: dict[str, str] = {
     "exp3":               "extrapolation",
     "exp3b":              "extrapolation/multi_seed",
     "suppA":              "hybrid_pysr/defi",
-    "suppB":              "comparison_results/feynman-tests/noise-sweep",
+    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
     "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
     "hybrid_all_domains": "hybrid_llm_nn/all_domains",
     "instability":        "figures",
@@ -201,7 +218,10 @@ def _r2_values(records: list[dict], method: str) -> list[float]:
     """Clipped, finite test_r2 values for a method across all records."""
     out = []
     for r in records:
-        v = _safe_float(r.get("results", {}).get(method, {}).get("test_r2"))
+        m_res = r.get("results", {}).get(method)
+        if not isinstance(m_res, dict):
+            continue
+        v = _safe_float(m_res.get("test_r2"))
         if math.isfinite(v):
             out.append(max(R2_CLIP_LO, min(R2_CLIP_HI, v)))
     return out
@@ -213,7 +233,7 @@ def _success_rate(records: list[dict], method: str) -> tuple[int, int, float]:
     n_success = 0
     for r in records:
         res = r.get("results", {}).get(method)
-        if res is None:
+        if not isinstance(res, dict):
             continue
         n_total += 1
         if res.get("success", False):
@@ -228,7 +248,10 @@ def _r2_success_rate(records: list[dict], method: str,
     n_total = 0
     n_above = 0
     for r in records:
-        v = _safe_float(r.get("results", {}).get(method, {}).get("test_r2"))
+        m_res = r.get("results", {}).get(method)
+        if not isinstance(m_res, dict):
+            continue
+        v = _safe_float(m_res.get("test_r2"))
         if math.isfinite(v):
             n_total += 1
             if v >= threshold:
@@ -1429,10 +1452,10 @@ def analyse(records: list[dict], experiment: str,
     # translates method names before this analysis runs.
     if mode == "multi_method":
         fatal.append(
-            "WARN_MULTI_METHOD: this experiment produces a 4th method key "
-            "(HybridSystemLLMNN all-domains) not in METHODS. "
-            "It is excluded from all method-comparison statistics. "
-            "Confirm merge_shards.py translates method names before analysis."
+            "WARN_MULTI_METHOD: six method keys present in records "
+            "(pure_llm, neural_network, hybrid, hybrid_all_domains, symbolic_engine, hybrid_v50_2). "
+            "Only METHODS = [pure_llm, neural_network, hybrid] drive MW tests and summary tables. "
+            "Extra keys are retained in records for completeness."
         )
 
     # -- Assemble output -------------------------------------------------------
@@ -1521,10 +1544,14 @@ def write_report(analysis: dict, path: Path) -> None:
         )
     elif mode == "multi_method":
         p(
-            "\n> **Multi-method experiment**: a 4th method key "
-            "(`HybridSystemLLMNN all-domains`) is present in the raw output "
-            "but is not in `METHODS` and is excluded from comparisons. "
-            "Verify `merge_shards.py` translates method names correctly."
+            "\n> **Multi-method experiment**: six method keys are present in the raw "
+            "output (`PureLLM Baseline`, `ImprovedNN`, `EnhancedHybridSystemDeFi`, "
+            "`HybridSystemLLMNN all-domains`, `SymbolicEngineWithLLM`, "
+            "`HybridDiscoverySystem v50_2`). `merge_shards.py` normalises these to "
+            "canonical slugs; only `pure_llm`, `neural_network`, and `hybrid` are "
+            "included in METHODS and drive all statistical comparisons. The remaining "
+            "three keys (`hybrid_all_domains`, `symbolic_engine`, `hybrid_v50_2`) are "
+            "present in records but excluded from MW tests and method summary tables."
         )
 
     # -- Fatal conditions --------------------------------------------------------
