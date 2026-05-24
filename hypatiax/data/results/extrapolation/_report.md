@@ -9,7 +9,7 @@ R² success threshold: 0.8
 
 ## ⚠️ Fatal Conditions
 
-- **EMPTY_DATASET: _merged.json contains 0 records. Experiment mode='pysr'. Most likely cause: 'Locate input JSON' step picked a stub or empty file (e.g. benchmark_results.json) instead of the primary shard, OR the shard file has an empty 'results' key (dict or list). Check the 'Shape A/D ... records' log line above and inspect the file.**
+- **EMPTY_DATASET: _merged.json contains 0 records.**
 
 ## Method Summary
 
