@@ -42,7 +42,9 @@ Changes in current revision:
         (consolidated_hybrid_*.json etc.) matched nothing.
       - suppB/suppB_sc: added protocol_core_*.json as fallback.
       - exp1 result_subdir corrected: noiseless/defi (was noiseless/).
-      - suppB result_subdir corrected: noise-sweep/noise-sweep (tree has nested dir).
+      - suppB result_subdir corrected: noise-sweep (matches ci_runner.yml RESULT_SUBDIR;
+        the /noise-sweep nested-dir assumption was wrong — runner writes directly to
+        comparison_results/feynman-tests/noise-sweep).
   · FIX-ARRAY-KEY: array_key changed from "results" to "tests" for all
     experiments that use the protocol_core_*.json wrapper shape
     (exp1, exp1b, exp2, exp2_feynman, extrap, hybrid_all_domains, suppB, suppB_sc).
@@ -260,13 +262,18 @@ EXP_CONFIG: dict[str, dict] = {
     ),
 
     # ── suppB: Noise sweep σ ∈ {0, 0.5, 1, 5, 10}% × 30 equations ───────────
+    # ci_runner.yml plan sets RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
+    # and the move_matching step writes all top-level outputs to TARGET (that path).
+    # Per-equation sub-dirs are rescued to noise-sweep/<eq-dir>/ by the inline
+    # find loop in ci_runner.yml, but top-level noise_sweep_*.json files land at
+    # the flat noise-sweep/ level — there is NO nested noise-sweep/noise-sweep dir.
     # run_noise_sweep_benchmark.py writes:
     #   noise_sweep_<timestamp>.json  ← consolidated result (Shape: list or {results:[...]})
     #   noise_sweep_sig<N>_checkpoint.json  ← per-sigma checkpoint
     #   protocol_core_noisy_<timestamp>.json  ← if using v2 worker
-    # task_id format: "noise{σ}__{feynman_id}"  e.g. "noise5.0__I.6.20"
+    # task_id format: "noise{σ}__{feynman_domain}"  e.g. "noise5.0__feynman_mechanics"
     "suppB": dict(
-        result_subdir="comparison_results/feynman-tests/noise-sweep/noise-sweep",
+        result_subdir="comparison_results/feynman-tests/noise-sweep",
         shard_globs=[
             "noise_sweep_*.json",
             "protocol_core_noisy_*.json",

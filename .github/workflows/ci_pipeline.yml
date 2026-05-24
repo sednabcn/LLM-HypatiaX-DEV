@@ -82,24 +82,21 @@ on:
         default: "0.0,0.5,1.0,5.0,10.0"
 
       dry_run:
-        description: "Dry-run — print commands without executing"
+        description: "Dry-run — print commands without executing (true/false)"
         required: false
         default: "false"
-        type: boolean
 
       fail_on_incomplete:
-        description: "Fail pipeline if checkpoint finds missing tasks"
+        description: "Fail pipeline if checkpoint finds missing tasks (true/false)"
         required: false
         default: "false"
-        type: boolean
 
       force_rerun:
         description: >
           Skip the already-done guard and re-run all stages even if they
-          completed successfully in a prior run.
+          completed successfully in a prior run (true/false).
         required: false
         default: "false"
-        type: boolean
 
 permissions:
   contents: write
@@ -382,20 +379,48 @@ jobs:
                   return False
 
           def check_analysis_outputs(exp_id):
-              """Return (present, valid) for _report.md and _analysis.json."""
+              """Return (present, valid, workflow_sha_match) for _report.md and _analysis.json.
+
+              workflow_sha_match is True when the ci_analysis.yml SHA recorded in
+              _analysis.json matches the current HEAD SHA of that file.  When False
+              the outputs are from an older version of ci_analysis.yml and must be
+              treated as stale — classify_analysis() will return "stale" so the
+              run-analysis job re-runs even if the file is otherwise valid.
+              """
               subdir  = SUBDIR.get(exp_id, "")
               rdir    = OUT_BASE / subdir
               report  = rdir / "_report.md"
               afile   = rdir / "_analysis.json"
               present = report.exists() and afile.exists()
               valid   = False
+              workflow_sha_match = True   # default: assume match when no SHA stored
               if present:
                   try:
                       d = json.loads(afile.read_text())
                       valid = "experiment" in d and "fatal_conditions" in d
+                      # Compare stored ci_analysis.yml SHA against HEAD SHA.
+                      # _analysis.json records it under "ci_analysis_sha" when
+                      # written by a pipeline-aware version of run_analysis.py.
+                      stored_sha = d.get("ci_analysis_sha", "")
+                      if stored_sha:
+                          try:
+                              r = subprocess.run(
+                                  ["git", "log", "-1", "--format=%H",
+                                   ".github/workflows/ci_analysis.yml"],
+                                  capture_output=True, text=True, cwd="."
+                              )
+                              head_sha = r.stdout.strip()
+                              workflow_sha_match = (stored_sha == head_sha)
+                              if not workflow_sha_match:
+                                  print(f"  ⚠  ci_analysis.yml SHA mismatch for {exp_id}:")
+                                  print(f"       stored : {stored_sha}")
+                                  print(f"       HEAD   : {head_sha}")
+                                  print(f"     → treating analysis outputs as STALE")
+                          except Exception:
+                              pass   # git unavailable; assume match
                   except Exception:
                       pass
-              return present, valid
+              return present, valid, workflow_sha_match
 
           def check_postprocess_outputs(exp_id):
               """Return (figures_present, tables_present)."""
@@ -567,9 +592,7 @@ jobs:
     # Run when full pipeline AND diagnose says runner is not done.
     # diagnose.skip_runner==true means result files are committed and valid.
     if: |
-      always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.diagnose.result == 'success' &&
       needs.diagnose.outputs.skip_runner != 'true'
 
     # P2 FIX: expose the dispatched ci_runner.yml run ID so run-analysis can
@@ -726,14 +749,6 @@ jobs:
             SLEEP=$(( SLEEP < 120 ? SLEEP + 10 : 120 ))
           done
 
-      - name: Annotate relaunch instructions on failure
-        if: failure()
-        env:
-          SLOT: ${{ needs.resolve.outputs.slot }}
-          EXP:  ${{ needs.resolve.outputs.experiment }}
-        run: |
-          echo "::error title=C0 runner failed — relaunch instructions::Experiment '${EXP}' (slot ${SLOT}) failed at C0 (ci_runner.yml). To resume from this stage re-dispatch ci_pipeline.yml with experiment_index=${SLOT} (full pipeline) and force_rerun=false. C0 will re-run; C1/C2/C3 will be skipped if their outputs are already committed."
-
   # ============================================================================
   #  JOB: run-analysis  —  C1: dispatch ci_analysis.yml and wait
   # ============================================================================
@@ -745,9 +760,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_analysis == 'true' &&
-      needs.diagnose.result == 'success' &&
       (needs.run-experiment.result == 'success' || needs.run-experiment.result == 'skipped') &&
-      needs.run-experiment.result != 'failure' &&
       (
         needs.diagnose.outputs.analysis_state != 'done' ||
         needs.diagnose.outputs.rerun_analysis == 'true'
@@ -861,14 +874,6 @@ jobs:
             sleep ${SLEEP}
           done
 
-      - name: Annotate relaunch instructions on failure
-        if: failure()
-        env:
-          SLOT: ${{ needs.resolve.outputs.slot }}
-          EXP:  ${{ needs.resolve.outputs.experiment }}
-        run: |
-          echo "::error title=C1 analysis failed — relaunch instructions::Experiment '${EXP}' (slot ${SLOT}) failed at C1 (ci_analysis.yml). To resume from this stage re-dispatch ci_pipeline.yml with experiment_index=${SLOT}a (analysis-only). C0 outputs are already committed and will not re-run."
-
   # ============================================================================
   #  JOB: run-postprocess  —  C2: dispatch ci_postprocess.yml and wait
   # ============================================================================
@@ -880,10 +885,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_postprocess == 'true' &&
-      needs.diagnose.result == 'success' &&
       (needs.run-analysis.result == 'success' || needs.run-analysis.result == 'skipped') &&
-      needs.run-analysis.result != 'failure' &&
-      needs.run-experiment.result != 'failure' &&
       needs.diagnose.outputs.postprocess_state != 'done'
 
     steps:
@@ -986,14 +988,6 @@ jobs:
             sleep ${SLEEP}
           done
 
-      - name: Annotate relaunch instructions on failure
-        if: failure()
-        env:
-          SLOT: ${{ needs.resolve.outputs.slot }}
-          EXP:  ${{ needs.resolve.outputs.experiment }}
-        run: |
-          echo "::error title=C2 postprocess failed — relaunch instructions::Experiment '${EXP}' (slot ${SLOT}) failed at C2 (ci_postprocess.yml). To resume from this stage re-dispatch ci_pipeline.yml with experiment_index=${SLOT}f (figures+tables only). C0 and C1 outputs are already committed and will not re-run."
-
   # ============================================================================
   #  JOB: run-checkpoint  —  C3: qualification + audit gate
   # ============================================================================
@@ -1005,11 +999,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_checkpoint == 'true' &&
-      needs.diagnose.result == 'success' &&
-      (needs.run-postprocess.result == 'success' || needs.run-postprocess.result == 'skipped') &&
-      needs.run-postprocess.result != 'failure' &&
-      needs.run-analysis.result != 'failure' &&
-      needs.run-experiment.result != 'failure'
+      (needs.run-postprocess.result == 'success' || needs.run-postprocess.result == 'skipped')
 
     steps:
       # -----------------------------------------------------------------------
@@ -1129,14 +1119,6 @@ jobs:
               echo "::error::Timed out waiting for ci_pipeline_check.yml."; exit 1; }
             sleep ${SLEEP}
           done
-
-      - name: Annotate relaunch instructions on failure
-        if: failure()
-        env:
-          SLOT: ${{ needs.resolve.outputs.slot }}
-          EXP:  ${{ needs.resolve.outputs.experiment }}
-        run: |
-          echo "::error title=C3 checkpoint failed — relaunch instructions::Experiment '${EXP}' (slot ${SLOT}) failed at C3 (ci_pipeline_check.yml). To re-run the qualification gate only re-dispatch ci_pipeline.yml with experiment_index=${SLOT}c (checkpoint-only). C0/C1/C2 outputs are intact and will not re-run."
 
   # ============================================================================
   #  JOB: next-slot  —  C4: self-dispatch next experiment in the queue
