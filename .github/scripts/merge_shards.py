@@ -76,7 +76,14 @@ Changes in current revision:
       - Per-file top-key summary when files are found but yield 0 records
         (so array_key mismatches are immediately visible).
   · FIX-CSV: _find_shard_files() allowed suffixes derived from shard_globs.
-"""
+  · FIX-SKIP-ANALYSIS: _pick_shard_file() _SKIP_NAMES now includes
+    _analysis.json so a pipeline output from a prior run can never be
+    returned as a valid shard input.
+  · FIX-SHAPE-A-DICT: _extract_records() now handles the case where
+    array_key points to a dict instead of a list (exp3/exp3b Nguyen schema:
+    {"results": {"N1":{...}, "N2":{...}}}). Previously this fell through to
+    Shape C which worked for clean files but was fragile when metadata keys
+    were present. The new Shape A-dict branch handles it explicitly."""
 
 from __future__ import annotations
 
@@ -582,7 +589,9 @@ def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
     P.  {"tests": [ {description, domain, results:{RawMethod:{r2,...}}} ]}
                                  protocol_core_*.json from run_comparative_suite_benchmark_v2.py
                                  Normalised to canonical schema unless experiment is ablation.
-    A.  {"results": [ {...}, ... ]}          wrapper dict with list under array_key
+    A-list.  {"results": [ {...}, ... ]}      wrapper dict with list under array_key
+    A-dict.  {"results": {"N1":{...}, ...}}   wrapper dict with dict-of-tasks under array_key
+                                              (exp3/exp3b Nguyen schema)
     B.  [ {...}, ... ]                       top-level list
     C.  {"task_id": {...}, "task_id2": {...}} dict keyed by task identifiers
     D.  { single record }                    one task record as a bare dict
@@ -623,9 +632,29 @@ def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
                 records.append(_normalise_protocol_record(test))
         return records
 
-    # Shape A — wrapper dict with list under array_key
+    # Shape A-list — wrapper dict with list under array_key
     if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), list):
         return [r for r in raw[array_key] if isinstance(r, dict)]
+
+    # Shape A-dict — wrapper dict with dict-of-tasks under array_key
+    # (exp3/exp3b Nguyen schema: {"results": {"N1": {...}, "N2": {...}}})
+    # Distinct from Shape C: array_key is explicitly declared for this experiment.
+    if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), dict):
+        inner = raw[array_key]
+        records: list[dict] = []
+        for k, v in inner.items():
+            if k.startswith("_") or not isinstance(v, dict):
+                continue
+            rec = dict(v)
+            if not rec.get(merge_key):
+                for fb in fallback_keys:
+                    if rec.get(fb):
+                        rec[merge_key] = str(rec[fb])
+                        break
+                else:
+                    rec[merge_key] = k
+            records.append(rec)
+        return records
 
     # Shape B — top-level list
     if isinstance(raw, list):
@@ -1185,9 +1214,8 @@ def _pick_shard_file(exp_id: str, search_dir: Path) -> int:
     _SKIP_NAMES = frozenset({
         "_report.md", "_merged.json", "_merged.csv",
         "_stats.json", "_checkpoint.json",
-        # benchmark_results.json is an empty flat-list convenience export;
-        # skip it so the real protocol_core_*.json shard is picked instead.
-        "benchmark_results.json",
+        "_analysis.json",       # pipeline output written by run_analysis.py — never a valid shard
+        "benchmark_results.json",  # empty flat-list convenience export from v2 worker
     })
 
     def _is_non_empty(path: Path) -> bool:

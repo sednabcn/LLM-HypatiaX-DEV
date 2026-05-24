@@ -10,15 +10,24 @@
 #    exp1b, exp3b  — 4 workers each.  ci_runner.yml runs merge_shards.py in its
 #                    consolidate job and commits _merged.json to the repo.
 #                    ci_analysis.yml reads that _merged.json directly.
-#    exp2_feynman  — 1 worker, but requires inline merge to normalise the
-#                    protocol_core_*.json wrapper shape (tests:[...]) into
-#                    canonical per-equation records (multi_method mode).
-#                    ci_analysis.yml runs merge_shards.py inline here.
-#    all others    — 1 worker.  Worker commits a shard result file directly.
-#                    ci_analysis.yml reads that file as-is (run_analysis.py
-#                    accepts shapes A/B/C).  No merging needed or performed.
+#    exp1, exp2, exp2_feynman, extrap, hybrid_all_domains, suppB, suppB_sc
+#                  — 1 worker each, but require inline merge because the worker
+#                    commits protocol_core_*.json (Shape P: {tests:[...]}) or
+#                    another shape that run_analysis.py cannot read natively.
+#                    ci_analysis.yml runs merge_shards.py inline to produce
+#                    _merged.json before the locate and analysis steps.
+#                    FIX: previously only exp2_feynman had inline merge; all
+#                    other protocol-file experiments passed the raw shard file
+#                    directly to run_analysis.py, which has no Shape P handler,
+#                    causing EMPTY_DATASET on every run for those experiments.
+#    exp3          — 1 worker.  Commits *nguyen*seed42*.json (Shape D results:[]).
+#                    run_analysis.py Shape D handles it directly; no merge needed.
+#    suppA         — 1 worker.  Commits extrapolation_*enhanced*.json (Shape D).
+#                    run_analysis.py Shape D handles it directly; no merge needed.
 #
-#  MERGE_REQUIRED = {exp1b, exp3b, exp2_feynman}
+#  MERGE_REQUIRED (inline, this workflow) = {exp1, exp2, exp2_feynman, extrap,
+#                                             hybrid_all_domains, suppB, suppB_sc}
+#  MERGE_REQUIRED (ci_runner.yml, pre-committed) = {exp1b, exp3b}
 #  All other experiments (including exp3, exp3b) use their committed shard
 #  file directly — exp3/exp3b _merged.json is produced by ci_runner.yml and
 #  read by the artifact/committed path, not re-merged here.
@@ -150,7 +159,8 @@ jobs:
       # ci_runner.yml already ran merge_shards.py and committed _merged.json.
       # Download that artifact here when source_run_id is provided; fall back
       # to the committed copy when running manually without source_run_id.
-      # exp2_feynman is single-worker but uses an inline merge step below.
+      # All other experiments use the inline merge step below (single-worker)
+      # or the direct shard-file path (exp3, suppA).
       # All other experiments (including exp3) are single-worker — no artifact
       # download or merge needed; committed shard file is used directly.
       - name: Download merged artifact (exp1b / exp3b only)
@@ -263,36 +273,73 @@ jobs:
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
       # -----------------------------------------------------------------------
-      # exp2_feynman — single worker, but inline merge required.
-      # The worker commits protocol_core_noiseless_*.json (Shape P {tests:[...]}).
-      # run_analysis.py in multi_method mode needs canonical per-equation records
-      # (pure_llm / neural_network / hybrid keys) — produced by
-      # merge_shards.py _normalise_protocol_record().
-      # Run merge_shards.py inline here; no separate consolidation job needed.
-      - name: Produce _merged.json for exp2_feynman (inline merge)
-        if: github.event.inputs.experiment == 'exp2_feynman'
+      # FIX: Inline merge for ALL single-worker experiments whose workers emit
+      # protocol_core_*.json (Shape P {tests:[...]}) or any other shard shape
+      # that merge_shards.py knows how to normalise.
+      #
+      # ROOT CAUSE OF ALL NON-EXP1B/EXP3B FAILURES:
+      #   run_analysis.py has no Shape P handler.  When ci_analysis.yml passed
+      #   a raw protocol_core_*.json directly as --merged-json, run_analysis.py
+      #   fell through every shape branch (A/B/C/D) to Shape B (flat dict),
+      #   found 0 dict values under the top-level "tests" key, and emitted
+      #   EMPTY_DATASET.  The sanity check in the locate step counted Shape P
+      #   records correctly, masking the mismatch until run_analysis.py ran.
+      #
+      # FIX: run merge_shards.py inline for every single-worker experiment
+      # that requires normalisation, producing a canonical _merged.json that
+      # run_analysis.py can read via its existing Shape A/D handlers.
+      #
+      # Experiments covered by this step:
+      #   exp1           — protocol_core_noiseless_*.json  (Shape P, standard mode)
+      #   exp2           — protocol_core_noiseless_*.json  (Shape P, multi_method)
+      #   exp2_feynman   — protocol_core_noiseless_*.json  (Shape P, multi_method)
+      #   extrap         — protocol_core_noisy_*.json      (Shape P, ood mode)
+      #   hybrid_all_domains — hybrid_llm_nn_all_domains_*.json (Shape B/D)
+      #   suppB          — noise_sweep_*.json or protocol_core_*.json
+      #   suppB_sc       — sample_complexity_*.json or protocol_core_*.json
+      #
+      # Experiments intentionally excluded (already work without this step):
+      #   exp1b / exp3b  — _merged.json committed by ci_runner.yml consolidation
+      #   exp3           — Nguyen shard (*nguyen*seed42*.json, Shape D results:[])
+      #                    run_analysis.py Shape D handles it directly
+      #   suppA          — extrapolation_*enhanced*.json (Shape D results:[])
+      #                    run_analysis.py Shape D handles it directly
+      #   instability    — CSV-only; short-circuited before this step
+      - name: Produce _merged.json (inline merge for single-worker experiments)
+        if: >
+          github.event.inputs.experiment == 'exp1'              ||
+          github.event.inputs.experiment == 'exp2'              ||
+          github.event.inputs.experiment == 'exp2_feynman'      ||
+          github.event.inputs.experiment == 'extrap'            ||
+          github.event.inputs.experiment == 'hybrid_all_domains'||
+          github.event.inputs.experiment == 'suppB'             ||
+          github.event.inputs.experiment == 'suppB_sc'
         env:
+          EXP: ${{ steps.meta.outputs.exp_id }}
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
           set -euo pipefail
 
           OUT_DIR="${OUT_BASE}/${SUB}"
-          echo "=== Inline merge_shards for exp2_feynman ==="
+          STAGE_DIR="/tmp/inline_merge_input_${EXP}"
+          echo "=== Inline merge_shards for ${EXP} ==="
           echo "  Input dir:  ${OUT_DIR}"
+          echo "  Stage dir:  ${STAGE_DIR}"
 
-          # Stage shard files into a temp input-root for merge_shards.py.
-          mkdir -p /tmp/exp2_feynman_input
-          # Copy all non-underscore JSON files (exclude pipeline metadata).
-          find "${OUT_DIR}" -maxdepth 1 -type f -name "*.json" ! -name "_*.json" \
-            -exec cp {} /tmp/exp2_feynman_input/ \;
+          # Stage all non-underscore JSON/CSV files (exclude pipeline metadata).
+          mkdir -p "${STAGE_DIR}"
+          find "${OUT_DIR}" -maxdepth 1 -type f \
+            \( -name "*.json" -o -name "*.csv" \) \
+            ! -name "_*.json" ! -name "_*.csv" \
+            -exec cp {} "${STAGE_DIR}/" \;
 
           echo "  Staged files:"
-          ls -lah /tmp/exp2_feynman_input/
+          ls -lah "${STAGE_DIR}/"
 
           python .github/scripts/merge_shards.py \
-            --experiment    exp2_feynman \
-            --input-root    /tmp/exp2_feynman_input \
-            --output-dir    "${OUT_DIR}" \
+            --experiment    "${EXP}"       \
+            --input-root    "${STAGE_DIR}" \
+            --output-dir    "${OUT_DIR}"   \
             --result-subdir "${SUB}"
 
           echo "  _merged.json produced:"

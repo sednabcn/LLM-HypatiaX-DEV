@@ -36,6 +36,13 @@ _merged.json  — produced by scripts/merge_shards.py
     primary method comparisons (counted separately).
 
     Top-level shapes accepted (handled in main()):
+      Shape P  {"tests": [{description, domain, results:{RawMethod:{r2,...}}}]}
+               — raw protocol_core_*.json (Shape P). FIX: previously missing,
+               causing EMPTY_DATASET for exp1, exp2, exp2_feynman, extrap,
+               hybrid_all_domains, suppB, suppB_sc on every CI run.
+               ci_analysis.yml inline merge step now converts all protocol files
+               to _merged.json before this script runs (primary fix).  This
+               handler is a defensive fallback for manual invocations.
       Shape A  {"_meta":{}, "results":{task_id: record}}  — merge_shards.py output
       Shape B  {task_id: record, ...}                     — flat dict (legacy)
       Shape C  [record, ...]                              — top-level list (legacy)
@@ -1919,6 +1926,14 @@ def main() -> None:
         print("  PySR fit params: not set (PYSR_FIT_WALL_TIMEOUT / PYSR_FIT_GRACE_SECS absent)")
 
     # Handle all shapes merge_shards.py and legacy workers can produce:
+    #   Shape P  {"tests": [{description, domain, results:{RawMethod:{r2,...}}}]}
+    #            — raw protocol_core_*.json from run_comparative_suite_benchmark_v2.py.
+    #            ci_analysis.yml inline merge step should have converted this to
+    #            _merged.json (Shape A/D) before reaching here.  This handler is a
+    #            defensive fallback for manual --merged-json invocations.
+    #            FIX: previously missing entirely, causing EMPTY_DATASET for all
+    #            non-exp1b/exp3b experiments (exp1, exp2, exp2_feynman, extrap,
+    #            hybrid_all_domains, suppB, suppB_sc) on every CI run.
     #   Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
     #            — canonical output of merge_shards.py.
     #            results value is a DICT keyed by task_id.
@@ -1931,6 +1946,90 @@ def main() -> None:
     #              shard from exp3_nguyen12_*.py). results value is a LIST.
     #            Must be checked BEFORE Shape A — both have a "results" key;
     #            only the type (list vs dict) distinguishes them.
+
+    # ---------------------------------------------------------------------------
+    # Shape P normalisation (defensive fallback — should already be normalised
+    # by ci_analysis.yml inline merge step before this script is called).
+    # Mirrors merge_shards._normalise_protocol_record() and
+    # merge_shards._is_protocol_file() exactly.
+    # ---------------------------------------------------------------------------
+    _RAW_METHOD_TO_CANONICAL_P: dict[str, str] = {
+        "PureLLM Baseline (core)":              "pure_llm",
+        "ImprovedNN (core)":                    "neural_network",
+        "EnhancedHybridSystemDeFi (core)":      "hybrid",
+        "HybridSystemLLMNN all-domains (core)": "hybrid_all_domains",
+        "SymbolicEngineWithLLM (tools)":        "symbolic_engine",
+        "HybridDiscoverySystem v50_2 (tools)":  "hybrid_v50_2",
+    }
+
+    def _is_protocol_file_p(data: Any) -> bool:
+        return (
+            isinstance(data, dict)
+            and isinstance(data.get("tests"), list)
+            and bool(data["tests"])
+            and isinstance(data["tests"][0], dict)
+            and "results" in data["tests"][0]
+            and isinstance(data["tests"][0]["results"], dict)
+            and any(
+                isinstance(v, dict) and ("r2" in v or "success" in v)
+                for v in data["tests"][0]["results"].values()
+            )
+        )
+
+    if _is_protocol_file_p(raw):
+        print(
+            f"  Shape P (protocol_core wrapper): normalising {len(raw['tests'])} "
+            f"tests[] entries → canonical per-equation records.\n"
+            f"  NOTE: ci_analysis.yml inline merge step should have produced a "
+            f"_merged.json before this script ran.  This fallback handles manual "
+            f"--merged-json invocations with raw protocol_core files."
+        )
+        _normalised_p: list[dict] = []
+        for _test in raw["tests"]:
+            if not isinstance(_test, dict):
+                continue
+            _desc   = _test.get("description", "")
+            _domain = _test.get("domain", "")
+            _eq_id  = _desc
+            for _sep in (" — ", " - ", ": ", " | "):
+                if _sep in _desc:
+                    _eq_id = _desc.split(_sep)[0].strip()
+                    break
+            _canonical_results: dict = {}
+            for _raw_name, _res in _test.get("results", {}).items():
+                if not isinstance(_res, dict):
+                    continue
+                _canonical = _RAW_METHOD_TO_CANONICAL_P.get(
+                    _raw_name,
+                    _raw_name.lower().replace(" ", "_").replace("(", "").replace(")", ""),
+                )
+                _canonical_results[_canonical] = {
+                    "train_r2":          None,
+                    "test_r2":           _res.get("r2"),
+                    "success":           _res.get("success", False),
+                    "time_s":            _res.get("time"),
+                    "extrapolation_gap": _res.get("extrap_r2"),
+                    "stability_score":   None,
+                    "timed_out":         (
+                        _res.get("metadata", {}).get("timed_out", False)
+                        if isinstance(_res.get("metadata"), dict) else False
+                    ),
+                    "decision":          _res.get("decision"),
+                }
+            _normalised_p.append({
+                "equation_id":               _eq_id,
+                "equation":                  _eq_id,
+                "description":               _desc,
+                "domain":                    _domain,
+                "difficulty":                _test.get("difficulty"),
+                "formula_type":              _test.get("formula_type"),
+                "extrapolation_intractable": _test.get("extrapolation_intractable", False),
+                "winner":                    _test.get("winner"),
+                "results":                   _canonical_results,
+            })
+        # Rewrite raw as Shape D list so the existing dispatch below reads it correctly.
+        raw = {"results": _normalised_p}
+        print(f"  Shape P normalised → {len(_normalised_p)} records (rewritten as Shape D).")
 
     # Always log the raw top-level structure so CI logs contain enough context
     # to diagnose 0-records failures without needing to fetch the file manually.
