@@ -1239,7 +1239,7 @@ def _pick_shard_file(exp_id: str, search_dir: Path) -> int:
             return bool(raw)
         return False
 
-    # Priority 1: globs in declared order.
+    # Priority 1: globs in declared order — flat search (original behaviour).
     for pattern in cfg["shard_globs"]:
         for m in sorted(search_dir.glob(pattern)):
             if (m.is_file()
@@ -1249,23 +1249,42 @@ def _pick_shard_file(exp_id: str, search_dir: Path) -> int:
                 print(str(m))
                 return 0
 
-    # Priority 2: any *.json fallback.
-    for m in sorted(search_dir.glob("*.json")):
-        if (m.is_file()
+    # Priority 2: recursive rglob fallback — same globs, searched into subdirs.
+    # Needed when the runner commits outputs into per-equation subdirectories
+    # (e.g. suppB writes noise_sweep_*.json under noise-sweep/<eq-dir>/).
+    # We prefer the shallowest hit so top-level files still win over nested ones.
+    for pattern in cfg["shard_globs"]:
+        candidates = [
+            m for m in sorted(search_dir.rglob(pattern))
+            if (m.is_file()
                 and m.name not in _SKIP_NAMES
                 and not m.name.startswith("_")
-                and _is_non_empty(m)):
-            print(str(m))
+                and _is_non_empty(m))
+        ]
+        if candidates:
+            # Pick the candidate closest to search_dir (fewest path parts).
+            best = min(candidates, key=lambda p: len(p.parts))
+            print(str(best))
             return 0
+
+    # Priority 3: any *.json fallback — flat then recursive.
+    for glob_fn, scope in [(search_dir.glob, "*.json"), (search_dir.rglob, "*.json")]:
+        for m in sorted(glob_fn(scope)):
+            if (m.is_file()
+                    and m.name not in _SKIP_NAMES
+                    and not m.name.startswith("_")
+                    and _is_non_empty(m)):
+                print(str(m))
+                return 0
 
     print(
         f"ERROR: no suitable shard file found in {search_dir} for experiment '{exp_id}'.",
         file=sys.stderr,
     )
     print(f"  Globs tried: {cfg['shard_globs']}", file=sys.stderr)
-    print("  Files present:", file=sys.stderr)
-    for f in sorted(search_dir.glob("*.json")):
-        print(f"    {f.name}", file=sys.stderr)
+    print("  Files present (recursive):", file=sys.stderr)
+    for f in sorted(search_dir.rglob("*.json")):
+        print(f"    {f.relative_to(search_dir)}", file=sys.stderr)
     return 1
 
 
