@@ -328,18 +328,35 @@ jobs:
           else
             # Single-worker experiment with no _merged.json — use shard file directly.
             # run_analysis.py accepts shapes A (merge_shards output), B (flat dict),
-            # and C (list), so any committed shard file is valid input.
-            SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
-              ! -name "_*.json" 2>/dev/null | sort | head -1 || true)
+            # C (list), and D ({results:[...]}), so any committed shard file is valid.
+            #
+            # FIX: use EXP_CONFIG shard_globs priority order instead of naive
+            # sort|head-1.  sort|head-1 could pick benchmark_results.json (empty
+            # stub) or any other lexicographically-early file before the real shard.
+            # We try each glob from the experiment's EXP_CONFIG in order; the first
+            # non-empty match wins.  Falls back to any non-underscore .json.
+            EXP="${{ steps.meta.outputs.exp_id }}"
+            SHARD_JSON=""
+
+            # Delegate shard-file selection to merge_shards.py which already
+            # owns the EXP_CONFIG shard_globs.  --pick-shard-file prints the
+            # best matching non-empty file path to stdout (exit 0) or exits 1.
+            # This keeps the glob table in a single place instead of duplicating
+            # it here.
+            SHARD_JSON=$(python3 .github/scripts/merge_shards.py \
+              --pick-shard-file "${EXP}" "${OUT_BASE}/${SUB}" 2>/dev/null || true)
+
             if [[ -n "${SHARD_JSON}" && -f "${SHARD_JSON}" ]]; then
               INPUT_JSON="${SHARD_JSON}"
-              echo "Using committed shard file: ${INPUT_JSON}"
+              echo "Using committed shard file (glob-ranked): ${INPUT_JSON}"
             else
-              echo "::error::No input JSON found for experiment '${SUB}'."
+              echo "::error::No input JSON found for experiment '${EXP}' in '${OUT_BASE}/${SUB}'."
               echo "  Searched:"
               echo "    artifact:   merged_artifact/**/_merged.json"
               echo "    committed:  ${COMMITTED_JSON}"
-              echo "    shard file: ${OUT_BASE}/${SUB}/*.json (excluding _*.json)"
+              echo "    shard file: ${OUT_BASE}/${SUB}/*.json (glob-ranked, excluding _*.json and stubs)"
+              echo "  Files present in directory:"
+              ls -lah "${OUT_BASE}/${SUB}/" 2>/dev/null || echo "    (directory does not exist)"
               echo "  Ensure ci_runner.yml worker committed results to the repo."
               exit 1
             fi

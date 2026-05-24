@@ -89,6 +89,12 @@ Each experiment ID maps to a mode that controls which fatals fire:
                    ci_analysis.yml short-circuits before calling this script.
                    Mode kept here for completeness / manual dispatch fallback.
 
+Note on EMPTY_DATASET:
+  analyse() now emits a mode-specific hint inside the EMPTY_DATASET fatal
+  condition string so the CI log is immediately actionable.  For pysr and
+  instability modes, analyse() also returns early before attempting
+  method-schema operations that would silently produce misleading zeros.
+
 Fatal-condition prefix conventions
 -----------------------------------
   (no prefix)  — hard fatal; ci_analysis.yml aborts the workflow.
@@ -1255,6 +1261,27 @@ def analyse(records: list[dict], experiment: str,
             f"Check main() dispatch logic."
         )
 
+    # Guard: pysr/instability — emit a clean empty-dataset error if records is
+    # empty so the message matches what the CI abort step checks for, and add a
+    # diagnostic suggesting the most common cause (wrong shard file picked up).
+    if not records and mode in ("pysr", "instability"):
+        fatal: list[str] = [
+            "EMPTY_DATASET: _merged.json contains 0 records. "
+            f"Experiment mode={mode!r}. "
+            "Most likely cause: 'Locate input JSON' step picked a stub or empty file "
+            "(e.g. benchmark_results.json) instead of the primary shard. "
+            "Check the 'Using committed shard file' log line and confirm the file "
+            "contains a non-empty 'results' list."
+        ]
+        return {
+            "experiment":      experiment,
+            "experiment_mode": mode,
+            "n_total":         0,
+            "n_standard":      0,
+            "n_intractable":   0,
+            "fatal_conditions": fatal,
+        }
+
     # -- Partition: standard vs intractable ------------------------------------
     standard    = [r for r in records if not r.get("extrapolation_intractable", False)]
     intractable = [r for r in records if r.get("extrapolation_intractable", False)]
@@ -1412,7 +1439,34 @@ def analyse(records: list[dict], experiment: str,
 
     # Always active regardless of mode.
     if n_total == 0:
-        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
+        # Build a targeted diagnostic hint based on mode so the CI log is
+        # immediately actionable without having to cross-reference docs.
+        if mode in ("standard", "ood"):
+            hint = (
+                "For multi-worker experiments (exp1b, exp3b): check that "
+                "merge_shards.py ran without error and committed a non-empty "
+                "_merged.json. For single-worker experiments: check the "
+                "'Locate input JSON' step selected the primary shard file, "
+                "not a stub or empty convenience export."
+            )
+        elif mode == "multi_method":
+            hint = (
+                "merge_shards.py _normalise_protocol_record() may have "
+                "produced no records. Confirm the protocol_core_*.json shard "
+                "has a non-empty 'tests' list and that _is_protocol_file() "
+                "recognises the file shape (tests[0].results must be a dict "
+                "with 'r2' or 'success' keys)."
+            )
+        else:
+            hint = (
+                "The shard file selected by 'Locate input JSON' may be a stub "
+                "or empty file. Check the CI log for the 'Using committed shard "
+                "file' line and inspect that file manually."
+            )
+        fatal.append(
+            f"EMPTY_DATASET: _merged.json contains 0 records. "
+            f"Experiment mode={mode!r}. {hint}"
+        )
 
     if n_standard == 0 and n_total > 0:
         fatal.append(

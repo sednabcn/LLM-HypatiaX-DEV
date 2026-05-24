@@ -65,6 +65,16 @@ Changes in current revision:
   · _compute_stats() iterates r2/r2_score/r2_noiseless/best_r2; also checks
     normalised test_r2 field produced by _normalise_protocol_record().
   · Zero-solve warning emitted to stderr when n_solved=0 and n_tasks>0.
+  · FIX-EMPTY-FAIL: merge_experiment() now hard-fails (returns 1) with a
+    detailed diagnostic when _find_shard_files() returns 0 files OR when
+    0 records are extracted from the files found.  Both conditions previously
+    silently wrote an empty _merged.json and returned 0, causing EMPTY_DATASET
+    to fire in ci_analysis.yml instead of at the merge step where the real
+    fault lies.  The new diagnostics include:
+      - A recursive listing of everything present under --input-root (so glob
+        mismatches are immediately visible in the CI log).
+      - Per-file top-key summary when files are found but yield 0 records
+        (so array_key mismatches are immediately visible).
   · FIX-CSV: _find_shard_files() allowed suffixes derived from shard_globs.
 """
 
@@ -881,7 +891,29 @@ def merge_experiment(
 
     if not shard_files:
         print(f"  ERROR: no partial result files found under {input_root}", file=sys.stderr)
-        print(f"         globs tried: {cfg['shard_globs']}", file=sys.stderr)
+        print(f"         globs tried:", file=sys.stderr)
+        for g in cfg["shard_globs"]:
+            print(f"           · {g}", file=sys.stderr)
+        # Emit a recursive listing of what IS present so CI logs show the
+        # actual filenames — the most common root cause is a glob mismatch
+        # between the pattern and the real filename the worker produced.
+        print(f"\n  Actual contents of {input_root} (recursive):", file=sys.stderr)
+        all_files = sorted(input_root.rglob("*"))
+        if not all_files:
+            print("    (directory is empty or does not exist)", file=sys.stderr)
+        else:
+            for fp in all_files:
+                if fp.is_file():
+                    try:
+                        rel = fp.relative_to(input_root)
+                    except ValueError:
+                        rel = fp
+                    print(f"    {rel}", file=sys.stderr)
+        print(
+            "\n  ACTION REQUIRED: update EXP_CONFIG shard_globs for "
+            f"'{exp_id}' in merge_shards.py to match the filenames listed above.",
+            file=sys.stderr,
+        )
         _write_stub_checkpoint(output_dir, exp_id, result_subdir, run_id,
                                error="no_shard_files")
         return 1
@@ -926,7 +958,34 @@ def merge_experiment(
         print(f"  Unique task IDs       : {len(merged)}")
 
     if not merged:
-        print("  ERROR: no task records could be extracted.", file=sys.stderr)
+        print("  ERROR: no task records could be extracted from any shard file.",
+              file=sys.stderr)
+        print(f"         {len(shard_files)} shard file(s) were found but all "
+              "produced 0 records.", file=sys.stderr)
+        print(f"         array_key={cfg.get('array_key')!r}  "
+              f"merge_key={cfg.get('merge_key')!r}", file=sys.stderr)
+        print("\n  Per-file summary:", file=sys.stderr)
+        for fpath in shard_files:
+            try:
+                raw = json.loads(fpath.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(raw, dict):
+                    top_keys = list(raw.keys())[:8]
+                    ttype = "dict"
+                elif isinstance(raw, list):
+                    top_keys = [f"(list, len={len(raw)})"]
+                    ttype = "list"
+                else:
+                    top_keys = [str(type(raw))]
+                    ttype = "other"
+                print(f"    · {fpath.name}: type={ttype}  top-keys={top_keys}",
+                      file=sys.stderr)
+            except Exception as exc:
+                print(f"    · {fpath.name}: JSON error — {exc}", file=sys.stderr)
+        print(
+            "\n  ACTION REQUIRED: confirm array_key in EXP_CONFIG matches the "
+            "top-level key that wraps the results list in the files above.",
+            file=sys.stderr,
+        )
         _write_stub_checkpoint(output_dir, exp_id, result_subdir, run_id,
                                error="no_records_extracted")
         return 1
@@ -1104,7 +1163,94 @@ def _write_stub_checkpoint(
 #        --result-subdir "${RESULT_SUBDIR}"
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _pick_shard_file(exp_id: str, search_dir: Path) -> int:
+    """
+    CLI helper: print the best matching non-empty shard file for `exp_id`
+    in `search_dir` and exit 0, or exit 1 if nothing suitable is found.
+
+    Called by ci_analysis.yml "Locate input JSON" step for single-worker
+    experiments to avoid duplicating EXP_CONFIG shard_globs in the YAML.
+
+    Selection rules (same logic as _find_shard_files but for a single dir):
+      1. Try each glob from EXP_CONFIG[exp_id]['shard_globs'] in order.
+         First non-empty, non-stub, non-metadata match wins.
+      2. Fallback: any *.json in search_dir that isn't in SKIP_NAMES and
+         isn't empty / a stub.
+    """
+    cfg = EXP_CONFIG.get(exp_id)
+    if cfg is None:
+        print(f"ERROR: unknown experiment '{exp_id}'", file=sys.stderr)
+        return 1
+
+    _SKIP_NAMES = frozenset({
+        "_report.md", "_merged.json", "_merged.csv",
+        "_stats.json", "_checkpoint.json",
+        # benchmark_results.json is an empty flat-list convenience export;
+        # skip it so the real protocol_core_*.json shard is picked instead.
+        "benchmark_results.json",
+    })
+
+    def _is_non_empty(path: Path) -> bool:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            return False
+        if isinstance(raw, list):
+            return len(raw) > 0
+        if isinstance(raw, dict):
+            # Reject stub checkpoints written by _write_stub_checkpoint().
+            if isinstance(raw.get("_meta"), dict) and raw["_meta"].get("stub"):
+                return False
+            return bool(raw)
+        return False
+
+    # Priority 1: globs in declared order.
+    for pattern in cfg["shard_globs"]:
+        for m in sorted(search_dir.glob(pattern)):
+            if (m.is_file()
+                    and m.name not in _SKIP_NAMES
+                    and not m.name.startswith("_")
+                    and _is_non_empty(m)):
+                print(str(m))
+                return 0
+
+    # Priority 2: any *.json fallback.
+    for m in sorted(search_dir.glob("*.json")):
+        if (m.is_file()
+                and m.name not in _SKIP_NAMES
+                and not m.name.startswith("_")
+                and _is_non_empty(m)):
+            print(str(m))
+            return 0
+
+    print(
+        f"ERROR: no suitable shard file found in {search_dir} for experiment '{exp_id}'.",
+        file=sys.stderr,
+    )
+    print(f"  Globs tried: {cfg['shard_globs']}", file=sys.stderr)
+    print("  Files present:", file=sys.stderr)
+    for f in sorted(search_dir.glob("*.json")):
+        print(f"    {f.name}", file=sys.stderr)
+    return 1
+
+
 def main() -> None:
+    # ── Subcommand: --pick-shard-file ─────────────────────────────────────────
+    # Lightweight helper used by ci_analysis.yml "Locate input JSON" step.
+    # Must be handled BEFORE the main argparse block to avoid conflicts.
+    if len(sys.argv) >= 2 and sys.argv[1] == "--pick-shard-file":
+        if len(sys.argv) < 4:
+            print(
+                "Usage: merge_shards.py --pick-shard-file <exp_id> <search_dir>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        rc = _pick_shard_file(
+            exp_id     = sys.argv[2],
+            search_dir = Path(sys.argv[3]).expanduser().resolve(),
+        )
+        sys.exit(rc)
+
     parser = argparse.ArgumentParser(
         description="Merge HypatiaX per-shard partial JSONs → 4 canonical output files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
