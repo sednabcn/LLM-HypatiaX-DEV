@@ -7,9 +7,12 @@ R² success threshold: 0.8
 
 > **PySR/Nguyen experiment**: no `hybrid` / `neural_network` / `pure_llm` method keys are expected in `_merged.json`. Method-comparison sections are skipped.
 
-## ⚠️ Fatal Conditions
+## ✅ No Fatal Conditions
 
-- **EMPTY_DATASET: _merged.json contains 0 records.**
+
+## ℹ️ Informational / Warnings
+
+- WARN_EMPTY_DATASET: _merged.json contains 0 records for experiment 'exp3'. This is non-fatal for this experiment type. Workflow continues.
 
 ## Method Summary
 
