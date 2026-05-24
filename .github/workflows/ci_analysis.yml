@@ -163,10 +163,16 @@ jobs:
           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
 
       # -----------------------------------------------------------------------
-      # Download shard artifact from the ci_runner.yml run.
+      # Download consolidated artifact from a ci_consolidate_experiment.yml run.
       # source_run_id is provided by ci_schedule_all.yml; omit when
       # re-running analysis manually against already-committed files.
-      # instability has no _merged.json — skip download entirely.
+      #
+      # MERGE-REQUIRED GATE: only exp1b and exp3b are multi-shard experiments
+      # whose workers feed merge_shards.py to produce a _merged.json via a
+      # consolidate job.  All other experiments commit individual shard files
+      # directly to the repo — there is no consolidated artifact to download
+      # for them, and attempting the download is wasteful and misleading.
+      # instability has no JSON results at all — skip download entirely.
       #
       # PURGE RESILIENCE: continue-on-error: true prevents this step from
       # hard-failing the job when the referenced run has been deleted by
@@ -175,7 +181,8 @@ jobs:
       - name: Download consolidated artifact
         if: >
           github.event.inputs.source_run_id != '' &&
-          github.event.inputs.experiment != 'instability'
+          (github.event.inputs.experiment == 'exp1b' ||
+           github.event.inputs.experiment == 'exp3b')
         continue-on-error: true
         id: download_artifact
         uses: actions/download-artifact@v4
@@ -190,7 +197,8 @@ jobs:
       - name: Log artifact download outcome
         if: >
           github.event.inputs.source_run_id != '' &&
-          github.event.inputs.experiment != 'instability'
+          (github.event.inputs.experiment == 'exp1b' ||
+           github.event.inputs.experiment == 'exp3b')
         run: |
           if [[ "${{ steps.download_artifact.outcome }}" == "success" ]]; then
             echo "Artifact downloaded from run ${{ github.event.inputs.source_run_id }}."
@@ -330,21 +338,44 @@ jobs:
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
       # -----------------------------------------------------------------------
-      # Locate _merged.json: prefer the downloaded artifact copy (guaranteed
-      # consistent with the run that produced it), fall back to the committed
-      # file (manual dispatch without source_run_id).
+      # Locate input JSON for analysis.
+      #
+      # Resolution order differs by experiment type:
+      #
+      #   exp1b / exp3b  (MERGE-REQUIRED):
+      #     1. Downloaded consolidated artifact _merged.json  (from ci_consolidate_experiment.yml)
+      #     2. Committed _merged.json in the repo
+      #     3. Committed shard file (last resort)
+      #
+      #   All other experiments  (SHARD-DIRECT):
+      #     Workers commit individual shard files directly — merge_shards.py is
+      #     never called in CI and no _merged.json is produced.
+      #     1. Committed _merged.json (present only if ci_consolidate_experiment.yml
+      #        was run manually)
+      #     2. Committed shard file  (normal path)
+      #     The artifact branch is intentionally skipped for these experiments.
       - name: Locate _merged.json
         if: github.event.inputs.experiment != 'instability'
         id: locate
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+          EXP: ${{ steps.meta.outputs.exp_id }}
         run: |
           set -euo pipefail
 
-          ARTIFACT_JSON=$(find consolidated_artifact -name "_merged.json" 2>/dev/null | head -1 || true)
           COMMITTED_JSON="${OUT_BASE}/${SUB}/_merged.json"
 
-          if [[ -f "$ARTIFACT_JSON" ]]; then
+          # Artifact branch: only valid for exp1b / exp3b, the only experiments
+          # that produce _merged.json via merge_shards.py in a consolidate job.
+          # For every other experiment the consolidated_artifact dir is empty
+          # (download step was skipped), so searching it would always return
+          # nothing — skip it outright to keep the log unambiguous.
+          ARTIFACT_JSON=""
+          if [[ "$EXP" == "exp1b" || "$EXP" == "exp3b" ]]; then
+            ARTIFACT_JSON=$(find consolidated_artifact -name "_merged.json" 2>/dev/null | head -1 || true)
+          fi
+
+          if [[ -n "$ARTIFACT_JSON" && -f "$ARTIFACT_JSON" ]]; then
             MERGED_JSON="$ARTIFACT_JSON"
             echo "Using artifact copy: $MERGED_JSON"
           elif [[ -f "$COMMITTED_JSON" ]]; then
@@ -352,8 +383,6 @@ jobs:
             echo "Using committed copy: $MERGED_JSON"
           else
             # Fallback: locate the primary committed shard result file.
-            # Only exp1b and exp3b produce a _merged.json via merge_shards.py;
-            # all other experiments commit individual shard files directly.
             # run_analysis.py accepts shapes A/B/C so a shard file is valid input.
             # Files starting with "_" are pipeline metadata (_analysis.json etc) — skip them.
             SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
@@ -364,7 +393,9 @@ jobs:
             else
               echo "::error::No input JSON found for experiment '${SUB}'."
               echo "  Searched:"
-              echo "    artifact:   consolidated_artifact/**/_merged.json"
+              if [[ "$EXP" == "exp1b" || "$EXP" == "exp3b" ]]; then
+                echo "    artifact (exp1b/exp3b only): consolidated_artifact/**/_merged.json"
+              fi
               echo "    committed:  ${COMMITTED_JSON}"
               echo "    shard file: ${OUT_BASE}/${SUB}/*.json (excluding _*.json)"
               echo "  Ensure ci_runner.yml worker shard committed results to the repo,"
