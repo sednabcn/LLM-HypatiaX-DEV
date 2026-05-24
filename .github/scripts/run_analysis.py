@@ -10,49 +10,25 @@ NEVER called by workers or the consolidate job.
 Input
 -----
 _merged.json  — produced by scripts/merge_shards.py
-    Dict keyed by task_id (Shape A from merge_shards.py), each value with shape:
+    List of records (one per equation / task), each with shape:
 
     {
         "equation_id":               str,
-        "difficulty":                str,   # "easy" | "medium" | "hard" | null
-        "formula_type":              str,   # "rational" | "transcendental" | ... | null
-        "extrapolation_intractable": bool,  # absent → False
+        "difficulty":                str,   # "easy" | "medium" | "hard"
+        "formula_type":              str,   # "rational" | "transcendental" | ...
+        "extrapolation_intractable": bool,
         "results": {
             "pure_llm":       { "train_r2": float|null, "test_r2": float|null,
-                                "success": bool, "time_s": float|null,
+                                "success": bool, "time_s": float,
                                 "extrapolation_gap": float|null,
                                 "stability_score":   float|null },
             "neural_network": { ..., "timed_out": bool },
-            "hybrid":         { ..., "decision": str|null }
+            "hybrid":         { ..., "decision": str }
         }
     }
 
-    Produced by merge_shards._normalise_protocol_record() from
-    run_comparative_suite_benchmark_v2.py protocol_core_*.json output.
-    train_r2 is null for all protocol-file experiments (worker does not
-    produce a training split R²); only test_r2 is meaningful for MW tests.
-
     Records with "extrapolation_intractable": true are excluded from
     primary method comparisons (counted separately).
-
-    Top-level shapes accepted (handled in main()):
-      Shape P  {"tests": [{description, domain, results:{RawMethod:{r2,...}}}]}
-               — raw protocol_core_*.json (Shape P). FIX: previously missing,
-               causing EMPTY_DATASET for exp1, exp2, exp2_feynman, extrap,
-               hybrid_all_domains, suppB, suppB_sc on every CI run.
-               ci_analysis.yml inline merge step now converts all protocol files
-               to _merged.json before this script runs (primary fix).  This
-               handler is a defensive fallback for manual invocations.
-      Shape A  {"_meta":{}, "results":{task_id: record}}  — merge_shards.py output
-      Shape B  {task_id: record, ...}                     — flat dict (legacy)
-      Shape C  [record, ...]                              — top-level list (legacy)
-      Shape D  {"results": [...]} or {"equations": [...]} — Nguyen shard (exp3/exp3b)
-               results/equations value is a LIST, not a dict (checked before Shape A)
-      Shape E  {"results": {"hypatiax": [...], "pysr": [...]}}
-               — Nguyen method-arrays (exp3/exp3b direct shard).
-               results is a dict whose values are per-method LISTS.
-               FIX: previously misidentified as Shape A → 0 records → EMPTY_DATASET.
-               Now unpacked: lists are zipped by index into per-equation records.
 
 Experiment modes
 ----------------
@@ -61,51 +37,33 @@ Each experiment ID maps to a mode that controls which fatals fire:
   "standard"     — exp1, exp1b, suppA, suppB, suppB_sc
                    Full analysis; all fatals active.
 
-  "ablation"     — exp1_ablation only.
+  "ablation"     — exp2_feynman
                    Paired pysr_only vs hypatia comparison on extrap_r2_far.
-                   Records use hypatia/pysr_only keys, NOT pure_llm/neural_network/hybrid.
-                   merge_shards.py does NOT normalise ablation records.
                    Three-tier MW (all-N / excl-train-fail / success-subset),
                    Fisher, Spearman, complexity distributions, threshold sweep,
                    and LOO sensitivity.  Routes to analyse_ablation().
                    NOTE: exp1_ablation is NOT dispatched by ci_experiment.yml
-                   or ci_schedule_all.yml — no worker, no result_subdir in CI.
-                   Kept in EXPERIMENT_MODE for manual standalone use only.
+                   or ci_schedule_all.yml — it has no worker or result_subdir.
+                   It is kept in EXPERIMENT_MODE for manual standalone use only.
 
   "ood"          — extrap
                    OOD/out-of-distribution run. Hybrid legitimately loses NN.
                    HYBRID_NEVER_BEATS_NN is demoted to INFO_ (non-blocking).
-                   train_r2 is null (protocol-file experiment); extrapolation_gap
-                   is populated from extrap_r2 field when --extrap flag was used.
 
   "pysr"         — exp3, exp3b
-                   Nguyen-12 / PySR runs. No hybrid/NN/LLM key in schema.
+                   Nguyen-12 / PySR runs. No hybrid key in schema.
                    TOTAL_FAILURE and HYBRID_NEVER_BEATS_NN fatals suppressed.
                    Method-comparison sections written as N/A.
 
-  "multi_method" — exp2, exp2_feynman, hybrid_all_domains
-                   All six method keys may be present (pure_llm, neural_network,
-                   hybrid, hybrid_all_domains, symbolic_engine, hybrid_v50_2).
-                   METHODS = [pure_llm, neural_network, hybrid] are analysed;
-                   extra keys (symbolic_engine, hybrid_v50_2, hybrid_all_domains)
-                   are retained in records but excluded from MW tests and summary.
+  "multi_method" — exp2, hybrid_all_domains
+                   4-method output (HybridSystemLLMNN all-domains unmapped).
                    TOTAL_FAILURE and HYBRID_NEVER_BEATS_NN active.
                    WARN_MULTI_METHOD appended (non-blocking).
-                   exp2_feynman uses this mode: the worker is
-                   run_comparative_suite_benchmark_v2.py (same as exp2) and
-                   produces PureLLM/ImprovedNN/Hybrid/SymbolicEngine method keys,
-                   NOT the hypatia/pysr_only ablation schema.
 
   "instability"  — instability
                    Writes only CSVs/figures; no _merged.json with method results.
                    ci_analysis.yml short-circuits before calling this script.
                    Mode kept here for completeness / manual dispatch fallback.
-
-Note on EMPTY_DATASET:
-  analyse() now emits a mode-specific hint inside the EMPTY_DATASET fatal
-  condition string so the CI log is immediately actionable.  For pysr and
-  instability modes, analyse() also returns early before attempting
-  method-schema operations that would silently produce misleading zeros.
 
 Fatal-condition prefix conventions
 -----------------------------------
@@ -180,21 +138,13 @@ EXPERIMENT_MODE: dict[str, str] = {
     "instability":        "instability",
     "exp2":               "multi_method",
     "hybrid_all_domains": "multi_method",
-    # exp1_ablation: paired pysr_only vs hypatia comparison using extrap_r2_far.
-    # Uses dedicated helpers; standard method schema (pure_llm/neural_network/hybrid)
-    # is absent — method-comparison sections suppressed.
+    # exp1_ablation / exp2_feynman: paired pysr_only vs hypatia comparison using
+    # extrap_r2_far. Uses dedicated helpers; standard method schema
+    # (pure_llm/neural_network/hybrid) is absent — method-comparison sections suppressed.
     # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
     # complexity distributions, threshold sweep, and LOO all run under this mode.
     "exp1_ablation":      "ablation",
-    # exp2_feynman: Feynman SR noisy benchmark — same runner as exp1/exp2.
-    # Worker produces protocol_core_*.json with PureLLM/ImprovedNN/Hybrid/SymbolicEngine
-    # method keys; merge_shards.py normalises these to canonical slugs.
-    # Treated as multi_method (like exp2/hybrid_all_domains): all six method keys
-    # may be present; pure_llm, neural_network, hybrid drive MW tests and summary
-    # tables; extra keys (symbolic_engine, hybrid_v50_2, hybrid_all_domains) are
-    # retained in records but excluded from METHODS comparisons.
-    # WARN_MULTI_METHOD is appended (non-blocking) so the report is self-documenting.
-    "exp2_feynman":       "multi_method",
+    "exp2_feynman":       "ablation",
 }
 
 # Canonical result_subdir for every CI-dispatched experiment.
@@ -209,7 +159,7 @@ RESULT_SUBDIR: dict[str, str] = {
     "exp3":               "extrapolation",
     "exp3b":              "extrapolation/multi_seed",
     "suppA":              "hybrid_pysr/defi",
-    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB":              "comparison_results/feynman-tests/noise-sweep",
     "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
     "hybrid_all_domains": "hybrid_llm_nn/all_domains",
     "instability":        "figures",
@@ -251,10 +201,7 @@ def _r2_values(records: list[dict], method: str) -> list[float]:
     """Clipped, finite test_r2 values for a method across all records."""
     out = []
     for r in records:
-        m_res = r.get("results", {}).get(method)
-        if not isinstance(m_res, dict):
-            continue
-        v = _safe_float(m_res.get("test_r2"))
+        v = _safe_float(r.get("results", {}).get(method, {}).get("test_r2"))
         if math.isfinite(v):
             out.append(max(R2_CLIP_LO, min(R2_CLIP_HI, v)))
     return out
@@ -266,7 +213,7 @@ def _success_rate(records: list[dict], method: str) -> tuple[int, int, float]:
     n_success = 0
     for r in records:
         res = r.get("results", {}).get(method)
-        if not isinstance(res, dict):
+        if res is None:
             continue
         n_total += 1
         if res.get("success", False):
@@ -281,10 +228,7 @@ def _r2_success_rate(records: list[dict], method: str,
     n_total = 0
     n_above = 0
     for r in records:
-        m_res = r.get("results", {}).get(method)
-        if not isinstance(m_res, dict):
-            continue
-        v = _safe_float(m_res.get("test_r2"))
+        v = _safe_float(r.get("results", {}).get(method, {}).get("test_r2"))
         if math.isfinite(v):
             n_total += 1
             if v >= threshold:
@@ -1273,61 +1217,6 @@ def analyse(records: list[dict], experiment: str,
             f"Check main() dispatch logic."
         )
 
-    # Guard: pysr/instability — emit a clean empty-dataset error if records is
-    # empty so the message matches what the CI abort step checks for, and add a
-    # diagnostic suggesting the most common cause (wrong shard file picked up).
-    #
-    # IMPORTANT: the returned dict must include every key that write_report()
-    # accesses unconditionally (r2_success_threshold, n_standard, n_intractable,
-    # method_summary, mann_whitney, coverage_gaps, hybrid_vs_nn_headtohead,
-    # extrapolation_gap_summary, timing, hybrid_decisions, by_difficulty,
-    # by_formula_type) — even as empty/null sentinels — so write_report() never
-    # KeyErrors on a partial analysis dict.
-    if not records and mode in ("pysr", "instability"):
-        fatal: list[str] = [
-            "EMPTY_DATASET: _merged.json contains 0 records. "
-            f"Experiment mode={mode!r}. "
-            "Most likely cause: 'Locate input JSON' step picked a stub or empty file "
-            "(e.g. benchmark_results.json) instead of the primary shard, OR the shard "
-            "file has an empty 'results' key (dict or list). "
-            "Check the 'Shape A/D ... records' log line above and inspect the file."
-        ]
-        _empty_method = {m: {"n_records": 0, "n_success_flag": 0,
-                              "success_rate_flag": 0.0, "n_r2_above_80": 0,
-                              "r2_above_80_rate": 0.0, "median_test_r2": None,
-                              "mean_test_r2": None, "n_finite_r2": 0}
-                         for m in METHODS}
-        _empty_mw     = {"available": False, "reason": "empty dataset"}
-        return {
-            "experiment":              experiment,
-            "experiment_mode":         mode,
-            "n_total":                 0,
-            "n_standard":              0,
-            "n_intractable":           0,
-            "r2_success_threshold":    R2_SUCCESS_THRESHOLD,
-            "method_summary":          _empty_method,
-            "mann_whitney":            {
-                "hybrid_vs_llm": _empty_mw,
-                "hybrid_vs_nn":  _empty_mw,
-                "nn_vs_llm":     _empty_mw,
-            },
-            "coverage_gaps":           [],
-            "n_coverage_gaps":         0,
-            "by_difficulty":           {},
-            "by_formula_type":         {},
-            "extrapolation_gap_summary": {m: {"mean_gap": None, "median_gap": None, "n": 0}
-                                          for m in METHODS},
-            "timing":                  {m: {"mean_s": None, "median_s": None,
-                                            "total_s": None, "n": 0, "n_timed_out": 0}
-                                        for m in METHODS},
-            "hybrid_decisions":        {},
-            "hybrid_vs_nn_headtohead": {"n_equations_both_finite": 0,
-                                        "hybrid_wins": 0, "nn_wins": 0,
-                                        "tied": 0, "hybrid_win_rate": None},
-            "pysr_fit_params":         pysr_fit_params or {},
-            "fatal_conditions":        fatal,
-        }
-
     # -- Partition: standard vs intractable ------------------------------------
     standard    = [r for r in records if not r.get("extrapolation_intractable", False)]
     intractable = [r for r in records if r.get("extrapolation_intractable", False)]
@@ -1485,34 +1374,7 @@ def analyse(records: list[dict], experiment: str,
 
     # Always active regardless of mode.
     if n_total == 0:
-        # Build a targeted diagnostic hint based on mode so the CI log is
-        # immediately actionable without having to cross-reference docs.
-        if mode in ("standard", "ood"):
-            hint = (
-                "For multi-worker experiments (exp1b, exp3b): check that "
-                "merge_shards.py ran without error and committed a non-empty "
-                "_merged.json. For single-worker experiments: check the "
-                "'Locate input JSON' step selected the primary shard file, "
-                "not a stub or empty convenience export."
-            )
-        elif mode == "multi_method":
-            hint = (
-                "merge_shards.py _normalise_protocol_record() may have "
-                "produced no records. Confirm the protocol_core_*.json shard "
-                "has a non-empty 'tests' list and that _is_protocol_file() "
-                "recognises the file shape (tests[0].results must be a dict "
-                "with 'r2' or 'success' keys)."
-            )
-        else:
-            hint = (
-                "The shard file selected by 'Locate input JSON' may be a stub "
-                "or empty file. Check the CI log for the 'Using committed shard "
-                "file' line and inspect that file manually."
-            )
-        fatal.append(
-            f"EMPTY_DATASET: _merged.json contains 0 records. "
-            f"Experiment mode={mode!r}. {hint}"
-        )
+        fatal.append("EMPTY_DATASET: _merged.json contains 0 records.")
 
     if n_standard == 0 and n_total > 0:
         fatal.append(
@@ -1567,11 +1429,10 @@ def analyse(records: list[dict], experiment: str,
     # translates method names before this analysis runs.
     if mode == "multi_method":
         fatal.append(
-            "WARN_MULTI_METHOD: up to six method keys may be present in records "
-            "(pure_llm, neural_network, hybrid, hybrid_all_domains, symbolic_engine, hybrid_v50_2). "
-            "Only METHODS = [pure_llm, neural_network, hybrid] drive MW tests and summary tables. "
-            "Extra keys (symbolic_engine / hybrid_all_domains / hybrid_v50_2) are retained "
-            "in records for completeness but excluded from all statistical comparisons."
+            "WARN_MULTI_METHOD: this experiment produces a 4th method key "
+            "(HybridSystemLLMNN all-domains) not in METHODS. "
+            "It is excluded from all method-comparison statistics. "
+            "Confirm merge_shards.py translates method names before analysis."
         )
 
     # -- Assemble output -------------------------------------------------------
@@ -1641,9 +1502,9 @@ def write_report(analysis: dict, path: Path) -> None:
     h(1, f"HypatiaX Analysis Report — `{exp}`")
     p(f"Experiment mode: **{mode}**")
     p(f"N total: {analysis['n_total']} "
-      f"| N standard: {analysis.get('n_standard', 'N/A')} "
-      f"| N intractable: {analysis.get('n_intractable', 'N/A')}")
-    p(f"R² success threshold: {analysis.get('r2_success_threshold', R2_SUCCESS_THRESHOLD)}")
+      f"| N standard: {analysis['n_standard']} "
+      f"| N intractable: {analysis['n_intractable']}")
+    p(f"R² success threshold: {analysis['r2_success_threshold']}")
 
     # -- Mode-specific header note -----------------------------------------------
     if mode == "ood":
@@ -1660,16 +1521,10 @@ def write_report(analysis: dict, path: Path) -> None:
         )
     elif mode == "multi_method":
         p(
-            "\n> **Multi-method experiment**: up to six method keys may be present in "
-            "the raw output (`PureLLM Baseline`, `ImprovedNN`, `EnhancedHybridSystemDeFi`, "
-            "`HybridSystemLLMNN all-domains`, `SymbolicEngineWithLLM`, "
-            "`HybridDiscoverySystem v50_2`). `merge_shards.py` normalises these to "
-            "canonical slugs; only `pure_llm`, `neural_network`, and `hybrid` are "
-            "included in METHODS and drive all statistical comparisons. The remaining "
-            "keys (`hybrid_all_domains`, `symbolic_engine`, `hybrid_v50_2`) are "
-            "present in records but excluded from MW tests and method summary tables. "
-            f"For `{exp}`: `symbolic_engine` (SymbolicEngineWithLLM) and any PySR-only "
-            "variants are retained in records for completeness but not compared."
+            "\n> **Multi-method experiment**: a 4th method key "
+            "(`HybridSystemLLMNN all-domains`) is present in the raw output "
+            "but is not in `METHODS` and is excluded from comparisons. "
+            "Verify `merge_shards.py` translates method names correctly."
         )
 
     # -- Fatal conditions --------------------------------------------------------
@@ -1744,8 +1599,7 @@ def write_report(analysis: dict, path: Path) -> None:
 
     # -- Coverage gaps -----------------------------------------------------------
     gaps = analysis.get("coverage_gaps", [])
-    _thr = analysis.get("r2_success_threshold", R2_SUCCESS_THRESHOLD)
-    h(2, f"Coverage Gaps ({len(gaps)} equations with best R² < {_thr})")
+    h(2, f"Coverage Gaps ({len(gaps)} equations with best R² < {analysis['r2_success_threshold']})")
     if gaps:
         lines.append("| Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |")
         lines.append("|----------|------------|------|---------|-----|----|----|")
@@ -1931,205 +1785,17 @@ def main() -> None:
         print("  PySR fit params: not set (PYSR_FIT_WALL_TIMEOUT / PYSR_FIT_GRACE_SECS absent)")
 
     # Handle all shapes merge_shards.py and legacy workers can produce:
-    #   Shape P  {"tests": [{description, domain, results:{RawMethod:{r2,...}}}]}
-    #            — raw protocol_core_*.json from run_comparative_suite_benchmark_v2.py.
-    #            ci_analysis.yml inline merge step should have converted this to
-    #            _merged.json (Shape A/D) before reaching here.  This handler is a
-    #            defensive fallback for manual --merged-json invocations.
-    #            FIX: previously missing entirely, causing EMPTY_DATASET for all
-    #            non-exp1b/exp3b experiments (exp1, exp2, exp2_feynman, extrap,
-    #            hybrid_all_domains, suppB, suppB_sc) on every CI run.
     #   Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
-    #            — canonical output of merge_shards.py.
-    #            results value is a DICT keyed by task_id.
+    #            — canonical output of merge_shards.py (new).
     #   Shape B  {task_id: record, ...}
     #            — flat dict keyed by task_id (legacy).
     #   Shape C  [record, ...]
     #            — top-level list (legacy).
-    #   Shape D  {"results": [...], ...}  or  {"equations": [...], ...}
-    #            — Nguyen / single-equation shard file (exp3, exp3b direct
-    #              shard from exp3_nguyen12_*.py). results value is a LIST.
-    #            Must be checked BEFORE Shape A — both have a "results" key;
-    #            only the type (list vs dict) distinguishes them.
-
-    # ---------------------------------------------------------------------------
-    # Shape P normalisation (defensive fallback — should already be normalised
-    # by ci_analysis.yml inline merge step before this script is called).
-    # Mirrors merge_shards._normalise_protocol_record() and
-    # merge_shards._is_protocol_file() exactly.
-    # ---------------------------------------------------------------------------
-    _RAW_METHOD_TO_CANONICAL_P: dict[str, str] = {
-        "PureLLM Baseline (core)":              "pure_llm",
-        "ImprovedNN (core)":                    "neural_network",
-        "EnhancedHybridSystemDeFi (core)":      "hybrid",
-        "HybridSystemLLMNN all-domains (core)": "hybrid_all_domains",
-        "SymbolicEngineWithLLM (tools)":        "symbolic_engine",
-        "HybridDiscoverySystem v50_2 (tools)":  "hybrid_v50_2",
-    }
-
-    def _is_protocol_file_p(data: Any) -> bool:
-        return (
-            isinstance(data, dict)
-            and isinstance(data.get("tests"), list)
-            and bool(data["tests"])
-            and isinstance(data["tests"][0], dict)
-            and "results" in data["tests"][0]
-            and isinstance(data["tests"][0]["results"], dict)
-            and any(
-                isinstance(v, dict) and ("r2" in v or "success" in v)
-                for v in data["tests"][0]["results"].values()
-            )
-        )
-
-    if _is_protocol_file_p(raw):
-        print(
-            f"  Shape P (protocol_core wrapper): normalising {len(raw['tests'])} "
-            f"tests[] entries → canonical per-equation records.\n"
-            f"  NOTE: ci_analysis.yml inline merge step should have produced a "
-            f"_merged.json before this script ran.  This fallback handles manual "
-            f"--merged-json invocations with raw protocol_core files."
-        )
-        _normalised_p: list[dict] = []
-        for _test in raw["tests"]:
-            if not isinstance(_test, dict):
-                continue
-            _desc   = _test.get("description", "")
-            _domain = _test.get("domain", "")
-            _eq_id  = _desc
-            for _sep in (" — ", " - ", ": ", " | "):
-                if _sep in _desc:
-                    _eq_id = _desc.split(_sep)[0].strip()
-                    break
-            _canonical_results: dict = {}
-            for _raw_name, _res in _test.get("results", {}).items():
-                if not isinstance(_res, dict):
-                    continue
-                _canonical = _RAW_METHOD_TO_CANONICAL_P.get(
-                    _raw_name,
-                    _raw_name.lower().replace(" ", "_").replace("(", "").replace(")", ""),
-                )
-                _canonical_results[_canonical] = {
-                    "train_r2":          None,
-                    "test_r2":           _res.get("r2"),
-                    "success":           _res.get("success", False),
-                    "time_s":            _res.get("time"),
-                    "extrapolation_gap": _res.get("extrap_r2"),
-                    "stability_score":   None,
-                    "timed_out":         (
-                        _res.get("metadata", {}).get("timed_out", False)
-                        if isinstance(_res.get("metadata"), dict) else False
-                    ),
-                    "decision":          _res.get("decision"),
-                }
-            _normalised_p.append({
-                "equation_id":               _eq_id,
-                "equation":                  _eq_id,
-                "description":               _desc,
-                "domain":                    _domain,
-                "difficulty":                _test.get("difficulty"),
-                "formula_type":              _test.get("formula_type"),
-                "extrapolation_intractable": _test.get("extrapolation_intractable", False),
-                "winner":                    _test.get("winner"),
-                "results":                   _canonical_results,
-            })
-        # Rewrite raw as Shape D list so the existing dispatch below reads it correctly.
-        raw = {"results": _normalised_p}
-        print(f"  Shape P normalised → {len(_normalised_p)} records (rewritten as Shape D).")
-
-    # Always log the raw top-level structure so CI logs contain enough context
-    # to diagnose 0-records failures without needing to fetch the file manually.
-    if isinstance(raw, dict):
-        top_keys = list(raw.keys())
-        print(f"  File top-level type: dict  keys={top_keys}")
-        for probe in ("results", "tests", "equations", "runs", "data"):
-            val = raw.get(probe)
-            if val is not None:
-                if isinstance(val, list):
-                    first = val[0] if val else None
-                    print(f"  raw[{probe!r}]: list  len={len(val)}  "
-                          f"first_item_type={type(first).__name__ if first is not None else 'N/A'}")
-                    if first is not None and isinstance(first, dict):
-                        print(f"  first item keys: {list(first.keys())[:12]}")
-                elif isinstance(val, dict):
-                    first_v = next(iter(val.values()), None)
-                    print(f"  raw[{probe!r}]: dict  len={len(val)}  "
-                          f"first_value_type={type(first_v).__name__ if first_v is not None else 'N/A'}")
-                    if isinstance(first_v, dict):
-                        print(f"  first value keys: {list(first_v.keys())[:12]}")
-                    elif first_v is not None:
-                        print(f"  first value sample: {repr(first_v)[:120]}")
-                break  # only probe the first matching key
-    elif isinstance(raw, list):
-        first = raw[0] if raw else None
-        print(f"  File top-level type: list  len={len(raw)}  "
-              f"first_item_type={type(first).__name__ if first is not None else 'N/A'}")
-        if isinstance(first, dict):
-            print(f"  first item keys: {list(first.keys())[:12]}")
-
-    _ARRAY_KEYS = ("results", "equations", "runs", "data")
-    if isinstance(raw, dict) and isinstance(raw.get("results"), list):
-        # Shape D (results list) — exp3/exp3b Nguyen shard.
-        records = [r for r in raw["results"] if isinstance(r, dict)]
-        print(f"  Shape D (Nguyen shard): {len(records)} records from 'results' list.")
-        if len(records) == 0 and raw["results"]:
-            non_dict = [type(x).__name__ for x in raw["results"][:5]]
-            print(f"  WARNING: list items are not dicts — types: {non_dict}", file=sys.stderr)
-    elif isinstance(raw, dict) and any(
-        k != "results" and isinstance(raw.get(k), list) for k in _ARRAY_KEYS
-    ):
-        # Shape D (other array key) — equations/runs/data list wrapper.
-        _k = next(k for k in _ARRAY_KEYS if k != "results" and isinstance(raw.get(k), list))
-        records = [r for r in raw[_k] if isinstance(r, dict)]
-        print(f"  Shape D (array key '{_k}'): {len(records)} records.")
-    elif (isinstance(raw, dict)
-          and isinstance(raw.get("results"), dict)
-          and raw["results"]
-          and all(isinstance(v, list) for v in raw["results"].values())):
-        # Shape E — Nguyen method-arrays schema (exp3/exp3b):
-        #   {"results": {"hypatiax": [eq0, eq1, ...], "pysr": [eq0, eq1, ...]}, ...}
-        # "results" is a dict whose values are per-method result LISTS.  Each list
-        # entry corresponds to one equation.  Previously misidentified as Shape A
-        # (results is a dict → extract values as records → values are lists not dicts
-        # → 0 records → EMPTY_DATASET).
-        #
-        # Correct handling: zip the per-method lists by index into one record per
-        # equation, setting top-level keys from the longest-common-index position.
-        # The per-equation dict from each method list becomes the method sub-key.
-        _method_arrays = raw["results"]           # {"hypatiax":[...], "pysr":[...]}
-        _method_keys   = list(_method_arrays.keys())
-        _n_eq          = max(len(v) for v in _method_arrays.values())
-        records = []
-        for _i in range(_n_eq):
-            _rec: dict = {}
-            for _mk in _method_keys:
-                _arr = _method_arrays[_mk]
-                if _i < len(_arr) and isinstance(_arr[_i], dict):
-                    _entry = _arr[_i]
-                    # Hoist shared identity fields from the first method entry seen.
-                    if not _rec:
-                        for _id_key in ("equation_id", "equation", "name",
-                                        "description", "domain", "difficulty",
-                                        "formula_type", "extrapolation_intractable"):
-                            if _id_key in _entry:
-                                _rec[_id_key] = _entry[_id_key]
-                    # Store the per-method entry under its method key.
-                    _rec[_mk] = _entry
-            if _rec:
-                records.append(_rec)
-        print(f"  Shape E (Nguyen method-arrays): methods={_method_keys}, "
-              f"{len(records)} per-equation records unpacked.")
-    elif isinstance(raw, dict) and isinstance(raw.get("results"), dict):
+    if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
         # Shape A: the "results" value is the task-keyed dict.
-        results_dict = raw["results"]
-        records = [v for v in results_dict.values() if isinstance(v, dict)]
+        records = [v for v in raw["results"].values() if isinstance(v, dict)]
         print(f"  Shape A (_merged.json from merge_shards.py): "
               f"{len(records)} records from 'results' key.")
-        if len(records) == 0 and results_dict:
-            sample_items = list(results_dict.items())[:5]
-            print(f"  WARNING: 'results' dict has {len(results_dict)} keys but "
-                  "no dict values — 0 records.", file=sys.stderr)
-            for k, v in sample_items:
-                print(f"    {k!r}: {type(v).__name__} = {repr(v)[:120]}", file=sys.stderr)
     elif isinstance(raw, dict):
         # Shape B: flat dict — skip _meta / stats / _checkpoint sentinel keys.
         records = [v for k, v in raw.items()
@@ -2137,11 +1803,6 @@ def main() -> None:
                    and not k.startswith("_")
                    and k != "stats"]
         print(f"  Shape B (flat dict): {len(records)} records.")
-        if len(records) == 0:
-            non_dict = [(k, type(v).__name__) for k, v in list(raw.items())[:5]
-                        if not k.startswith("_") and k != "stats"]
-            if non_dict:
-                print(f"  WARNING: non-dict top-level values: {non_dict}", file=sys.stderr)
     elif isinstance(raw, list):
         # Shape C: top-level list.
         records = [r for r in raw if isinstance(r, dict)]
@@ -2152,66 +1813,6 @@ def main() -> None:
 
     print(f"  {len(records)} records loaded.")
     print(f"  Experiment mode: {_get_mode(args.experiment)}")
-
-    # Hard-exit when 0 records are loaded. Continuing into analyse() would
-    # produce an EMPTY_DATASET fatal with no file-structure context; exiting
-    # here ensures the shape dump above is the last thing in the log, making
-    # the root cause immediately visible.
-    if len(records) == 0:
-        print(f"::error::0 records loaded from {merged_path} — cannot run analysis.",
-              file=sys.stderr)
-        print(f"  See file structure dump above to identify the schema mismatch.",
-              file=sys.stderr)
-        print(f"  Expected for exp3/exp3b: {{\"results\": [{{...}}, ...]}}  (list of task dicts)",
-              file=sys.stderr)
-        print(f"  Got shape: see 'File top-level type' and 'raw[...]' lines above.",
-              file=sys.stderr)
-        # Write minimal _analysis.json so downstream steps don't crash on missing file.
-        mode = _get_mode(args.experiment)
-        _empty_mw = {"available": False, "reason": "empty dataset"}
-        analysis = {
-            "experiment":          args.experiment,
-            "experiment_mode":     mode,
-            "n_total":             0,
-            "n_standard":          0,
-            "n_intractable":       0,
-            "r2_success_threshold": R2_SUCCESS_THRESHOLD,
-            "method_summary":      {m: {"n_records": 0, "n_success_flag": 0,
-                                        "success_rate_flag": 0.0, "n_r2_above_80": 0,
-                                        "r2_above_80_rate": 0.0, "median_test_r2": None,
-                                        "mean_test_r2": None, "n_finite_r2": 0}
-                                    for m in METHODS},
-            "mann_whitney":        {"hybrid_vs_llm": _empty_mw,
-                                    "hybrid_vs_nn":  _empty_mw,
-                                    "nn_vs_llm":     _empty_mw},
-            "coverage_gaps":       [],
-            "n_coverage_gaps":     0,
-            "by_difficulty":       {},
-            "by_formula_type":     {},
-            "extrapolation_gap_summary": {m: {"mean_gap": None, "median_gap": None, "n": 0}
-                                          for m in METHODS},
-            "timing":              {m: {"mean_s": None, "median_s": None,
-                                        "total_s": None, "n": 0, "n_timed_out": 0}
-                                    for m in METHODS},
-            "hybrid_decisions":    {},
-            "hybrid_vs_nn_headtohead": {"n_equations_both_finite": 0, "hybrid_wins": 0,
-                                        "nn_wins": 0, "tied": 0, "hybrid_win_rate": None},
-            "pysr_fit_params":     pysr_fit_params,
-            "fatal_conditions": [
-                "EMPTY_DATASET: 0 records loaded from input file. "
-                f"Experiment={args.experiment!r} mode={mode!r}. "
-                f"Input file: {merged_path}. "
-                "See CI log for file structure dump (lines starting with "
-                "'File top-level type' and 'raw[...]' above this error)."
-            ],
-        }
-        analysis_path = output_dir / "_analysis.json"
-        report_path   = output_dir / "_report.md"
-        with open(analysis_path, "w", encoding="utf-8") as fh:
-            json.dump(analysis, fh, indent=2, default=str)
-        write_report(analysis, report_path)
-        print(f"  Wrote diagnostic _analysis.json and _report.md to {output_dir}")
-        sys.exit(0)  # let ci_analysis.yml abort step handle the fatal condition
 
     if not _SCIPY_OK:
         print("WARNING: scipy not available — Mann-Whitney tests will be skipped.", file=sys.stderr)
