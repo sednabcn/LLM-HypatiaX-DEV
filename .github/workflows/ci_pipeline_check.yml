@@ -161,7 +161,7 @@ on:
         default: "false"
 
 permissions:
-  contents: read
+  contents: write  # write needed by qualify job to commit moved figures/tables
   actions:  read
 
 env:
@@ -907,6 +907,144 @@ jobs:
               fh.write(f"all_qualified={'true' if all_qualified else 'false'}\n")
               fh.write(f"qualified_exps={json.dumps(qualified_exps)}\n")
           PYEOF
+
+      # -----------------------------------------------------------------------
+      # Move REPO_ROOT/figures and REPO_ROOT/tables into per-experiment subdirs
+      #
+      # Rationale: ci_postprocess.yml writes figures/tables into
+      #   OUT_BASE/{result_subdir}/figures/  and  OUT_BASE/{result_subdir}/tables/
+      # but some older scripts (e.g. instability) write directly to
+      #   REPO_ROOT/figures/  or  REPO_ROOT/tables/
+      # leaving orphaned files at the repo root that never reach the per-experiment
+      # subtree and are therefore invisible to qualify dim 6 + 7.
+      #
+      # This step runs only for experiments that have just passed qualify (i.e. core
+      # gates passed) so we never move files for experiments with no result outputs.
+      # It is safe to re-run: if files are already in the right place the mv is a no-op.
+      #
+      # GATING: only fires when REPO_ROOT/figures or REPO_ROOT/tables contain
+      # at least one file, to avoid a spurious commit on clean runs.
+      # -----------------------------------------------------------------------
+      - name: Move root figures/tables into per-experiment subdirs
+        if: always()
+        env:
+          OUT_BASE:       ${{ env.OUT_BASE }}
+          QUALIFY_REPORT: ${{ steps.qualify.outputs.qualify_report }}
+          QUALIFIED_EXPS: ${{ steps.qualify.outputs.qualified_exps }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, shutil, subprocess, sys
+          from pathlib import Path
+
+          REPO_ROOT      = Path(".")
+          OUT_BASE       = Path(os.environ["OUT_BASE"])
+          QUALIFY_REPORT = json.loads(os.environ.get("QUALIFY_REPORT") or "{}")
+          QUALIFIED_EXPS = set(json.loads(os.environ.get("QUALIFIED_EXPS") or "[]"))
+
+          # BUG 1 FIX paths (same canonical map as Jobs 1 and 3)
+          SUBDIR = {
+              "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2":               "comparison_results/feynman-tests/exp2_multi",
+              "exp3":               "extrapolation",
+              "exp3b":              "extrapolation/multi_seed",
+              "suppA":              "hybrid_pysr/defi",
+              "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+              "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+              "instability":        "figures",
+              "extrap":             "comparison_results/extrapolation",
+          }
+
+          root_figs  = REPO_ROOT / "figures"
+          root_tabs  = REPO_ROOT / "tables"
+
+          root_fig_files = list(root_figs.glob("*.pdf")) + list(root_figs.glob("*.png")) if root_figs.exists() else []
+          root_tab_files = list(root_tabs.glob("*.tex")) if root_tabs.exists() else []
+
+          if not root_fig_files and not root_tab_files:
+              print("No files found in REPO_ROOT/figures or REPO_ROOT/tables — nothing to move.")
+              sys.exit(0)
+
+          print(f"Root figures : {len(root_fig_files)} file(s) in {root_figs}")
+          print(f"Root tables  : {len(root_tab_files)} file(s) in {root_tabs}")
+
+          if not QUALIFIED_EXPS:
+              print("::warning::No qualified experiments — skipping move to avoid misrouting files.")
+              sys.exit(0)
+
+          moved_any = False
+          for exp_id in sorted(QUALIFIED_EXPS):
+              subdir    = SUBDIR.get(exp_id, exp_id)
+              result_dir = OUT_BASE / subdir
+              dest_figs  = result_dir / "figures"
+              dest_tabs  = result_dir / "tables"
+
+              if root_fig_files:
+                  dest_figs.mkdir(parents=True, exist_ok=True)
+                  for src in root_fig_files:
+                      dst = dest_figs / src.name
+                      action = "overwrite" if dst.exists() else "move"
+                      shutil.copy2(src, dst)
+                      print(f"  [{action}] {src}  →  {dst}")
+                  moved_any = True
+
+              if root_tab_files:
+                  dest_tabs.mkdir(parents=True, exist_ok=True)
+                  for src in root_tab_files:
+                      dst = dest_tabs / src.name
+                      action = "overwrite" if dst.exists() else "move"
+                      shutil.copy2(src, dst)
+                      print(f"  [{action}] {src}  →  {dst}")
+                  moved_any = True
+
+          if not moved_any:
+              print("No files moved.")
+              sys.exit(0)
+
+          # Remove originals from root dirs after all copies are done
+          for src in root_fig_files:
+              src.unlink()
+              print(f"  [removed] {src}")
+          for src in root_tab_files:
+              src.unlink()
+              print(f"  [removed] {src}")
+
+          print("Move complete.")
+          PYEOF
+
+      - name: Commit moved figures and tables
+        if: always()
+        run: |
+          set -euo pipefail
+
+          # Collect destination dirs that actually have new content
+          # (git status --short shows M/A/? for any changed paths).
+          CHANGED=$(git status --short -- "$OUT_BASE" "figures" "tables" 2>/dev/null | grep -v "^$" | wc -l || echo 0)
+          if [[ "$CHANGED" -eq 0 ]]; then
+            echo "No moved files to commit — working tree clean."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+
+          # Stage all changes under OUT_BASE (new destinations) and root dirs (removals)
+          git add "$OUT_BASE/" 2>/dev/null || true
+          git add "figures/" "tables/" 2>/dev/null || true   # stage deletions from root
+
+          if git diff --cached --quiet; then
+            echo "Nothing staged — skipping commit."
+            exit 0
+          fi
+
+          git commit -m "ci: move root figures+tables into per-exp subdirs - run ${{ github.run_id }}"
+          git push origin HEAD:${{ github.ref_name }}
+          echo "Pushed moved figures/tables."
 
 
 # ==============================================================================

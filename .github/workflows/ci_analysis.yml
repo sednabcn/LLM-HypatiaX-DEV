@@ -181,29 +181,31 @@ jobs:
             # WARNING: this mapping must stay in sync with ci_runner.yml plan job
             # and ci_pipeline.yml diagnose SUBDIR.  Prefer passing result_subdir
             # explicitly rather than relying on this fallback.
-            RESULT_SUBDIR=$(python3 << 'PYEOF'
-import os, sys
-MAPPING = {
-    "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
-    "exp1b":              "comparison_results/noise-noiseless/15",
-    "exp2_feynman":       "comparison_results/feynman-tests/exp2",
-    "exp2":               "comparison_results/feynman-tests/exp2_multi",
-    "exp3":               "extrapolation",
-    "exp3b":              "extrapolation/multi_seed",
-    "suppA":              "hybrid_pysr/defi",
-    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
-    "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
-    "hybrid_all_domains": "hybrid_llm_nn/all_domains",
-    "instability":        "figures",
-    "extrap":             "comparison_results/extrapolation",
-}
-exp = os.environ["EXPERIMENT"]
-result = MAPPING.get(exp, exp)
-if result == exp:
-    print(f"::warning::No canonical subdir mapping for '{exp}' — using experiment name as subdir.", file=sys.stderr)
-print(result)
-PYEOF
-)
+            # Use an indented heredoc to avoid YAML treating unindented Python
+            # lines as top-level YAML keys (GitHub Actions yaml syntax error).
+            python3 - <<'PYEOF' > /tmp/_resolve_subdir.txt
+            import os, sys
+            MAPPING = {
+                "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+                "exp1b":              "comparison_results/noise-noiseless/15",
+                "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+                "exp2":              "comparison_results/feynman-tests/exp2_multi",
+                "exp3":               "extrapolation",
+                "exp3b":              "extrapolation/multi_seed",
+                "suppA":              "hybrid_pysr/defi",
+                "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+                "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+                "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+                "instability":        "figures",
+                "extrap":             "comparison_results/extrapolation",
+            }
+            exp = os.environ["EXPERIMENT"]
+            result = MAPPING.get(exp, exp)
+            if result == exp:
+                print(f"::warning::No canonical subdir mapping for '{exp}' — using experiment name as subdir.", file=sys.stderr)
+            print(result)
+            PYEOF
+            RESULT_SUBDIR="$(cat /tmp/_resolve_subdir.txt)"
           fi
 
           RESULT_DIR="hypatiax/data/results/${RESULT_SUBDIR}"

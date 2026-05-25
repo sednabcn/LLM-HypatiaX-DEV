@@ -74,6 +74,58 @@ jobs:
           echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
           echo "Resolved result_subdir=${SUB} for experiment=${DISPATCH_EXP}"
 
+      - name: Detect existing figures and tables (overwrite audit)
+        id: overwrite_audit
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          FIGS="${OUT_BASE}/${SUB}/figures"
+          TABS="${OUT_BASE}/${SUB}/tables"
+
+          # Snapshot which files already exist so we can report overwrites after
+          # the generator scripts run.  Files are listed with their sizes so the
+          # operator can spot unexpectedly large replacements.
+          echo "--- Pre-run snapshot ---"
+          if [[ -d "$FIGS" ]]; then
+            EXISTING_FIGS=$(find "$FIGS" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) | sort)
+            N_EXISTING_FIGS=$(echo "$EXISTING_FIGS" | grep -c . || true)
+            echo "Figures dir  : $FIGS"
+            echo "  Existing   : ${N_EXISTING_FIGS} file(s)"
+            if [[ $N_EXISTING_FIGS -gt 0 ]]; then
+              echo "$EXISTING_FIGS" | while IFS= read -r f; do
+                printf "    [WILL OVERWRITE] %s  (%s)\n" "$(basename "$f")" "$(du -sh "$f" | cut -f1)"
+              done
+            fi
+          else
+            N_EXISTING_FIGS=0
+            echo "Figures dir  : $FIGS  (does not exist yet — no overwrites)"
+          fi
+
+          if [[ -d "$TABS" ]]; then
+            EXISTING_TABS=$(find "$TABS" -maxdepth 1 -type f -name "*.tex" | sort)
+            N_EXISTING_TABS=$(echo "$EXISTING_TABS" | grep -c . || true)
+            echo "Tables dir   : $TABS"
+            echo "  Existing   : ${N_EXISTING_TABS} file(s)"
+            if [[ $N_EXISTING_TABS -gt 0 ]]; then
+              echo "$EXISTING_TABS" | while IFS= read -r f; do
+                printf "    [WILL OVERWRITE] %s  (%s)\n" "$(basename "$f")" "$(du -sh "$f" | cut -f1)"
+              done
+            fi
+          else
+            N_EXISTING_TABS=0
+            echo "Tables dir   : $TABS  (does not exist yet — no overwrites)"
+          fi
+
+          # Export counts for the post-run diff step.
+          echo "n_existing_figs=${N_EXISTING_FIGS}" >> "$GITHUB_OUTPUT"
+          echo "n_existing_tabs=${N_EXISTING_TABS}" >> "$GITHUB_OUTPUT"
+
+          # Persist the file lists to temp files so the diff step can compare.
+          mkdir -p /tmp/postprocess_audit
+          find "$FIGS" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) 2>/dev/null | sort > /tmp/postprocess_audit/figs_before.txt || true
+          find "$TABS" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > /tmp/postprocess_audit/tabs_before.txt || true
+
       - name: Generate figures
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
@@ -100,6 +152,67 @@ jobs:
           python scripts/generate_tables.py \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: Post-run overwrite summary
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+          N_EXISTING_FIGS: ${{ steps.overwrite_audit.outputs.n_existing_figs }}
+          N_EXISTING_TABS: ${{ steps.overwrite_audit.outputs.n_existing_tabs }}
+        run: |
+          set -euo pipefail
+          FIGS="${OUT_BASE}/${SUB}/figures"
+          TABS="${OUT_BASE}/${SUB}/tables"
+
+          echo "--- Post-run overwrite summary ---"
+
+          # Figures
+          find "$FIGS" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) 2>/dev/null | sort > /tmp/postprocess_audit/figs_after.txt || true
+          N_AFTER_FIGS=$(wc -l < /tmp/postprocess_audit/figs_after.txt || echo 0)
+          N_OVERWRITTEN_FIGS=$(comm -12 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | wc -l || echo 0)
+          N_NEW_FIGS=$(comm -13 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | wc -l || echo 0)
+          N_DELETED_FIGS=$(comm -23 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | wc -l || echo 0)
+          echo "Figures: ${N_AFTER_FIGS} total  |  ${N_OVERWRITTEN_FIGS} overwritten  |  ${N_NEW_FIGS} new  |  ${N_DELETED_FIGS} deleted"
+          if [[ $N_OVERWRITTEN_FIGS -gt 0 ]]; then
+            echo "  Overwritten figures:"
+            comm -12 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | while IFS= read -r f; do
+              printf "    ✏  %s\n" "$(basename "$f")"
+            done
+          fi
+          if [[ $N_NEW_FIGS -gt 0 ]]; then
+            echo "  New figures:"
+            comm -13 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | while IFS= read -r f; do
+              printf "    ✚  %s\n" "$(basename "$f")"
+            done
+          fi
+
+          # Tables
+          find "$TABS" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > /tmp/postprocess_audit/tabs_after.txt || true
+          N_AFTER_TABS=$(wc -l < /tmp/postprocess_audit/tabs_after.txt || echo 0)
+          N_OVERWRITTEN_TABS=$(comm -12 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | wc -l || echo 0)
+          N_NEW_TABS=$(comm -13 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | wc -l || echo 0)
+          N_DELETED_TABS=$(comm -23 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | wc -l || echo 0)
+          echo "Tables:  ${N_AFTER_TABS} total  |  ${N_OVERWRITTEN_TABS} overwritten  |  ${N_NEW_TABS} new  |  ${N_DELETED_TABS} deleted"
+          if [[ $N_OVERWRITTEN_TABS -gt 0 ]]; then
+            echo "  Overwritten tables:"
+            comm -12 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | while IFS= read -r f; do
+              printf "    ✏  %s\n" "$(basename "$f")"
+            done
+          fi
+          if [[ $N_NEW_TABS -gt 0 ]]; then
+            echo "  New tables:"
+            comm -13 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | while IFS= read -r f; do
+              printf "    ✚  %s\n" "$(basename "$f")"
+            done
+          fi
+
+          # Emit GitHub step summary
+          {
+            echo "## Post-process output summary — ${{ github.event.inputs.experiment }}"
+            echo "| Dir | Before | After | Overwritten | New | Deleted |"
+            echo "|-----|-------:|------:|------------:|----:|--------:|"
+            echo "| figures | ${N_EXISTING_FIGS} | ${N_AFTER_FIGS} | ${N_OVERWRITTEN_FIGS} | ${N_NEW_FIGS} | ${N_DELETED_FIGS} |"
+            echo "| tables  | ${N_EXISTING_TABS} | ${N_AFTER_TABS} | ${N_OVERWRITTEN_TABS} | ${N_NEW_TABS} | ${N_DELETED_TABS} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit outputs
         env:
