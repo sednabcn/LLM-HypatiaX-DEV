@@ -173,31 +173,31 @@ jobs:
           # leading spaces that bash never recognised as the closing delimiter).
           # python3 -c avoids all heredoc/YAML indentation interactions entirely.
           RESULT_SUBDIR=$(python3 -c "
-import os, sys
-inp = os.environ.get('INPUT_RESULT_SUBDIR', '').strip()
-if inp:
-    print(inp)
-    sys.exit(0)
-MAPPING = {
-    'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
-    'exp1b':              'comparison_results/noise-noiseless/15',
-    'exp2_feynman':       'comparison_results/feynman-tests/exp2',
-    'exp2':               'comparison_results/feynman-tests/exp2_multi',
-    'exp3':               'extrapolation',
-    'exp3b':              'extrapolation/multi_seed',
-    'suppA':              'hybrid_pysr/defi',
-    'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
-    'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
-    'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
-    'instability':        'figures',
-    'extrap':             'comparison_results/extrapolation',
-}
-exp = os.environ['EXPERIMENT']
-result = MAPPING.get(exp, exp)
-if result == exp:
-    print(f'::warning::No canonical subdir mapping for \"{exp}\" — using experiment name as subdir.', file=sys.stderr)
-print(result)
-")
+          import os, sys
+          inp = os.environ.get('INPUT_RESULT_SUBDIR', '').strip()
+          if inp:
+              print(inp)
+              sys.exit(0)
+          MAPPING = {
+              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp2':               'comparison_results/feynman-tests/exp2_multi',
+              'exp3':               'extrapolation',
+              'exp3b':              'extrapolation/multi_seed',
+              'suppA':              'hybrid_pysr/defi',
+              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
+              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+              'instability':        'figures',
+              'extrap':             'comparison_results/extrapolation',
+          }
+          exp = os.environ['EXPERIMENT']
+          result = MAPPING.get(exp, exp)
+          if result == exp:
+              print(f'::warning::No canonical subdir mapping for \"{exp}\" — using experiment name as subdir.', file=sys.stderr)
+          print(result)
+          ")
 
           RESULT_DIR="hypatiax/data/results/${RESULT_SUBDIR}"
 
@@ -373,25 +373,25 @@ print(result)
             USE_MERGED_FOR_BENCHMARK=false
             if [[ ${#SHARD_FILES[@]} -eq 1 ]]; then
               USE_MERGED_FOR_BENCHMARK=$(SHARD0="${SHARD_FILES[0]}" python3 -c '
-import json, sys, os
-path = os.environ["SHARD0"]
-if not path or not os.path.exists(path):
-    print("false"); sys.exit(0)
-try:
-    data = json.load(open(path))
-except Exception:
-    print("false"); sys.exit(0)
-if isinstance(data, list):
-    print("false"); sys.exit(0)
-if isinstance(data, dict) and isinstance(data.get("results"), list):
-    print("false"); sys.exit(0)
-if isinstance(data, dict):
-    non_meta = {k: v for k, v in data.items()
-                if not k.startswith("_") and k not in ("stats","summary","metadata")}
-    if non_meta and isinstance(next(iter(non_meta.values())), dict):
-        print("true"); sys.exit(0)
-print("false")
-')
+          import json, sys, os
+          path = os.environ["SHARD0"]
+          if not path or not os.path.exists(path):
+              print("false"); sys.exit(0)
+          try:
+              data = json.load(open(path))
+          except Exception:
+              print("false"); sys.exit(0)
+          if isinstance(data, list):
+              print("false"); sys.exit(0)
+          if isinstance(data, dict) and isinstance(data.get("results"), list):
+              print("false"); sys.exit(0)
+          if isinstance(data, dict):
+              non_meta = {k: v for k, v in data.items()
+                          if not k.startswith("_") and k not in ("stats","summary","metadata")}
+              if non_meta and isinstance(next(iter(non_meta.values())), dict):
+                  print("true"); sys.exit(0)
+          print("false")
+          ')
             fi
 
             if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
@@ -471,25 +471,25 @@ print("false")
 
           # Verify _analysis.json is valid JSON and contains required top-level keys.
           python3 -c '
-import json, os, sys
-path = os.environ["RESULT_DIR"] + "/_analysis.json"
-try:
-    d = json.load(open(path))
-except Exception as e:
-    print(f"::error::_analysis.json is not valid JSON: {e}")
-    sys.exit(1)
-required = ("experiment", "experiment_mode", "n_total", "fatal_conditions")
-missing  = [k for k in required if k not in d]
-if missing:
-    print(f"::error::_analysis.json missing required keys: {missing}")
-    sys.exit(1)
-hard = [c for c in d["fatal_conditions"]
-        if not (c.startswith("INFO_") or c.startswith("WARN_"))]
-soft = len(d["fatal_conditions"]) - len(hard)
-print(f"_analysis.json OK: experiment={d[\"experiment\"]}, mode={d[\"experiment_mode\"]}, "
-      f"n_total={d[\"n_total\"]}, fatal_conditions={len(d[\"fatal_conditions\"])} "
-      f"({len(hard)} hard, {soft} soft)")
-'
+          import json, os, sys
+          path = os.environ["RESULT_DIR"] + "/_analysis.json"
+          try:
+              d = json.load(open(path))
+          except Exception as e:
+              print(f"::error::_analysis.json is not valid JSON: {e}")
+              sys.exit(1)
+          required = ("experiment", "experiment_mode", "n_total", "fatal_conditions")
+          missing  = [k for k in required if k not in d]
+          if missing:
+              print(f"::error::_analysis.json missing required keys: {missing}")
+              sys.exit(1)
+          hard = [c for c in d["fatal_conditions"]
+                  if not (c.startswith("INFO_") or c.startswith("WARN_"))]
+          soft = len(d["fatal_conditions"]) - len(hard)
+          print(f"_analysis.json OK: experiment={d[\"experiment\"]}, mode={d[\"experiment_mode\"]}, "
+                f"n_total={d[\"n_total\"]}, fatal_conditions={len(d[\"fatal_conditions\"])} "
+                f"({len(hard)} hard, {soft} soft)")
+          '
 
           echo
           echo "=== OUTPUTS ==="
@@ -547,26 +547,26 @@ print(f"_analysis.json OK: experiment={d[\"experiment\"]}, mode={d[\"experiment_
         shell: bash
         run: |
           python3 -c '
-import json, os, sys
-path = os.environ["RESULT_DIR"] + "/_analysis.json"
-if not os.path.exists(path):
-    print("No _analysis.json found; skipping fatal-condition check.")
-    sys.exit(0)
-analysis  = json.load(open(path))
-fatal     = analysis.get("fatal_conditions", [])
-hard      = [c for c in fatal if not (c.startswith("INFO_") or c.startswith("WARN_"))]
-if not hard:
-    if fatal:
-        print(f"Soft conditions only ({len(fatal)}):")
-        for i, c in enumerate(fatal, 1):
-            print(f"  {i}. {c}")
-    print("No fatal conditions detected. Analysis complete.")
-    sys.exit(0)
-print(f"::error::Fatal conditions detected ({len(hard)}):")
-for i, c in enumerate(hard, 1):
-    print(f"  {i}. {c}")
-print()
-print("Review _report.md for full diagnostic details.")
-print("To re-run analysis after fixes: use workflow_dispatch with the same experiment.")
-sys.exit(1)
-'
+          import json, os, sys
+          path = os.environ["RESULT_DIR"] + "/_analysis.json"
+          if not os.path.exists(path):
+              print("No _analysis.json found; skipping fatal-condition check.")
+              sys.exit(0)
+          analysis  = json.load(open(path))
+          fatal     = analysis.get("fatal_conditions", [])
+          hard      = [c for c in fatal if not (c.startswith("INFO_") or c.startswith("WARN_"))]
+          if not hard:
+              if fatal:
+                  print(f"Soft conditions only ({len(fatal)}):")
+                  for i, c in enumerate(fatal, 1):
+                      print(f"  {i}. {c}")
+              print("No fatal conditions detected. Analysis complete.")
+              sys.exit(0)
+          print(f"::error::Fatal conditions detected ({len(hard)}):")
+          for i, c in enumerate(hard, 1):
+              print(f"  {i}. {c}")
+          print()
+          print("Review _report.md for full diagnostic details.")
+          print("To re-run analysis after fixes: use workflow_dispatch with the same experiment.")
+          sys.exit(1)
+          '
