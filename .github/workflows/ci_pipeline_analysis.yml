@@ -244,7 +244,15 @@ jobs:
           echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
-      - name: Locate _merged.json
+      # ── Locate analysis input (multi-shard strategy from ci_analysis.yml) ────
+      # FIX: replaced head -1 fallback (which silently discarded all but the first
+      # shard file — root cause of TOO_FEW_RECORDS for exp1's 35-file layout).
+      # Now mirrors ci_analysis.yml exactly:
+      #   MERGED mode  → _merged.json present, OR single benchmark-format dict file.
+      #   SHARD  mode  → all non-meta *.json files collected into a manifest.
+      # run_analysis.py is called via hypatiax/tools/run_analysis.py (supports both
+      # --input-json and --shard-manifest) — no separate script needed.
+      - name: Locate analysis input
         if: matrix.experiment != 'instability'
         id: locate
         env:
@@ -252,82 +260,98 @@ jobs:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
           set -euo pipefail
-          COMMITTED_JSON="${OUT_BASE}/${SUB}/_merged.json"
+          RESULT_DIR="${OUT_BASE}/${SUB}"
 
-          if [[ -f "$COMMITTED_JSON" ]]; then
-            MERGED_JSON="$COMMITTED_JSON"
-            echo "Using committed _merged.json: $MERGED_JSON"
-          else
-            # Fall back to first non-meta shard result file
-            SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
-              ! -name "_*.json" 2>/dev/null | sort | head -1 || true)
-            if [[ -n "$SHARD_JSON" && -f "$SHARD_JSON" ]]; then
-              MERGED_JSON="$SHARD_JSON"
-              echo "No _merged.json — using shard file: $MERGED_JSON"
-            else
-              echo "::error::No input JSON found for ${EXP} in ${OUT_BASE}/${SUB}."
-              exit 1
-            fi
+          # ── MERGED mode: committed _merged.json takes priority ───────────────
+          if [[ -f "${RESULT_DIR}/_merged.json" ]]; then
+            echo "input_mode=merged"                            >> "$GITHUB_OUTPUT"
+            echo "input_json=${RESULT_DIR}/_merged.json"       >> "$GITHUB_OUTPUT"
+            echo "Using committed _merged.json."
+            exit 0
           fi
 
-          # Sanity-check: valid JSON with records.
-          # EMPTY_DATASET is fatal only for exp1b and exp3b.
-          python3 - <<PYEOF
-          import json, sys, os
-          path = "$MERGED_JSON"
-          exp  = "$EXP"
-          try:
-              data = json.load(open(path))
-          except Exception as e:
-              print(f"::error::_merged.json is not valid JSON: {e}")
-              sys.exit(1)
+          # ── SHARD mode: collect ALL non-meta JSON files (maxdepth 2) ─────────
+          # maxdepth 2 catches both flat layouts (depth 1) and one-level-nested
+          # layouts like suppB's noise-sweep/noise-sweep/*.json.
+          mapfile -t SHARD_FILES < <(
+            find "$RESULT_DIR" -maxdepth 2 -type f -name "*.json" \
+              ! -name "_*.json" ! -name "benchmark_results.json" \
+              2>/dev/null | sort
+          )
 
-          if isinstance(data, dict) and isinstance(data.get("results"), dict):
-              n = len(data["results"])
-          elif isinstance(data, dict):
-              n = sum(1 for k, v in data.items()
-                      if isinstance(v, dict) and not k.startswith("_") and k != "stats")
-          elif isinstance(data, list):
-              n = len(data)
-          else:
-              print(f"::error::Unexpected _merged.json top-level type: {type(data).__name__}")
-              sys.exit(1)
+          if [[ ${#SHARD_FILES[@]} -eq 0 ]]; then
+            echo "::error::No input JSON found for ${EXP} in ${RESULT_DIR}."
+            exit 1
+          fi
 
-          if n == 0:
-              if exp in ("exp1b", "exp3b"):
-                  print(f"::error::_merged.json contains 0 task records for {exp}.")
-                  sys.exit(1)
-              else:
-                  print(f"::warning::_merged.json contains 0 task records for {exp} — non-fatal, continuing.")
-          else:
-              print(f"_merged.json OK — {n} record(s).")
-          PYEOF
+          # Single-file benchmark-format detection: if there is exactly one shard
+          # and it is a dict-of-dicts (not a list / {results:[...]} shard wrapper),
+          # treat it as a merged input so run_analysis.py receives it whole.
+          USE_MERGED_FOR_BENCHMARK=false
+          if [[ ${#SHARD_FILES[@]} -eq 1 ]]; then
+            USE_MERGED_FOR_BENCHMARK=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('${SHARD_FILES[0]}'))
+except Exception:
+    print('false'); sys.exit(0)
+if isinstance(data, list): print('false'); sys.exit(0)
+if isinstance(data, dict) and isinstance(data.get('results'), list):
+    print('false'); sys.exit(0)
+if isinstance(data, dict):
+    nm = {k: v for k, v in data.items()
+          if not k.startswith('_') and k not in ('stats', 'summary', 'metadata')}
+    if nm and isinstance(next(iter(nm.values())), dict):
+        print('true'); sys.exit(0)
+print('false')
+")
+          fi
 
-          echo "merged_json=${MERGED_JSON}" >> "$GITHUB_OUTPUT"
+          if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
+            echo "input_mode=merged"                      >> "$GITHUB_OUTPUT"
+            echo "input_json=${SHARD_FILES[0]}"           >> "$GITHUB_OUTPUT"
+            echo "Single benchmark-format file — merged mode: ${SHARD_FILES[0]}"
+          else
+            MANIFEST="${RESULT_DIR}/_shard_manifest.txt"
+            printf '%s\n' "${SHARD_FILES[@]}" > "$MANIFEST"
+            echo "input_mode=shards"              >> "$GITHUB_OUTPUT"
+            echo "shard_manifest=${MANIFEST}"     >> "$GITHUB_OUTPUT"
+            echo "${#SHARD_FILES[@]} shard file(s) → manifest: ${MANIFEST}"
+            cat "$MANIFEST"
+          fi
 
       - name: Run statistical analysis
         if: matrix.experiment != 'instability'
         # continue-on-error: run_analysis.py writes _analysis.json even on fatal
-        # conditions, then exits nonzero.  We must NOT hard-fail here — Commit
-        # analysis outputs needs to run so the report is always saved, and Abort
-        # on fatal conditions is the single, consistent exit gate for the job.
+        # conditions then exits nonzero.  Commit analysis outputs must always run
+        # so the report is saved; Abort on fatal conditions is the single exit gate.
         continue-on-error: true
         id: run_analysis
         env:
-          EXP:         ${{ matrix.experiment }}
-          SUB:         ${{ steps.meta.outputs.result_subdir }}
-          MERGED_JSON: ${{ steps.locate.outputs.merged_json }}
+          EXP:            ${{ matrix.experiment }}
+          SUB:            ${{ steps.meta.outputs.result_subdir }}
+          INPUT_MODE:     ${{ steps.locate.outputs.input_mode }}
+          INPUT_JSON:     ${{ steps.locate.outputs.input_json }}
+          SHARD_MANIFEST: ${{ steps.locate.outputs.shard_manifest }}
           PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
           PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
         run: |
           set -euo pipefail
           OUT_DIR="${OUT_BASE}/${SUB}"
           mkdir -p "${OUT_DIR}"
-          echo "=== Analysis: ${EXP} → ${OUT_DIR} ==="
-          python .github/scripts/run_analysis.py \
-            --experiment  "${EXP}"         \
-            --merged-json "${MERGED_JSON}" \
-            --output-dir  "${OUT_DIR}"
+          echo "=== Analysis: ${EXP} → ${OUT_DIR} (mode: ${INPUT_MODE}) ==="
+
+          if [[ "${INPUT_MODE}" == "merged" ]]; then
+            python3 hypatiax/tools/run_analysis.py \
+              --experiment "${EXP}"       \
+              --result-dir "${OUT_DIR}"   \
+              --input-json "${INPUT_JSON}"
+          else
+            python3 hypatiax/tools/run_analysis.py \
+              --experiment      "${EXP}"            \
+              --result-dir      "${OUT_DIR}"         \
+              --shard-manifest  "${SHARD_MANIFEST}"
+          fi
 
       - name: Verify analysis outputs
         if: matrix.experiment != 'instability'
