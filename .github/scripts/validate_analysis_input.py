@@ -25,9 +25,10 @@ def load_records(path):
     if not isinstance(data, dict):
         return []
 
-    # Case 2: {"results": [...]}  — standard shard wrapper
-    if "results" in data and isinstance(data["results"], list):
-        return data["results"]
+    # Case 2: {"results": [...]} or {"tests": [...]}  — standard shard/benchmark wrapper
+    for wrapper_key in ("results", "tests"):
+        if wrapper_key in data and isinstance(data[wrapper_key], list):
+            return data[wrapper_key]
 
     # Case 3: {"results": {"eq_id": {...}, ...}}  — dict-of-dicts under "results"
     if "results" in data and isinstance(data["results"], dict):
