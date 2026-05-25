@@ -410,7 +410,30 @@ jobs:
               python3 -c "
           import json, sys
           paths = open('_shard_paths_for_merge.txt').read().splitlines()
+
+          # FIX-MERGE-KEY: experiments write records under different top-level keys
+          # (tests, results, records, data, experiments) or as a dict-of-dicts keyed
+          # by equation/task ID.  The original code only checked 'tests', producing
+          # Records: 0 for any other layout.  find_records() probes all known layouts.
+          def find_records(d):
+              for key in ('tests', 'results', 'records', 'data', 'experiments'):
+                  if isinstance(d.get(key), list) and d[key]:
+                      return key, d[key]
+              # dict-of-dicts: equation_id → result_dict (e.g. {'amm': {...}, ...})
+              non_meta = {k: v for k, v in d.items()
+                          if not k.startswith('_') and k not in
+                          ('stats', 'summary', 'metadata', 'protocol', 'methods',
+                           'config', 'parameters', 'total_tests')}
+              if non_meta and all(isinstance(v, dict) for v in non_meta.values()):
+                  return '_dict_values', list(non_meta.values())
+              # fallback: any list value that is non-empty
+              for key, val in d.items():
+                  if isinstance(val, list) and val and key not in ('fatal_conditions',):
+                      return key, val
+              return None, []
+
           merged = None
+          records_key_used = None
           total_tests = 0
           for p in paths:
               try:
@@ -418,18 +441,26 @@ jobs:
               except Exception as e:
                   print(f'::warning::Skipping unreadable shard {p}: {e}', file=sys.stderr)
                   continue
-              if not isinstance(d, dict) or 'tests' not in d:
-                  print(f'::warning::Skipping non-benchmark shard {p}', file=sys.stderr)
+              if not isinstance(d, dict):
+                  print(f'::warning::Skipping non-dict shard {p}', file=sys.stderr)
+                  continue
+              key, records = find_records(d)
+              if key is None:
+                  print(f'::warning::Skipping shard {p}: no recognisable records list found. Keys: {list(d.keys())[:8]}', file=sys.stderr)
                   continue
               if merged is None:
-                  merged = {k: v for k, v in d.items() if k != 'tests'}
+                  # Copy all metadata keys except the records list itself
+                  skip = {k for k in d if k in ('tests','results','records','data','experiments') or k == key}
+                  merged = {k: v for k, v in d.items() if k not in skip}
                   merged['tests'] = []
-              merged['tests'].extend(d['tests'])
-              total_tests += len(d['tests'])
+                  records_key_used = key
+              merged['tests'].extend(records)
+              total_tests += len(records)
           if merged is None:
               print('::error::No readable benchmark-format shards found after merge pass.')
               sys.exit(1)
           merged['total_tests'] = total_tests
+          print(f'  Records key used: {records_key_used}')
           json.dump(merged, open('_merged_benchmark.json', 'w'), indent=2)
           print(f'  Merged {len(paths)} shard(s) → {total_tests} total tests.')
           "

@@ -72,7 +72,14 @@ set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-RESULTS_DIR="${RESULTS_DIR:-${REPO_ROOT}/hypatiax/data/results}"
+# FIX-ABS-PATH: always resolve RESULTS_DIR to an absolute path.
+# If the caller passed a relative path (e.g. RESULTS_DIR=hypatiax/data/results)
+# scripts that cd before writing will produce doubled/wrong paths.
+# realpath -m tolerates non-existent dirs (no --canonicalize-missing needed on macOS).
+_RESULTS_RAW="${RESULTS_DIR:-${REPO_ROOT}/hypatiax/data/results}"
+RESULTS_DIR="$(cd "$(dirname "${_RESULTS_RAW}")" 2>/dev/null && pwd)/$(basename "${_RESULTS_RAW}")" \
+  || RESULTS_DIR="${REPO_ROOT}/hypatiax/data/results"
+export RESULTS_DIR
 EXPERIMENTS_DIR="${EXPERIMENTS_DIR:-${REPO_ROOT}/hypatiax/experiments/benchmarks}"
 # FIX PATH-1: GENERATION_DIR corrected to hypatiax/core/generation/ to match
 # CI script_path: hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py
@@ -312,6 +319,34 @@ _exp1_body() {
   find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'exp1_rf01_mannwhitney*.json' \
     ! -path "${RESULTS_DIR}/*" \
     -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
+
+  # ── FIX-EXP1-VERIFY: post-run file confirmation ──────────────────────────
+  # Prints where result files actually landed so path mismatches are visible
+  # immediately rather than silently producing an empty artifact upload.
+  echo "=== exp1 post-run verification ==="
+  echo "  RESULTS_DIR : ${RESULTS_DIR}"
+  echo "  REPO_ROOT   : ${REPO_ROOT}"
+  DEFI_TARGET="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+  echo "  Expected target: ${DEFI_TARGET}"
+  echo "  Files in target:"
+  find "${DEFI_TARGET}" -type f 2>/dev/null | sort || echo "    (directory empty or missing)"
+  echo "  Any hypatiax_defi_benchmark_v3*results*.json anywhere under RESULTS_DIR:"
+  find "${RESULTS_DIR}" -maxdepth 8 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort \
+    || echo "    (none found)"
+  echo "  Any hypatiax_defi_benchmark_v3*results*.json anywhere under REPO_ROOT:"
+  find "${REPO_ROOT}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort \
+    || echo "    (none found)"
+  COUNT_DEFI=$(find "${DEFI_TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
+  COUNT_PROTO=$(find "${DEFI_TARGET}" -name "protocol_core_noiseless_*.json" 2>/dev/null | wc -l)
+  TOTAL_EXP1=$((COUNT_DEFI + COUNT_PROTO))
+  if [[ "${TOTAL_EXP1}" -eq 0 ]]; then
+    echo "  WARNING: exp1 produced NO result files in canonical target."
+    echo "    This will cause an empty artifact upload and FATAL: EMPTY DATASET in ci_analysis."
+    echo "    Check that hypatiax_defi_benchmark_v3c.py ran successfully above."
+  else
+    echo "  OK: ${TOTAL_EXP1} result file(s) confirmed in canonical target."
+  fi
+  echo "=== end exp1 post-run verification ==="
 }
 run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" _exp1_body
 
