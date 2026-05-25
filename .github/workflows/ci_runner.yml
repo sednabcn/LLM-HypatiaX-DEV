@@ -1067,6 +1067,38 @@ jobs:
                        -name "$pattern" 2>/dev/null)
           }
 
+          # prune_old: remove previously-committed (git-tracked) result files
+          # matching a glob from a destination directory before the current
+          # run's fresh outputs are moved in.  Without this, timestamp-named
+          # files from past runs accumulate in TARGET on every workflow run
+          # because move_matching only renames exact-name collisions, never
+          # removes older timestamped variants.
+          #
+          # Strategy:
+          #   1. find all files in dest matching the pattern (maxdepth 1).
+          #   2. For each, check git ls-files — only remove if git-tracked
+          #      (i.e. committed by a prior run, not a local-only file that
+          #      another step in this run might still need).
+          #   3. git rm --cached unstages the file; rm -f removes it from disk.
+          #      The subsequent "Commit and push" step will then stage the
+          #      deletion (D) alongside the newly moved files (A), keeping
+          #      the repo tree in sync with exactly one run's outputs.
+          prune_old() {
+            local pattern="$1" dest="$2"
+            local pruned=0
+            while IFS= read -r f; do
+              [[ -f "$f" ]] || continue
+              if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+                echo "  prune_old: removing stale committed result: $f"
+                git rm --cached --quiet "$f" 2>/dev/null || true
+                rm -f "$f"
+                pruned=$((pruned + 1))
+              fi
+            done < <(find "$dest" -maxdepth 1 -name "$pattern" -type f 2>/dev/null)
+            [[ $pruned -gt 0 ]] && echo "  prune_old: removed ${pruned} stale file(s) matching '${pattern}' from ${dest}"
+            return 0
+          }
+
           case "${EXP}" in
 
             # -- exp1: noiseless DeFi benchmark -------------------------------
@@ -1075,7 +1107,15 @@ jobs:
             #   protocol_core_noiseless_<TS>.json              ← if protocol wrapper used
             #   defi_v3_<TS>.json                              ← legacy name
             # All three patterns are moved so the artifact upload finds them.
+            #
+            # STALE-FILE FIX: prune previously-committed output files from
+            # TARGET before moving in the current run's outputs, so that
+            # timestamp-named files from past runs do not accumulate in the
+            # repo tree (each run should own exactly one result set).
             exp1)
+              prune_old "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
+              prune_old "protocol_core_noiseless_*.json"           "${TARGET}"
+              prune_old "defi_v3_*.json"                           "${TARGET}"
               move_matching "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
               move_matching "protocol_core_noiseless_*.json"           "${TARGET}"
               move_matching "defi_v3_*.json"                           "${RESULTS_DIR}"
@@ -1087,7 +1127,15 @@ jobs:
             # Rename each file to comparison_FIXED_<TS>_shard<N>_<runid>.json
             # before moving so every shard's output has a unique repo path.
             # The same logic applies to .txt companion files.
+            #
+            # STALE-FILE FIX: prune previously-committed outputs before moving
+            # in the current run's files (same pattern as exp1).
             exp1b)
+              prune_old "comparison_FIXED_*.json"                  "${TARGET}"
+              prune_old "comparison_FIXED_*.txt"                   "${TARGET}"
+              prune_old "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
+              prune_old "defi_v3_*.json"                           "${TARGET}"
+              prune_old "*portfolio*variance*.json"                 "${TARGET}"
               DEST_15="${TARGET}"
               mkdir -p "${DEST_15}"
               while IFS= read -r src; do
@@ -1112,6 +1160,9 @@ jobs:
             # protocol_core_*_checkpoint.json (one per domain from --checkpoint-name).
             # All are saved to TARGET so the verify step and artifact upload find them.
             exp2_feynman)
+              prune_old "protocol_core_*.json"            "${TARGET}"
+              prune_old "protocol_core_*_checkpoint.json" "${TARGET}"
+              prune_old "benchmark_results.json"          "${TARGET}"
               move_matching "exp2_feynman_checkpoint_shard*.json" "${TARGET}"
               move_matching "exp2_feynman_merged.*"               "${TARGET}"
               move_matching "exp2_feynman_stats.json"             "${TARGET}"
@@ -1125,6 +1176,9 @@ jobs:
 
             # -- exp2: multi-seed comparative suite ---------------------------
             exp2)
+              prune_old "protocol_core_*.json"            "${TARGET}"
+              prune_old "protocol_core_*_checkpoint.json" "${TARGET}"
+              prune_old "benchmark_results.json"          "${TARGET}"
               move_matching "exp2_checkpoint_shard*.json"        "${TARGET}"
               move_matching "exp2_merged.*"                      "${TARGET}"
               move_matching "exp2_stats.json"                    "${TARGET}"
@@ -1137,6 +1191,10 @@ jobs:
 
             # -- exp3: Nguyen12 extrapolation (single seed) -------------------
             exp3)
+              prune_old "full_run_*.json"          "${TARGET}"
+              prune_old "report_hybrid_*.json"     "${TARGET}"
+              prune_old "exp3_nguyen12_*.json"     "${TARGET}"
+              prune_old "*nguyen*seed*.json"        "${TARGET}"
               move_matching "full_run_*.json"          "${TARGET}"
               move_matching "report_hybrid_*.json"     "${TARGET}"
               move_matching "hybrid_defi_*.json"       "${TARGET}"
@@ -1151,6 +1209,10 @@ jobs:
             # BUG 2 FIX: exp3b outputs now go to extrapolation/multi_seed to avoid
             # colliding with exp3 outputs in extrapolation/.
             exp3b)
+              prune_old "full_run_*.json"          "${TARGET}"
+              prune_old "report_hybrid_*.json"     "${TARGET}"
+              prune_old "exp3_nguyen12_*.json"     "${TARGET}"
+              prune_old "*nguyen*seed*.json"        "${TARGET}"
               move_matching "full_run_*.json"          "${TARGET}"
               move_matching "report_hybrid_*.json"     "${TARGET}"
               move_matching "hybrid_defi_*.json"       "${TARGET}"
@@ -1263,6 +1325,27 @@ jobs:
           SRC="${RESULTS_DIR}"
           DEST="${RESULTS_DIR}/${RESULT_SUBDIR}"
           mkdir -p "${DEST}"
+
+          # STALE-FILE FIX: remove previously-committed (git-tracked) JSON/CSV
+          # files from DEST before copying in the current run's outputs.
+          # Without this, every run appends its fresh timestamp-named files on
+          # top of those already committed by prior runs, causing the directory
+          # to grow unboundedly.  Only git-tracked files are removed (files
+          # written earlier in this run but not yet committed are preserved).
+          pruned_store=0
+          while IFS= read -r f; do
+            [[ -f "$f" ]] || continue
+            fname=$(basename "$f")
+            # Never prune merge_shards meta-files — they are intentionally stable.
+            [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "  store prune: removing stale committed file: $f"
+              git rm --cached --quiet "$f" 2>/dev/null || true
+              rm -f "$f"
+              pruned_store=$((pruned_store + 1))
+            fi
+          done < <(find "${DEST}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) 2>/dev/null)
+          [[ $pruned_store -gt 0 ]] && echo "Store results: pruned ${pruned_store} stale committed file(s) from ${DEST}" || true
 
           copied=0
           # One-level scan of OUT_BASE root: pick up any JSON/CSV not already
