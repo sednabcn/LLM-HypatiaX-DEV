@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp1b`
 
 Experiment mode: **standard**
-N total: 5 | N standard: 5 | N intractable: 0
+N total: 74 | N standard: 74 | N intractable: 0
 R² success threshold: 0.8
 
 ## ✅ No Fatal Conditions
@@ -12,73 +12,101 @@ R² success threshold: 0.8
 
 | Method | N | Success% (flag) | R²≥0.80% | Median test R² | Mean test R² |
 |--------|---|-----------------|----------|----------------|--------------|
-| Pure LLM | 5 | 80.0% | 100.0% | 1.0000 | 1.0000 |
-| Neural Net | 5 | 40.0% | 0.0% | -1.4090 | -1.4090 |
-| Hybrid | 5 | 100.0% | 100.0% | 1.0000 | 1.0000 |
+| Pure LLM | 74 | 77.0% | 82.5% | 1.0000 | -0.4098 |
+| Neural Net | 74 | 87.8% | 20.0% | -0.2412 | -1.0878 |
+| Hybrid | 74 | 100.0% | 90.5% | 1.0000 | 0.7618 |
 
 ## Mann-Whitney U Tests (two-sided, clipped R², standard equations)
 
 
 ### Hybrid vs Pure LLM
 
-  U=10.5,  p=1.0000,  direction=b_greater,  n=(5, 4)
+  U=2321.5,  p=0.1233,  direction=b_greater,  n=(74, 57)
 
 ### Hybrid vs Neural Net
 
-  U=10.0,  p=0.0545,  direction=a_greater,  n=(5, 2)
+  U=4584.0,  p=0.0000**,  direction=a_greater,  n=(74, 65)
 
 ### Neural Net vs Pure LLM
 
-  U=0.0,  p=0.0852,  direction=b_greater,  n=(2, 4)
+  U=579.0,  p=0.0000**,  direction=b_greater,  n=(65, 57)
 _** = p < 0.05_
 
 ## Hybrid vs Neural Net (head-to-head, equation level)
 
-Equations with both finite R²: 2
-Hybrid wins:  2  (100.0%)
+Equations with both finite R²: 65
+Hybrid wins:  58  (89.2%)
 NN wins:      0
-Tied:         0
+Tied:         7
 
-## Coverage Gaps (1 equations with best R² < 0.8)
+## Coverage Gaps (19 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
 | Portfolio Expected Shortfall for correlated | hard | quadratic_form | N/A | N/A | N/A | 1.0000 |
+| Simple Staking APY | easy | linear | N/A | N/A | -0.2493 | 1.0000 |
+| Liquidation Price Long | medium | rational | N/A | N/A | 0.8965 | 1.0000 |
+| Liquidation Price Short | medium | rational | N/A | N/A | -2.5432 | 1.0000 |
+| Capital efficiency | medium | rational | N/A | N/A | -2.0963 | 1.0000 |
+| Options Delta | medium | norm_cdf | 0.7136 | 0.7136 | -10.3199 | -10.3199 |
+| Optimal LP Position (Kelly) | medium | rational | N/A | N/A | 0.0000 | 0.0000 |
+| Black-Scholes Call Price | hard | norm_cdf | N/A | N/A | -0.8981 | -0.8981 |
+| Black-Scholes Put Price | hard | norm_cdf | N/A | N/A | 0.0459 | 0.0459 |
+| Component ES | hard | quadratic_form | N/A | N/A | -0.2542 | 1.0000 |
+| Gamma of option | hard | norm_pdf | N/A | N/A | 0.3433 | 0.3433 |
+| Vega of option | hard | norm_pdf | N/A | N/A | 0.6593 | 0.6593 |
+| Convexity Adjustment | hard | algebraic | N/A | N/A | -2.4192 | 1.0000 |
+| Liquidation price for leveraged long | hard | rational | N/A | N/A | 0.6256 | 1.0000 |
+| Liquidation price for leveraged short | hard | rational | N/A | N/A | -1.4329 | 1.0000 |
+| Maximum safe leverage | hard | rational | N/A | N/A | -1.3461 | 1.0000 |
+| Required collateral | hard | rational | N/A | N/A | -0.7895 | 1.0000 |
+| Uniswap V3 virtual | hard | algebraic_with_sqrt | N/A | N/A | 0.7871 | 1.0000 |
+| Theta of option | hard | norm_pdf | -0.7755 | -15.9304 | -0.7755 | -0.7755 |
 
 ## R²≥0.80 Rate by Difficulty
 
 | Difficulty | N | LLM R²≥0.80 | NN R²≥0.80 | Hybrid R²≥0.80 |
 |------------|---|-------------|------------|----------------|
-| easy | 1 | 100.0% | 0.0% | 100.0% |
-| hard | 2 | 100.0% | 0.0% | 100.0% |
-| medium | 2 | 100.0% | 0.0% | 100.0% |
+| easy | 24 | 91.3% | 14.3% | 100.0% |
+| hard | 21 | 66.7% | 11.1% | 76.2% |
+| medium | 29 | 80.0% | 30.8% | 93.1% |
 
 ## Median Test R² by Formula Type
 
 | Formula Type | N | LLM median R² | NN median R² | Hybrid median R² |
 |--------------|---|---------------|--------------|------------------|
-| algebraic | 2 | 1.0000 | -2.7952 | 1.0000 |
-| quadratic_form | 2 | 1.0000 | N/A | 1.0000 |
-| rational | 1 | 1.0000 | -0.0229 | 1.0000 |
+| algebraic | 5 | 1.0000 | -1.5028 | 1.0000 |
+| algebraic_with_sqrt | 4 | 1.0000 | -0.4518 | 1.0000 |
+| exponential | 5 | 1.0000 | -2.1634 | 1.0000 |
+| linear | 18 | 1.0000 | -1.3664 | 1.0000 |
+| norm_cdf | 3 | 0.7136 | -0.8981 | -0.8981 |
+| norm_pdf | 3 | -10.0000 | 0.3433 | 0.3433 |
+| piecewise_linear | 1 | -3.5798 | 0.8679 | 1.0000 |
+| quadratic_form | 3 | 1.0000 | -0.2542 | 1.0000 |
+| rational | 24 | 1.0000 | -0.0229 | 1.0000 |
+| rational_simple | 7 | 1.0000 | 0.5461 | 1.0000 |
+| weighted_aggregate | 1 | -10.0000 | 0.9725 | 1.0000 |
 
 ## Extrapolation Gap (train R² − test R²)
 
 | Method | Mean gap | Median gap | N |
 |--------|----------|------------|---|
-| Pure LLM | 0.0000 | 0.0000 | 4 |
-| Neural Net | 2.4089 | 2.4089 | 2 |
-| Hybrid | 0.0000 | 0.0000 | 5 |
+| Pure LLM | 14.1570 | 0.0000 | 57 |
+| Neural Net | 2.0881 | 1.2411 | 65 |
+| Hybrid | -0.0059 | 0.0000 | 72 |
 
 ## Wall-clock Timing (standard equations)
 
 | Method | Mean (s) | Median (s) | Total (s) | N |
 |--------|----------|------------|-----------|---|
-| Pure LLM | 13.8818 | 13.0300 | 69.41 | 5 |
-| Neural Net | 0.1016 | 0.0000 | 0.51 | 5 |
-| Hybrid | 1.4406 | 1.5400 | 7.2 | 5 |
+| Pure LLM | 11.4858 | 10.1280 | 849.95 | 74 |
+| Neural Net | 0.3166 | 0.3610 | 23.43 | 74 |
+| Hybrid | 1.7036 | 1.3230 | 126.07 | 74 |
 
 ## Hybrid Routing Decisions
 
 | Decision | Count |
 |----------|-------|
-| llm | 5 |
+| llm | 67 |
+| nn | 6 |
+| nn_fallback | 1 |
