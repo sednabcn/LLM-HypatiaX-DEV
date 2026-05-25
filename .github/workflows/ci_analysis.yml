@@ -345,6 +345,7 @@ jobs:
 
             echo "INPUT_MODE=merged" >> "$GITHUB_ENV"
             echo "INPUT_JSON=$INPUT_JSON" >> "$GITHUB_ENV"
+            echo "SHARD_MANIFEST="        >> "$GITHUB_ENV"
 
             echo
             echo "Selected merged input:"
@@ -422,6 +423,9 @@ jobs:
               echo "  File: ${SINGLE_FILE}"
               echo "INPUT_MODE=direct"             >> "$GITHUB_ENV"
               echo "INPUT_JSON=${SINGLE_FILE}"     >> "$GITHUB_ENV"
+              # Always define SHARD_MANIFEST so validate_analysis_input.py
+              # can read os.environ["SHARD_MANIFEST"] without KeyError.
+              echo "SHARD_MANIFEST="               >> "$GITHUB_ENV"
 
             else
               # ── Probe first shard to detect benchmark vs flat format ──────
@@ -518,6 +522,7 @@ jobs:
 
                 echo "INPUT_MODE=merged"                    >> "$GITHUB_ENV"
                 echo "INPUT_JSON=_merged_benchmark.json"    >> "$GITHUB_ENV"
+                echo "SHARD_MANIFEST="                      >> "$GITHUB_ENV"
 
               # ── SHARDS: N>1 flat/list-format shards ───────────────────────
               else
