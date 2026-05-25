@@ -5,14 +5,14 @@ Experiment mode: **multi_method**
 N total: 156 | N standard: 156 | N intractable: 0
 R² success threshold: 0.8
 
-> **Multi-method experiment**: up to six method keys may be present in the raw output (`PureLLM Baseline`, `ImprovedNN`, `EnhancedHybridSystemDeFi`, `HybridSystemLLMNN all-domains`, `SymbolicEngineWithLLM`, `HybridDiscoverySystem v50_2`). `merge_shards.py` normalises these to canonical slugs; only `pure_llm`, `neural_network`, and `hybrid` are included in METHODS and drive all statistical comparisons. The remaining keys (`hybrid_all_domains`, `symbolic_engine`, `hybrid_v50_2`) are present in records but excluded from MW tests and method summary tables. For `exp2`: `symbolic_engine` (SymbolicEngineWithLLM) and any PySR-only variants are retained in records for completeness but not compared.
+> **Multi-method experiment**: a 4th method key (`HybridSystemLLMNN all-domains`) is present in the raw output but is not in `METHODS` and is excluded from comparisons. Verify `merge_shards.py` translates method names correctly.
 
 ## ✅ No Fatal Conditions
 
 
 ## ℹ️ Informational / Warnings
 
-- WARN_MULTI_METHOD: up to six method keys may be present in records (pure_llm, neural_network, hybrid, hybrid_all_domains, symbolic_engine, hybrid_v50_2). Only METHODS = [pure_llm, neural_network, hybrid] drive MW tests and summary tables. Extra keys (symbolic_engine / hybrid_all_domains / hybrid_v50_2) are retained in records for completeness but excluded from all statistical comparisons.
+- WARN_MULTI_METHOD: this experiment produces a 4th method key (HybridSystemLLMNN all-domains) not in METHODS. It is excluded from all method-comparison statistics. Confirm merge_shards.py translates method names before analysis.
 
 ## Method Summary (standard equations only)
 
