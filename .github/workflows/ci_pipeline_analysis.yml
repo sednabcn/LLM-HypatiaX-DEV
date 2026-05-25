@@ -290,21 +290,21 @@ jobs:
           USE_MERGED_FOR_BENCHMARK=false
           if [[ ${#SHARD_FILES[@]} -eq 1 ]]; then
             USE_MERGED_FOR_BENCHMARK=$(python3 -c "
-import json, sys
-try:
-    data = json.load(open('${SHARD_FILES[0]}'))
-except Exception:
-    print('false'); sys.exit(0)
-if isinstance(data, list): print('false'); sys.exit(0)
-if isinstance(data, dict) and isinstance(data.get('results'), list):
-    print('false'); sys.exit(0)
-if isinstance(data, dict):
-    nm = {k: v for k, v in data.items()
-          if not k.startswith('_') and k not in ('stats', 'summary', 'metadata')}
-    if nm and isinstance(next(iter(nm.values())), dict):
-        print('true'); sys.exit(0)
-print('false')
-")
+          import json, sys
+          try:
+              data = json.load(open('${SHARD_FILES[0]}'))
+          except Exception:
+              print('false'); sys.exit(0)
+          if isinstance(data, list): print('false'); sys.exit(0)
+          if isinstance(data, dict) and isinstance(data.get('results'), list):
+              print('false'); sys.exit(0)
+          if isinstance(data, dict):
+              nm = {k: v for k, v in data.items()
+                    if not k.startswith('_') and k not in ('stats', 'summary', 'metadata')}
+              if nm and isinstance(next(iter(nm.values())), dict):
+                  print('true'); sys.exit(0)
+          print('false')
+          ")
           fi
 
           if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
