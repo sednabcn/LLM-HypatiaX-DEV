@@ -361,57 +361,21 @@ jobs:
                 exit 1
               fi
 
-              echo "  Found ${#EXP1B_SHARDS[@]} shard file(s) — merging..."
-              printf '%s\n' "${EXP1B_SHARDS[@]}" > _exp1b_shard_paths.txt
+              echo "  Found ${#EXP1B_SHARDS[@]} shard file(s) — merging via merge_shards.py..."
 
-              printf '%s\n' \\
-                'import json, sys' \\
-                'paths = open('\''_exp1b_shard_paths.txt'\'').read().splitlines()' \\
-                'def find_records(d):' \\
-                '    for key in ('\''tests'\'', '\''results'\'', '\''records'\'', '\''data'\'', '\''experiments'\''):' \\
-                '        if isinstance(d.get(key), list) and d[key]:' \\
-                '            return key, d[key]' \\
-                '    non_meta = {k: v for k, v in d.items() if not k.startswith('\''_'\'') and k not in ('\''stats'\'', '\''summary'\'', '\''metadata'\'', '\''protocol'\'', '\''methods'\'', '\''config'\'', '\''parameters'\'', '\''total_tests'\'')}' \\
-                '    if non_meta and all(isinstance(v, dict) for v in non_meta.values()):' \\
-                '        return '\''_dict_values'\'', list(non_meta.values())' \\
-                '    for key, val in d.items():' \\
-                '        if isinstance(val, list) and val and key not in ('\''fatal_conditions'\'',):' \\
-                '            return key, val' \\
-                '    return None, []' \\
-                'merged = None' \\
-                'records_key_used = None' \\
-                'total_tests = 0' \\
-                'for p in paths:' \\
-                '    try:' \\
-                '        d = json.load(open(p))' \\
-                '    except Exception as e:' \\
-                '        print('\''::warning::Skipping unreadable shard '\'' + p + '\'': '\'' + str(e), file=__import__('\''sys'\'').stderr); continue' \\
-                '    if not isinstance(d, dict):' \\
-                '        print('\''::warning::Skipping non-dict shard '\'' + p, file=__import__('\''sys'\'').stderr); continue' \\
-                '    key, records = find_records(d)' \\
-                '    if key is None:' \\
-                '        print('\''::warning::Skipping '\'' + p + '\'': no recognisable records. Keys: '\'' + str(list(d.keys())[:8]), file=__import__('\''sys'\'').stderr); continue' \\
-                '    if merged is None:' \\
-                '        skip = {k for k in d if k in ('\''tests'\'','\''results'\'','\''records'\'','\''data'\'','\''experiments'\'') or k == key}' \\
-                '        merged = {k: v for k, v in d.items() if k not in skip}' \\
-                '        merged['\''tests'\''] = []' \\
-                '        records_key_used = key' \\
-                '    merged['\''tests'\''].extend(records)' \\
-                '    total_tests += len(records)' \\
-                'if merged is None:' \\
-                '    print('\''::error::No readable shards found after merge pass.'\''); __import__('\''sys'\'').exit(1)' \\
-                'merged['\''total_tests'\''] = total_tests' \\
-                'print('\''  Records key used: '\'' + str(records_key_used))' \\
-                'json.dump(merged, open('\''_merged_benchmark.json'\'', '\''w'\''), indent=2)' \\
-                'print('\''  Merged '\'' + str(len(paths)) + '\'' shard(s) -> '\'' + str(total_tests) + '\'' total tests.'\'')' \\
-                > /tmp/_exp1b_merge.py
-              python3 /tmp/_exp1b_merge.py
+              # merge_shards.py knows exp1b's shard globs, handles all JSON shapes,
+              # and writes _merged.json directly to RESULT_DIR.
+              python3 .github/scripts/merge_shards.py \
+                --experiment    "$EXPERIMENT" \
+                --input-root    "$RESULT_DIR" \
+                --output-dir    "$RESULT_DIR" \
+                --result-subdir "$RESULT_SUBDIR"
 
-              echo "INPUT_MODE=merged"                 >> "$GITHUB_ENV"
-              echo "INPUT_JSON=_merged_benchmark.json" >> "$GITHUB_ENV"
-              echo "SHARD_MANIFEST="                   >> "$GITHUB_ENV"
+              echo "INPUT_MODE=merged"              >> "$GITHUB_ENV"
+              echo "INPUT_JSON=$RESULT_DIR/_merged.json" >> "$GITHUB_ENV"
+              echo "SHARD_MANIFEST="                >> "$GITHUB_ENV"
               echo
-              echo "In-memory merge complete → _merged_benchmark.json"
+              echo "Merge complete → $RESULT_DIR/_merged.json"
 
             fi
 
