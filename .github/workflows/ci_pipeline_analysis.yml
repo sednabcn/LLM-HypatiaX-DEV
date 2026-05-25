@@ -778,13 +778,31 @@ print('false')
               "extrap":             FEYNMAN_DOMAINS,
           }
 
-          def _done_set_from_files(result_dir, all_ids):
-              done = set()
+          def _done_set_from_files(result_dir, all_ids, exp_id=None):
+              done  = set()
               files = [f.name for f in result_dir.glob("*")
                        if f.is_file() and not f.name.startswith("_")]
+
+              # Fallback globs: when the REGISTRY task-id substring does not match
+              # any filename (e.g. exp1 produces protocol_core_noiseless_*.json but
+              # REGISTRY uses "hypatiax_defi_benchmark_v3_results"), treat the
+              # experiment as done if ANY of its RESULT_GLOBS files are present.
+              # This keeps REGISTRY as a logical task list while tolerating output
+              # naming variations across script versions.
+              import fnmatch
+              globs_for_exp = RESULT_GLOBS.get(exp_id, []) if exp_id else []
+
               for tid in all_ids:
                   safe = tid.replace("/", "_").replace(".", "_")
                   if any(safe in fname for fname in files):
+                      done.add(tid)
+                  elif globs_for_exp and any(
+                      fnmatch.fnmatch(fname, pat)
+                      for fname in files
+                      for pat in globs_for_exp
+                  ):
+                      # At least one RESULT_GLOBS file present → treat this logical
+                      # task as complete (combined-output experiment like exp1/exp1b).
                       done.add(tid)
               return done
 
@@ -801,7 +819,7 @@ print('false')
                   missing, done = all_ids, 0
               else:
                   result_dir = OUT_BASE / info["subdir"]
-                  done_set   = _done_set_from_files(result_dir, all_ids)
+                  done_set   = _done_set_from_files(result_dir, all_ids, exp_id=exp_id)
                   for path_name, key in [("_merged.json", None), ("_checkpoint.json", "completed")]:
                       fp = result_dir / path_name
                       if fp.exists():
@@ -1224,6 +1242,18 @@ print('false')
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
+
+      # Download audit findings so the summary step can print FAIL/MISSING details.
+      # The audit job writes logs/paper_audit_findings.json on its own runner — that
+      # file does NOT survive to this job via checkout.  continue-on-error: true so a
+      # missing artifact (e.g. audit job crashed before writing) never blocks the
+      # summary from printing the health table.
+      - name: Download audit findings artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: paper-audit-findings-${{ github.run_id }}
+          path: logs/
 
       - name: Print consolidated summary and set exit code
         env:
