@@ -53,7 +53,11 @@ def load_records(path):
                     records.append(rec)
         return records
 
-    # Case 4: top-level dict keyed by equation/task (no "results" wrapper)
+    # Case 4: top-level dict keyed by equation/task (no "results" wrapper).
+    # This is the canonical shape written by merge_shards.py:
+    #   { "equation_id_1": { ...record... }, "equation_id_2": { ... }, ... }
+    # Records may use "test_r2", "results", "equation_id", etc. — we do NOT
+    # require specific field names; any dict value that isn't a meta key counts.
     non_meta = {
         k: v for k, v in data.items()
         if not k.startswith("_") and k not in ("stats", "summary", "metadata")
@@ -63,7 +67,7 @@ def load_records(path):
 
     first_val = next(iter(non_meta.values()))
 
-    # Sub-case 4a: {eq_id: {method: {r2, success, ...}}}
+    # Sub-case 4a: {eq_id: {method: {r2, success, ...}}}  — old nested method shape
     if isinstance(first_val, dict):
         inner_first = next(iter(first_val.values()), None) if first_val else None
         if isinstance(inner_first, dict) and (
@@ -80,7 +84,7 @@ def load_records(path):
                             records.append(rec)
             return records
 
-        # Sub-case 4b: {eq_id: {r2, success, method, ...}}
+        # Sub-case 4b: {eq_id: {r2/success/method, ...}}  — flat per-equation record
         if (
             "r2" in first_val or "success" in first_val
             or "r_squared" in first_val or "method" in first_val
@@ -93,56 +97,34 @@ def load_records(path):
                     records.append(rec)
             return records
 
+        # Sub-case 4c: generic dict-of-dicts (merge_shards.py output).
+        # Covers normalised protocol records keyed by equation_id:
+        #   { "eq_id": { "equation_id": ..., "results": {...}, "test_r2": ..., ... } }
+        # Accept any non-empty dict value without requiring specific field names.
+        if all(isinstance(v, dict) for v in non_meta.values()):
+            records = []
+            for eq_id, rec_val in non_meta.items():
+                rec = dict(rec_val)
+                rec.setdefault("equation_id", eq_id)
+                rec.setdefault("equation", eq_id)
+                records.append(rec)
+            return records
+
     return []
 
 
 def main():
-    mode = os.environ.get("INPUT_MODE", "").strip()
-    if not mode:
-        print("FATAL: INPUT_MODE is not set or empty", file=sys.stderr)
-        sys.exit(1)
-
+    mode = os.environ["INPUT_MODE"]
     total = 0
 
-    if mode in ("merged", "direct"):
-        # Both merged and direct use a single JSON file via INPUT_JSON.
-        path = os.environ.get("INPUT_JSON", "").strip()
-        if not path:
-            print(f"FATAL: INPUT_MODE={mode} but INPUT_JSON is not set or empty",
-                  file=sys.stderr)
-            sys.exit(1)
+    if mode == "merged":
+        path = os.environ["INPUT_JSON"]
         records = load_records(path)
-        label = "Merged" if mode == "merged" else "Direct"
-        print(f"{label} file: {path}")
+        print(f"Merged file: {path}")
         print(f"Records: {len(records)}")
         total += len(records)
-
-    elif mode == "shards":
-        # ci_analysis.yml writes  SHARD_MANIFEST=  (empty) for merged/direct modes
-        # so that the env var is always defined.  An empty value here means the
-        # "Locate analysis input" step never reached the SHARDS branch — config error.
-        raw = os.environ.get("SHARD_MANIFEST", "").strip()
-        if not raw:
-            print(
-                "FATAL: INPUT_MODE=shards but SHARD_MANIFEST is not set or empty.\n"
-                "       Check the 'Locate analysis input' step in ci_analysis.yml.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        manifest = pathlib.Path(raw).resolve()
-        print(f"Manifest: {manifest}")
-
-        if not manifest.exists():
-            print(f"FATAL: manifest does not exist: {manifest}", file=sys.stderr)
-            sys.exit(1)
-        if manifest.is_dir():
-            print(
-                f"FATAL: manifest path is a directory, expected a file: {manifest}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
+    else:
+        manifest = pathlib.Path(os.environ["SHARD_MANIFEST"])
         for line in manifest.read_text().splitlines():
             line = line.strip()
             if not line:
@@ -151,11 +133,6 @@ def main():
             print(f"Shard: {line}")
             print(f"Records: {len(records)}")
             total += len(records)
-
-    else:
-        print(f"FATAL: unknown INPUT_MODE={mode!r}. Expected: merged | direct | shards",
-              file=sys.stderr)
-        sys.exit(1)
 
     print(f"TOTAL_RECORDS={total}")
 
