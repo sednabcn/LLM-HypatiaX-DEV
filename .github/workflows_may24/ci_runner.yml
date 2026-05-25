@@ -1447,8 +1447,8 @@ jobs:
             #   defi_v3_<TS>.json                              ← legacy name
             # All three patterns are moved so the artifact upload finds them.
             exp1)
-              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
-              move_matching "protocol_core_noiseless_*.json"           "${TARGET}"
+              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+              move_matching "protocol_core_noiseless_*.json"           "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
               move_matching "defi_v3_*.json"                           "${RESULTS_DIR}"
               ;;
 
@@ -1459,7 +1459,7 @@ jobs:
             # before moving so every shard's output has a unique repo path.
             # The same logic applies to .txt companion files.
             exp1b)
-              DEST_15="${TARGET}"
+              DEST_15="${RESULTS_DIR}/comparison_results/noise-noiseless/15"
               mkdir -p "${DEST_15}"
               while IFS= read -r src; do
                 [[ -e "$src" ]] || continue
@@ -1508,41 +1508,41 @@ jobs:
 
             # -- exp3: Nguyen12 extrapolation (single seed) -------------------
             exp3)
-              move_matching "full_run_*.json"          "${TARGET}"
-              move_matching "report_hybrid_*.json"     "${TARGET}"
-              move_matching "hybrid_defi_*.json"       "${TARGET}"
-              move_matching "experiment_registry.json" "${TARGET}"
+              move_matching "full_run_*.json"          "${RESULTS_DIR}/extrapolation"
+              move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation"
+              move_matching "hybrid_defi_*.json"       "${RESULTS_DIR}/extrapolation"
+              move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation"
               # ISSUE 2 FIX: xref lists exp3_nguyen12_*.json and *nguyen*seed*.json as
               # expected outputs (tab:nguyen12) but these were never moved — files stayed
               # at workspace root and were silently lost before artifact upload.
-              move_matching "exp3_nguyen12_*.json"     "${TARGET}"
-              move_matching "*nguyen*seed*.json"       "${TARGET}"
+              move_matching "exp3_nguyen12_*.json"     "${RESULTS_DIR}/extrapolation"
+              move_matching "*nguyen*seed*.json"       "${RESULTS_DIR}/extrapolation"
               ;;
 
             # BUG 2 FIX: exp3b outputs now go to extrapolation/multi_seed to avoid
             # colliding with exp3 outputs in extrapolation/.
             exp3b)
-              move_matching "full_run_*.json"          "${TARGET}"
-              move_matching "report_hybrid_*.json"     "${TARGET}"
-              move_matching "hybrid_defi_*.json"       "${TARGET}"
-              move_matching "experiment_registry.json" "${TARGET}"
+              move_matching "full_run_*.json"          "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "hybrid_defi_*.json"       "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation/multi_seed"
               # ISSUE 2 FIX: same missing nguyen globs as exp3 — add them here too.
-              move_matching "exp3_nguyen12_*.json"     "${TARGET}"
-              move_matching "*nguyen*seed*.json"       "${TARGET}"
+              move_matching "exp3_nguyen12_*.json"     "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "*nguyen*seed*.json"       "${RESULTS_DIR}/extrapolation/multi_seed"
               ;;
 
             # -- suppA: hybrid PySR/DeFi benchmark ----------------------------
             # RESULT_SUBDIR=hybrid_pysr/defi (set in meta step) - move must
             # match so the artifact upload and consolidate job find the files.
             suppA)
-              move_matching "consolidated_hybrid_*.json"          "${TARGET}"
+              move_matching "consolidated_hybrid_*.json"          "${RESULTS_DIR}/hybrid_pysr/defi"
               # ISSUE 3 FIX: xref lists hybrid_system*.json and extrapolation_73cases*.json
               # / *73cases*.json as primary suppA outputs (Tab 11-13) but these patterns
               # were missing from the move block — files were never relocated to the
               # canonical subdir and would be absent from the artifact upload.
-              move_matching "hybrid_system*.json"                 "${TARGET}"
-              move_matching "extrapolation_73cases*.json"         "${TARGET}"
-              move_matching "*73cases*.json"                      "${TARGET}"
+              move_matching "hybrid_system*.json"                 "${RESULTS_DIR}/hybrid_pysr/defi"
+              move_matching "extrapolation_73cases*.json"         "${RESULTS_DIR}/hybrid_pysr/defi"
+              move_matching "*73cases*.json"                      "${RESULTS_DIR}/hybrid_pysr/defi"
               move_matching "hybrid_llm_nn_all_domains_*.json"    "${RESULTS_DIR}/hybrid_llm_nn/all_domains"
               move_matching "ablation_exp1_*.json"                "${RESULTS_DIR}"
               move_matching "hypatiax_defi_benchmark_v3_results*" "${RESULTS_DIR}"
@@ -1572,33 +1572,33 @@ jobs:
 
             # -- hybrid_all_domains: LLM+NN all-domains run -------------------
             hybrid_all_domains)
-              move_matching "hybrid_llm_nn_all_domains_*.json" "${TARGET}"
+              move_matching "hybrid_llm_nn_all_domains_*.json" "${RESULTS_DIR}/hybrid_llm_nn/all_domains"
               ;;
 
             # -- instability: instability index figures + CSVs -----------------
             instability)
-              move_matching "instability_analysis.csv"     "${TARGET}"
+              move_matching "instability_analysis.csv"     "${RESULTS_DIR}/figures"
               # ISSUE 5a FIX: instability_extrapolation.csv (Stage 2 output, tab:instability)
               # was never moved — add it alongside instability_analysis.csv.
-              move_matching "instability_extrapolation.csv" "${TARGET}"
+              move_matching "instability_extrapolation.csv" "${RESULTS_DIR}/figures"
               # ISSUE 5b FIX: *.png and *.pdf globs were workspace-wide (maxdepth 8),
               # which risks capturing runner debug images or Julia precompile artifacts.
               # Scope to the canonical figure name stems produced by run_instability_suite.py.
-              move_matching "fig_paper_*.pdf"              "${TARGET}"
-              move_matching "fig_paper_*.png"              "${TARGET}"
-              move_matching "hypatiax_instability_*.pdf"   "${TARGET}"
-              move_matching "hypatiax_instability_*.png"   "${TARGET}"
+              move_matching "fig_paper_*.pdf"              "${RESULTS_DIR}/figures"
+              move_matching "fig_paper_*.png"              "${RESULTS_DIR}/figures"
+              move_matching "hypatiax_instability_*.pdf"   "${RESULTS_DIR}/figures"
+              move_matching "hypatiax_instability_*.png"   "${RESULTS_DIR}/figures"
               ;;
 
             # -- extrap: OOD extrapolation comparative -------------------------
             # Also rescues standalone_llm_nn outputs written by some script variants
             extrap)
-              move_matching "all_domains_extrap_v4_*.json" "${TARGET}"
-              move_matching "all_domains_extrap_v4_*.txt"  "${TARGET}"
+              move_matching "all_domains_extrap_v4_*.json" "${RESULTS_DIR}/comparison_results/extrapolation"
+              move_matching "all_domains_extrap_v4_*.txt"  "${RESULTS_DIR}/comparison_results/extrapolation"
               # ISSUE 4 FIX: xref lists protocol_core_*.json as an extrap output
               # (Tab 9 OOD columns) but this pattern was absent from the move block.
               # The verify step (line ~1840) already checks for it; now actually move it.
-              move_matching "protocol_core_*.json"         "${TARGET}"
+              move_matching "protocol_core_*.json"         "${RESULTS_DIR}/comparison_results/extrapolation"
               move_matching "standalone_llm_nn_*.json"      "${RESULTS_DIR}/standalone_llm_nn"
               move_matching "standalone_real_methods_*.json" "${RESULTS_DIR}/standalone_llm_nn"
               ;;

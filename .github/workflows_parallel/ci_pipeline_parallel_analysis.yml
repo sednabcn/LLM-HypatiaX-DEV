@@ -1,60 +1,71 @@
 # ==============================================================================
-#  ci_pipeline_analysis.yml
-#  HypatiaX · Analysis → Post-process → Check
+#  ci_pipeline_parallel_analysis.yml
+#  HypatiaX · Cross-experiment analysis → Post-process → Check
+#  (parallel pipeline variant of ci_pipeline_analysis.yml)
 #
 #  PURPOSE
 #  -------
-#  Runs the full post-experiment pipeline for every experiment in sequence:
+#  Runs the full post-experiment pipeline across all 12 experiments after
+#  ci_pipeline_parallel.yml's wave5-postprocess completes.  Dispatched once
+#  per full parallel pipeline run (not once per experiment like ci_analysis_parallel.yml).
 #
-#    For each experiment (in canonical order):
-#      1. ci_analysis    — statistical analysis; writes _analysis.json + _report.md
-#      2. ci_postprocess — figures + tables; writes figures/ + tables/
+#  Stage chain:
+#    For each experiment (parallel matrix, max-parallel: 2):
+#      1. ci_analysis_parallel    — statistical analysis; writes _analysis.json + _report.md
+#      2. ci_postprocess_parallel — figures + tables; writes figures/ + tables/
 #
 #    After all experiments complete:
-#      3. ci_check       — 4-phase gate (check / complete / qualify / audit)
-#                          Prints consolidated pipeline health table and exits
-#                          non-zero if any hard gate fails.
+#      3. check   — verify all committed outputs are present and valid JSON
+#      4. complete — identify any missing tasks vs full task registry
+#      5. qualify  — 7-dimension qualification gate per experiment
+#      6. audit    — cross-check paper_targets.json against actual result values
+#      7. summary  — consolidated health table; exits 1 on any hard gate failure
 #
-#  This workflow does NOT re-run expensive experiment workers.  It operates
-#  entirely on committed result files already in the repo.
+#  CHANGES vs ci_pipeline_analysis.yml
+#  ─────────────────────────────────────────────────────────────────────────────
+#  PAR-PA1  Dispatches ci_analysis_parallel.yml and ci_postprocess_parallel.yml
+#           instead of embedding analysis/postprocess logic inline.  This allows
+#           each experiment's analysis to run with its full timeout (120 min)
+#           and retry independently without re-running the entire pipeline job.
 #
-#  TRIGGER STRATEGY
-#  ----------------
-#  Manual:   workflow_dispatch — choose a single experiment or "all".
-#            "all" runs the full sequence for every experiment in canonical order.
+#  PAR-PA2  analysis matrix uses max-parallel: 2 (instead of 1) since parallel
+#           pipeline experiments are already sharded and committed independently;
+#           rebase conflicts are resolved by git pull --rebase --autostash in
+#           each dispatched workflow.  Increase to 3–4 as confidence grows.
 #
-#  AUTO TRIGGER:
-#  Add a workflow_run trigger (commented out below) once the upstream worker
-#  workflow name is confirmed.
+#  PAR-PA3  triggered_by and run_id inputs accepted from ci_pipeline_parallel.yml
+#           wave5-postprocess for traceability in the GitHub UI.
 #
-#  CANONICAL EXPERIMENT ORDER
-#  --------------------------
-#  exp1 → exp1b → exp2_feynman → exp2 → exp3 → exp3b →
-#  suppA → suppB → suppB_sc → hybrid_all_domains → instability → extrap
+#  PAR-PA4  check / complete / qualify / audit / summary jobs are identical to
+#           ci_pipeline_analysis.yml phases 3–5 (single source of truth for gate
+#           logic).  Only the workflow name and dispatch targets differ.
 #
-#  exp1b and exp3b are the only experiments that require a _merged.json
-#  (produced by ci_consolidate_experiment.yml).  All others use per-shard
-#  committed files directly.  The EMPTY_DATASET fatal fires only for those two;
-#  all others emit WARN_EMPTY_DATASET and continue.
+#  DISPATCH CONTEXT
+#  ─────────────────────────────────────────────────────────────────────────────
+#  ci_pipeline_parallel.yml dispatches this workflow from its wave5-postprocess
+#  job after all per-experiment postprocess steps complete:
 #
-#  PERMISSIONS
-#  -----------
-#  contents: write  — ci_analysis and ci_postprocess commit outputs to master.
-#  actions:  read   — ci_check reads artifact store.
+#    gh workflow run ci_pipeline_parallel_analysis.yml \
+#      --field triggered_by="ci_pipeline_parallel" \
+#      --field run_id="${{ github.run_id }}"
+#
+#  Can also be run manually (experiment="all") to re-run analysis + check
+#  on already-committed result files without re-running experiment workers.
 # ==============================================================================
 
-name: "HypatiaX - pipeline (analysis + postprocess + check)"
+name: "HypatiaX - pipeline parallel (analysis + postprocess + check)"
 run-name: >-
-  HypatiaX pipeline —
+  HypatiaX pipeline parallel —
   ${{ github.event.inputs.experiment || 'all' }}
   · run ${{ github.run_id }}
+  ${{ github.event.inputs.triggered_by != '' && format('(triggered by {0} run {1})', github.event.inputs.triggered_by, github.event.inputs.run_id) || '' }}
 
 on:
   # ── Manual trigger ────────────────────────────────────────────────────────
   workflow_dispatch:
     inputs:
       experiment:
-        description: "Experiment to run (or 'all' for every experiment in order)"
+        description: "Experiment to run (or 'all' for every experiment in parallel order)"
         required: false
         type: choice
         options:
@@ -88,36 +99,33 @@ on:
         required: false
         default: "false"
 
-  # ── Uncomment to auto-trigger after ci_experiment.yml completes ───────────
-  # workflow_run:
-  #   workflows: ["HypatiaX - experiment runner"]
-  #   types: [completed]
+      # PAR-PA3: traceability fields from ci_pipeline_parallel.yml dispatcher.
+      triggered_by:
+        description: "Upstream workflow that triggered this run (informational)"
+        required: false
+        default: ""
+
+      run_id:
+        description: "Upstream workflow run_id (informational)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
-  actions:  read
+  actions:  write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  OUT_BASE: "hypatiax/data/results"
+  OUT_BASE:     "hypatiax/data/results"
   SEEDS:        ${{ github.event.inputs.seeds        || '42,99,123,777,2024' }}
   NOISE_LEVELS: ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
-  PYSR_FIT_WALL_TIMEOUT: ${{ vars.PYSR_FIT_WALL_TIMEOUT }}
-  PYSR_FIT_GRACE_SECS:   ${{ vars.PYSR_FIT_GRACE_SECS }}
-
-# Canonical result_subdir mapping — must stay in sync with ci_runner.yml plan job
-# (the authoritative source) and ci_pipeline.yml diagnose SUBDIR dict.
 
 # ==============================================================================
-#  PHASE 1 — ANALYSIS
-#  Runs ci_analysis logic for every selected experiment.
-#  instability is short-circuited (stub outputs written inline, no run_analysis.py).
-#  exp1b and exp3b are hard-fatal on EMPTY_DATASET; all others emit WARN only.
+#  PHASE 0 — Resolve which experiments to run
 # ==============================================================================
 
 jobs:
 
-  # ── Resolve which experiments to run ────────────────────────────────────────
   setup:
     name: "Resolve experiment list"
     runs-on: ubuntu-latest
@@ -146,396 +154,161 @@ jobs:
               fh.write(f"experiments={json.dumps(selected)}\n")
           PYEOF
 
-  # ── Install shared pip deps once; reused by analysis and postprocess ─────────
-  # (Each job installs its own deps; this job exists for clarity in the graph.)
+# ==============================================================================
+#  PHASE 1 — ANALYSIS
+#  PAR-PA1: dispatches ci_analysis_parallel.yml per experiment (not inline logic).
+#  PAR-PA2: max-parallel: 2 for faster throughput with safe rebase-on-push.
+# ==============================================================================
 
-  # ── Analysis: one matrix job per experiment ──────────────────────────────────
   analysis:
     name: "Analysis · ${{ matrix.experiment }}"
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 150    # 120-min analysis + 30-min dispatch + locate overhead
     strategy:
       fail-fast: false
-      max-parallel: 1          # serial — each job commits to master; avoid rebase conflicts
+      max-parallel: 2       # PAR-PA2: 2 concurrent analysis dispatches
       matrix:
         experiment: ${{ fromJson(needs.setup.outputs.experiments) }}
 
     steps:
-      - name: Checkout master
+      - name: Checkout
         uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: analysis-pip-${{ runner.os }}-numpy-scipy-pandas
-          restore-keys: analysis-pip-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
-
-      # ── instability: short-circuit (no _merged.json, no run_analysis.py) ────
-      - name: Short-circuit for instability experiment
-        if: matrix.experiment == 'instability'
+      - name: Dispatch + wait · ci_analysis_parallel.yml
         env:
-          OUT_BASE: ${{ env.OUT_BASE }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          EXP:      ${{ matrix.experiment }}
         run: |
           set -euo pipefail
-          OUT_DIR="${OUT_BASE}/figures"
-          mkdir -p "${OUT_DIR}"
-          python3 -c "
-          import json, os
-          out = os.environ['OUT_BASE'] + '/figures'
-          stub = {
-              'experiment':      'instability',
-              'experiment_mode': 'instability',
-              'n_total':         0,
-              'fatal_conditions': [
-                  'WARN_INSTABILITY_NO_MERGED_JSON: instability outputs are CSVs/figures only; '
-                  'statistical method analysis was skipped.'
-              ],
-          }
-          open(out + '/_analysis.json', 'w').write(json.dumps(stub, indent=2))
-          open(out + '/_report.md',     'w').write(
-              '# HypatiaX Analysis Report -- instability\n\n'
-              'Instability experiment: method comparison analysis not applicable.\n'
-              'See figures/instability_analysis.csv for results.\n'
-          )
-          print('Stub outputs written — instability short-circuit done.')
-          "
 
-      # ── All other experiments: resolve result_subdir and locate _merged.json ─
-      - name: Resolve result_subdir
-        if: matrix.experiment != 'instability'
-        id: meta
-        env:
-          EXP: ${{ matrix.experiment }}
-        run: |
-          set -euo pipefail
-          SUB=$(EXP_ID="${EXP}" python3 -c "
-          import os
-          mapping = {
-              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
-              'exp1b':              'comparison_results/noise-noiseless/15',
-              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
-              'exp2':               'comparison_results/feynman-tests/exp2_multi',
-              'exp3':               'extrapolation',
-              'exp3b':              'extrapolation/multi_seed',
-              'suppA':              'hybrid_pysr/defi',
-              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
-              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
-              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
-              'instability':        'figures',
-              'extrap':             'comparison_results/extrapolation',
-          }
-          print(mapping.get(os.environ['EXP_ID'], os.environ['EXP_ID']))
-          ")
-          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
-          echo "Resolved: exp=${EXP}  subdir=${SUB}"
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-      - name: Locate _merged.json
-        if: matrix.experiment != 'instability'
-        id: locate
-        env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          set -euo pipefail
-          COMMITTED_JSON="${OUT_BASE}/${SUB}/_merged.json"
+          echo "Dispatching ci_analysis_parallel.yml for ${EXP} ..."
+          gh workflow run ci_analysis_parallel.yml \
+            --repo "${REPO}" --ref "${{ github.ref_name }}" \
+            --field experiment="${EXP}" \
+            --field result_subdir="" \
+            --field source_run_id=""
+          sleep 10
 
-          if [[ -f "$COMMITTED_JSON" ]]; then
-            MERGED_JSON="$COMMITTED_JSON"
-            echo "Using committed _merged.json: $MERGED_JSON"
-          else
-            # Fall back to first non-meta shard result file
-            SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
-              ! -name "_*.json" 2>/dev/null | sort | head -1 || true)
-            if [[ -n "$SHARD_JSON" && -f "$SHARD_JSON" ]]; then
-              MERGED_JSON="$SHARD_JSON"
-              echo "No _merged.json — using shard file: $MERGED_JSON"
-            else
-              echo "::error::No input JSON found for ${EXP} in ${OUT_BASE}/${SUB}."
-              exit 1
+          # Locate the dispatched run (up to 12 attempts × 10 s = 120 s)
+          ARID=""
+          for attempt in $(seq 1 12); do
+            ARID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_analysis_parallel.yml \
+              --event workflow_dispatch \
+              --limit 20 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg b "${{ github.ref_name }}" \
+                '[.[]|select(.headBranch==$b and .createdAt>=$ts)]|first|.databaseId//empty' \
+              2>/dev/null || echo "")
+            [[ -n "$ARID" ]] && break
+            echo "  ${EXP} analysis: attempt ${attempt}/12 — waiting 10 s ..."; sleep 10
+          done
+          [[ -z "$ARID" ]] && { echo "::error::Could not locate ci_analysis_parallel run for ${EXP}."; exit 1; }
+          echo "  ${EXP} analysis → run ${ARID}"
+
+          # Poll to completion (120-min deadline)
+          DEADLINE=$(( $(date +%s) + 7200 ))
+          SLEEP=20
+          while true; do
+            RJ=$(gh run view "${ARID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+                 || echo '{"status":"unknown","conclusion":"none"}')
+            ST=$(echo "${RJ}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CN=$(echo "${RJ}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+            echo "  [$(date -u +%H:%M:%SZ)] ${EXP} analysis run=${ARID} status=${ST} conclusion=${CN}"
+            if [[ "${ST}" == "completed" ]]; then
+              [[ "${CN}" != "success" ]] && { echo "::error::${EXP} analysis failed: ${CN}"; exit 1; }
+              echo "  ${EXP} analysis completed successfully."; break
             fi
-          fi
-
-          # Sanity-check: valid JSON with records.
-          # EMPTY_DATASET is fatal only for exp1b and exp3b.
-          python3 - <<PYEOF
-          import json, sys, os
-          path = "$MERGED_JSON"
-          exp  = "$EXP"
-          try:
-              data = json.load(open(path))
-          except Exception as e:
-              print(f"::error::_merged.json is not valid JSON: {e}")
-              sys.exit(1)
-
-          if isinstance(data, dict) and isinstance(data.get("results"), dict):
-              n = len(data["results"])
-          elif isinstance(data, dict):
-              n = sum(1 for k, v in data.items()
-                      if isinstance(v, dict) and not k.startswith("_") and k != "stats")
-          elif isinstance(data, list):
-              n = len(data)
-          else:
-              print(f"::error::Unexpected _merged.json top-level type: {type(data).__name__}")
-              sys.exit(1)
-
-          if n == 0:
-              if exp in ("exp1b", "exp3b"):
-                  print(f"::error::_merged.json contains 0 task records for {exp}.")
-                  sys.exit(1)
-              else:
-                  print(f"::warning::_merged.json contains 0 task records for {exp} — non-fatal, continuing.")
-          else:
-              print(f"_merged.json OK — {n} record(s).")
-          PYEOF
-
-          echo "merged_json=${MERGED_JSON}" >> "$GITHUB_OUTPUT"
-
-      - name: Run statistical analysis
-        if: matrix.experiment != 'instability'
-        env:
-          EXP:         ${{ matrix.experiment }}
-          SUB:         ${{ steps.meta.outputs.result_subdir }}
-          MERGED_JSON: ${{ steps.locate.outputs.merged_json }}
-          PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
-          PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
-        run: |
-          set -euo pipefail
-          OUT_DIR="${OUT_BASE}/${SUB}"
-          mkdir -p "${OUT_DIR}"
-          echo "=== Analysis: ${EXP} → ${OUT_DIR} ==="
-          python .github/scripts/run_analysis.py \
-            --experiment  "${EXP}"         \
-            --merged-json "${MERGED_JSON}" \
-            --output-dir  "${OUT_DIR}"
-
-      - name: Verify analysis outputs
-        if: matrix.experiment != 'instability'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          set -euo pipefail
-          OUT_DIR="${OUT_BASE}/${SUB}"
-          test -f "${OUT_DIR}/_report.md"    || { echo "::error::_report.md missing";    exit 1; }
-          test -f "${OUT_DIR}/_analysis.json" || { echo "::error::_analysis.json missing"; exit 1; }
-
-          python3 -c "
-          import json, sys
-          path = '${OUT_DIR}/_analysis.json'
-          d    = json.load(open(path))
-          required = ('experiment', 'experiment_mode', 'n_total', 'fatal_conditions')
-          missing  = [k for k in required if k not in d]
-          if missing:
-              print(f'::error::_analysis.json missing keys: {missing}')
-              sys.exit(1)
-          hard = [c for c in d['fatal_conditions']
-                  if not (c.startswith('INFO_') or c.startswith('WARN_'))]
-          soft = len(d['fatal_conditions']) - len(hard)
-          print(f'_analysis.json OK: n_total={d[\"n_total\"]}  hard={len(hard)}  soft={soft}')
-          "
-
-      - name: Commit analysis outputs
-        env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir || 'figures' }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git reset HEAD 2>/dev/null || true
-          git pull --rebase --autostash origin "${{ github.ref_name }}"
-          git add "${OUT_BASE}/${SUB}/_report.md" \
-                  "${OUT_BASE}/${SUB}/_analysis.json" 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "No changes — outputs unchanged."
-          else
-            git commit -m "ci: ${EXP} analysis — pipeline run ${{ github.run_id }}"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed analysis outputs for ${EXP}."
-          fi
-
-      # ── Abort on hard fatal conditions (after commit so report is always saved) ─
-      - name: Abort on fatal conditions
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir || 'figures' }}
-        run: |
-          python3 - <<'PYEOF'
-          import json, os, sys
-
-          sub      = os.environ["SUB"]
-          out_base = os.environ.get("OUT_BASE", "hypatiax/data/results")
-          path     = f"{out_base}/{sub}/_analysis.json"
-
-          if not os.path.exists(path):
-              print("No _analysis.json found; skipping fatal-condition check.")
-              sys.exit(0)
-
-          analysis = json.load(open(path))
-          fatal    = analysis.get("fatal_conditions", [])
-
-          # Hard fatals: not prefixed INFO_ or WARN_
-          hard = [c for c in fatal if not (c.startswith("INFO_") or c.startswith("WARN_"))]
-          soft = [c for c in fatal if c.startswith("INFO_") or c.startswith("WARN_")]
-
-          if soft:
-              print(f"ℹ  {len(soft)} soft condition(s):")
-              for c in soft:
-                  print(f"  - {c}")
-
-          if not hard:
-              print("No fatal conditions. Analysis complete.")
-              sys.exit(0)
-
-          print(f"::error::Fatal conditions detected ({len(hard)}):")
-          for i, c in enumerate(hard, 1):
-              print(f"  {i}. {c}")
-          print()
-          print("Review _report.md for full diagnostic details.")
-          print("To re-run: use workflow_dispatch with the same experiment.")
-          sys.exit(1)
-          PYEOF
-
-      - name: Upload analysis artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: analysis-${{ matrix.experiment }}-${{ github.run_id }}
-          path: |
-            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir || 'figures' }}/_report.md
-            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir || 'figures' }}/_analysis.json
-          if-no-files-found: warn
-          retention-days: 30
-
+            [[ $(date +%s) -ge ${DEADLINE} ]] && { echo "::error::Timed out on ${EXP} analysis."; exit 1; }
+            sleep ${SLEEP}; SLEEP=$(( SLEEP < 60 ? SLEEP + 10 : 60 ))
+          done
 
 # ==============================================================================
 #  PHASE 2 — POST-PROCESS (figures + tables)
-#  Runs after all analysis jobs complete (any outcome).
-#  instability is intentionally included — its figures/ dir may already exist
-#  from the worker; postprocess regenerates/extends it.
+#  PAR-PA1: dispatches ci_postprocess_parallel.yml per experiment.
 # ==============================================================================
 
   postprocess:
     name: "Postprocess · ${{ matrix.experiment }}"
     needs: [setup, analysis]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     if: always()
     strategy:
       fail-fast: false
-      max-parallel: 1          # serial commits — avoid rebase conflicts
+      max-parallel: 2
       matrix:
         experiment: ${{ fromJson(needs.setup.outputs.experiments) }}
 
     steps:
-      - name: Checkout master
+      - name: Checkout
         uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn
-
-      - name: Resolve result_subdir
-        id: meta
+      - name: Dispatch + wait · ci_postprocess_parallel.yml
         env:
-          EXP: ${{ matrix.experiment }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          EXP:      ${{ matrix.experiment }}
         run: |
           set -euo pipefail
-          SUB=$(EXP_ID="${EXP}" python3 -c "
-          import os
-          mapping = {
-              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
-              'exp1b':              'comparison_results/noise-noiseless/15',
-              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
-              'exp2':               'comparison_results/feynman-tests/exp2_multi',
-              'exp3':               'extrapolation',
-              'exp3b':              'extrapolation/multi_seed',
-              'suppA':              'hybrid_pysr/defi',
-              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
-              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
-              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
-              'instability':        'figures',
-              'extrap':             'comparison_results/extrapolation',
-          }
-          print(mapping.get(os.environ['EXP_ID'], os.environ['EXP_ID']))
-          ")
-          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate figures
-        env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          mkdir -p "${OUT_BASE}/${SUB}/figures"
-          python figures/generate_figures.py \
-            --repo-root   "${OUT_BASE}/${SUB}" \
-            --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source auto
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-      - name: Generate tables
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python tables/generate_tables.py \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          echo "Dispatching ci_postprocess_parallel.yml for ${EXP} ..."
+          gh workflow run ci_postprocess_parallel.yml \
+            --repo "${REPO}" --ref "${{ github.ref_name }}" \
+            --field experiment="${EXP}" \
+            --field result_subdir=""
+          sleep 8
 
-      - name: Commit postprocess outputs
-        env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git reset HEAD 2>/dev/null || true
-          git pull --rebase --autostash origin "${{ github.ref_name }}"
+          PRID=""
+          for attempt in $(seq 1 12); do
+            PRID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_postprocess_parallel.yml \
+              --event workflow_dispatch \
+              --limit 20 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg b "${{ github.ref_name }}" \
+                '[.[]|select(.headBranch==$b and .createdAt>=$ts)]|first|.databaseId//empty' \
+              2>/dev/null || echo "")
+            [[ -n "$PRID" ]] && break
+            echo "  ${EXP} postprocess: attempt ${attempt}/12 — waiting 10 s ..."; sleep 10
+          done
+          [[ -z "$PRID" ]] && { echo "::error::Could not locate ci_postprocess_parallel run for ${EXP}."; exit 1; }
+          echo "  ${EXP} postprocess → run ${PRID}"
 
-          FIGS="${OUT_BASE}/${SUB}/figures"
-          TABS="${OUT_BASE}/${SUB}/tables"
-
-          if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
-            echo "::warning::figures directory empty or missing: ${FIGS}"
-          fi
-          if [[ ! -d "$TABS" ]] || [[ -z "$(ls -A "$TABS" 2>/dev/null)" ]]; then
-            echo "::warning::tables directory empty or missing: ${TABS}"
-          fi
-
-          git add "${FIGS}/" "${TABS}/" 2>/dev/null || true
-
-          if git diff --cached --quiet; then
-            echo "No changes — outputs unchanged."
-          else
-            git commit -m "ci: ${EXP} figures+tables — pipeline run ${{ github.run_id }}"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed figures+tables for ${EXP}."
-          fi
-
+          DEADLINE=$(( $(date +%s) + 1800 ))
+          SLEEP=20
+          while true; do
+            RJ=$(gh run view "${PRID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+                 || echo '{"status":"unknown","conclusion":"none"}')
+            ST=$(echo "${RJ}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CN=$(echo "${RJ}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+            echo "  [$(date -u +%H:%M:%SZ)] ${EXP} postprocess run=${PRID} status=${ST} conclusion=${CN}"
+            if [[ "${ST}" == "completed" ]]; then
+              [[ "${CN}" != "success" ]] && { echo "::error::${EXP} postprocess failed: ${CN}"; exit 1; }
+              echo "  ${EXP} postprocess completed successfully."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && { echo "::error::Timed out on ${EXP} postprocess."; exit 1; }
+            sleep ${SLEEP}
+          done
 
 # ==============================================================================
-#  PHASE 3 — CHECK (ci_all_checkpoint logic)
-#  Runs after all postprocess jobs complete.
-#  4-phase gate: check → complete → qualify → audit → summary
+#  PHASE 3 — CHECK / COMPLETE / QUALIFY / AUDIT / SUMMARY
+#  PAR-PA4: identical gate logic to ci_pipeline_analysis.yml phases 3–5.
+#           Only the workflow name and trigger context differ.
 # ==============================================================================
 
   # ── Gate 1: verify committed outputs exist and are valid JSON ────────────────
@@ -598,9 +371,9 @@ jobs:
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
-              "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
-              "exp3b":              ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
-              "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json", "extrapolation_73cases*.json", "*73cases*.json"],
+              "exp3":               ["full_run_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "exp3b":              ["full_run_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json", "*73cases*.json"],
               "suppB":              ["noise_sweep_*.json", "noise_sweep_*.csv"],
               "suppB_sc":           ["sample_complexity_*.json", "sample_complexity_*.csv"],
               "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
@@ -608,8 +381,8 @@ jobs:
               "extrap":             ["all_domains_extrap_v4_*.json", "protocol_core_*.json"],
           }
 
-          EXPERIMENT   = os.environ["EXPERIMENT"]
-          target_exps  = list(SUBDIR.keys()) if EXPERIMENT in ("all", "") else [EXPERIMENT]
+          EXPERIMENT  = os.environ["EXPERIMENT"]
+          target_exps = list(SUBDIR.keys()) if EXPERIMENT in ("all", "") else [EXPERIMENT]
 
           report      = {}
           all_present = True
@@ -857,7 +630,6 @@ jobs:
               checks     = []
               result_dir = OUT_BASE / SUBDIR.get(exp_id, "")
 
-              # 1. Checkpoint
               ckpt_path = result_dir / "_checkpoint.json"
               ckpt_ok, ckpt_detail = False, "missing"
               if ckpt_path.exists():
@@ -870,7 +642,6 @@ jobs:
                       ckpt_detail = f"parse error: {e}"
               checks.append(["checkpoint=pass", ckpt_ok, ckpt_detail])
 
-              # 2. Result files
               data_files = []
               if result_dir.exists():
                   all_files  = list(result_dir.glob("*.json")) + list(result_dir.glob("*.csv"))
@@ -878,7 +649,6 @@ jobs:
               checks.append(["result_files", len(data_files) > 0,
                               f"{len(data_files)} data file(s) in {SUBDIR.get(exp_id,'')}"])
 
-              # 3. Result JSON valid (or _merged.json present)
               merged_json = result_dir / "_merged.json"
               if merged_json.exists():
                   merged_ok, merged_detail = True, str(merged_json)
@@ -901,14 +671,12 @@ jobs:
                                    if csv_files else "no result files found"))
               checks.append(["result_json_valid", merged_ok, merged_detail])
 
-              # 4. CSV present
               csv_files = list(result_dir.glob("*.csv")) if result_dir.exists() else []
               csv_ok    = (result_dir / "_merged.csv").exists() or len(csv_files) > 0
               csv_detail = (f"{len(csv_files)} CSV(s)" if csv_ok
                             else f"no CSV files in {SUBDIR.get(exp_id,'')}")
               checks.append(["csv_or_tables", csv_ok, csv_detail])
 
-              # 5. Committed to git
               git_ok, git_detail = False, "git unavailable"
               probe_file = merged_json if merged_json.exists() else next(
                   (f for f in (result_dir.glob("*.json") if result_dir.exists() else [])
@@ -934,14 +702,12 @@ jobs:
                   git_detail = "no result file to probe"
               checks.append(["committed_to_git", git_ok, git_detail])
 
-              # 6. Figures
               figs_dir  = OUT_BASE / "figures"
               fig_files = (list(figs_dir.glob("*.pdf")) + list(figs_dir.glob("*.png"))
                            if figs_dir.exists() else [])
               checks.append(["figures_present", len(fig_files) > 0,
                               f"{len(fig_files)} figure(s) in results/figures/"])
 
-              # 7. Tables
               tables_dir = OUT_BASE / "tables"
               if not tables_dir.exists() or not any(tables_dir.glob("*.tex")):
                   tables_dir = REPO_ROOT / "paper" / "tables"
@@ -1137,7 +903,7 @@ jobs:
 
           audit_pass = (n_fail == 0 and n_missing == 0 and len(findings) > 0)
 
-          out = Path("logs/paper_audit_findings.json")
+          out = Path("logs/paper_audit_findings_parallel.json")
           out.parent.mkdir(parents=True, exist_ok=True)
           out.write_text(json.dumps(findings, indent=2))
           print(f"  Audit findings → {out}")
@@ -1162,14 +928,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          name: paper-audit-findings-${{ github.run_id }}
-          path: logs/paper_audit_findings.json
+          name: paper-audit-findings-parallel-${{ github.run_id }}
+          path: logs/paper_audit_findings_parallel.json
           if-no-files-found: warn
           retention-days: 30
 
   # ── Gate 5: consolidated health summary ─────────────────────────────────────
   summary:
-    name: "Pipeline health summary"
+    name: "Pipeline health summary (parallel)"
     needs: [check, complete, qualify, audit]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1194,6 +960,8 @@ jobs:
           N_MISSING:         ${{ needs.audit.outputs.n_missing }}
           COMPLETION_REPORT: ${{ needs.complete.outputs.completion_report }}
           QUALIFY_REPORT:    ${{ needs.qualify.outputs.qualify_report }}
+          TRIGGERED_BY:      ${{ github.event.inputs.triggered_by || 'manual' }}
+          UPSTREAM_RUN_ID:   ${{ github.event.inputs.run_id || '' }}
         run: |
           python3 - <<'PYEOF'
           import json, os, sys
@@ -1209,10 +977,14 @@ jobs:
           n_warn   = int(os.environ.get("N_WARN",    "0") or 0)
           n_fail   = int(os.environ.get("N_FAIL",    "0") or 0)
           n_miss   = int(os.environ.get("N_MISSING", "0") or 0)
+          triggered_by    = os.environ.get("TRIGGERED_BY", "manual")
+          upstream_run_id = os.environ.get("UPSTREAM_RUN_ID", "")
 
           SEP = "=" * 70
           print(f"\n{SEP}")
-          print(f"  HypatiaX Pipeline Health")
+          print(f"  HypatiaX Parallel Pipeline Health")
+          if triggered_by and triggered_by != "manual":
+              print(f"  Triggered by: {triggered_by}" + (f"  run={upstream_run_id}" if upstream_run_id else ""))
           print(SEP)
           print(f"  {'Gate':<30}  {'Status'}")
           print(f"  {'-'*30}  {'------'}")
@@ -1246,7 +1018,7 @@ jobs:
                       fails = [c[0] for c in qr.get("checks", []) if not c[1]]
                       print(f"    {exp:<25} FAILED: {', '.join(fails)}")
 
-          audit_findings_path = Path("logs/paper_audit_findings.json")
+          audit_findings_path = Path("logs/paper_audit_findings_parallel.json")
           if not (n_fail == 0 and n_miss == 0):
               print("\n  Audit FAIL/MISSING details:")
               if audit_findings_path.exists():
@@ -1258,15 +1030,13 @@ jobs:
                               print(f"        {f['detail']}")
                   except Exception as e:
                       print(f"    (could not read audit findings: {e})")
-              else:
-                  print("    (logs/paper_audit_findings.json not found — check audit job artifact)")
 
           print()
           overall_ok = present and qual and (audit or (n_fail == 0 and n_miss == 0 and n_pass == 0))
           if overall_ok:
-              print("  ✅  Overall: PIPELINE HEALTHY — ready for submission.")
+              print("  ✅  Overall: PARALLEL PIPELINE HEALTHY — ready for submission.")
           else:
-              print("  ❌  Overall: PIPELINE NEEDS ATTENTION (see above).")
+              print("  ❌  Overall: PARALLEL PIPELINE NEEDS ATTENTION (see above).")
           print(SEP)
 
           sys.exit(0 if overall_ok else 1)

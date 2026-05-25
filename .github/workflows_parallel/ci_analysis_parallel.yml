@@ -1,85 +1,53 @@
 # ==============================================================================
-#  ci_analysis.yml - HypatiaX post-consolidation statistical analysis
+#  ci_analysis_parallel.yml  —  HypatiaX post-consolidation statistical analysis
+#                               (parallel pipeline variant of ci_analysis.yml)
 #
-#  Architecture contract (read before editing):
-#    This workflow runs AFTER ci_runner.yml has completed and
-#    committed result files to the repository.  It is the ONLY stage that may
-#    perform statistical analysis.  Workers MUST NOT run statistical tests;
-#    see ci_runner.yml for the architectural rationale.
+#  CHANGES vs ci_analysis.yml
+#  ─────────────────────────────────────────────────────────────────────────────
+#  This file is functionally identical to ci_analysis.yml with the following
+#  adaptations for the parallel pipeline (ci_pipeline_parallel.yml):
 #
-#  NOTE: ci_runner.yml has NO consolidate job — each worker shard
-#    commits its own result files directly to the repo.  _merged.json is NOT
-#    automatically produced for most experiments; run ci_consolidate_experiment.yml
-#    manually if a merged view is needed for exp1b / exp3b.
+#  PAR-A1  workflow name updated to "HypatiaX - analysis (parallel)" so that
+#          gh run list queries in ci_pipeline_parallel.yml can filter by
+#          --workflow ci_analysis_parallel.yml without ambiguity.
 #
-#  Input modes:
-#    MERGED (exp1b, exp3b only):
-#      Reads _merged.json produced by ci_consolidate_experiment.yml.
-#      Hard-fails if _merged.json is absent.
+#  PAR-A2  run-name embeds "(parallel)" to distinguish runs in the GitHub UI
+#          from sequential ci_analysis.yml runs that may overlap.
 #
-#    SHARD-DIRECT (all other experiments):
-#      Reads committed shard *.json files directly from the result directory.
-#      Hard-fails if no shard files are found.
+#  PAR-A3  concurrency group renamed to ci-analysis-parallel-<experiment> so
+#          parallel analysis runs do not cancel or queue-block sequential ones.
 #
-#  Responsibilities:
-#    - Mann-Whitney U tests (per-method, cross-method)
-#    - R² distribution analysis and per-method success rates
-#    - Method summary tables (coverage, median R², rank)
-#    - Coverage gap detection
-#    - Instability / domain-consistency metrics (exp: instability, hybrid_all_domains)
-#    - Extrapolation checks (exp: extrap)
-#    - Publication-quality table generation
-#    - Markdown report (_report.md) and structured output (_analysis.json)
-#    - Fatal-condition abort (exits non-zero; PR merge blocked by branch protection)
+#  PAR-A4  source_run_id handling preserved: ci_pipeline_parallel.yml wave jobs
+#          forward the runner_run_id output as source_run_id, enabling artifact
+#          download for exp1b / exp3b consolidated artifacts. Falls back to
+#          committed files (purge resilience) when artifact is absent.
 #
-#  Outputs committed to master:
-#    hypatiax/data/results/{result_subdir}/_report.md
-#    hypatiax/data/results/{result_subdir}/_analysis.json
+#  PAR-A5  No other logic changes.  All analysis, validation, commit, and
+#          fatal-condition abort steps are identical to ci_analysis.yml.
+#          This preserves a single source of truth for analysis logic while
+#          giving ci_pipeline_parallel.yml a uniquely addressable workflow file.
 #
-#  Triggering modes:
-#    1. Scheduled chain (workflow_dispatch from ci_pipeline.yml): called
-#       automatically after ci_runner.yml completes.  Passes
-#       experiment and source_run_id; result_subdir is derived from the
-#       checkpoint.
-#    2. Manual (workflow_dispatch): re-runs analysis on already-committed
-#       result files.  Requires experiment; result_subdir is optional (derived
-#       from experiment name if omitted); source_run_id optional.
-#
-#  WHY ci_analysis.yml IS A STANDALONE WORKFLOW (not workflow_run):
-#    GitHub does NOT fire the workflow_run event when the triggering workflow
-#    was itself started by another workflow via gh workflow run / workflow_dispatch
-#    (chained dispatch).  Because ci_pipeline.yml dispatches
-#    ci_runner.yml programmatically, a workflow_run trigger on
-#    ci_runner.yml would never fire in the normal scheduled
-#    pipeline.  ci_pipeline.yml therefore dispatches ci_analysis.yml
-#    explicitly from its run-finalize job after ci_runner.yml
-#    completes.  The standalone design also allows manual reruns without
-#    re-running the expensive experiment workers.
-#
-#  PURGE RESILIENCE:
-#    purge_old_runs in ci_runner.yml and ci_pipeline.yml can
-#    delete a completed ci_runner.yml run (and its shard artifact)
-#    before a queued ci_analysis.yml job has had a chance to start and download
-#    it.  To handle this, the "Download merged artifact" step uses
-#    continue-on-error: true.  The "Locate analysis input" step falls back to
-#    the committed copy in the repository, which is always present because
-#    ci_runner.yml worker shards commit their result files to
-#    master directly before ci_analysis.yml is ever dispatched.
-#    In manual mode, omit source_run_id entirely to use the committed files
-#    directly (the download step is skipped when source_run_id is blank).
+#  DISPATCH CONTEXT
+#  ─────────────────────────────────────────────────────────────────────────────
+#  Dispatched by ci_pipeline_parallel.yml wave jobs immediately after each
+#  experiment's runner (ci_runner.yml shards) completes.  The caller:
+#    - passes experiment=<exp_id>
+#    - passes source_run_id=<first_shard_run_id>  (or "" for idempotency skip)
+#    - passes result_subdir=<canonical_subdir>    (from diagnose_map)
+#  Polling is performed by the wave job; this workflow just runs and exits.
 # ==============================================================================
 
-name: "HypatiaX - analysis"
+name: "HypatiaX - analysis (parallel)"
 
 run-name: >-
-  HypatiaX analysis ::
+  HypatiaX analysis (parallel) ::
   ${{ github.event.inputs.experiment }}
 
 # -- Triggers ------------------------------------------------------------------
 on:
 
-  # Dispatched explicitly by ci_pipeline.yml after ci_runner.yml
-  # completes, or run manually to re-analyse committed result files.
+  # Dispatched explicitly by ci_pipeline_parallel.yml wave jobs after each
+  # experiment's runner completes, or run manually to re-analyse committed files.
   workflow_dispatch:
     inputs:
 
@@ -89,13 +57,13 @@ on:
         type: string
 
       result_subdir:
-        description: "Optional explicit result subdirectory"
+        description: "Optional explicit result subdirectory (forwarded from diagnose_map)"
         required: false
         default: ""
         type: string
 
       source_run_id:
-        description: "Optional workflow run id"
+        description: "Optional workflow run id of the runner (for artifact download)"
         required: false
         default: ""
         type: string
@@ -106,8 +74,10 @@ permissions:
   actions:  read    # download artifacts from triggering workflow run
 
 # -- Concurrency ---------------------------------------------------------------
+# PAR-A3: separate concurrency group from ci_analysis.yml to avoid
+# cross-pipeline cancellation when both pipelines run simultaneously.
 concurrency:
-  group: ci-analysis-${{ github.event.inputs.experiment }}
+  group: ci-analysis-parallel-${{ github.event.inputs.experiment }}
   cancel-in-progress: false
 
 # ==============================================================================
@@ -121,9 +91,9 @@ jobs:
     timeout-minutes: 120
 
     env:
-      EXPERIMENT:        ${{ github.event.inputs.experiment }}
-      INPUT_RESULT_SUBDIR: ${{ github.event.inputs.result_subdir }}
-      SOURCE_RUN_ID:     ${{ github.event.inputs.source_run_id }}
+      EXPERIMENT:            ${{ github.event.inputs.experiment }}
+      INPUT_RESULT_SUBDIR:   ${{ github.event.inputs.result_subdir }}
+      SOURCE_RUN_ID:         ${{ github.event.inputs.source_run_id }}
 
     steps:
 
@@ -132,16 +102,17 @@ jobs:
       # -----------------------------------------------------------------------
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # -----------------------------------------------------------------------
       # Python
       # -----------------------------------------------------------------------
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.12"
 
@@ -172,38 +143,38 @@ jobs:
           INPUT_RESULT_SUBDIR="${INPUT_RESULT_SUBDIR}"
 
           if [[ -n "${INPUT_RESULT_SUBDIR}" ]]; then
-            # Canonical subdir forwarded by ci_pipeline.yml (single source of truth).
-            # When dispatched via ci_pipeline.yml this is always populated from the
-            # diagnose job's SUBDIR dict, which mirrors ci_runner.yml exactly.
+            # Canonical subdir forwarded by ci_pipeline_parallel.yml (single source of truth).
+            # When dispatched via ci_pipeline_parallel.yml this is always populated from the
+            # diagnose-all job's diagnose_map, which mirrors ci_runner.yml exactly.
             RESULT_SUBDIR="${INPUT_RESULT_SUBDIR}"
           else
             # Fallback for manual workflow_dispatch without result_subdir.
             # WARNING: this mapping must stay in sync with ci_runner.yml plan job
-            # and ci_pipeline.yml diagnose SUBDIR.  Prefer passing result_subdir
-            # explicitly rather than relying on this fallback.
+            # and ci_pipeline_parallel.yml diagnose-all SUBDIR dict.  Prefer passing
+            # result_subdir explicitly via diagnose_map rather than relying on this fallback.
             RESULT_SUBDIR=$(python3 << 'PYEOF'
-import os, sys
-MAPPING = {
-    "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
-    "exp1b":              "comparison_results/noise-noiseless/15",
-    "exp2_feynman":       "comparison_results/feynman-tests/exp2",
-    "exp2":               "comparison_results/feynman-tests/exp2_multi",
-    "exp3":               "extrapolation",
-    "exp3b":              "extrapolation/multi_seed",
-    "suppA":              "hybrid_pysr/defi",
-    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
-    "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
-    "hybrid_all_domains": "hybrid_llm_nn/all_domains",
-    "instability":        "figures",
-    "extrap":             "comparison_results/extrapolation",
-}
-exp = os.environ["EXPERIMENT"]
-result = MAPPING.get(exp, exp)
-if result == exp:
-    print(f"::warning::No canonical subdir mapping for '{exp}' — using experiment name as subdir.", file=sys.stderr)
-print(result)
-PYEOF
-)
+          import os, sys
+          MAPPING = {
+              "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2":               "comparison_results/feynman-tests/exp2_multi",
+              "exp3":               "extrapolation",
+              "exp3b":              "extrapolation/multi_seed",
+              "suppA":              "hybrid_pysr/defi",
+              "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+              "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+              "instability":        "figures",
+              "extrap":             "comparison_results/extrapolation",
+          }
+          exp = os.environ["EXPERIMENT"]
+          result = MAPPING.get(exp, exp)
+          if result == exp:
+              print(f"::warning::No canonical subdir mapping for '{exp}' — using experiment name as subdir.", file=sys.stderr)
+          print(result)
+          PYEOF
+          )
           fi
 
           RESULT_DIR="hypatiax/data/results/${RESULT_SUBDIR}"
@@ -219,19 +190,11 @@ PYEOF
       # Optional artifact download
       # -----------------------------------------------------------------------
 
-      # Download consolidated artifact from a ci_consolidate_experiment.yml run.
-      # source_run_id is provided by ci_pipeline.yml; omit when
-      # re-running analysis manually against already-committed files.
-      #
-      # MERGE-REQUIRED GATE: only exp1b and exp3b are multi-shard experiments
-      # whose workers feed merge_shards.py to produce a _merged.json via a
-      # consolidate job.  All other experiments commit individual shard files
-      # directly to the repo — there is no consolidated artifact to download
-      # for them.
-      #
-      # PURGE RESILIENCE: continue-on-error: true prevents hard-failing when
-      # the referenced run has been deleted by purge_old_runs.  The
-      # "Locate analysis input" step falls back to the committed copy.
+      # PAR-A4: source_run_id forwarded from wave job's runner_run_id output.
+      # Purge resilience: continue-on-error so the step never hard-fails
+      # when the run has been deleted; Locate analysis input falls back to
+      # committed files in that case (always present for parallel pipeline
+      # because shards commit directly before this workflow is dispatched).
       - name: Download merged artifact (exp1b / exp3b only)
         if: |
           github.event.inputs.source_run_id != '' &&
@@ -337,11 +300,6 @@ PYEOF
             echo
             echo "Shard mode activated"
 
-            # maxdepth 2: some experiments (e.g. suppB / noise-sweep) store
-            # their shard JSONs one level deeper than RESULT_DIR, in a same-named
-            # subdirectory (noise-sweep/noise-sweep/*.json).  Depth 2 catches both
-            # flat layouts (depth 1) and that one nested layout without over-reaching.
-            # Tables subdirs contain only .tex files, so no false positives.
             mapfile -t SHARD_FILES < <(
               find "$RESULT_DIR" \
                 -maxdepth 2 \
@@ -491,7 +449,6 @@ PYEOF
             exit 1
           }
 
-          # Verify _analysis.json is valid JSON and contains required top-level keys.
           python3 - <<'PYEOF'
           import json, os, sys
 
@@ -532,6 +489,9 @@ PYEOF
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+
           git add -f \
             "$RESULT_DIR/_report.md" \
             "$RESULT_DIR/_analysis.json"
@@ -541,7 +501,7 @@ PYEOF
             exit 0
           fi
 
-          git commit -m "analysis: ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git commit -m "analysis(parallel): ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           git push origin HEAD:${{ github.ref_name }}
           echo "Pushed analysis outputs to master."
@@ -553,7 +513,7 @@ PYEOF
       - name: Upload analysis outputs
         uses: actions/upload-artifact@v4
         with:
-          name: analysis-${{ github.event.inputs.experiment }}-${{ github.run_id }}
+          name: analysis-parallel-${{ github.event.inputs.experiment }}-${{ github.run_id }}
           path: |
             ${{ env.RESULT_DIR }}/_report.md
             ${{ env.RESULT_DIR }}/_analysis.json
@@ -562,10 +522,7 @@ PYEOF
 
       # -----------------------------------------------------------------------
       # Abort on fatal conditions flagged by run_analysis.py.
-      # _analysis.json["fatal_conditions"] is a list of strings (empty = OK).
-      # Non-zero exit here fails the workflow, which can block PR merges via
-      # branch protection rules.  This step runs AFTER the commit so the
-      # report is always available even when the run is aborted.
+      # Runs AFTER commit so the report is always available even on abort.
       # -----------------------------------------------------------------------
 
       - name: Abort on fatal conditions

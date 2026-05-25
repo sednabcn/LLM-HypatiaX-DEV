@@ -867,7 +867,7 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   OUT_BASE='${RESULTS_DIR}' \
   RESULTS_DIR='${RESULTS_DIR}' \
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \
-    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep' \
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 "
 
@@ -1005,8 +1005,8 @@ print(f"  [{'OK' if ok else 'FAIL'}] sample-complexity outputs: {len(sc)} file(s
 # tables-generator uses glob 'noise_sweep_*.json' to find suppB results.
 # If run_noise_sweep_benchmark.py writes files under a different prefix,
 # all suppB tables will contain placeholder text.
-noise_sweep_matched = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise-sweep/noise_sweep_*.json")
-noise_sweep_all     = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise-sweep/*.json")
+noise_sweep_matched = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json")
+noise_sweep_all     = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/*.json")
 if noise_sweep_all:
     ok = bool(noise_sweep_matched)
     checks.append(("suppB output matches noise_sweep_*.json glob (CRITICAL 4)", 1.0 if ok else 0.0, 1.0, ok))

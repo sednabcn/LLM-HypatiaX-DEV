@@ -248,14 +248,14 @@ EXP_RESULT_SUBDIR: dict[str, str] = {
     # FIX-BUG1: exp1/exp1b were "comparison_results/extrapolation" (wrong);
     #           exp2 was "comparison_results/feynman-tests/exp2" (wrong).
     #           Correct values match ci_experiment.yml plan meta.
-    "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
+    "exp1":              "comparison_results/noise-noiseless/noiseless",
     "exp1b":             "comparison_results/noise-noiseless/15",
     "exp2_feynman":      "comparison_results/feynman-tests/exp2",
     "exp2":              "comparison_results/feynman-tests/exp2_multi",
     "exp3":              "extrapolation",
     "exp3b":             "extrapolation/multi_seed",
     "suppA":             "hybrid_pysr/defi",
-    "suppB":             "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB":             "comparison_results/feynman-tests/noise-sweep",
     "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
     "hybrid_all_domains": "hybrid_llm_nn/all_domains",
     "instability":       "figures",
@@ -327,8 +327,8 @@ def validate_hybrid_all_domains_ids() -> bool:
 #  BLOCKER-4 — suppB result glob helper
 # ════════════════════════════════════════════════════════════════════════════
 def _suppb_result_glob() -> str:
-    primary  = "comparison_results/feynman-tests/noise-sweep/noise-sweep/noise_sweep_*.json"
-    fallback = "comparison_results/feynman-tests/noise-sweep/noise-sweep/suppB_*.json"
+    primary  = "comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json"
+    fallback = "comparison_results/feynman-tests/noise-sweep/suppB_*.json"
     if list(RESULTS_DIR.glob(primary)):
         return primary
     return fallback
@@ -585,7 +585,7 @@ def load_paper_targets() -> list[AuditClaim]:
         # suppB — EHD noise robustness 100% at all σ
         AuditClaim("suppB", "ehd_noise_robust_100pct",
                    1.00, 0.01,
-                   "comparison_results/feynman-tests/noise-sweep/noise-sweep/_merged.json",
+                   "comparison_results/feynman-tests/noise-sweep/_merged.json",
                    "summary.ehd_success_rate",
                    note="EHD 100% at all noise levels §SuppB"),
         # hybrid_all_domains — coverage check (at least 1 result per domain)
@@ -1243,9 +1243,9 @@ STEPS: list[Step] = [
              "for sub in [",
              "    'comparison_results/feynman-tests/exp2',",
              "    'comparison_results/feynman-tests/exp2_multi',",
-             "    'comparison_results/feynman-tests/noise-sweep/noise-sweep',",
+             "    'comparison_results/feynman-tests/noise-sweep',",
              "    'comparison_results/feynman-tests/sample-complexity',",
-             "    'comparison_results/noise-noiseless/noiseless/defi',",
+             "    'comparison_results/noise-noiseless/noiseless',",
              "    'comparison_results/noise-noiseless/15',",
              "    'comparison_results/extrapolation',",
              "    'extrapolation',",
@@ -1369,7 +1369,7 @@ STEPS: list[Step] = [
          phase="1 · Core experiments",
          slow=True,
          expected="Tab 9 OOD R²>0.85; Tab 10 DeFi 74-task solve rate; Tab 15 ablation",
-         result_glob="comparison_results/noise-noiseless/noiseless/defi/*.json",  # FIX-BUG4: was extrapolation/
+         result_glob="comparison_results/noise-noiseless/noiseless/*.json",  # FIX-BUG4: was extrapolation/
          env_extra={"SKIP_PKG_CHECK": "1"}),
 
     Step("exp1_analysis",
@@ -1627,7 +1627,7 @@ STEPS: list[Step] = [
              "M3 avg 841.4s · M4 avg 11.1s · speedup 75.8×"
          ),
          result_glob=(
-             "comparison_results/feynman-tests/noise-sweep/noise-sweep/noise_sweep_*.json"
+             "comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json"
          ),
          post_move=[
              PostMove(RESULTS_DIR / "comparison_results" / "feynman-tests" / "noise-sweep",
@@ -1851,9 +1851,9 @@ def ensure_output_dirs() -> None:
     for sub in [
         "comparison_results/extrapolation",
         "comparison_results/feynman-tests/exp2",
-        "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+        "comparison_results/feynman-tests/noise-sweep",
         "comparison_results/feynman-tests/sample-complexity",
-        "comparison_results/noise-noiseless/noiseless/defi",
+        "comparison_results/noise-noiseless/noiseless",
         "comparison_results/noise-noiseless/15",
         "extrapolation",
         "extrapolation/multi_seed",

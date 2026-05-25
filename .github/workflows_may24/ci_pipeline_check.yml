@@ -1,5 +1,5 @@
 # ==============================================================================
-#  ci_pipeline_check.yml
+#  ci_all_checkpoint.yml
 #  HypatiaX · Full pipeline checkpoint, completion, qualification & paper audit
 #
 #  PURPOSE
@@ -14,7 +14,7 @@
 #
 #    2. COMPLETE — Are there any incomplete tasks?  Compares the task IDs
 #                  recorded in _merged.json against the full task registry
-#                  from ci_runner.yml (mirrored here).  Emits a per-exp
+#                  from ci_experiment.yml (mirrored here).  Emits a per-exp
 #                  table of missing task IDs so the operator knows exactly
 #                  what to re-dispatch.
 #
@@ -33,7 +33,7 @@
 #
 #  TRIGGER STRATEGY
 #  ----------------
-#  Auto:   Fires after ci_runner.yml (any experiment) completes.
+#  Auto:   Fires after ci_experiment.yml (any experiment) completes.
 #          Reads the experiment that triggered it and runs all four phases
 #          for that experiment only, then runs the cross-experiment qualify
 #          and audit gates on the full set.
@@ -51,7 +51,7 @@
 #      exp1  → "comparison_results/extrapolation"
 #      exp1b → "comparison_results/extrapolation"
 #      exp2  → "comparison_results/feynman-tests/exp2"
-#    Fixed (matches ci_runner.yml plan meta):
+#    Fixed (matches ci_experiment.yml plan meta):
 #      exp1  → comparison_results/noise-noiseless/noiseless
 #      exp1b → comparison_results/noise-noiseless/15
 #      exp2  → comparison_results/feynman-tests/exp2_multi
@@ -214,7 +214,7 @@ jobs:
           SEEDS        = [s.strip() for s in os.environ["SEEDS"].split(",") if s.strip()]
           NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
 
-          # ── Canonical subdir map (source of truth: ci_runner.yml plan job)
+          # ── Canonical subdir map (source of truth: ci_experiment.yml plan job)
           # BUG 1 FIX: exp1 and exp1b were mapped to "comparison_results/extrapolation"
           # and exp2 was mapped to "comparison_results/feynman-tests/exp2"
           # in run_all_checkpoint.py.  All three are wrong; correct values are below.
@@ -226,7 +226,7 @@ jobs:
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
               "suppA":             "hybrid_pysr/defi",
-              "suppB":             "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB":             "comparison_results/feynman-tests/noise-sweep",
               "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":       "figures",
@@ -430,7 +430,7 @@ jobs:
               print(f"::error::Unknown experiment '{_exp_input}' — not in known experiment list.")
               sys.exit(1)
 
-          # ── Task registries (mirrors ci_runner.yml plan job + split step)
+          # ── Task registries (mirrors ci_experiment.yml plan job + split step)
           FEYNMAN_DOMAINS = [
               "feynman_biology", "feynman_chemistry", "feynman_electrochemistry",
               "feynman_electromagnetism", "feynman_electrostatics", "feynman_magnetism",
@@ -587,7 +587,7 @@ jobs:
                     + ", ".join(incomplete))
               print()
               print("  To resume, re-dispatch ci_pipeline.yml from the first")
-              print("  incomplete slot (experiment_index=N), or use ci_runner.yml")
+              print("  incomplete slot (experiment_index=N), or use ci_experiment.yml")
               print("  with task_ids_override for targeted task recovery.")
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
@@ -656,7 +656,7 @@ jobs:
           COMPLETION   = json.loads(os.environ.get("COMPLETION_REPORT") or "{}")
           CHECK        = json.loads(os.environ.get("CHECK_REPORT")      or "{}")
 
-          # BUG 1 FIX: matches ci_runner.yml and job 1 above (exp1, exp1b, exp2 corrected)
+          # BUG 1 FIX: matches ci_experiment.yml and job 1 above (exp1, exp1b, exp2 corrected)
           SUBDIR = {
               "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
@@ -665,7 +665,7 @@ jobs:
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
               "suppA":             "hybrid_pysr/defi",
-              "suppB":             "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB":             "comparison_results/feynman-tests/noise-sweep",
               "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":       "figures",

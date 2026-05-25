@@ -37,7 +37,7 @@
 #    hypatiax/data/results/{result_subdir}/_analysis.json
 #
 #  Triggering modes:
-#    1. Scheduled chain (workflow_dispatch from ci_pipeline.yml): called
+#    1. Scheduled chain (workflow_dispatch from ci_schedule_all.yml): called
 #       automatically after ci_runner.yml completes.  Passes
 #       experiment and source_run_id; result_subdir is derived from the
 #       checkpoint.
@@ -48,16 +48,16 @@
 #  WHY ci_analysis.yml IS A STANDALONE WORKFLOW (not workflow_run):
 #    GitHub does NOT fire the workflow_run event when the triggering workflow
 #    was itself started by another workflow via gh workflow run / workflow_dispatch
-#    (chained dispatch).  Because ci_pipeline.yml dispatches
+#    (chained dispatch).  Because ci_schedule_all.yml dispatches
 #    ci_runner.yml programmatically, a workflow_run trigger on
 #    ci_runner.yml would never fire in the normal scheduled
-#    pipeline.  ci_pipeline.yml therefore dispatches ci_analysis.yml
+#    pipeline.  ci_schedule_all.yml therefore dispatches ci_analysis.yml
 #    explicitly from its run-finalize job after ci_runner.yml
 #    completes.  The standalone design also allows manual reruns without
 #    re-running the expensive experiment workers.
 #
 #  PURGE RESILIENCE:
-#    purge_old_runs in ci_runner.yml and ci_pipeline.yml can
+#    purge_old_runs in ci_runner.yml and ci_schedule_all.yml can
 #    delete a completed ci_runner.yml run (and its shard artifact)
 #    before a queued ci_analysis.yml job has had a chance to start and download
 #    it.  To handle this, the "Download merged artifact" step uses
@@ -78,7 +78,7 @@ run-name: >-
 # -- Triggers ------------------------------------------------------------------
 on:
 
-  # Dispatched explicitly by ci_pipeline.yml after ci_runner.yml
+  # Dispatched explicitly by ci_schedule_all.yml after ci_experiment.yml
   # completes, or run manually to re-analyse committed result files.
   workflow_dispatch:
     inputs:
@@ -172,15 +172,10 @@ jobs:
           INPUT_RESULT_SUBDIR="${INPUT_RESULT_SUBDIR}"
 
           if [[ -n "${INPUT_RESULT_SUBDIR}" ]]; then
-            # Canonical subdir forwarded by ci_pipeline.yml (single source of truth).
-            # When dispatched via ci_pipeline.yml this is always populated from the
-            # diagnose job's SUBDIR dict, which mirrors ci_runner.yml exactly.
             RESULT_SUBDIR="${INPUT_RESULT_SUBDIR}"
           else
-            # Fallback for manual workflow_dispatch without result_subdir.
-            # WARNING: this mapping must stay in sync with ci_runner.yml plan job
-            # and ci_pipeline.yml diagnose SUBDIR.  Prefer passing result_subdir
-            # explicitly rather than relying on this fallback.
+            # Canonical mapping — must stay in sync with ci_runner.yml plan job
+            # and ci_pipeline.yml diagnose SUBDIR dict.
             RESULT_SUBDIR=$(python3 << 'PYEOF'
 import os, sys
 MAPPING = {
@@ -213,14 +208,13 @@ PYEOF
 
           echo "Resolved: experiment=${EXPERIMENT}  subdir=${RESULT_SUBDIR}"
           echo "          RESULT_DIR=${RESULT_DIR}"
-          echo "          source=pipeline-forwarded (${INPUT_RESULT_SUBDIR:+yes}${INPUT_RESULT_SUBDIR:-no, used fallback MAPPING})"
 
       # -----------------------------------------------------------------------
       # Optional artifact download
       # -----------------------------------------------------------------------
 
       # Download consolidated artifact from a ci_consolidate_experiment.yml run.
-      # source_run_id is provided by ci_pipeline.yml; omit when
+      # source_run_id is provided by ci_schedule_all.yml; omit when
       # re-running analysis manually against already-committed files.
       #
       # MERGE-REQUIRED GATE: only exp1b and exp3b are multi-shard experiments

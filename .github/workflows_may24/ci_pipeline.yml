@@ -257,9 +257,6 @@ jobs:
       # Whether to force-rerun analysis even if history says done
       # (true when runner_state!=done but analysis_state==done — stale outputs)
       rerun_analysis:   ${{ steps.diagnose.outputs.rerun_analysis }}
-      # Canonical result subdirectory for this experiment — single source of truth
-      # forwarded to ci_analysis.yml so it never re-derives the path independently.
-      result_subdir:    ${{ steps.diagnose.outputs.result_subdir }}
 
     steps:
       - name: Checkout
@@ -554,9 +551,6 @@ jobs:
               fh.write(f"skip_runner={'true' if skip_runner else 'false'}\n")
               fh.write(f"rerun_analysis={'true' if rerun_analysis else 'false'}\n")
               fh.write(f"diagnosis_report={json.dumps(report)}\n")
-              # Single source of truth for result_subdir — forwarded to ci_analysis.yml
-              # so it never re-derives the path from its own independent MAPPING dict.
-              fh.write(f"result_subdir={SUBDIR.get(EXP, EXP)}\n")
           PYEOF
 
   # ============================================================================
@@ -793,10 +787,6 @@ jobs:
           # Empty when run-experiment was skipped (already_done) — ci_analysis.yml
           # handles blank source_run_id gracefully (uses committed files).
           SOURCE_RUN_ID:   ${{ needs.run-experiment.outputs.runner_run_id || '' }}
-          # SUBDIR FIX: forward the canonical result_subdir computed by diagnose
-          # (the single source of truth) so ci_analysis.yml never re-derives it
-          # from its own independent MAPPING dict.
-          RESULT_SUBDIR:   ${{ needs.diagnose.outputs.result_subdir }}
           REPO:            ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -808,8 +798,7 @@ jobs:
             --repo "${REPO}" \
             --ref "${{ github.ref_name }}" \
             --field experiment="${EXP}" \
-            --field source_run_id="${SOURCE_RUN_ID}" \
-            --field result_subdir="${RESULT_SUBDIR}"
+            --field source_run_id="${SOURCE_RUN_ID}"
 
           sleep 8
 

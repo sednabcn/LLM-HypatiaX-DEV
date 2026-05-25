@@ -17,9 +17,6 @@ on:
 permissions:
   contents: write
 
-env:
-  OUT_BASE: "hypatiax/data/results"
-
 jobs:
   postprocess:
     runs-on: ubuntu-latest
@@ -61,7 +58,7 @@ jobs:
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
               'suppA':              'hybrid_pysr/defi',
-              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
+              'suppB':              'comparison_results/feynman-tests/noise-sweep',
               'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
               'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
               'instability':        'figures',
@@ -82,14 +79,14 @@ jobs:
           # and git add must find the paths even when no files are produced.
           # BUG 2b FIX: tables dir was missing; only figures dir was pre-created,
           # so git add "${TABS}/" would warn and tables were never committed.
-          mkdir -p "${OUT_BASE}/${SUB}/figures"
-          mkdir -p "${OUT_BASE}/${SUB}/tables"
+          mkdir -p "hypatiax/data/results/${SUB}/figures"
+          mkdir -p "hypatiax/data/results/${SUB}/tables"
           # BUG 2a FIX: script was invoked as figures/generate_figures.py — that path
           # resolves to the output subdirectory, not the script source location.
           # Scripts live under scripts/ (same prefix as scripts/patches/paper_targets.json).
           python scripts/generate_figures.py \
-            --repo-root   "${OUT_BASE}/${SUB}" \
-            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --repo-root   "hypatiax/data/results/${SUB}" \
+            --figures-dir "hypatiax/data/results/${SUB}/figures" \
             --source auto
 
       - name: Generate tables
@@ -98,8 +95,8 @@ jobs:
         run: |
           # BUG 2a FIX: same wrong-path bug as generate_figures — was tables/generate_tables.py.
           python scripts/generate_tables.py \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
+            --results-dir "hypatiax/data/results/${SUB}" \
+            --output-dir  "hypatiax/data/results/${SUB}/tables"
 
       - name: Commit outputs
         env:
@@ -115,8 +112,8 @@ jobs:
 
           # Stage outputs; warn explicitly if either directory is empty or missing
           # rather than hiding it with a bare || true.
-          FIGS="${OUT_BASE}/${SUB}/figures"
-          TABS="${OUT_BASE}/${SUB}/tables"
+          FIGS="hypatiax/data/results/${SUB}/figures"
+          TABS="hypatiax/data/results/${SUB}/tables"
 
           if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
             echo "::warning::figures directory is empty or missing: ${FIGS}"
