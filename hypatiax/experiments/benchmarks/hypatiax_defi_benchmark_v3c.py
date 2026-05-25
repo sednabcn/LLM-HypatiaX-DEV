@@ -114,10 +114,11 @@ different per-method denominators and are NOT comparable.
 
 Usage
 ─────
-  python hypatiax_defi_benchmark_v3.py               # full 74-case run
-  python hypatiax_defi_benchmark_v3.py --resume      # continue from checkpoint
-  python hypatiax_defi_benchmark_v3.py --verify-fix5 # run only the 4 known broken cases
-  python hypatiax_defi_benchmark_v3.py --report-only # print report from saved JSON
+  python hypatiax_defi_benchmark_v3.py                            # full 74-case run
+  python hypatiax_defi_benchmark_v3.py --resume                   # continue from checkpoint
+  python hypatiax_defi_benchmark_v3.py --verify-fix5              # run only the 4 known broken cases
+  python hypatiax_defi_benchmark_v3.py --report-only              # print report from saved JSON
+  python hypatiax_defi_benchmark_v3.py --output-dir /tmp/out      # write results to a custom directory
 
 Author : HypatiaX Team
 Version: 3.1 — protocol fixes: 3 skipped cases added, Borrowing Interest time_years feature, model updated to claude-sonnet-4-6
@@ -266,6 +267,7 @@ except ImportError as _e:
 # If OUT_BASE is set, write into OUT_BASE/RESULT_SUBDIR (canonical CI path).
 # RESULT_SUBDIR defaults to the noiseless subdir matching the plan job metadata.
 # When running locally (no OUT_BASE), behaviour is unchanged.
+# --output-dir CLI flag overrides all of the above when provided.
 _OUT_BASE      = os.environ.get("OUT_BASE", "").strip()
 _RESULT_SUBDIR = os.environ.get("RESULT_SUBDIR", "comparison_results/noise-noiseless/noiseless").strip()
 if _OUT_BASE:
@@ -275,6 +277,22 @@ else:
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 CHECKPOINT_FILE = RESULTS_DIR / "hypatiax_defi_benchmark_v3_checkpoint.json"
 FINAL_OUTPUT    = RESULTS_DIR / "hypatiax_defi_benchmark_v3_results.json"
+
+
+def _configure_output_dir(output_dir: str | None) -> None:
+    """Override the module-level output paths when --output-dir is supplied.
+
+    This must be called before any function that reads CHECKPOINT_FILE or
+    FINAL_OUTPUT (i.e. before run_benchmark / report_only).
+    """
+    if output_dir is None:
+        return
+    global RESULTS_DIR, CHECKPOINT_FILE, FINAL_OUTPUT
+    RESULTS_DIR     = Path(output_dir)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_FILE = RESULTS_DIR / "hypatiax_defi_benchmark_v3_checkpoint.json"
+    FINAL_OUTPUT    = RESULTS_DIR / "hypatiax_defi_benchmark_v3_results.json"
+    print(f"📁 Output dir overridden via --output-dir: {RESULTS_DIR}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 1 — Neural network (self-contained, no external NN import needed)
@@ -1455,6 +1473,8 @@ Examples:
   python hypatiax_defi_benchmark_v3.py --report-only               # print report from saved results
   python hypatiax_defi_benchmark_v3.py --cases moneyness           # run only moneyness case(s)
   python hypatiax_defi_benchmark_v3.py --cases moneyness delta     # run multiple named cases
+  python hypatiax_defi_benchmark_v3.py --output-dir /tmp/out       # write results to a custom directory
+  python hypatiax_defi_benchmark_v3.py --output-dir ./results --resume  # resume from a custom directory
         """,
     )
     parser.add_argument("--resume",      action="store_true",
@@ -1471,8 +1491,18 @@ Examples:
                             "substrings (case-insensitive). "
                             "E.g. --cases moneyness   or   --cases 'black-scholes' delta"
                         ))
+    parser.add_argument("--output-dir",  metavar="DIR", default=None,
+                        help=(
+                            "Directory for checkpoint and results JSON files. "
+                            "Overrides OUT_BASE env var and the default "
+                            "'hypatiax/data/results' path. Created if it does not exist. "
+                            "E.g. --output-dir /tmp/benchmark_out"
+                        ))
 
     args = parser.parse_args()
+
+    # Apply --output-dir before any I/O touches CHECKPOINT_FILE / FINAL_OUTPUT.
+    _configure_output_dir(args.output_dir)
 
     if args.report_only:
         report_only()

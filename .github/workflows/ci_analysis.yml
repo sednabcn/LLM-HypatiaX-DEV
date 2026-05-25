@@ -222,6 +222,15 @@ jobs:
       # directly to the repo — there is no consolidated artifact to download
       # for them.
       #
+      # NSHARDS=1 — exp1 is always single-shard (NSHARDS=NWORKERS=1).
+      # It never produces a _merged.json and never needs the consolidate job.
+      # The single worker commits its result JSON directly to the repo under
+      # hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/.
+      # The "Locate analysis input" step detects benchmark-format and merges
+      # the tests[] array in-memory into _merged_benchmark.json, then routes
+      # to run_analysis.py --input-json. No download, no merge_shards.py call.
+      # Do NOT add exp1 to the REQUIRE_MERGE gate below.
+      #
       # PURGE RESILIENCE: continue-on-error: true prevents hard-failing when
       # the referenced run has been deleted by purge_old_runs.  The
       # "Locate analysis input" step falls back to the committed copy.
@@ -273,6 +282,13 @@ jobs:
 
           if [[ "$EXPERIMENT" == *"exp1b"* ]] || [[ "$EXPERIMENT" == *"exp3b"* ]]; then
             REQUIRE_MERGE=true
+          fi
+
+          # NSHARDS=1: exp1 is single-shard — never requires a merge step.
+          # Explicitly guard against accidentally promoting it to REQUIRE_MERGE
+          # if the experiment string ever contains "exp1" as a substring match.
+          if [[ "$EXPERIMENT" == "exp1" ]]; then
+            REQUIRE_MERGE=false
           fi
 
           echo "REQUIRE_MERGE=$REQUIRE_MERGE"

@@ -49,6 +49,19 @@
 #   — JOB_DEADLINE exported to exp3/exp3b subprocess env
 #   — python3 -c IndentationErrors fixed (3 sites in worker step)
 #
+# FIX-NSHARDS1-AUDIT (2026-05-25):
+#   — extrap: added --resume flag to match exp2_feynman; without it extrap re-runs
+#     all 11 domains from scratch on every retry, ignoring the CI RESUME=true env var.
+#     run_comparative_suite_benchmark_v2.py only honours --resume (not the env var).
+#   — suppB: NOISE_LEVELS forwarded explicitly as env var to run_noise_sweep_benchmark.py
+#     so custom dispatch inputs are respected; previously the script used its own default.
+#   — suppB: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
+#     now passed as CLI args (matching repro.yaml / CI values) rather than relying on
+#     the script picking them up from the environment — eliminates the env-vs-CLI gap.
+#   — suppB_sc: same repro.yaml CLI flag set added (--samples, --pysr-timeout,
+#     --method-timeout, --populations, --parsimony) — mirrors suppB fix.
+#   — exp1, exp2_feynman: confirmed correct for NSHARDS=1; no changes needed.
+#
 # STEP IDs (linear order):
 #   env_check          → verify Python, PySR, API key
 #   exp1               → core extrapolation benchmark (Tab 9, 10, 15 · Fig 9, 10)
@@ -275,93 +288,35 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
 '
 
 # ── STEP 1: exp1 ──────────────────────────────────────────────────────────────
-_exp1_body() {
-  set -euo pipefail
-  # ROOT CAUSE FIX: hypatiax_defi_benchmark_v3c.py hardcodes the relative path
-  # "hypatiax/data/results" from os.getcwd().  It does NOT read RESULTS_DIR from
-  # the environment.  When called after cd "${EXPERIMENTS_DIR}", CWD becomes
-  # .../hypatiax/experiments/benchmarks and the output lands in the doubled path
-  # .../benchmarks/hypatiax/data/results/... which nothing downstream can find.
-  #
-  # Fix: stay at REPO_ROOT and invoke the script by its full path.  Then
-  # os.getcwd() = REPO_ROOT and "hypatiax/data/results" resolves correctly.
-  cd "${REPO_ROOT}"
-  python3 "${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_v3c.py" \
-    2>&1 | tee "${RESULTS_DIR}/exp1_run.log"
-  cd "${ANALYSIS_DIR}"
-  # ITEM 2 FIX: guard seaborn immediately before statistical_analysis.py.
-  # This is the second line of defence after the env_check self-heal above;
-  # it fires even when exp1 is run standalone (--step exp1, skipping env_check).
-  python3 -c "import seaborn" 2>/dev/null || \
-    python3 -m pip install --quiet seaborn || \
-    { echo "ERROR: seaborn install failed — statistical_analysis.py will crash"; exit 1; }
-  python3 statistical_analysis.py \
-    2>&1 | tee -a "${RESULTS_DIR}/exp1_run.log" \
-  || echo "WARNING: statistical_analysis.py exited non-zero — primary results already saved, continuing"
-  # ── Rescue secondary exp1 outputs (protocol wrapper, ablation, mannwhitney) ──
-  # protocol_core_noiseless_*.json (protocol wrapper variant) and ablation /
-  # mannwhitney JSONs are written to EXPERIMENTS_DIR root by their own scripts.
-  #
-  # NSHARDS=1 FIX: pre-clean the canonical target dir of any stale JSON files
-  # from previous runs before moving this run's outputs into it.  Without this,
-  # re-runs accumulate files (one per prior run) causing COUNT_DEFI > 1 and
-  # confusing ci_analysis with a multi-file dataset.  exp1 is always single-seed
-  # (seed=42) and single-shard; exactly ONE results JSON is expected per run.
-  DEFI_TARGET_EARLY="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
-  echo "  [exp1] Pre-cleaning stale JSONs from ${DEFI_TARGET_EARLY}"
-  find "${DEFI_TARGET_EARLY}" -maxdepth 1 \
-    \( -name 'hypatiax_defi_benchmark_v3*results*.json' \
-       -o -name 'protocol_core_noiseless_*.json' \) \
-    -delete 2>/dev/null || true
-  #
-  # Move primary benchmark output from RESULTS_DIR root → noiseless/defi/.
-  # hypatiax_defi_benchmark_v3c.py hardcodes its write path to RESULTS_DIR root;
-  # this block relocates it to the canonical subdir so the instability preflight
-  # and artifact upload find it in the right place.
-  # maxdepth reduced from 8 → 2: NSHARDS=1 means all output lands at known
-  # shallow paths; depth 8 was sweeping up stale files from prior runs.
-  find "${RESULTS_DIR}" -maxdepth 1 \
-    -name 'hypatiax_defi_benchmark_v3*results*.json' \
-    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 2 -name 'protocol_core_noiseless_*.json' \
-    ! -path "${RESULTS_DIR}/*" \
-    -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 2 -name 'ablation_*.json' \
-    ! -path "${RESULTS_DIR}/*" \
-    -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 2 -name 'exp1_rf01_mannwhitney*.json' \
-    ! -path "${RESULTS_DIR}/*" \
-    -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
+run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
+  # FIX-exp1-cd: cd REPO_ROOT so statistical_analysis.py and any repo-relative
+  # imports resolve correctly.  Mirrors the fix applied to exp1b, suppA, extrap.
+  cd '${REPO_ROOT}'
+  _DEFI_TARGET='${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'
+  mkdir -p \"\${_DEFI_TARGET}\"
 
-  # ── FIX-EXP1-VERIFY: post-run file confirmation ──────────────────────────
-  # Prints where result files actually landed so path mismatches are visible
-  # immediately rather than silently producing an empty artifact upload.
-  echo "=== exp1 post-run verification ==="
-  echo "  RESULTS_DIR : ${RESULTS_DIR}"
-  echo "  REPO_ROOT   : ${REPO_ROOT}"
-  DEFI_TARGET="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
-  echo "  Expected target: ${DEFI_TARGET}"
-  echo "  Files in target:"
-  find "${DEFI_TARGET}" -type f 2>/dev/null | sort || echo "    (directory empty or missing)"
-  echo "  Any hypatiax_defi_benchmark_v3*results*.json anywhere under RESULTS_DIR:"
-  find "${RESULTS_DIR}" -maxdepth 8 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort \
-    || echo "    (none found)"
-  echo "  Any hypatiax_defi_benchmark_v3*results*.json anywhere under REPO_ROOT:"
-  find "${REPO_ROOT}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort \
-    || echo "    (none found)"
-  COUNT_DEFI=$(find "${DEFI_TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
-  COUNT_PROTO=$(find "${DEFI_TARGET}" -name "protocol_core_noiseless_*.json" 2>/dev/null | wc -l)
-  TOTAL_EXP1=$((COUNT_DEFI + COUNT_PROTO))
-  if [[ "${TOTAL_EXP1}" -eq 0 ]]; then
-    echo "  WARNING: exp1 produced NO result files in canonical target."
-    echo "    This will cause an empty artifact upload and FATAL: EMPTY DATASET in ci_analysis."
-    echo "    Check that hypatiax_defi_benchmark_v3c.py ran successfully above."
+  python3 '${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_v3c.py' \
+    --output-dir \"\${_DEFI_TARGET}\" \
+    2>&1 | tee '${RESULTS_DIR}/exp1_run.log'
+
+  python3 -c 'import seaborn' 2>/dev/null || \
+    python3 -m pip install --quiet seaborn || \
+    { echo 'ERROR: seaborn install failed — statistical_analysis.py will crash'; exit 1; }
+  cd '${ANALYSIS_DIR}'
+  python3 statistical_analysis.py \
+    2>&1 | tee -a '${RESULTS_DIR}/exp1_run.log' \
+  || echo 'WARNING: statistical_analysis.py exited non-zero — primary results already saved, continuing'
+
+  echo '=== exp1 verification ==='
+  find \"\${_DEFI_TARGET}\" -type f 2>/dev/null | sort || echo '  (directory empty)'
+  COUNT_DEFI=\$(find \"\${_DEFI_TARGET}\" -name 'hypatiax_defi_benchmark_v3*results*.json' 2>/dev/null | wc -l)
+  if [[ \"\${COUNT_DEFI}\" -eq 0 ]]; then
+    echo 'WARNING: exp1 produced no result JSON in canonical target — check log above.'
   else
-    echo "  OK: ${TOTAL_EXP1} result file(s) confirmed in canonical target."
+    echo \"OK: \${COUNT_DEFI} result file(s) confirmed in \${_DEFI_TARGET}\"
   fi
-  echo "=== end exp1 post-run verification ==="
-}
-run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" _exp1_body
+  echo '=== end exp1 verification ==='
+"
 
 # ── STEP 2: exp1b ─────────────────────────────────────────────────────────────
 # FIX-exp1b-1: cd to REPO_ROOT (not EXPERIMENTS_DIR).
@@ -556,6 +511,7 @@ run extrap "OOD extrapolation comparative run (Tab 9 OOD columns)" bash -c "
         --no-llm-cache \
         --checkpoint-name \"extrap_checkpoint_\${DOMAIN_ID}\" \
         --output-dir '${RESULTS_DIR}/comparison_results/extrapolation' \
+        --resume \
         2>&1 | tee -a '${RESULTS_DIR}/extrap_run.log' \
       || echo 'WARNING: extrap domain '\${DOMAIN_ID}' exited non-zero — continuing'
   done
@@ -691,7 +647,9 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
 # FIX-DOMAINS: removed feynman_astronomy + feynman_fluid_dynamics (don't exist in
 # BenchmarkProtocol._build_domain_map()); added feynman_magnetism + feynman_probability
 # (present in protocol). Matches CI FEYNMAN_DOMAINS authoritative list exactly.
-FEYNMAN_DOMAINS="feynman_biology feynman_chemistry feynman_electrochemistry feynman_electromagnetism feynman_electrostatics feynman_magnetism feynman_mechanics feynman_optics feynman_probability feynman_quantum feynman_thermodynamics"
+# NOTE: FEYNMAN_DOMAINS is defined once at the top of the script (line ~152) and
+# must not be re-assigned here — doing so produces two sources of truth that can
+# silently diverge.  The hoisted definition is used by all steps that reference it.
 run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab 16-18)" bash -c "
   # FIX-exp2_feynman-1: cd REPO_ROOT and invoke by full path (doubled-path fix).
   cd '${REPO_ROOT}'
@@ -756,7 +714,7 @@ run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c 
         --parsimony 0.01 \
         --use-transcendental-compositions \
         --noiseless \
-        --threshold 0.9999 \
+        --threshold ${FEYNMAN_NOISELESS_THRESHOLD} \
         --checkpoint-name \"exp2_checkpoint_\${DOMAIN_ID}\" \
         --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi' \
         --resume \
@@ -910,12 +868,26 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # run_noise_sweep_benchmark.py uses os.getcwd()-relative paths; cd EXPERIMENTS_DIR
   # caused outputs to land in .../benchmarks/hypatiax/data/results/... → never found.
   cd '${REPO_ROOT}'
+  # FIX-suppB-2: NOISE_LEVELS forwarded explicitly so run_noise_sweep_benchmark.py
+  # honours custom dispatch inputs (default: CI value 0.0,0.5,1.0,5.0,10.0).
+  # Without this the script silently uses its own internal default, which may diverge
+  # from the task-ID list the plan job built (noise{NL}__<domain> IDs).
+  # FIX-suppB-3: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
+  # forwarded as CLI flags to match repro.yaml paper-quality values.  The CI worker
+  # exports these as env vars; passing them explicitly ensures the script respects them
+  # even if it reads CLI args rather than the environment.
   # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
   # Scripts that read either var will resolve to the same canonical path.
+  NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}' \
   OUT_BASE='${RESULTS_DIR}' \
   RESULTS_DIR='${RESULTS_DIR}' \
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \
     --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \
+    --samples ${FEYNMAN_SAMPLES} \
+    --pysr-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${METHOD_TIMEOUT} \
+    --populations ${PYSR_POPULATIONS} \
+    --parsimony 0.01 \
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 "
 
@@ -927,6 +899,8 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   # FIX-suppB_sc-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug.
   cd '${REPO_ROOT}'
+  # FIX-suppB_sc-2: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
+  # forwarded as CLI flags to match repro.yaml paper-quality values (same fix as suppB).
   # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
   NOISE_LEVEL='5.0' \
   SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \
@@ -934,6 +908,11 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
   RESULTS_DIR='${RESULTS_DIR}' \
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \
     --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \
+    --samples ${FEYNMAN_SAMPLES} \
+    --pysr-timeout ${FEYNMAN_TIMEOUT} \
+    --method-timeout ${METHOD_TIMEOUT} \
+    --populations ${PYSR_POPULATIONS} \
+    --parsimony 0.01 \
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
 "
 
@@ -969,7 +948,11 @@ run figures "Generate all paper figures from results -> \${RESULTS_DIR}/figures/
 "
 
 # ── STEP 13: validate ────────────────────────────────────────────────────────
-run validate "Cross-check all results against paper-reported values" python3 - << 'PYEOF'
+# FIX-validate: run() dispatches via "$@" which cannot forward a here-doc on stdin.
+# Wrapping the inline Python in bash -c '...' with a single-quoted heredoc ensures
+# the script body is passed as an argument (not stdin) and executes correctly.
+run validate "Cross-check all results against paper-reported values" bash -c '
+python3 - <<'"'"'PYEOF'"'"'
 import json, os, glob, sys
 
 RESULTS = os.environ.get('RESULTS_DIR', 'hypatiax/data/results')
@@ -1094,6 +1077,7 @@ if passed < total:
 else:
     print("All checks passed.")
 PYEOF
+'
 
 # ── Final summary ─────────────────────────────────────────────────────────────
 echo ""

@@ -261,7 +261,7 @@ jobs:
               # TASK-6 FIX: resolve NEEDS_JULIA at runtime by inspecting the script
               # rather than assuming false.  If juliacall/PySR is imported, the worker
               # must have Julia installed or methods 5/6 will crash silently with N/A.
-              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${SCRIPT}" 2>/dev/null; then
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${{ github.workspace }}/${SCRIPT}" 2>/dev/null; then
                 NEEDS_JULIA=true
                 echo "::notice::suppB: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
               else
@@ -297,7 +297,7 @@ jobs:
             suppB_sc)
               SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
               # TASK-6 FIX: resolve NEEDS_JULIA at runtime (same guard as suppB).
-              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${SCRIPT}" 2>/dev/null; then
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${{ github.workspace }}/${SCRIPT}" 2>/dev/null; then
                 NEEDS_JULIA=true
                 echo "::notice::suppB_sc: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
               else
@@ -940,7 +940,7 @@ jobs:
           echo "=== OUT_BASE vs RESULTS_DIR equivalence check ==="
           WS_OUT="${GITHUB_WORKSPACE}/${OUT_BASE}"
           echo "  Expected RESULTS_DIR: ${WS_OUT}"
-          echo "  Same? $([ "${WS_OUT}" = "${WS_OUT}" ] && echo YES || echo NO)"
+          echo "  Same? $([ "${WS_OUT}" = "${{ github.workspace }}/${{ env.OUT_BASE }}" ] && echo YES || echo NO)"
           echo "=== ALL *.json files anywhere under GITHUB_WORKSPACE (first 60) ==="
           find "${GITHUB_WORKSPACE}" -maxdepth 12 \
             -name "*.json" \

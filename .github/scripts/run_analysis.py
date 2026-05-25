@@ -1730,23 +1730,146 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--experiment",  required=True,
                     help="Experiment ID (e.g. exp1, exp2_feynman, extrap)")
-    ap.add_argument("--merged-json", required=True,
-                    help="Path to _merged.json produced by merge_shards.py")
+
+    # ---------------------------------------------------------------------------
+    # Input source — two modes, both supported:
+    #
+    #   LEGACY (merge_shards.py output):
+    #     --merged-json <path>   Path to _merged.json from merge_shards.py.
+    #     --output-dir  <dir>    Where to write _analysis.json / _report.md.
+    #                            Defaults to the directory containing --merged-json.
+    #
+    #   CI / NSHARDS=1 (direct repo JSON):
+    #     --input-json  <path>   Path to any readable input JSON (the single
+    #                            result file committed directly by the worker,
+    #                            or _merged_benchmark.json assembled in-memory
+    #                            by the "Locate analysis input" step in
+    #                            ci_analysis.yml).  Used for exp1 (NSHARDS=1)
+    #                            and any other single-shard experiment where
+    #                            merge_shards.py is not called.
+    #     --shard-manifest <f>  Newline-delimited list of shard JSON paths.
+    #                            Each file is loaded and records concatenated
+    #                            before analysis (shard-direct mode from CI).
+    #     --result-dir  <dir>    Canonical result directory (RESULT_DIR from CI
+    #                            env).  Outputs are written here as
+    #                            _analysis.json and _report.md.
+    #
+    # --input-json and --shard-manifest are mutually exclusive.
+    # --merged-json is kept for backward compatibility with manual invocations.
+    # ---------------------------------------------------------------------------
+    input_group = ap.add_mutually_exclusive_group()
+    input_group.add_argument("--merged-json",
+                    help="Path to _merged.json produced by merge_shards.py "
+                         "(legacy; use --input-json for NSHARDS=1 direct mode).")
+    input_group.add_argument("--input-json",
+                    help="Path to any readable result JSON — the single file "
+                         "committed directly by a NSHARDS=1 worker, or an "
+                         "in-memory assembled _merged_benchmark.json.  "
+                         "Takes the same load/normalise path as --merged-json.")
+    input_group.add_argument("--shard-manifest",
+                    help="Newline-delimited file listing shard JSON paths "
+                         "(shard-direct mode; each file is loaded and records "
+                         "concatenated).")
+
     ap.add_argument("--output-dir",  required=False, default=None,
-                    help=(
-                        "Directory to write _analysis.json and _report.md. "
-                        "Defaults to the directory containing --merged-json."
-                    ))
+                    help="Directory for outputs (legacy; use --result-dir).")
+    ap.add_argument("--result-dir",  required=False, default=None,
+                    help="Canonical RESULT_DIR from CI env; outputs written here.")
     return ap.parse_args()
+
+
+def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
+    """
+    Load records from a single JSON file using the same shape-detection logic
+    as the main() legacy path.  Shared between --merged-json, --input-json,
+    and individual shard files in --shard-manifest mode.
+
+    Handles:
+      Shape A  {\"_meta\":{}, \"stats\":{}, \"results\":{task_id: record}}
+      Shape B  {task_id: record, ...}  flat dict
+      Shape C  [record, ...]           top-level list
+      Shape P  {\"tests\": [{description, domain, results:{RawMethod:{r2,...}}}]}
+               — protocol_core_*.json / _merged_benchmark.json from the
+                 "Locate analysis input" step.  Normalised via
+                 _normalise_protocol_record() unless ablation.
+    """
+    with open(json_path, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    # Shape P — benchmark-format (protocol_core_*.json or _merged_benchmark.json)
+    # Detected by the presence of a non-empty "tests" list whose entries have
+    # a "results" dict with method sub-dicts (r2 / success).
+    # This is the shape produced by the single NSHARDS=1 worker for exp1 and
+    # assembled in-memory by ci_analysis.yml for other single-shard experiments.
+    from merge_shards import _is_protocol_file, _normalise_protocol_record  # type: ignore
+    _ABLATION_EXPERIMENTS = {"exp1_ablation"}
+    is_ablation = experiment in _ABLATION_EXPERIMENTS
+
+    if isinstance(raw, dict) and _is_protocol_file(raw):
+        records = []
+        for test in raw.get("tests", []):
+            if not isinstance(test, dict):
+                continue
+            if is_ablation:
+                records.append(test)
+            else:
+                records.append(_normalise_protocol_record(test))
+        print(f"  Shape P (protocol wrapper / NSHARDS=1 direct): "
+              f"{len(records)} records from 'tests' key.")
+        return records
+
+    if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
+        # Shape A: the "results" value is the task-keyed dict.
+        records = [v for v in raw["results"].values() if isinstance(v, dict)]
+        print(f"  Shape A (_merged.json from merge_shards.py): "
+              f"{len(records)} records from 'results' key.")
+        return records
+    elif isinstance(raw, dict):
+        # Shape B: flat dict — skip _meta / stats / _checkpoint sentinel keys.
+        records = [v for k, v in raw.items()
+                   if isinstance(v, dict)
+                   and not k.startswith("_")
+                   and k != "stats"]
+        print(f"  Shape B (flat dict): {len(records)} records.")
+        return records
+    elif isinstance(raw, list):
+        # Shape C: top-level list.
+        records = [r for r in raw if isinstance(r, dict)]
+        print(f"  Shape C (list): {len(records)} records.")
+        return records
+    else:
+        print(f"::error::Unexpected JSON top-level type: {type(raw)}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> None:
     args = parse_args()
 
-    merged_path = Path(args.merged_json)
-    # Derive output_dir: explicit flag → same directory as _merged.json.
-    output_dir = Path(args.output_dir) if args.output_dir else merged_path.parent
+    # ── Resolve output directory ──────────────────────────────────────────────
+    # Priority: --result-dir > --output-dir > directory of input file.
+    if args.result_dir:
+        output_dir = Path(args.result_dir)
+    elif args.output_dir:
+        output_dir = Path(args.output_dir)
+    elif args.merged_json:
+        output_dir = Path(args.merged_json).parent
+    elif args.input_json:
+        output_dir = Path(args.input_json).parent
+    elif args.shard_manifest:
+        output_dir = Path(args.shard_manifest).parent
+    else:
+        print("::error::No input source specified (--merged-json, --input-json, or "
+              "--shard-manifest required).", file=sys.stderr)
+        sys.exit(1)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Resolve input path (for non-manifest modes) ───────────────────────────
+    # --input-json and --merged-json are treated identically after this point.
+    input_json_path: Path | None = None
+    if args.merged_json:
+        input_json_path = Path(args.merged_json)
+    elif args.input_json:
+        input_json_path = Path(args.input_json)
 
     # instability produces no _merged.json — the CI yml short-circuits before
     # reaching this script, but guard here for manual dispatch fallback.
@@ -1774,13 +1897,43 @@ def main() -> None:
         print("✅ Stub _analysis.json and _report.md written.")
         sys.exit(0)
 
-    if not merged_path.exists():
-        print(f"::error::_merged.json not found at {merged_path}", file=sys.stderr)
+    # ── Load records ──────────────────────────────────────────────────────────
+    if args.shard_manifest:
+        # Shard-direct mode: load each file listed in the manifest and
+        # concatenate records.  This is the path used by ci_analysis.yml when
+        # INPUT_MODE=shards (non-benchmark-format experiments).
+        manifest_path = Path(args.shard_manifest)
+        if not manifest_path.exists():
+            print(f"::error::shard manifest not found: {manifest_path}", file=sys.stderr)
+            sys.exit(1)
+        shard_paths = [
+            Path(p.strip())
+            for p in manifest_path.read_text(encoding="utf-8").splitlines()
+            if p.strip()
+        ]
+        records: list[dict] = []
+        for sp in shard_paths:
+            if not sp.exists():
+                print(f"  WARNING: shard file not found, skipping: {sp}", file=sys.stderr)
+                continue
+            print(f"  Loading shard: {sp.name} …")
+            records.extend(_load_records_from_json(sp, args.experiment))
+        print(f"  {len(records)} total records loaded from {len(shard_paths)} shard(s).")
+
+    elif input_json_path is not None:
+        # Single-file mode: --merged-json (legacy) or --input-json (NSHARDS=1 / CI direct).
+        if not input_json_path.exists():
+            print(f"::error::input JSON not found at {input_json_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Loading {input_json_path} …")
+        records = _load_records_from_json(input_json_path, args.experiment)
+        print(f"  {len(records)} records loaded.")
+
+    else:
+        print("::error::No input source resolved (internal error).", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loading {merged_path} …")
-    with open(merged_path, encoding="utf-8") as f:
-        raw = json.load(f)
+    print(f"  Experiment mode: {_get_mode(args.experiment)}")
 
     # Read PySR fit timeout parameters from the environment.  Set by
     # ci_analysis.yml from repository variables (vars.PYSR_FIT_WALL_TIMEOUT /
@@ -1809,36 +1962,6 @@ def main() -> None:
         print(f"  PySR fit params: {pysr_fit_params}")
     else:
         print("  PySR fit params: not set (PYSR_FIT_WALL_TIMEOUT / PYSR_FIT_GRACE_SECS absent)")
-
-    # Handle all shapes merge_shards.py and legacy workers can produce:
-    #   Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
-    #            — canonical output of merge_shards.py (new).
-    #   Shape B  {task_id: record, ...}
-    #            — flat dict keyed by task_id (legacy).
-    #   Shape C  [record, ...]
-    #            — top-level list (legacy).
-    if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
-        # Shape A: the "results" value is the task-keyed dict.
-        records = [v for v in raw["results"].values() if isinstance(v, dict)]
-        print(f"  Shape A (_merged.json from merge_shards.py): "
-              f"{len(records)} records from 'results' key.")
-    elif isinstance(raw, dict):
-        # Shape B: flat dict — skip _meta / stats / _checkpoint sentinel keys.
-        records = [v for k, v in raw.items()
-                   if isinstance(v, dict)
-                   and not k.startswith("_")
-                   and k != "stats"]
-        print(f"  Shape B (flat dict): {len(records)} records.")
-    elif isinstance(raw, list):
-        # Shape C: top-level list.
-        records = [r for r in raw if isinstance(r, dict)]
-        print(f"  Shape C (list): {len(records)} records.")
-    else:
-        print(f"::error::Unexpected _merged.json top-level type: {type(raw)}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"  {len(records)} records loaded.")
-    print(f"  Experiment mode: {_get_mode(args.experiment)}")
 
     if not _SCIPY_OK:
         print("WARNING: scipy not available — Mann-Whitney tests will be skipped.", file=sys.stderr)
