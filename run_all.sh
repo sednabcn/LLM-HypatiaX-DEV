@@ -1054,8 +1054,11 @@ else:
 exp3b_files = glob.glob(f"{RESULTS}/extrapolation/multi_seed/*nguyen*.json")
 ok_exp3b = bool(exp3b_files)
 checks.append(("exp3b outputs in extrapolation/multi_seed/ (BUG 2)", 1.0 if ok_exp3b else 0.0, 1.0, ok_exp3b))
-print(f"  [{'OK' if ok_exp3b else 'SKIP'}] extrapolation/multi_seed/: {len(exp3b_files)} nguyen JSON(s) "
-      f"{'(exp3b not yet run)' if not ok_exp3b else ''}")
+print(
+    f"  [{'OK' if ok_exp3b else 'SKIP'}] extrapolation/multi_seed/: "
+    f"{len(exp3b_files)} nguyen JSON(s)"
+    f"{' (exp3b not yet run)' if not ok_exp3b else ''}"
+)
 
 # --- FIX STEP-11-12: tables and figures co-located under RESULTS_DIR ---
 tbl = glob.glob(f"{RESULTS}/tables/*.tex")
