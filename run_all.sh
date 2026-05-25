@@ -301,22 +301,35 @@ _exp1_body() {
   # ── Rescue secondary exp1 outputs (protocol wrapper, ablation, mannwhitney) ──
   # protocol_core_noiseless_*.json (protocol wrapper variant) and ablation /
   # mannwhitney JSONs are written to EXPERIMENTS_DIR root by their own scripts.
-  # Search up to maxdepth 8 so any doubled-path remnants are also caught.
+  #
+  # NSHARDS=1 FIX: pre-clean the canonical target dir of any stale JSON files
+  # from previous runs before moving this run's outputs into it.  Without this,
+  # re-runs accumulate files (one per prior run) causing COUNT_DEFI > 1 and
+  # confusing ci_analysis with a multi-file dataset.  exp1 is always single-seed
+  # (seed=42) and single-shard; exactly ONE results JSON is expected per run.
+  DEFI_TARGET_EARLY="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+  echo "  [exp1] Pre-cleaning stale JSONs from ${DEFI_TARGET_EARLY}"
+  find "${DEFI_TARGET_EARLY}" -maxdepth 1 \
+    \( -name 'hypatiax_defi_benchmark_v3*results*.json' \
+       -o -name 'protocol_core_noiseless_*.json' \) \
+    -delete 2>/dev/null || true
   #
   # Move primary benchmark output from RESULTS_DIR root → noiseless/defi/.
   # hypatiax_defi_benchmark_v3c.py hardcodes its write path to RESULTS_DIR root;
-  # move_matching in CI and this block below relocate it to the canonical subdir
-  # so the instability preflight and artifact upload find it in the right place.
+  # this block relocates it to the canonical subdir so the instability preflight
+  # and artifact upload find it in the right place.
+  # maxdepth reduced from 8 → 2: NSHARDS=1 means all output lands at known
+  # shallow paths; depth 8 was sweeping up stale files from prior runs.
   find "${RESULTS_DIR}" -maxdepth 1 \
     -name 'hypatiax_defi_benchmark_v3*results*.json' \
     -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'protocol_core_noiseless_*.json' \
+  find "${EXPERIMENTS_DIR}" -maxdepth 2 -name 'protocol_core_noiseless_*.json' \
     ! -path "${RESULTS_DIR}/*" \
     -exec mv -v {} "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'ablation_*.json' \
+  find "${EXPERIMENTS_DIR}" -maxdepth 2 -name 'ablation_*.json' \
     ! -path "${RESULTS_DIR}/*" \
     -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
-  find "${EXPERIMENTS_DIR}" -maxdepth 8 -name 'exp1_rf01_mannwhitney*.json' \
+  find "${EXPERIMENTS_DIR}" -maxdepth 2 -name 'exp1_rf01_mannwhitney*.json' \
     ! -path "${RESULTS_DIR}/*" \
     -exec mv -v {} "${RESULTS_DIR}/" \; 2>/dev/null || true
 

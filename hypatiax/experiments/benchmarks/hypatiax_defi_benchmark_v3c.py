@@ -1241,6 +1241,19 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
         print(f"\n🔍 Case filter active: running {total} case(s) — "
               f"{[tc['name'] for tc in test_cases]}")
 
+    # NSHARDS=1 FIX: on a fresh (non-resume) run, remove any stale checkpoint
+    # and final-output JSON left over from a prior run.  Without this, a second
+    # run in the same workspace smuggles the prior run's cases through
+    # _load_checkpoint, producing duplicate records and a bloated output file
+    # that ci_analysis misreads as multiple seeds.
+    if not resume:
+        if CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
+            print(f"  [fresh run] Removed stale checkpoint: {CHECKPOINT_FILE}")
+        if FINAL_OUTPUT.exists():
+            FINAL_OUTPUT.unlink()
+            print(f"  [fresh run] Removed stale output: {FINAL_OUTPUT}")
+
     existing, n_done = _load_checkpoint() if resume else ([], 0)
     all_results      = list(existing)
 
