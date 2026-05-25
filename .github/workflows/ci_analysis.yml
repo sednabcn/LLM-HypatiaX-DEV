@@ -342,6 +342,7 @@ jobs:
                 -name '*.json' \
                 ! -name '_*.json' \
                 ! -name 'benchmark_results.json' \
+                ! -name '*_shard*_run*.json' \
                 | sort
             )
 
@@ -357,22 +358,24 @@ jobs:
               echo
               echo "Searched:"
               echo "  ${RESULT_DIR}/**/*.json (maxdepth 2)"
-              echo "  excluding _*.json and benchmark_results.json"
+              echo "  excluding _*.json, benchmark_results.json, and *_shard*_run*.json"
 
               exit 1
             fi
 
             # ----------------------------------------------------------------
             # BENCHMARK-FORMAT DETECTION
-            # If there is exactly one shard file and it is a benchmark dict
-            # (dict-of-dicts keyed by equation or method, not a flat list),
-            # switch to merged mode so run_analysis.py receives it as a single
-            # structured input rather than treating it as a shard list.
-            # This handles exp1's hypatiax_defi_benchmark_v3_results.json.
+            # exp1 (and similar experiments) write each worker run as a
+            # benchmark dict:  { protocol, methods, tests:[...], ... }
+            # rather than a flat list of records.  run_analysis.py cannot
+            # read this format as shards (it expects lists → Records: 0).
+            #
+            # Fix: probe the FIRST shard regardless of how many files exist.
+            # If it is benchmark-format, merge ALL shard files by concatenating
+            # their tests arrays into a single _merged_benchmark.json and
+            # switch to merged mode.  Works for 1 file or 33.
             # ----------------------------------------------------------------
-            USE_MERGED_FOR_BENCHMARK=false
-            if [[ ${#SHARD_FILES[@]} -eq 1 ]]; then
-              USE_MERGED_FOR_BENCHMARK=$(SHARD0="${SHARD_FILES[0]}" python3 -c '
+            USE_MERGED_FOR_BENCHMARK=$(SHARD0="${SHARD_FILES[0]}" python3 -c '
           import json, sys, os
           path = os.environ["SHARD0"]
           if not path or not os.path.exists(path):
@@ -385,6 +388,8 @@ jobs:
               print("false"); sys.exit(0)
           if isinstance(data, dict) and isinstance(data.get("results"), list):
               print("false"); sys.exit(0)
+          if isinstance(data, dict) and isinstance(data.get("tests"), list):
+              print("true"); sys.exit(0)
           if isinstance(data, dict):
               non_meta = {k: v for k, v in data.items()
                           if not k.startswith("_") and k not in ("stats","summary","metadata")}
@@ -392,14 +397,46 @@ jobs:
                   print("true"); sys.exit(0)
           print("false")
           ')
-            fi
 
             if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
-              INPUT_JSON="${SHARD_FILES[0]}"
-              echo "  Single benchmark-format file detected — switching to merged mode."
-              echo "  File: ${INPUT_JSON}"
-              echo "INPUT_MODE=merged"  >> "$GITHUB_ENV"
-              echo "INPUT_JSON=${INPUT_JSON}" >> "$GITHUB_ENV"
+
+              echo "  Benchmark-format shards detected (${#SHARD_FILES[@]} file(s))."
+              echo "  Merging tests arrays → _merged_benchmark.json ..."
+
+              # Write the list of shard paths to a temp file so Python can read
+              # them without hitting shell argument-length limits.
+              printf '%s\n' "${SHARD_FILES[@]}" > _shard_paths_for_merge.txt
+
+              python3 -c "
+          import json, sys
+          paths = open('_shard_paths_for_merge.txt').read().splitlines()
+          merged = None
+          total_tests = 0
+          for p in paths:
+              try:
+                  d = json.load(open(p))
+              except Exception as e:
+                  print(f'::warning::Skipping unreadable shard {p}: {e}', file=sys.stderr)
+                  continue
+              if not isinstance(d, dict) or 'tests' not in d:
+                  print(f'::warning::Skipping non-benchmark shard {p}', file=sys.stderr)
+                  continue
+              if merged is None:
+                  merged = {k: v for k, v in d.items() if k != 'tests'}
+                  merged['tests'] = []
+              merged['tests'].extend(d['tests'])
+              total_tests += len(d['tests'])
+          if merged is None:
+              print('::error::No readable benchmark-format shards found after merge pass.')
+              sys.exit(1)
+          merged['total_tests'] = total_tests
+          json.dump(merged, open('_merged_benchmark.json', 'w'), indent=2)
+          print(f'  Merged {len(paths)} shard(s) → {total_tests} total tests.')
+          "
+
+              echo "INPUT_MODE=merged"                    >> "$GITHUB_ENV"
+              echo "INPUT_JSON=_merged_benchmark.json"    >> "$GITHUB_ENV"
+
             else
               printf '%s\n' "${SHARD_FILES[@]}" > shard_manifest.txt
 
