@@ -12,14 +12,27 @@
 #    automatically produced for most experiments; run ci_consolidate_experiment.yml
 #    manually if a merged view is needed for exp1b / exp3b.
 #
-#  Input modes:
-#    MERGED (exp1b, exp3b only):
+#  Input modes (set by "Locate analysis input" → $INPUT_MODE env var):
+#
+#    MERGED  (exp1b, exp3b only):
 #      Reads _merged.json produced by ci_consolidate_experiment.yml.
 #      Hard-fails if _merged.json is absent.
+#      run_analysis.py flag: --input-json <path>
 #
-#    SHARD-DIRECT (all other experiments):
-#      Reads committed shard *.json files directly from the result directory.
+#    DIRECT  (NSHARDS=1 / single-file experiments — exp1 and any other
+#             experiment whose worker commits exactly one result JSON):
+#      Reads the single committed result file directly.
+#      No shard_manifest.txt is written; no merge step needed.
+#      Covers two sub-cases:
+#        • benchmark-format (tests[] array) — in-memory merge to
+#          _merged_benchmark.json, then --input-json.
+#        • flat/list JSON — --input-json on the single file directly.
+#      run_analysis.py flag: --input-json <path>
+#
+#    SHARDS  (multi-shard, non-benchmark-format experiments):
+#      Reads multiple committed shard *.json files listed in shard_manifest.txt.
 #      Hard-fails if no shard files are found.
+#      run_analysis.py flag: --shard-manifest shard_manifest.txt
 #
 #  Responsibilities:
 #    - Mann-Whitney U tests (per-method, cross-method)
@@ -380,18 +393,39 @@ jobs:
             fi
 
             # ----------------------------------------------------------------
-            # BENCHMARK-FORMAT DETECTION
-            # exp1 (and similar experiments) write each worker run as a
-            # benchmark dict:  { protocol, methods, tests:[...], ... }
-            # rather than a flat list of records.  run_analysis.py cannot
-            # read this format as shards (it expects lists → Records: 0).
+            # INPUT MODE SELECTION
             #
-            # Fix: probe the FIRST shard regardless of how many files exist.
-            # If it is benchmark-format, merge ALL shard files by concatenating
-            # their tests arrays into a single _merged_benchmark.json and
-            # switch to merged mode.  Works for 1 file or 33.
+            # Three cases, evaluated in order:
+            #
+            #  DIRECT (NSHARDS=1 / single-file):
+            #    The worker committed exactly one JSON — no manifest needed.
+            #    Pass the file directly as --input-json.  This is the correct
+            #    path for exp1 and any other experiment dispatched with
+            #    n_shards=1.  Avoids the quoting bug that existed in the old
+            #    "$(...) echo '--shard-manifest ...'" expansion, which caused
+            #    literal single-quote characters to reach Python's argparse.
+            #
+            #  MERGED-FOR-BENCHMARK (N>1 benchmark-format shards):
+            #    Each shard has a tests[] array.  Concatenate in-memory into
+            #    _merged_benchmark.json and pass as --input-json.
+            #
+            #  SHARDS (N>1 flat/list-format shards):
+            #    Write shard_manifest.txt; pass as --shard-manifest.
             # ----------------------------------------------------------------
-            USE_MERGED_FOR_BENCHMARK=$(SHARD0="${SHARD_FILES[0]}" python3 -c '
+
+            N_SHARDS=${#SHARD_FILES[@]}
+
+            # ── DIRECT: single committed result file ─────────────────────────
+            if [[ $N_SHARDS -eq 1 ]]; then
+              SINGLE_FILE="${SHARD_FILES[0]}"
+              echo "  DIRECT mode: single result file — using --input-json directly."
+              echo "  File: ${SINGLE_FILE}"
+              echo "INPUT_MODE=direct"             >> "$GITHUB_ENV"
+              echo "INPUT_JSON=${SINGLE_FILE}"     >> "$GITHUB_ENV"
+
+            else
+              # ── Probe first shard to detect benchmark vs flat format ──────
+              USE_MERGED_FOR_BENCHMARK=$(SHARD0="${SHARD_FILES[0]}" python3 -c '
           import json, sys, os
           path = os.environ["SHARD0"]
           if not path or not os.path.exists(path):
@@ -414,16 +448,17 @@ jobs:
           print("false")
           ')
 
-            if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
+              # ── MERGED-FOR-BENCHMARK: N>1 benchmark-format shards ─────────
+              if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
 
-              echo "  Benchmark-format shards detected (${#SHARD_FILES[@]} file(s))."
-              echo "  Merging tests arrays → _merged_benchmark.json ..."
+                echo "  Benchmark-format shards detected (${N_SHARDS} file(s))."
+                echo "  Merging tests arrays → _merged_benchmark.json ..."
 
-              # Write the list of shard paths to a temp file so Python can read
-              # them without hitting shell argument-length limits.
-              printf '%s\n' "${SHARD_FILES[@]}" > _shard_paths_for_merge.txt
+                # Write the list of shard paths to a temp file so Python can
+                # read them without hitting shell argument-length limits.
+                printf '%s\n' "${SHARD_FILES[@]}" > _shard_paths_for_merge.txt
 
-              python3 -c "
+                python3 -c "
           import json, sys
           paths = open('_shard_paths_for_merge.txt').read().splitlines()
 
@@ -481,18 +516,20 @@ jobs:
           print(f'  Merged {len(paths)} shard(s) → {total_tests} total tests.')
           "
 
-              echo "INPUT_MODE=merged"                    >> "$GITHUB_ENV"
-              echo "INPUT_JSON=_merged_benchmark.json"    >> "$GITHUB_ENV"
+                echo "INPUT_MODE=merged"                    >> "$GITHUB_ENV"
+                echo "INPUT_JSON=_merged_benchmark.json"    >> "$GITHUB_ENV"
 
-            else
-              printf '%s\n' "${SHARD_FILES[@]}" > shard_manifest.txt
+              # ── SHARDS: N>1 flat/list-format shards ───────────────────────
+              else
+                printf '%s\n' "${SHARD_FILES[@]}" > shard_manifest.txt
 
-              echo "INPUT_MODE=shards"                    >> "$GITHUB_ENV"
-              echo "SHARD_MANIFEST=shard_manifest.txt"   >> "$GITHUB_ENV"
+                echo "INPUT_MODE=shards"                    >> "$GITHUB_ENV"
+                echo "SHARD_MANIFEST=shard_manifest.txt"    >> "$GITHUB_ENV"
 
-              echo
-              echo "Selected shard files:"
-              cat shard_manifest.txt
+                echo
+                echo "Selected shard files (${N_SHARDS} file(s)):"
+                cat shard_manifest.txt
+              fi
             fi
 
           fi
@@ -507,6 +544,7 @@ jobs:
           set -euo pipefail
           # Logic lives in .github/scripts/validate_analysis_input.py —
           # reads INPUT_MODE / INPUT_JSON / SHARD_MANIFEST from the environment.
+          # Valid INPUT_MODE values: merged | direct | shards
           python3 .github/scripts/validate_analysis_input.py
 
       # -----------------------------------------------------------------------
@@ -520,16 +558,39 @@ jobs:
 
           mkdir -p "$RESULT_DIR"
 
+          # Build the input-source flag without any subshell quoting.
+          # The old "$(...) echo '--flag \'$VAR\''" pattern passed literal
+          # single-quote characters to Python (bash does NOT strip quotes from
+          # command-substitution output), causing Path("'shard_manifest.txt'")
+          # to fail with "not found".  A case statement with bare variable
+          # references is unambiguous and covers all three INPUT_MODE values.
+          #
+          #   merged  — _merged.json from ci_consolidate, or _merged_benchmark.json
+          #             assembled in-memory from benchmark-format shards
+          #   direct  — single committed result file (NSHARDS=1, e.g. exp1)
+          #   shards  — multiple flat/list-format shard files via manifest
+          INPUT_FLAG=()
+          case "$INPUT_MODE" in
+            merged|direct)
+              INPUT_FLAG=(--input-json "$INPUT_JSON")
+              ;;
+            shards)
+              INPUT_FLAG=(--shard-manifest "$SHARD_MANIFEST")
+              ;;
+            *)
+              echo "::error::Unknown INPUT_MODE='${INPUT_MODE}'. Expected merged, direct, or shards."
+              exit 1
+              ;;
+          esac
+
+          echo "INPUT_MODE  : ${INPUT_MODE}"
+          echo "INPUT_FLAG  : ${INPUT_FLAG[*]}"
+          echo "RESULT_DIR  : ${RESULT_DIR}"
+
           python3 .github/scripts/run_analysis.py \
             --experiment "$EXPERIMENT" \
             --result-dir "$RESULT_DIR" \
-            $(
-              if [[ "$INPUT_MODE" == "merged" ]]; then
-                echo "--input-json '$INPUT_JSON'"
-              else
-                echo "--shard-manifest '$SHARD_MANIFEST'"
-              fi
-            )
+            "${INPUT_FLAG[@]}" 
 
       # -----------------------------------------------------------------------
       # Verify outputs

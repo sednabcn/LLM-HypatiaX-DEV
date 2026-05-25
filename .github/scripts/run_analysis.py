@@ -1904,21 +1904,76 @@ def main() -> None:
         # INPUT_MODE=shards (non-benchmark-format experiments).
         manifest_path = Path(args.shard_manifest)
         if not manifest_path.exists():
-            print(f"::error::shard manifest not found: {manifest_path}", file=sys.stderr)
-            sys.exit(1)
-        shard_paths = [
-            Path(p.strip())
-            for p in manifest_path.read_text(encoding="utf-8").splitlines()
-            if p.strip()
-        ]
-        records: list[dict] = []
-        for sp in shard_paths:
-            if not sp.exists():
-                print(f"  WARNING: shard file not found, skipping: {sp}", file=sys.stderr)
-                continue
-            print(f"  Loading shard: {sp.name} …")
-            records.extend(_load_records_from_json(sp, args.experiment))
-        print(f"  {len(records)} total records loaded from {len(shard_paths)} shard(s).")
+            # ── NSHARDS=1 / direct-result fallback ────────────────────────────
+            # ci_analysis.yml unconditionally passes --shard-manifest, but for
+            # experiments that commit results directly (NSHARDS=1, no
+            # merge_shards.py step — e.g. exp1), shard_manifest.txt is never
+            # written.  Hard-failing here with exit(1) is the WRONG DESIGN:
+            # the manifest absence just means this experiment's worker wrote
+            # its JSON straight into RESULT_DIR.
+            #
+            # Fix: when --result-dir is set, scan that directory for result
+            # JSON files (excluding internal meta-files that start with "_")
+            # and load them directly — the same shape-detection logic in
+            # _load_records_from_json handles all known formats (Shape P for
+            # protocol_core_*.json, Shape A/B/C for others).  If result_dir
+            # is absent or contains no JSON files, fall through to the original
+            # hard error so genuine manifest misconfigurations still fail loudly.
+            fallback_used = False
+            if args.result_dir:
+                fallback_dir = Path(args.result_dir)
+                # Collect all non-meta JSON files one level deep in result_dir.
+                candidate_jsons = sorted(
+                    p for p in fallback_dir.glob("*.json")
+                    if not p.name.startswith("_")   # exclude _merged, _stats, _checkpoint, _analysis
+                )
+                if candidate_jsons:
+                    print(
+                        f"::warning::--shard-manifest '{manifest_path}' not found — "
+                        f"this is normal for NSHARDS=1 / direct-result experiments "
+                        f"(e.g. exp1) that commit JSON directly without a shard-merge step. "
+                        f"Falling back to scanning result_dir '{fallback_dir}' "
+                        f"({len(candidate_jsons)} JSON file(s) found).",
+                        file=sys.stderr,
+                    )
+                    records: list[dict] = []
+                    for jp in candidate_jsons:
+                        print(f"  Loading (direct-result fallback): {jp.name} …")
+                        records.extend(_load_records_from_json(jp, args.experiment))
+                    print(
+                        f"  {len(records)} total record(s) loaded via direct-result fallback "
+                        f"from {len(candidate_jsons)} file(s) in '{fallback_dir}'."
+                    )
+                    fallback_used = True
+
+            if not fallback_used:
+                # No result_dir or no JSON files found there — this is a genuine
+                # misconfiguration (wrong manifest path, wrong RESULT_DIR, etc.).
+                print(
+                    f"::error::shard manifest not found: '{manifest_path}' and no "
+                    f"fallback JSON files found"
+                    + (f" in result_dir '{args.result_dir}'" if args.result_dir else
+                       " (--result-dir not set, cannot auto-discover)") + ".\n"
+                    f"  For NSHARDS=1 experiments (exp1, etc.), ci_analysis.yml should "
+                    f"either write a shard_manifest.txt listing the result JSON, or pass "
+                    f"--input-json <path> directly instead of --shard-manifest.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            shard_paths = [
+                Path(p.strip())
+                for p in manifest_path.read_text(encoding="utf-8").splitlines()
+                if p.strip()
+            ]
+            records: list[dict] = []
+            for sp in shard_paths:
+                if not sp.exists():
+                    print(f"  WARNING: shard file not found, skipping: {sp}", file=sys.stderr)
+                    continue
+                print(f"  Loading shard: {sp.name} …")
+                records.extend(_load_records_from_json(sp, args.experiment))
+            print(f"  {len(records)} total records loaded from {len(shard_paths)} shard(s).")
 
     elif input_json_path is not None:
         # Single-file mode: --merged-json (legacy) or --input-json (NSHARDS=1 / CI direct).
