@@ -307,6 +307,12 @@ jobs:
 
       - name: Run statistical analysis
         if: matrix.experiment != 'instability'
+        # continue-on-error: run_analysis.py writes _analysis.json even on fatal
+        # conditions, then exits nonzero.  We must NOT hard-fail here — Commit
+        # analysis outputs needs to run so the report is always saved, and Abort
+        # on fatal conditions is the single, consistent exit gate for the job.
+        continue-on-error: true
+        id: run_analysis
         env:
           EXP:         ${{ matrix.experiment }}
           SUB:         ${{ steps.meta.outputs.result_subdir }}
@@ -325,6 +331,10 @@ jobs:
 
       - name: Verify analysis outputs
         if: matrix.experiment != 'instability'
+        # continue-on-error: a missing or malformed _analysis.json is reported
+        # by Abort on fatal conditions as a hard fatal; failing here would skip
+        # Commit and prevent the report from being saved.
+        continue-on-error: true
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
@@ -368,6 +378,10 @@ jobs:
           fi
 
       # ── Abort on hard fatal conditions (after commit so report is always saved) ─
+      # This is the SINGLE exit gate for the job.  All prior steps that can
+      # produce fatal conditions use continue-on-error: true so execution always
+      # reaches here.  Missing _analysis.json (run_analysis.py hard-crashed) is
+      # treated as a hard fatal to keep the failure mode consistent.
       - name: Abort on fatal conditions
         env:
           SUB: ${{ steps.meta.outputs.result_subdir || 'figures' }}
@@ -380,8 +394,13 @@ jobs:
           path     = f"{out_base}/{sub}/_analysis.json"
 
           if not os.path.exists(path):
-              print("No _analysis.json found; skipping fatal-condition check.")
-              sys.exit(0)
+              print(f"::error::Fatal conditions detected (1):")
+              print(f"  1. ANALYSIS_OUTPUT_MISSING: _analysis.json not found at {path}.")
+              print(f"     run_analysis.py may have crashed before writing outputs.")
+              print()
+              print("Review workflow logs for the 'Run statistical analysis' step.")
+              print("To re-run: use workflow_dispatch with the same experiment.")
+              sys.exit(1)
 
           analysis = json.load(open(path))
           fatal    = analysis.get("fatal_conditions", [])
