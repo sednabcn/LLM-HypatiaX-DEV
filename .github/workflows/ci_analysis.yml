@@ -547,6 +547,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # ── Pre-flight: validate env vars before handing off to Python ────────
+          # INPUT_MODE is always set by "Locate analysis input"; an empty value
+          # means that step was skipped or failed silently.
+          if [[ -z "${INPUT_MODE:-}" ]]; then
+            echo "::error::INPUT_MODE is not set — 'Locate analysis input' step may have failed."
+            exit 1
+          fi
+
+          case "$INPUT_MODE" in
+            merged|direct)
+              if [[ -z "${INPUT_JSON:-}" ]]; then
+                echo "::error::INPUT_MODE=${INPUT_MODE} but INPUT_JSON is not set or empty."
+                exit 1
+              fi
+              if [[ ! -f "$INPUT_JSON" ]]; then
+                echo "::error::INPUT_JSON='${INPUT_JSON}' does not exist or is not a file."
+                exit 1
+              fi
+              ;;
+            shards)
+              if [[ -z "${SHARD_MANIFEST:-}" ]]; then
+                echo "::error::INPUT_MODE=shards but SHARD_MANIFEST is not set or empty."
+                exit 1
+              fi
+              # Path("") → Path(".") is the exact crash we saw; catch it here
+              # before Python touches it.
+              if [[ ! -f "$SHARD_MANIFEST" ]]; then
+                echo "::error::SHARD_MANIFEST='${SHARD_MANIFEST}' is not a file (got a directory or missing path)."
+                echo "         Resolved: $(realpath "${SHARD_MANIFEST}" 2>/dev/null || echo 'could not resolve')"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown INPUT_MODE='${INPUT_MODE}'. Expected: merged | direct | shards"
+              exit 1
+              ;;
+          esac
+
+          echo "Pre-flight OK: INPUT_MODE=${INPUT_MODE}"
+
+          # ── Delegate record-counting to Python ────────────────────────────────
           # Logic lives in .github/scripts/validate_analysis_input.py —
           # reads INPUT_MODE / INPUT_JSON / SHARD_MANIFEST from the environment.
           # Valid INPUT_MODE values: merged | direct | shards
