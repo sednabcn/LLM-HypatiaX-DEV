@@ -662,33 +662,25 @@ jobs:
           }
 
           # Verify _analysis.json is valid JSON and contains required top-level keys.
-          # FIX: switched from python3 -c '...' (single-quoted) to heredoc.
-          # Inside single quotes, backslash escapes like \" are NOT processed by
-          # the shell, so Python received literal backslash-quote sequences and
-          # raised: SyntaxError: unexpected character after line continuation character.
-          python3 << 'PYEOF'
-import json, os, sys
-path = os.environ["RESULT_DIR"] + "/_analysis.json"
-try:
-    d = json.load(open(path))
-except Exception as e:
-    print(f"::error::_analysis.json is not valid JSON: {e}")
-    sys.exit(1)
-required = ("experiment", "experiment_mode", "n_total", "fatal_conditions")
-missing  = [k for k in required if k not in d]
-if missing:
-    print(f"::error::_analysis.json missing required keys: {missing}")
-    sys.exit(1)
-hard = [c for c in d["fatal_conditions"]
-        if not (c.startswith("INFO_") or c.startswith("WARN_"))]
-soft = len(d["fatal_conditions"]) - len(hard)
-print(
-    f"_analysis.json OK: experiment={d['experiment']}, mode={d['experiment_mode']}, "
-    f"n_total={d['n_total']}, fatal_conditions={len(d['fatal_conditions'])} "
-    f"({len(hard)} hard, {soft} soft)"
-)
-PYEOF
-
+          # FIX: use printf to write checker script (avoids heredoc/multiline python3 -c,
+          # both of which produce unindented lines that YAML parses as mapping keys).
+          printf '%s\n' \
+            'import json, os, sys' \
+            'path = os.environ["RESULT_DIR"] + "/_analysis.json"' \
+            'try:' \
+            '    d = json.load(open(path))' \
+            'except Exception as e:' \
+            '    print("::error::_analysis.json is not valid JSON: " + str(e)); sys.exit(1)' \
+            'required = ("experiment","experiment_mode","n_total","fatal_conditions")' \
+            'missing = [k for k in required if k not in d]' \
+            'if missing:' \
+            '    print("::error::_analysis.json missing required keys: " + str(missing)); sys.exit(1)' \
+            'hard = [c for c in d["fatal_conditions"] if not (c.startswith("INFO_") or c.startswith("WARN_"))]' \
+            'soft = len(d["fatal_conditions"]) - len(hard)' \
+            'exp,mode,n,nf = d["experiment"],d["experiment_mode"],d["n_total"],len(d["fatal_conditions"])' \
+            'print(f"_analysis.json OK: experiment={exp}, mode={mode}, n_total={n}, fatal_conditions={nf} ({len(hard)} hard, {soft} soft)")' \
+            > /tmp/_verify_analysis.py
+          python3 /tmp/_verify_analysis.py
           echo
           echo "=== OUTPUTS ==="
           ls -lh "$REPORT_MD" "$ANALYSIS_JSON"
