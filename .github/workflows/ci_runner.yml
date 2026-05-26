@@ -67,6 +67,7 @@ on:
           - exp1
           - exp1b
           - exp2_feynman
+          - exp2_feynman_extrap
           - exp2
           - exp3
           - exp3b
@@ -355,7 +356,8 @@ jobs:
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              4,
-              "exp2_feynman":       1,
+              "exp2_feynman":        1,
+              "exp2_feynman_extrap": 1,
               "exp2":               1,
               "exp3":               1,
               "exp3b":              4,
@@ -464,7 +466,9 @@ jobs:
               "exp1":              DEFI_TASKS,
               "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
               # exp2_feynman: shard by feynman domain keys (BenchmarkProtocol, benchmark=feynman)
-              "exp2_feynman":      FEYNMAN_DOMAINS,
+              "exp2_feynman":       FEYNMAN_DOMAINS,
+              # exp2_feynman_extrap: same 11-domain split, generates extrap_r2_far for Mann-Whitney
+              "exp2_feynman_extrap": FEYNMAN_DOMAINS,
               # exp2: shard by ExperimentProtocolAll domain keys (--protocol all30)
               "exp2":              EXP2_DOMAINS,
               "exp3":              [f"{eq}_seed{s}" for eq in NGUYEN12 for s in SEEDS],
@@ -938,7 +942,7 @@ jobs:
       #   2. Merges extrap_r2_far into benchmark_results to produce ablation_paired.json
       # ablation_paired.json is the input that run_analysis.py (ablation mode) reads.
       - name: Run extrapolation evaluation (exp2_feynman only)
-        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman' && steps.resolve_ids.outputs.has_work == 'true' }}
+        if: ${{ (needs.plan.outputs.exp_id == 'exp2_feynman' || needs.plan.outputs.exp_id == 'exp2_feynman_extrap') && steps.resolve_ids.outputs.has_work == 'true' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
