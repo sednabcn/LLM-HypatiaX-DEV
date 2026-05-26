@@ -1,83 +1,1099 @@
 
-# HypatiaX Analysis Report — `exp2_feynman` (RF09 Feynman n=30)
+# HypatiaX Analysis Report — `exp2_feynman`
 
-Experiment mode: **ablation** | N equations: 1166
-Tier-1 (all-N) pairs: 0 | Tier-2 (excl-train-fail) pairs: 0 | Tier-3 (extrap R²≥0.99) pairs: 0 | Skipped: 0
+Experiment mode: **standard**
+N total: 1166 | N standard: 1166 | N intractable: 0
+R² success threshold: 0.8
 
-## ⚠️ Fatal Conditions
-
-- **WRONG_SCHEMA_FOR_ABLATION: exp2_feynman requires paired extrapolation records with hypatia.extrap_r2_far and pysr_only.extrap_r2_far, but the committed results are flat per-method benchmark records (keys: ['domain', 'formula', 'method', 'r2', 'rmse', 'runtime', 'success', 'test']). The workers must rerun with the extrapolation evaluation step enabled. See run_analysis.py EXPERIMENT_MODE['ablation'] docstring for the required record schema.**
-
-## A. Primary Result — Three-Tier MW Framing (§10.7)
-
-**Tier 1 (all-N):** Expected non-significant — 21 discovery failures add variance. Report with explicit framing: 'not significant; expected given 21 failures.' 
-
-**Tier 2 (excl-train-fail):** Excludes equations where HypatiaX train R²<0. Intermediate result; shows signal strengthens once degenerate outputs removed. 
-
-**Tier 3 (success-subset, R²≥0.99):** The paper's primary claim (§10.7). Restricts to equations where HypatiaX achieved symbolic recovery. This is the publishable result — it answers whether symbolic recovery produces a qualitatively different extrapolation regime, not whether HypatiaX always wins.
-
-  Tier 1 — All-N: N/A (early exit)
-  Tier 2 — Excl-train-fail (train R²≥0): N/A (early exit)
-  Tier 3 — Success-subset (extrap R²≥0.99) ★: N/A (early exit)
-_** = p_one < 0.05  |  ★ = primary paper claim_
-
-### Win / Loss by Tier
-
-| Split | HypatiaX wins | PySR wins | Tied | N pairs |
-|-------|---------------|-----------|------|---------|
-| Tier 1 — All-N | 0 | 0 | 0 | 0 |
-| Tier 2 — Excl-train-fail | 0 | 0 | 0 | 0 |
-| Tier 3 — Success-subset ★ | 0 | 0 | 0 | 0 |
-
-## B. Failure Analysis (0 equations — degenerate PySR, train R² < 0)
-
-_None — all equations have hypatia train R² ≥ 0._
-
-### Domain Stratification
+## ✅ No Fatal Conditions
 
 
-### Fisher's Exact Test — Failure Cluster Non-Randomness
+## Method Summary (standard equations only)
 
-N/A (early exit)
+| Method | N | Success% (flag) | R²≥0.80% | Median test R² | Mean test R² |
+|--------|---|-----------------|----------|----------------|--------------|
+| Pure LLM | 146 | 99.3% | 97.2% | 1.0000 | 0.9085 |
+| Neural Net | 146 | 100.0% | 99.3% | 0.9999 | 0.9960 |
+| Hybrid | 986 | 100.0% | 99.9% | 1.0000 | 0.9994 |
 
-## C. Scale / Magnitude Sensitivity
+## Mann-Whitney U Tests (two-sided, clipped R², standard equations)
 
-Spearman correlation between `scale_log` (log₁₀ of smallest constant magnitude) and HypatiaX performance. Positive ρ means larger-scale constants → better results.
-  scale_log vs train R²: N/A (early exit)
-  scale_log vs far R²: N/A (early exit)
-scale_log available for 0 equations.
-_** = p < 0.05. N/A if scale_log field absent from records._
 
-## D. Expression Complexity — Success vs Failure
+### Hybrid vs Pure LLM
 
-| Group | N | Min | Max | Mean | Median | IQR |
-|-------|---|-----|-----|------|--------|-----|
-| HypatiaX successes | 0 | N/A | N/A | N/A | N/A | N/A |
-| HypatiaX failures | 0 | N/A | N/A | N/A | N/A | N/A |
-| HypatiaX all | 0 | N/A | N/A | N/A | N/A | N/A |
-| PySR-only all | 0 | N/A | N/A | N/A | N/A | N/A |
+  U=32342.0,  p=0.0000**,  direction=b_greater,  n=(986, 145)
+
+### Hybrid vs Neural Net
+
+  U=123514.0,  p=0.0000**,  direction=a_greater,  n=(986, 146)
+
+### Neural Net vs Pure LLM
+
+  U=4121.0,  p=0.0000**,  direction=b_greater,  n=(146, 145)
 _** = p < 0.05_
 
-## F. Train-R² Threshold Sweep — Robustness of Inclusion Cutoff
+## Hybrid vs Neural Net (head-to-head, equation level)
 
-MW p_one at each train-R² inclusion threshold. A robust result stays significant across a range near 0.
-_No sweep data._
+Equations with both finite R²: 146
+Hybrid wins:  136  (93.2%)
+NN wins:      10
+Tied:         0
 
-## G. Leave-One-Out Sensitivity — Failure Equations
+## Coverage Gaps (1022 equations with best R² < 0.8)
 
-All-N MW re-run with each failure equation removed. Shows how much each discovery failure masks the signal.
-_No LOO data (no failure equations or scipy unavailable)._
+| Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
+|----------|------------|------|---------|-----|----|----|
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| Molecular viscosity from physicochemical props | None | None | N/A | N/A | 0.9986 | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 1.0000 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9999 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 1.0000 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 1.0000 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9998 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 1.0000 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9999 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 1.0000 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 1.0000 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 1.0000 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9988 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 1.0000 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 1.0000 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 1.0000 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 1.0000 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9996 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9988 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 1.0000 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 1.0000 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 1.0000 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 1.0000 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9999 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 1.0000 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 1.0000 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 1.0000 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 1.0000 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 1.0000 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 1.0000 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9981 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9995 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9976 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9977 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9979 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9971 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9979 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9979 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9975 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9973 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9979 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9983 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9988 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9980 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9979 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9981 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9981 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9981 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9981 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9974 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9975 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9976 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9976 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9975 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9975 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9949 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9975 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9970 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9973 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9976 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9971 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9976 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9941 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9976 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9974 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9972 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9975 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9976 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9975 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9976 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Arrhenius rate constant (Feynman variant) | None | None | 0.7717 | 0.7385 | 0.7555 | 0.7717 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9978 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9979 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9976 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9972 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9979 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9979 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9972 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9976 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9977 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9972 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9976 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9978 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9955 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9977 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9972 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9976 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9977 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9974 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9977 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
+| Michaelis-Menten enzyme kinetics | None | None | N/A | N/A | N/A | 0.9973 |
+| Logistic growth rate | None | None | N/A | N/A | N/A | 0.9977 |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | 0.9977 |
+| Arrhenius rate constant (Feynman variant) | None | None | N/A | N/A | N/A | 0.9977 |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | 1.0000 |
+| Nernst equation for electrode potential | None | None | N/A | N/A | N/A | 1.0000 |
+| Clausius-Mossotti | None | None | N/A | N/A | N/A | 1.0000 |
+| Dielectric polarisation | None | None | N/A | N/A | N/A | 1.0000 |
+| Lorentz force on moving charge in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Ohm's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Energy stored in a capacitor | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | 1.0000 |
+| Coulomb's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Curie's law for magnetic susceptibility | None | None | N/A | N/A | N/A | 1.0000 |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | 1.0000 |
+| Kinetic energy (classical) | None | None | N/A | N/A | N/A | 1.0000 |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | 1.0000 |
+| Total mechanical energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Snell's law | None | None | N/A | N/A | N/A | 1.0000 |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | 1.0000 |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | 1.0000 |
+| Photon energy | None | None | N/A | N/A | N/A | 0.9977 |
+| Zeeman energy | None | None | N/A | N/A | N/A | 1.0000 |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | 0.9980 |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | 1.0000 |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | 1.0000 |
+| Planck blackbody spectral radiance (dimensionless | None | None | N/A | N/A | N/A | 0.9978 |
+| Fourier's law of heat conduction | None | None | N/A | N/A | N/A | 1.0000 |
+| Stefan-Boltzmann law | None | None | N/A | N/A | N/A | 1.0000 |
+| Ideal gas law | None | None | N/A | N/A | N/A | 1.0000 |
 
-## Skipped from MW (0 equations)
+## R²≥0.80 Rate by Difficulty
 
-_None._
+| Difficulty | N | LLM R²≥0.80 | NN R²≥0.80 | Hybrid R²≥0.80 |
+|------------|---|-------------|------------|----------------|
+| unknown | 146 | 97.2% | 99.3% | 99.9% |
 
-## Instability Index (1 − extrap_r2_far; None→0.0; unclamped)
+## Median Test R² by Formula Type
 
+| Formula Type | N | LLM median R² | NN median R² | Hybrid median R² |
+|--------------|---|---------------|--------------|------------------|
+| unknown | 146 | 1.0000 | 0.9999 | 1.0000 |
 
-## Wall-clock Timing
+## Extrapolation Gap (train R² − test R²)
 
-| Method | Mean (s) | Median (s) | N |
+| Method | Mean gap | Median gap | N |
 |--------|----------|------------|---|
-| HypatiaX | N/A | N/A | 0 |
-| PySR-only | N/A | N/A | 0 |
+| Pure LLM | N/A | N/A | 0 |
+| Neural Net | N/A | N/A | 0 |
+| Hybrid | N/A | N/A | 0 |
+
+## Wall-clock Timing (standard equations)
+
+| Method | Mean (s) | Median (s) | Total (s) | N |
+|--------|----------|------------|-----------|---|
+| Pure LLM | 6.6190 | 7.8310 | 966.37 | 146 |
+| Neural Net | 1.8690 | 1.3346 | 272.88 | 146 |
+| Hybrid | 5.5647 | 6.5394 | 5486.8 | 986 |
+
+## Hybrid Routing Decisions
+
+_No hybrid decision data available._
