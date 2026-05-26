@@ -67,15 +67,18 @@ on:
           - exp1
           - exp1b
           - exp2_feynman
-          - exp2_feynman_extrap
           - exp2
           - exp3
           - exp3b
           - suppA
           - suppB
+          ## <- FIX CRITICAL 2: added to dispatch menu
           - suppB_sc
+          ## <- FIX CRITICAL 1: renamed from instability
           - hybrid_all_domains
+          ## <- STEP 4a: Instability Index S10.9 (run_instability_suite.py)
           - instability
+          ## <- STEP 3: all-domains OOD extrapolation (Tab 9 OOD)
           - extrap
         default: exp2_feynman
 
@@ -220,16 +223,6 @@ jobs:
               DEFAULT_SEEDS="42"
               ;;
 
-            # exp2_feynman_extrap: writes protocol_core_extrap_*.json into the
-            # same feynman-tests/exp2 dir as exp2_feynman, distinguished by the
-            # 'extrap' prefix.  Must run AFTER exp2_feynman (dep declared in catalogue).
-            exp2_feynman_extrap)
-              SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
-              NEEDS_JULIA=true
-              RESULT_SUBDIR="comparison_results/feynman-tests/exp2"
-              DEFAULT_SEEDS="42"
-              ;;
-
             exp2)
               SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
               NEEDS_JULIA=true
@@ -268,14 +261,14 @@ jobs:
               # TASK-6 FIX: resolve NEEDS_JULIA at runtime by inspecting the script
               # rather than assuming false.  If juliacall/PySR is imported, the worker
               # must have Julia installed or methods 5/6 will crash silently with N/A.
-              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${{ github.workspace }}/${SCRIPT}" 2>/dev/null; then
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${SCRIPT}" 2>/dev/null; then
                 NEEDS_JULIA=true
                 echo "::notice::suppB: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
               else
                 NEEDS_JULIA=false
                 echo "suppB: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
               fi
-              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep/noise-sweep"
+              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
               DEFAULT_SEEDS="42"
               ;;
 
@@ -304,7 +297,7 @@ jobs:
             suppB_sc)
               SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
               # TASK-6 FIX: resolve NEEDS_JULIA at runtime (same guard as suppB).
-              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${{ github.workspace }}/${SCRIPT}" 2>/dev/null; then
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${SCRIPT}" 2>/dev/null; then
                 NEEDS_JULIA=true
                 echo "::notice::suppB_sc: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
               else
@@ -362,8 +355,7 @@ jobs:
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              4,
-              "exp2_feynman":        1,
-              "exp2_feynman_extrap": 1,
+              "exp2_feynman":       1,
               "exp2":               1,
               "exp3":               1,
               "exp3b":              4,
@@ -472,9 +464,7 @@ jobs:
               "exp1":              DEFI_TASKS,
               "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
               # exp2_feynman: shard by feynman domain keys (BenchmarkProtocol, benchmark=feynman)
-              "exp2_feynman":       FEYNMAN_DOMAINS,
-              # exp2_feynman_extrap: same 11-domain split, generates extrap_r2_far for Mann-Whitney
-              "exp2_feynman_extrap": FEYNMAN_DOMAINS,
+              "exp2_feynman":      FEYNMAN_DOMAINS,
               # exp2: shard by ExperimentProtocolAll domain keys (--protocol all30)
               "exp2":              EXP2_DOMAINS,
               "exp3":              [f"{eq}_seed{s}" for eq in NGUYEN12 for s in SEEDS],
@@ -757,7 +747,7 @@ jobs:
           mkdir -p \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2" \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi" \
-            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
+            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep" \
             "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
             "${OUT_BASE}/comparison_results/noise-noiseless/noiseless/defi" \
             "${OUT_BASE}/comparison_results/noise-noiseless/15" \
@@ -923,63 +913,406 @@ jobs:
           # Ensure log dir exists before run_all.sh tries to tee into it.
           mkdir -p "${OUT_BASE}"
 
-          # Delegate to run_all.sh which contains the full per-experiment logic.
-          # Environment variables are already set in the step env block above;
-          # we additionally export TASK_IDS, SHARD_IDS, and SHARD as aliases
-          # that run_all.sh and its sub-scripts expect.
-          TASK_IDS="${TASK_IDS}" \
-          SHARD_IDS="${TASK_IDS}" \
-          SHARD="${SHARD_INDEX}" \
-          RESULTS_DIR="${RESULTS_DIR}" \
-          OUT_BASE="${RESULTS_DIR}" \
-          REPO_ROOT="${{ github.workspace }}" \
-          DEFI_SEEDS="${EFFECTIVE_SEEDS}" \
-          EXPERIMENT_SEED="${PYSR_SEED}" \
-          DOMAIN_FILTER="${TASK_IDS}" \
-            bash run_all.sh --step "${EXP}"
+          case "${EXP}" in
 
-      # ── exp2_feynman: extrapolation evaluation step ──────────────────────────
-      # The main run (run_all.sh --step exp2_feynman) produces benchmark_results.json
-      # with {r2, success} but NO extrap_r2_far field.
-      # run_analysis.py (ablation mode) requires paired hypatia.extrap_r2_far /
-      # pysr_only.extrap_r2_far for every equation to run the Mann-Whitney test.
-      # This step calls merge_extrap_into_benchmark.py which:
-      #   1. Runs run_comparative_suite_benchmark_v2.py --extrap to get far-region R²
-      #   2. Merges extrap_r2_far into benchmark_results to produce ablation_paired.json
-      # ablation_paired.json is the input that run_analysis.py (ablation mode) reads.
-      - name: Run extrapolation evaluation (exp2_feynman only)
-        if: ${{ contains(fromJSON('["exp2_feynman","exp2_feynman_extrap"]'), needs.plan.outputs.exp_id) && steps.resolve_ids.outputs.has_work == 'true' }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
-          RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
-          REPRO_CFG:         ${{ env.REPRO_CFG }}
-        run: |
-          set -euo pipefail
-          export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
-          TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
-          mkdir -p "${TARGET}"
+            exp1)
+              # FIX: replaced TOY stub (which did exit 1) with the real run_all.sh
+              # invocation, matching ci_experiment.yml.  RESULTS_DIR is passed as an
+              # absolute path (same pattern as exp1b below) so run_all.sh resolves it
+              # from workspace root regardless of any cd inside the script.
+              TASK_IDS="${TASK_IDS}" \
+              SHARD_IDS="${TASK_IDS}" \
+              PYSR_SEED="${PYSR_SEED}" \
+              FEYNMAN_DOMAINS="" \
+                bash run_all.sh --step exp1
+              # -- exp1 post-run file scan: confirm where outputs landed -----------
+              echo "=== exp1 post-run file scan (repo-root-relative) ==="
+              find . -maxdepth 8 \( \
+                -name "hypatiax_defi_benchmark_v3*results*.json" -o \
+                -name "protocol_core_noiseless_*.json"           -o \
+                -name "defi_v3_*.json" \
+              \) 2>/dev/null | sort || true
+              echo "=== end scan ==="
+              ;;
 
-          echo "=== exp2_feynman: extrapolation step ==="
-          echo "  Target: ${TARGET}"
+            exp1b)
+              # ITEM 3 FIX: pass RESULTS_DIR as an absolute path so run_all.sh always
+              # resolves it from workspace root, regardless of any cd inside the script.
+              TASK_IDS="${TASK_IDS}" \
+              SHARD_IDS="${TASK_IDS}" \
+              DEFI_SEEDS="${EFFECTIVE_SEEDS}" \
+              DEFI_TASK_FILTER="Portfolio" \
+              PYSR_SEED="${PYSR_SEED}" \
+              FEYNMAN_DOMAINS="" \
+                bash run_all.sh --step exp1b
+              # -- exp1b post-run file scan: mirrors exp1 ghost-file diagnostic ----
+              # Shows exactly where hypatiax_defi_benchmark_v3c.py (portfolio mode)
+              # wrote its outputs so path mismatches are visible in the step log.
+              echo "=== exp1b post-run file scan (repo-root-relative) ==="
+              find . -maxdepth 8 \( \
+                -name "comparison_FIXED_*.json" -o \
+                -name "comparison_FIXED_*.txt"  -o \
+                -name "defi_v3_*.json"           -o \
+                -name "*portfolio*variance*.json" \
+              \) 2>/dev/null | sort || true
+              echo "=== end scan ==="
+              ;;
 
-          # Call run_all.sh with the dedicated extrapolation step for exp2_feynman.
-          # run_all.sh --step exp2_feynman_extrap should invoke the same script
-          # with --extrap --benchmark feynman, writing extrap_r2_far into results.
-          # If run_all.sh does not yet have this step, fall back to direct invocation.
-          if grep -q "exp2_feynman_extrap" run_all.sh 2>/dev/null; then
-            TASK_IDS="$(python3 -c "import json,os; print(' '.join(json.loads(os.environ['PENDING_IDS'])))")"             SHARD_IDS="${TASK_IDS}"             SHARD="${SHARD_INDEX}"             RESULTS_DIR="${RESULTS_DIR}"             OUT_BASE="${RESULTS_DIR}"             REPO_ROOT="${{ github.workspace }}"             DOMAIN_FILTER="${TASK_IDS}"               bash run_all.sh --step exp2_feynman_extrap || true
-          else
-            echo "::warning::run_all.sh has no exp2_feynman_extrap step."
-            echo "  Add --step exp2_feynman_extrap to run_all.sh that invokes:"
-            echo "  run_comparative_suite_benchmark_v2.py --extrap --benchmark feynman"
-            echo "  This step produces extrap_r2_far fields needed by run_analysis.py."
-          fi
+            exp2_feynman)
+              # BUG 1 + BUG 4 FIX:
+              # Previous: called `bash run_all.sh --step exp2_feynman` which set
+              # SHARD_IDS in env but never passed --domain to the script, so every
+              # shard ran ALL 11 Feynman domains (44 domain-runs instead of 11).
+              # Previous: did not pass --output-dir, so results landed in the
+              # default comparison_results/ path rather than RESULT_SUBDIR.
+              #
+              # Fix: read domain IDs from SHARD_IDS JSON, loop per-domain,
+              # pass --domain and --output-dir explicitly on every invocation.
+              # All 6 methods active (--skip-pysr removed): methods 5+6 (SymbolicEngine,
+              # HybridV50_2) now run with METHOD_TIMEOUT (900s) for full PySR budget.
+              python3 -c 'import json,os; [print(d) for d in json.loads(os.environ["SHARD_IDS"])]' > /tmp/domain_list.txt
+              while IFS= read -r DOMAIN_ID; do
+                [[ -z "${DOMAIN_ID}" ]] && continue
+                echo "=== exp2_feynman: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
+                TASK_IDS="${DOMAIN_ID}" \
+                SHARD_IDS="${DOMAIN_ID}" \
+                FEYNMAN_SAMPLES="${FEYNMAN_SAMPLES}" \
+                FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
+                METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
+                PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
+                PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
+                JOB_DEADLINE="${JOB_DEADLINE}" \
+                  python3 "${SCRIPT_PATH}" \
+                    --benchmark feynman \
+                    --domain "${DOMAIN_ID}" \
+                    --samples "${FEYNMAN_SAMPLES}" \
+                    --pysr-timeout "${FEYNMAN_TIMEOUT}" \
+                    --method-timeout "${METHOD_TIMEOUT}" \
+                    --populations "${PYSR_POPULATIONS}" \
+                    --parsimony 0.01 \
+                    --noiseless \
+                    --threshold "${FEYNMAN_NOISELESS_THRESHOLD}" \
+                    --checkpoint-name "feynman_exp2_checkpoint_${DOMAIN_ID}" \
+                    --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
+                    --resume \
+                  || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
+              done < /tmp/domain_list.txt
+              # -- Partial results summary ------------------------------------------
+              echo "--- exp2_feynman partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
+              echo "--- end exp2_feynman partial results ---"
+              ;;
 
-          # Merge extrap_r2_far values into benchmark_results to produce
-          # ablation_paired.json — the schema analyse_ablation() expects.
-          python3 .github/scripts/merge_extrap_into_benchmark.py             --benchmark-dir "${TARGET}"             --extrap-dir    "${TARGET}"             --output        "${TARGET}/ablation_paired.json"             && echo "  ablation_paired.json written."             || echo "::warning::merge_extrap_into_benchmark.py not found — add to .github/scripts/"
+            exp2)
+              # BUG 2 + BUG 4 FIX:
+              # Previous: passed --protocol all30 which does not exist in the script's
+              # argparse -> SystemExit(2) crash at startup on every worker.
+              # Previous: SHARD_IDS domain names were exported as env vars but the
+              # script had no way to consume them (no --domain loop).
+              # Previous: --output-dir not passed -> results in wrong directory.
+              #
+              # Fix: use --benchmark both (runs both Feynman + SRBench protocols,
+              # which is exp2's intent), loop per-domain from SHARD_IDS, and pass
+              # --output-dir so outputs land in the expected RESULT_SUBDIR path.
+              python3 -c 'import json,os; [print(d) for d in json.loads(os.environ["SHARD_IDS"])]' > /tmp/domain_list.txt
+              while IFS= read -r DOMAIN_ID; do
+                [[ -z "${DOMAIN_ID}" ]] && continue
+                echo "=== exp2: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
+                TASK_IDS="${DOMAIN_ID}" \
+                SHARD_IDS="${DOMAIN_ID}" \
+                FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
+                METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
+                PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
+                PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
+                JOB_DEADLINE="${JOB_DEADLINE}" \
+                  python3 "${SCRIPT_PATH}" \
+                    --benchmark both \
+                    --domain "${DOMAIN_ID}" \
+                    --samples "${FEYNMAN_SAMPLES}" \
+                    --pysr-timeout "${FEYNMAN_TIMEOUT}" \
+                    --method-timeout "${METHOD_TIMEOUT}" \
+                    --populations "${PYSR_POPULATIONS}" \
+                    --parsimony 0.01 \
+                    --use-transcendental-compositions \
+                    --noiseless \
+                    --threshold 0.9999 \
+                    --checkpoint-name "exp2_checkpoint_${DOMAIN_ID}" \
+                    --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
+                    --resume \
+                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/exp2_shard${SHARD_INDEX}_run${GITHUB_RUN_ID}.log" \
+                  || echo "WARNING: domain ${DOMAIN_ID} exited non-zero — continuing"
+              done < /tmp/domain_list.txt
+              # -- Partial results summary ------------------------------------------
+              echo "--- exp2 partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
+              echo "  JSON files: $(find "${RESULTS_DIR}/${RESULT_SUBDIR}" -name '*.json' 2>/dev/null | wc -l)"
+              echo "--- end exp2 partial results ---"
+              ;;
 
+            exp3|exp3b)
+              SEEDS_IN_SHARD=$(python3 -c "import sys; lines=open('/tmp/pending_ids.txt').read().splitlines(); seeds=sorted(set(l.split('_seed')[1] for l in lines if '_seed' in l)); print(' '.join(seeds))")
+              for SEED in ${SEEDS_IN_SHARD}; do
+                SEED_TASK_IDS=$(python3 -c "import sys; lines=open('/tmp/pending_ids.txt').read().splitlines(); ids=[l.split('_seed')[0] for l in lines if l.endswith('_seed${SEED}')]; print(' '.join(ids))")
+                if [[ -z "${SEED_TASK_IDS}" ]]; then
+                  echo "WARNING: no Nguyen IDs for seed=${SEED} - skipping"
+                  continue
+                fi
+                TASK_IDS="${SEED_TASK_IDS}" \
+                SHARD_IDS="${SEED_TASK_IDS}" \
+                PYSR_SEED="${SEED}" \
+                EXPERIMENT_SEED="${SEED}" \
+                RESULTS_DIR="${RESULTS_DIR}" \
+                JOB_DEADLINE="${JOB_DEADLINE}" \
+                  python3 hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py \
+                    --seed "${SEED}"
+              done
+              # -- Partial results summary (mirrors run_all.sh exp3 block) ------
+              # exp3  writes to extrapolation/         (seed=42)
+              # exp3b writes to extrapolation/multi_seed/  (seeds 99/123/777/2024)
+              if [[ "${EXP}" == "exp3b" ]]; then
+                _SUMMARY_DIR="${RESULTS_DIR}/extrapolation/multi_seed"
+              else
+                _SUMMARY_DIR="${RESULTS_DIR}/extrapolation"
+              fi
+              echo "--- ${EXP} partial results (${_SUMMARY_DIR}) ---"
+              echo "  JSON files: $(find "${_SUMMARY_DIR}" -name '*.json' 2>/dev/null | wc -l)"
+              echo "--- end ${EXP} partial results ---"
+              ;;
+
+            suppA)
+              TASK_IDS="${TASK_IDS}" \
+              SHARD_IDS="${TASK_IDS}" \
+              PYSR_SEED="${PYSR_SEED}" \
+              FEYNMAN_DOMAINS="" \
+                bash run_all.sh --step suppA
+              ;;
+
+            suppB)
+              # FIX suppB-DISPATCH: plan task IDs have the form "noise{nl}__{domain}"
+              # e.g. "noise0.0__feynman_biology".  The old per-task loop extracted EQ_ID
+              # as "feynman_biology" (a domain key, not an equation ID) and passed it as
+              # TASK_ID to run_noise_sweep_benchmark.py, which then forwarded it as
+              # "--test feynman_biology" to the inner runner → KeyError / crash.
+              #
+              # Fix: derive the unique set of NOISE_LEVEL values from the pending task
+              # IDs and invoke the script once per noise level, passing NOISE_LEVEL and
+              # DOMAIN_FILTER (space-separated list of feynman domain keys assigned to
+              # this shard).  The script enumerates all equations for each domain itself,
+              # exactly as run_all.sh's suppB step does (OUT_BASE + single invocation).
+              #
+              # DOMAIN_FILTER lets the script restrict to only the domains in this shard
+              # (supporting future multi-shard suppB without re-architecting the loop).
+              #
+              # FIX: unset TASK_ID (singular) before invoking the script.  A stale
+              # TASK_ID in env (set earlier in this step, or inherited) would be read by
+              # run_noise_sweep_benchmark.py's legacy CI block and forwarded as --test
+              # with a domain key, crashing the inner runner.  The env var is no longer
+              # read by the script (the block was removed), but the unset is kept here
+              # as defence-in-depth in case run_comparative_suite_benchmark_v2.py has
+              # its own TASK_ID-reading path.
+              unset TASK_ID
+              DOMAIN_FILTER=$(python3 -c "import sys; tasks=open('/tmp/pending_ids.txt').read().splitlines(); domains=sorted({t.split('__',1)[1] for t in tasks if '__' in t}); print(' '.join(domains))")
+              NOISE_LIST=$(python3 -c "import os; tasks=open('/tmp/pending_ids.txt').read().splitlines(); seen={}; [seen.__setitem__(t.split('__',1)[0].lstrip('noise'),1) for t in tasks]; print(' '.join(seen.keys()))")
+              echo "suppB: noise levels = ${NOISE_LIST}"
+              echo "suppB: domains      = ${DOMAIN_FILTER}"
+              for NL in ${NOISE_LIST}; do
+                echo "=== suppB: NOISE_LEVEL=${NL} shard=${SHARD_INDEX} ==="
+                NOISE_LEVEL="${NL}" \
+                DOMAIN_FILTER="${DOMAIN_FILTER}" \
+                TASK_IDS="${TASK_IDS}" \
+                PYSR_SEED="${PYSR_SEED}" \
+                OUT_BASE="${RESULTS_DIR}" \
+                RESULTS_DIR="${RESULTS_DIR}" \
+                  python3 hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py \
+                  || echo "WARNING: suppB NOISE_LEVEL=${NL} exited non-zero — continuing"
+              done
+              # -- Partial results summary ------------------------------------------
+              echo "--- suppB partial results (${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep) ---"
+              echo "  JSON files: $(find "${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep" -name '*.json' 2>/dev/null | wc -l)"
+              echo "--- end suppB partial results ---"
+              ;;
+
+            # FIX suppB_sc-DISPATCH: plan task IDs have the form "sc_n{n}__{domain}"
+            # e.g. "sc_n200__feynman_biology".  The old per-task loop extracted EQ_ID
+            # as "feynman_biology" (a domain key) and passed it as TASK_ID, causing the
+            # same registry-lookup crash as the suppB bug.  The comment
+            # "sc_n200__I.6.20" was aspirational, not actual — the plan builds IDs from
+            # FEYNMAN_DOMAINS (domain keys), not individual equation IDs.
+            #
+            # Fix: derive SC_SAMPLE_COUNTS and DOMAIN_FILTER from the pending task list
+            # and invoke the script once (all counts in one call), passing SC_SAMPLE_COUNTS
+            # and DOMAIN_FILTER as env vars.  The script enumerates equations per domain
+            # itself, exactly as run_all.sh's suppB_sc step does.
+            #
+            # FIX: unset TASK_ID (singular) — same defence-in-depth as suppB above.
+            suppB_sc)
+              unset TASK_ID
+              DOMAIN_FILTER=$(python3 -c "import sys; tasks=open('/tmp/pending_ids.txt').read().splitlines(); domains=sorted({t.split('__',1)[1] for t in tasks if '__' in t}); print(' '.join(domains))")
+              SC_COUNTS=$(python3 -c "tasks=open('/tmp/pending_ids.txt').read().splitlines(); seen={}; [seen.__setitem__(t.split('__',1)[0][len('sc_n'):],1) for t in tasks]; print(','.join(seen.keys()))")
+              echo "suppB_sc: sample counts = ${SC_COUNTS}"
+              echo "suppB_sc: domains       = ${DOMAIN_FILTER}"
+              NOISE_LEVEL="5.0" \
+              SC_SAMPLE_COUNTS="${SC_COUNTS}" \
+              DOMAIN_FILTER="${DOMAIN_FILTER}" \
+              TASK_IDS="${TASK_IDS}" \
+              PYSR_SEED="${PYSR_SEED}" \
+              OUT_BASE="${RESULTS_DIR}" \
+              RESULTS_DIR="${RESULTS_DIR}" \
+                python3 hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py \
+                || echo "WARNING: suppB_sc exited non-zero"
+              # -- Partial results summary ------------------------------------------
+              echo "--- suppB_sc partial results (${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity) ---"
+              echo "  JSON files: $(find "${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity" -name '*.json' 2>/dev/null | wc -l)"
+              echo "--- end suppB_sc partial results ---"
+              ;;
+
+            # -- STEP 4a: instability -------------------------------------------------
+            # run_instability_suite.py is a pure-analysis script - it reads pre-existing
+            # benchmark JSONs from RESULTS_DIR and writes CSVs + figures to figures/.
+            # TASK_IDS / SHARD_IDS are shard-planning domain names only (amm, risk_var, …);
+            # they are NOT forwarded to the script as --cases (see Fix 2 below).
+            # --benchmark-json is resolved to the most recent DeFi results JSON (Fix 1).
+            instability)
+              # Pre-flight: instability is a post-processing step that reads exp1 output.
+              # If no DeFi results JSON exists yet, exp1 has not completed — exit 0 (skip)
+              # rather than exit 1 so the job does not block the pipeline with a false failure.
+              #
+              # Fix 1 (proper): point find at the canonical exp1 output directory
+              # comparison_results/noise-noiseless/noiseless/defi/ — the dedicated
+              # subdir that RESULT_SUBDIR and move_matching now route exp1 outputs to.
+              # Feynman outputs in adjacent dirs (noiseless/, feynman-tests/, …) are
+              # structurally isolated and can never match this exact path.
+              DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+              DEFI_JSON_COUNT=$(find "${DEFI_DIR}" -maxdepth 1 \
+                -name "hypatiax_defi_benchmark_v3*results*.json" \
+                2>/dev/null | wc -l)
+              if [[ "${DEFI_JSON_COUNT}" -eq 0 ]]; then
+                echo "::warning::instability skipped — no exp1 results found in '${DEFI_DIR}'."
+                echo "  Run the 'exp1' experiment first, then re-trigger 'instability'."
+                exit 0
+              fi
+              BENCH_JSON=$(find "${DEFI_DIR}" -maxdepth 1 \
+                -name "hypatiax_defi_benchmark_v3*results*.json" \
+                2>/dev/null -printf "%T@ %p\n" | sort -rn | head -1 | cut -d' ' -f2-)
+              BENCH_ARG=""
+              if [[ -n "${BENCH_JSON}" ]]; then
+                BENCH_ARG="--benchmark-json ${BENCH_JSON}"
+                echo "[instability] Stage 2 extrapolation merge enabled: ${BENCH_JSON}"
+              else
+                echo "[instability] No benchmark JSON found - Stage 2 (EX figure) skipped."
+              fi
+              # --results-dir points at the canonical exp1 subdir so load_data finds
+              # the DeFi benchmark JSON directly without guessing or dirname tricks.
+              INSTABILITY_DATA_DIR="${DEFI_DIR}"
+              echo "[instability] --results-dir set to: ${INSTABILITY_DATA_DIR}"
+              # Fix 2: --cases is intentionally NOT passed here.
+              # TASK_IDS for the instability experiment are DeFi domain sharding
+              # names (amm, risk_var, liquidity, ...) used by the plan job to
+              # partition work -- they are NOT case-name substrings to filter on.
+              # run_instability_suite.py uses --cases as a substring filter against
+              # whatever load_data loaded; passing DeFi domain names against a
+              # Feynman-sourced dataset (or even a real DeFi dataset with different
+              # case name spelling) yields 0 matches and calls sys.exit(1).
+              # The script must run against all cases in whatever data load_data found.
+              echo "=== instability pre-run: input files in RESULTS_DIR ==="
+              echo "  RESULTS_DIR : ${RESULTS_DIR}"
+              find "${RESULTS_DIR}" -maxdepth 3 -type f | sort || true
+              echo "=== instability pre-run: end ==="
+              RESULTS_DIR="${RESULTS_DIR}" \
+                python3 hypatiax/experiments/benchmarks/run_instability_suite.py \
+                  --results-dir "${INSTABILITY_DATA_DIR}" \
+                  --out         "${RESULTS_DIR}/figures" \
+                  --csv-out     "${RESULTS_DIR}/figures/instability_analysis.csv" \
+                  ${BENCH_ARG} \
+                  --format png pdf
+              INSTABILITY_EXIT=$?
+              echo "=== instability post-run: exit=${INSTABILITY_EXIT} ==="
+              echo "  figures dir contents:"
+              find "${RESULTS_DIR}/figures" -type f | sort || true
+              if [[ "${INSTABILITY_EXIT}" -ne 0 ]]; then
+                echo "::error::run_instability_suite.py exited ${INSTABILITY_EXIT}"
+                exit "${INSTABILITY_EXIT}"
+              fi
+              if [[ ! -f "${RESULTS_DIR}/figures/instability_analysis.csv" ]]; then
+                echo "::error::run_instability_suite.py exited 0 but wrote no instability_analysis.csv"
+                echo "  Check that --results-dir contains the expected input files (see pre-run scan above)."
+                exit 1
+              fi
+              ;;
+
+            # <- FIX CRITICAL 1: renamed case label from "instability" to "hybrid_all_domains"
+            # <- FIX CRITICAL 3: outputs now written to hybrid_llm_nn/all_domains (set in meta)
+            # <- FIX TASK 7: domain list validated in the preceding dedicated step;
+            #               the --domains flag passes this shard's domain subset to
+            #               the script so run_hybrid_test_all_domains() only iterates
+            #               the assigned domains. TASK_IDS / SHARD_IDS are also
+            #               exported for _resolve_domains_from_env() fallback path.
+            hybrid_all_domains)
+              # Bug 1 fix: SHARD_IDS must be a JSON array — the protocol uses
+              # json.loads(os.environ["SHARD_IDS"]) so passing raw space-separated
+              # string produces malformed JSON and matches 0 domains.
+              SHARD_IDS_JSON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1].split()))" "${TASK_IDS}")
+              TASK_IDS="${TASK_IDS}" \
+              SHARD_IDS="${SHARD_IDS_JSON}" \
+              ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+              RESULTS_DIR="${RESULTS_DIR}" \
+                python3 hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py \
+                  --domains ${TASK_IDS} \
+                  --samples "${FEYNMAN_SAMPLES}"
+              ;;
+
+            # -- STEP 3: all-domains OOD extrapolation comparative -----------------
+            # Plan task IDs are FEYNMAN_DOMAINS (e.g. "feynman_biology"), the same
+            # domain registry used by exp2_feynman.  The previous dispatch passed
+            # --domain all_domains hardcoded, which ignored TASK_IDS entirely and
+            # caused every shard to run the full 11-domain set instead of only its
+            # assigned slice.
+            #
+            # FIX extrap-DISPATCH: loop per domain from SHARD_IDS exactly as
+            # exp2_feynman does, passing --domain per invocation so each domain
+            # runs independently with its own checkpoint and output file.
+            extrap)
+              python3 -c 'import json,os; [print(d) for d in json.loads(os.environ["SHARD_IDS"])]' > /tmp/domain_list.txt
+              while IFS= read -r DOMAIN_ID; do
+                [[ -z "${DOMAIN_ID}" ]] && continue
+                echo "=== extrap: domain=${DOMAIN_ID} shard=${SHARD_INDEX} ==="
+                TASK_IDS="${DOMAIN_ID}" \
+                SHARD_IDS="${DOMAIN_ID}" \
+                PYSR_SEED="${PYSR_SEED}" \
+                FEYNMAN_SAMPLES="${FEYNMAN_SAMPLES}" \
+                FEYNMAN_TIMEOUT="${FEYNMAN_TIMEOUT}" \
+                METHOD_TIMEOUT="${METHOD_TIMEOUT}" \
+                PYSR_TIMEOUT="${FEYNMAN_TIMEOUT}" \
+                PYSR_FIT_WALL_TIMEOUT="${PYSR_FIT_WALL_TIMEOUT}" \
+                PYSR_FIT_GRACE_SECS="${PYSR_FIT_GRACE_SECS}" \
+                JOB_DEADLINE="${JOB_DEADLINE}" \
+                RESULTS_DIR="${RESULTS_DIR}" \
+                  python3 hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py \
+                    --benchmark feynman \
+                    --extrap \
+                    --extrap-multiplier 2.0 \
+                    --extrap-train-frac 0.8 \
+                    --domain "${DOMAIN_ID}" \
+                    --samples "${FEYNMAN_SAMPLES}" \
+                    --pysr-timeout "${FEYNMAN_TIMEOUT}" \
+                    --method-timeout "${METHOD_TIMEOUT}" \
+                    --populations "${PYSR_POPULATIONS}" \
+                    --parsimony 0.01 \
+                    --use-transcendental-compositions \
+                    --nn-seeds 3 \
+                    --no-llm-cache \
+                    --checkpoint-name "extrap_checkpoint_${DOMAIN_ID}" \
+                    --output-dir "${RESULTS_DIR}/${RESULT_SUBDIR}" \
+                    2>&1 | tee -a "${RESULTS_DIR}/${RESULT_SUBDIR}/extrap_shard${SHARD_INDEX}_run${GITHUB_RUN_ID}.log" \
+                  || echo "WARNING: extrap domain ${DOMAIN_ID} exited non-zero — continuing"
+              done < /tmp/domain_list.txt
+              # -- Partial results summary ------------------------------------------
+              echo "--- extrap partial results (${RESULTS_DIR}/${RESULT_SUBDIR}) ---"
+              echo "--- end extrap partial results ---"
+              ;;
+
+          esac
+
+
+      # -- DIAGNOSTIC: find where result files actually landed on disk -----------
       - name: Diagnostic - locate result files on disk
         if: always()
         run: |
@@ -987,26 +1320,12 @@ jobs:
           echo "=== github.workspace ===" && echo "${GITHUB_WORKSPACE}"
           echo "=== OUT_BASE ===" && echo "${OUT_BASE}"
           echo "=== OUT_BASE resolved ===" && realpath "${OUT_BASE}" 2>/dev/null || true
-          echo "=== RESULTS_DIR env (from Run experiment tasks step) ==="
-          echo "  RESULTS_DIR in env: ${{ github.workspace }}/${OUT_BASE}"
-          echo "=== OUT_BASE vs RESULTS_DIR equivalence check ==="
-          WS_OUT="${GITHUB_WORKSPACE}/${OUT_BASE}"
-          echo "  Expected RESULTS_DIR: ${WS_OUT}"
-          echo "  Same? $([ "${WS_OUT}" = "${{ github.workspace }}/${{ env.OUT_BASE }}" ] && echo YES || echo NO)"
-          echo "=== ALL *.json files anywhere under GITHUB_WORKSPACE (first 60) ==="
-          find "${GITHUB_WORKSPACE}" -maxdepth 12 \
-            -name "*.json" \
-            ! -path "*/.git/*" \
-            ! -path "*/node_modules/*" \
-            2>/dev/null | sort | head -60 || echo "(none)"
           echo "=== ALL hypatiax_defi_benchmark_v3*results*.json in workspace ==="
           find "${GITHUB_WORKSPACE}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
           echo "=== ALL protocol_core_noiseless_*.json in workspace ==="
           find "${GITHUB_WORKSPACE}" -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
           echo "=== OUT_BASE full tree ==="
           find "${OUT_BASE}" -type f 2>/dev/null | sort || echo "(empty or missing)"
-          echo "=== RESULT_SUBDIR target ==="
-          find "${OUT_BASE}/${RESULT_SUBDIR}" -type f 2>/dev/null | sort || echo "(empty or missing)"
 
       # -- FIX-G5: Safety-net extraction ----------------------------------------
       # Rescues computed results from the per-shard checkpoint into RESULTS_DIR
@@ -1119,38 +1438,6 @@ jobs:
                        -name "$pattern" 2>/dev/null)
           }
 
-          # prune_old: remove previously-committed (git-tracked) result files
-          # matching a glob from a destination directory before the current
-          # run's fresh outputs are moved in.  Without this, timestamp-named
-          # files from past runs accumulate in TARGET on every workflow run
-          # because move_matching only renames exact-name collisions, never
-          # removes older timestamped variants.
-          #
-          # Strategy:
-          #   1. find all files in dest matching the pattern (maxdepth 1).
-          #   2. For each, check git ls-files — only remove if git-tracked
-          #      (i.e. committed by a prior run, not a local-only file that
-          #      another step in this run might still need).
-          #   3. git rm --cached unstages the file; rm -f removes it from disk.
-          #      The subsequent "Commit and push" step will then stage the
-          #      deletion (D) alongside the newly moved files (A), keeping
-          #      the repo tree in sync with exactly one run's outputs.
-          prune_old() {
-            local pattern="$1" dest="$2"
-            local pruned=0
-            while IFS= read -r f; do
-              [[ -f "$f" ]] || continue
-              if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
-                echo "  prune_old: removing stale committed result: $f"
-                git rm --cached --quiet "$f" 2>/dev/null || true
-                rm -f "$f"
-                pruned=$((pruned + 1))
-              fi
-            done < <(find "$dest" -maxdepth 1 -name "$pattern" -type f 2>/dev/null)
-            [[ $pruned -gt 0 ]] && echo "  prune_old: removed ${pruned} stale file(s) matching '${pattern}' from ${dest}"
-            return 0
-          }
-
           case "${EXP}" in
 
             # -- exp1: noiseless DeFi benchmark -------------------------------
@@ -1159,17 +1446,9 @@ jobs:
             #   protocol_core_noiseless_<TS>.json              ← if protocol wrapper used
             #   defi_v3_<TS>.json                              ← legacy name
             # All three patterns are moved so the artifact upload finds them.
-            #
-            # STALE-FILE FIX: prune previously-committed output files from
-            # TARGET before moving in the current run's outputs, so that
-            # timestamp-named files from past runs do not accumulate in the
-            # repo tree (each run should own exactly one result set).
             exp1)
-              prune_old "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
-              prune_old "protocol_core_noiseless_*.json"           "${TARGET}"
-              prune_old "defi_v3_*.json"                           "${TARGET}"
-              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
-              move_matching "protocol_core_noiseless_*.json"           "${TARGET}"
+              move_matching "hypatiax_defi_benchmark_v3*results*.json" "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+              move_matching "protocol_core_noiseless_*.json"           "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
               move_matching "defi_v3_*.json"                           "${RESULTS_DIR}"
               ;;
 
@@ -1179,16 +1458,8 @@ jobs:
             # Rename each file to comparison_FIXED_<TS>_shard<N>_<runid>.json
             # before moving so every shard's output has a unique repo path.
             # The same logic applies to .txt companion files.
-            #
-            # STALE-FILE FIX: prune previously-committed outputs before moving
-            # in the current run's files (same pattern as exp1).
             exp1b)
-              prune_old "comparison_FIXED_*.json"                  "${TARGET}"
-              prune_old "comparison_FIXED_*.txt"                   "${TARGET}"
-              prune_old "hypatiax_defi_benchmark_v3*results*.json" "${TARGET}"
-              prune_old "defi_v3_*.json"                           "${TARGET}"
-              prune_old "*portfolio*variance*.json"                 "${TARGET}"
-              DEST_15="${TARGET}"
+              DEST_15="${RESULTS_DIR}/comparison_results/noise-noiseless/15"
               mkdir -p "${DEST_15}"
               while IFS= read -r src; do
                 [[ -e "$src" ]] || continue
@@ -1212,9 +1483,6 @@ jobs:
             # protocol_core_*_checkpoint.json (one per domain from --checkpoint-name).
             # All are saved to TARGET so the verify step and artifact upload find them.
             exp2_feynman)
-              prune_old "protocol_core_*.json"            "${TARGET}"
-              prune_old "protocol_core_*_checkpoint.json" "${TARGET}"
-              prune_old "benchmark_results.json"          "${TARGET}"
               move_matching "exp2_feynman_checkpoint_shard*.json" "${TARGET}"
               move_matching "exp2_feynman_merged.*"               "${TARGET}"
               move_matching "exp2_feynman_stats.json"             "${TARGET}"
@@ -1226,23 +1494,8 @@ jobs:
               move_matching "feynman_exp2_checkpoint_*.json"      "${TARGET}"
               ;;
 
-            # exp2_feynman_extrap: outputs use protocol_core_extrap_* prefix so they
-            # are distinct from exp2_feynman's protocol_core_*.json files in the same
-            # TARGET dir. prune_old is scoped to the extrap prefix only — never touches
-            # the main exp2_feynman results already committed in this directory.
-            exp2_feynman_extrap)
-              prune_old "protocol_core_extrap_*.json"             "${TARGET}"
-              prune_old "feynman_extrap_checkpoint_*.json"        "${TARGET}"
-              move_matching "protocol_core_extrap_*.json"         "${TARGET}"
-              move_matching "feynman_extrap_checkpoint_*.json"    "${TARGET}"
-              move_matching "exp2_extrap_run.log"                 "${TARGET}"
-              ;;
-
             # -- exp2: multi-seed comparative suite ---------------------------
             exp2)
-              prune_old "protocol_core_*.json"            "${TARGET}"
-              prune_old "protocol_core_*_checkpoint.json" "${TARGET}"
-              prune_old "benchmark_results.json"          "${TARGET}"
               move_matching "exp2_checkpoint_shard*.json"        "${TARGET}"
               move_matching "exp2_merged.*"                      "${TARGET}"
               move_matching "exp2_stats.json"                    "${TARGET}"
@@ -1255,49 +1508,41 @@ jobs:
 
             # -- exp3: Nguyen12 extrapolation (single seed) -------------------
             exp3)
-              prune_old "full_run_*.json"          "${TARGET}"
-              prune_old "report_hybrid_*.json"     "${TARGET}"
-              prune_old "exp3_nguyen12_*.json"     "${TARGET}"
-              prune_old "*nguyen*seed*.json"        "${TARGET}"
-              move_matching "full_run_*.json"          "${TARGET}"
-              move_matching "report_hybrid_*.json"     "${TARGET}"
-              move_matching "hybrid_defi_*.json"       "${TARGET}"
-              move_matching "experiment_registry.json" "${TARGET}"
+              move_matching "full_run_*.json"          "${RESULTS_DIR}/extrapolation"
+              move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation"
+              move_matching "hybrid_defi_*.json"       "${RESULTS_DIR}/extrapolation"
+              move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation"
               # ISSUE 2 FIX: xref lists exp3_nguyen12_*.json and *nguyen*seed*.json as
               # expected outputs (tab:nguyen12) but these were never moved — files stayed
               # at workspace root and were silently lost before artifact upload.
-              move_matching "exp3_nguyen12_*.json"     "${TARGET}"
-              move_matching "*nguyen*seed*.json"       "${TARGET}"
+              move_matching "exp3_nguyen12_*.json"     "${RESULTS_DIR}/extrapolation"
+              move_matching "*nguyen*seed*.json"       "${RESULTS_DIR}/extrapolation"
               ;;
 
             # BUG 2 FIX: exp3b outputs now go to extrapolation/multi_seed to avoid
             # colliding with exp3 outputs in extrapolation/.
             exp3b)
-              prune_old "full_run_*.json"          "${TARGET}"
-              prune_old "report_hybrid_*.json"     "${TARGET}"
-              prune_old "exp3_nguyen12_*.json"     "${TARGET}"
-              prune_old "*nguyen*seed*.json"        "${TARGET}"
-              move_matching "full_run_*.json"          "${TARGET}"
-              move_matching "report_hybrid_*.json"     "${TARGET}"
-              move_matching "hybrid_defi_*.json"       "${TARGET}"
-              move_matching "experiment_registry.json" "${TARGET}"
+              move_matching "full_run_*.json"          "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "report_hybrid_*.json"     "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "hybrid_defi_*.json"       "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "experiment_registry.json" "${RESULTS_DIR}/extrapolation/multi_seed"
               # ISSUE 2 FIX: same missing nguyen globs as exp3 — add them here too.
-              move_matching "exp3_nguyen12_*.json"     "${TARGET}"
-              move_matching "*nguyen*seed*.json"       "${TARGET}"
+              move_matching "exp3_nguyen12_*.json"     "${RESULTS_DIR}/extrapolation/multi_seed"
+              move_matching "*nguyen*seed*.json"       "${RESULTS_DIR}/extrapolation/multi_seed"
               ;;
 
             # -- suppA: hybrid PySR/DeFi benchmark ----------------------------
             # RESULT_SUBDIR=hybrid_pysr/defi (set in meta step) - move must
             # match so the artifact upload and consolidate job find the files.
             suppA)
-              move_matching "consolidated_hybrid_*.json"          "${TARGET}"
+              move_matching "consolidated_hybrid_*.json"          "${RESULTS_DIR}/hybrid_pysr/defi"
               # ISSUE 3 FIX: xref lists hybrid_system*.json and extrapolation_73cases*.json
               # / *73cases*.json as primary suppA outputs (Tab 11-13) but these patterns
               # were missing from the move block — files were never relocated to the
               # canonical subdir and would be absent from the artifact upload.
-              move_matching "hybrid_system*.json"                 "${TARGET}"
-              move_matching "extrapolation_73cases*.json"         "${TARGET}"
-              move_matching "*73cases*.json"                      "${TARGET}"
+              move_matching "hybrid_system*.json"                 "${RESULTS_DIR}/hybrid_pysr/defi"
+              move_matching "extrapolation_73cases*.json"         "${RESULTS_DIR}/hybrid_pysr/defi"
+              move_matching "*73cases*.json"                      "${RESULTS_DIR}/hybrid_pysr/defi"
               move_matching "hybrid_llm_nn_all_domains_*.json"    "${RESULTS_DIR}/hybrid_llm_nn/all_domains"
               move_matching "ablation_exp1_*.json"                "${RESULTS_DIR}"
               move_matching "hypatiax_defi_benchmark_v3_results*" "${RESULTS_DIR}"
@@ -1327,33 +1572,33 @@ jobs:
 
             # -- hybrid_all_domains: LLM+NN all-domains run -------------------
             hybrid_all_domains)
-              move_matching "hybrid_llm_nn_all_domains_*.json" "${TARGET}"
+              move_matching "hybrid_llm_nn_all_domains_*.json" "${RESULTS_DIR}/hybrid_llm_nn/all_domains"
               ;;
 
             # -- instability: instability index figures + CSVs -----------------
             instability)
-              move_matching "instability_analysis.csv"     "${TARGET}"
+              move_matching "instability_analysis.csv"     "${RESULTS_DIR}/figures"
               # ISSUE 5a FIX: instability_extrapolation.csv (Stage 2 output, tab:instability)
               # was never moved — add it alongside instability_analysis.csv.
-              move_matching "instability_extrapolation.csv" "${TARGET}"
+              move_matching "instability_extrapolation.csv" "${RESULTS_DIR}/figures"
               # ISSUE 5b FIX: *.png and *.pdf globs were workspace-wide (maxdepth 8),
               # which risks capturing runner debug images or Julia precompile artifacts.
               # Scope to the canonical figure name stems produced by run_instability_suite.py.
-              move_matching "fig_paper_*.pdf"              "${TARGET}"
-              move_matching "fig_paper_*.png"              "${TARGET}"
-              move_matching "hypatiax_instability_*.pdf"   "${TARGET}"
-              move_matching "hypatiax_instability_*.png"   "${TARGET}"
+              move_matching "fig_paper_*.pdf"              "${RESULTS_DIR}/figures"
+              move_matching "fig_paper_*.png"              "${RESULTS_DIR}/figures"
+              move_matching "hypatiax_instability_*.pdf"   "${RESULTS_DIR}/figures"
+              move_matching "hypatiax_instability_*.png"   "${RESULTS_DIR}/figures"
               ;;
 
             # -- extrap: OOD extrapolation comparative -------------------------
             # Also rescues standalone_llm_nn outputs written by some script variants
             extrap)
-              move_matching "all_domains_extrap_v4_*.json" "${TARGET}"
-              move_matching "all_domains_extrap_v4_*.txt"  "${TARGET}"
+              move_matching "all_domains_extrap_v4_*.json" "${RESULTS_DIR}/comparison_results/extrapolation"
+              move_matching "all_domains_extrap_v4_*.txt"  "${RESULTS_DIR}/comparison_results/extrapolation"
               # ISSUE 4 FIX: xref lists protocol_core_*.json as an extrap output
               # (Tab 9 OOD columns) but this pattern was absent from the move block.
               # The verify step (line ~1840) already checks for it; now actually move it.
-              move_matching "protocol_core_*.json"         "${TARGET}"
+              move_matching "protocol_core_*.json"         "${RESULTS_DIR}/comparison_results/extrapolation"
               move_matching "standalone_llm_nn_*.json"      "${RESULTS_DIR}/standalone_llm_nn"
               move_matching "standalone_real_methods_*.json" "${RESULTS_DIR}/standalone_llm_nn"
               ;;
@@ -1389,27 +1634,6 @@ jobs:
           SRC="${RESULTS_DIR}"
           DEST="${RESULTS_DIR}/${RESULT_SUBDIR}"
           mkdir -p "${DEST}"
-
-          # STALE-FILE FIX: remove previously-committed (git-tracked) JSON/CSV
-          # files from DEST before copying in the current run's outputs.
-          # Without this, every run appends its fresh timestamp-named files on
-          # top of those already committed by prior runs, causing the directory
-          # to grow unboundedly.  Only git-tracked files are removed (files
-          # written earlier in this run but not yet committed are preserved).
-          pruned_store=0
-          while IFS= read -r f; do
-            [[ -f "$f" ]] || continue
-            fname=$(basename "$f")
-            # Never prune merge_shards meta-files — they are intentionally stable.
-            [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
-            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
-              echo "  store prune: removing stale committed file: $f"
-              git rm --cached --quiet "$f" 2>/dev/null || true
-              rm -f "$f"
-              pruned_store=$((pruned_store + 1))
-            fi
-          done < <(find "${DEST}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) 2>/dev/null)
-          [[ $pruned_store -gt 0 ]] && echo "Store results: pruned ${pruned_store} stale committed file(s) from ${DEST}" || true
 
           copied=0
           # One-level scan of OUT_BASE root: pick up any JSON/CSV not already
@@ -1672,7 +1896,7 @@ jobs:
         run: |
           WORKSPACE="${{ github.workspace }}"
           if [[ "${{ needs.plan.outputs.exp_id }}" == "suppB" ]]; then
-            OUT_DIR="${WORKSPACE}/${OUT_BASE}/${{ needs.plan.outputs.result_subdir }}"
+            OUT_DIR="${WORKSPACE}/${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
             GLOB_PATTERN="noise_sweep_*.json"
             LABEL="suppB"
           else
@@ -1697,7 +1921,7 @@ jobs:
       - name: Verify suppB output files exist
         if: ${{ needs.plan.outputs.exp_id == 'suppB' && steps.resolve_ids.outputs.has_work == 'true' }}
         run: |
-          TARGET="${{ github.workspace }}/${OUT_BASE}/${{ needs.plan.outputs.result_subdir }}"
+          TARGET="${{ github.workspace }}/${OUT_BASE}/comparison_results/feynman-tests/noise-sweep"
           COUNT=$(find "${TARGET}" \( -name "noise_sweep_*.json" -o -name "noise_sweep_*.csv" \) 2>/dev/null | wc -l)
           echo "=== suppB output verification ==="
           echo "  Target dir : ${TARGET}"
