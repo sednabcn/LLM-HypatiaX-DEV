@@ -173,7 +173,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate"
+_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -680,7 +680,91 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
   done
 "
 
-# ── STEP 6: exp2 ──────────────────────────────────────────────────────────────
+# ── STEP 5c: exp2_feynman_extrap ──────────────────────────────────────────────
+# Generates extrap_r2_far for every Feynman equation by re-running
+# run_comparative_suite_benchmark_v2.py with --extrap on the same domain set
+# as exp2_feynman.
+#
+# WHY THIS STEP EXISTS
+# The main exp2_feynman run (STEP 5) trains each method on the full 200-sample
+# dataset and records r2 / rmse (in-distribution).  run_analysis.py (ablation
+# mode) additionally requires hypatia.extrap_r2_far / pysr_only.extrap_r2_far
+# for every equation to run the Mann-Whitney test that is the paper's primary
+# ablation claim (Table 14).  Without this step the field is never computed, the
+# pairing fails, and the test exits with 0 pairs — this was the root cause of
+# the "not a Mann-Whitney issue" diagnosis in the project log.
+#
+# WHAT --extrap DOES (run_comparative_suite_benchmark_v2.py, BUG 3 FIX)
+#   1. Sorts each equation's samples by X[:,0] (first variable).
+#   2. Trains every method on the first --extrap-train-frac (80%) of rows
+#      — the "near" region.
+#   3. After each method returns a formula string, re-evaluates that formula on
+#      the remaining 20% of rows (the "far" region, beyond training max).
+#   4. Records R² on the far region as extrap_r2_far in the result record and
+#      in the flat benchmark_results.json (alongside the normal r2 field).
+#
+# OUTPUT SCHEMA (protocol_core_extrap_<TS>.json + benchmark_results.json)
+#   Per record: { ..., "extrap_r2_far": { "method_name": float_or_null, ... } }
+#   Per flat row: { ..., "extrap_r2_far": float_or_null }
+#
+# merge_extrap_into_benchmark.py (called by CI YAML exp2_feynman extrap step)
+# reads these outputs alongside the noiseless benchmark_results.json and produces
+# ablation_paired.json — the input schema run_analysis.py (ablation mode) needs.
+#
+# DATA CONDITIONS: --noiseless matches the main exp2_feynman run so r2 values
+# are directly comparable.  --noiseless and --extrap are independent argparse
+# flags (confirmed in BUG 3 FIX section of the script) and do not conflict.
+#
+# DOMAIN FILTER: DOMAIN_FILTER env var is set by CI to the shard's pending domain
+# IDs (e.g. "feynman_biology feynman_chemistry").  ACTIVE_DOMAINS falls back to
+# the full FEYNMAN_DOMAINS list when called locally without DOMAIN_FILTER.
+run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney ablation)" bash -c "
+  cd '${REPO_ROOT}'
+  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
+  # Use shard-assigned domain filter from CI (DOMAIN_FILTER set by CI YAML's
+  # exp2_feynman extrap step).  Falls back to full FEYNMAN_DOMAINS list for
+  # local runs where DOMAIN_FILTER is not set.
+  ACTIVE_DOMAINS=\"\${DOMAIN_FILTER:-${FEYNMAN_DOMAINS}}\"
+  for DOMAIN_ID in \${ACTIVE_DOMAINS}; do
+    echo '=== exp2_feynman_extrap: domain='\${DOMAIN_ID}' ==='
+    FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
+    FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT} \
+    METHOD_TIMEOUT=${METHOD_TIMEOUT} \
+    PYSR_FIT_WALL_TIMEOUT=${PYSR_FIT_WALL_TIMEOUT} \
+    PYSR_FIT_GRACE_SECS=${PYSR_FIT_GRACE_SECS} \
+    JOB_DEADLINE=${JOB_DEADLINE} \
+      python3 '${EXPERIMENTS_DIR}/run_comparative_suite_benchmark_v2.py' \
+        --benchmark feynman \
+        --extrap \
+        --extrap-multiplier \${EXTRAP_MULTIPLIER:-2.0} \
+        --extrap-train-frac \${EXTRAP_TRAIN_FRAC:-0.8} \
+        --domain \"\${DOMAIN_ID}\" \
+        --samples ${FEYNMAN_SAMPLES} \
+        --pysr-timeout ${FEYNMAN_TIMEOUT} \
+        --method-timeout ${METHOD_TIMEOUT} \
+        --populations ${PYSR_POPULATIONS} \
+        --parsimony 0.01 \
+        --noiseless \
+        --threshold ${FEYNMAN_NOISELESS_THRESHOLD} \
+        --checkpoint-name \"feynman_extrap_checkpoint_\${DOMAIN_ID}\" \
+        --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+        --resume \
+      2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_extrap_run.log' \
+    || echo 'WARNING: exp2_feynman_extrap domain '\${DOMAIN_ID}' exited non-zero — continuing'
+  done
+  echo '=== exp2_feynman_extrap verification ==='
+  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+    -name 'protocol_core_extrap_*.json' 2>/dev/null | sort || echo '  (none yet)'
+  COUNT_EXTRAP=\$(find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+    -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
+  if [[ \"\${COUNT_EXTRAP}\" -eq 0 ]]; then
+    echo 'WARNING: exp2_feynman_extrap produced no protocol_core_extrap_*.json — extrap_r2_far will be missing from ablation_paired.json'
+  else
+    echo \"OK: \${COUNT_EXTRAP} extrap result file(s) — merge_extrap_into_benchmark.py can proceed\"
+  fi
+"
+
+
 # FIX: --protocol all30 does not exist in run_comparative_suite_benchmark_v2.py
 #      argparse — it caused SystemExit(2) on every worker (confirmed in CI BUG 2 fix).
 #      Replaced with --benchmark both which runs both Feynman + SRBench protocols
