@@ -195,6 +195,7 @@ jobs:
               'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp2_feynman_extrap': 'comparison_results/feynman-tests/extrap',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
@@ -251,8 +252,8 @@ jobs:
         if: |
           github.event.inputs.source_run_id != '' &&
           (
-            contains(github.event.inputs.experiment, 'exp1b') ||
-            contains(github.event.inputs.experiment, 'exp3b')
+            github.event.inputs.experiment == 'exp1b' ||
+            github.event.inputs.experiment == 'exp3b'
           )
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -291,20 +292,36 @@ jobs:
           echo
           echo "=== DETERMINE INPUT MODE ==="
 
+          # ================================
+          
+          # Multi-shard merge criterion
+          #
+          # REQUIRE_MERGE=true ONLY for:
+          #
+          #   exp1b  — DeFi seed sweep (4 workers)
+          #   exp3b  — Nguyen-12 multi-seed (4 workers)
+          #
+          # These experiments produce shard JSON outputs that must
+          # be merged before analysis.
+          #
+          # All other experiments run with NSHARDS=1 and commit
+          # result JSONs directly without shard merging.
+          #
+          # Exact equality is required to avoid substring
+          # false positives:
+          #
+          #   exp1  != exp1b
+          #
+          # ----------------------------------------------------------
+
           REQUIRE_MERGE=false
 
-          if [[ "$EXPERIMENT" == *"exp1b"* ]] || [[ "$EXPERIMENT" == *"exp3b"* ]]; then
-            REQUIRE_MERGE=true
-          fi
-
-          # NSHARDS=1: exp1 is single-shard — never requires a merge step.
-          # Explicitly guard against accidentally promoting it to REQUIRE_MERGE
-          # if the experiment string ever contains "exp1" as a substring match.
-          if [[ "$EXPERIMENT" == "exp1" ]]; then
-            REQUIRE_MERGE=false
+          if [[ "$EXPERIMENT" == "exp1b" ]] || [[ "$EXPERIMENT" == "exp3b" ]]; then
+              REQUIRE_MERGE=true
           fi
 
           echo "REQUIRE_MERGE=$REQUIRE_MERGE"
+
 
           # ------------------------------------------------------------------
           # MERGED MODE (exp1b / exp3b)

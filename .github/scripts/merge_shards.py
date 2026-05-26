@@ -97,11 +97,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Per-experiment configuration
 #  Mirrors run_all_checkpoint.py: Step.result_glob, Step.post_move, and
 #  EXP_RESULT_SUBDIR; plus the merge_key each benchmark script uses.
 # ─────────────────────────────────────────────────────────────────────────────
+# Experiments that REQUIRE shard merging
+MERGE_REQUIRED_EXPERIMENTS = {
+    "exp1b",
+    "exp3b",
+}
+
 EXP_CONFIG: dict[str, dict] = {
 
     # ── exp1: Core DeFi extrapolation (noiseless) ─────────────────────────────
@@ -318,6 +325,28 @@ EXP_CONFIG: dict[str, dict] = {
         merge_key="equation_id",
         fallback_keys=["domain", "task_id", "equation", "name"],
         array_key="results",
+    ),
+
+    # ── exp2_feynman_extrap: OOD extrapolation step for exp2_feynman ──────────
+    # Runs AFTER exp2_feynman completes.  merge_extrap_into_benchmark.py reads
+    # the exp2_feynman benchmark output and generates protocol_core_extrap_*.json
+    # files containing extrap_r2_far values, then writes ablation_paired.json
+    # into the same result_subdir (comparison_results/feynman-tests/extrap).
+    # NSHARDS=1: single-worker step — merge_shards.py is NOT called by CI.
+    # ci_analysis.yml routes this experiment via the DIRECT input mode, reading
+    # protocol_core_extrap_*.json directly from RESULT_DIR.
+    # run_analysis.py reads ablation_paired.json (ablation mode) when present.
+    "exp2_feynman_extrap": dict(
+        result_subdir="comparison_results/feynman-tests/extrap",
+        shard_globs=[
+            "protocol_core_extrap_*.json",       # PRIMARY — written by merge_extrap_into_benchmark.py
+            "ablation_paired.json",              # paired {hypatia,pysr_only}.extrap_r2_far schema
+            "protocol_core_noiseless_*.json",    # fallback from v2 worker
+            "protocol_core_noisy_*.json",
+        ],
+        merge_key="equation_id",
+        fallback_keys=["equation", "task_id", "name", "description"],
+        array_key="tests",
     ),
 
     # ── exp1_ablation: paired pysr_only vs hypatia ablation (manual-only) ────

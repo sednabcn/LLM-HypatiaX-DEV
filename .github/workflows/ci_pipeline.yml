@@ -163,6 +163,7 @@ jobs:
               "exp1",
               "exp1b",
               "exp2_feynman",
+              "exp2_feynman_extrap",
               "exp2",
               "exp3",
               "exp3b",
@@ -297,6 +298,7 @@ jobs:
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
@@ -315,6 +317,8 @@ jobs:
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json",
                                      "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json",
+                                     "protocol_core_*.json"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":               ["exp3_nguyen12_*.json", "*nguyen*seed*.json",
                                      "full_run_*.json"],
@@ -336,6 +340,7 @@ jobs:
               "exp1":               1,    # single-shard, ~1 protocol JSON
               "exp1b":              4,    # 5 seeds × multi-shard
               "exp2_feynman":       1,
+              "exp2_feynman_extrap": 1,
               "exp2":               1,
               "exp3":               1,
               "exp3b":              4,    # multi-seed
@@ -1133,7 +1138,7 @@ jobs:
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
 
           # Keep in sync with len(QUEUE) in the resolve job.
-          QUEUE_SIZE=12
+          QUEUE_SIZE=13
 
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
             echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."

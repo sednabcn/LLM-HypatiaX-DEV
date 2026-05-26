@@ -143,8 +143,11 @@ EXPERIMENT_MODE: dict[str, str] = {
     # (pure_llm/neural_network/hybrid) is absent — method-comparison sections suppressed.
     # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
     # complexity distributions, threshold sweep, and LOO all run under this mode.
-    "exp1_ablation":      "ablation",
-    "exp2_feynman":       "ablation",
+    "exp1_ablation":          "ablation",
+    "exp2_feynman":           "ablation",
+    # exp2_feynman_extrap: OOD extrap step — produces ablation_paired.json;
+    # run_analysis.py reads it in ablation mode (extrap_r2_far present).
+    "exp2_feynman_extrap":    "ablation",
 }
 
 # Canonical result_subdir for every CI-dispatched experiment.
@@ -154,7 +157,10 @@ EXPERIMENT_MODE: dict[str, str] = {
 RESULT_SUBDIR: dict[str, str] = {
     "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
     "exp1b":              "comparison_results/noise-noiseless/15",
-    "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+    "exp2_feynman":           "comparison_results/feynman-tests/exp2",
+    # exp2_feynman_extrap: NSHARDS=1, DIRECT mode. ablation_paired.json written here
+    # after merge_extrap_into_benchmark.py. Mirrors ci_analysis.yml MAPPING.
+    "exp2_feynman_extrap":    "comparison_results/feynman-tests/extrap",
     "exp2":               "comparison_results/feynman-tests/exp2_multi",
     "exp3":               "extrapolation",
     "exp3b":              "extrapolation/multi_seed",
@@ -1944,12 +1950,13 @@ def main() -> None:
         manifest_path = Path(args.shard_manifest)
         if not manifest_path.exists():
             # ── NSHARDS=1 / direct-result fallback ────────────────────────────
-            # ci_analysis.yml unconditionally passes --shard-manifest, but for
-            # experiments that commit results directly (NSHARDS=1, no
-            # merge_shards.py step — e.g. exp1), shard_manifest.txt is never
-            # written.  Hard-failing here with exit(1) is the WRONG DESIGN:
-            # the manifest absence just means this experiment's worker wrote
-            # its JSON straight into RESULT_DIR.
+            # Single-shard experiments (all except exp1b / exp3b)
+            # may bypass shard merging entirely and commit JSON
+            # files directly into RESULT_DIR.
+            #
+            # In that case ci_analysis.yml may not generate
+            # shard_manifest.txt, so we automatically scan
+            # RESULT_DIR for valid JSON result files.
             #
             # Fix: when --result-dir is set, scan that directory for result
             # JSON files (excluding internal meta-files that start with "_")

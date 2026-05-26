@@ -654,6 +654,14 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
   # FIX-exp2_feynman-1: cd REPO_ROOT and invoke by full path (doubled-path fix).
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
+  # FIX-STALE-RESULTS: remove old protocol_core_noiseless_*.json files from
+  # previous runs so they do not accumulate and confuse downstream consumers.
+  # Checkpoints (feynman_exp2_checkpoint_*.pkl / *.json) are preserved so
+  # --resume can still skip domains that genuinely completed this run.
+  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+    -maxdepth 1 -name 'protocol_core_noiseless_*.json' -delete 2>/dev/null || true
+  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+    -maxdepth 1 -name 'exp2_run.log' -delete 2>/dev/null || true
   for DOMAIN_ID in ${FEYNMAN_DOMAINS}; do
     echo '=== exp2_feynman: domain='\${DOMAIN_ID}' ==='
     FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
@@ -721,6 +729,11 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
 run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney ablation)" bash -c "
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
+  # FIX-STALE-RESULTS: remove old extrap result files from previous runs.
+  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
+    -maxdepth 1 -name 'protocol_core_extrap_*.json' -delete 2>/dev/null || true
+  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
+    -maxdepth 1 -name 'exp2_extrap_run.log' -delete 2>/dev/null || true
   # Use shard-assigned domain filter from CI (DOMAIN_FILTER set by CI YAML's
   # exp2_feynman extrap step).  Falls back to full FEYNMAN_DOMAINS list for
   # local runs where DOMAIN_FILTER is not set.
@@ -1140,7 +1153,7 @@ ok_exp3b = bool(exp3b_files)
 checks.append(("exp3b outputs in extrapolation/multi_seed/ (BUG 2)", 1.0 if ok_exp3b else 0.0, 1.0, ok_exp3b))
 suffix_exp3b = " (exp3b not yet run)" if not ok_exp3b else ""
 print(
-    f"  [{\'OK\' if ok_exp3b else \'SKIP\'}] extrapolation/multi_seed/: "
+    f"  [{'OK' if ok_exp3b else 'SKIP'}] extrapolation/multi_seed/: "
     f"{len(exp3b_files)} nguyen JSON(s){suffix_exp3b}"
 )
 
@@ -1154,7 +1167,7 @@ print(f"  [{'OK' if ok_tbl else 'FAIL'}] {RESULTS}/tables/: {len(tbl)} .tex file
 print(f"  [{'OK' if ok_fig else 'FAIL'}] {RESULTS}/figures/: {len(fig)} .pdf file(s)")
 
 # --- Summary ---
-total = len(checks); passed = sum(1 for *_, ok in checks if ok)
+total = len(checks); passed = sum(1 for item in checks if item[-1])
 print(f"\n=== Result: {passed}/{total} checks passed ===")
 if passed < total:
     print("FAILED:")
