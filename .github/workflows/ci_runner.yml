@@ -948,8 +948,8 @@ jobs:
       #   1. Runs run_comparative_suite_benchmark_v2.py --extrap to get far-region R²
       #   2. Merges extrap_r2_far into benchmark_results to produce ablation_paired.json
       # ablation_paired.json is the input that run_analysis.py (ablation mode) reads.
-      - name: Run extrapolation evaluation (exp2_feynman only)
-        if: ${{ contains(fromJSON('["exp2_feynman","exp2_feynman_extrap"]'), needs.plan.outputs.exp_id) && steps.resolve_ids.outputs.has_work == 'true' }}
+      - name: Run extrapolation evaluation (exp2_feynman_extrap only)
+        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman_extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
@@ -979,7 +979,10 @@ jobs:
 
           # Merge extrap_r2_far values into benchmark_results to produce
           # ablation_paired.json — the schema analyse_ablation() expects.
-          python3 .github/scripts/merge_extrap_into_benchmark.py             --benchmark-dir "${TARGET}"             --extrap-dir    "${TARGET}"             --output        "${TARGET}/ablation_paired.json"             && echo "  ablation_paired.json written."             || echo "::warning::merge_extrap_into_benchmark.py not found — add to .github/scripts/"
+          BENCH_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2"
+          EXTRAP_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap"
+
+          python3 .github/scripts/merge_extrap_into_benchmark.py             --benchmark-dir "${BENCH_DIR}"             --extrap-dir    "${EXTRAP_DIR}"             --output        "${BENCH_DIR}/ablation_paired.json"             && echo "  ablation_paired.json written."             || echo "::warning::merge_extrap_into_benchmark.py not found — add to .github/scripts/"
 
       - name: Diagnostic - locate result files on disk
         if: always()

@@ -144,7 +144,7 @@ EXPERIMENT_MODE: dict[str, str] = {
     # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
     # complexity distributions, threshold sweep, and LOO all run under this mode.
     "exp1_ablation":          "ablation",
-    "exp2_feynman":           "ablation",
+    "exp2_feynman":           "standard",
     # exp2_feynman_extrap: OOD extrap step — produces ablation_paired.json;
     # run_analysis.py reads it in ablation mode (extrap_r2_far present).
     "exp2_feynman_extrap":    "ablation",
@@ -160,7 +160,7 @@ RESULT_SUBDIR: dict[str, str] = {
     "exp2_feynman":           "comparison_results/feynman-tests/exp2",
     # exp2_feynman_extrap: NSHARDS=1, DIRECT mode. ablation_paired.json written here
     # after merge_extrap_into_benchmark.py. Mirrors ci_analysis.yml MAPPING.
-    "exp2_feynman_extrap":    "comparison_results/feynman-tests/extrap",
+    "exp2_feynman_extrap":    "comparison_results/feynman-tests/exp2_extrap",
     "exp2":               "comparison_results/feynman-tests/exp2_multi",
     "exp3":               "extrapolation",
     "exp3b":              "extrapolation/multi_seed",
