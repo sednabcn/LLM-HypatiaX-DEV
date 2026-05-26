@@ -400,7 +400,6 @@ jobs:
                 -name '*.json' \
                 ! -name '_*.json' \
                 ! -name 'benchmark_results.json' \
-                ! -name '*_shard*_run*.json' \
                 | sort
             )
 
@@ -481,7 +480,13 @@ jobs:
           ')
 
               # ── MERGED-FOR-BENCHMARK: N>1 benchmark-format shards ─────────
-              if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
+              # Only exp1b and exp3b use the merge path (REQUIRE_MERGE=true routes
+              # to the block above).  All other experiments — exp1, exp2, exp3,
+              # exp4, suppB, noise-sweep, etc. — pass their shards directly to
+              # run_analysis.py without merging.  Forcing SHARDS here prevents
+              # field-name mismatches (e.g. exp2/Feynman records don't have
+              # far-R² which the merged benchmark path expects).
+              if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" && "$REQUIRE_MERGE" == "true" ]]; then
 
                 echo "  Benchmark-format shards detected (${N_SHARDS} file(s))."
                 echo "  Merging tests arrays → _merged_benchmark.json ..."
