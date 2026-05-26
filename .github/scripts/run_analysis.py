@@ -523,6 +523,68 @@ def _mann_whitney(a: list[float], b: list[float]) -> dict:
         return {"available": False, "reason": str(e)}
 
 
+# ---------------------------------------------------------------------------
+# Ablation early-return skeleton
+# ---------------------------------------------------------------------------
+
+def _ablation_empty_result(experiment: str, mode: str, n_total: int,
+                           fatal: list[str]) -> dict:
+    """
+    Minimal but complete dict returned by analyse_ablation() on early exit.
+    Includes every key that write_report_ablation() accesses, so the report
+    writer never raises a KeyError regardless of which exit path was taken.
+    """
+    return {
+        "experiment":               experiment,
+        "experiment_mode":          mode,
+        "n_total":                  n_total,
+        # MW pair counts — always present
+        "n_mw_pairs_all":           0,
+        "n_mw_pairs_excl":          0,
+        "n_mw_pairs_success":       0,
+        "n_successes_extrap":       0,
+        "extrap_success_threshold": EXTRAP_SUCCESS_THRESHOLD,
+        "n_skipped_from_mw":        0,
+        "skipped_equations":        [],
+        # MW results
+        "mann_whitney_all_n":            {"available": False, "reason": "early exit"},
+        "mann_whitney_excl_fail":        {"available": False, "reason": "early exit"},
+        "mann_whitney_success_subset":   {"available": False, "reason": "early exit"},
+        # Win/loss
+        "win_loss_all":     {"hypatia_wins": 0, "pysr_wins": 0, "tied": 0, "n_pairs": 0},
+        "win_loss_excl":    {"hypatia_wins": 0, "pysr_wins": 0, "tied": 0, "n_pairs": 0},
+        "win_loss_success": {"hypatia_wins": 0, "pysr_wins": 0, "tied": 0, "n_pairs": 0},
+        # Failure analysis
+        "failure_analysis":       [],
+        "n_train_failures":       0,
+        "domain_stratification":  {},
+        "fisher_failure_cluster": {"available": False, "reason": "early exit"},
+        # Scale sensitivity
+        "spearman_scale_vs_train_r2": {"available": False, "reason": "early exit"},
+        "spearman_scale_vs_far_r2":   {"available": False, "reason": "early exit"},
+        "n_scale_log_available":      0,
+        # Complexity
+        "complexity_analysis": {
+            "hypatia_success":    {"n": 0},
+            "hypatia_failure":    {"n": 0},
+            "hypatia_all":        {"n": 0},
+            "pysr_all":           {"n": 0},
+            "mw_success_vs_fail": {"available": False, "reason": "early exit"},
+        },
+        # Threshold sweep / LOO
+        "threshold_sweep":  [],
+        "loo_sensitivity":  [],
+        # Instability / timing
+        "instability_rows": [],
+        "timing": {
+            "hypatia":   {"mean_s": None, "median_s": None, "n": 0},
+            "pysr_only": {"mean_s": None, "median_s": None, "n": 0},
+        },
+        "pysr_fit_params":  {},
+        "fatal_conditions": fatal,
+    }
+
+
 def analyse_ablation(records: list[dict], experiment: str,
                      pysr_fit_params: dict | None = None) -> dict:
     """
@@ -561,8 +623,7 @@ def analyse_ablation(records: list[dict], experiment: str,
                 f"'{experiment}'. This is non-fatal for this experiment type. "
                 "Workflow continues."
             )
-        return {"experiment": experiment, "experiment_mode": mode,
-                "n_total": 0, "fatal_conditions": fatal}
+        return _ablation_empty_result(experiment, mode, 0, fatal)
 
     n_total = len(records)
 
@@ -576,34 +637,28 @@ def analyse_ablation(records: list[dict], experiment: str,
     #                               "pysr_only": {"extrap_r2_far": ...}}]
     #    Fail immediately with a clear fatal so the CI log names the real problem.
     # -------------------------------------------------------------------------
-    if records:
-        sample = records[0]
-        has_paired_schema = (
-            ("hypatia" in sample or "pysr_only" in sample)
-            or ("extrap_r2_far" in sample)
+    sample = records[0]
+    has_paired_schema = (
+        ("hypatia" in sample or "pysr_only" in sample)
+        or ("extrap_r2_far" in sample)
+    )
+    has_flat_method_schema = (
+        "method" in sample and "r2" in sample
+        and "hypatia" not in sample and "pysr_only" not in sample
+    )
+    if has_flat_method_schema and not has_paired_schema:
+        # Workers ran the consistency/benchmark check but not extrapolation.
+        # extrap_r2_far was never computed — ablation analysis cannot proceed.
+        fatal.append(
+            f"WRONG_SCHEMA_FOR_ABLATION: exp2_feynman requires paired extrapolation "
+            f"records with hypatia.extrap_r2_far and pysr_only.extrap_r2_far, but "
+            f"the committed results are flat per-method benchmark records "
+            f"(keys: {sorted(sample.keys())}). "
+            f"The workers must rerun with the extrapolation evaluation step enabled. "
+            f"See run_analysis.py EXPERIMENT_MODE['ablation'] docstring for the "
+            f"required record schema."
         )
-        has_flat_method_schema = (
-            "method" in sample and "r2" in sample
-            and "hypatia" not in sample and "pysr_only" not in sample
-        )
-        if has_flat_method_schema and not has_paired_schema:
-            # Workers ran the consistency/benchmark check but not extrapolation.
-            # extrap_r2_far was never computed — ablation analysis cannot proceed.
-            fatal.append(
-                f"WRONG_SCHEMA_FOR_ABLATION: exp2_feynman requires paired extrapolation "
-                f"records with hypatia.extrap_r2_far and pysr_only.extrap_r2_far, but "
-                f"the committed results are flat per-method benchmark records "
-                f"(keys: {sorted(sample.keys())}). "
-                f"The workers must rerun with the extrapolation evaluation step enabled. "
-                f"See run_analysis.py EXPERIMENT_MODE['ablation'] docstring for the "
-                f"required record schema."
-            )
-            return {
-                "experiment":      experiment,
-                "experiment_mode": mode,
-                "n_total":         n_total,
-                "fatal_conditions": fatal,
-            }
+        return _ablation_empty_result(experiment, mode, n_total, fatal)
 
     # -------------------------------------------------------------------------
     # 1. Build paired arrays (Rule 1 filtering) + instability rows (Rule 2)
@@ -881,8 +936,8 @@ def analyse_ablation(records: list[dict], experiment: str,
     if mw_all.get("available") and not mw_all.get("significant_05_one"):
         fatal.append(
             f"INFO_MW_ALL_NOT_SIGNIFICANT: Tier-1 (all-N) Mann-Whitney one-sided "
-            f"p={mw_all.get('p_value_one_sided', '?'):.4f} "
-            f"(two-sided p={mw_all.get('p_value_two_sided', '?'):.4f}, "
+            f"p={mw_all.get('p_value_one_sided', float('nan')):.4f} "
+            f"(two-sided p={mw_all.get('p_value_two_sided', float('nan')):.4f}, "
             f"r={rb_all}, n={mw_all.get('n_pairs', '?')}) — directional but not significant. "
             f"Expected: 21 discovery failures add noise. Report Tier-3 success-subset as primary claim. "
             f"Workflow continues."
@@ -893,15 +948,15 @@ def analyse_ablation(records: list[dict], experiment: str,
         if mw_success.get("significant_05_one"):
             fatal.append(
                 f"INFO_MW_SUCCESS_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney one-sided "
-                f"p={mw_success.get('p_value_one_sided', '?'):.4f} "
-                f"(two-sided p={mw_success.get('p_value_two_sided', '?'):.4f}, "
+                f"p={mw_success.get('p_value_one_sided', float('nan')):.4f} "
+                f"(two-sided p={mw_success.get('p_value_two_sided', float('nan')):.4f}, "
                 f"r={rb_success}, n={mw_success.get('n_pairs', '?')} equations with extrap R²>="
                 f"{EXTRAP_SUCCESS_THRESHOLD}) — SIGNIFICANT. Primary paper claim confirmed."
             )
         else:
             fatal.append(
                 f"WARN_MW_SUCCESS_NOT_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney one-sided "
-                f"p={mw_success.get('p_value_one_sided', '?'):.4f} "
+                f"p={mw_success.get('p_value_one_sided', float('nan')):.4f} "
                 f"(n={mw_success.get('n_pairs', '?')}) — not significant at α=0.05. "
                 f"Primary paper claim (§10.7) may be weaker than expected. Investigate."
             )
@@ -979,12 +1034,21 @@ def write_report_ablation(analysis: dict, path: Path) -> None:
         )
 
     thr = analysis.get("extrap_success_threshold", EXTRAP_SUCCESS_THRESHOLD)
+
+    # Use .get() with safe defaults for every key — protects against early-exit
+    # dicts that may be missing optional keys (e.g. wrong-schema or empty-dataset
+    # returns from analyse_ablation).
+    n_mw_all     = analysis.get("n_mw_pairs_all",     0)
+    n_mw_excl    = analysis.get("n_mw_pairs_excl",    0)
+    n_mw_success = analysis.get("n_mw_pairs_success", 0)
+    n_skipped    = analysis.get("n_skipped_from_mw",  0)
+
     h(1, f"HypatiaX Analysis Report — `{exp}` (RF09 Feynman n=30)")
     p(f"Experiment mode: **ablation** | N equations: {analysis['n_total']}")
-    p(f"Tier-1 (all-N) pairs: {analysis['n_mw_pairs_all']} "
-      f"| Tier-2 (excl-train-fail) pairs: {analysis['n_mw_pairs_excl']} "
-      f"| Tier-3 (extrap R²≥{thr}) pairs: {analysis.get('n_mw_pairs_success', '?')} "
-      f"| Skipped: {analysis['n_skipped_from_mw']}")
+    p(f"Tier-1 (all-N) pairs: {n_mw_all} "
+      f"| Tier-2 (excl-train-fail) pairs: {n_mw_excl} "
+      f"| Tier-3 (extrap R²≥{thr}) pairs: {n_mw_success} "
+      f"| Skipped: {n_skipped}")
 
     # Fatal / info conditions
     all_conds  = analysis.get("fatal_conditions", [])
@@ -1193,7 +1257,7 @@ def write_report_ablation(analysis: dict, path: Path) -> None:
         p("_No LOO data (no failure equations or scipy unavailable)._")
 
     # -------------------------------------------------------------------------
-    # Skipped equations + instability + timing (unchanged)
+    # Skipped equations + instability + timing
     # -------------------------------------------------------------------------
     skipped = analysis.get("skipped_equations", [])
     h(2, f"Skipped from MW ({len(skipped)} equations)")
@@ -1830,10 +1894,10 @@ def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
     and individual shard files in --shard-manifest mode.
 
     Handles:
-      Shape A  {\"_meta\":{}, \"stats\":{}, \"results\":{task_id: record}}
+      Shape A  {"_meta":{}, "stats":{}, "results":{task_id: record}}
       Shape B  {task_id: record, ...}  flat dict
       Shape C  [record, ...]           top-level list
-      Shape P  {\"tests\": [{description, domain, results:{RawMethod:{r2,...}}}]}
+      Shape P  {"tests": [{description, domain, results:{RawMethod:{r2,...}}}]}
                — protocol_core_*.json / _merged_benchmark.json from the
                  "Locate analysis input" step.  Normalised via
                  _normalise_protocol_record() unless ablation.
