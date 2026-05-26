@@ -244,82 +244,22 @@ jobs:
           echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
-      # ── Locate analysis input (multi-shard strategy from ci_analysis.yml) ────
-      # FIX: replaced head -1 fallback (which silently discarded all but the first
-      # shard file — root cause of TOO_FEW_RECORDS for exp1's 35-file layout).
-      # Now mirrors ci_analysis.yml exactly:
-      #   MERGED mode  → _merged.json present, OR single benchmark-format dict file.
-      #   SHARD  mode  → all non-meta *.json files collected into a manifest.
-      # run_analysis.py is called via hypatiax/tools/run_analysis.py (supports both
-      # --input-json and --shard-manifest) — no separate script needed.
+      # ── Locate analysis input ───────────────────────────────────────────────
+      # Single source of truth — shared with ci_analysis.yml.
+      # OUTPUT_TARGET=output writes to $GITHUB_OUTPUT (step outputs).
       - name: Locate analysis input
         if: matrix.experiment != 'instability'
         id: locate
         env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
+          EXP:        ${{ matrix.experiment }}
+          EXPERIMENT: ${{ matrix.experiment }}
+          SUB:        ${{ steps.meta.outputs.result_subdir }}
         run: |
           set -euo pipefail
           RESULT_DIR="${OUT_BASE}/${SUB}"
-
-          # ── MERGED mode: committed _merged.json takes priority ───────────────
-          if [[ -f "${RESULT_DIR}/_merged.json" ]]; then
-            echo "input_mode=merged"                            >> "$GITHUB_OUTPUT"
-            echo "input_json=${RESULT_DIR}/_merged.json"       >> "$GITHUB_OUTPUT"
-            echo "Using committed _merged.json."
-            exit 0
-          fi
-
-          # ── SHARD mode: collect ALL non-meta JSON files (maxdepth 2) ─────────
-          # maxdepth 2 catches both flat layouts (depth 1) and one-level-nested
-          # layouts like suppB's noise-sweep/noise-sweep/*.json.
-          mapfile -t SHARD_FILES < <(
-            find "$RESULT_DIR" -maxdepth 2 -type f -name "*.json" \
-              ! -name "_*.json" ! -name "benchmark_results.json" \
-              2>/dev/null | sort
-          )
-
-          if [[ ${#SHARD_FILES[@]} -eq 0 ]]; then
-            echo "::error::No input JSON found for ${EXP} in ${RESULT_DIR}."
-            exit 1
-          fi
-
-          # Single-file benchmark-format detection: if there is exactly one shard
-          # and it is a dict-of-dicts (not a list / {results:[...]} shard wrapper),
-          # treat it as a merged input so run_analysis.py receives it whole.
-          USE_MERGED_FOR_BENCHMARK=false
-          if [[ ${#SHARD_FILES[@]} -eq 1 ]]; then
-            USE_MERGED_FOR_BENCHMARK=$(python3 -c "
-          import json, sys
-          try:
-              data = json.load(open('${SHARD_FILES[0]}'))
-          except Exception:
-              print('false'); sys.exit(0)
-          if isinstance(data, list): print('false'); sys.exit(0)
-          if isinstance(data, dict) and isinstance(data.get('results'), list):
-              print('false'); sys.exit(0)
-          if isinstance(data, dict):
-              nm = {k: v for k, v in data.items()
-                    if not k.startswith('_') and k not in ('stats', 'summary', 'metadata')}
-              if nm and isinstance(next(iter(nm.values())), dict):
-                  print('true'); sys.exit(0)
-          print('false')
-          ")
-          fi
-
-          if [[ "$USE_MERGED_FOR_BENCHMARK" == "true" ]]; then
-            echo "input_mode=merged"                      >> "$GITHUB_OUTPUT"
-            echo "input_json=${SHARD_FILES[0]}"           >> "$GITHUB_OUTPUT"
-            echo "Single benchmark-format file — merged mode: ${SHARD_FILES[0]}"
-          else
-            MANIFEST="${RESULT_DIR}/_shard_manifest.txt"
-            printf '%s\n' "${SHARD_FILES[@]}" > "$MANIFEST"
-            echo "input_mode=shards"              >> "$GITHUB_OUTPUT"
-            echo "shard_manifest=${MANIFEST}"     >> "$GITHUB_OUTPUT"
-            echo "${#SHARD_FILES[@]} shard file(s) → manifest: ${MANIFEST}"
-            cat "$MANIFEST"
-          fi
-
+          RESULT_SUBDIR="${SUB}"
+          OUTPUT_TARGET=output \
+          bash .github/scripts/locate_analysis_input.sh
       - name: Run statistical analysis
         if: matrix.experiment != 'instability'
         # continue-on-error: run_analysis.py writes _analysis.json even on fatal
@@ -341,7 +281,7 @@ jobs:
           mkdir -p "${OUT_DIR}"
           echo "=== Analysis: ${EXP} → ${OUT_DIR} (mode: ${INPUT_MODE}) ==="
 
-          if [[ "${INPUT_MODE}" == "merged" ]]; then
+          if [[ "${INPUT_MODE}" == "merged" || "${INPUT_MODE}" == "direct" ]]; then
             python3 hypatiax/tools/run_analysis.py \
               --experiment "${EXP}"       \
               --result-dir "${OUT_DIR}"   \
@@ -374,12 +314,13 @@ jobs:
           required = ('experiment', 'experiment_mode', 'n_total', 'fatal_conditions')
           missing  = [k for k in required if k not in d]
           if missing:
-              print(f'::error::_analysis.json missing keys: {missing}')
+              print('::error::_analysis.json missing keys: ' + str(missing))
               sys.exit(1)
           hard = [c for c in d['fatal_conditions']
                   if not (c.startswith('INFO_') or c.startswith('WARN_'))]
           soft = len(d['fatal_conditions']) - len(hard)
-          print(f'_analysis.json OK: n_total={d[\"n_total\"]}  hard={len(hard)}  soft={soft}')
+          n = d['n_total']
+          print(f'_analysis.json OK: n_total={n}  hard={len(hard)}  soft={soft}')
           "
 
       - name: Commit analysis outputs

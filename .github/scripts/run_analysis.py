@@ -561,6 +561,45 @@ def analyse_ablation(records: list[dict], experiment: str,
     n_total = len(records)
 
     # -------------------------------------------------------------------------
+    # 0. Schema guard — detect flat per-method records (Shape C from workers
+    #    that did not run the extrapolation step) before spending time on the
+    #    full analysis.  Shape C looks like:
+    #      [{"test": ..., "domain": ..., "method": ..., "r2": ..., "success": ...}]
+    #    Ablation analysis requires the paired schema:
+    #      [{"equation_name": ..., "hypatia": {"extrap_r2_far": ...},
+    #                               "pysr_only": {"extrap_r2_far": ...}}]
+    #    Fail immediately with a clear fatal so the CI log names the real problem.
+    # -------------------------------------------------------------------------
+    if records:
+        sample = records[0]
+        has_paired_schema = (
+            ("hypatia" in sample or "pysr_only" in sample)
+            or ("extrap_r2_far" in sample)
+        )
+        has_flat_method_schema = (
+            "method" in sample and "r2" in sample
+            and "hypatia" not in sample and "pysr_only" not in sample
+        )
+        if has_flat_method_schema and not has_paired_schema:
+            # Workers ran the consistency/benchmark check but not extrapolation.
+            # extrap_r2_far was never computed — ablation analysis cannot proceed.
+            fatal.append(
+                f"WRONG_SCHEMA_FOR_ABLATION: exp2_feynman requires paired extrapolation "
+                f"records with hypatia.extrap_r2_far and pysr_only.extrap_r2_far, but "
+                f"the committed results are flat per-method benchmark records "
+                f"(keys: {sorted(sample.keys())}). "
+                f"The workers must rerun with the extrapolation evaluation step enabled. "
+                f"See run_analysis.py EXPERIMENT_MODE['ablation'] docstring for the "
+                f"required record schema."
+            )
+            return {
+                "experiment":      experiment,
+                "experiment_mode": mode,
+                "n_total":         n_total,
+                "fatal_conditions": fatal,
+            }
+
+    # -------------------------------------------------------------------------
     # 1. Build paired arrays (Rule 1 filtering) + instability rows (Rule 2)
     # -------------------------------------------------------------------------
     mw_pairs_all:     list[tuple[float, float]] = []  # Tier 1: all finite pairs (all-N)
@@ -1977,6 +2016,26 @@ def main() -> None:
 
     elif input_json_path is not None:
         # Single-file mode: --merged-json (legacy) or --input-json (NSHARDS=1 / CI direct).
+        #
+        # exp2_feynman special case: if ablation_paired.json exists in the same
+        # directory, use it instead of the raw benchmark_results.json.
+        # ablation_paired.json is written by merge_extrap_into_benchmark.py and
+        # contains the paired {hypatia.extrap_r2_far, pysr_only.extrap_r2_far}
+        # schema that analyse_ablation() requires.
+        if args.experiment == "exp2_feynman":
+            paired_path = output_dir / "ablation_paired.json"
+            if paired_path.exists():
+                print(f"exp2_feynman: using ablation_paired.json (has extrap_r2_far) "
+                      f"instead of {input_json_path.name}")
+                input_json_path = paired_path
+            else:
+                print(f"::warning::exp2_feynman: ablation_paired.json not found in "
+                      f"{output_dir}. Loading {input_json_path.name} directly — "
+                      f"extrap_r2_far will be None for all records and "
+                      f"TOO_FEW_MW_PAIRS will fire. "
+                      f"Run ci_runner.yml exp2_feynman_extrap step to generate it.",
+                      file=sys.stderr)
+
         if not input_json_path.exists():
             print(f"::error::input JSON not found at {input_json_path}", file=sys.stderr)
             sys.exit(1)
