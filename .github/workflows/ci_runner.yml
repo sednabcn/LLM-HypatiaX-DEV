@@ -224,6 +224,16 @@ jobs:
               DEFAULT_SEEDS="42"
               ;;
 
+            # exp2_feynman_extrap: writes protocol_core_extrap_*.json into the
+            # same feynman-tests/exp2 dir as exp2_feynman, distinguished by the
+            # 'extrap' prefix.  Must run AFTER exp2_feynman (dep declared in catalogue).
+            exp2_feynman_extrap)
+              SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="comparison_results/feynman-tests/exp2"
+              DEFAULT_SEEDS="42"
+              ;;
+
             exp2)
               SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
               NEEDS_JULIA=true
@@ -942,7 +952,7 @@ jobs:
       #   2. Merges extrap_r2_far into benchmark_results to produce ablation_paired.json
       # ablation_paired.json is the input that run_analysis.py (ablation mode) reads.
       - name: Run extrapolation evaluation (exp2_feynman only)
-        if: ${{ (needs.plan.outputs.exp_id == 'exp2_feynman' || needs.plan.outputs.exp_id == 'exp2_feynman_extrap') && steps.resolve_ids.outputs.has_work == 'true' }}
+        if: ${{ contains(fromJSON('["exp2_feynman","exp2_feynman_extrap"]'), needs.plan.outputs.exp_id) && steps.resolve_ids.outputs.has_work == 'true' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
@@ -1218,6 +1228,18 @@ jobs:
               move_matching "protocol_core_*_checkpoint.json"     "${TARGET}"
               move_matching "benchmark_results.json"              "${TARGET}"
               move_matching "feynman_exp2_checkpoint_*.json"      "${TARGET}"
+              ;;
+
+            # exp2_feynman_extrap: outputs use protocol_core_extrap_* prefix so they
+            # are distinct from exp2_feynman's protocol_core_*.json files in the same
+            # TARGET dir. prune_old is scoped to the extrap prefix only — never touches
+            # the main exp2_feynman results already committed in this directory.
+            exp2_feynman_extrap)
+              prune_old "protocol_core_extrap_*.json"             "${TARGET}"
+              prune_old "feynman_extrap_checkpoint_*.json"        "${TARGET}"
+              move_matching "protocol_core_extrap_*.json"         "${TARGET}"
+              move_matching "feynman_extrap_checkpoint_*.json"    "${TARGET}"
+              move_matching "exp2_extrap_run.log"                 "${TARGET}"
               ;;
 
             # -- exp2: multi-seed comparative suite ---------------------------
