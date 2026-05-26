@@ -129,7 +129,6 @@ _STEP_CATALOGUE: list[dict] = [
         outputs=[
             # creates the directory skeleton
             "comparison_results/feynman-tests/exp2",
-            "comparison_results/feynman-tests/extrap",
             "comparison_results/feynman-tests/noise-sweep",
             "comparison_results/feynman-tests/sample-complexity",
             "comparison_results/noise-noiseless/noiseless",
@@ -284,11 +283,11 @@ _STEP_CATALOGUE: list[dict] = [
         ],
         cwd_vars=["EXPERIMENTS_DIR"],
         outputs=[
-            "comparison_results/feynman-tests/extrap/feynman_extrap_*.json",
-            "exp2_feynman_extrap_run.log",
+            "comparison_results/feynman-tests/exp2/protocol_core_extrap_*.json",
+            "comparison_results/feynman-tests/exp2/exp2_extrap_run.log",
         ],
         inputs=[],
-        deps=["env_check"],
+        deps=["env_check", "exp2_feynman"],
     ),
 
     # ── 8: exp2 ───────────────────────────────────────────────────────────────
@@ -434,7 +433,7 @@ _STEP_CATALOGUE: list[dict] = [
             "comparison_results/feynman-tests/sample-complexity/sample_complexity_*.json",
             "comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json",
         ],
-        deps=["exp1", "exp1b", "extrap", "instability", "exp2_feynman",
+        deps=["exp1", "exp1b", "extrap", "instability", "exp2_feynman", "exp2_feynman_extrap",
               "exp3", "exp3b", "suppB", "suppB_sc"],
     ),
 
@@ -474,7 +473,7 @@ _STEP_CATALOGUE: list[dict] = [
         inputs=[
             "comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json",
             "comparison_results/feynman-tests/exp2/exp2_results*.json",
-            "comparison_results/feynman-tests/extrap/feynman_extrap_*.json",
+            "comparison_results/feynman-tests/exp2/protocol_core_extrap_*.json",
             "exp1_rf01_mannwhitney*.json",
             "hybrid_llm_nn/all_domains/*.json",
             "figures/instability_analysis.csv",
