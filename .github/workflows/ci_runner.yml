@@ -220,13 +220,13 @@ jobs:
               DEFAULT_SEEDS="42"
               ;;
 
-            # exp2_feynman_extrap: writes protocol_core_extrap_*.json into the
-            # same feynman-tests/exp2 dir as exp2_feynman, distinguished by the
-            # 'extrap' prefix.  Must run AFTER exp2_feynman (dep declared in catalogue).
+            # exp2_feynman_extrap: writes protocol_core_extrap_*.json into its
+            # own feynman-tests/exp2_extrap dir (distinct from exp2_feynman's
+            # feynman-tests/exp2).  Must run AFTER exp2_feynman (dep declared in catalogue).
             exp2_feynman_extrap)
               SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
               NEEDS_JULIA=true
-              RESULT_SUBDIR="comparison_results/feynman-tests/exp2"
+              RESULT_SUBDIR="comparison_results/feynman-tests/exp2_extrap"
               DEFAULT_SEEDS="42"
               ;;
 
@@ -756,6 +756,7 @@ jobs:
         run: |
           mkdir -p \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2" \
+            "${OUT_BASE}/comparison_results/feynman-tests/exp2_extrap" \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi" \
             "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
             "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
@@ -1226,10 +1227,10 @@ jobs:
               move_matching "feynman_exp2_checkpoint_*.json"      "${TARGET}"
               ;;
 
-            # exp2_feynman_extrap: outputs use protocol_core_extrap_* prefix so they
-            # are distinct from exp2_feynman's protocol_core_*.json files in the same
-            # TARGET dir. prune_old is scoped to the extrap prefix only — never touches
-            # the main exp2_feynman results already committed in this directory.
+            # exp2_feynman_extrap: outputs use protocol_core_extrap_* prefix and
+            # go into their own feynman-tests/exp2_extrap dir (RESULT_SUBDIR).
+            # prune_old is scoped to the extrap prefix only — never touches
+            # the main exp2_feynman results in feynman-tests/exp2.
             exp2_feynman_extrap)
               prune_old "protocol_core_extrap_*.json"             "${TARGET}"
               prune_old "feynman_extrap_checkpoint_*.json"        "${TARGET}"

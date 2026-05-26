@@ -282,7 +282,7 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
   # and bare extrapolation/ (exp3 RESULT_SUBDIR) — both present in the CI mkdir
   # step but absent here, causing tee/mv failures when those steps run standalone.
   # Mirrors ci_experiment.yml Create results directory structure step exactly.
-  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless/defi,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
+  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_extrap,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless/defi,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
   mkdir -p '"${RESULTS_DIR}"'/extrapolation
   echo "Directory structure: ok"
 '
@@ -720,7 +720,7 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
 # the full FEYNMAN_DOMAINS list when called locally without DOMAIN_FILTER.
 run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney ablation)" bash -c "
   cd '${REPO_ROOT}'
-  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
+  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
   # Use shard-assigned domain filter from CI (DOMAIN_FILTER set by CI YAML's
   # exp2_feynman extrap step).  Falls back to full FEYNMAN_DOMAINS list for
   # local runs where DOMAIN_FILTER is not set.
@@ -747,15 +747,15 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
         --noiseless \
         --threshold ${FEYNMAN_NOISELESS_THRESHOLD} \
         --checkpoint-name \"feynman_extrap_checkpoint_\${DOMAIN_ID}\" \
-        --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+        --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
         --resume \
-      2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2/exp2_extrap_run.log' \
+      2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap/exp2_extrap_run.log' \
     || echo 'WARNING: exp2_feynman_extrap domain '\${DOMAIN_ID}' exited non-zero — continuing'
   done
   echo '=== exp2_feynman_extrap verification ==='
-  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | sort || echo '  (none yet)'
-  COUNT_EXTRAP=\$(find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
+  COUNT_EXTRAP=\$(find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   if [[ \"\${COUNT_EXTRAP}\" -eq 0 ]]; then
     echo 'WARNING: exp2_feynman_extrap produced no protocol_core_extrap_*.json — extrap_r2_far will be missing from ablation_paired.json'
