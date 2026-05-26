@@ -129,6 +129,7 @@ _STEP_CATALOGUE: list[dict] = [
         outputs=[
             # creates the directory skeleton
             "comparison_results/feynman-tests/exp2",
+            "comparison_results/feynman-tests/extrap",
             "comparison_results/feynman-tests/noise-sweep",
             "comparison_results/feynman-tests/sample-complexity",
             "comparison_results/noise-noiseless/noiseless",
@@ -274,7 +275,23 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 7: exp2 ───────────────────────────────────────────────────────────────
+    # ── 7: exp2_feynman_extrap ────────────────────────────────────────────────
+    dict(
+        name="exp2_feynman_extrap",
+        description="Feynman SR benchmark — OOD extrapolation protocol (Tab 16-18 OOD)",
+        scripts=[
+            ("EXPERIMENTS_DIR", "run_comparative_suite_benchmark_v2.py"),
+        ],
+        cwd_vars=["EXPERIMENTS_DIR"],
+        outputs=[
+            "comparison_results/feynman-tests/extrap/feynman_extrap_*.json",
+            "exp2_feynman_extrap_run.log",
+        ],
+        inputs=[],
+        deps=["env_check"],
+    ),
+
+    # ── 8: exp2 ───────────────────────────────────────────────────────────────
     dict(
         name="exp2",
         description="Combined five-system comparison — all Methods (Tab 19 full)",
@@ -290,7 +307,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 8: exp3 ───────────────────────────────────────────────────────────────
+    # ── 9: exp3 ───────────────────────────────────────────────────────────────
     dict(
         name="exp3",
         description="Nguyen-12 benchmark — SEED=42 (tab:nguyen12 · §10.8)",
@@ -306,7 +323,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 9: exp3b ──────────────────────────────────────────────────────────────
+    # ── 10: exp3b ──────────────────────────────────────────────────────────────
     dict(
         name="exp3b",
         description="Nguyen-12 stability seeds 99/123/777/2024",
@@ -321,7 +338,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check", "exp3"],  # reuses same script; logically after exp3
     ),
 
-    # ── 10: suppA ─────────────────────────────────────────────────────────────
+    # ── 11: suppA ─────────────────────────────────────────────────────────────
     dict(
         name="suppA",
         description="DeFi routing improvement experiments (Supplement A · Tab 11-13 routing)",
@@ -343,7 +360,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check", "hybrid_all_domains"],
     ),
 
-    # ── 11: suppB ─────────────────────────────────────────────────────────────
+    # ── 12: suppB ─────────────────────────────────────────────────────────────
     dict(
         name="suppB",
         description="Noise sweep benchmark σ ∈ {0,0.5,1,5,10}% (Tab 28, 29)",
@@ -359,7 +376,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 12: suppB_sc ──────────────────────────────────────────────────────────
+    # ── 13: suppB_sc ──────────────────────────────────────────────────────────
     dict(
         name="suppB_sc",
         description="Sample-complexity sweep n ∈ {50…1000} (Tab 29 · Supplement B §6)",
@@ -375,7 +392,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 13: tables ────────────────────────────────────────────────────────────
+    # ── 14: tables ────────────────────────────────────────────────────────────
     dict(
         name="tables",
         description="Generate all LaTeX tables from result JSONs → ${RESULTS_DIR}/tables/",
@@ -421,7 +438,7 @@ _STEP_CATALOGUE: list[dict] = [
               "exp3", "exp3b", "suppB", "suppB_sc"],
     ),
 
-    # ── 14: figures ───────────────────────────────────────────────────────────
+    # ── 15: figures ───────────────────────────────────────────────────────────
     dict(
         name="figures",
         description="Generate all paper figures from results → ${RESULTS_DIR}/figures/",
@@ -447,7 +464,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["exp1", "exp1b", "instability"],
     ),
 
-    # ── 15: validate ──────────────────────────────────────────────────────────
+    # ── 16: validate ──────────────────────────────────────────────────────────
     dict(
         name="validate",
         description="Cross-check all results against paper-reported values",
@@ -457,6 +474,7 @@ _STEP_CATALOGUE: list[dict] = [
         inputs=[
             "comparison_results/noise-noiseless/noiseless/protocol_core_noiseless_*.json",
             "comparison_results/feynman-tests/exp2/exp2_results*.json",
+            "comparison_results/feynman-tests/extrap/feynman_extrap_*.json",
             "exp1_rf01_mannwhitney*.json",
             "hybrid_llm_nn/all_domains/*.json",
             "figures/instability_analysis.csv",
@@ -475,7 +493,7 @@ _STEP_CATALOGUE: list[dict] = [
             # extrap
             "comparison_results/extrapolation/all_domains_extrap_v4_*.json",
         ],
-        deps=["exp1", "exp2_feynman", "hybrid_all_domains", "instability",
+        deps=["exp1", "exp2_feynman", "exp2_feynman_extrap", "hybrid_all_domains", "instability",
               "suppB_sc", "suppB", "tables", "figures",
               "exp1b", "exp2", "exp3", "exp3b", "extrap"],
     ),
@@ -484,7 +502,7 @@ _STEP_CATALOGUE: list[dict] = [
 # Declared step order from run_all.sh _STEP_ORDER variable
 _DECLARED_ORDER = [
     "env_check", "exp1", "exp1b", "extrap", "hybrid_all_domains",
-    "instability", "exp2_feynman", "exp2", "exp3", "exp3b",
+    "instability", "exp2_feynman", "exp2_feynman_extrap", "exp2", "exp3", "exp3b",
     "suppA", "suppB", "suppB_sc", "tables", "figures", "validate",
 ]
 
