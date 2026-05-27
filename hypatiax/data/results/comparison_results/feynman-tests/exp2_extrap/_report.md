@@ -114,9 +114,9 @@ _No LOO data (no failure equations or scipy unavailable)._
 | Snell's law: refracted angle from incident angle and refractive indices | feynman_optics | hypatia.extrap_r2_far is None |
 | Double-slit wave interference intensity | feynman_optics | hypatia.extrap_r2_far is None |
 | Gaussian/normal distribution probability density | feynman_probability | hypatia.extrap_r2_far is None |
-| Photon energy: E = h * f (Planck relation) | feynman_quantum | hypatia.extrap_r2_far=-inf is non-finite |
+| Photon energy: E = h * f (Planck relation) | feynman_quantum | hypatia.extrap_r2_far is None |
 | Zeeman energy: electron spin in magnetic field | feynman_quantum | pysr_only.extrap_r2_far=nan is non-finite |
-| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far=-inf is non-finite |
+| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
 | Fermi-Dirac occupation number for fermions | feynman_quantum | hypatia.extrap_r2_far is None |
 | Rabi frequency of two-level atom in magnetic field | feynman_quantum | hypatia.extrap_r2_far is None |
 | Planck blackbody spectral radiance (dimensionless: x=hf/kT) | feynman_thermodynamics | pysr_only.extrap_r2_far=nan is non-finite |
