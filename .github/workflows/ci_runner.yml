@@ -883,7 +883,7 @@ jobs:
           PYEOF
 
       - name: Run experiment tasks
-        if: ${{ steps.resolve_ids.outputs.has_work == 'true' }}
+        if: ${{ steps.resolve_ids.outputs.has_work == 'true' && needs.plan.outputs.exp_id != 'exp2_feynman_extrap' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
@@ -954,6 +954,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
           RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
+          RESULT_SUBDIR:     ${{ needs.plan.outputs.result_subdir }}
           REPRO_CFG:         ${{ env.REPRO_CFG }}
         run: |
           set -euo pipefail
@@ -968,14 +969,15 @@ jobs:
           # run_all.sh --step exp2_feynman_extrap should invoke the same script
           # with --extrap --benchmark feynman, writing extrap_r2_far into results.
           # If run_all.sh does not yet have this step, fall back to direct invocation.
-          if grep -q "exp2_feynman_extrap" run_all.sh 2>/dev/null; then
-            TASK_IDS="$(python3 -c "import json,os; print(' '.join(json.loads(os.environ['PENDING_IDS'])))")"             SHARD_IDS="${TASK_IDS}"             SHARD="${SHARD_INDEX}"             RESULTS_DIR="${RESULTS_DIR}"             OUT_BASE="${RESULTS_DIR}"             REPO_ROOT="${{ github.workspace }}"             DOMAIN_FILTER="${TASK_IDS}"               bash run_all.sh --step exp2_feynman_extrap || true
-          else
-            echo "::warning::run_all.sh has no exp2_feynman_extrap step."
-            echo "  Add --step exp2_feynman_extrap to run_all.sh that invokes:"
-            echo "  run_comparative_suite_benchmark_v2.py --extrap --benchmark feynman"
-            echo "  This step produces extrap_r2_far fields needed by run_analysis.py."
-          fi
+          TASK_IDS="$(python3 -c "import json,os; print(' '.join(json.loads(os.environ['PENDING_IDS'])))")"
+          TASK_IDS="${TASK_IDS}" \
+          SHARD_IDS="${TASK_IDS}" \
+          SHARD="${SHARD_INDEX}" \
+          RESULTS_DIR="${RESULTS_DIR}" \
+          OUT_BASE="${RESULTS_DIR}" \
+          REPO_ROOT="${{ github.workspace }}" \
+          DOMAIN_FILTER="${TASK_IDS}" \
+            bash run_all.sh --step exp2_feynman_extrap
 
           # Merge extrap_r2_far values into benchmark_results to produce
           # ablation_paired.json — the schema analyse_ablation() expects.
