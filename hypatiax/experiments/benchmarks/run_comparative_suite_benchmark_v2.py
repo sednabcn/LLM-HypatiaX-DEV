@@ -3261,6 +3261,7 @@ class ProtocolBenchmarkSuite:
         self._save(
             noiseless=getattr(self, "_noiseless", False),
             threshold=getattr(self, "_threshold", 0.995),
+            extrap=getattr(self, "_extrap", False),
         )
 
         # FIX 7 — export flat benchmark_results.json for easy downstream analysis.
@@ -3392,11 +3393,16 @@ class ProtocolBenchmarkSuite:
         except Exception as _eje:
             print(f"\n⚠️  Could not export benchmark_results_extrap.json: {_eje}")
 
-    def _save(self, noiseless: bool = False, threshold: float = 0.995):
+    def _save(self, noiseless: bool = False, threshold: float = 0.995, extrap: bool = False):
         out_dir = _OUTPUT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-        mode = "noiseless" if noiseless else "noisy"
+        if extrap:
+            mode = "extrap"
+        elif noiseless:
+            mode = "noiseless"
+        else:
+            mode = "noisy"
         path = out_dir / f"protocol_core_{mode}_{ts}.json"
 
         # Build PureLLM truncation audit
@@ -3807,7 +3813,13 @@ Examples
         )
         print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
         print()
-        if _noiseless:
+        if getattr(args, "extrap", False):
+            print("=" * 70)
+            print("  EXTRAP MODE  —  train on first 80% of range, test beyond it")
+            print(f"  R² threshold    :  {_threshold}")
+            print("  Output file     :  protocol_core_extrap_TIMESTAMP.json")
+            print("=" * 70)
+        elif _noiseless:
             print("=" * 70)
             print("  NOISELESS MODE  —  noise_level = 0.0")
             print(f"  R² threshold    :  {_threshold}")
@@ -3849,6 +3861,7 @@ Examples
     )
     suite._noiseless  = _noiseless
     suite._threshold  = _threshold
+    suite._extrap     = getattr(args, "extrap", False)
 
     # Propagate symbolic-engine tuning to suite so run_test() can pass
     # them to DiscoveryConfig when constructing v50_2 / SymbolicEngine.
