@@ -64,13 +64,38 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 def _classify_method(method_str: str) -> str:
-    """Return 'hypatia' | 'pysr_only' | 'other'."""
+    """Return 'hypatia' | 'pysr_only' | 'other'.
+
+    Role mapping against the actual method names produced by
+    run_comparative_suite_benchmark_v2.py:
+
+      pysr_only  — HybridDiscoverySystem v50_2 (tools)
+                   Pure PySR run; SymbolicEngineWithLLM is called with
+                   llm_mode="none" inside the v50_2 subprocess path, so no
+                   LLM guidance is applied.  This is the PySR-baseline arm.
+
+      hypatia    — Everything else that uses LLM, hybrid, or neural components:
+                   SymbolicEngineWithLLM (tools), PureLLM Baseline,
+                   ImprovedNN, EnhancedHybridSystemDeFi,
+                   HybridSystemLLMNN all-domains, etc.
+
+    The old classifier required "pysr" or bare "symbolic" (without "llm"/"hybrid")
+    in the name — conditions never satisfied by any current method — so pysr_only
+    was always empty.  We now key on "v50_2" as the unambiguous PySR-baseline
+    marker, with "pysr" retained for forward-compat with any future method names.
+    """
     m = method_str.lower()
-    if "pysr" in m or ("symbolic" in m and "llm" not in m and "hybrid" not in m):
+
+    # PySR-only baseline: v50_2 runs PySR with llm_mode="none" (no LLM loop).
+    # "pysr" kept for forward-compat with future method names.
+    if "v50_2" in m or "pysr" in m:
         return "pysr_only"
+
+    # Hypatia: any method with LLM, hybrid, neural, or discovery components.
     if any(k in m for k in ("llm", "hybrid", "neural", "nn", "hypatia",
-                             "improved", "enhanced", "discovery")):
+                             "improved", "enhanced", "discovery", "symbolic")):
         return "hypatia"
+
     return "other"
 
 

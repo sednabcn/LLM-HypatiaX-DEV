@@ -78,7 +78,8 @@ from typing import Any, Dict, List, Optional
 # Hard ceiling on any single method call. Prevents Anthropic API exponential-
 # backoff retry storms from hanging the suite for 18+ minutes on one test.
 # Can be overridden at runtime with --method-timeout.
-_METHOD_TIMEOUT_SECS: int = 90
+# Paper-quality default (repro.yaml timeouts.method_seconds = 900).
+_METHOD_TIMEOUT_SECS: int = 900
 
 # ---------------------------------------------------------------------------
 # SEGFAULT FIX — must happen BEFORE juliacall or torch are imported.
@@ -119,7 +120,8 @@ random.seed(42)
 np.random.seed(42)
 
 # PySR subprocess timeout — overridden by --pysr-timeout at runtime.
-_PYSR_TIMEOUT: int = 600
+# Paper-quality default (repro.yaml timeouts.feynman_pysr_seconds = 1100).
+_PYSR_TIMEOUT: int = 1100
 
 # ---------------------------------------------------------------------------
 # Path setup.
@@ -2112,11 +2114,12 @@ try:
         # ── FIX: wire DiscoveryConfig from kwargs — same pattern as hybrid_v50_2 ──
         # Previously max_iterations defaulted to 5 (near-zero for PySR) and
         # pysr_timeout was never forwarded, causing guaranteed "Discovery failed".
-        _n_iter   = kwargs.get("max_iterations", 40)   # FIX: was 5 → 40 minimum
-        _pysr_to  = kwargs.get("pysr_timeout", 150)
-        _pop_size = kwargs.get("population_size", 33)
-        _parsimony = kwargs.get("parsimony", 0.0032)
-        _populations = kwargs.get("populations", None)
+        # Defaults aligned to paper-quality values (repro.yaml pysr block).
+        _n_iter   = kwargs.get("max_iterations", 1000)   # repro.yaml pysr.niterations=1000
+        _pysr_to  = kwargs.get("pysr_timeout", 1100)     # repro.yaml timeouts.feynman_pysr_seconds=1100
+        _pop_size = kwargs.get("population_size", 33)    # repro.yaml pysr.population_size=33
+        _parsimony = kwargs.get("parsimony", 0.01)       # repro.yaml pysr.parsimony=0.01
+        _populations = kwargs.get("populations", 30)     # repro.yaml pysr.populations=30
         _use_tc  = kwargs.get("use_transcendental_compositions", False)
         _domain  = kwargs.get("domain", metadata.get("domain", "general"))
         _disc_cfg_kwargs = dict(
@@ -2151,12 +2154,13 @@ try:
         # pysr_timeout entirely and defaulting to 800s/attempt.  Now we build a
         # DiscoveryConfig from the kwargs forwarded by the runner so the per-attempt
         # PySR cap is actually respected.
-        _n_iter    = kwargs.get("max_iterations", 40)
-        _pysr_to   = kwargs.get("pysr_timeout", 150)   # per-attempt cap
-        _n_retry   = kwargs.get("max_retries", 3)
-        _pop_size  = kwargs.get("population_size", 33)
-        _parsimony = kwargs.get("parsimony", 0.0032)
-        _populations = kwargs.get("populations", None)
+        # Defaults aligned to paper-quality values (repro.yaml pysr block).
+        _n_iter    = kwargs.get("max_iterations", 1000)  # repro.yaml pysr.niterations=1000
+        _pysr_to   = kwargs.get("pysr_timeout", 1100)    # repro.yaml timeouts.feynman_pysr_seconds=1100
+        _n_retry   = kwargs.get("max_retries", 3)        # repro.yaml engine.max_retries=3
+        _pop_size  = kwargs.get("population_size", 33)   # repro.yaml pysr.population_size=33
+        _parsimony = kwargs.get("parsimony", 0.01)       # repro.yaml pysr.parsimony=0.01
+        _populations = kwargs.get("populations", 30)     # repro.yaml pysr.populations=30
         _use_tc    = kwargs.get("use_transcendental_compositions", False)
         _disc_cfg_kwargs = dict(
             niterations=_n_iter,
@@ -2401,7 +2405,10 @@ class SymbolicEngineMethod(BaseMethod):
         _s4     = {"easy": 0.0, "medium": 0.5, "hard": 1.0}.get(
                     str(metadata.get("difficulty", "medium")).lower(), 0.5)
         _score  = 0.35 * _s1 + 0.25 * _s2 + 0.25 * _s3 + 0.15 * _s4
-        _ITER_MAX = max(40, min(300, (_per_to - 30) // 3))
+        # Iterations: scale to per-attempt timeout.  Cap raised to 1000 to match
+        # repro.yaml pysr.niterations=1000; actual execution is bounded by the
+        # pysr_timeout wall-clock, so setting a high cap is safe.
+        _ITER_MAX = max(40, min(1000, (_per_to - 30) // 3))
         _ITER_MIN = 40
         _n_iter = int(_ITER_MIN + _score * (_ITER_MAX - _ITER_MIN))
         _n_iter = max(_ITER_MIN, min(_ITER_MAX, _n_iter))
@@ -2512,7 +2519,9 @@ class HybridSystemV50_2Method(BaseMethod):
         _t_avail_outer   = max(60, _METHOD_TIMEOUT_SECS - 150)
         _per_to_outer    = min(200, max(60, _t_avail_outer // _MAX_RETRIES_V50_2_OUTER))
         # Iterations: scale to per-attempt timeout, assuming ~1s/iteration
-        _ITER_MAX  = max(40, min(200, _per_to_outer - 30))
+        # Iterations: scale to per-attempt timeout.  Cap raised to 1000 to match
+        # repro.yaml pysr.niterations=1000; actual execution bounded by pysr_timeout.
+        _ITER_MAX  = max(40, min(1000, _per_to_outer - 30))
         _ITER_MIN  = 40
 
         # Signal 1: output scale spread
@@ -2958,8 +2967,18 @@ class ProtocolBenchmarkSuite:
             "timestamp":     datetime.now().isoformat(),
         }
         if _do_extrap:
-            record["extrap_r2_far"]   = extrap_r2_far
-            record["extrap_rmse_far"] = extrap_rmse_far
+            record["extrap_r2_far"]    = extrap_r2_far
+            record["extrap_rmse_far"]  = extrap_rmse_far
+            # FIX: store extrap split context at the record level so that
+            # print_summary()'s benchmark_results_extrap.json export can read
+            # train_frac / n_train / n_test without searching MethodResult.metadata
+            # dicts (which carry method-specific keys and never contain these fields).
+            record["extrap_train_frac"]  = metadata.get("extrap_train_frac")
+            record["extrap_multiplier"]  = metadata.get("extrap_multiplier")
+            record["extrap_n_train"]     = metadata.get("extrap_n_train")
+            record["extrap_n_test"]      = metadata.get("extrap_n_test")
+            record["extrap_x_train_max"] = metadata.get("extrap_x_train_max")
+            record["extrap_far_ceiling"] = metadata.get("extrap_far_ceiling")
         self.results.append(record)
         return record
 
@@ -3341,17 +3360,16 @@ class ProtocolBenchmarkSuite:
                     continue
                 _desc = rec.get("description", "")
                 _dom  = rec.get("domain", "")
-                # Pull extrap context from the first result's metadata if available,
-                # otherwise fall back to the record-level metadata.
-                _meta_any = {}
-                for _mres in rec.get("results", {}).values():
-                    _md = _mres.get("metadata", {})
-                    if _md.get("extrap") or rec.get("comparison", {}).get("extrap"):
-                        _meta_any = _md
-                        break
-                _train_frac = _meta_any.get("extrap_train_frac")
-                _n_train    = _meta_any.get("extrap_n_train")
-                _n_test     = _meta_any.get("extrap_n_test")
+                # FIX: extrap context (train_frac, n_train, n_test) is stored at the
+                # record level (rec["extrap_train_frac"] etc.) because it comes from
+                # the test-level metadata dict, NOT from individual MethodResult.metadata
+                # dicts (which carry method-specific keys like "decision", "nn_applied").
+                # The old code searched MethodResult.metadata and always got None.
+                _train_frac = rec.get("extrap_train_frac")
+                _n_train    = rec.get("extrap_n_train")
+                _n_test     = rec.get("extrap_n_test")
+                _x_train_max = rec.get("extrap_x_train_max")
+                _far_ceiling = rec.get("extrap_far_ceiling")
                 # One row per method per equation.
                 for _mname, _mres in rec.get("results", {}).items():
                     _extrap_rows.append({
@@ -3368,6 +3386,8 @@ class ProtocolBenchmarkSuite:
                         "extrap_train_frac": _train_frac,
                         "extrap_n_train":    _n_train,
                         "extrap_n_test":     _n_test,
+                        "extrap_x_train_max": _x_train_max,
+                        "extrap_far_ceiling": _far_ceiling,
                     })
             if _extrap_rows:
                 _ext_path = _OUTPUT_DIR / "benchmark_results_extrap.json"
@@ -3604,20 +3624,24 @@ Examples
         ),
     )
     parser.add_argument(
-        "--pysr-timeout", type=int, default=600, dest="pysr_timeout",
+        "--pysr-timeout", type=int, default=1100, dest="pysr_timeout",
         metavar="SECS",
         help=(
-            "Seconds before a PySR subprocess is killed (default: 600). "
+            "Seconds before a PySR subprocess is killed "
+            "(default: 1100, repro.yaml timeouts.feynman_pysr_seconds). "
             "Julia startup alone takes 60-90 s, so values below 300 will "
             "almost always time out before any search is attempted."
         ),
     )
     parser.add_argument(
-        "--method-timeout", type=int, default=90, dest="method_timeout",
+        "--method-timeout", type=int, default=900, dest="method_timeout",
         metavar="SECS",
         help=(
-            "Hard timeout in seconds for each individual method call (default: 90). "
-            "Prevents Anthropic API retry storms from hanging the suite indefinitely."
+            "Hard timeout in seconds for each individual method call "
+            "(default: 900, repro.yaml timeouts.method_seconds). "
+            "Prevents Anthropic API retry storms from hanging the suite indefinitely. "
+            "Note: PySR subprocess_timeout is derived from this value, so setting "
+            "it too low (< 300) will prevent PySR from completing Julia startup."
         ),
     )
     parser.add_argument(
@@ -3776,13 +3800,14 @@ Examples
 
     # Apply env overrides only when the CLI arg is still at its default value
     # (i.e. the user did not explicitly pass --method-timeout or --pysr-timeout).
-    if _env_feynman_to and args.method_timeout == 90:
+    # Defaults updated to paper quality: method_timeout=900, pysr_timeout=1100.
+    if _env_feynman_to and args.method_timeout == 900:
         print(f"ℹ️  FEYNMAN_TIMEOUT={_env_feynman_to}s applied to --method-timeout "
-              f"(CLI default was 90s)")
+              f"(CLI default was 900s)")
         args.method_timeout = _env_feynman_to
-    if _env_feynman_to and args.pysr_timeout == 600:
+    if _env_feynman_to and args.pysr_timeout == 1100:
         print(f"ℹ️  FEYNMAN_TIMEOUT={_env_feynman_to}s applied to --pysr-timeout "
-              f"(CLI default was 600s)")
+              f"(CLI default was 1100s)")
         args.pysr_timeout = _env_feynman_to
     if _env_job_dl:
         print(f"ℹ️  JOB_DEADLINE={_env_job_dl}s detected (informational — "
@@ -3863,17 +3888,26 @@ Examples
     suite._threshold  = _threshold
     suite._extrap     = getattr(args, "extrap", False)
 
+    # CRITICAL FIX: expose the suite in module globals so that
+    # SymbolicEngineMethod.run() and HybridSystemV50_2Method.run() can read
+    # _parsimony / _populations / _use_transcendental_compositions via
+    # globals().get("_ACTIVE_SUITE").  Without this assignment those args are
+    # silently dropped — PySR always used the subprocess defaults regardless
+    # of --parsimony / --populations flags passed on the CLI.
+    globals()["_ACTIVE_SUITE"] = suite
+
     # Propagate symbolic-engine tuning to suite so run_test() can pass
     # them to DiscoveryConfig when constructing v50_2 / SymbolicEngine.
     if _parsimony is not None:
         suite._parsimony = _parsimony
-        print(f"ℹ️  --parsimony {_parsimony} (PySR default 0.0032 overridden)")
+        print(f"ℹ️  --parsimony {_parsimony} (paper default 0.01 from repro.yaml)")
     if _populations is not None:
         suite._populations = _populations
-        print(f"ℹ️  --populations {_populations} (PySR default 15 overridden)")
+        print(f"ℹ️  --populations {_populations} (paper default 30 from repro.yaml)")
     if _use_tc:
         suite._use_transcendental_compositions = True
         print("ℹ️  --use-transcendental-compositions: asin_of_sin / acos_of_cos / atan_of_tan enabled")
+
 
     # ── Collect test cases (same logic as run_comparative_suite_benchmark) ──
     all_tests: List[tuple] = []
@@ -3960,19 +3994,25 @@ Examples
         print("❌  No test cases found.")
         sys.exit(1)
 
-    # ── BUG 3 FIX: --extrap OOD split ─────────────────────────────────────
+    # ── BUG 3 + EXTRAP-MULTIPLIER FIX: --extrap OOD split ─────────────────────
     # When --extrap is set, re-partition each test's data so that training covers
     # only the first extrap_train_frac of the sample range and testing covers the
     # remainder beyond the training distribution.  The original X/y are replaced
     # with an (X_train, y_train) pair; extrap_r2 is added to each result record
     # by tagging the metadata so downstream code can identify the split.
-    # This is applied post-hoc (after protocol.load_test_data) so the split logic
-    # is isolated here and doesn't require changes to BenchmarkProtocol.
+    #
+    # MULTIPLIER FIX: previously _emult was stored in metadata but never used to
+    # define the far-region boundary — X_far was simply Xs[split:] regardless of
+    # the multiplier value, making --extrap-multiplier a no-op.  Now X_far is
+    # restricted to samples where X[:,0] ≤ x_train_max + _emult * train_range,
+    # matching repro.yaml benchmarks.feynman.extrap_mult=2.0 semantics:
+    # the far region spans at most 2× the training range beyond the training max.
     _extrap = getattr(args, "extrap", False)
     if _extrap:
         _efrac = float(getattr(args, "extrap_train_frac", 0.8))
         _emult = float(getattr(args, "extrap_multiplier", 2.0))
         print(f"\nℹ️  --extrap mode: train_frac={_efrac}  multiplier={_emult}")
+        print(f"   Far region: X[:,0] ∈ (x_train_max, x_train_max + {_emult}×train_range]")
         _extrap_tests = []
         for _desc, _X, _y, _vnames, _meta, _dom in all_tests:
             try:
@@ -3985,20 +4025,40 @@ Examples
                 _split    = max(1, int(_n * _efrac))
                 _X_train  = _Xs[:_split]
                 _y_train  = _ys[:_split]
-                # BUG FIX: retain the far region so run_test() can evaluate
-                # each method's returned formula on it and record extrap_r2_far.
-                # Previously _Xs[_split:] and _ys[_split:] were computed here
-                # but immediately discarded — extrap_r2_far was never written.
-                _X_far    = _Xs[_split:]
-                _y_far    = _ys[_split:]
+
+                # ── Multiplier-bounded far region ──────────────────────────────
+                # x_train_max: the largest X[:,0] value seen during training.
+                # train_range: the extent of the training domain on the first var.
+                # far_ceiling: x_train_max + _emult * train_range  (repro.yaml 2.0×).
+                # Only samples in (x_train_max, far_ceiling] become X_far so the
+                # evaluation regime matches the paper specification exactly.
+                _x_train_min  = float(_Xs[0, 0])
+                _x_train_max  = float(_Xs[_split - 1, 0])
+                _train_range  = max(_x_train_max - _x_train_min, 1e-300)
+                _far_ceiling  = _x_train_max + _emult * _train_range
+                _far_all      = _Xs[_split:]
+                _far_y_all    = _ys[_split:]
+                _far_mask     = _far_all[:, 0] <= _far_ceiling
+                _X_far        = _far_all[_far_mask]
+                _y_far        = _far_y_all[_far_mask]
+                _n_clipped    = int((~_far_mask).sum())
+                if _n_clipped > 0:
+                    print(f"   ℹ️  '{_desc[:45]}': clipped {_n_clipped} far sample(s) "
+                          f"beyond {_emult}× boundary (x>{_far_ceiling:.3g})")
+                if len(_X_far) == 0:
+                    print(f"  ⚠️  '{_desc[:45]}': no far samples within "
+                          f"multiplier={_emult}× — extrap_r2_far will be null")
+
                 # Tag metadata so run_test() and _save() can record extrap context.
                 _meta_ext = {
                     **_meta,
                     "extrap": True,
-                    "extrap_train_frac": _efrac,
-                    "extrap_multiplier": _emult,
-                    "extrap_n_train":    _split,
-                    "extrap_n_test":     _n - _split,
+                    "extrap_train_frac":  _efrac,
+                    "extrap_multiplier":  _emult,
+                    "extrap_n_train":     _split,
+                    "extrap_n_test":      len(_X_far),
+                    "extrap_x_train_max": _x_train_max,
+                    "extrap_far_ceiling": _far_ceiling,
                 }
                 _extrap_tests.append((_desc, _X_train, _y_train, _vnames, _meta_ext, _dom,
                                       _X_far, _y_far))
@@ -4009,6 +4069,7 @@ Examples
         all_tests = _extrap_tests
         print(f"   Applied extrap split to {len(all_tests)} test(s). "
               f"Each uses {int(_efrac*100)}% of samples for training.\n")
+
     else:
         # Non-extrap path: pad every tuple with (None, None) so the main loop
         # can always unpack 8 elements regardless of mode.
