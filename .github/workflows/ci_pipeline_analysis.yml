@@ -247,21 +247,37 @@ jobs:
           echo "Resolved: exp=${EXP}  subdir=${SUB}"
 
       # ── Locate analysis input ───────────────────────────────────────────────
-      # Single source of truth — shared with ci_analysis.yml.
-      # OUTPUT_TARGET=output writes to $GITHUB_OUTPUT (step outputs).
+      # Delegates entirely to the shared script.
+      # OUTPUT_TARGET=output writes INPUT_MODE / INPUT_JSON / SHARD_MANIFEST
+      # to $GITHUB_OUTPUT so subsequent steps can read them as step outputs.
       - name: Locate analysis input
         if: matrix.experiment != 'instability'
         id: locate
         env:
-          EXP:        ${{ matrix.experiment }}
-          EXPERIMENT: ${{ matrix.experiment }}
-          SUB:        ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT:    ${{ matrix.experiment }}
+          RESULT_DIR:    ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir }}
+          RESULT_SUBDIR: ${{ steps.meta.outputs.result_subdir }}
+          OUTPUT_TARGET: output
         run: |
           set -euo pipefail
-          RESULT_DIR="${OUT_BASE}/${SUB}"
-          RESULT_SUBDIR="${SUB}"
-          OUTPUT_TARGET=output \
           bash .github/scripts/locate_analysis_input.sh
+      - name: Validate input data
+        if: matrix.experiment != 'instability'
+        # continue-on-error: validation failure is a hard stop per-experiment but
+        # must not kill the whole matrix; Abort on fatal conditions is the gate.
+        continue-on-error: true
+        env:
+          INPUT_MODE:     ${{ steps.locate.outputs.INPUT_MODE }}
+          INPUT_JSON:     ${{ steps.locate.outputs.INPUT_JSON }}
+          SHARD_MANIFEST: ${{ steps.locate.outputs.SHARD_MANIFEST }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${INPUT_MODE:-}" ]]; then
+            echo "::error::INPUT_MODE is not set — 'Locate analysis input' step may have failed."
+            exit 1
+          fi
+          python3 .github/scripts/validate_analysis_input.py
+
       - name: Run statistical analysis
         if: matrix.experiment != 'instability'
         # continue-on-error: run_analysis.py writes _analysis.json even on fatal
@@ -272,9 +288,9 @@ jobs:
         env:
           EXP:            ${{ matrix.experiment }}
           SUB:            ${{ steps.meta.outputs.result_subdir }}
-          INPUT_MODE:     ${{ steps.locate.outputs.input_mode }}
-          INPUT_JSON:     ${{ steps.locate.outputs.input_json }}
-          SHARD_MANIFEST: ${{ steps.locate.outputs.shard_manifest }}
+          INPUT_MODE:     ${{ steps.locate.outputs.INPUT_MODE }}
+          INPUT_JSON:     ${{ steps.locate.outputs.INPUT_JSON }}
+          SHARD_MANIFEST: ${{ steps.locate.outputs.SHARD_MANIFEST }}
           PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
           PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
         run: |

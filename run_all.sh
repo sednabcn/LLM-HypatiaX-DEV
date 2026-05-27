@@ -635,11 +635,10 @@ PYEOF
 run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/C - Groups A-C + EX)" bash -c "
   mkdir -p '${RESULTS_DIR}/figures'
   # Purge only instability-specific files; preserve exp1 benchmark JSONs.
-  for _inst_f in \
+  rm -f \
     '${RESULTS_DIR}/figures/instability_analysis.csv' \
-    '${RESULTS_DIR}/figures/instability_extrapolation.csv'; do
-    rm -f "$_inst_f" 2>/dev/null || true
-  done
+    '${RESULTS_DIR}/figures/instability_extrapolation.csv' \
+    2>/dev/null || true
   find '${RESULTS_DIR}/figures' -maxdepth 1 \
     \( -name 'fig_paper_*.pdf' -o -name 'fig_paper_*.png' \
        -o -name 'hypatiax_instability_*.pdf' -o -name 'hypatiax_instability_*.png' \) \

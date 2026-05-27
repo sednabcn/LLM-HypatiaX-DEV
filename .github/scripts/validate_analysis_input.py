@@ -118,14 +118,22 @@ def main():
     mode = os.environ["INPUT_MODE"]
     total = 0
 
-    if mode == "merged":
+    if mode in ("merged", "direct"):
         path = os.environ["INPUT_JSON"]
+        if not path or not pathlib.Path(path).is_file():
+            print(f"::error::INPUT_JSON='{path}' does not exist or is not a file.")
+            sys.exit(1)
         records = load_records(path)
-        print(f"Merged file: {path}")
+        label = "Merged" if mode == "merged" else "Direct"
+        print(f"{label} file: {path}")
         print(f"Records: {len(records)}")
         total += len(records)
-    else:
-        manifest = pathlib.Path(os.environ["SHARD_MANIFEST"])
+    elif mode == "shards":
+        manifest_path = os.environ.get("SHARD_MANIFEST", "")
+        if not manifest_path or not pathlib.Path(manifest_path).is_file():
+            print(f"::error::SHARD_MANIFEST='{manifest_path}' is not a file.")
+            sys.exit(1)
+        manifest = pathlib.Path(manifest_path)
         for line in manifest.read_text().splitlines():
             line = line.strip()
             if not line:
@@ -134,6 +142,9 @@ def main():
             print(f"Shard: {line}")
             print(f"Records: {len(records)}")
             total += len(records)
+    else:
+        print(f"::error::Unknown INPUT_MODE='{mode}'. Expected: merged | direct | shards")
+        sys.exit(1)
 
     print(f"TOTAL_RECORDS={total}")
 
