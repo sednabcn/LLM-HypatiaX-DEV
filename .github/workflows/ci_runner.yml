@@ -1152,6 +1152,11 @@ jobs:
           #      deletion (D) alongside the newly moved files (A), keeping
           #      the repo tree in sync with exactly one run's outputs.
           prune_old() {
+            # Removes files matching pattern from dest before a fresh run moves
+            # new outputs in.  Handles BOTH cases:
+            #   git-tracked files: git rm --cached + rm (keeps repo tree clean)
+            #   untracked files:   plain rm (removes stale partial-run leftovers
+#            that never got committed, e.g. from a crashed prior run)
             local pattern="$1" dest="$2"
             local pruned=0
             while IFS= read -r f; do
@@ -1159,9 +1164,11 @@ jobs:
               if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
                 echo "  prune_old: removing stale committed result: $f"
                 git rm --cached --quiet "$f" 2>/dev/null || true
-                rm -f "$f"
-                pruned=$((pruned + 1))
+              else
+                echo "  prune_old: removing stale untracked result: $f"
               fi
+              rm -f "$f"
+              pruned=$((pruned + 1))
             done < <(find "$dest" -maxdepth 1 -name "$pattern" -type f 2>/dev/null)
             [[ $pruned -gt 0 ]] && echo "  prune_old: removed ${pruned} stale file(s) matching '${pattern}' from ${dest}"
             return 0

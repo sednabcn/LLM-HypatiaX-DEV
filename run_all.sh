@@ -214,6 +214,32 @@ run() {
   fi
 }
 
+# ── purge_dir — wipe stale result files before a fresh run ────────────────────
+# Removes every JSON/CSV/log from the target dir that is NOT a checkpoint or
+# .pkl resume file.  Called at the start of each experiment step so that
+# timestamp-named outputs from prior local runs never contaminate the new run.
+# Mirrors what CI prune_old() does for git-tracked files, but works locally
+# where nothing is committed yet.
+purge_dir() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 0
+  local removed=0
+  while IFS= read -r f; do
+    fname=$(basename "$f")
+    # Preserve checkpoint / resume artefacts so --resume keeps working.
+    [[ "$fname" == *checkpoint* ]] && continue
+    [[ "$fname" == *.pkl       ]] && continue
+    [[ "$fname" == _merged*    ]] && continue
+    [[ "$fname" == _stats*     ]] && continue
+    [[ "$fname" == _analysis*  ]] && continue
+    [[ "$fname" == _report*    ]] && continue
+    rm -f "$f"
+    removed=$((removed + 1))
+  done < <(find "$dir" -maxdepth 1 -type f \
+             \( -name "*.json" -o -name "*.csv" -o -name "*.log" -o -name "*.txt" \) 2>/dev/null)
+  [[ $removed -gt 0 ]] && echo "[purge_dir] Removed $removed stale file(s) from $dir" || true
+}
+
 # ── STEP 0: env_check ─────────────────────────────────────────────────────────
 run env_check "Verify environment (Python, Julia/PySR, API key, directories)" bash -c '
   set -e
@@ -294,6 +320,7 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
   cd '${REPO_ROOT}'
   _DEFI_TARGET='${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'
   mkdir -p \"\${_DEFI_TARGET}\"
+  purge_dir \"\${_DEFI_TARGET}\"
 
   python3 '${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_v3c.py' \
     --output-dir \"\${_DEFI_TARGET}\" \
@@ -381,6 +408,7 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
   dest15='${RESULTS_DIR}/comparison_results/noise-noiseless/15'
 
   mkdir -p \"\${dest15}\"
+  purge_dir \"\${dest15}\"
 
   # move primary outputs
   # FIX-exp1b-1 (move block): after cd REPO_ROOT, hypatiax_defi_benchmark_v3c.py
@@ -487,6 +515,7 @@ run extrap "OOD extrapolation comparative run (Tab 9 OOD columns)" bash -c "
   #   --domain and an absolute --output-dir on every invocation.
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/comparison_results/extrapolation'
+  purge_dir '${RESULTS_DIR}/comparison_results/extrapolation'
   for DOMAIN_ID in ${FEYNMAN_DOMAINS}; do
     echo '=== extrap: domain='\${DOMAIN_ID}' ==='
     FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
@@ -574,6 +603,7 @@ PYEOF
   # FIX-OUTDIR-1: --output-dir so outputs land in hybrid_llm_nn/all_domains/
   # matching CI RESULT_SUBDIR and validate glob. Previously no --output-dir
   # was passed; files landed in CWD and were never found by the validate check.
+  purge_dir '${RESULTS_DIR}/hybrid_llm_nn/all_domains'
   python3 hybrid_system_llm_nn_all_domains.py \
     --samples '${FEYNMAN_SAMPLES}' \
     --output-dir '${RESULTS_DIR}/hybrid_llm_nn/all_domains' \
@@ -604,6 +634,16 @@ PYEOF
 #   … (all 12 figure stems: Groups A + B + C + EX)
 run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/C - Groups A-C + EX)" bash -c "
   mkdir -p '${RESULTS_DIR}/figures'
+  # Purge only instability-specific files; preserve exp1 benchmark JSONs.
+  for _inst_f in \
+    '${RESULTS_DIR}/figures/instability_analysis.csv' \
+    '${RESULTS_DIR}/figures/instability_extrapolation.csv'; do
+    rm -f "$_inst_f" 2>/dev/null || true
+  done
+  find '${RESULTS_DIR}/figures' -maxdepth 1 \
+    \( -name 'fig_paper_*.pdf' -o -name 'fig_paper_*.png' \
+       -o -name 'hypatiax_instability_*.pdf' -o -name 'hypatiax_instability_*.png' \) \
+    -delete 2>/dev/null || true
 
   # Canonical exp1 output directory (matches RESULT_SUBDIR in CI YAML).
   # All hypatiax_defi_benchmark_v3*results*.json from exp1 are moved here
@@ -654,14 +694,8 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
   # FIX-exp2_feynman-1: cd REPO_ROOT and invoke by full path (doubled-path fix).
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
-  # FIX-STALE-RESULTS: remove old protocol_core_noiseless_*.json files from
-  # previous runs so they do not accumulate and confuse downstream consumers.
-  # Checkpoints (feynman_exp2_checkpoint_*.pkl / *.json) are preserved so
-  # --resume can still skip domains that genuinely completed this run.
-  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
-    -maxdepth 1 -name 'protocol_core_noiseless_*.json' -delete 2>/dev/null || true
-  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2' \
-    -maxdepth 1 -name 'exp2_run.log' -delete 2>/dev/null || true
+  # purge_dir removes all stale JSON/CSV/log (not checkpoints) before re-run.
+  purge_dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
   for DOMAIN_ID in ${FEYNMAN_DOMAINS}; do
     echo '=== exp2_feynman: domain='\${DOMAIN_ID}' ==='
     FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
@@ -732,11 +766,8 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   # FIX-STALE-RESULTS: remove old extrap result files from previous runs.
   find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
     -maxdepth 1 -name 'protocol_core_extrap_*.json' -delete 2>/dev/null || true
-  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
-    -maxdepth 1 -name 'exp2_extrap_run.log' -delete 2>/dev/null || true
-  # Use shard-assigned domain filter from CI (DOMAIN_FILTER set by CI YAML's
-  # exp2_feynman extrap step).  Falls back to full FEYNMAN_DOMAINS list for
-  # local runs where DOMAIN_FILTER is not set.
+  # purge_dir removes all stale JSON/CSV/log (not checkpoints) before re-run.
+  purge_dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
   ACTIVE_DOMAINS=\"\${DOMAIN_FILTER:-${FEYNMAN_DOMAINS}}\"
   for DOMAIN_ID in \${ACTIVE_DOMAINS}; do
     echo '=== exp2_feynman_extrap: domain='\${DOMAIN_ID}' ==='
@@ -828,6 +859,7 @@ run exp2 "Combined five-system comparison -- all Methods (Tab 19 full)" bash -c 
   #   CI workers loop per-domain so each domain gets its own checkpoint + output.
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'
+  purge_dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_multi'
   EXP2_DOMAINS='mechanics thermodynamics electromagnetism fluid_dynamics optics quantum chemistry biology mathematics economics'
   for DOMAIN_ID in \${EXP2_DOMAINS}; do
     echo '=== exp2: domain='\${DOMAIN_ID}' ==='
@@ -861,6 +893,7 @@ run exp3 "Nguyen-12 benchmark -- SEED=42 (tab:nguyen12 - SS10.8)" bash -c '
   # FIX-exp3-1: cd REPO_ROOT and invoke by full path (doubled-path fix).
   cd '"'"'${REPO_ROOT}'"'"'
   mkdir -p '"'"'${RESULTS_DIR}/extrapolation'"'"'
+  purge_dir '"'"'${RESULTS_DIR}/extrapolation'"'"'
   echo "=== exp3 seed 1/1: seed=42 | equations: N1-N12 (12 total) ==="
   RESULTS_DIR='${RESULTS_DIR}' \
     python3 '"'"'${EXPERIMENTS_DIR}/exp3_nguyen12_hybrid50v_02.py'"'"' \
@@ -925,6 +958,7 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
   # Mirrors the exp3 fix (cd REPO_ROOT + full path invocation).
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/extrapolation/multi_seed'
+  purge_dir '${RESULTS_DIR}/extrapolation/multi_seed'
   for seed in 99 123 777 2024; do
     echo '--- exp3b seed='\$seed' ---'
     RESULTS_DIR='${RESULTS_DIR}' \
@@ -961,6 +995,7 @@ run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routin
   mkdir -p '${RESULTS_DIR}/hybrid_pysr/defi' '${RESULTS_DIR}/figures' '${RESULTS_DIR}/tables'
   python3 '${EXPERIMENTS_DIR}/run_hybrid_system_benchmark.py' \
     2>&1 | tee    '${RESULTS_DIR}'/suppA_run.log
+  purge_dir '${RESULTS_DIR}/hybrid_pysr/defi'
   python3 hypatiax/experiments/tests/test_enhanced_defi_extrapolation.py \
     2>&1 | tee -a '${RESULTS_DIR}'/suppA_run.log
   python3 hypatiax/analysis/analyze_hybrid_performance.py \
@@ -1000,6 +1035,7 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # run_noise_sweep_benchmark.py uses os.getcwd()-relative paths; cd EXPERIMENTS_DIR
   # caused outputs to land in .../benchmarks/hypatiax/data/results/... → never found.
   cd '${REPO_ROOT}'
+  purge_dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep'
   # FIX-suppB-2: NOISE_LEVELS forwarded explicitly so run_noise_sweep_benchmark.py
   # honours custom dispatch inputs (default: CI value 0.0,0.5,1.0,5.0,10.0).
   # Without this the script silently uses its own internal default, which may diverge
@@ -1031,6 +1067,7 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   # FIX-suppB_sc-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug.
   cd '${REPO_ROOT}'
+  purge_dir '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
   # FIX-suppB_sc-2: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
   # forwarded as CLI flags to match repro.yaml paper-quality values (same fix as suppB).
   # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
