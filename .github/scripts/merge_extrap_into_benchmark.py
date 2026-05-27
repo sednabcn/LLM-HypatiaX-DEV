@@ -128,11 +128,18 @@ def _load_extrap_benchmark(extrap_bench_dir: Path) -> dict:
     results: dict = defaultdict(lambda: {"hypatia": None, "pysr_only": None})
 
     def _better(a: dict | None, b: dict) -> dict:
-        """Return whichever candidate has the higher extrap_r2_far (None < any float)."""
+        """Return whichever candidate has the higher finite extrap_r2_far.
+        Non-finite values (-inf, nan) are treated the same as None so that a
+        method which failed extrapolation never blocks a finite result."""
+        import math as _math
+
+        def _fin(v):
+            return v if (v is not None and isinstance(v, float) and _math.isfinite(v)) else None
+
         if a is None:
             return b
-        a_far = a.get("extrap_r2_far")
-        b_far = b.get("extrap_r2_far")
+        a_far = _fin(a.get("extrap_r2_far"))
+        b_far = _fin(b.get("extrap_r2_far"))
         if a_far is None and b_far is None:
             # Fall back to train r2
             return a if (a.get("train_r2") or 0) >= (b.get("train_r2") or 0) else b
@@ -268,11 +275,22 @@ def merge(
         legacy_eq = extrap_legacy.get(eq_name, {})
 
         def _pick(new_role: dict | None, legacy_role: dict | None, key: str):
-            """Return value from new_role if present, else legacy_role."""
-            v = (new_role or {}).get(key)
+            """Return value from new_role if finite, else try legacy_role.
+            Non-finite floats (-inf, nan) are treated as absent so they never
+            shadow a finite value from the legacy source."""
+            import math as _math
+
+            def _fin(v):
+                if v is None:
+                    return None
+                if isinstance(v, float) and not _math.isfinite(v):
+                    return None
+                return v
+
+            v = _fin((new_role or {}).get(key))
             if v is not None:
                 return v
-            return (legacy_role or {}).get(key)
+            return _fin((legacy_role or {}).get(key))
 
         h_new    = new_eq.get("hypatia")    or {}
         p_new    = new_eq.get("pysr_only")  or {}
