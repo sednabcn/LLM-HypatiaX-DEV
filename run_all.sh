@@ -791,11 +791,15 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
 run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney ablation)" bash -c "
   cd '${REPO_ROOT}'
   mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
-  # NOTE: purge_dir intentionally removed here.
+  # NOTE: purge_dir intentionally absent here — must NEVER be added.
   # CI calls this step exactly once; purge_dir would delete any results already
   # written by a prior resume attempt before the domain loop completes — causing
   # the verify step to see 0 files.  The CI move step's prune_old handles stale
   # committed files from prior workflow runs.
+  # OUTPUT FILE: run_comparative_suite_benchmark_v2.py v2.2+ writes
+  # benchmark_results_extrap.json (not benchmark_results.json) into --output-dir
+  # when --extrap is active.  This name is mandatory: merge_extrap_into_benchmark.py
+  # reads it via --extrap-benchmark-dir.  Do NOT rename, move, or purge this file.
   ACTIVE_DOMAINS=\"\${DOMAIN_FILTER:-${FEYNMAN_DOMAINS}}\"
   for DOMAIN_ID in \${ACTIVE_DOMAINS}; do
     echo '=== exp2_feynman_extrap: domain='\${DOMAIN_ID}' ==='

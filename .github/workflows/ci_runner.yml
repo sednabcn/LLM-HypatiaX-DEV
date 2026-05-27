@@ -1265,7 +1265,12 @@ jobs:
             exp2_feynman_extrap)
               prune_old "protocol_core_extrap_*.json"             "${TARGET}"
               prune_old "feynman_extrap_checkpoint_*.json"        "${TARGET}"
-              prune_old "benchmark_results_extrap.json"           "${TARGET}"
+              # FIX-NOISELESS_EXTRAP: benchmark_results_extrap.json must NOT be pruned.
+              # prune_old "benchmark_results_extrap.json" was here and deleted the file
+              # immediately after it was created, before move_matching could pick it up.
+              # This is the primary input to merge_extrap_into_benchmark.py
+              # --extrap-benchmark-dir; purging it caused ablation_paired.json to be
+              # empty and the Mann-Whitney test to report TOO_FEW_MW_PAIRS. REMOVED.
               move_matching "protocol_core_extrap_*.json"         "${TARGET}"
               move_matching "feynman_extrap_checkpoint_*.json"    "${TARGET}"
               move_matching "benchmark_results_extrap.json"       "${TARGET}"

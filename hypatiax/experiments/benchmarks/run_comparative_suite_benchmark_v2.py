@@ -114,6 +114,30 @@ for _noisy_logger in ("httpx", "httpcore", "anthropic"):
 import numpy as np
 
 # ---------------------------------------------------------------------------
+# extrap_r2_far helpers — imported from the canonical module so this file
+# does not maintain its own copy of the far-region evaluation logic.
+# Falls back to inline stubs if the module is not on sys.path (e.g. during
+# isolated unit tests), but the suite will print a warning in that case.
+# ---------------------------------------------------------------------------
+try:
+    from hypatiax.experiments.benchmarks.extrap_r2_far import (
+        build_extrap_split,
+        compute_extrap_r2_far,
+        calculate_extrapolation_error,
+        extrapolation_error_status,
+        ExtrapolationRegime,
+        REGIMES,
+    )
+    _EXTRAP_MODULE_AVAILABLE = True
+except ImportError:
+    _EXTRAP_MODULE_AVAILABLE = False
+    print(
+        "⚠️  extrap_r2_far.py not found on sys.path — "
+        "extrapolation error % will not be computed. "
+        "Expected at: hypatiax/experiments/benchmarks/extrap_r2_far.py"
+    )
+
+# ---------------------------------------------------------------------------
 # Module-level reproducibility seeds (matches the rest of the project).
 # ---------------------------------------------------------------------------
 random.seed(42)
@@ -2868,19 +2892,24 @@ class ProtocolBenchmarkSuite:
         # ── extrap_r2_far — evaluate each method's formula on the held-out far
         # region (X_far / y_far) that was stripped before training in --extrap mode.
         # This is the field required by run_analysis.py's Mann-Whitney ablation test
-        # (Table 14).  Previously this block was absent: the far region was computed
-        # in main() but immediately discarded, so extrap_r2_far was never recorded.
+        # (Table 14).
         #
-        # Evaluation strategy:
-        #   • Symbolic / LLM methods return a Python formula string → use
-        #     BaseMethod._runner_eval_formula() to predict on X_far, then
-        #     compute R² with the same _safe_r2 logic used everywhere else.
+        # Evaluation is delegated to compute_extrap_r2_far() from extrap_r2_far.py,
+        # which also computes extrapolation_error_pct = (RMSE_far / RMSE_train) × 100%
+        # using the same five-tier status labels as extrapolation_test_protocol.py:
+        #   < 50 %  EXCELLENT  |  < 100 %  GOOD  |  < 200 %  MODERATE
+        #   < 500 %  POOR      |  ≥ 500 %  CATASTROPHIC
+        #
+        # Evaluation strategy (unchanged from the inline version):
+        #   • Symbolic / LLM methods return a Python formula string → evaluated on
+        #     X_far via _runner_eval_formula(); R² via _safe_r2 sign-flip logic.
         #   • NN methods return an architecture tag (e.g. "ImprovedNN(3→256→…)")
         #     that cannot be re-evaluated on new data → stored as null.
         #   • Any method that failed, returned "N/A", or whose formula raises on
         #     X_far → stored as null.
-        extrap_r2_far: Dict[str, Optional[float]] = {}
-        extrap_rmse_far: Dict[str, Optional[float]] = {}
+        extrap_r2_far:    Dict[str, Optional[float]] = {}
+        extrap_rmse_far:  Dict[str, Optional[float]] = {}
+        extrap_error_pct: Dict[str, Optional[float]] = {}
         _do_extrap = (
             X_far is not None
             and y_far is not None
@@ -2888,75 +2917,41 @@ class ProtocolBenchmarkSuite:
             and len(y_far) > 1
         )
         if _do_extrap:
-            # Inline _safe_r2 / _safe_rmse so we don't depend on method instances.
-            def _far_r2(y_true, y_pred):
-                y_pred = np.asarray(y_pred, dtype=float)
-                if np.any(~np.isfinite(y_pred)) or np.any(np.abs(y_pred) > 1e100):
-                    return None
-                if np.std(y_pred) < 1e-30:
-                    return None
-                if len(y_true) < 2:
-                    return None
-                ss_res = np.sum((y_true - y_pred) ** 2)
-                ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-                _scale = float(np.max(np.abs(y_true)) ** 2) * len(y_true)
-                _tol   = 1e-10 * _scale if _scale > 0 else 1e-30
-                if ss_tot < _tol:
-                    return 1.0 if ss_res < _tol else float("-inf")
-                r2 = float(1 - ss_res / ss_tot)
-                # sign-flip correction (same as BaseMethod._safe_r2)
-                if r2 < 0:
-                    ss_flip = np.sum((y_true - (-y_pred)) ** 2)
-                    r2_flip = float(1 - ss_flip / ss_tot)
-                    if r2_flip > r2:
-                        r2 = r2_flip
-                return r2 if r2 >= -100 else float("-inf")
+            if _EXTRAP_MODULE_AVAILABLE:
+                # Build per-method training-prediction dict for accurate RMSE_train.
+                # Only MethodResult objects that succeeded and have a formula string
+                # can contribute; NN-tag methods are excluded inside compute_extrap_r2_far.
+                _y_pred_train: Dict[str, np.ndarray] = {}
+                for _mn, _res in results.items():
+                    if _res.success:
+                        _formula_str = (_res.formula or "").strip()
+                        if (
+                            _formula_str
+                            and not _formula_str.startswith("ImprovedNN(")
+                            and not _formula_str.startswith("[NN fallback")
+                            and _formula_str not in ("N/A", "")
+                        ):
+                            _yp = BaseMethod._runner_eval_formula(_formula_str, X, var_names)
+                            if _yp is not None and np.all(np.isfinite(_yp)):
+                                _y_pred_train[_mn] = _yp
 
-            def _far_rmse(y_true, y_pred):
-                if not np.all(np.isfinite(y_pred)):
-                    return None
-                return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
-
-            for _mname, _res in results.items():
-                # Skip failed methods and NN-style methods (no evaluable formula).
-                if not _res.success:
-                    extrap_r2_far[_mname]   = None
-                    extrap_rmse_far[_mname] = None
-                    continue
-                _formula = (_res.formula or "").strip()
-                # NN methods return architecture tags — not evaluable expressions.
-                _is_nn_tag = (
-                    _formula.startswith("ImprovedNN(")
-                    or _formula.startswith("[NN fallback")
-                    or _formula in ("N/A", "")
+                extrap_r2_far, extrap_rmse_far, extrap_error_pct = compute_extrap_r2_far(
+                    results=results,
+                    X_far=X_far,
+                    y_far=y_far,
+                    var_names=var_names,
+                    y_train=y,
+                    y_pred_train=_y_pred_train if _y_pred_train else None,
+                    verbose=verbose,
                 )
-                if _is_nn_tag:
-                    extrap_r2_far[_mname]   = None
-                    extrap_rmse_far[_mname] = None
-                    continue
-                # Attempt formula evaluation on the far region.
-                try:
-                    _y_far_pred = BaseMethod._runner_eval_formula(
-                        _formula, X_far, var_names
-                    )
-                    if _y_far_pred is None or len(_y_far_pred) != len(y_far):
-                        extrap_r2_far[_mname]   = None
-                        extrap_rmse_far[_mname] = None
-                    else:
-                        _r2f   = _far_r2(y_far, _y_far_pred)
-                        _rmsef = _far_rmse(y_far, _y_far_pred) if _r2f is not None else None
-                        extrap_r2_far[_mname]   = _r2f
-                        extrap_rmse_far[_mname] = _rmsef
-                except Exception:
-                    extrap_r2_far[_mname]   = None
-                    extrap_rmse_far[_mname] = None
-
-            if verbose and any(v is not None for v in extrap_r2_far.values()):
-                print(f"\n  📐 Extrapolation R² on far region "
-                      f"(n={len(X_far)} held-out samples):", flush=True)
-                for _mn, _r2f in extrap_r2_far.items():
-                    _r2s = f"{_r2f:.4f}" if (_r2f is not None and np.isfinite(_r2f)) else "null"
-                    print(f"     {_mn:<42} extrap_r2_far={_r2s}", flush=True)
+            else:
+                # extrap_r2_far module not available — fall back to null for all methods
+                # so downstream code (benchmark_results_extrap.json export) still
+                # gets a complete row with explicit null values instead of missing keys.
+                for _mn in results:
+                    extrap_r2_far[_mn]    = None
+                    extrap_rmse_far[_mn]  = None
+                    extrap_error_pct[_mn] = None
 
         record = {
             "description":   description,
@@ -2969,6 +2964,7 @@ class ProtocolBenchmarkSuite:
         if _do_extrap:
             record["extrap_r2_far"]    = extrap_r2_far
             record["extrap_rmse_far"]  = extrap_rmse_far
+            record["extrap_error_pct"] = extrap_error_pct   # NEW: % degradation per method
             # FIX: store extrap split context at the record level so that
             # print_summary()'s benchmark_results_extrap.json export can read
             # train_frac / n_train / n_test without searching MethodResult.metadata
@@ -3356,6 +3352,7 @@ class ProtocolBenchmarkSuite:
                 # Skip records that were not produced by an extrap run.
                 _er_map   = rec.get("extrap_r2_far")
                 _erm_map  = rec.get("extrap_rmse_far", {})
+                _eep_map  = rec.get("extrap_error_pct", {})
                 if not _er_map:
                     continue
                 _desc = rec.get("description", "")
@@ -3383,6 +3380,7 @@ class ProtocolBenchmarkSuite:
                         "success":           _mres.get("success", False),
                         "extrap_r2_far":     _er_map.get(_mname),
                         "extrap_rmse_far":   _erm_map.get(_mname),
+                        "extrap_error_pct":  _eep_map.get(_mname),  # NEW: % degradation
                         "extrap_train_frac": _train_frac,
                         "extrap_n_train":    _n_train,
                         "extrap_n_test":     _n_test,
@@ -4016,50 +4014,50 @@ Examples
         _extrap_tests = []
         for _desc, _X, _y, _vnames, _meta, _dom in all_tests:
             try:
-                # Split on the first variable's range (most common convention).
-                # Sort rows by X[:,0] to get a contiguous training region.
-                _order    = np.argsort(_X[:, 0])
-                _Xs       = _X[_order]
-                _ys       = _y[_order]
-                _n        = len(_Xs)
-                _split    = max(1, int(_n * _efrac))
-                _X_train  = _Xs[:_split]
-                _y_train  = _ys[:_split]
-
-                # ── Multiplier-bounded far region ──────────────────────────────
-                # x_train_max: the largest X[:,0] value seen during training.
-                # train_range: the extent of the training domain on the first var.
-                # far_ceiling: x_train_max + _emult * train_range  (repro.yaml 2.0×).
-                # Only samples in (x_train_max, far_ceiling] become X_far so the
-                # evaluation regime matches the paper specification exactly.
-                _x_train_min  = float(_Xs[0, 0])
-                _x_train_max  = float(_Xs[_split - 1, 0])
-                _train_range  = max(_x_train_max - _x_train_min, 1e-300)
-                _far_ceiling  = _x_train_max + _emult * _train_range
-                _far_all      = _Xs[_split:]
-                _far_y_all    = _ys[_split:]
-                _far_mask     = _far_all[:, 0] <= _far_ceiling
-                _X_far        = _far_all[_far_mask]
-                _y_far        = _far_y_all[_far_mask]
-                _n_clipped    = int((~_far_mask).sum())
-                if _n_clipped > 0:
-                    print(f"   ℹ️  '{_desc[:45]}': clipped {_n_clipped} far sample(s) "
-                          f"beyond {_emult}× boundary (x>{_far_ceiling:.3g})")
-                if len(_X_far) == 0:
-                    print(f"  ⚠️  '{_desc[:45]}': no far samples within "
-                          f"multiplier={_emult}× — extrap_r2_far will be null")
-
-                # Tag metadata so run_test() and _save() can record extrap context.
-                _meta_ext = {
-                    **_meta,
-                    "extrap": True,
-                    "extrap_train_frac":  _efrac,
-                    "extrap_multiplier":  _emult,
-                    "extrap_n_train":     _split,
-                    "extrap_n_test":      len(_X_far),
-                    "extrap_x_train_max": _x_train_max,
-                    "extrap_far_ceiling": _far_ceiling,
-                }
+                if _EXTRAP_MODULE_AVAILABLE:
+                    # Delegate the split entirely to build_extrap_split() so that
+                    # the boundary logic stays in one place (extrap_r2_far.py).
+                    _X_train, _y_train, _X_far, _y_far, _extrap_meta = build_extrap_split(
+                        _X, _y,
+                        description=_desc,
+                        train_frac=_efrac,
+                        multiplier=_emult,
+                    )
+                    _meta_ext = {**_meta, **_extrap_meta}
+                else:
+                    # extrap_r2_far module unavailable — inline the split so the
+                    # run can still proceed (without extrapolation error %).
+                    _order   = np.argsort(_X[:, 0])
+                    _Xs, _ys = _X[_order], _y[_order]
+                    _n       = len(_Xs)
+                    _split   = max(1, int(_n * _efrac))
+                    _X_train, _y_train = _Xs[:_split], _ys[:_split]
+                    _x_train_min  = float(_Xs[0, 0])
+                    _x_train_max  = float(_Xs[_split - 1, 0])
+                    _train_range  = max(_x_train_max - _x_train_min, 1e-300)
+                    _far_ceiling  = _x_train_max + _emult * _train_range
+                    _far_all      = _Xs[_split:]
+                    _far_y_all    = _ys[_split:]
+                    _far_mask     = _far_all[:, 0] <= _far_ceiling
+                    _X_far        = _far_all[_far_mask]
+                    _y_far        = _far_y_all[_far_mask]
+                    _n_clipped    = int((~_far_mask).sum())
+                    if _n_clipped > 0:
+                        print(f"   ℹ️  '{_desc[:45]}': clipped {_n_clipped} far sample(s) "
+                              f"beyond {_emult}× boundary (x>{_far_ceiling:.3g})")
+                    if len(_X_far) == 0:
+                        print(f"  ⚠️  '{_desc[:45]}': no far samples within "
+                              f"multiplier={_emult}× — extrap_r2_far will be null")
+                    _meta_ext = {
+                        **_meta,
+                        "extrap":             True,
+                        "extrap_train_frac":  _efrac,
+                        "extrap_multiplier":  _emult,
+                        "extrap_n_train":     _split,
+                        "extrap_n_test":      len(_X_far),
+                        "extrap_x_train_max": _x_train_max,
+                        "extrap_far_ceiling": _far_ceiling,
+                    }
                 _extrap_tests.append((_desc, _X_train, _y_train, _vnames, _meta_ext, _dom,
                                       _X_far, _y_far))
             except Exception as _esplit_exc:
