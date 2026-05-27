@@ -2088,25 +2088,12 @@ def main() -> None:
     elif input_json_path is not None:
         # Single-file mode: --merged-json (legacy) or --input-json (NSHARDS=1 / CI direct).
         #
-        # exp2_feynman special case: if ablation_paired.json exists in the same
-        # directory, use it instead of the raw benchmark_results.json.
-        # ablation_paired.json is written by merge_extrap_into_benchmark.py and
-        # contains the paired {hypatia.extrap_r2_far, pysr_only.extrap_r2_far}
-        # schema that analyse_ablation() requires.
-        if args.experiment == "exp2_feynman":
-            paired_path = output_dir / "ablation_paired.json"
-            if paired_path.exists():
-                print(f"exp2_feynman: using ablation_paired.json (has extrap_r2_far) "
-                      f"instead of {input_json_path.name}")
-                input_json_path = paired_path
-            else:
-                print(f"::warning::exp2_feynman: ablation_paired.json not found in "
-                      f"{output_dir}. Loading {input_json_path.name} directly — "
-                      f"extrap_r2_far will be None for all records and "
-                      f"TOO_FEW_MW_PAIRS will fire. "
-                      f"Run ci_runner.yml exp2_feynman_extrap step to generate it.",
-                      file=sys.stderr)
-
+        # NOTE: the former exp2_feynman special-case that checked for
+        # ablation_paired.json in output_dir has been removed.
+        # ablation_paired.json is now committed to the repo by ci_analysis.yml
+        # ("Commit ablation_paired.json" step) and is passed directly as
+        # --input-json for exp2_feynman_extrap (mode=ablation).
+        # exp2_feynman itself uses mode=standard and never needs the paired schema.
         if not input_json_path.exists():
             print(f"::error::input JSON not found at {input_json_path}", file=sys.stderr)
             sys.exit(1)

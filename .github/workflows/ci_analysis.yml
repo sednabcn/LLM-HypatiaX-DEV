@@ -48,6 +48,10 @@
 #  Outputs committed to master:
 #    hypatiax/data/results/{result_subdir}/_report.md
 #    hypatiax/data/results/{result_subdir}/_analysis.json
+#    hypatiax/data/results/{result_subdir}/ablation_paired.json  (exp2_feynman_extrap only)
+#      Committed immediately after merge_extrap_into_benchmark.py so that manual
+#      re-runs of ci_analysis.yml find it via locate_analysis_input.sh without
+#      needing source_run_id or re-running the merge step.
 #
 #  Triggering modes:
 #    1. Scheduled chain (workflow_dispatch from ci_pipeline.yml): called
@@ -334,6 +338,44 @@ jobs:
           # INPUT_MODE stays 'direct' -- ablation_paired.json is a single flat list.
           echo "INPUT_JSON=${PAIRED}" >> "$GITHUB_ENV"
           echo "INPUT_MODE=direct"    >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Commit ablation_paired.json (exp2_feynman_extrap only)
+      #
+      # Persists the merged input to the repo so that:
+      #   1. Manual re-runs of ci_analysis.yml find it via locate_analysis_input.sh
+      #      without needing source_run_id or re-running the merge step.
+      #   2. The file is auditable alongside _report.md and _analysis.json.
+      #
+      # Committed BEFORE "Run analysis" so that any immediate manual re-run
+      # dispatched after a failed analysis step also reads the correct file.
+      #
+      # git pull --rebase guards against concurrent pushes from other workflows
+      # that may have landed on master since checkout.
+      # git add -f mirrors the flag used in "Commit analysis outputs" to bypass
+      # any .gitignore patterns that exclude generated JSON files.
+      # -----------------------------------------------------------------------
+      - name: Commit ablation_paired.json (exp2_feynman_extrap)
+        if: github.event.inputs.experiment == 'exp2_feynman_extrap'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Pull any commits that landed since checkout (other shards, racing workflows).
+          git pull --rebase origin ${{ github.ref_name }}
+
+          git add -f "${RESULT_DIR}/ablation_paired.json"
+
+          if git diff --cached --quiet; then
+            echo "ablation_paired.json unchanged — nothing to commit."
+          else
+            git commit -m "data: ablation_paired.json ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed ablation_paired.json to master."
+          fi
 
       # -----------------------------------------------------------------------
       # Run analysis
