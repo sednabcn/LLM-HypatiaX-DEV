@@ -979,10 +979,22 @@ jobs:
 
           # Merge extrap_r2_far values into benchmark_results to produce
           # ablation_paired.json — the schema analyse_ablation() expects.
+          # --extrap-benchmark-dir: primary source — benchmark_results_extrap.json
+          #   written by run_comparative_suite_benchmark_v2.py v2.2 when --extrap
+          #   is active.  Contains both train r2 AND extrap_r2_far in one flat file.
+          # --extrap-dir: legacy fallback — extrap_results_*.json files (old format).
+          #   Kept so runs from a pre-v2.2 runner that only produced the legacy files
+          #   still produce a valid ablation_paired.json.
           BENCH_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2"
           EXTRAP_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap"
 
-          python3 .github/scripts/merge_extrap_into_benchmark.py             --benchmark-dir "${BENCH_DIR}"             --extrap-dir    "${EXTRAP_DIR}"             --output        "${BENCH_DIR}/ablation_paired.json"             && echo "  ablation_paired.json written."             || echo "::warning::merge_extrap_into_benchmark.py not found — add to .github/scripts/"
+          python3 .github/scripts/merge_extrap_into_benchmark.py \
+            --benchmark-dir        "${BENCH_DIR}" \
+            --extrap-benchmark-dir "${EXTRAP_DIR}" \
+            --extrap-dir           "${EXTRAP_DIR}" \
+            --output               "${BENCH_DIR}/ablation_paired.json" \
+            && echo "  ablation_paired.json written." \
+            || echo "::warning::merge_extrap_into_benchmark.py not found — add to .github/scripts/"
 
       - name: Diagnostic - locate result files on disk
         if: always()
@@ -1234,11 +1246,20 @@ jobs:
             # go into their own feynman-tests/exp2_extrap dir (RESULT_SUBDIR).
             # prune_old is scoped to the extrap prefix only — never touches
             # the main exp2_feynman results in feynman-tests/exp2.
+            #
+            # benchmark_results_extrap.json is the new flat file written by
+            # run_comparative_suite_benchmark_v2.py v2.2 when --extrap is active.
+            # It carries both r2 (train) AND extrap_r2_far in one place and is
+            # the primary input to merge_extrap_into_benchmark.py --extrap-benchmark-dir.
+            # Without this move it lives only in the workspace root, misses the
+            # artifact upload, and is never committed to the repo.
             exp2_feynman_extrap)
               prune_old "protocol_core_extrap_*.json"             "${TARGET}"
               prune_old "feynman_extrap_checkpoint_*.json"        "${TARGET}"
+              prune_old "benchmark_results_extrap.json"           "${TARGET}"
               move_matching "protocol_core_extrap_*.json"         "${TARGET}"
               move_matching "feynman_extrap_checkpoint_*.json"    "${TARGET}"
+              move_matching "benchmark_results_extrap.json"       "${TARGET}"
               move_matching "exp2_extrap_run.log"                 "${TARGET}"
               ;;
 
@@ -1579,6 +1600,42 @@ jobs:
             exit 1
           fi
           echo "  OK exp2 output files present."
+
+      # -- Verify exp2_feynman_extrap output files ----------------------------------
+      # Checks that both the detailed protocol JSONs AND benchmark_results_extrap.json
+      # landed in feynman-tests/exp2_extrap after the extrap run.
+      # benchmark_results_extrap.json is specifically required by
+      # merge_extrap_into_benchmark.py --extrap-benchmark-dir; its absence means
+      # ablation_paired.json will be empty and the Mann-Whitney test will emit
+      # TOO_FEW_MW_PAIRS.
+      - name: Verify exp2_feynman_extrap output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman_extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT_PROTO=$(find "${TARGET}" -name "protocol_core_extrap_*.json" 2>/dev/null | wc -l)
+          COUNT_BENCH=$(find "${TARGET}" -name "benchmark_results_extrap.json" 2>/dev/null | wc -l)
+          echo "=== exp2_feynman_extrap output verification ==="
+          echo "  Target dir                      : ${TARGET}"
+          echo "  protocol_core_extrap_*.json     : ${COUNT_PROTO}"
+          echo "  benchmark_results_extrap.json   : ${COUNT_BENCH}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT_PROTO}" -eq 0 ]]; then
+            echo "::error::exp2_feynman_extrap produced NO protocol_core_extrap_*.json in '${TARGET}'."
+            echo "  The --extrap run may have crashed before writing results."
+            echo "  Check the 'Run experiment tasks' log for errors."
+            exit 1
+          fi
+          if [[ "${COUNT_BENCH}" -eq 0 ]]; then
+            echo "::warning::benchmark_results_extrap.json not found in '${TARGET}'."
+            echo "  This file is required by merge_extrap_into_benchmark.py --extrap-benchmark-dir."
+            echo "  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is being used (--extrap support)."
+            echo "  The merge step will fall back to --extrap-dir (extrap_results_*.json) if present."
+          else
+            echo "  OK benchmark_results_extrap.json present — merge step has primary extrap source."
+          fi
+          echo "  OK exp2_feynman_extrap protocol files present (${COUNT_PROTO} file(s))."
 
       - name: Verify exp3/exp3b output files exist
         if: ${{ (needs.plan.outputs.exp_id == 'exp3' || needs.plan.outputs.exp_id == 'exp3b') && steps.resolve_ids.outputs.has_work == 'true' }}

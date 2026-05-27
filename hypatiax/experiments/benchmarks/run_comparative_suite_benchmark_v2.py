@@ -2710,6 +2710,8 @@ class ProtocolBenchmarkSuite:
         metadata: Dict,
         domain: str,
         verbose: bool = True,
+        X_far: Optional[np.ndarray] = None,
+        y_far: Optional[np.ndarray] = None,
     ) -> Dict:
         """Run all active methods on one protocol test case."""
 
@@ -2854,14 +2856,110 @@ class ProtocolBenchmarkSuite:
         if verbose:
             self._print_comparison(results, comparison, y)
 
+        # ── extrap_r2_far — evaluate each method's formula on the held-out far
+        # region (X_far / y_far) that was stripped before training in --extrap mode.
+        # This is the field required by run_analysis.py's Mann-Whitney ablation test
+        # (Table 14).  Previously this block was absent: the far region was computed
+        # in main() but immediately discarded, so extrap_r2_far was never recorded.
+        #
+        # Evaluation strategy:
+        #   • Symbolic / LLM methods return a Python formula string → use
+        #     BaseMethod._runner_eval_formula() to predict on X_far, then
+        #     compute R² with the same _safe_r2 logic used everywhere else.
+        #   • NN methods return an architecture tag (e.g. "ImprovedNN(3→256→…)")
+        #     that cannot be re-evaluated on new data → stored as null.
+        #   • Any method that failed, returned "N/A", or whose formula raises on
+        #     X_far → stored as null.
+        extrap_r2_far: Dict[str, Optional[float]] = {}
+        extrap_rmse_far: Dict[str, Optional[float]] = {}
+        _do_extrap = (
+            X_far is not None
+            and y_far is not None
+            and len(X_far) > 1
+            and len(y_far) > 1
+        )
+        if _do_extrap:
+            # Inline _safe_r2 / _safe_rmse so we don't depend on method instances.
+            def _far_r2(y_true, y_pred):
+                y_pred = np.asarray(y_pred, dtype=float)
+                if np.any(~np.isfinite(y_pred)) or np.any(np.abs(y_pred) > 1e100):
+                    return None
+                if np.std(y_pred) < 1e-30:
+                    return None
+                if len(y_true) < 2:
+                    return None
+                ss_res = np.sum((y_true - y_pred) ** 2)
+                ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+                _scale = float(np.max(np.abs(y_true)) ** 2) * len(y_true)
+                _tol   = 1e-10 * _scale if _scale > 0 else 1e-30
+                if ss_tot < _tol:
+                    return 1.0 if ss_res < _tol else float("-inf")
+                r2 = float(1 - ss_res / ss_tot)
+                # sign-flip correction (same as BaseMethod._safe_r2)
+                if r2 < 0:
+                    ss_flip = np.sum((y_true - (-y_pred)) ** 2)
+                    r2_flip = float(1 - ss_flip / ss_tot)
+                    if r2_flip > r2:
+                        r2 = r2_flip
+                return r2 if r2 >= -100 else float("-inf")
+
+            def _far_rmse(y_true, y_pred):
+                if not np.all(np.isfinite(y_pred)):
+                    return None
+                return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+            for _mname, _res in results.items():
+                # Skip failed methods and NN-style methods (no evaluable formula).
+                if not _res.success:
+                    extrap_r2_far[_mname]   = None
+                    extrap_rmse_far[_mname] = None
+                    continue
+                _formula = (_res.formula or "").strip()
+                # NN methods return architecture tags — not evaluable expressions.
+                _is_nn_tag = (
+                    _formula.startswith("ImprovedNN(")
+                    or _formula.startswith("[NN fallback")
+                    or _formula in ("N/A", "")
+                )
+                if _is_nn_tag:
+                    extrap_r2_far[_mname]   = None
+                    extrap_rmse_far[_mname] = None
+                    continue
+                # Attempt formula evaluation on the far region.
+                try:
+                    _y_far_pred = BaseMethod._runner_eval_formula(
+                        _formula, X_far, var_names
+                    )
+                    if _y_far_pred is None or len(_y_far_pred) != len(y_far):
+                        extrap_r2_far[_mname]   = None
+                        extrap_rmse_far[_mname] = None
+                    else:
+                        _r2f   = _far_r2(y_far, _y_far_pred)
+                        _rmsef = _far_rmse(y_far, _y_far_pred) if _r2f is not None else None
+                        extrap_r2_far[_mname]   = _r2f
+                        extrap_rmse_far[_mname] = _rmsef
+                except Exception:
+                    extrap_r2_far[_mname]   = None
+                    extrap_rmse_far[_mname] = None
+
+            if verbose and any(v is not None for v in extrap_r2_far.values()):
+                print(f"\n  📐 Extrapolation R² on far region "
+                      f"(n={len(X_far)} held-out samples):", flush=True)
+                for _mn, _r2f in extrap_r2_far.items():
+                    _r2s = f"{_r2f:.4f}" if (_r2f is not None and np.isfinite(_r2f)) else "null"
+                    print(f"     {_mn:<42} extrap_r2_far={_r2s}", flush=True)
+
         record = {
-            "description": description,
-            "domain":      domain,
-            "results":     {name: res.to_dict() for name, res in results.items()},
-            "comparison":  comparison,
-            "winner":      comparison["winner"],
-            "timestamp":   datetime.now().isoformat(),
+            "description":   description,
+            "domain":        domain,
+            "results":       {name: res.to_dict() for name, res in results.items()},
+            "comparison":    comparison,
+            "winner":        comparison["winner"],
+            "timestamp":     datetime.now().isoformat(),
         }
+        if _do_extrap:
+            record["extrap_r2_far"]   = extrap_r2_far
+            record["extrap_rmse_far"] = extrap_rmse_far
         self.results.append(record)
         return record
 
@@ -3173,17 +3271,28 @@ class ProtocolBenchmarkSuite:
             for rec in self.results:
                 _desc = rec.get("description", "")
                 _dom  = rec.get("domain", "")
+                # extrap_r2_far / extrap_rmse_far are per-method dicts; may be absent
+                # on non-extrap runs (field simply omitted, not null).
+                _extrap_r2_map   = rec.get("extrap_r2_far",   {})
+                _extrap_rmse_map = rec.get("extrap_rmse_far", {})
                 for _mname, _mres in rec.get("results", {}).items():
-                    _flat_records.append({
-                        "test":    _desc,
-                        "domain":  _dom,
-                        "method":  _mname,
-                        "formula": _mres.get("formula", ""),
-                        "r2":      _mres.get("r2"),
-                        "rmse":    _mres.get("rmse"),
-                        "runtime": _mres.get("time"),
-                        "success": _mres.get("success", False),
-                    })
+                    _row = {
+                        "test":           _desc,
+                        "domain":         _dom,
+                        "method":         _mname,
+                        "formula":        _mres.get("formula", ""),
+                        "r2":             _mres.get("r2"),
+                        "rmse":           _mres.get("rmse"),
+                        "runtime":        _mres.get("time"),
+                        "success":        _mres.get("success", False),
+                    }
+                    # Only write extrap fields when this record has them
+                    # (i.e. when the run used --extrap).  Absent means the column
+                    # was never computed; null means it was computed but failed.
+                    if _extrap_r2_map:
+                        _row["extrap_r2_far"]   = _extrap_r2_map.get(_mname)
+                        _row["extrap_rmse_far"] = _extrap_rmse_map.get(_mname)
+                    _flat_records.append(_row)
             _json_path = _OUTPUT_DIR / "benchmark_results.json"
             _json_path.parent.mkdir(parents=True, exist_ok=True)
             # FIX: append/merge so multi-domain runs accumulate all results
@@ -3207,6 +3316,82 @@ class ProtocolBenchmarkSuite:
         except Exception as _je:
             print(f"\n⚠️  Could not export benchmark_results.json: {_je}")
 
+        # ── benchmark_results_extrap.json ─────────────────────────────────────
+        # Written ONLY when this run used --extrap (i.e. at least one record
+        # carries an extrap_r2_far dict).  Contains every flat row that has
+        # extrap_r2_far / extrap_rmse_far populated, plus the ordinary r2/rmse
+        # fields so the merge script can get train_r2 and extrap_r2_far from
+        # a single file without having to join against benchmark_results.json.
+        #
+        # Schema (each row):
+        #   test, domain, method, formula, r2, rmse, runtime, success,
+        #   extrap_r2_far (float|null), extrap_rmse_far (float|null),
+        #   extrap_train_frac (float), extrap_n_train (int), extrap_n_test (int)
+        #
+        # Merge logic: same append/dedup as benchmark_results.json so
+        # multi-domain extrap runs accumulate without clobbering each other.
+        try:
+            _extrap_rows = []
+            for rec in self.results:
+                # Skip records that were not produced by an extrap run.
+                _er_map   = rec.get("extrap_r2_far")
+                _erm_map  = rec.get("extrap_rmse_far", {})
+                if not _er_map:
+                    continue
+                _desc = rec.get("description", "")
+                _dom  = rec.get("domain", "")
+                # Pull extrap context from the first result's metadata if available,
+                # otherwise fall back to the record-level metadata.
+                _meta_any = {}
+                for _mres in rec.get("results", {}).values():
+                    _md = _mres.get("metadata", {})
+                    if _md.get("extrap") or rec.get("comparison", {}).get("extrap"):
+                        _meta_any = _md
+                        break
+                _train_frac = _meta_any.get("extrap_train_frac")
+                _n_train    = _meta_any.get("extrap_n_train")
+                _n_test     = _meta_any.get("extrap_n_test")
+                # One row per method per equation.
+                for _mname, _mres in rec.get("results", {}).items():
+                    _extrap_rows.append({
+                        "test":              _desc,
+                        "domain":            _dom,
+                        "method":            _mname,
+                        "formula":           _mres.get("formula", ""),
+                        "r2":                _mres.get("r2"),
+                        "rmse":              _mres.get("rmse"),
+                        "runtime":           _mres.get("time"),
+                        "success":           _mres.get("success", False),
+                        "extrap_r2_far":     _er_map.get(_mname),
+                        "extrap_rmse_far":   _erm_map.get(_mname),
+                        "extrap_train_frac": _train_frac,
+                        "extrap_n_train":    _n_train,
+                        "extrap_n_test":     _n_test,
+                    })
+            if _extrap_rows:
+                _ext_path = _OUTPUT_DIR / "benchmark_results_extrap.json"
+                _ext_path.parent.mkdir(parents=True, exist_ok=True)
+                _ext_existing: list = []
+                if _ext_path.exists():
+                    try:
+                        with open(_ext_path) as _ef_r:
+                            _ext_existing = json.load(_ef_r)
+                        if not isinstance(_ext_existing, list):
+                            _ext_existing = []
+                    except Exception:
+                        _ext_existing = []
+                _ext_new_keys = {(r["test"], r["method"]) for r in _extrap_rows}
+                _ext_existing = [r for r in _ext_existing
+                                 if (r.get("test"), r.get("method")) not in _ext_new_keys]
+                _ext_merged = _ext_existing + _extrap_rows
+                with open(_ext_path, "w") as _ef:
+                    json.dump(_ext_merged, _ef, indent=2, default=str)
+                _n_with_far = sum(1 for r in _extrap_rows if r.get("extrap_r2_far") is not None)
+                print(f"\n📄 Extrap results exported → {_ext_path}"
+                      f"  ({len(_extrap_rows)} rows, {_n_with_far} with extrap_r2_far)")
+        except Exception as _eje:
+            print(f"\n⚠️  Could not export benchmark_results_extrap.json: {_eje}")
+
     def _save(self, noiseless: bool = False, threshold: float = 0.995):
         out_dir = _OUTPUT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -3229,7 +3414,7 @@ class ProtocolBenchmarkSuite:
 
         payload = {
             "timestamp":   datetime.now().isoformat(),
-            "script":      "run_protocol_benchmark_core.py v2.1 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export)",
+            "script":      "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
             "protocol": {
                 "mode":        mode,
                 "noise_level": 0.0 if noiseless else 0.05,
@@ -3787,6 +3972,12 @@ Examples
                 _split    = max(1, int(_n * _efrac))
                 _X_train  = _Xs[:_split]
                 _y_train  = _ys[:_split]
+                # BUG FIX: retain the far region so run_test() can evaluate
+                # each method's returned formula on it and record extrap_r2_far.
+                # Previously _Xs[_split:] and _ys[_split:] were computed here
+                # but immediately discarded — extrap_r2_far was never written.
+                _X_far    = _Xs[_split:]
+                _y_far    = _ys[_split:]
                 # Tag metadata so run_test() and _save() can record extrap context.
                 _meta_ext = {
                     **_meta,
@@ -3796,13 +3987,19 @@ Examples
                     "extrap_n_train":    _split,
                     "extrap_n_test":     _n - _split,
                 }
-                _extrap_tests.append((_desc, _X_train, _y_train, _vnames, _meta_ext, _dom))
+                _extrap_tests.append((_desc, _X_train, _y_train, _vnames, _meta_ext, _dom,
+                                      _X_far, _y_far))
             except Exception as _esplit_exc:
                 print(f"  ⚠️  extrap split failed for '{_desc[:50]}': {_esplit_exc} — using full data")
-                _extrap_tests.append((_desc, _X, _y, _vnames, {**_meta, "extrap": False}, _dom))
+                _extrap_tests.append((_desc, _X, _y, _vnames, {**_meta, "extrap": False}, _dom,
+                                      None, None))
         all_tests = _extrap_tests
         print(f"   Applied extrap split to {len(all_tests)} test(s). "
               f"Each uses {int(_efrac*100)}% of samples for training.\n")
+    else:
+        # Non-extrap path: pad every tuple with (None, None) so the main loop
+        # can always unpack 8 elements regardless of mode.
+        all_tests = [(*t, None, None) for t in all_tests]
 
 
     global _CHECKPOINT_NAME
@@ -3882,7 +4079,7 @@ Examples
 
     # ── Main loop ───────────────────────────────────────────────────────────
     global_done = len(completed_keys)   # tests already done before this run
-    for i, (description, X, y, var_names, metadata, domain) in enumerate(all_tests, 1):
+    for i, (description, X, y, var_names, metadata, domain, X_far, y_far) in enumerate(all_tests, 1):
         eq_key = _eq_key(metadata, domain)
 
         # Skip if already completed (resume mode)
@@ -3919,6 +4116,8 @@ Examples
             metadata=metadata,
             domain=domain,
             verbose=not args.quiet,
+            X_far=X_far,
+            y_far=y_far,
         )
 
         # Record timing

@@ -20,37 +20,54 @@ expects:
       ...
     ]
 
-Called by ci_runner.yml "Run extrapolation evaluation (exp2_feynman only)" step.
+PRIMARY data source (preferred):
+    benchmark_results_extrap.json  — written by run_comparative_suite_benchmark_v2.py
+    when --extrap is active.  Contains both train r2 AND extrap_r2_far in one file,
+    keyed by (test, method).  Pass its directory via --extrap-benchmark-dir.
+
+LEGACY fallback (backward compat):
+    extrap_results_*.json  — one file per domain in the schema consumed by the
+    old merge script.  Used when benchmark_results_extrap.json is absent.
+    Pass its directory via --extrap-dir (unchanged from the original script).
 
 Usage:
+    # Preferred — single source of truth from v2.2+ runner:
+    python3 merge_extrap_into_benchmark.py \\
+        --benchmark-dir       <dir containing benchmark_results.json> \\
+        --extrap-benchmark-dir <dir containing benchmark_results_extrap.json> \\
+        --output              <path to write ablation_paired.json>
+
+    # Legacy fallback:
     python3 merge_extrap_into_benchmark.py \\
         --benchmark-dir  <dir containing benchmark_results.json> \\
         --extrap-dir     <dir containing extrap_results_*.json>  \\
         --output         <path to write ablation_paired.json>
+
+    # Both supplied — benchmark_results_extrap.json wins per-equation,
+    # extrap_results_*.json fills any gaps:
+    python3 merge_extrap_into_benchmark.py \\
+        --benchmark-dir        <dir> \\
+        --extrap-benchmark-dir <dir> \\
+        --extrap-dir           <dir> \\
+        --output               <path>
 """
 
 import argparse
 import json
-import math
 import sys
+from collections import defaultdict
 from pathlib import Path
+
 
 # ---------------------------------------------------------------------------
 # Method name normalisation
 # ---------------------------------------------------------------------------
-# Map from the verbose method strings in benchmark_results.json to canonical
-# short names used in the ablation schema.  Any method containing "PySR" or
-# "Symbolic" (without LLM/Hybrid qualifier) is treated as pysr_only.
-# The HypatiaX method is whichever non-PySR method achieves the best r2 on
-# a per-equation basis (or the first method not classified as pysr_only).
 
 def _classify_method(method_str: str) -> str:
     """Return 'hypatia' | 'pysr_only' | 'other'."""
     m = method_str.lower()
-    # Pure symbolic / PySR-only (no LLM/hybrid component)
     if "pysr" in m or ("symbolic" in m and "llm" not in m and "hybrid" not in m):
         return "pysr_only"
-    # Any LLM, hybrid, NN, or HypatiaX variant
     if any(k in m for k in ("llm", "hybrid", "neural", "nn", "hypatia",
                              "improved", "enhanced", "discovery")):
         return "hypatia"
@@ -61,8 +78,8 @@ def _classify_method(method_str: str) -> str:
 # Load helpers
 # ---------------------------------------------------------------------------
 
-def _load_benchmark(bench_dir: Path) -> list[dict]:
-    """Load benchmark_results.json from bench_dir (Shape C — flat list)."""
+def _load_benchmark(bench_dir: Path) -> list:
+    """Load benchmark_results.json (flat list, train r2 / metadata)."""
     path = bench_dir / "benchmark_results.json"
     if not path.exists():
         print(f"::error::benchmark_results.json not found in {bench_dir}", file=sys.stderr)
@@ -77,11 +94,83 @@ def _load_benchmark(bench_dir: Path) -> list[dict]:
     return data
 
 
-def _load_extrap_results(extrap_dir: Path) -> dict[str, dict]:
+def _load_extrap_benchmark(extrap_bench_dir: Path) -> dict:
     """
-    Load extrap_results_*.json files from extrap_dir.
+    Load benchmark_results_extrap.json written by run_comparative_suite_benchmark_v2.py
+    when --extrap is active.
 
-    Expected shape (one file per domain):
+    Returns a dict keyed by equation name:
+        {
+          eq_name: {
+            "hypatia":   { "extrap_r2_far": float|None, "extrap_rmse_far": float|None,
+                           "train_r2": float|None, "success": bool },
+            "pysr_only": { ... },
+          }
+        }
+
+    When multiple methods map to the same role (e.g. several hypatia methods),
+    the one with the highest extrap_r2_far is kept (same tie-break as train_r2).
+    """
+    path = extrap_bench_dir / "benchmark_results_extrap.json"
+    if not path.exists():
+        print(f"  benchmark_results_extrap.json not found in {extrap_bench_dir} "
+              f"— will fall back to extrap_results_*.json if supplied.", file=sys.stderr)
+        return {}
+
+    with open(path) as f:
+        rows = json.load(f)
+    if not isinstance(rows, list):
+        print(f"  ::warning::benchmark_results_extrap.json is not a list — skipping.",
+              file=sys.stderr)
+        return {}
+
+    # Group by equation, then by role, keeping best extrap_r2_far per role.
+    results: dict = defaultdict(lambda: {"hypatia": None, "pysr_only": None})
+
+    def _better(a: dict | None, b: dict) -> dict:
+        """Return whichever candidate has the higher extrap_r2_far (None < any float)."""
+        if a is None:
+            return b
+        a_far = a.get("extrap_r2_far")
+        b_far = b.get("extrap_r2_far")
+        if a_far is None and b_far is None:
+            # Fall back to train r2
+            return a if (a.get("train_r2") or 0) >= (b.get("train_r2") or 0) else b
+        if a_far is None:
+            return b
+        if b_far is None:
+            return a
+        return a if a_far >= b_far else b
+
+    for row in rows:
+        eq   = row.get("test", row.get("equation_name", "?"))
+        role = _classify_method(row.get("method", ""))
+        if role == "other":
+            continue
+
+        candidate = {
+            "extrap_r2_far":     row.get("extrap_r2_far"),
+            "extrap_rmse_far":   row.get("extrap_rmse_far"),
+            # extrap_r2_near is not computed by the benchmark runner — leave None
+            "extrap_r2_near":    row.get("extrap_r2_near"),
+            "train_r2":          row.get("r2"),
+            "success":           row.get("success", False),
+            "extrap_train_frac": row.get("extrap_train_frac"),
+            "extrap_n_train":    row.get("extrap_n_train"),
+            "extrap_n_test":     row.get("extrap_n_test"),
+        }
+        results[eq][role] = _better(results[eq][role], candidate)
+
+    print(f"  Loaded extrap data for {len(results)} equations "
+          f"from {path}  ({len(rows)} rows)")
+    return dict(results)
+
+
+def _load_extrap_results_legacy(extrap_dir: Path) -> dict:
+    """
+    Legacy loader: reads extrap_results_*.json files (one per domain).
+
+    Expected shape:
         {
           "domain": "feynman_biology",
           "equations": {
@@ -95,11 +184,10 @@ def _load_extrap_results(extrap_dir: Path) -> dict[str, dict]:
 
     Returns: { equation_name: { "hypatia": {...}, "pysr_only": {...} } }
     """
-    results: dict[str, dict] = {}
+    results: dict = {}
     files = sorted(extrap_dir.glob("extrap_results_*.json"))
     if not files:
-        print(f"  No extrap_results_*.json found in {extrap_dir} — "
-              f"extrap_r2_far will be None for all equations.", file=sys.stderr)
+        print(f"  No extrap_results_*.json found in {extrap_dir}.", file=sys.stderr)
         return results
 
     for fp in files:
@@ -115,7 +203,7 @@ def _load_extrap_results(extrap_dir: Path) -> dict[str, dict]:
                 results[eq_name] = eq_data
         print(f"  Loaded {len(equations)} extrap equations from {fp.name}")
 
-    print(f"  Total extrap equations loaded: {len(results)}")
+    print(f"  Total extrap equations loaded (legacy): {len(results)}")
     return results
 
 
@@ -123,33 +211,37 @@ def _load_extrap_results(extrap_dir: Path) -> dict[str, dict]:
 # Main merge logic
 # ---------------------------------------------------------------------------
 
-def merge(benchmark_records: list[dict],
-          extrap_results: dict[str, dict]) -> list[dict]:
+def merge(
+    benchmark_records: list,
+    extrap_new: dict,          # from benchmark_results_extrap.json  (preferred)
+    extrap_legacy: dict,       # from extrap_results_*.json           (fallback)
+) -> list:
     """
-    Group benchmark_records by (test, domain), classify methods, and
-    produce one paired record per equation in the ablation schema.
+    Group benchmark_records by equation name, classify methods, and produce
+    one paired record per equation in the ablation schema.
+
+    extrap_new takes priority per-equation; extrap_legacy fills any gaps.
     """
-    # Group by equation name
-    from collections import defaultdict
-    by_eq: dict[str, dict] = defaultdict(lambda: {
-        "equation_name": None,
-        "domain": None,
-        "hypatia_r2": [],
-        "pysr_r2": [],
-        "hypatia_success": [],
-        "pysr_success": [],
+    # ── Group train metrics by equation ─────────────────────────────────────
+    by_eq: dict = defaultdict(lambda: {
+        "equation_name":  None,
+        "domain":         None,
+        "hypatia_r2":     [],
+        "pysr_r2":        [],
+        "hypatia_success":[],
+        "pysr_success":   [],
     })
 
     for rec in benchmark_records:
-        eq = rec.get("test", rec.get("equation_name", rec.get("equation_id", "?")))
-        mtype = _classify_method(rec.get("method", ""))
+        eq     = rec.get("test", rec.get("equation_name", rec.get("equation_id", "?")))
+        mtype  = _classify_method(rec.get("method", ""))
         domain = rec.get("domain", "?")
 
         g = by_eq[eq]
         g["equation_name"] = eq
-        g["domain"] = domain
+        g["domain"]        = domain
 
-        r2 = rec.get("r2")
+        r2      = rec.get("r2")
         success = rec.get("success", False)
 
         if mtype == "hypatia":
@@ -161,23 +253,36 @@ def merge(benchmark_records: list[dict],
                 g["pysr_r2"].append(float(r2))
             g["pysr_success"].append(success)
 
-    paired: list[dict] = []
-    n_with_extrap = 0
+    # ── Build paired records ──────────────────────────────────────────────
+    paired: list = []
+    n_with_extrap   = 0
     n_missing_extrap = 0
 
     for eq_name, g in by_eq.items():
-        # Best train R² for hypatia (max across methods classified as hypatia)
         h_train_r2 = max(g["hypatia_r2"]) if g["hypatia_r2"] else None
 
-        # Extrap values from the extrap step
-        extrap = extrap_results.get(eq_name, {})
-        h_extrap = extrap.get("hypatia", {}) or {}
-        p_extrap = extrap.get("pysr_only", {}) or {}
+        # --- Resolve extrap values: new file first, legacy as fallback ------
+        # New source carries train_r2 too; we keep benchmark_results.json's
+        # train_r2 (max across all hypatia methods) as the canonical value.
+        new_eq    = extrap_new.get(eq_name, {})
+        legacy_eq = extrap_legacy.get(eq_name, {})
 
-        h_far  = h_extrap.get("extrap_r2_far")
-        h_near = h_extrap.get("extrap_r2_near")
-        p_far  = p_extrap.get("extrap_r2_far")
-        p_near = p_extrap.get("extrap_r2_near")
+        def _pick(new_role: dict | None, legacy_role: dict | None, key: str):
+            """Return value from new_role if present, else legacy_role."""
+            v = (new_role or {}).get(key)
+            if v is not None:
+                return v
+            return (legacy_role or {}).get(key)
+
+        h_new    = new_eq.get("hypatia")    or {}
+        p_new    = new_eq.get("pysr_only")  or {}
+        h_leg    = (legacy_eq.get("hypatia")   or {}) if isinstance(legacy_eq, dict) else {}
+        p_leg    = (legacy_eq.get("pysr_only") or {}) if isinstance(legacy_eq, dict) else {}
+
+        h_far    = _pick(h_new, h_leg, "extrap_r2_far")
+        h_near   = _pick(h_new, h_leg, "extrap_r2_near")
+        p_far    = _pick(p_new, p_leg, "extrap_r2_far")
+        p_near   = _pick(p_new, p_leg, "extrap_r2_near")
 
         if h_far is not None or p_far is not None:
             n_with_extrap += 1
@@ -202,10 +307,10 @@ def merge(benchmark_records: list[dict],
             },
         })
 
-    print(f"  Paired records: {len(paired)}")
-    print(f"  With extrap_r2_far: {n_with_extrap}")
-    print(f"  Missing extrap_r2_far: {n_missing_extrap}"
-          + (" ← run the extrap step to populate these" if n_missing_extrap else ""))
+    print(f"  Paired records   : {len(paired)}")
+    print(f"  With extrap_r2_far    : {n_with_extrap}")
+    print(f"  Missing extrap_r2_far : {n_missing_extrap}"
+          + (" ← run with --extrap to populate" if n_missing_extrap else ""))
     return paired
 
 
@@ -215,47 +320,99 @@ def merge(benchmark_records: list[dict],
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Merge extrap_r2_far into benchmark_results → ablation_paired.json"
+        description="Merge extrap_r2_far into benchmark_results → ablation_paired.json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples
+--------
+  # Preferred (v2.2+ runner):
+  python3 merge_extrap_into_benchmark.py \\
+      --benchmark-dir        results/ \\
+      --extrap-benchmark-dir results/ \\
+      --output               ablation_paired.json
+
+  # Legacy fallback:
+  python3 merge_extrap_into_benchmark.py \\
+      --benchmark-dir  results/ \\
+      --extrap-dir     results/extrap/ \\
+      --output         ablation_paired.json
+        """,
     )
-    ap.add_argument("--benchmark-dir", required=True,
-                    help="Directory containing benchmark_results.json")
-    ap.add_argument("--extrap-dir", required=True,
-                    help="Directory containing extrap_results_*.json files")
-    ap.add_argument("--output", required=True,
-                    help="Output path for ablation_paired.json")
+    ap.add_argument(
+        "--benchmark-dir", required=True,
+        help="Directory containing benchmark_results.json (train r2 / method metadata)",
+    )
+    ap.add_argument(
+        "--extrap-benchmark-dir", default=None, dest="extrap_benchmark_dir",
+        help=(
+            "Directory containing benchmark_results_extrap.json written by the "
+            "v2.2+ runner when --extrap is active.  Primary extrap source. "
+            "Falls back to --extrap-dir when absent."
+        ),
+    )
+    ap.add_argument(
+        "--extrap-dir", default=None, dest="extrap_dir",
+        help=(
+            "Directory containing extrap_results_*.json files (legacy format). "
+            "Used when benchmark_results_extrap.json is absent or as gap-filler."
+        ),
+    )
+    ap.add_argument(
+        "--output", required=True,
+        help="Output path for ablation_paired.json",
+    )
     args = ap.parse_args()
 
-    bench_dir  = Path(args.benchmark_dir)
-    extrap_dir = Path(args.extrap_dir)
-    out_path   = Path(args.output)
+    if args.extrap_benchmark_dir is None and args.extrap_dir is None:
+        ap.error("Supply at least one of --extrap-benchmark-dir or --extrap-dir")
 
-    print(f"merge_extrap_into_benchmark.py")
-    print(f"  benchmark-dir : {bench_dir}")
-    print(f"  extrap-dir    : {extrap_dir}")
-    print(f"  output        : {out_path}")
+    bench_dir = Path(args.benchmark_dir)
+    out_path  = Path(args.output)
+
+    print("merge_extrap_into_benchmark.py")
+    print(f"  benchmark-dir        : {bench_dir}")
+    if args.extrap_benchmark_dir:
+        print(f"  extrap-benchmark-dir : {args.extrap_benchmark_dir}")
+    if args.extrap_dir:
+        print(f"  extrap-dir (legacy)  : {args.extrap_dir}")
+    print(f"  output               : {out_path}")
 
     benchmark_records = _load_benchmark(bench_dir)
-    extrap_results    = _load_extrap_results(extrap_dir)
-    paired            = merge(benchmark_records, extrap_results)
+
+    extrap_new: dict = {}
+    if args.extrap_benchmark_dir:
+        extrap_new = _load_extrap_benchmark(Path(args.extrap_benchmark_dir))
+
+    extrap_legacy: dict = {}
+    if args.extrap_dir:
+        extrap_legacy = _load_extrap_results_legacy(Path(args.extrap_dir))
+
+    paired = merge(benchmark_records, extrap_new, extrap_legacy)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(paired, f, indent=2)
-
     print(f"  Written {len(paired)} paired records → {out_path}")
 
-    # Warn if no extrap data at all — analysis will fail with TOO_FEW_MW_PAIRS
+    # Warn if Mann-Whitney will fail
     n_with_far = sum(
         1 for r in paired
         if r.get("hypatia", {}).get("extrap_r2_far") is not None
     )
     if n_with_far == 0:
-        print("::warning::ablation_paired.json has 0 equations with hypatia.extrap_r2_far. "
-              "run_analysis.py will emit TOO_FEW_MW_PAIRS. "
-              "Ensure run_all.sh --step exp2_feynman_extrap ran successfully.", file=sys.stderr)
+        print(
+            "::warning::ablation_paired.json has 0 equations with hypatia.extrap_r2_far. "
+            "run_analysis.py will emit TOO_FEW_MW_PAIRS. "
+            "Ensure run_all.sh --step exp2_feynman_extrap ran successfully and "
+            "benchmark_results_extrap.json was produced.",
+            file=sys.stderr,
+        )
     elif n_with_far < 3:
-        print(f"::warning::Only {n_with_far} equation(s) have extrap_r2_far. "
-              f"Mann-Whitney test needs ≥ 3 pairs.", file=sys.stderr)
+        print(
+            f"::warning::Only {n_with_far} equation(s) have extrap_r2_far. "
+            f"Mann-Whitney test needs ≥ 3 pairs.",
+            file=sys.stderr,
+        )
     else:
         print(f"  OK: {n_with_far} equations have extrap_r2_far — "
               f"sufficient for Mann-Whitney test.")

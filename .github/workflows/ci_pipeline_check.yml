@@ -223,7 +223,7 @@ jobs:
               "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
               "exp2_feynman":      "comparison_results/feynman-tests/exp2",
-              "exp2_feynman_extrap": "comparison_results/feynman-tests/extrap",
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2":              "comparison_results/feynman-tests/exp2_multi",
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
@@ -232,7 +232,7 @@ jobs:
               "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":       "figures",
-              "extrap":            "comparison_results/extrapolation",
+              "extrap":            "comparison_results/feynman-tests/exp2_extrap",
           }
 
           # Resolve which experiments to check
@@ -264,6 +264,8 @@ jobs:
                                     "*portfolio*variance*.json",
                                     "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_feynman_extrap": ["merged_extrap_*.json", "protocol_core_extrap_*.json",
+                                      "ablation_paired.json"],
               "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":              ["full_run_*.json", "report_hybrid_*.json",
                                     "hybrid_defi_*.json",
@@ -417,7 +419,7 @@ jobs:
           # When EXPERIMENT is a known single experiment, iterate only that.
           # When EXPERIMENT is "all" or blank, iterate everything in CHECK_REPORT.
           _KNOWN_EXPS = [
-              "exp1", "exp1b", "exp2_feynman", "exp2", "exp3", "exp3b",
+              "exp1", "exp1b", "exp2_feynman", "exp2_feynman_extrap", "exp2", "exp3", "exp3b",
               "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "instability", "extrap",
           ]
           _exp_input = os.environ.get("EXPERIMENT", "all").strip()
@@ -464,6 +466,7 @@ jobs:
               # the runner puts in checkpoint.completed ("portfolio_seed{s}").
               "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
               "exp2_feynman":      FEYNMAN_DOMAINS,
+              "exp2_feynman_extrap": FEYNMAN_DOMAINS,
               "exp2":              EXP2_DOMAINS,
               # exp3 committed a single exp3_nguyen12_seed42.json covering all 12 Nguyen eqs.
               "exp3":              ["nguyen12_seed42"],
@@ -663,6 +666,7 @@ jobs:
               "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
               "exp2_feynman":      "comparison_results/feynman-tests/exp2",
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2":              "comparison_results/feynman-tests/exp2_multi",
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
@@ -671,7 +675,7 @@ jobs:
               "suppB_sc":          "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":       "figures",
-              "extrap":            "comparison_results/extrapolation",
+              "extrap":            "comparison_results/feynman-tests/exp2_extrap",
           }
 
           # Respect the EXPERIMENT input: when a single experiment is specified,
@@ -697,6 +701,8 @@ jobs:
                                     "*portfolio*variance*.json",
                                     "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_feynman_extrap": ["merged_extrap_*.json", "protocol_core_extrap_*.json",
+                                      "ablation_paired.json"],
               "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":              ["full_run_*.json", "report_hybrid_*.json",
                                     "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
@@ -948,6 +954,7 @@ jobs:
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
@@ -956,7 +963,7 @@ jobs:
               "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
               "hybrid_all_domains": "hybrid_llm_nn/all_domains",
               "instability":        "figures",
-              "extrap":             "comparison_results/extrapolation",
+              "extrap":             "comparison_results/feynman-tests/exp2_extrap",
           }
 
           root_figs  = REPO_ROOT / "figures"

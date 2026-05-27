@@ -645,6 +645,47 @@ jobs:
           python3 .github/scripts/validate_analysis_input.py
 
       # -----------------------------------------------------------------------
+      # Merge extrap into benchmark (exp2_feynman_extrap only)
+      # -----------------------------------------------------------------------
+      # merge_extrap_into_benchmark.py joins benchmark_results.json (train r2)
+      # with benchmark_results_extrap.json (extrap_r2_far / extrap_r2_near) into
+      # ablation_paired.json -- the schema that analyse_ablation() in run_analysis.py
+      # requires.  After the merge, INPUT_JSON and INPUT_MODE are overridden so the
+      # analysis step reads the paired file rather than the raw benchmark JSON.
+      #
+      # Primary source  : benchmark_results_extrap.json  (v2.2+ runner --extrap flag)
+      # Legacy fallback : extrap_results_*.json           (passed via --extrap-dir)
+      # Both live in RESULT_DIR; the script picks extrap_benchmark_dir first per-eq.
+      # -----------------------------------------------------------------------
+
+      - name: Merge extrap into benchmark (exp2_feynman_extrap)
+        if: github.event.inputs.experiment == 'exp2_feynman_extrap'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PAIRED="${RESULT_DIR}/ablation_paired.json"
+
+          python3 scripts/merge_extrap_into_benchmark.py \
+            --benchmark-dir        "${RESULT_DIR}" \
+            --extrap-benchmark-dir "${RESULT_DIR}" \
+            --extrap-dir           "${RESULT_DIR}" \
+            --output               "${PAIRED}"
+
+          if [[ ! -f "${PAIRED}" ]]; then
+            echo "::error::merge_extrap_into_benchmark.py did not produce ${PAIRED}"
+            exit 1
+          fi
+
+          N_RECORDS=$(python3 -c "import json; print(len(json.load(open('${PAIRED}'))))")
+          echo "  ablation_paired.json: ${N_RECORDS} paired record(s) -> ${PAIRED}"
+
+          # Override INPUT_JSON / INPUT_MODE so the analysis step reads the merged file.
+          # INPUT_MODE stays 'direct' -- ablation_paired.json is a single flat list.
+          echo "INPUT_JSON=${PAIRED}" >> "$GITHUB_ENV"
+          echo "INPUT_MODE=direct"    >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
       # Run analysis
       # -----------------------------------------------------------------------
 
