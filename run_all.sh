@@ -840,7 +840,7 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   else
     echo \"OK: \${COUNT_EXTRAP} extrap protocol file(s) produced\"
   fi
-  if [[ \"${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
+  if [[ \"\${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
     echo 'WARNING: benchmark_results_extrap.json not found — ci_analysis.yml merge step will find nothing'
     echo '  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is in use (writes this file when --extrap is active)'
   else

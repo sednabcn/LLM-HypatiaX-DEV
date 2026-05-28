@@ -883,7 +883,7 @@ jobs:
           PYEOF
 
       - name: Run experiment tasks
-        if: ${{ steps.resolve_ids.outputs.has_work == 'true' && needs.plan.outputs.exp_id != 'exp2_feynman_extrap' }}
+        if: ${{ steps.resolve_ids.outputs.has_work == 'true' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
@@ -938,41 +938,6 @@ jobs:
           EXPERIMENT_SEED="${PYSR_SEED}" \
           DOMAIN_FILTER="${TASK_IDS}" \
             bash run_all.sh --step "${EXP}"
-
-      # ── exp2_feynman_extrap: run extrap benchmark, store results in exp2_extrap ─
-      # Responsibility of this step: produce benchmark_results_extrap.json and
-      # protocol_core_extrap_*.json inside RESULT_SUBDIR (exp2_extrap).
-      # The merge that creates ablation_paired.json is owned exclusively by
-      # ci_analysis.yml so there is a single authoritative owner and output path.
-      - name: Run extrapolation evaluation (exp2_feynman_extrap only)
-        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman_extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
-          RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
-          RESULT_SUBDIR:     ${{ needs.plan.outputs.result_subdir }}
-          REPRO_CFG:         ${{ env.REPRO_CFG }}
-        run: |
-          set -euo pipefail
-          export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
-          # RESULT_SUBDIR = comparison_results/feynman-tests/exp2_extrap (from plan).
-          # All outputs (protocol_core_extrap_*.json, benchmark_results_extrap.json)
-          # are written here. ci_analysis.yml reads from this same path.
-          TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
-          mkdir -p "${TARGET}"
-
-          echo "=== exp2_feynman_extrap: extrapolation run ==="
-          echo "  Target: ${TARGET}"
-
-          TASK_IDS="$(python3 -c "import json,os; print(' '.join(json.loads(os.environ['PENDING_IDS'])))")"
-          TASK_IDS="${TASK_IDS}" \
-          SHARD_IDS="${TASK_IDS}" \
-          SHARD="${SHARD_INDEX}" \
-          RESULTS_DIR="${RESULTS_DIR}" \
-          OUT_BASE="${RESULTS_DIR}" \
-          REPO_ROOT="${{ github.workspace }}" \
-          DOMAIN_FILTER="${TASK_IDS}" \
-            bash run_all.sh --step exp2_feynman_extrap
 
       - name: Diagnostic - locate result files on disk
         if: always()
