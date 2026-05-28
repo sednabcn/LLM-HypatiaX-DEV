@@ -850,7 +850,7 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   # ci_analysis.yml is the sole owner of the merge: it reads benchmark_results_extrap.json
   # from exp2_extrap/ and writes ablation_paired.json to exp2_extrap/.
   # Running the merge here would write to exp2/ (wrong path) and race ci_analysis.
-\"
+"
 
 
 # FIX: --protocol all30 does not exist in run_comparative_suite_benchmark_v2.py
