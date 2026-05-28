@@ -316,8 +316,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Confirm RESULT_DIR resolves to exp2_extrap — this is where
+          # benchmark_results_extrap.json lives and where ablation_paired.json
+          # will be written and committed.
+          EXPECTED_SUFFIX="comparison_results/feynman-tests/exp2_extrap"
+          if [[ "${RESULT_DIR}" != *"${EXPECTED_SUFFIX}" ]]; then
+            echo "::error::RESULT_DIR='${RESULT_DIR}' does not end with '${EXPECTED_SUFFIX}'"
+            echo "  The subdir mapping for exp2_feynman_extrap must be ${EXPECTED_SUFFIX}"
+            exit 1
+          fi
+
           PAIRED="${RESULT_DIR}/ablation_paired.json"
-          # benchmark_results.json lives in exp2 (noiseless baseline); benchmark_results_extrap.json lives in exp2_extrap.
+          # benchmark_results.json (noiseless train r2) lives in exp2, not exp2_extrap.
+          # benchmark_results_extrap.json (extrap_r2_far) lives in RESULT_DIR (exp2_extrap).
           BENCHMARK_DIR="hypatiax/data/results/comparison_results/feynman-tests/exp2"
 
           python3 .github/scripts/merge_extrap_into_benchmark.py \

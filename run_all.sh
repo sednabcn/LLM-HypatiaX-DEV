@@ -840,40 +840,17 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   else
     echo \"OK: \${COUNT_EXTRAP} extrap protocol file(s) produced\"
   fi
-  if [[ \"\${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
-    echo 'WARNING: benchmark_results_extrap.json not found — merge_extrap_into_benchmark.py --extrap-benchmark-dir will find nothing'
+  if [[ \"${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
+    echo 'WARNING: benchmark_results_extrap.json not found — ci_analysis.yml merge step will find nothing'
     echo '  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is in use (writes this file when --extrap is active)'
   else
-    echo 'OK: benchmark_results_extrap.json present — primary source for merge step'
+    echo 'OK: benchmark_results_extrap.json present — ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
   fi
-  # ── Merge extrap_r2_far into ablation_paired.json ──────────────────────────
-  # Mirrors the merge step in ci_runner.yml so local --step exp2_feynman_extrap
-  # runs produce ablation_paired.json without needing the CI YAML.
-  # --extrap-benchmark-dir: primary (benchmark_results_extrap.json, v2.2+)
-  # --extrap-dir:           legacy fallback (extrap_results_*.json)
-  BENCH_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
-  EXTRAP_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
-  MERGE_SCRIPT=\$(
-    for p in \
-      '${REPO_ROOT}/.github/scripts/merge_extrap_into_benchmark.py' \
-      '${REPO_ROOT}/hypatiax/experiments/benchmarks/merge_extrap_into_benchmark.py'; do
-      [[ -f \"\$p\" ]] && echo \"\$p\" && break
-    done
-  )
-  if [[ -n \"\${MERGE_SCRIPT}\" ]]; then
-    echo \"Running merge: \${MERGE_SCRIPT}\"
-    python3 \"\${MERGE_SCRIPT}\" \
-      --benchmark-dir        \"\${BENCH_DIR}\" \
-      --extrap-benchmark-dir \"\${EXTRAP_DIR}\" \
-      --extrap-dir           \"\${EXTRAP_DIR}\" \
-      --output               \"\${BENCH_DIR}/ablation_paired.json\" \
-      && echo 'ablation_paired.json written → '\"\${BENCH_DIR}/ablation_paired.json\" \
-      || echo 'WARNING: merge_extrap_into_benchmark.py failed — ablation_paired.json not produced'
-  else
-    echo 'WARNING: merge_extrap_into_benchmark.py not found in .github/scripts/ or experiments/benchmarks/'
-    echo '  Add the script to either location so ablation_paired.json is produced automatically.'
-  fi
-"
+  # NOTE: merge_extrap_into_benchmark.py is intentionally NOT called here.
+  # ci_analysis.yml is the sole owner of the merge: it reads benchmark_results_extrap.json
+  # from exp2_extrap/ and writes ablation_paired.json to exp2_extrap/.
+  # Running the merge here would write to exp2/ (wrong path) and race ci_analysis.
+\"
 
 
 # FIX: --protocol all30 does not exist in run_comparative_suite_benchmark_v2.py
