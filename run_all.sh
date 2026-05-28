@@ -326,6 +326,37 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
     echo "WARNING: repro.yaml not found at ${REPRO_CFG} -- using env defaults"
   fi
   echo "Results dir: '"${RESULTS_DIR}"'"
+  # FIX-E3: extrap_r2_far.py presence check + auto-install.
+  # run_comparative_suite_benchmark_v2.py imports from
+  # hypatiax.experiments.benchmarks.extrap_r2_far (line ~123).
+  # When the file is absent every exp2_feynman_extrap domain prints:
+  #   ⚠️  extrap_r2_far.py not found on sys.path — extrapolation error % will not be computed.
+  # and all extrap_r2_far / extrap_error_pct values fall back to null.
+  # Fix: verify the file is in EXPERIMENTS_DIR (the benchmarks package).
+  # If absent, search known candidate locations and copy it there.
+  _EXTRAP_DEST="${EXPERIMENTS_DIR}/extrap_r2_far.py"
+  if [ -f "${_EXTRAP_DEST}" ]; then
+    echo "extrap_r2_far.py: OK at ${_EXTRAP_DEST}"
+  else
+    _EXTRAP_FOUND=false
+    for _src in \
+        "${SCRIPTS_DIR}/extrap_r2_far.py" \
+        "${REPO_ROOT}/extrap_r2_far.py" \
+        "${CORE_DIR}/extrap_r2_far.py" \
+        "${ANALYSIS_DIR}/extrap_r2_far.py"; do
+      if [ -f "${_src}" ]; then
+        cp "${_src}" "${_EXTRAP_DEST}" \
+          && echo "extrap_r2_far.py: copied ${_src} → ${_EXTRAP_DEST}" \
+          && _EXTRAP_FOUND=true \
+          && break
+      fi
+    done
+    if [ "${_EXTRAP_FOUND}" = false ]; then
+      echo "ERROR: extrap_r2_far.py not found — exp2_feynman_extrap will produce null extrap_r2_far values."
+      echo "       Expected at: ${_EXTRAP_DEST}"
+      echo "       Place extrap_r2_far.py in ${EXPERIMENTS_DIR}/ before running exp2_feynman_extrap."
+    fi
+  fi
   # FIX CRITICAL 3: hybrid_llm_nn/all_domains (not /defi)
   # BUG 2 FIX: added extrapolation/multi_seed — exp3b now writes to this subdir
   # (was: extrapolation/) to avoid collision with exp3 outputs.
@@ -796,10 +827,32 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   # written by a prior resume attempt before the domain loop completes — causing
   # the verify step to see 0 files.  The CI move step's prune_old handles stale
   # committed files from prior workflow runs.
+  #
+  # FIX-E2: CI prune_old data-loss guard.
+  # The CI Move step runs prune_old("protocol_core_extrap_*.json") on TARGET before
+  # move_matching.  Because the benchmark script writes directly into TARGET (not a
+  # scratch dir), prune_old misidentifies this run's fresh outputs as untracked
+  # leftovers from a prior run and deletes them.  move_matching then finds nothing.
+  # Mitigation: after the domain loop completes, hard-link every protocol_core_extrap_*.json
+  # into a _saved/ subdir.  Hard-links survive the rm inside prune_old because the
+  # inode still has a reference count > 0 — the file data is preserved.  CI's
+  # move step will not look in _saved/, so these copies are untouched and available
+  # for recovery if the primary files are wiped.  The canonical merge path
+  # (benchmark_results_extrap.json) is unaffected by this guard.
+  #
+  # FIX-E6: benchmark_results_extrap.json overwrite-on-push guard.
+  # Each shard pushes benchmark_results_extrap.json with no timestamp/shard suffix,
+  # so every push silently overwrites the previous shard's file (E6).
+  # Fix: after the domain loop, copy benchmark_results_extrap.json to a shard-suffixed
+  # name alongside the original.  merge_extrap_into_benchmark.py reads the canonical
+  # benchmark_results_extrap.json (unchanged); the suffixed copy is the pushable artefact
+  # that will not collide with other shards on the same branch.
   # OUTPUT FILE: run_comparative_suite_benchmark_v2.py v2.2+ writes
   # benchmark_results_extrap.json (not benchmark_results.json) into --output-dir
   # when --extrap is active.  This name is mandatory: merge_extrap_into_benchmark.py
-  # reads it via --extrap-benchmark-dir.  Do NOT rename, move, or purge this file.
+  # reads it via --extrap-benchmark-dir.  Do NOT rename or purge this file.
+  _EXT_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
+  _EXT_SHARD=\${SHARD_INDEX:-0}
   ACTIVE_DOMAINS=\"\${DOMAIN_FILTER:-${FEYNMAN_DOMAINS}}\"
   for DOMAIN_ID in \${ACTIVE_DOMAINS}; do
     echo '=== exp2_feynman_extrap: domain='\${DOMAIN_ID}' ==='
@@ -823,28 +876,58 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
         --noiseless \
         --threshold ${FEYNMAN_NOISELESS_THRESHOLD} \
         --checkpoint-name \"feynman_extrap_checkpoint_\${DOMAIN_ID}\" \
-        --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
+        --output-dir \"\${_EXT_DIR}\" \
         --resume \
-      2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap/exp2_extrap_run.log' \
+      2>&1 | tee -a \"\${_EXT_DIR}/exp2_extrap_run.log\" \
     || echo 'WARNING: exp2_feynman_extrap domain '\${DOMAIN_ID}' exited non-zero — continuing'
   done
+
+  # FIX-E2: hard-link protocol_core_extrap_*.json into _saved/ immediately after
+  # the domain loop so CI's prune_old cannot destroy the only copy.
+  # Hard-links are atomic and zero-cost; they survive rm on the original path.
+  mkdir -p \"\${_EXT_DIR}/_saved\"
+  while IFS= read -r _pf; do
+    _pfn=\$(basename \"\${_pf}\")
+    # ln -f overwrites an existing _saved copy (idempotent on retry).
+    ln -f \"\${_pf}\" \"\${_EXT_DIR}/_saved/\${_pfn}\" 2>/dev/null \
+      || cp \"\${_pf}\" \"\${_EXT_DIR}/_saved/\${_pfn}\" \
+      || true
+  done < <(find \"\${_EXT_DIR}\" -maxdepth 1 -name 'protocol_core_extrap_*.json' 2>/dev/null)
+  _SAVED=\$(find \"\${_EXT_DIR}/_saved\" -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
+  echo \"[E2-guard] \${_SAVED} protocol_core_extrap_*.json hard-linked into \${_EXT_DIR}/_saved/\"
+
+  # FIX-E6: copy benchmark_results_extrap.json to a shard-suffixed name so
+  # parallel shard pushes do not silently overwrite each other on master.
+  _BENCH_EXT_SRC=\"\${_EXT_DIR}/benchmark_results_extrap.json\"
+  if [ -f \"\${_BENCH_EXT_SRC}\" ]; then
+    _BENCH_EXT_DST=\"\${_EXT_DIR}/benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
+    cp \"\${_BENCH_EXT_SRC}\" \"\${_BENCH_EXT_DST}\"
+    echo \"[E6-guard] shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
+  fi
+
   echo '=== exp2_feynman_extrap verification ==='
-  find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
+  find \"\${_EXT_DIR}\" \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | sort || echo '  (none yet)'
-  COUNT_EXTRAP=\$(find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
+  COUNT_EXTRAP=\$(find \"\${_EXT_DIR}\" \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
-  COUNT_BENCH_EXTRAP=\$(find '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap' \
+  COUNT_BENCH_EXTRAP=\$(find \"\${_EXT_DIR}\" \
     -name 'benchmark_results_extrap.json' 2>/dev/null | wc -l)
-  if [[ \"\${COUNT_EXTRAP}\" -eq 0 ]]; then
+  COUNT_SAVED=\$(find \"\${_EXT_DIR}/_saved\" \
+    -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
+  if [[ \"\${COUNT_EXTRAP}\" -eq 0 && \"\${COUNT_SAVED}\" -gt 0 ]]; then
+    echo \"WARNING: primary protocol_core_extrap_*.json were deleted (prune_old E2); \${COUNT_SAVED} copies survived in _saved/ — restore with:\"
+    echo \"         cp \${_EXT_DIR}/_saved/protocol_core_extrap_*.json \${_EXT_DIR}/\"
+  elif [[ \"\${COUNT_EXTRAP}\" -eq 0 ]]; then
     echo 'WARNING: exp2_feynman_extrap produced no protocol_core_extrap_*.json — extrap_r2_far will be missing from ablation_paired.json'
   else
-    echo \"OK: \${COUNT_EXTRAP} extrap protocol file(s) produced\"
+    echo \"OK: \${COUNT_EXTRAP} extrap protocol file(s) produced  (\${COUNT_SAVED} backed up in _saved/)\"
   fi
   if [[ \"\${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
     echo 'WARNING: benchmark_results_extrap.json not found — ci_analysis.yml merge step will find nothing'
     echo '  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is in use (writes this file when --extrap is active)'
   else
-    echo 'OK: benchmark_results_extrap.json present — ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
+    echo \"OK: benchmark_results_extrap.json present (shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json)\"
+    echo '    ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
   fi
   # NOTE: merge_extrap_into_benchmark.py is intentionally NOT called here.
   # ci_analysis.yml is the sole owner of the merge: it reads benchmark_results_extrap.json

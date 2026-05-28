@@ -1096,10 +1096,22 @@ jobs:
           #      the repo tree in sync with exactly one run's outputs.
           prune_old() {
             # Removes files matching pattern from dest before a fresh run moves
-            # new outputs in.  Handles BOTH cases:
-            #   git-tracked files: git rm --cached + rm (keeps repo tree clean)
-            #   untracked files:   plain rm (removes stale partial-run leftovers
-            #            that never got committed, e.g. from a crashed prior run)
+            # new outputs in.  ONLY removes git-tracked (committed) files.
+            #
+            # FIX-E2: removed untracked-file deletion.  The original code also
+            # deleted untracked files as "stale partial-run leftovers", but this
+            # is indistinguishable from fresh outputs the current run just wrote
+            # directly into TARGET (e.g. via --output-dir in the Python script).
+            # For exp2_feynman_extrap this caused all 9+ protocol_core_extrap_*.json
+            # files to be silently wiped immediately after creation — they were
+            # present in TARGET but untracked, so prune_old deleted them before
+            # move_matching could stage them for the artifact upload and git commit.
+            #
+            # Correct semantics: only remove files that are git-tracked (i.e.
+            # committed by a prior workflow run).  Untracked files are either
+            # (a) fresh outputs of the current run — must NOT be deleted, or
+            # (b) leftover workspace noise — harmless to leave; move_matching
+            #     will skip them because their destination already exists.
             local pattern="$1" dest="$2"
             local pruned=0
             while IFS= read -r f; do
@@ -1107,13 +1119,13 @@ jobs:
               if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
                 echo "  prune_old: removing stale committed result: $f"
                 git rm --cached --quiet "$f" 2>/dev/null || true
+                rm -f "$f"
+                pruned=$((pruned + 1))
               else
-                echo "  prune_old: removing stale untracked result: $f"
+                echo "  prune_old: skipping untracked file (may be current-run output): $f"
               fi
-              rm -f "$f"
-              pruned=$((pruned + 1))
             done < <(find "$dest" -maxdepth 1 -name "$pattern" -type f 2>/dev/null)
-            [[ $pruned -gt 0 ]] && echo "  prune_old: removed ${pruned} stale file(s) matching '${pattern}' from ${dest}"
+            [[ $pruned -gt 0 ]] && echo "  prune_old: removed ${pruned} stale committed file(s) matching '${pattern}' from ${dest}"
             return 0
           }
 
@@ -1214,7 +1226,23 @@ jobs:
               # empty and the Mann-Whitney test to report TOO_FEW_MW_PAIRS. REMOVED.
               move_matching "protocol_core_extrap_*.json"         "${TARGET}"
               move_matching "feynman_extrap_checkpoint_*.json"    "${TARGET}"
-              move_matching "benchmark_results_extrap.json"       "${TARGET}"
+              # FIX-E6: benchmark_results_extrap.json and benchmark_results.json have no
+              # timestamp or shard suffix, so concurrent shards or re-runs silently
+              # overwrite each other on git push.  Rename them to include the shard
+              # index and run_id so every run's output has a unique repo path.
+              # The merge script (merge_extrap_into_benchmark.py) reads the extrap dir
+              # via glob, so any _shard*_run*.json file is picked up correctly.
+              for _stable_name in "benchmark_results_extrap.json" "benchmark_results.json"; do
+                _stable_src=$(find . -maxdepth 8 -name "${_stable_name}" 2>/dev/null | head -1)
+                if [[ -n "${_stable_src}" && -e "${_stable_src}" ]]; then
+                  _stable_stem="${_stable_name%.json}"
+                  _stable_dst="${TARGET}/${_stable_stem}_shard${SHARD_INDEX}_run${{ github.run_id }}.json"
+                  # Skip if already inside TARGET
+                  [[ "$(realpath "${_stable_src}" 2>/dev/null || echo "${_stable_src}")" == "$(realpath "${TARGET}" 2>/dev/null || echo "${TARGET}")"/* ]] && continue
+                  mv -v "${_stable_src}" "${_stable_dst}" 2>/dev/null || true
+                  echo "  FIX-E6: renamed ${_stable_name} → $(basename "${_stable_dst}")"
+                fi
+              done
               move_matching "exp2_extrap_run.log"                 "${TARGET}"
               ;;
 

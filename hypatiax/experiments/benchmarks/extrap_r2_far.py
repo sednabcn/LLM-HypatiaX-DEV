@@ -22,9 +22,72 @@ also included verbatim, as compute_extrap_r2_far() depends on it.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 0.  EXTRAPOLATION REGIME — five-tier quality ladder
+#     Matches extrapolation_test_protocol.py and the comments in run_test()
+# ──────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ExtrapolationRegime:
+    """A single tier in the extrapolation-quality ladder."""
+    name:      str    # e.g. "EXCELLENT"
+    threshold: float  # upper bound of this tier (exclusive), % units
+    label:     str    # human-readable label for display
+
+
+#: Ordered from best to worst.  Each tier covers error_pct < threshold.
+#: The last entry (CATASTROPHIC) has threshold=inf so it catches everything ≥ 500 %.
+REGIMES: List[ExtrapolationRegime] = [
+    ExtrapolationRegime("EXCELLENT",    50.0,       "< 50 %  EXCELLENT"),
+    ExtrapolationRegime("GOOD",        100.0,       "< 100 % GOOD"),
+    ExtrapolationRegime("MODERATE",    200.0,       "< 200 % MODERATE"),
+    ExtrapolationRegime("POOR",        500.0,       "< 500 % POOR"),
+    ExtrapolationRegime("CATASTROPHIC", float("inf"), "≥ 500 % CATASTROPHIC"),
+]
+
+
+def calculate_extrapolation_error(
+    rmse_far: float,
+    rmse_train: float,
+) -> Optional[float]:
+    """
+    Compute extrapolation error percentage:  (RMSE_far / RMSE_train) × 100.
+
+    Returns None when either argument is non-finite or rmse_train ≤ 0.
+    A value of 100 % means the far-region RMSE exactly equals the training RMSE
+    (GOOD tier boundary).
+    """
+    if (
+        rmse_train is None
+        or rmse_far is None
+        or not math.isfinite(rmse_train)
+        or not math.isfinite(rmse_far)
+        or rmse_train <= 0.0
+    ):
+        return None
+    return float(rmse_far / rmse_train * 100.0)
+
+
+def extrapolation_error_status(error_pct: Optional[float]) -> str:
+    """
+    Map an extrapolation error percentage to its five-tier status label.
+
+    Returns the regime *name* string (e.g. "EXCELLENT") so callers can
+    do equality comparisons.  Returns "UNKNOWN" when error_pct is None or
+    non-finite.
+    """
+    if error_pct is None or not math.isfinite(error_pct):
+        return "UNKNOWN"
+    for regime in REGIMES:
+        if error_pct < regime.threshold:
+            return regime.name
+    return "CATASTROPHIC"  # shouldn't be reached; last tier has threshold=inf
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -269,48 +332,59 @@ def _far_rmse(y_true: np.ndarray, y_pred: np.ndarray) -> Optional[float]:
 
 
 def compute_extrap_r2_far(
-    results: Dict[str, Any],       # {method_name: MethodResult} — needs .success, .formula
+    results: Dict[str, Any],                                # {method_name: MethodResult}
     X_far: Optional[np.ndarray],
     y_far: Optional[np.ndarray],
     var_names: List[str],
+    y_train: Optional[np.ndarray] = None,                   # training targets for RMSE_train
+    y_pred_train: Optional[Dict[str, np.ndarray]] = None,   # {method: train predictions}
     verbose: bool = True,
-) -> Tuple[Dict[str, Optional[float]], Dict[str, Optional[float]]]:
+) -> Tuple[
+    Dict[str, Optional[float]],   # extrap_r2_far
+    Dict[str, Optional[float]],   # extrap_rmse_far
+    Dict[str, Optional[float]],   # extrap_error_pct  (RMSE_far / RMSE_train × 100)
+]:
     """
     Re-evaluate each method's formula on the held-out far region and return
-    (extrap_r2_far, extrap_rmse_far) dicts keyed by method name.
+    ``(extrap_r2_far, extrap_rmse_far, extrap_error_pct)`` dicts keyed by method name.
 
     Called *after* all methods have run (results already populated), inside
     run_test(), before the record is assembled.
 
     Parameters
     ----------
-    results   : dict of {name: MethodResult} from the method runner loop.
-                Each MethodResult must have .success (bool) and .formula (str|None).
-    X_far     : held-out far-region features, shape (n_far, n_vars).
-                Pass None when not in --extrap mode.
-    y_far     : held-out far-region targets, shape (n_far,).
-    var_names : variable names matching X columns (e.g. ["x0", "x1"]).
-    verbose   : print per-method extrap R² when any non-null value is found.
+    results       : ``{name: MethodResult}`` — each entry must expose ``.success``
+                    and ``.formula``.
+    X_far         : held-out far-region features, shape ``(n_far, n_vars)``.
+    y_far         : held-out far-region targets, shape ``(n_far,)``.
+    var_names     : variable names matching X columns (e.g. ``["x0", "x1"]``).
+    y_train       : training targets, used together with ``y_pred_train`` to
+                    compute RMSE_train per method.
+    y_pred_train  : ``{method_name: np.ndarray}`` of per-method training
+                    predictions pre-evaluated by the caller (only symbolic
+                    methods included).  When provided, RMSE_train is derived
+                    from these; otherwise ``extrap_error_pct`` is null for all
+                    methods.
+    verbose       : print per-method far-region R² / error-% summary table.
 
     Returns
     -------
-    extrap_r2_far   : {method_name: float | None}
-    extrap_rmse_far : {method_name: float | None}
+    extrap_r2_far    : ``{method_name: float | None}``
+    extrap_rmse_far  : ``{method_name: float | None}``
+    extrap_error_pct : ``{method_name: float | None}``  — (RMSE_far/RMSE_train)×100
 
     Notes
     -----
-    Methods that return an NN architecture tag instead of a formula string
-    (e.g. "ImprovedNN(3→256→…)", "[NN fallback", "N/A", "") are skipped —
-    they have no evaluable expression, so extrap_r2_far is null by design.
-    This is NOT a bug: PureLLM, ImprovedNN, HybridDeFi, and HybridAllDomains
-    all fall into this category.  Only SymbolicEngineWithLLM and
-    HybridDiscoverySystem v50_2 produce formula strings and can yield non-null
-    extrap_r2_far values.
+    Methods that return NN architecture tags (``"ImprovedNN(…)"``,
+    ``"[NN fallback"``, ``"N/A"``, ``""``) are skipped — they have no evaluable
+    expression so all three values are null.  Only SymbolicEngineWithLLM and
+    HybridDiscoverySystem v50_2 produce formula strings and yield non-null values.
     """
-    extrap_r2_far:   Dict[str, Optional[float]] = {}
-    extrap_rmse_far: Dict[str, Optional[float]] = {}
+    extrap_r2_far:    Dict[str, Optional[float]] = {}
+    extrap_rmse_far:  Dict[str, Optional[float]] = {}
+    extrap_error_pct: Dict[str, Optional[float]] = {}
 
-    # Guard: skip entirely when not in extrap mode or far region is empty.
+    # Guard: skip entirely when not in extrap mode or far region is degenerate.
     _do_extrap = (
         X_far is not None
         and y_far is not None
@@ -318,13 +392,14 @@ def compute_extrap_r2_far(
         and len(y_far) > 1
     )
     if not _do_extrap:
-        return extrap_r2_far, extrap_rmse_far
+        return extrap_r2_far, extrap_rmse_far, extrap_error_pct
 
     for mname, res in results.items():
-        # Failed methods → null.
+        # Failed methods → null across the board.
         if not res.success:
-            extrap_r2_far[mname]   = None
-            extrap_rmse_far[mname] = None
+            extrap_r2_far[mname]    = None
+            extrap_rmse_far[mname]  = None
+            extrap_error_pct[mname] = None
             continue
 
         formula = (res.formula or "").strip()
@@ -336,24 +411,40 @@ def compute_extrap_r2_far(
             or formula in ("N/A", "")
         )
         if is_nn_tag:
-            extrap_r2_far[mname]   = None
-            extrap_rmse_far[mname] = None
+            extrap_r2_far[mname]    = None
+            extrap_rmse_far[mname]  = None
+            extrap_error_pct[mname] = None
             continue
 
-        # Symbolic methods: attempt formula re-evaluation on the far region.
+        # Symbolic methods: re-evaluate on the far region.
         try:
             y_far_pred = _runner_eval_formula(formula, X_far, var_names)
             if y_far_pred is None or len(y_far_pred) != len(y_far):
-                extrap_r2_far[mname]   = None
-                extrap_rmse_far[mname] = None
+                extrap_r2_far[mname]    = None
+                extrap_rmse_far[mname]  = None
+                extrap_error_pct[mname] = None
             else:
-                r2f  = _far_r2(y_far, y_far_pred)
-                rmse = _far_rmse(y_far, y_far_pred) if r2f is not None else None
+                r2f      = _far_r2(y_far, y_far_pred)
+                rmse_far = _far_rmse(y_far, y_far_pred) if r2f is not None else None
                 extrap_r2_far[mname]   = r2f
-                extrap_rmse_far[mname] = rmse
+                extrap_rmse_far[mname] = rmse_far
+
+                # error_pct = (RMSE_far / RMSE_train) × 100
+                error_pct: Optional[float] = None
+                if (
+                    rmse_far is not None
+                    and y_pred_train is not None
+                    and y_train is not None
+                    and mname in y_pred_train
+                ):
+                    rmse_train = _far_rmse(y_train, y_pred_train[mname])
+                    error_pct  = calculate_extrapolation_error(rmse_far, rmse_train)
+                extrap_error_pct[mname] = error_pct
+
         except Exception:
-            extrap_r2_far[mname]   = None
-            extrap_rmse_far[mname] = None
+            extrap_r2_far[mname]    = None
+            extrap_rmse_far[mname]  = None
+            extrap_error_pct[mname] = None
 
     if verbose and any(v is not None for v in extrap_r2_far.values()):
         print(
@@ -361,10 +452,16 @@ def compute_extrap_r2_far(
             flush=True,
         )
         for mn, r2f in extrap_r2_far.items():
-            r2s = f"{r2f:.4f}" if (r2f is not None and np.isfinite(r2f)) else "null"
-            print(f"     {mn:<42} extrap_r2_far={r2s}", flush=True)
+            r2s  = f"{r2f:.4f}" if (r2f is not None and math.isfinite(r2f)) else "null"
+            pctr = extrap_error_pct.get(mn)
+            pcts = f"{pctr:.1f}%" if (pctr is not None and math.isfinite(pctr)) else "null"
+            tier = extrapolation_error_status(pctr)
+            print(
+                f"     {mn:<42} extrap_r2_far={r2s}  error_pct={pcts}  [{tier}]",
+                flush=True,
+            )
 
-    return extrap_r2_far, extrap_rmse_far
+    return extrap_r2_far, extrap_rmse_far, extrap_error_pct
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -381,17 +478,20 @@ def compute_extrap_r2_far(
 #   metadata = {**metadata, **extrap_meta}
 #
 #   # --- after all methods have run on (X_train, y_train) ---
-#   extrap_r2_far, extrap_rmse_far = compute_extrap_r2_far(
-#       results   = results,       # {name: MethodResult}
-#       X_far     = X_far,
-#       y_far     = y_far,
-#       var_names = var_names,
-#       verbose   = True,
+#   extrap_r2_far, extrap_rmse_far, extrap_error_pct = compute_extrap_r2_far(
+#       results      = results,           # {name: MethodResult}
+#       X_far        = X_far,
+#       y_far        = y_far,
+#       var_names    = var_names,
+#       y_train      = y_train,           # NEW: needed for error_%
+#       y_pred_train = y_pred_train_dict, # NEW: {method: train preds}
+#       verbose      = True,
 #   )
 #
 #   # --- assemble record ---
-#   record["extrap_r2_far"]    = extrap_r2_far
-#   record["extrap_rmse_far"]  = extrap_rmse_far
+#   record["extrap_r2_far"]      = extrap_r2_far
+#   record["extrap_rmse_far"]    = extrap_rmse_far
+#   record["extrap_error_pct"]   = extrap_error_pct
 #   record["extrap_train_frac"]  = metadata.get("extrap_train_frac")
 #   record["extrap_multiplier"]  = metadata.get("extrap_multiplier")
 #   record["extrap_n_train"]     = metadata.get("extrap_n_train")
