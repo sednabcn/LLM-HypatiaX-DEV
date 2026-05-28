@@ -1216,8 +1216,6 @@ jobs:
             # Without this move it lives only in the workspace root, misses the
             # artifact upload, and is never committed to the repo.
             exp2_feynman_extrap)
-              prune_old "protocol_core_extrap_*.json"             "${TARGET}"
-              prune_old "feynman_extrap_checkpoint_*.json"        "${TARGET}"
               # FIX-NOISELESS_EXTRAP: benchmark_results_extrap.json must NOT be pruned.
               # prune_old "benchmark_results_extrap.json" was here and deleted the file
               # immediately after it was created, before move_matching could pick it up.
@@ -1404,20 +1402,32 @@ jobs:
           # top of those already committed by prior runs, causing the directory
           # to grow unboundedly.  Only git-tracked files are removed (files
           # written earlier in this run but not yet committed are preserved).
-          pruned_store=0
-          while IFS= read -r f; do
-            [[ -f "$f" ]] || continue
-            fname=$(basename "$f")
-            # Never prune merge_shards meta-files — they are intentionally stable.
-            [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
-            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
-              echo "  store prune: removing stale committed file: $f"
-              git rm --cached --quiet "$f" 2>/dev/null || true
-              rm -f "$f"
-              pruned_store=$((pruned_store + 1))
-            fi
-          done < <(find "${DEST}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) 2>/dev/null)
-          [[ $pruned_store -gt 0 ]] && echo "Store results: pruned ${pruned_store} stale committed file(s) from ${DEST}" || true
+          #
+          # EXCEPTION: skip store-prune entirely for exp2_feynman_extrap's
+          # feynman_tests/exp2_extrap directory.  protocol_core_extrap_*.json
+          # and benchmark_results_extrap.json are written directly into TARGET
+          # (and therefore DEST) before this step runs; pruning them here
+          # deletes the current run's primary outputs before the artifact
+          # upload and git commit can pick them up.
+          _extrap_dest="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap"
+          if [[ "$(realpath "${DEST}" 2>/dev/null || echo "${DEST}")" != "$(realpath "${_extrap_dest}" 2>/dev/null || echo "${_extrap_dest}")" ]]; then
+            pruned_store=0
+            while IFS= read -r f; do
+              [[ -f "$f" ]] || continue
+              fname=$(basename "$f")
+              # Never prune merge_shards meta-files — they are intentionally stable.
+              [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
+              if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+                echo "  store prune: removing stale committed file: $f"
+                git rm --cached --quiet "$f" 2>/dev/null || true
+                rm -f "$f"
+                pruned_store=$((pruned_store + 1))
+              fi
+            done < <(find "${DEST}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) 2>/dev/null)
+            [[ $pruned_store -gt 0 ]] && echo "Store results: pruned ${pruned_store} stale committed file(s) from ${DEST}" || true
+          else
+            echo "Store results: skipping store-prune for exp2_extrap dir (protocol_core_extrap_* and benchmark_results_extrap.json must not be pruned)."
+          fi
 
           copied=0
           # One-level scan of OUT_BASE root: pick up any JSON/CSV not already
@@ -1598,11 +1608,14 @@ jobs:
         run: |
           TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
           COUNT_PROTO=$(find "${TARGET}" -name "protocol_core_extrap_*.json" 2>/dev/null | wc -l)
-          COUNT_BENCH=$(find "${TARGET}" -name "benchmark_results_extrap.json" 2>/dev/null | wc -l)
+          # FIX-E6: benchmark_results_extrap.json is renamed to
+          # benchmark_results_extrap_shard<N>_run<run_id>.json by the move block.
+          # Match the renamed glob; also accept the bare name for backwards-compat.
+          COUNT_BENCH=$(find "${TARGET}" \( -name "benchmark_results_extrap_shard*.json" -o -name "benchmark_results_extrap.json" \) 2>/dev/null | wc -l)
           echo "=== exp2_feynman_extrap output verification ==="
-          echo "  Target dir                      : ${TARGET}"
-          echo "  protocol_core_extrap_*.json     : ${COUNT_PROTO}"
-          echo "  benchmark_results_extrap.json   : ${COUNT_BENCH}"
+          echo "  Target dir                                    : ${TARGET}"
+          echo "  protocol_core_extrap_*.json                   : ${COUNT_PROTO}"
+          echo "  benchmark_results_extrap[_shard*].json        : ${COUNT_BENCH}"
           find "${TARGET}" -type f 2>/dev/null | sort || true
           if [[ "${COUNT_PROTO}" -eq 0 ]]; then
             echo "::error::exp2_feynman_extrap produced NO protocol_core_extrap_*.json in '${TARGET}'."
@@ -1611,12 +1624,12 @@ jobs:
             exit 1
           fi
           if [[ "${COUNT_BENCH}" -eq 0 ]]; then
-            echo "::warning::benchmark_results_extrap.json not found in '${TARGET}'."
+            echo "::warning::benchmark_results_extrap[_shard*].json not found in '${TARGET}'."
             echo "  This file is required by merge_extrap_into_benchmark.py --extrap-benchmark-dir."
             echo "  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is being used (--extrap support)."
             echo "  The merge step will fall back to --extrap-dir (extrap_results_*.json) if present."
           else
-            echo "  OK benchmark_results_extrap.json present — merge step has primary extrap source."
+            echo "  OK benchmark_results_extrap[_shard*].json present — merge step has primary extrap source."
           fi
           echo "  OK exp2_feynman_extrap protocol files present (${COUNT_PROTO} file(s))."
 

@@ -1188,16 +1188,86 @@ class HybridDiscoverySystem:
                     # Issue 1: inverse log-transform predictions if they are in log-space
                     if _scale_log:
                         _y_pred = np.sign(_y_pred) * (10 ** np.abs(_y_pred) - 1)
+                    #====================================================================
+                    #_finite = np.isfinite(_y_pred) & np.isfinite(_y_for_rmse)
+                    #if _finite.sum() >= 2:
+                    #    rmse = float(
+                    #        np.sqrt(np.mean(
+                    #            (_y_for_rmse[_finite] - _y_pred[_finite]) ** 2
+                    #        ))
+                    #    )
+                    #else:
+                    #    rmse = float("nan")
 
-                    _finite = np.isfinite(_y_pred) & np.isfinite(_y_for_rmse)
-                    if _finite.sum() >= 2:
-                        rmse = float(
-                            np.sqrt(np.mean(
-                                (_y_for_rmse[_finite] - _y_pred[_finite]) ** 2
-                            ))
+                    # ------------------------------------------------------------------
+                    # FIX-NAN v5.4: overflow-safe RMSE
+                    # ------------------------------------------------------------------
+
+                    # Replace inf -> nan
+                    _y_pred = np.where(
+                        np.isfinite(_y_pred),
+                        _y_pred,
+                        np.nan,
+                    )
+
+                    _y_true = np.asarray(
+                        _y_for_rmse,
+                        dtype=np.float64,
+                    )
+
+                    _y_true = np.where(
+                        np.isfinite(_y_true),
+                        _y_true,
+                        np.nan,
+                    )
+
+                    with np.errstate(
+                            over="ignore",
+                            invalid="ignore",
+                    ):
+                        _residuals = _y_true - _y_pred
+
+                    _valid = np.isfinite(_residuals)
+
+                    if _valid.sum() >= 2:
+
+                        # Prevent overflow in square
+                        _residuals_valid = np.clip(
+                            _residuals[_valid],
+                            -1e150,
+                            1e150,
                         )
+
+                        with np.errstate(
+                                over="ignore",
+                                invalid="ignore",
+                        ):
+                            _sq = _residuals_valid ** 2
+
+                        _sq = np.where(
+                            np.isfinite(_sq),
+                            _sq,
+                            np.nan,
+                        )
+
+                        if np.all(np.isnan(_sq)):
+                            rmse = float("nan")
+                        else:
+                            rmse = float(
+                                np.sqrt(np.nanmean(_sq))
+                            )
+
                     else:
                         rmse = float("nan")
+
+                    _overflow_count = np.sum(~np.isfinite(_y_pred))
+
+                    if _overflow_count > 0:
+                        logger.warning(
+                            f"[RMSE] {_overflow_count} non-finite "
+                            "predictions excluded from RMSE"
+                        )
+                    #=====================================================================
                 except Exception as _rmse_err:
                     logger.warning(f"[FIX-A] RMSE computation failed: {_rmse_err}")
 

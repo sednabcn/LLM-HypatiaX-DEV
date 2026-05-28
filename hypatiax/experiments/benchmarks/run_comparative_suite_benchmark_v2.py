@@ -75,6 +75,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+os.environ.setdefault(
+    "PYTHON_JULIACALL_HANDLE_SIGNALS",
+    "yes"
+)
+
+
 # Hard ceiling on any single method call. Prevents Anthropic API exponential-
 # backoff retry storms from hanging the suite for 18+ minutes on one test.
 # Can be overridden at runtime with --method-timeout.
@@ -3356,7 +3363,8 @@ class ProtocolBenchmarkSuite:
         # This is the field required by run_analysis.py's Mann-Whitney ablation test
         # (Table 14).
         #
-        # Evaluation is delegated to compute_extrap_r2_far() from extrap_r2_far.py,
+        # Evaluation is delegated to the internal compute_extrap_r2_far()
+        # implementation defined earlier in this file.
         # which also computes extrapolation_error_pct = (RMSE_far / RMSE_train) × 100%
         # using the same five-tier status labels as extrapolation_test_protocol.py:
         #   < 50 %  EXCELLENT  |  < 100 %  GOOD  |  < 200 %  MODERATE
