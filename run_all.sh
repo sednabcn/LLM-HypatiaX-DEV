@@ -80,6 +80,17 @@
 #   tables             → Generate all LaTeX tables  → ${RESULTS_DIR}/tables/
 #   figures            → Generate all paper figures → ${RESULTS_DIR}/figures/
 #   validate           → Cross-check all result files against expected checksums
+#   qualify            → verify_results.py spot-check + 7-dimension per-experiment gate
+#                        (figures ✓  tables ✓  _merged.json ✓  git ✓  checkpoint ✓)
+#   audit_paper        → Cross-check every paper claim vs result JSONs (paper_targets.json)
+#                        PASS/WARN/FAIL/MISSING per claim; Nguyen-12 dual-threshold;
+#                        writes logs/paper_audit_findings.json
+#   audit_setup        → Copy .tex source files into notebooks/ for notebook steps
+#   audit_nb01         → NB-01 Citation & Bibliography Audit
+#   audit_nb02         → NB-02 Cross-Reference & Label Integrity
+#   audit_nb03         → NB-03 Section Structure & Numbering
+#   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
+#   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
 # FIXES (observ-02 audit 2026-05-27):
 #   — FIX-suppA-BUG-A : purge_dir moved BEFORE run_hybrid_system_benchmark.py in suppA.
@@ -198,7 +209,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate"
+_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1309,6 +1320,194 @@ else:
 PYEOF
 '
 
+# ── STEP 14: qualify ─────────────────────────────────────────────────────────
+# Per-experiment qualification gate (Phase 5 of run_all_checkpoint.py).
+# Checks 7 dimensions for each of the 12 qualifiable experiments:
+#   (1) checkpoint=pass  (2) result files present  (3) _merged.json present
+#   (4) _merged.csv present  (5) committed to git
+#   (6) figures present in ${RESULTS_DIR}/figures/
+#   (7) tables present in ${RESULTS_DIR}/tables/
+# Blocks audit-paper if any experiment fails any dimension.
+# Also runs verify_results.py --report as a pre-flight numerical spot-check
+# (DeFi 89.2%, 74 cases, Feynman 9/30, Core-15 MW, Instability 70 tasks).
+run qualify "Qualify all experiments + numerical spot-check (Phase 5 gate)" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+
+  echo ""
+  echo "=== Phase 5a: verify_results.py --report (numerical spot-check) ==="
+  python3 scripts/patches/verify_results.py \
+    --report \
+    --report-file logs/verify_report.json \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/qualify_verify_run.log
+  echo "=== verify_results.py done ==="
+
+  echo ""
+  echo "=== Phase 5b: run_all_checkpoint.py --only qualify ==="
+  python3 run_all_checkpoint.py --only qualify \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/qualify_run.log
+  echo "=== qualify done ==="
+'
+
+# ── STEP 15: audit_paper ─────────────────────────────────────────────────────
+# Final paper audit (Phase 5 of run_all_checkpoint.py).
+# Loads scripts/patches/paper_targets.json and cross-checks every reported
+# number against the corresponding _merged.json / result file.
+# Emits PASS / WARN / FAIL / MISSING per claim.
+# Includes Nguyen-12 dual-threshold check (91.7% 4-decimal vs 33.3% strict).
+# Writes logs/paper_audit_findings.json.
+# Exits non-zero on any FAIL or MISSING (not on WARN).
+run audit_paper "Audit all paper claims against results (paper_targets.json)" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+
+  echo ""
+  echo "=== Phase 5c: run_all_checkpoint.py --only audit-paper ==="
+  python3 run_all_checkpoint.py --only audit-paper \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_paper_run.log
+  echo "=== audit-paper done ==="
+  echo "  Findings → logs/paper_audit_findings.json"
+'
+
+# ── STEP 16: audit_setup ─────────────────────────────────────────────────────
+# Copies main paper .tex and supplement files into notebooks/ so all
+# subsequent notebook steps can read them from a single known location.
+# Mirrors the audit-setup step in run_all_checkpoint.py Phase 4-B exactly.
+# Sources searched: paper/, repo root, paper/tables/, logs/
+run audit_setup "Copy .tex source files into notebooks/ for audit notebooks" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+
+  python3 - <<'"'"'PYEOF'"'"'
+import shutil, pathlib, sys
+
+nb = pathlib.Path("notebooks")
+nb.mkdir(exist_ok=True)
+
+search_dirs = [
+    pathlib.Path("paper"),
+    pathlib.Path("."),
+    pathlib.Path("paper") / "tables",
+    pathlib.Path("logs"),
+]
+
+copied  = []
+missing = []
+
+# Main paper .tex
+main = next(
+    (f for d in search_dirs
+       for pat in ("jmlr-hypatiax*.tex", "jmlr_paper*.tex")
+       for f in d.glob(pat) if f.is_file()),
+    None
+)
+if main:
+    shutil.copy(main, nb / main.name)
+    copied.append(main.name)
+    print(f"  [OK] main paper: {main.name}")
+else:
+    print("  [WARN] main paper .tex not found — notebooks may not locate paper content")
+
+# Supplement files
+for name in ("supp_routing_improvements.tex", "supp_benchmark_report.tex"):
+    src = next((d / name for d in search_dirs if (d / name).is_file()), None)
+    if src:
+        shutil.copy(src, nb / name)
+        copied.append(name)
+        print(f"  [OK] {name}")
+    else:
+        missing.append(name)
+        print(f"  [WARN] {name} not found — notebook may skip supplement checks")
+
+print(f"\naudit-setup: copied {len(copied)} file(s): {copied}")
+if missing:
+    print(f"  Missing (non-fatal): {missing}")
+PYEOF
+'
+
+# ── STEP 17: audit_nb01 ───────────────────────────────────────────────────────
+# NB-01 · Citation & Bibliography Audit
+# Catches: koza1994genetic missing from bibliography (lines 327, 1888);
+#          cranmer2023pysr/cranmer2023interp alias collision (same arXiv);
+#          4 uncited bibitems.
+run audit_nb01 "NB-01: Citation & Bibliography Audit" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-01: Citation & Bibliography Audit ==="
+  jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=300 \
+    notebooks/NB-01_Citation_Bibliography_Audit.ipynb \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb01_run.log
+  echo "=== NB-01 done ==="
+'
+
+# ── STEP 18: audit_nb02 ───────────────────────────────────────────────────────
+# NB-02 · Cross-Reference & Label Integrity
+# Catches: \label inside \item (sec:r2_bugfix, thm:five_system_hierarchy) →
+#          garbled \ref output; duplicate section labels
+#          sec:llm_limitations/sec:llm_domain; Supp A references Section 7.3
+#          but main paper has Component 3 at Section 7.4.
+run audit_nb02 "NB-02: Cross-Reference & Label Integrity" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-02: Cross-Reference & Label Integrity ==="
+  jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=300 \
+    notebooks/NB-02_CrossReference_Label_Audit.ipynb \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb02_run.log
+  echo "=== NB-02 done ==="
+'
+
+# ── STEP 19: audit_nb03 ───────────────────────────────────────────────────────
+# NB-03 · Section Structure & Numbering
+# Catches: section structure and numbering consistency issues across .tex files.
+run audit_nb03 "NB-03: Section Structure & Numbering" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-03: Section Structure & Numbering ==="
+  jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=300 \
+    notebooks/NB-03_Section_Structure_Numbering.ipynb \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb03_run.log
+  echo "=== NB-03 done ==="
+'
+
+# ── STEP 20: audit_nb04 ───────────────────────────────────────────────────────
+# NB-04 · Numerical Consistency & Abstract Claims
+# Catches: abstract claim presence (89.2%, 62.2%, +27pp, +83.8pp, 1.73×,
+#          68/74, 11/12, 9/30, +38.1pp); 70 vs 71 task discrepancy (body
+#          says "71 cases", table caption says "70 tasks"); "five-stage routing"
+#          vs "Five-Layer Architecture" terminology inconsistency; timing
+#          arithmetic cross-check (6.8s, 1.7s, 3.0s, 2.7s, 1.73×, 11.4s).
+run audit_nb04 "NB-04: Numerical Consistency & Abstract Claims" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-04: Numerical Consistency & Abstract Claims ==="
+  jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=300 \
+    notebooks/NB-04_Numerical_Consistency_Checker.ipynb \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb04_run.log
+  echo "=== NB-04 done ==="
+'
+
+# ── STEP 21: audit_nb05 ───────────────────────────────────────────────────────
+# NB-05 · Figure Files & Image Dependencies
+# Catches: all 5 \includegraphics targets checked on disk — 4 MISSING
+#          (hypatiaX_three_systems, fig18_r2_heatmap_improved,
+#           fig09_r2_heatmap_regimes, fig1_seed_sweep);
+#          \fbox placeholder in Section 7.1 (fig:architecture);
+#          figure environment label/caption completeness.
+run audit_nb05 "NB-05: Figure Files & Image Dependencies" bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-05: Figure Files & Image Dependencies ==="
+  jupyter nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=300 \
+    notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb \
+    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb05_run.log
+  echo "=== NB-05 done ==="
+'
+
 # ── Final summary ─────────────────────────────────────────────────────────────
 echo ""
 log "============================================================"
@@ -1317,8 +1516,10 @@ log "============================================================"
 echo ""
 echo "  Key output locations:"
 echo "    Results JSON:  ${RESULTS_DIR}/"
-echo "    LaTeX tables:  ${RESULTS_DIR}/tables/*.tex"     # FIX STEP-11-12
-echo "    Figures PDF:   ${RESULTS_DIR}/figures/*.pdf"    # consistent with tables
+echo "    LaTeX tables:  ${RESULTS_DIR}/tables/*.tex"             # FIX STEP-11-12
+echo "    Figures PDF:   ${RESULTS_DIR}/figures/*.pdf"            # consistent with tables
+echo "    Verify report: logs/verify_report.json"                 # STEP 14
+echo "    Paper audit:   logs/paper_audit_findings.json"          # STEP 15
 echo ""
 echo "  Cross-reference with paper:"
 echo "    Table 9          <- exp1              (core extrapolation)"
@@ -1340,6 +1541,25 @@ echo "    ${RESULTS_DIR}/figures/fig_paper_instability_hist.{png,pdf}"
 echo "    ${RESULTS_DIR}/figures/fig_paper_regime_counts.{png,pdf}"
 echo "    ${RESULTS_DIR}/figures/hypatiax_instability_per_case.{png,pdf}"
 echo "    (+ 8 more figure stems: Groups A, B, C full set + EX)"
+echo ""
+echo "  Paper audit outputs (STEPs 14-21):"
+echo "    ${RESULTS_DIR}/qualify_verify_run.log   (verify_results.py spot-check)"
+echo "    ${RESULTS_DIR}/qualify_run.log          (7-dimension per-experiment gate)"
+echo "    ${RESULTS_DIR}/audit_paper_run.log      (paper claims vs results)"
+echo "    ${RESULTS_DIR}/audit_nb01_run.log       (NB-01 citation audit)"
+echo "    ${RESULTS_DIR}/audit_nb02_run.log       (NB-02 cross-reference audit)"
+echo "    ${RESULTS_DIR}/audit_nb03_run.log       (NB-03 section structure)"
+echo "    ${RESULTS_DIR}/audit_nb04_run.log       (NB-04 numerical consistency)"
+echo "    ${RESULTS_DIR}/audit_nb05_run.log       (NB-05 figure dependencies)"
+echo "    logs/verify_report.json                 (structured verify output)"
+echo "    logs/paper_audit_findings.json          (structured audit output)"
+echo ""
+echo "  Notebook audit outputs (executed .ipynb with cell outputs):"
+echo "    notebooks/NB-01_Citation_Bibliography_Audit.ipynb"
+echo "    notebooks/NB-02_CrossReference_Label_Audit.ipynb"
+echo "    notebooks/NB-03_Section_Structure_Numbering.ipynb"
+echo "    notebooks/NB-04_Numerical_Consistency_Checker.ipynb"
+echo "    notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb"
 echo ""
 echo "  To rebuild the paper PDF:"
 echo "    cd ${REPO_ROOT} && pdflatex jmlr-hypatiax-paper-final.tex"

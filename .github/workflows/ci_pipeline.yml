@@ -3,11 +3,15 @@
 #  (formerly ci_schedule_simplify.yml / ci_schedule_all.yml)
 #
 #  Pipeline stages (in order):
-#    C0 → ci_runner.yml       — experiment workers (sharded)
-#    C1 → ci_analysis.yml     — statistical analysis / reports
-#    C2 → ci_postprocess.yml  — figures + tables
+#    C0 → ci_runner.yml           — experiment workers (sharded)
+#    C1 → ci_analysis.yml         — statistical analysis / reports
+#    C2 → ci_postprocess.yml      — figures + tables
 #    C3 → ci_pipeline_check.yml   — qualification + paper audit gate
-#    C4 → self-dispatch        — next experiment slot (if multi-slot run)
+#    C4 → ci_paper_audit.yml      — cross-experiment numerical verify + paper claim audit
+#                                   (slot 12 only: fires after final experiment completes)
+#    C5 → ci_paper_notebooks.yml  — NB-01…NB-06 notebook audit chain (mandatory gate)
+#                                   (slot 12 only: fires after C4 passes)
+#    C6 → self-dispatch            — next experiment slot (if multi-slot run)
 #
 #  Manual modes (experiment_index suffix):
 #    N    — full pipeline for slot N  (C0 → C1 → C2 → C3 → C4)
@@ -305,7 +309,7 @@ jobs:
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
-              "exp2_feynman_extrap": "comparison_results/feynman-tests/extrap",
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
@@ -1118,20 +1122,194 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: next-slot  —  C4: self-dispatch next experiment in the queue
+  #  JOB: run-paper-audit  —  C4: dispatch ci_paper_audit.yml (slot 12 only)
+  #
+  #  Only runs when slot == 12 AND run_full == 'true' AND run-checkpoint passed.
+  #  Dispatches ci_paper_audit.yml and polls until it completes.
+  #  Failure here halts the pipeline (paper audit is a mandatory gate).
+  #
+  #  TIMEOUT CONTRACT: 45 min (numerical-verify 15 + paper-audit 15 +
+  #                            figures-tables 10 + polling buffer 5)
+  # ============================================================================
+  run-paper-audit:
+    name: "C4 · Paper audit (slot 12)"
+    needs: [resolve, run-checkpoint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '12' &&
+      needs.run-checkpoint.result == 'success'
+
+    steps:
+      - name: Dispatch and wait for ci_paper_audit.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_paper_audit.yml (slot 12 — extrap complete)"
+
+          gh workflow run ci_paper_audit.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_audit.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_paper_audit.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_paper_audit.yml) ..."
+          DEADLINE=$(( $(date +%s) + 2400 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] paper-audit run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_paper_audit.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
+                echo "  Fix paper audit issues, then re-trigger ci_pipeline.yml for slot 12."
+                exit 1
+              fi
+              echo "ci_paper_audit.yml passed (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_paper_audit.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-paper-notebooks  —  C5: dispatch ci_paper_notebooks.yml (slot 12 only)
+  #
+  #  Runs after run-paper-audit passes. Mandatory — notebook audit chain
+  #  (NB-01 through NB-06) is the final paper-readiness gate.
+  #
+  #  TIMEOUT CONTRACT: 60 min (6 notebooks × ~8 min each + polling buffer)
+  # ============================================================================
+  run-paper-notebooks:
+    name: "C5 · Paper notebooks (slot 12)"
+    needs: [resolve, run-paper-audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '12' &&
+      needs.run-paper-audit.result == 'success'
+
+    steps:
+      - name: Dispatch and wait for ci_paper_notebooks.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_paper_notebooks.yml (paper audit passed)"
+
+          gh workflow run ci_paper_notebooks.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_notebooks.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_paper_notebooks.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_paper_notebooks.yml) ..."
+          DEADLINE=$(( $(date +%s) + 3600 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] paper-notebooks run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_paper_notebooks.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
+                echo "  Fix notebook audit issues (check uploaded .ipynb artifacts), then re-trigger."
+                exit 1
+              fi
+              echo "ci_paper_notebooks.yml passed — paper-readiness gate cleared (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_paper_notebooks.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: next-slot  —  C6: self-dispatch next experiment in the queue
   #
   #  Only runs in full-pipeline mode (not Na/Nf/Nc manual phases).
   #  Only runs when run-checkpoint passes — qualification failure aborts chain.
+  #  On slot 12, also waits for run-paper-notebooks (the terminal paper gate).
+  #  Slots 0-11: next-slot fires immediately after run-checkpoint.
+  #  Slot 12: next-slot is a no-op (QUEUE_SIZE guard exits 0) but is still
+  #           listed in needs so the workflow conclusion reflects the full chain.
   # ============================================================================
   next-slot:
-    name: "C4 · Advance to next slot"
-    needs: [resolve, run-checkpoint]
+    name: "C6 · Advance to next slot"
+    needs: [resolve, run-checkpoint, run-paper-audit, run-paper-notebooks]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.run-checkpoint.result == 'success'
+      needs.run-checkpoint.result == 'success' &&
+      (needs.run-paper-audit.result == 'success' || needs.run-paper-audit.result == 'skipped') &&
+      (needs.run-paper-notebooks.result == 'success' || needs.run-paper-notebooks.result == 'skipped')
 
     steps:
       - name: Dispatch next pipeline slot
@@ -1151,6 +1329,7 @@ jobs:
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
 
           # Keep in sync with len(QUEUE) in the resolve job.
+          # Slot 12 (extrap) is the last slot; next-slot exits 0 (no-op) for it.
           QUEUE_SIZE=13
 
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then

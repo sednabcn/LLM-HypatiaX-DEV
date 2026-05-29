@@ -1,0 +1,780 @@
+# ==============================================================================
+#  ci_paper_audit.yml  —  HypatiaX · Paper audit gate
+#
+#  TRIGGER
+#  -------
+#  Fires automatically when ci_pipeline.yml completes for slot 12 (extrap),
+#  which is the last experiment in the queue.  Gated on:
+#    slot == '12'  AND  run_full == 'true'
+#
+#  Runs in-repo (checkout + Python, no external dispatch).
+#
+#  JOBS (sequential)
+#  -----------------
+#  Job 1 — numerical-verify
+#    python3 scripts/patches/verify_results.py --report --report-file logs/verify_report.json
+#    Checks: DeFi accuracy/counts, Feynman 9/30, Core-15 MW statistics,
+#            Instability 70 tasks, DeFi duplicate cases.
+#    Exits non-zero on any FAIL.
+#
+#  Job 2 — paper-audit  (needs: numerical-verify)
+#    python3 run_all_checkpoint.py --only audit-paper
+#    Loads scripts/patches/paper_targets.json, cross-checks all claims
+#    against _merged.json files, emits logs/paper_audit_findings.json.
+#    Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
+#    Exits non-zero on any FAIL or MISSING.
+#
+#  Job 3 — figures-tables-validate  (needs: numerical-verify)
+#    Validates that all expected figures (PDF/PNG) and tables (TeX) are
+#    present in RESULTS_DIR/figures/ and RESULTS_DIR/tables/.
+#    Mirrors the figures + tables validation absent from ci_pipeline_check.yml.
+#    Exits non-zero on any missing file.
+#
+#  TIMEOUT CONTRACT
+#  ----------------
+#  numerical-verify    : 15 min  (reads JSON files — no heavy computation)
+#  paper-audit         : 15 min  (run_all_checkpoint.py --only audit-paper)
+#  figures-tables-validate : 10 min  (file presence checks only)
+#
+#  ARTIFACTS
+#  ---------
+#  logs/verify_report.json         → verify-report-<run_id>
+#  logs/paper_audit_findings.json  → paper-audit-findings-<run_id>
+#  logs/figures_tables_report.json → figures-tables-report-<run_id>
+# ==============================================================================
+
+name: "HypatiaX - paper audit"
+run-name: >-
+  HypatiaX paper audit — slot 12 (extrap) — run ${{ github.run_id }}
+
+on:
+  # ── Auto: fired by ci_pipeline.yml completing for slot 12 ──────────────────
+  workflow_run:
+    workflows:
+      - "HypatiaX - pipeline"
+    types:
+      - completed
+
+  # ── Manual: run at any time (useful for ad-hoc audits) ─────────────────────
+  workflow_dispatch:
+    inputs:
+      skip_verify:
+        description: "Skip numerical-verify and go straight to paper-audit (true/false)"
+        required: false
+        default: "false"
+      fail_on_warn:
+        description: "Treat WARN as FAIL in the audit (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  actions:  read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  OUT_BASE: "hypatiax/data/results"
+  PYTHON_VERSION: "3.12"
+
+# ==============================================================================
+#  GUARD — only fire automatically when the triggering pipeline run was for
+#          slot 12 (extrap) in full-pipeline mode.
+#
+#  For workflow_dispatch the guard is skipped — the operator is running manually.
+# ==============================================================================
+jobs:
+
+  # ============================================================================
+  #  GUARD — parse the triggering workflow's run-name to confirm slot + mode.
+  #
+  #  The ci_pipeline.yml run-name is:
+  #    "HypatiaX pipeline — <experiment_index>"
+  #  Slot 12 has experiment_index "12" (no suffix → run_full=true).
+  #
+  #  Outputs:
+  #    should_run  — "true" if this workflow should proceed, "false" to skip
+  # ============================================================================
+  guard:
+    name: "Check trigger conditions"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+
+    steps:
+      - name: Evaluate trigger
+        id: check
+        env:
+          EVENT_NAME:        ${{ github.event_name }}
+          TRIGGER_NAME:      ${{ github.event.workflow_run.name || '' }}
+          TRIGGER_TITLE:     ${{ github.event.workflow_run.display_title || '' }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, re, sys
+
+          event      = os.environ["EVENT_NAME"]
+          conclusion = os.environ.get("TRIGGER_CONCLUSION", "")
+          title      = os.environ.get("TRIGGER_TITLE", "")
+          wf_name    = os.environ.get("TRIGGER_NAME", "")
+
+          # Manual dispatch always proceeds
+          if event == "workflow_dispatch":
+              print("Manual dispatch — proceeding unconditionally.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_run=true\n")
+              sys.exit(0)
+
+          # Auto trigger: only proceed when the upstream run succeeded
+          if conclusion != "success":
+              print(f"Upstream run conclusion='{conclusion}' (not success) — skipping.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_run=false\n")
+              sys.exit(0)
+
+          # Parse the run-name: "HypatiaX pipeline — <experiment_index>"
+          # Slot 12 with no suffix (run_full=true) has experiment_index "12".
+          m = re.search(r"—\s*(\d+)([afcp]?)\s*$", title)
+          if not m:
+              print(f"Could not parse slot from run title: '{title}' — skipping.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_run=false\n")
+              sys.exit(0)
+
+          slot   = int(m.group(1))
+          suffix = m.group(2)   # "" = full pipeline, "a/f/c/p" = partial
+
+          if slot != 12:
+              print(f"Slot={slot} (not 12) — skipping paper audit.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_run=false\n")
+              sys.exit(0)
+
+          if suffix != "":
+              print(f"Slot=12 but suffix='{suffix}' (run_full=false) — skipping paper audit.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("should_run=false\n")
+              sys.exit(0)
+
+          print(f"Slot=12, run_full=true, conclusion=success — paper audit WILL run.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("should_run=true\n")
+          PYEOF
+
+
+  # ============================================================================
+  #  JOB 1 — numerical-verify
+  #
+  #  Runs scripts/patches/verify_results.py --report.
+  #  Checks:
+  #    • DeFi accuracy/counts
+  #    • Feynman 9/30
+  #    • Core-15 Mann-Whitney statistics
+  #    • Instability 70 tasks
+  #    • DeFi duplicate cases
+  #  Exits non-zero on any FAIL.  Writes logs/verify_report.json.
+  # ============================================================================
+  numerical-verify:
+    name: "Job 1 · Numerical verify"
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: needs.guard.outputs.should_run == 'true' &&
+        github.event.inputs.skip_verify != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then
+            pip install -r requirements.txt
+          else
+            # Minimal deps required by verify_results.py
+            pip install numpy scipy
+          fi
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Run verify_results.py
+        id: verify
+        env:
+          OUT_BASE:           ${{ env.OUT_BASE }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          echo "=== numerical-verify ==="
+          echo "Results base: ${OUT_BASE}"
+
+          python3 scripts/patches/verify_results.py \
+            --report \
+            --report-file logs/verify_report.json \
+            2>&1 | tee logs/verify_run.log
+
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "verify_exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit ${EXIT_CODE}
+
+      - name: Print verify summary
+        if: always()
+        run: |
+          if [[ -f logs/verify_report.json ]]; then
+            echo "=== verify_report.json ==="
+            python3 - <<'PYEOF'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("logs/verify_report.json").read_text())
+          checks = data if isinstance(data, list) else data.get("checks", [])
+          n_ok   = sum(1 for c in checks if c.get("status") in ("OK", "PASS", "pass"))
+          n_fail = sum(1 for c in checks if c.get("status") in ("FAIL", "fail"))
+          n_warn = sum(1 for c in checks if c.get("status") in ("WARN", "warn"))
+          print(f"  Checks : {len(checks)} total")
+          print(f"  PASS   : {n_ok}")
+          print(f"  WARN   : {n_warn}")
+          print(f"  FAIL   : {n_fail}")
+          if n_fail:
+              print("\n  Failed checks:")
+              for c in checks:
+                  if c.get("status") in ("FAIL", "fail"):
+                      print(f"    ❌  {c.get('name', c.get('check', '?'))}: {c.get('detail', '')}")
+          PYEOF
+          else
+            echo "  logs/verify_report.json not written — see verify_run.log above."
+          fi
+
+      - name: Upload verify report
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              verify-report-${{ github.run_id }}
+          path:              |
+            logs/verify_report.json
+            logs/verify_run.log
+          if-no-files-found: warn
+          retention-days:    30
+
+
+  # ============================================================================
+  #  JOB 2 — paper-audit  (needs: numerical-verify)
+  #
+  #  Runs:  python3 run_all_checkpoint.py --only audit-paper
+  #
+  #  Loads  scripts/patches/paper_targets.json
+  #  Emits  logs/paper_audit_findings.json
+  #
+  #  Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
+  #  Exits non-zero on any FAIL or MISSING.
+  # ============================================================================
+  paper-audit:
+    name: "Job 2 · Paper audit"
+    needs: [guard, numerical-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      always() &&
+      needs.guard.outputs.should_run == 'true' &&
+      (needs.numerical-verify.result == 'success' ||
+       needs.numerical-verify.result == 'skipped')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then
+            pip install -r requirements.txt
+          else
+            pip install numpy scipy pyyaml
+          fi
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Confirm paper_targets.json exists
+        run: |
+          if [[ ! -f scripts/patches/paper_targets.json ]]; then
+            echo "::error::scripts/patches/paper_targets.json not found — commit it before running this audit."
+            exit 1
+          fi
+          N=$(python3 -c "import json; d=json.load(open('scripts/patches/paper_targets.json')); print(len(d))")
+          echo "paper_targets.json: ${N} claim(s)"
+
+      - name: Run audit-paper step
+        id: audit
+        env:
+          OUT_BASE:           ${{ env.OUT_BASE }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          FAIL_ON_WARN:       ${{ github.event.inputs.fail_on_warn || 'false' }}
+        run: |
+          set -euo pipefail
+
+          echo "=== paper-audit ==="
+          echo "Invoking: bash run_all.sh audit_paper"
+
+          bash run_all.sh audit_paper \
+            2>&1 | tee logs/paper_audit_run.log
+
+          EXIT_CODE=${PIPESTATUS[0]}
+
+          # Surface Nguyen-12 dual-threshold caveat explicitly in the step log
+          echo ""
+          echo "=== Nguyen-12 dual-threshold caveat ==="
+          echo "  Paper abstract : 11/12 (91.7%)  — 4-decimal rounding (Uy et al. benchmark)"
+          echo "  Strict R²≥0.9999: 4/12 (33.3%) — both figures must appear in §10.8"
+
+          echo "audit_exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit ${EXIT_CODE}
+
+      - name: Print audit summary
+        if: always()
+        run: |
+          FINDINGS="logs/paper_audit_findings.json"
+          if [[ ! -f "${FINDINGS}" ]]; then
+            echo "  logs/paper_audit_findings.json not written — run_all_checkpoint.py may have failed before emitting it."
+            echo "  Check logs/paper_audit_run.log above."
+            exit 0
+          fi
+
+          python3 - <<'PYEOF'
+          import json
+          from pathlib import Path
+
+          data     = json.loads(Path("logs/paper_audit_findings.json").read_text())
+          n_pass   = sum(1 for f in data if f["status"] == "PASS")
+          n_warn   = sum(1 for f in data if f["status"] == "WARN")
+          n_fail   = sum(1 for f in data if f["status"] == "FAIL")
+          n_miss   = sum(1 for f in data if f["status"] == "MISSING")
+          n_skip   = sum(1 for f in data if f["status"] == "SKIP")
+
+          print(f"\n  Audit findings ({len(data)} claims)")
+          print(f"  {'─'*55}")
+          print(f"  ✅ PASS    : {n_pass}")
+          print(f"  ⚠  WARN    : {n_warn}")
+          print(f"  ❌ FAIL    : {n_fail}")
+          print(f"  🔍 MISSING : {n_miss}")
+          print(f"  ↩  SKIP    : {n_skip}")
+
+          bad = [f for f in data if f["status"] in ("FAIL", "MISSING")]
+          if bad:
+              print(f"\n  FAIL / MISSING details:")
+              for f in bad:
+                  print(f"    [{f['status']}]  exp={f['exp']}  metric={f['metric']}")
+                  print(f"             {f['detail']}")
+
+          # Nguyen-12 caveat
+          if any(f["exp"] in ("exp3", "exp3b") for f in data):
+              print()
+              print("  ⚠  Nguyen-12 dual-threshold caveat:")
+              print("       Paper abstract  : 11/12 (91.7%) — 4-decimal rounding")
+              print("       Strict R²≥0.9999: 4/12  (33.3%) — both must appear in §10.8")
+
+          if n_fail == 0 and n_miss == 0 and len(data) > 0:
+              print("\n  ✅  All claims PASSED (within tolerance).")
+          elif len(data) == 0:
+              print("\n  ⚠   No claims found — check paper_targets.json.")
+          else:
+              print(f"\n  ❌  {n_fail} FAIL + {n_miss} MISSING — fix before submission.")
+          PYEOF
+
+      - name: Upload audit findings
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              paper-audit-findings-${{ github.run_id }}
+          path:              |
+            logs/paper_audit_findings.json
+            logs/paper_audit_run.log
+          if-no-files-found: warn
+          retention-days:    30
+
+
+  # ============================================================================
+  #  JOB 3 — figures-tables-validate  (needs: numerical-verify)
+  #
+  #  Validates that all expected figures (PDF/PNG) and LaTeX tables (TeX) are
+  #  present under RESULTS_DIR.  This check is ABSENT from ci_pipeline_check.yml
+  #  at the global level — this job fills that gap.
+  #
+  #  Checks:
+  #    • RESULTS_DIR/figures/  — ≥1 PDF, ≥1 PNG
+  #    • RESULTS_DIR/tables/   — ≥1 TeX
+  #    • Per-experiment expected figure stems (KEY figures listed in run_all.sh)
+  #    • Per-experiment expected table stems (cross-referenced against run_all.sh)
+  #
+  #  Exits non-zero on any missing file.
+  #  Writes logs/figures_tables_report.json.
+  # ============================================================================
+  figures-tables-validate:
+    name: "Job 3 · Figures & tables validate"
+    needs: [guard, numerical-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      always() &&
+      needs.guard.outputs.should_run == 'true' &&
+      (needs.numerical-verify.result == 'success' ||
+       needs.numerical-verify.result == 'skipped')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Validate figures and tables
+        id: validate
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+          import glob as _glob
+
+          OUT_BASE = Path(os.environ["OUT_BASE"])
+
+          # ── Shared output directories (FIX STEP-11-12 from run_all.sh) ─────────────
+          FIGURES_DIR = OUT_BASE / "figures"
+          TABLES_DIR  = OUT_BASE / "tables"
+
+          findings = []
+          all_ok   = True
+
+          def record(category, name, ok, detail=""):
+              findings.append({"category": category, "name": name, "ok": ok, "detail": detail})
+              icon = "✅" if ok else "❌"
+              print(f"  {icon}  [{category}]  {name}  {detail}")
+              return ok
+
+          # ── 1. Shared figures/ directory ─────────────────────────────────────────────
+          print("\n── Shared figures directory ──────────────────────────────────────────")
+          pdfs = list(FIGURES_DIR.glob("*.pdf")) if FIGURES_DIR.exists() else []
+          pngs = list(FIGURES_DIR.glob("*.png")) if FIGURES_DIR.exists() else []
+          record("figures", "shared figures dir exists",  FIGURES_DIR.exists(),
+                 str(FIGURES_DIR))
+          record("figures", "≥1 PDF in figures/",         bool(pdfs),
+                 f"{len(pdfs)} PDF(s)")
+          record("figures", "≥1 PNG in figures/",         bool(pngs),
+                 f"{len(pngs)} PNG(s)")
+          if not bool(pdfs):
+              all_ok = False
+          if not bool(pngs):
+              all_ok = False
+
+          # ── 2. Shared tables/ directory ──────────────────────────────────────────────
+          print("\n── Shared tables directory ───────────────────────────────────────────")
+          texs = list(TABLES_DIR.glob("*.tex")) if TABLES_DIR.exists() else []
+          record("tables", "shared tables dir exists", TABLES_DIR.exists(),
+                 str(TABLES_DIR))
+          record("tables", "≥1 TeX in tables/",        bool(texs),
+                 f"{len(texs)} TeX file(s)")
+          if not bool(texs):
+              all_ok = False
+
+          # ── 3. KEY instability figures (run_all.sh STEP 4a) ──────────────────────────
+          #  These are the figures explicitly listed as KEY in run_all.sh.
+          print("\n── KEY instability figures (§10.9) ──────────────────────────────────")
+          KEY_FIG_STEMS = [
+              "fig_paper_complexity_vs_instability",   # ← KEY (SS10.9) per run_all.sh
+              "fig_paper_instability_hist",
+              "fig_paper_regime_counts",
+              "hypatiax_instability_per_case",
+              "instability_analysis",                  # CSV — not a figure but KEY output
+          ]
+          KEY_FIG_EXTENSIONS = [".pdf", ".png"]
+
+          for stem in KEY_FIG_STEMS:
+              if stem.endswith(".csv") or stem == "instability_analysis":
+                  # CSV lives in figures/ dir (instability step writes there)
+                  csv_path = FIGURES_DIR / f"{stem}.csv"
+                  found = csv_path.exists()
+                  ok = record("instability", f"{stem}.csv", found,
+                              str(csv_path) if found else f"MISSING at {csv_path}")
+                  if not found:
+                      all_ok = False
+              else:
+                  found_any = False
+                  for ext in KEY_FIG_EXTENSIONS:
+                      p = FIGURES_DIR / f"{stem}{ext}"
+                      if p.exists():
+                          found_any = True
+                  ok = record("instability", f"{stem}[.pdf/.png]", found_any,
+                              f"in {FIGURES_DIR}")
+                  if not found_any:
+                      all_ok = False
+
+          # instability_extrapolation.csv (Stage 2, may be absent if benchmark JSON not found)
+          extrap_csv = FIGURES_DIR / "instability_extrapolation.csv"
+          record("instability",
+                 "instability_extrapolation.csv (Stage 2, optional)",
+                 extrap_csv.exists(),
+                 "(absent if benchmark JSON not present — non-fatal)")
+          # This is optional — do NOT set all_ok = False
+
+          # ── 4. Per-experiment expected outputs ───────────────────────────────────────
+          # Cross-reference: run_all.sh final summary section
+          # Format: {exp_label: (result_subdir, required_glob_patterns)}
+          print("\n── Per-experiment result directories ────────────────────────────────")
+          EXP_CHECKS = {
+              "exp1  (Tab 9, 10, 15)": (
+                  "comparison_results/noise-noiseless/noiseless/defi",
+                  ["hypatiax_defi_benchmark_v3*results*.json",
+                   "protocol_core_noiseless_*.json"],
+              ),
+              "exp1b (Tab 11-13)": (
+                  "comparison_results/noise-noiseless/15",
+                  ["comparison_FIXED_*.json", "defi_v3_*.json",
+                   "hypatiax_defi_benchmark_v3*results*.json"],
+              ),
+              "exp2_feynman (Tab 17)": (
+                  "comparison_results/feynman-tests/exp2",
+                  ["protocol_core_*.json", "benchmark_results.json"],
+              ),
+              "exp2  (Tab 19)": (
+                  "comparison_results/feynman-tests/exp2_multi",
+                  ["protocol_core_*.json", "benchmark_results.json"],
+              ),
+              "exp3  (tab:nguyen12 seed=42)": (
+                  "extrapolation",
+                  ["*nguyen*seed42*.json", "exp3_nguyen12_*.json"],
+              ),
+              "exp3b (tab:nguyen12 seeds 99/123/777/2024)": (
+                  "extrapolation/multi_seed",
+                  ["*nguyen*seed*.json", "exp3_nguyen12_*.json"],
+              ),
+              "suppA (Tab 11-13 routing)": (
+                  "hybrid_pysr/defi",
+                  ["consolidated_hybrid_*.json", "extrapolation_73cases*.json",
+                   "*73cases*.json"],
+              ),
+              "suppB (Tab 28, 29)": (
+                  "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+                  ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              ),
+              "suppB_sc (Tab 29 sc)": (
+                  "comparison_results/feynman-tests/sample-complexity",
+                  ["sample_complexity_*.json", "sample_complexity_*.csv"],
+              ),
+              "hybrid_all_domains (tab:hybrid_all §10.9)": (
+                  "hybrid_llm_nn/all_domains",
+                  ["hybrid_llm_nn_all_domains_*.json"],
+              ),
+              "extrap (Tab 9 OOD columns)": (
+                  "comparison_results/feynman-tests/exp2_extrap",
+                  ["all_domains_extrap_v4_*.json", "protocol_core_*.json"],
+              ),
+          }
+
+          for label, (subdir, globs) in EXP_CHECKS.items():
+              result_dir = OUT_BASE / subdir
+              found_files = []
+              if result_dir.exists():
+                  for pattern in globs:
+                      found_files.extend(
+                          f for f in result_dir.glob(pattern)
+                          if not f.name.startswith("_")
+                      )
+              found_files = list(set(found_files))
+              ok = bool(found_files)
+              record("result-files", label, ok,
+                     f"{len(found_files)} file(s) in {subdir}" if ok
+                     else f"MISSING — expected {globs[0]} in {subdir}")
+              if not ok:
+                  all_ok = False
+
+          # ── 5. suppB noise_sweep_*.json glob alignment check ─────────────────────────
+          # run_all.sh CRITICAL 4: tables-generator uses glob 'noise_sweep_*.json'.
+          # If files don't match this prefix all suppB tables contain placeholder text.
+          print("\n── suppB noise_sweep_*.json glob alignment (CRITICAL 4) ────────────")
+          suppB_dir  = OUT_BASE / "comparison_results/feynman-tests/noise-sweep/noise-sweep"
+          all_json   = list(suppB_dir.glob("*.json"))          if suppB_dir.exists() else []
+          named_json = list(suppB_dir.glob("noise_sweep_*.json")) if suppB_dir.exists() else []
+          if all_json:
+              ok = bool(named_json)
+              detail = (f"{len(named_json)}/{len(all_json)} JSON(s) match noise_sweep_*.json"
+                        if ok else
+                        f"0/{len(all_json)} JSON(s) match noise_sweep_*.json — "
+                        f"actual: {[f.name for f in all_json[:3]]}")
+              record("suppB-glob", "noise_sweep_*.json glob alignment", ok, detail)
+              if not ok:
+                  all_ok = False
+          else:
+              record("suppB-glob", "noise_sweep_*.json (suppB not yet run)", True,
+                     "no JSON files found — skipped")
+
+          # ── 6. hybrid_all_domains output in correct subdir ───────────────────────────
+          # FIX CRITICAL 1/3 from run_all.sh: must be hybrid_llm_nn/all_domains/ (not /defi)
+          print("\n── hybrid_all_domains output path (FIX CRITICAL 1/3) ───────────────")
+          had_correct = list(_glob.glob(
+              str(OUT_BASE / "hybrid_llm_nn/all_domains/*.json")))
+          had_wrong   = list(_glob.glob(
+              str(OUT_BASE / "hybrid_llm_nn/defi/*.json")))
+          ok = bool(had_correct)
+          record("hybrid-path",
+                 "hybrid_llm_nn/all_domains/ (correct)",
+                 ok,
+                 f"{len(had_correct)} JSON(s)")
+          if had_wrong:
+              record("hybrid-path",
+                     "hybrid_llm_nn/defi/ (WRONG — FIX CRITICAL 1)",
+                     False,
+                     f"{len(had_wrong)} misrouted JSON(s) — move to all_domains/")
+              all_ok = False
+          if not ok:
+              all_ok = False
+
+          # ── 7. exp3b outputs in extrapolation/multi_seed/ (BUG 2) ────────────────────
+          print("\n── exp3b output path (BUG 2) ────────────────────────────────────────")
+          exp3b_correct = list(_glob.glob(
+              str(OUT_BASE / "extrapolation/multi_seed/*nguyen*.json")))
+          exp3b_wrong   = [f for f in _glob.glob(
+              str(OUT_BASE / "extrapolation/*nguyen*.json"))
+                           if "multi_seed" not in f]
+          ok = bool(exp3b_correct)
+          record("exp3b-path",
+                 "extrapolation/multi_seed/ (correct)",
+                 ok,
+                 f"{len(exp3b_correct)} nguyen JSON(s)")
+          if exp3b_wrong:
+              record("exp3b-path",
+                     "extrapolation/ root (WRONG — BUG 2)",
+                     False,
+                     f"{len(exp3b_wrong)} misrouted JSON(s) — move to multi_seed/")
+              all_ok = False
+          if not ok:
+              # exp3b may not have run yet — non-fatal warning
+              record("exp3b-path",
+                     "exp3b not yet present (warning)",
+                     True,
+                     "non-fatal if exp3b has not run")
+
+          # ── Summary ──────────────────────────────────────────────────────────────────
+          print()
+          n_ok   = sum(1 for f in findings if f["ok"])
+          n_fail = sum(1 for f in findings if not f["ok"])
+          print(f"  Figures/tables validation: {n_ok}/{len(findings)} checks passed")
+
+          out = Path("logs/figures_tables_report.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps({"all_ok": all_ok, "findings": findings}, indent=2))
+          print(f"\n  Report → {out}")
+
+          if all_ok:
+              print("  ✅  All figures and tables present and correctly located.")
+          else:
+              fails = [f for f in findings if not f["ok"]]
+              print(f"\n  ❌  {len(fails)} check(s) failed:")
+              for f in fails:
+                  print(f"    [{f['category']}]  {f['name']}  {f['detail']}")
+              sys.exit(1)
+          PYEOF
+
+      - name: Upload figures/tables report
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              figures-tables-report-${{ github.run_id }}
+          path:              logs/figures_tables_report.json
+          if-no-files-found: warn
+          retention-days:    30
+
+
+  # ============================================================================
+  #  JOB 4 — final-gate
+  #
+  #  Aggregates the outcomes of all three jobs and sets the workflow conclusion.
+  #  Prints a consolidated health table.
+  # ============================================================================
+  final-gate:
+    name: "Final gate"
+    needs: [guard, numerical-verify, paper-audit, figures-tables-validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always() && needs.guard.outputs.should_run == 'true'
+
+    steps:
+      - name: Print consolidated summary and set exit code
+        env:
+          VERIFY_RESULT:  ${{ needs.numerical-verify.result }}
+          AUDIT_RESULT:   ${{ needs.paper-audit.result }}
+          FIGS_RESULT:    ${{ needs.figures-tables-validate.result }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+
+          verify = os.environ["VERIFY_RESULT"]
+          audit  = os.environ["AUDIT_RESULT"]
+          figs   = os.environ["FIGS_RESULT"]
+
+          ok_verify = verify in ("success", "skipped")
+          ok_audit  = audit  == "success"
+          ok_figs   = figs   == "success"
+
+          SEP = "=" * 65
+          print(f"\n{SEP}")
+          print(f"  HypatiaX Paper Audit — Final Gate")
+          print(SEP)
+          print(f"  {'Job':<35}  {'Result':<10}  Status")
+          print(f"  {'-'*35}  {'-'*10}  ------")
+
+          rows = [
+              ("1. numerical-verify",           verify, ok_verify),
+              ("2. paper-audit",                audit,  ok_audit),
+              ("3. figures-tables-validate",    figs,   ok_figs),
+          ]
+          for label, result, ok in rows:
+              icon = "✅" if ok else "❌"
+              print(f"  {icon}  {label:<33}  {result:<10}")
+
+          print(SEP)
+          overall_ok = ok_verify and ok_audit and ok_figs
+          if overall_ok:
+              print("  ✅  Overall: PAPER AUDIT PASSED — ready for submission.")
+          else:
+              print("  ❌  Overall: PAPER AUDIT FAILED — fix issues listed above.")
+          print(SEP)
+
+          # Nguyen-12 caveat always printed in final gate
+          print()
+          print("  ⚠  Nguyen-12 caveat (exp3/exp3b):")
+          print("       Paper abstract  : 11/12 (91.7%) — 4-decimal rounding (Uy et al.)")
+          print("       Strict R²≥0.9999: 4/12  (33.3%) — both must appear in abstract + §10.8")
+          print()
+
+          sys.exit(0 if overall_ok else 1)
+          PYEOF
