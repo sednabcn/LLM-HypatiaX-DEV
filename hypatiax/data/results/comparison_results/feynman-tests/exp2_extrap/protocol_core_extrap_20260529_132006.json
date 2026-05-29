@@ -1,5 +1,43 @@
 {
-  "timestamp": "2026-05-29T13:20:06.860086",
+  "timestamp": "2026-05-29T13:20:06.863043",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "extrap",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 4,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Planck blackbody spectral radiance (dimensionless: x=hf/kT)": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(x):\n    x_safe = np.clip(x, 1e-6, 700.0)\n    return x_safe**3 / (np."
+      },
+      "Fourier's law of heat conduction: heat flux across material": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(kappa, T2, T1, d):\n    return kappa * (T2 - T1) / d\n"
+      },
+      "Stefan-Boltzmann law: blackbody radiated power": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(A, T):\n    sigma = 5.67e-08\n    return sigma * A * T**4"
+      },
+      "Ideal gas law: pressure from moles, temperature, volume": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(n, T, V):\n    R = 8.314\n    return (n * R * T) / V"
+      }
+    }
+  },
   "total_tests": 4,
   "methods": [
     "PureLLM Baseline (core)",
@@ -9,13 +47,6 @@
     "SymbolicEngineWithLLM (tools)",
     "HybridDiscoverySystem v50_2 (tools)"
   ],
-  "completed": [
-    "feynman_thermodynamics::I_41_16_simplified",
-    "feynman_thermodynamics::II.2.42",
-    "feynman_thermodynamics::FEY_THERMO_SB",
-    "feynman_thermodynamics::FEY_THERMO_IG"
-  ],
-  "had_timeouts": false,
   "tests": [
     {
       "description": "Planck blackbody spectral radiance (dimensionless: x=hf/kT)",
