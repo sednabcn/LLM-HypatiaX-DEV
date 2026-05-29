@@ -136,8 +136,11 @@ jobs:
           import json, os
 
           ALL = [
-              "exp1", "exp1b", "exp2_feynman", "exp2", "exp3", "exp3b",
-              "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "instability", "extrap",
+              # FIX 1: exp2_feynman_extrap was missing — caused it to be silently
+              # skipped on every "all" run.  Order matches canonical QUEUE in ci_pipeline.yml.
+              "exp1", "exp1b", "exp2_feynman", "exp2_feynman_extrap", "exp2",
+              "exp3", "exp3b", "suppA", "suppB", "suppB_sc",
+              "hybrid_all_domains", "instability", "extrap",
           ]
           exp = os.environ["EXPERIMENT"]
           selected = ALL if (exp == "all" or not exp) else [exp]
@@ -470,6 +473,9 @@ jobs:
               'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              # FIX 3: exp2_feynman_extrap was missing from postprocess mapping —
+              # it would fall back to the bare experiment name as subdir (wrong path).
+              'exp2_feynman_extrap': 'comparison_results/feynman-tests/extrap',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
@@ -489,8 +495,13 @@ jobs:
           EXP: ${{ matrix.experiment }}
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
+          # FIX 2a: scripts live under scripts/, not figures/ or tables/.
+          # "figures/generate_figures.py" resolves into the OUTPUT subtree, not the repo root.
+          # FIX 2b: pre-create tables/ dir alongside figures/ — without it git add
+          # "${TABS}/" warns and tables are never committed (same bug as ci_postprocess.yml).
           mkdir -p "${OUT_BASE}/${SUB}/figures"
-          python figures/generate_figures.py \
+          mkdir -p "${OUT_BASE}/${SUB}/tables"
+          python scripts/generate_figures.py \
             --repo-root   "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
             --source auto
@@ -499,7 +510,8 @@ jobs:
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
-          python tables/generate_tables.py \
+          # FIX 2a (continued): was tables/generate_tables.py — same wrong-path bug.
+          python scripts/generate_tables.py \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
 
@@ -584,6 +596,9 @@ jobs:
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              # FIX 4: exp2_feynman_extrap missing from check SUBDIR — caused
+              # the check job to report it as MISSING even when results were present.
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
@@ -599,6 +614,7 @@ jobs:
               "exp1":               ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
+              # FIX 4 (continued): exp2_feynman_extrap missing from RESULT_GLOBS.
               "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json", "protocol_core_*.json"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],

@@ -14,6 +14,9 @@
 #    Na   — analysis only for slot N  (C1 only)
 #    Nf   — figures+tables only       (C2 only)
 #    Nc   — checkpoint/audit only     (C3 only)
+#    Np   — postprocess+checkpoint    (C2 → C3, skip C0+C1)
+#           Use this after all runners have completed to regenerate
+#           figures/tables and run the audit gate without re-running workers.
 #
 #  Naming convention: Option A (role-based)
 #    ci_pipeline.yml    — this file (orchestrator)
@@ -50,10 +53,11 @@ on:
     inputs:
       experiment_index:
         description: >
-          Slot index (N) or phase suffix (Na / Nf / Nc).
+          Slot index (N) or phase suffix (Na / Nf / Nc / Np).
           E.g. "0" = full pipeline for slot 0;
                "0a" = analysis-only;  "0f" = figures+tables only;
-               "0c" = checkpoint/audit only.
+               "0c" = checkpoint/audit only;
+               "0p" = postprocess+checkpoint (C2+C3, skip C0+C1).
         required: false
         default: "0"
 
@@ -178,7 +182,9 @@ jobs:
           raw = os.environ["INDEX_RAW"].strip()
 
           # Phase suffix: nothing = full, a = analysis, f = postprocess, c = checkpoint
-          m = re.fullmatch(r"(\d+)([afc]?)", raw)
+          # FIX B: added 'p' suffix = postprocess + checkpoint only (C2+C3, skip C0+C1).
+          # This is the "all-done, just regenerate figures+tables and audit" mode.
+          m = re.fullmatch(r"(\d+)([afcp]?)", raw)
           if not m:
               print(f"ERROR: cannot parse experiment_index '{raw}' — expected N, Na, Nf, or Nc")
               sys.exit(1)
@@ -194,8 +200,9 @@ jobs:
 
           run_full        = suffix == ""
           run_analysis    = suffix in ("", "a")
-          run_postprocess = suffix in ("", "f")
-          run_checkpoint  = suffix in ("", "c")
+          # FIX B: 'p' suffix enables postprocess+checkpoint without runner or analysis.
+          run_postprocess = suffix in ("", "f", "p")
+          run_checkpoint  = suffix in ("", "c", "p")
 
           started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -912,9 +919,14 @@ jobs:
       - name: Dispatch and wait for ci_postprocess.yml
         if: steps.check_postprocess.outputs.already_done != 'true'
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-          EXP:      ${{ needs.resolve.outputs.experiment }}
-          REPO:     ${{ github.repository }}
+          GH_TOKEN:      ${{ secrets.PAT_TOKEN }}
+          EXP:           ${{ needs.resolve.outputs.experiment }}
+          # FIX A: forward the canonical result_subdir from diagnose (single source
+          # of truth) so ci_postprocess.yml never re-derives the path from its own
+          # independent mapping dict.  Without this, if a mapping entry differs
+          # between the two files the postprocess scripts write to the wrong subtree.
+          RESULT_SUBDIR: ${{ needs.diagnose.outputs.result_subdir }}
+          REPO:          ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -924,7 +936,8 @@ jobs:
           gh workflow run ci_postprocess.yml \
             --repo "${REPO}" \
             --ref "${{ github.ref_name }}" \
-            --field experiment="${EXP}"
+            --field experiment="${EXP}" \
+            --field result_subdir="${RESULT_SUBDIR}"
 
           sleep 8
 
