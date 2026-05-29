@@ -68,6 +68,17 @@ Two tiers of schema handling are provided:
                        { "per_noise": { "0.0": { "MethodA": {
                            "equations": { "Eq1": {r2, rmse, ...} } } } } }
 
+    sample_complexity_per_n
+                       suppC sample-complexity runner output.  Top-level dict
+                       with a "per_n" key mapping sample sizes to dicts
+                       containing "method_summary" (aggregate stats) and
+                       "per_equation" (equation → method → {r2, rmse, success}).
+                       The meaningful unit is one (sample_size x equation x
+                       method) triple; method_summary stats are hoisted onto
+                       each record.
+                       { "per_n": { "50": { "per_equation": {
+                           "Eq1": { "MethodA": {r2, ...} } } } } }
+
 Adding a new format
 -------------------
   Tier 1: add one entry to _TIER1_EXTRACTORS (guard + extract lambda).
@@ -257,6 +268,51 @@ _TIER2_EXTRACTORS = [
             for method, m_val in nl_val.items()
             if isinstance(m_val, dict)
             for eq, eq_val in m_val.get("equations", {}).items()
+            if isinstance(eq_val, dict)
+        ],
+    ),
+    # suppC sample-complexity runner output:
+    #   { "generated": ..., "sample_sizes": [...], "mode": ..., "threshold": {...},
+    #     "methods": [...],
+    #     "per_n": {
+    #       "50": {
+    #         "method_summary": { "MethodA": {median_r2, recovery_rate, ...} },
+    #         "per_equation":   { "EqName":  { "MethodA": {r2, rmse, success}, ... } }
+    #       }, ...
+    #     },
+    #     "data_efficiency": { "MethodA": {min_n_above_threshold, recovery_curve, ...} }
+    #   }
+    # The meaningful unit is one (sample_size x equation x method) triple.
+    # method_summary stats are hoisted onto each record for full context.
+    (
+        "sample_complexity_per_n",
+        lambda d: (
+            isinstance(d, dict)
+            and isinstance(d.get("per_n"), dict)
+            and bool(d["per_n"])
+        ),
+        lambda d: [
+            {
+                "sample_size":    int(n),
+                "equation":       eq,
+                "method":         method,
+                "mode":           d.get("mode"),
+                "threshold":      d.get("threshold", {}).get(str(n)),
+                # method_summary stats hoisted for full context
+                "median_r2":      d["per_n"][n].get("method_summary", {}).get(method, {}).get("median_r2"),
+                "mean_r2":        d["per_n"][n].get("method_summary", {}).get(method, {}).get("mean_r2"),
+                "std_r2":         d["per_n"][n].get("method_summary", {}).get(method, {}).get("std_r2"),
+                "recovery_rate":  d["per_n"][n].get("method_summary", {}).get(method, {}).get("recovery_rate"),
+                "n_success":      d["per_n"][n].get("method_summary", {}).get(method, {}).get("n_success"),
+                "n_total":        d["per_n"][n].get("method_summary", {}).get(method, {}).get("n_total"),
+                # per-equation metrics
+                **({k: v for k, v in eq_val.items()} if isinstance(eq_val, dict) else {}),
+            }
+            for n, n_val in d["per_n"].items()
+            if isinstance(n_val, dict)
+            for eq, eq_methods in n_val.get("per_equation", {}).items()
+            if isinstance(eq_methods, dict)
+            for method, eq_val in eq_methods.items()
             if isinstance(eq_val, dict)
         ],
     ),
@@ -509,6 +565,55 @@ _SELF_TEST_CASES = [
             "cross_noise_summary": {},
         },
         expected_n=4, expected_fmt="noise_sweep_per_noise", tier=2,
+    ),
+    dict(
+        name="tier2 / sample_complexity_per_n  (suppC runner)",
+        payload={
+            "generated": "2026-05-22T19:11:12",
+            "sample_sizes": [50, 100],
+            "mode": "noisy",
+            "threshold": {"50": 0.995, "100": 0.995},
+            "methods": ["MethodA", "MethodB"],
+            "per_n": {
+                "50": {
+                    "method_summary": {
+                        "MethodA": {"median_r2": 0.999, "mean_r2": 0.998, "std_r2": 0.001,
+                                    "recovery_rate": 1.0, "n_success": 2, "n_total": 2,
+                                    "threshold_used": 0.995},
+                        "MethodB": {"median_r2": 0.95, "mean_r2": 0.94, "std_r2": 0.02,
+                                    "recovery_rate": 0.5, "n_success": 1, "n_total": 2,
+                                    "threshold_used": 0.995},
+                    },
+                    "per_equation": {
+                        "Eq1": {
+                            "MethodA": {"r2": 1.0,  "rmse": 0.0,  "success": True},
+                            "MethodB": {"r2": 0.95, "rmse": 0.1,  "success": True},
+                        },
+                        "Eq2": {
+                            "MethodA": {"r2": 0.99, "rmse": 0.01, "success": True},
+                            "MethodB": {"r2": 0.60, "rmse": 0.5,  "success": False},
+                        },
+                    },
+                },
+                "100": {
+                    "method_summary": {
+                        "MethodA": {"median_r2": 1.0, "mean_r2": 1.0, "std_r2": 0.0,
+                                    "recovery_rate": 1.0, "n_success": 2, "n_total": 2,
+                                    "threshold_used": 0.995},
+                    },
+                    "per_equation": {
+                        "Eq1": {
+                            "MethodA": {"r2": 1.0, "rmse": 0.0, "success": True},
+                        },
+                    },
+                },
+            },
+            "data_efficiency": {
+                "MethodA": {"min_n_above_threshold": 50, "recovery_curve": {"50": 1.0, "100": 1.0}},
+            },
+        },
+        # 50: 2 eq x 2 methods = 4, 100: 1 eq x 1 method = 1  → total 5
+        expected_n=5, expected_fmt="sample_complexity_per_n", tier=2,
     ),
     # ------------------------------------------------------------------
     # Error / no-match
