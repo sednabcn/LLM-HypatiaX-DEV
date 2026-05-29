@@ -7,114 +7,281 @@ the total number of result records across all input files.  Exits 1 on an
 empty dataset (FATAL: EMPTY DATASET).
 
 Called by ci_analysis.yml "Validate input data" step.
+
+Schema support
+--------------
+Two tiers of schema handling are provided:
+
+  TIER 1 — Canonical (preferred)
+    All runners should emit one of these.  Detection is unambiguous; no
+    field-name heuristics required.
+
+    flat_list          Top-level JSON array.  Each element is one record.
+                       [ {record}, {record}, ... ]
+
+    results_list       Wrapper dict with a "results" key whose value is a list.
+                       { "results": [{record}, ...], ... }
+
+    tests_list         Wrapper dict with a "tests" key whose value is a list.
+                       { "tests": [{record}, ...], ... }
+
+    results_dict_of_lists
+                       Wrapper dict with a "results" key whose value is a
+                       dict mapping system/method names to lists of records.
+                       { "results": { "sysA": [{record}, ...], ... }, ... }
+                       Emitted by the exp3 runner (seed42 / multi-seed shards).
+
+  TIER 2 — Legacy / third-party (tolerated, not recommended)
+    Formats produced by older runners or external tools.  Detection relies on
+    structural heuristics and may misfire on unusual inputs.  Migrate runners
+    to a Tier 1 format when possible.
+
+    results_dict_of_dicts_methods
+                       "results" maps equation IDs to per-method dicts.
+                       { "results": { "N1": { "hypatiax": {r2,...}, ... } } }
+
+    results_dict_of_dicts_flat
+                       "results" maps equation IDs to flat record dicts.
+                       { "results": { "N1": { "r2": 0.9, ... }, ... } }
+
+    toplevel_method_nested
+                       Top-level dict maps equation IDs to per-method dicts.
+                       No "results" wrapper.  Old nested method shape.
+                       { "N1": { "hypatiax": {r2,...}, "pysr": {r2,...} } }
+
+    toplevel_flat_records
+                       Top-level dict maps equation IDs to flat record dicts.
+                       { "N1": { "r2": 0.9, "method": "hypatiax", ... } }
+
+    toplevel_generic_dicts
+                       Top-level dict maps arbitrary keys to dicts with no
+                       recognisable result fields.  Catch-all for
+                       merge_shards.py output keyed by equation_id.
+                       { "N1": { "equation_id": "N1", "test_r2": 0.9 } }
+
+Adding a new format
+-------------------
+  Tier 1: add one entry to _TIER1_EXTRACTORS (guard + extract lambda).
+  Tier 2: add one entry to _TIER2_EXTRACTORS with an explanatory comment.
+  Either way: add a corresponding test case to _SELF_TEST_CASES at the bottom
+  of this file and run:  python3 validate_analysis_input.py --self-test
 """
+
 import json
 import os
 import pathlib
 import sys
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _has_result_fields(d):
+    """True if dict d looks like a result record (contains a known metric key)."""
+    return isinstance(d, dict) and bool({"r2", "success", "r_squared", "method"} & d.keys())
+
+
+def _flatten_method_dict(mapping):
+    """
+    Flatten {eq_id: {method: {r2, ...}}} into a list of records,
+    injecting 'equation' and 'method' keys.
+    """
+    records = []
+    for eq_id, methods in mapping.items():
+        if eq_id.startswith("_"):
+            continue
+        if isinstance(methods, dict):
+            for method, mval in methods.items():
+                if isinstance(mval, dict):
+                    rec = dict(mval)
+                    rec.setdefault("equation", eq_id)
+                    rec.setdefault("method", method)
+                    records.append(rec)
+    return records
+
+
+def _non_meta(data):
+    """Strip well-known metadata keys from a top-level dict."""
+    return {
+        k: v for k, v in data.items()
+        if not k.startswith("_") and k not in ("stats", "summary", "metadata", "config")
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 — Canonical extractors
+# Each entry: (format_name, guard(data) -> bool, extract(data) -> list)
+# Guards are evaluated in order; first match wins.
+# ---------------------------------------------------------------------------
+
+_TIER1_EXTRACTORS = [
+    (
+        "flat_list",
+        lambda d: isinstance(d, list),
+        lambda d: d,
+    ),
+    (
+        "results_list",
+        lambda d: isinstance(d, dict) and isinstance(d.get("results"), list),
+        lambda d: d["results"],
+    ),
+    (
+        "tests_list",
+        lambda d: isinstance(d, dict) and isinstance(d.get("tests"), list),
+        lambda d: d["tests"],
+    ),
+    (
+        "results_dict_of_lists",
+        lambda d: (
+            isinstance(d, dict)
+            and isinstance(d.get("results"), dict)
+            and bool(d["results"])
+            and all(isinstance(v, list) for v in d["results"].values())
+        ),
+        lambda d: [r for rs in d["results"].values() for r in rs],
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Tier 2 — Legacy / third-party extractors
+# Same tuple shape as Tier 1.  Heuristic guards; document the source runner.
+# ---------------------------------------------------------------------------
+
+_TIER2_EXTRACTORS = [
+    # Old runner: results keyed by equation, each value a dict of method->metrics
+    (
+        "results_dict_of_dicts_methods",
+        lambda d: (
+            isinstance(d, dict)
+            and isinstance(d.get("results"), dict)
+            and any(
+                isinstance(v, dict)
+                and any(isinstance(mv, dict) and _has_result_fields(mv) for mv in v.values())
+                for v in d["results"].values()
+                if isinstance(v, dict)
+            )
+        ),
+        lambda d: _flatten_method_dict(d["results"]),
+    ),
+    # Old runner: results keyed by equation, each value a flat record dict
+    (
+        "results_dict_of_dicts_flat",
+        lambda d: (
+            isinstance(d, dict)
+            and isinstance(d.get("results"), dict)
+            and all(
+                not k.startswith("_") and _has_result_fields(v)
+                for k, v in d["results"].items()
+                if isinstance(v, dict)
+            )
+            and bool(d["results"])
+        ),
+        lambda d: [
+            {**v, "equation": v.get("equation", k)}
+            for k, v in d["results"].items()
+            if isinstance(v, dict) and not k.startswith("_")
+        ],
+    ),
+    # Top-level dict, no "results" wrapper, equation->method->metrics (old nested shape)
+    (
+        "toplevel_method_nested",
+        lambda d: (
+            isinstance(d, dict)
+            and bool(_non_meta(d))
+            and (lambda nm: (
+                bool(nm)
+                and isinstance(next(iter(nm.values())), dict)
+                and (lambda iv: isinstance(iv, dict) and _has_result_fields(iv))(
+                    next(iter(next(iter(nm.values())).values()), None)
+                )
+            ))(_non_meta(d))
+        ),
+        lambda d: _flatten_method_dict(_non_meta(d)),
+    ),
+    # Top-level dict, no "results" wrapper, equation->flat record with result fields
+    (
+        "toplevel_flat_records",
+        lambda d: (
+            isinstance(d, dict)
+            and bool(_non_meta(d))
+            and all(_has_result_fields(v) for v in _non_meta(d).values() if isinstance(v, dict))
+            and any(isinstance(v, dict) for v in _non_meta(d).values())
+        ),
+        lambda d: [
+            {**v, "equation": v.get("equation", k)}
+            for k, v in _non_meta(d).items()
+            if isinstance(v, dict)
+        ],
+    ),
+    # Top-level dict, no "results" wrapper, equation->generic dict (merge_shards.py output)
+    (
+        "toplevel_generic_dicts",
+        lambda d: (
+            isinstance(d, dict)
+            and bool(_non_meta(d))
+            and all(isinstance(v, dict) for v in _non_meta(d).values())
+        ),
+        lambda d: [
+            {**v, "equation_id": v.get("equation_id", k), "equation": v.get("equation", k)}
+            for k, v in _non_meta(d).items()
+        ],
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def load_records(path):
+    """
+    Load result records from *path*, auto-detecting the JSON schema.
+
+    Returns a list of record dicts.  Raises ValueError if no extractor
+    matches (rather than silently returning []).
+
+    Prints a single diagnostic line to stdout:
+        format=<name>  tier=<1|2>  records=<n>
+    """
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Case 1: flat list of records
-    if isinstance(data, list):
-        return data
+    for tier, extractors in ((1, _TIER1_EXTRACTORS), (2, _TIER2_EXTRACTORS)):
+        for name, guard, extract in extractors:
+            try:
+                matched = guard(data)
+            except Exception:
+                matched = False
+            if matched:
+                try:
+                    records = extract(data)
+                except Exception as exc:
+                    raise ValueError(
+                        f"{path}: extractor '{name}' (tier {tier}) raised: {exc}"
+                    ) from exc
+                print(f"  format={name}  tier={tier}  records={len(records)}")
+                return records
 
-    if not isinstance(data, dict):
-        return []
+    top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+    raise ValueError(
+        f"{path}: no extractor matched.\n"
+        f"  Top-level type : {type(data).__name__}\n"
+        f"  Top-level keys : {top}\n"
+        f"  Add a new extractor to _TIER1_EXTRACTORS or _TIER2_EXTRACTORS\n"
+        f"  and a test case to _SELF_TEST_CASES."
+    )
 
-    # Case 2: {"results": [...]} or {"tests": [...]}  — standard shard/benchmark wrapper
-    for wrapper_key in ("results", "tests"):
-        if wrapper_key in data and isinstance(data[wrapper_key], list):
-            return data[wrapper_key]
 
-    # Case 3: {"results": {"eq_id": {...}, ...}}  — dict-of-dicts under "results"
-    if "results" in data and isinstance(data["results"], dict):
-        records = []
-        for eq_id, eq_val in data["results"].items():
-            if eq_id.startswith("_"):
-                continue
-            if isinstance(eq_val, dict):
-                has_method_keys = any(
-                    isinstance(v, dict) and ("r2" in v or "success" in v or "r_squared" in v)
-                    for v in eq_val.values()
-                )
-                if has_method_keys:
-                    for method, mval in eq_val.items():
-                        if isinstance(mval, dict):
-                            rec = dict(mval)
-                            rec.setdefault("equation", eq_id)
-                            rec.setdefault("method", method)
-                            records.append(rec)
-                else:
-                    rec = dict(eq_val)
-                    rec.setdefault("equation", eq_id)
-                    records.append(rec)
-        return records
-
-    # Case 4: top-level dict keyed by equation/task (no "results" wrapper).
-    # This is the canonical shape written by merge_shards.py:
-    #   { "equation_id_1": { ...record... }, "equation_id_2": { ... }, ... }
-    # Records may use "test_r2", "results", "equation_id", etc. — we do NOT
-    # require specific field names; any dict value that isn't a meta key counts.
-    non_meta = {
-        k: v for k, v in data.items()
-        if not k.startswith("_") and k not in ("stats", "summary", "metadata")
-    }
-    if not non_meta:
-        return []
-
-    first_val = next(iter(non_meta.values()))
-
-    # Sub-case 4a: {eq_id: {method: {r2, success, ...}}}  — old nested method shape
-    if isinstance(first_val, dict):
-        inner_first = next(iter(first_val.values()), None) if first_val else None
-        if isinstance(inner_first, dict) and (
-            "r2" in inner_first or "success" in inner_first or "r_squared" in inner_first
-        ):
-            records = []
-            for eq_id, methods in non_meta.items():
-                if isinstance(methods, dict):
-                    for method, mval in methods.items():
-                        if isinstance(mval, dict):
-                            rec = dict(mval)
-                            rec.setdefault("equation", eq_id)
-                            rec.setdefault("method", method)
-                            records.append(rec)
-            return records
-
-        # Sub-case 4b: {eq_id: {r2/success/method, ...}}  — flat per-equation record
-        if (
-            "r2" in first_val or "success" in first_val
-            or "r_squared" in first_val or "method" in first_val
-        ):
-            records = []
-            for eq_id, rec_val in non_meta.items():
-                if isinstance(rec_val, dict):
-                    rec = dict(rec_val)
-                    rec.setdefault("equation", eq_id)
-                    records.append(rec)
-            return records
-
-        # Sub-case 4c: generic dict-of-dicts (merge_shards.py output).
-        # Covers normalised protocol records keyed by equation_id:
-        #   { "eq_id": { "equation_id": ..., "results": {...}, "test_r2": ..., ... } }
-        # Accept any non-empty dict value without requiring specific field names.
-        if all(isinstance(v, dict) for v in non_meta.values()):
-            records = []
-            for eq_id, rec_val in non_meta.items():
-                rec = dict(rec_val)
-                rec.setdefault("equation_id", eq_id)
-                rec.setdefault("equation", eq_id)
-                records.append(rec)
-            return records
-
-    return []
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        _run_self_tests()
+        return
+
     mode = os.environ["INPUT_MODE"]
     total = 0
 
@@ -123,11 +290,12 @@ def main():
         if not path or not pathlib.Path(path).is_file():
             print(f"::error::INPUT_JSON='{path}' does not exist or is not a file.")
             sys.exit(1)
-        records = load_records(path)
         label = "Merged" if mode == "merged" else "Direct"
         print(f"{label} file: {path}")
+        records = load_records(path)
         print(f"Records: {len(records)}")
         total += len(records)
+
     elif mode == "shards":
         manifest_path = os.environ.get("SHARD_MANIFEST", "")
         if not manifest_path or not pathlib.Path(manifest_path).is_file():
@@ -138,10 +306,11 @@ def main():
             line = line.strip()
             if not line:
                 continue
-            records = load_records(line)
             print(f"Shard: {line}")
+            records = load_records(line)
             print(f"Records: {len(records)}")
             total += len(records)
+
     else:
         print(f"::error::Unknown INPUT_MODE='{mode}'. Expected: merged | direct | shards")
         sys.exit(1)
@@ -152,6 +321,223 @@ def main():
         print()
         print("FATAL: EMPTY DATASET")
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Self-tests  (python3 validate_analysis_input.py --self-test)
+# ---------------------------------------------------------------------------
+#
+# Each entry:
+#   name          Human-readable label shown in test output
+#   payload       The Python object that will be JSON-serialised and fed to load_records
+#   expected_n    Expected number of records returned (None = expect ValueError)
+#   expected_fmt  Expected format name reported by load_records (None = don't check)
+#   tier          Expected tier (None = don't check)
+#
+_SELF_TEST_CASES = [
+    # ------------------------------------------------------------------
+    # Tier 1
+    # ------------------------------------------------------------------
+    dict(
+        name="tier1 / flat_list",
+        payload=[{"r2": 0.9, "equation": "N1"}, {"r2": 0.8, "equation": "N2"}],
+        expected_n=2, expected_fmt="flat_list", tier=1,
+    ),
+    dict(
+        name="tier1 / results_list",
+        payload={"results": [{"r2": 0.9}, {"r2": 0.8}], "config": {}},
+        expected_n=2, expected_fmt="results_list", tier=1,
+    ),
+    dict(
+        name="tier1 / tests_list",
+        payload={"tests": [{"r2": 0.9}, {"r2": 0.7}]},
+        expected_n=2, expected_fmt="tests_list", tier=1,
+    ),
+    dict(
+        name="tier1 / results_dict_of_lists  (exp3 runner / seed42)",
+        payload={
+            "config": {"seed": 42},
+            "results": {
+                "hypatiax": [{"system": "hypatiax", "evaluation": {"r2": 1.0}, "equation_name": "N1"}],
+                "pysr":     [{"system": "pysr",     "evaluation": {"r2": 0.9}, "equation_name": "N1"}],
+            },
+            "summary": {"n_total": 1},
+        },
+        expected_n=2, expected_fmt="results_dict_of_lists", tier=1,
+    ),
+    dict(
+        name="tier1 / results_dict_of_lists  multi-system 12-eq",
+        payload={
+            "results": {
+                "sysA": [{"r2": i * 0.1} for i in range(12)],
+                "sysB": [{"r2": i * 0.1} for i in range(12)],
+            }
+        },
+        expected_n=24, expected_fmt="results_dict_of_lists", tier=1,
+    ),
+    # ------------------------------------------------------------------
+    # Tier 2
+    # ------------------------------------------------------------------
+    dict(
+        name="tier2 / results_dict_of_dicts_methods",
+        payload={
+            "results": {
+                "N1": {"hypatiax": {"r2": 0.99, "success": True}, "pysr": {"r2": 0.95}},
+                "N2": {"hypatiax": {"r2": 0.80}, "pysr": {"r2": 0.75}},
+            }
+        },
+        expected_n=4, expected_fmt="results_dict_of_dicts_methods", tier=2,
+    ),
+    dict(
+        name="tier2 / results_dict_of_dicts_flat",
+        payload={
+            "results": {
+                "N1": {"r2": 0.99, "method": "hypatiax"},
+                "N2": {"r2": 0.80, "method": "hypatiax"},
+            }
+        },
+        expected_n=2, expected_fmt="results_dict_of_dicts_flat", tier=2,
+    ),
+    dict(
+        name="tier2 / toplevel_method_nested",
+        payload={
+            "N1": {"hypatiax": {"r2": 0.99, "success": True}, "pysr": {"r2": 0.95}},
+            "N2": {"hypatiax": {"r2": 0.80}, "pysr": {"r2": 0.75}},
+        },
+        expected_n=4, expected_fmt="toplevel_method_nested", tier=2,
+    ),
+    dict(
+        name="tier2 / toplevel_flat_records",
+        payload={
+            "N1": {"r2": 0.99, "method": "hypatiax"},
+            "N2": {"r2": 0.80, "method": "pysr"},
+            "N3": {"success": True, "r2": 0.70, "method": "hypatiax"},
+        },
+        expected_n=3, expected_fmt="toplevel_flat_records", tier=2,
+    ),
+    dict(
+        name="tier2 / toplevel_generic_dicts  (merge_shards.py output)",
+        payload={
+            "N1": {"equation_id": "N1", "test_r2": 0.9, "expression": "x**2"},
+            "N2": {"equation_id": "N2", "test_r2": 0.8, "expression": "x+1"},
+        },
+        expected_n=2, expected_fmt="toplevel_generic_dicts", tier=2,
+    ),
+    # ------------------------------------------------------------------
+    # Error / no-match
+    # ------------------------------------------------------------------
+    dict(
+        name="no-match / scalar string",
+        payload="just a string",
+        expected_n=None, expected_fmt=None, tier=None,
+    ),
+    dict(
+        name="no-match / empty dict",
+        payload={},
+        expected_n=None, expected_fmt=None, tier=None,
+    ),
+    dict(
+        name="no-match / dict with only meta keys",
+        payload={"_meta": {}, "summary": {}, "stats": {}},
+        expected_n=None, expected_fmt=None, tier=None,
+    ),
+]
+
+
+def _run_self_tests():
+    import tempfile, traceback
+
+    passed = failed = 0
+    tier_counts = {1: {"pass": 0, "fail": 0}, 2: {"pass": 0, "fail": 0}, None: {"pass": 0, "fail": 0}}
+
+    # Group for display
+    current_group = None
+
+    for case in _SELF_TEST_CASES:
+        name        = case["name"]
+        payload     = case["payload"]
+        expected_n  = case["expected_n"]
+        expected_fmt = case.get("expected_fmt")
+        tier        = case.get("tier")
+
+        # Print group header
+        group = name.split("/")[0].strip()
+        if group != current_group:
+            print(f"\n  {'─' * 56}")
+            print(f"  {group.upper()}")
+            print(f"  {'─' * 56}")
+            current_group = group
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+            json.dump(payload, tf)
+            tmp_path = tf.name
+
+        captured_fmt = None
+        captured_n   = None
+        error        = None
+
+        # Monkey-patch print to capture the format= line
+        original_print = __builtins__["print"] if isinstance(__builtins__, dict) else print
+        import builtins
+        _captured = []
+        _orig = builtins.print
+        def _capturing_print(*args, **kwargs):
+            _captured.append(" ".join(str(a) for a in args))
+            _orig(*args, **kwargs)
+        builtins.print = _capturing_print
+
+        try:
+            records = load_records(tmp_path)
+            captured_n = len(records)
+            for line in _captured:
+                if line.strip().startswith("format="):
+                    parts = dict(p.split("=", 1) for p in line.strip().split() if "=" in p)
+                    captured_fmt = parts.get("format")
+        except ValueError as exc:
+            error = exc
+        finally:
+            builtins.print = _orig
+            pathlib.Path(tmp_path).unlink(missing_ok=True)
+
+        # Evaluate
+        if expected_n is None:
+            # Expect a ValueError
+            ok = error is not None
+            status = "PASS" if ok else "FAIL (expected ValueError, got records)"
+        else:
+            fmt_ok = (expected_fmt is None) or (captured_fmt == expected_fmt)
+            ok = (error is None) and (captured_n == expected_n) and fmt_ok
+            if error:
+                status = f"FAIL (unexpected error: {error})"
+            elif captured_n != expected_n:
+                status = f"FAIL (got {captured_n} records, expected {expected_n})"
+            elif not fmt_ok:
+                status = f"FAIL (format='{captured_fmt}', expected='{expected_fmt}')"
+            else:
+                status = "PASS"
+
+        label = name.split("/", 1)[-1].strip()
+        print(f"  {'✓' if ok else '✗'}  {label:<48}  {status}")
+
+        if ok:
+            passed += 1
+            tier_counts[tier]["pass"] += 1
+        else:
+            failed += 1
+            tier_counts[tier]["fail"] += 1
+
+    print(f"\n  {'═' * 56}")
+    print(f"  Results: {passed} passed, {failed} failed")
+    for t, counts in sorted((k, v) for k, v in tier_counts.items() if k is not None):
+        total = counts["pass"] + counts["fail"]
+        if total:
+            print(f"    Tier {t}: {counts['pass']}/{total} passed")
+    no_t = tier_counts[None]
+    if no_t["pass"] + no_t["fail"]:
+        print(f"    Error cases: {no_t['pass']}/{no_t['pass'] + no_t['fail']} passed")
+    print(f"  {'═' * 56}\n")
+
+    sys.exit(0 if failed == 0 else 1)
 
 
 if __name__ == "__main__":

@@ -831,6 +831,10 @@ class MethodResult:
     time:          float                = 0.0
     metadata:      Dict[str, Any]       = field(default_factory=dict)
     formula_hash:  str                  = ""   # SHA-256 of the FULL formula pre-truncation
+    # FIX-N2: store the untruncated formula so compute_extrap_r2_far can eval
+    # the complete expression.  formula is kept at 500 chars for display/logs;
+    # formula_full is unlimited and used exclusively for re-evaluation.
+    formula_full:  str                  = ""
 
     def to_dict(self) -> Dict:
         return {
@@ -915,14 +919,17 @@ class BaseMethod:
         )
 
     @staticmethod
-    def _make_formula_result(formula_full: str, truncate: int = 80) -> tuple:
+    def _make_formula_result(formula_full: str, truncate: int = 500) -> tuple:
         """Return (display_str, hash_str) — hash computed on FULL formula,
         display string truncated to `truncate` chars.
+        FIX-N2: truncate raised 80→500 so extrap re-evaluation gets a complete
+        expression.  formula_full is also returned as the third element so
+        callers can store it in MethodResult.formula_full without a second call.
         Prevents false-positive duplicate detection when two different formulas
         share the same first 80 characters (the old truncation bug)."""
         import hashlib as _hl
         h = _hl.sha256((formula_full or "").strip().encode()).hexdigest()
-        return (formula_full or "")[:truncate], h
+        return (formula_full or "")[:truncate], h, (formula_full or "")
 
     @staticmethod
     def _formula_complexity(formula: str) -> int:
@@ -1413,7 +1420,7 @@ class PureLLMBaselineMethod(BaseMethod):
                 return MethodResult(
                     method=self.name, success=False,
                     r2=float("nan"), rmse=float("inf"),
-                    formula=python_code[:80], formula_hash=BaseMethod._make_formula_result(python_code)[1],
+                    formula=python_code[:500], formula_hash=BaseMethod._make_formula_result(python_code)[1], formula_full=python_code,
                     error="truncated_formula: no valid return statement",
                     metadata={"truncated_formula": True,
                               "formula_preview": python_code[:120]},
@@ -1428,7 +1435,7 @@ class PureLLMBaselineMethod(BaseMethod):
                     method=self.name, success=True,
                     r2=float(metrics.get("r2", 0.0)),
                     rmse=float(metrics.get("rmse", float("inf"))),
-                    formula=python_code[:80], formula_hash=BaseMethod._make_formula_result(python_code)[1],
+                    formula=python_code[:500], formula_hash=BaseMethod._make_formula_result(python_code)[1], formula_full=python_code,
                     metadata={"truncated_formula": False,
                               "is_hardcoded": _is_hardcoded},
                 )
@@ -1448,7 +1455,7 @@ class PureLLMBaselineMethod(BaseMethod):
                         return MethodResult(
                             method=self.name, success=True,
                             r2=r2_fb, rmse=rmse_fb,
-                            formula=python_code[:80], formula_hash=BaseMethod._make_formula_result(python_code)[1],
+                            formula=python_code[:500], formula_hash=BaseMethod._make_formula_result(python_code)[1], formula_full=python_code,
                             metadata={"fallback_eval": True,
                                       "truncated_formula": False},
                         )
@@ -1982,7 +1989,7 @@ class HybridDeFiMethod(BaseMethod):
                     return MethodResult(
                         method=self.name, success=True,
                         r2=r2_val, rmse=rmse_val,
-                        formula=str(_formula)[:80], formula_hash=BaseMethod._make_formula_result(str(_formula))[1],
+                        formula=str(_formula)[:500], formula_hash=BaseMethod._make_formula_result(str(_formula))[1], formula_full=str(_formula),
                         metadata={"decision": decision, "eval_source": "y_pred_recompute"},
                     )
                 self._log(
@@ -2064,11 +2071,11 @@ class HybridDeFiMethod(BaseMethod):
                         _nn_applied_defi = True
                         self._log(f"NN residual correction applied R²={r2_val:.4f}")
 
-            _fdisp, _fhash = BaseMethod._make_formula_result(str(_formula))
+            _fdisp, _fhash, _ffull = BaseMethod._make_formula_result(str(_formula))
             return MethodResult(
                 method=self.name, success=True,
                 r2=r2_val, rmse=rmse_val,
-                formula=_fdisp, formula_hash=_fhash,
+                formula=_fdisp, formula_hash=_fhash, formula_full=_ffull,
                 metadata={"decision": decision, "nn_applied": _nn_applied_defi},
             )
 
@@ -2520,11 +2527,12 @@ class HybridAllDomainsMethod(BaseMethod):
                             f"{r2v:.4f} to {r2_hybrid:.4f})"
                         )
 
+            _fstr_2534 = str(result.get("formula", result.get("best_formula", "N/A")))
             return MethodResult(
                 method=self.name, success=True,
                 r2=r2v,
                 rmse=rmse,
-                formula=str(result.get("formula", result.get("best_formula", "N/A")))[:80], formula_hash=BaseMethod._make_formula_result(str(result.get("formula", result.get("best_formula", "N/A"))))[1],
+                formula=_fstr_2534[:500], formula_hash=BaseMethod._make_formula_result(_fstr_2534)[1], formula_full=_fstr_2534,
                 metadata={
                     "decision":   result.get("decision", "unknown"),
                     "nn_applied": nn_applied,
@@ -2951,7 +2959,7 @@ class SymbolicEngineMethod(BaseMethod):
                 method=self.name, success=True,
                 r2=float(result.get("r2", 0.0)),
                 rmse=float(result.get("rmse", float("nan"))),
-                formula=formula[:80], formula_hash=BaseMethod._make_formula_result(formula)[1],
+                formula=formula[:500], formula_hash=BaseMethod._make_formula_result(formula)[1], formula_full=formula,
                 metadata={"iterations": _n_iter},
             )
         err = (result.get("error") or "Discovery failed") if result else "No result"
@@ -3109,7 +3117,7 @@ class HybridSystemV50_2Method(BaseMethod):
                 method=self.name, success=True,
                 r2=float(result.get("r2", 0.0)),
                 rmse=float(result.get("rmse", float("nan"))),
-                formula=formula[:80], formula_hash=BaseMethod._make_formula_result(formula)[1],
+                formula=formula[:500], formula_hash=BaseMethod._make_formula_result(formula)[1], formula_full=formula,
                 metadata={
                     "strategy":    result.get("strategy", "unknown"),
                     "validations": result.get("validations", 0),
@@ -3388,28 +3396,150 @@ class ProtocolBenchmarkSuite:
         )
         if _do_extrap:
             if _EXTRAP_MODULE_AVAILABLE:
-                # Build per-method training-prediction dict for accurate RMSE_train.
-                # Only MethodResult objects that succeeded and have a formula string
-                # can contribute; NN-tag methods are excluded inside compute_extrap_r2_far.
+                # ── FIX-N3a/N3b: build augmented X matrices ───────────────────────
+                # Some methods (HybridDiscoverySystem, SymbolicEngine) internally
+                # engineer ratio_*/gm_* features and fit a formula that references
+                # those column names.  The original X (and X_far) only has the p
+                # base columns, so _runner_eval_formula returns None for any formula
+                # containing ratio_*/gm_* names → extrap_r2_far = null.
+                #
+                # Strategy: collect all unique ratio_*/gm_* names referenced in any
+                # successful formula, reconstruct those columns from X and X_far,
+                # and append them to produce X_aug / X_far_aug alongside an
+                # extended aug_names list.  Formulas that only use original vars
+                # are unaffected (extra columns are never bound if not referenced).
+                #
+                # FIX-N2: use res.formula_full (untruncated) instead of res.formula
+                # so formulas > 500 chars are evaluated completely.
+
+                def _collect_aug_features(
+                    formula: str,
+                ) -> List[tuple]:
+                    """
+                    Return list of (feat_name, col_a_idx, col_b_idx, kind)
+                    for every ratio_*/gm_* token found in *formula*.
+                    kind is 'ratio' or 'gm'.
+                    """
+                    feats = []
+                    for tok in re.findall(r"\b(ratio_\w+|gm_\w+)\b", formula):
+                        kind = "ratio" if tok.startswith("ratio_") else "gm"
+                        body = tok[len(kind) + 1:]   # strip "ratio_" or "gm_"
+                        # body may be "a_b" or "a_minus_b" or "a_over_b"
+                        # Try splitting on the first underscore that separates
+                        # two known var names; fall back to longest-match.
+                        found = False
+                        for sep_idx in range(1, len(body)):
+                            if body[sep_idx] == "_":
+                                a_nm = body[:sep_idx]
+                                b_nm = body[sep_idx + 1:]
+                                if a_nm in var_names and b_nm in var_names:
+                                    ai = var_names.index(a_nm)
+                                    bi = var_names.index(b_nm)
+                                    feats.append((tok, ai, bi, kind))
+                                    found = True
+                                    break
+                        if not found:
+                            # Can't resolve column indices; skip — formula will
+                            # still fail but won't crash the extrap block.
+                            pass
+                    return feats
+
+                def _build_aug(
+                    X_base: np.ndarray,
+                    feat_specs: List[tuple],
+                    existing_names: List[str],
+                ) -> tuple:
+                    """
+                    Append engineered columns to X_base.
+                    Returns (X_aug, aug_names) — X_aug has shape
+                    (n, p + len(new_feats)).
+                    """
+                    if not feat_specs:
+                        return X_base, list(existing_names)
+                    extra_cols = []
+                    extra_names = []
+                    seen = set(existing_names)
+                    for feat_name, ai, bi, kind in feat_specs:
+                        if feat_name in seen:
+                            continue
+                        col_a = X_base[:, ai]
+                        col_b = X_base[:, bi]
+                        if kind == "ratio":
+                            col = col_a / (col_b + 1e-12)
+                        else:  # gm
+                            col = np.sqrt(np.abs(col_a * col_b) + 1e-12)
+                        extra_cols.append(col)
+                        extra_names.append(feat_name)
+                        seen.add(feat_name)
+                    if not extra_cols:
+                        return X_base, list(existing_names)
+                    return (
+                        np.hstack([X_base, np.column_stack(extra_cols)]),
+                        list(existing_names) + extra_names,
+                    )
+
+                # Gather all aug feature specs from every successful formula
+                _all_aug_specs: List[tuple] = []
+                _seen_aug: set = set()
+                for _mn, _res in results.items():
+                    if not _res.success:
+                        continue
+                    # FIX-N2: prefer formula_full (untruncated)
+                    _fs = (_res.formula_full or _res.formula or "").strip()
+                    if not _fs or _fs in ("N/A", ""):
+                        continue
+                    for spec in _collect_aug_features(_fs):
+                        if spec[0] not in _seen_aug:
+                            _all_aug_specs.append(spec)
+                            _seen_aug.add(spec[0])
+
+                # Build augmented training matrix and far matrix
+                X_aug,     aug_names     = _build_aug(X,     _all_aug_specs, list(var_names))
+                X_far_aug, aug_names_far = _build_aug(X_far, _all_aug_specs, list(var_names))
+                # aug_names and aug_names_far should be identical; use aug_names
+                # as the canonical var_names for all extrap evaluation below.
+
+                # ── FIX-N3c+N6: build y_pred_train with augmented X and full formula
                 _y_pred_train: Dict[str, np.ndarray] = {}
                 for _mn, _res in results.items():
                     if _res.success:
-                        _formula_str = (_res.formula or "").strip()
+                        # FIX-N2: use untruncated formula
+                        _formula_str = (_res.formula_full or _res.formula or "").strip()
                         if (
                             _formula_str
                             and not _formula_str.startswith("ImprovedNN(")
                             and not _formula_str.startswith("[NN fallback")
                             and _formula_str not in ("N/A", "")
                         ):
-                            _yp = BaseMethod._runner_eval_formula(_formula_str, X, var_names)
+                            # FIX-N3c: eval on augmented X so ratio_*/gm_* cols exist
+                            _yp = BaseMethod._runner_eval_formula(
+                                _formula_str, X_aug, aug_names
+                            )
                             if _yp is not None and np.all(np.isfinite(_yp)):
                                 _y_pred_train[_mn] = _yp
 
+                # ── Pass augmented matrices and names to compute_extrap_r2_far ────
+                # Wrap results so each .formula returns the full untruncated string.
+                # compute_extrap_r2_far reads result.formula internally; we patch
+                # it by substituting formula_full on the fly via a lightweight proxy.
+                class _FullFormulaProxy:
+                    """Thin wrapper that exposes formula_full as .formula."""
+                    __slots__ = ("_r",)
+                    def __init__(self, r):   self._r = r
+                    def __getattr__(self, k):
+                        if k == "formula":
+                            return self._r.formula_full or self._r.formula
+                        return getattr(self._r, k)
+
+                _results_full = {
+                    mn: _FullFormulaProxy(res) for mn, res in results.items()
+                }
+
                 extrap_r2_far, extrap_rmse_far, extrap_error_pct = compute_extrap_r2_far(
-                    results=results,
-                    X_far=X_far,
+                    results=_results_full,
+                    X_far=X_far_aug,       # FIX-N3b: augmented far matrix
                     y_far=y_far,
-                    var_names=var_names,
+                    var_names=aug_names,   # FIX-N3a: includes ratio_*/gm_* names
                     y_train=y,
                     y_pred_train=_y_pred_train if _y_pred_train else None,
                     verbose=verbose,

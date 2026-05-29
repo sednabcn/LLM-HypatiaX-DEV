@@ -9,14 +9,17 @@
 #
 #  NOTE: ci_runner.yml has NO consolidate job — each worker shard
 #    commits its own result files directly to the repo.  _merged.json is NOT
-#    automatically produced for most experiments; run ci_consolidate_experiment.yml
-#    manually if a merged view is needed for exp1b / exp3b.
+#    automatically produced for most experiments; for exp1b and exp3b it is
+#    produced inline by the "Merge shards" step in this workflow (see below).
+#    ci_consolidate_experiment.yml does not exist; no manual consolidation
+#    step is required.
 #
 #  Input modes (set by "Locate analysis input" → $INPUT_MODE env var):
 #
 #    MERGED  (exp1b, exp3b only):
-#      Reads _merged.json produced by ci_consolidate_experiment.yml.
-#      Hard-fails if _merged.json is absent.
+#      Reads _merged.json produced inline by the "Merge shards" step, which
+#      calls merge_shards.py against the committed shard files in RESULT_DIR.
+#      Hard-fails if _merged.json is absent after the merge step.
 #      run_analysis.py flag: --input-json <path>
 #
 #    DIRECT  (NSHARDS=1 / single-file experiments — exp1 and any other
@@ -234,24 +237,18 @@ jobs:
       # source_run_id is provided by ci_pipeline.yml; omit when
       # re-running analysis manually against already-committed files.
       #
-      # MERGE-REQUIRED GATE: only exp1b and exp3b are multi-shard experiments
-      # whose workers feed merge_shards.py to produce a _merged.json via a
-      # consolidate job.  All other experiments commit individual shard files
-      # directly to the repo — there is no consolidated artifact to download
-      # for them.
-      #
-      # NSHARDS=1 — exp1 is always single-shard (NSHARDS=NWORKERS=1).
-      # It never produces a _merged.json and never needs the consolidate job.
-      # The single worker commits its result JSON directly to the repo under
-      # hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/.
-      # The "Locate analysis input" step detects benchmark-format and merges
-      # the tests[] array in-memory into _merged_benchmark.json, then routes
-      # to run_analysis.py --input-json. No download, no merge_shards.py call.
-      # Do NOT add exp1 to the REQUIRE_MERGE gate below.
+      # MERGE-REQUIRED GATE: exp1b and exp3b are multi-shard experiments.
+      # Their _merged.json is now produced inline by the "Merge shards" step
+      # below rather than by a separate consolidation workflow.  This download
+      # step is therefore a no-op for exp1b/exp3b in the normal pipeline
+      # (no consolidated artifact is ever uploaded), but is kept so that a
+      # future ci_consolidate_experiment.yml can slot in without YAML changes:
+      # if the artifact IS present it is downloaded and the merge step below
+      # will find _merged.json already in place and skip re-merging.
       #
       # PURGE RESILIENCE: continue-on-error: true prevents hard-failing when
-      # the referenced run has been deleted by purge_old_runs.  The
-      # "Locate analysis input" step falls back to the committed copy.
+      # the referenced run has been deleted by purge_old_runs.  The inline
+      # "Merge shards" step reads directly from the committed repo files.
       - name: Download merged artifact (exp1b / exp3b only)
         if: |
           github.event.inputs.source_run_id != '' &&
@@ -295,6 +292,75 @@ jobs:
           fi
           # Full validation (path checks + record counting) delegated to script.
           python3 .github/scripts/validate_analysis_input.py
+
+      # -----------------------------------------------------------------------
+      # Merge shards (MERGE_REQUIRED_EXPERIMENTS only)
+      # -----------------------------------------------------------------------
+      # ci_consolidate_experiment.yml does not exist.  For multi-shard
+      # experiments the shards are committed directly to the repo by each
+      # worker; no artifact is ever uploaded for download.
+      # merge_shards.py is therefore called inline here, reading from and
+      # writing to RESULT_DIR (the already-checked-out shard files).
+      #
+      # Which experiments require merging is controlled solely by
+      # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py — the YAML does not
+      # maintain a separate list.  Adding a new multi-shard experiment only
+      # requires updating that set in merge_shards.py.
+      #
+      # merge_shards.py --input-root == --output-dir == RESULT_DIR:
+      #   · _find_shard_files() globs for shard files in RESULT_DIR
+      #     recursively.  The _merged.json / _merged.csv / _stats.json /
+      #     _checkpoint.json outputs are skipped by _find_shard_files() via
+      #     its _SKIP_NAMES guard.
+      #   · On success INPUT_MODE is overridden to "merged" and INPUT_JSON is
+      #     pointed at _merged.json so run_analysis.py reads the unified file.
+      #   · On failure the step exits non-zero and the workflow aborts here
+      #     rather than silently passing an empty dataset to run_analysis.py.
+      #
+      # PURGE RESILIENCE: shard files are committed to master by the workers
+      # before this workflow is dispatched, so they are always present in the
+      # checkout regardless of artifact retention.
+      # -----------------------------------------------------------------------
+
+      - name: Merge shards
+        if: github.event.inputs.experiment != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is the single source
+          # of truth for which experiments need shard merging.  No hardcoded
+          # list here — adding an experiment to that set is the only change
+          # needed when a new multi-shard experiment is introduced.
+          NEEDS_MERGE=$(python3 -c "
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+          print('true' if '${{ github.event.inputs.experiment }}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
+          ")
+
+          if [[ "$NEEDS_MERGE" != "true" ]]; then
+            echo "Experiment '${EXPERIMENT}' not in MERGE_REQUIRED_EXPERIMENTS — skipping."
+            exit 0
+          fi
+
+          python3 .github/scripts/merge_shards.py \
+            --experiment    "$EXPERIMENT" \
+            --input-root    "$RESULT_DIR" \
+            --output-dir    "$RESULT_DIR" \
+            --result-subdir "$RESULT_SUBDIR"
+
+          MERGED_JSON="${RESULT_DIR}/_merged.json"
+          if [[ ! -f "$MERGED_JSON" ]]; then
+            echo "::error::merge_shards.py did not produce ${MERGED_JSON}"
+            exit 1
+          fi
+
+          N_MERGED=$(python3 -c "import json; d=json.load(open('${MERGED_JSON}')); print(len(d))")
+          echo "  _merged.json: ${N_MERGED} unique task record(s)"
+
+          echo "INPUT_MODE=merged"          >> "$GITHUB_ENV"
+          echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
       # Merge extrap into benchmark (exp2_feynman_extrap only)

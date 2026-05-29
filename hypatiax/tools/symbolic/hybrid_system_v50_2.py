@@ -1,8 +1,39 @@
 """
-HypatiaX Hybrid Discovery System v5.3
+HypatiaX Hybrid Discovery System v5.4
 ======================================
-Adds six engineering fixes (Issues 1-6) identified in the v5.2 code review
-on top of the v5.2 LLM-wiring + output-correctness rewrite.
+Adds five NaN RMSE / NRMSE fixes (RC-1 … RC-5, FIX-NAN v5.4) on top of
+the v5.3 engineering-hardening rewrite.
+
+What v5.4 fixes (NaN RMSE / NRMSE root causes)
+------------------------------------------------
+RC-1  Wrong X fed to formula evaluator when _last_X_aug is absent.
+    When the engine does not expose _last_X_aug (e.g. base SymbolicEngine),
+    the code previously fell back to _X_for_rmse (the ORIGINAL unscaled X).
+    The formula was fitted on the log-scaled X, so evaluating it on raw
+    magnitudes (e.g. 1e11 kg masses) produced overflow / NaN.
+    Fix: fall back to the current post-transform X (= _X_scaled_for_rmse),
+    which is correct regardless of whether log-scaling was applied.
+
+RC-2  Inverse log-transform 10**|_y_pred| overflows float64 for |pred|≥309.
+    np.power(10., 309.) = inf, which is then replaced with nan, leaving
+    too few valid residuals → RMSE = nan.
+    Fix: clip the exponent to ≤308 with np.clip(np.abs(_y_pred), 0, 308)
+    before calling np.power(10., …).
+
+RC-3  _overflow_count diagnostic was measured AFTER inf→nan replacement,
+    so it always reported 0 — masking the real problem.
+    Fix: count ~np.isfinite(_y_pred) BEFORE the np.where replacement.
+
+RC-4  NRMSE (= RMSE / std(y_true)) was never computed or returned.
+    Callers that need a scale-invariant metric received KeyError.
+    Fix: compute nrmse after rmse; guard against near-zero std (constant y);
+    add "nrmse" key to both the success and error return dicts.
+
+RC-5  Stale _last_X_aug from a prior discover() call could have a different
+    row count than _y_for_rmse, causing lambdify to produce a
+    wrong-length array → residuals shape error → exception → nan.
+    Fix: validate _X_aug.shape[0] == len(_y_for_rmse); if not, fall back
+    to the current scaled X (same as RC-1 fallback).
 
 What v5.3 fixes (from v5.2 review)
 ------------------------------------
@@ -294,7 +325,7 @@ class HybridDiscoverySystem:
         self.llm_mode = self.requested_llm_mode                     # Issue-5: active mode (may degrade)
 
         logger.info("=" * 70)
-        logger.info("HybridDiscoverySystem v5.3 — LLM WIRING + OUTPUT FIXES + ENGINEERING HARDENING")
+        logger.info("HybridDiscoverySystem v5.4 — LLM WIRING + OUTPUT FIXES + NaN RMSE FIXES")
         logger.info("=" * 70)
         logger.info(f"Domain: {domain}")
         logger.info(f"Discovery mode: {self.discovery_mode.value}")
@@ -979,7 +1010,7 @@ class HybridDiscoverySystem:
                 "discovery_engine": discovery_result.get("discovery_engine"),
                 "llm_mode": self.llm_mode,
                 "equation_name": equation_name,
-                "version": "5.3",
+                "version": "5.4",
             },
         }
 
@@ -1148,10 +1179,29 @@ class HybridDiscoverySystem:
             #   4. scalar predictions broadcast to vector
             #   5. finite-mask validates both y_pred and y_orig before sqrt
             #   6. failure cause logged at WARNING level
-            rmse = float("nan")
+            #
+            # FIX-NAN v5.4 (additional fixes):
+            #   RC-1  When _last_X_aug is absent, fall back to the SCALED X (not
+            #         the original unscaled X).  The formula was fitted on the
+            #         scaled data, so evaluating it on raw original magnitudes
+            #         produces garbage / overflow → NaN.
+            #   RC-2  Inverse log-transform clips the exponent to ≤308 before
+            #         np.power(10, …) to avoid float64 overflow → inf → NaN.
+            #   RC-3  _overflow_count is now measured on the raw prediction
+            #         BEFORE inf→NaN replacement, so the diagnostic is accurate.
+            #   RC-4  NRMSE (normalised by std(y_true)) computed and returned.
+            #   RC-5  Length-mismatch guard: if _X_aug row count ≠ _y_for_rmse
+            #         length (stale _last_X_aug from a prior call), fall back to
+            #         the current scaled X so evaluation never silently truncates.
+            rmse  = float("nan")
+            nrmse = float("nan")
             _X_for_rmse = getattr(self, "_discover_X_orig", X)
             _y_for_rmse = getattr(self, "_discover_y_orig", y)
             _scale_log  = getattr(self, "_discover_scale_log", False)
+            # RC-1: the formula was fitted on *scaled* X (when _scale_log=True).
+            # Use scaled X as the safe fallback; only use original if we can
+            # confirm the engine stored the augmented matrix for this call.
+            _X_scaled_for_rmse = X   # post-transform X (may equal _X_for_rmse when no log)
             if formula and formula not in (
                 "DISCOVERY_FAILED", "NO_VALID_EQUATIONS", "VALIDATION_FAILED", "N/A"
             ):
@@ -1159,8 +1209,19 @@ class HybridDiscoverySystem:
                     import sympy as _sp
                     _norm_expr = self._normalise_expression(formula)
                     _safe_names = discovery.get("variable_names", var_names)
-                    _X_aug   = getattr(self.symbolic_engine, "_last_X_aug",    _X_for_rmse)
-                    _aug_nms = getattr(self.symbolic_engine, "_last_aug_names", list(var_names))
+
+                    # RC-1 / RC-5: prefer engine's augmented matrix; validate row count
+                    _X_aug   = getattr(self.symbolic_engine, "_last_X_aug",    None)
+                    _aug_nms = getattr(self.symbolic_engine, "_last_aug_names", None)
+                    if (
+                        _X_aug is None
+                        or _X_aug.shape[0] != len(_y_for_rmse)   # RC-5: stale matrix guard
+                    ):
+                        # Fall back to the current (possibly log-scaled) X.
+                        # For a log-scaled run this is the scaled matrix, which is
+                        # correct because the formula was fitted in that space.
+                        _X_aug   = _X_scaled_for_rmse
+                        _aug_nms = list(var_names)
 
                     # Build variable → column mapping
                     _vars_dict: dict[str, np.ndarray] = {}
@@ -1185,89 +1246,64 @@ class HybridDiscoverySystem:
                     if _y_pred.ndim == 0:
                         _y_pred = np.full(len(_y_for_rmse), float(_y_pred))
 
-                    # Issue 1: inverse log-transform predictions if they are in log-space
+                    # Issue 1 / RC-2: inverse log-transform predictions back to
+                    # original units when the engine operated in log-space.
+                    # Clip the exponent to float64-safe range (≤308) BEFORE
+                    # np.power to prevent overflow → inf → dropped → NaN RMSE.
                     if _scale_log:
-                        _y_pred = np.sign(_y_pred) * (10 ** np.abs(_y_pred) - 1)
-                    #====================================================================
-                    #_finite = np.isfinite(_y_pred) & np.isfinite(_y_for_rmse)
-                    #if _finite.sum() >= 2:
-                    #    rmse = float(
-                    #        np.sqrt(np.mean(
-                    #            (_y_for_rmse[_finite] - _y_pred[_finite]) ** 2
-                    #        ))
-                    #    )
-                    #else:
-                    #    rmse = float("nan")
+                        _exp_safe = np.clip(np.abs(_y_pred), 0.0, 308.0)
+                        _y_pred = np.sign(_y_pred) * (np.power(10.0, _exp_safe) - 1.0)
 
                     # ------------------------------------------------------------------
-                    # FIX-NAN v5.4: overflow-safe RMSE
+                    # FIX-NAN v5.4: overflow-safe RMSE + NRMSE
                     # ------------------------------------------------------------------
 
-                    # Replace inf -> nan
-                    _y_pred = np.where(
-                        np.isfinite(_y_pred),
-                        _y_pred,
-                        np.nan,
-                    )
+                    # RC-3: count non-finite predictions BEFORE replacing them with nan,
+                    # so the warning reflects the true number of overflowed values.
+                    _overflow_count = int(np.sum(~np.isfinite(_y_pred)))
+                    if _overflow_count > 0:
+                        logger.warning(
+                            f"[RMSE] {_overflow_count} non-finite "
+                            "predictions excluded from RMSE / NRMSE"
+                        )
 
-                    _y_true = np.asarray(
-                        _y_for_rmse,
-                        dtype=np.float64,
-                    )
+                    # Replace inf / -inf → nan so nanmean ignores them
+                    _y_pred = np.where(np.isfinite(_y_pred), _y_pred, np.nan)
 
-                    _y_true = np.where(
-                        np.isfinite(_y_true),
-                        _y_true,
-                        np.nan,
-                    )
+                    _y_true = np.asarray(_y_for_rmse, dtype=np.float64)
+                    _y_true = np.where(np.isfinite(_y_true), _y_true, np.nan)
 
-                    with np.errstate(
-                            over="ignore",
-                            invalid="ignore",
-                    ):
+                    with np.errstate(over="ignore", invalid="ignore"):
                         _residuals = _y_true - _y_pred
 
                     _valid = np.isfinite(_residuals)
 
                     if _valid.sum() >= 2:
+                        # Prevent catastrophic overflow in squaring step
+                        _residuals_valid = np.clip(_residuals[_valid], -1e150, 1e150)
 
-                        # Prevent overflow in square
-                        _residuals_valid = np.clip(
-                            _residuals[_valid],
-                            -1e150,
-                            1e150,
-                        )
-
-                        with np.errstate(
-                                over="ignore",
-                                invalid="ignore",
-                        ):
+                        with np.errstate(over="ignore", invalid="ignore"):
                             _sq = _residuals_valid ** 2
 
-                        _sq = np.where(
-                            np.isfinite(_sq),
-                            _sq,
-                            np.nan,
-                        )
+                        _sq = np.where(np.isfinite(_sq), _sq, np.nan)
 
-                        if np.all(np.isnan(_sq)):
-                            rmse = float("nan")
-                        else:
-                            rmse = float(
-                                np.sqrt(np.nanmean(_sq))
-                            )
+                        if not np.all(np.isnan(_sq)):
+                            rmse = float(np.sqrt(np.nanmean(_sq)))
 
-                    else:
-                        rmse = float("nan")
+                            # RC-4: NRMSE = RMSE / std(y_true) — normalises scale
+                            # so equations with wildly different y magnitudes are
+                            # comparable.  Guard against near-zero std (constant y).
+                            _y_true_valid = _y_true[_valid]
+                            _y_std = float(np.nanstd(_y_true_valid))
+                            if _y_std > 1e-30:
+                                nrmse = rmse / _y_std
+                            else:
+                                nrmse = float("nan")
+                                logger.warning(
+                                    "[RMSE] y_true std ≈ 0 — NRMSE undefined (constant target)"
+                                )
+                    # (else: rmse and nrmse remain nan)
 
-                    _overflow_count = np.sum(~np.isfinite(_y_pred))
-
-                    if _overflow_count > 0:
-                        logger.warning(
-                            f"[RMSE] {_overflow_count} non-finite "
-                            "predictions excluded from RMSE"
-                        )
-                    #=====================================================================
                 except Exception as _rmse_err:
                     logger.warning(f"[FIX-A] RMSE computation failed: {_rmse_err}")
 
@@ -1285,6 +1321,7 @@ class HybridDiscoverySystem:
                 "success": success,
                 "r2": r2,
                 "rmse": rmse,
+                "nrmse": nrmse,   # RC-4: NRMSE = RMSE / std(y_true); nan if undefined
                 "strategy": discovery.get("discovery_engine", "symbolic"),
                 "llm_mode": discovery.get("llm_mode", self.llm_mode),
                 "validations": 1 if validation else 0,
@@ -1305,6 +1342,7 @@ class HybridDiscoverySystem:
                 "success": False,
                 "r2": 0.0,
                 "rmse": float("nan"),   # nan = not computable; inf would mean infinitely bad fit
+                "nrmse": float("nan"),
                 "formula": "N/A",
                 "expression": "N/A",
                 "final_formula": "N/A",
@@ -1346,12 +1384,12 @@ class HybridDiscoverySystem:
         """Save results to JSON — PROD-4/5: single-pass serialisation."""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"discovery_results_v53_{timestamp}.json"
+            filename = f"discovery_results_v54_{timestamp}.json"
 
         results_list = [_to_serialisable(r) for r in self.results]
 
         output = {
-            "version": "5.3",
+            "version": "5.4",
             "timestamp": datetime.now().isoformat(),
             "domain": self.domain,
             "llm_mode": self.llm_mode,

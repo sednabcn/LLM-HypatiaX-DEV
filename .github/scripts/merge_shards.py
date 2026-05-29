@@ -81,11 +81,19 @@ Changes in current revision:
   · FIX-SKIP-ANALYSIS: _pick_shard_file() _SKIP_NAMES now includes
     _analysis.json so a pipeline output from a prior run can never be
     returned as a valid shard input.
-  · FIX-SHAPE-A-DICT: _extract_records() now handles the case where
-    array_key points to a dict instead of a list (exp3/exp3b Nguyen schema:
-    {"results": {"N1":{...}, "N2":{...}}}). Previously this fell through to
-    Shape C which worked for clean files but was fragile when metadata keys
-    were present. The new Shape A-dict branch handles it explicitly."""
+  · FIX-SHAPE-A-DICT: _extract_records() now handles both dict-under-array_key
+    variants produced by the exp3/exp3b runner:
+      A-dict-of-lists: {"results": {"hypatiax": [...], "pysr": [...]}}
+        Actual runner output — system names as keys, lists of records as values.
+        Previously fell through all Shape A guards (which expected list or
+        dict-of-dict values) and extracted 0 records, causing EMPTY DATASET
+        in both merge_shards.py and validate_analysis_input.py.
+        New branch checks all(isinstance(v, list)) and flattens all system
+        lists into one flat record list.
+      A-dict-of-tasks: {"results": {"N1": {...}, "N2": {...}}}
+        Documented Nguyen schema — equation IDs as keys, record dicts as values.
+        Preserved unchanged; evaluated after A-dict-of-lists so list-valued
+        inner dicts never fall into this branch."""
 
 from __future__ import annotations
 
@@ -622,15 +630,21 @@ def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
 
     Handles the shapes the HypatiaX benchmark scripts produce:
 
-    P.  {"tests": [ {description, domain, results:{RawMethod:{r2,...}}} ]}
-                                 protocol_core_*.json from run_comparative_suite_benchmark_v2.py
-                                 Normalised to canonical schema unless experiment is ablation.
-    A-list.  {"results": [ {...}, ... ]}      wrapper dict with list under array_key
-    A-dict.  {"results": {"N1":{...}, ...}}   wrapper dict with dict-of-tasks under array_key
-                                              (exp3/exp3b Nguyen schema)
-    B.  [ {...}, ... ]                       top-level list
-    C.  {"task_id": {...}, "task_id2": {...}} dict keyed by task identifiers
-    D.  { single record }                    one task record as a bare dict
+    P.               {"tests": [{description, domain, results:{RawMethod:{r2,...}}}]}
+                     protocol_core_*.json from run_comparative_suite_benchmark_v2.py.
+                     Normalised to canonical schema unless experiment is ablation.
+    A-list.          {"results": [{...}, ...]}
+                     Wrapper dict with list under array_key.
+    A-dict-of-lists. {"results": {"hypatiax": [{...},...], "pysr": [{...},...]}}
+                     Wrapper dict; array_key maps system names to lists of records.
+                     Actual exp3/exp3b runner output (seed42, seed2024, etc.).
+    A-dict-of-tasks. {"results": {"N1": {...}, "N2": {...}}}
+                     Wrapper dict; array_key maps equation IDs to single record dicts.
+                     Documented Nguyen schema (dict-of-tasks variant).
+    B.               [{...}, ...]  Top-level list.
+    C.               {"task_id": {...}, "task_id2": {...}}
+                     Top-level dict keyed by task identifiers (no array_key wrapper).
+    D.               {single record}  One task record as a bare dict.
     """
     try:
         raw = json.loads(filepath.read_text(encoding="utf-8", errors="replace"))
@@ -672,8 +686,19 @@ def _extract_records(filepath: Path, cfg: dict) -> list[dict]:
     if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), list):
         return [r for r in raw[array_key] if isinstance(r, dict)]
 
-    # Shape A-dict — wrapper dict with dict-of-tasks under array_key
-    # (exp3/exp3b Nguyen schema: {"results": {"N1": {...}, "N2": {...}}})
+    # Shape A-dict-of-lists — wrapper dict with dict-of-lists under array_key
+    # (exp3/exp3b actual runner output: {"results": {"hypatiax": [...], "pysr": [...]}})
+    # Keys are system/method names; values are lists of per-equation records.
+    # Must be checked BEFORE A-dict-of-tasks: both have a dict under array_key,
+    # but this shape has list values while A-dict-of-tasks has dict values.
+    if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), dict):
+        inner = raw[array_key]
+        non_meta = {k: v for k, v in inner.items() if not k.startswith("_")}
+        if non_meta and all(isinstance(v, list) for v in non_meta.values()):
+            return [r for records in non_meta.values() for r in records if isinstance(r, dict)]
+
+    # Shape A-dict-of-tasks — wrapper dict with dict-of-tasks under array_key
+    # (Nguyen schema as documented: {"results": {"N1": {...}, "N2": {...}}})
     # Distinct from Shape C: array_key is explicitly declared for this experiment.
     if array_key and isinstance(raw, dict) and isinstance(raw.get(array_key), dict):
         inner = raw[array_key]
