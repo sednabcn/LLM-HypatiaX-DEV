@@ -59,6 +59,15 @@ Two tiers of schema handling are provided:
                        merge_shards.py output keyed by equation_id.
                        { "N1": { "equation_id": "N1", "test_r2": 0.9 } }
 
+    noise_sweep_per_noise
+                       suppB noise-sweep runner output.  Top-level dict with
+                       a "per_noise" key mapping noise levels to method dicts,
+                       each containing an "equations" sub-dict of per-equation
+                       records.  Aggregate stats (median_r2, recovery_rate,
+                       etc.) are hoisted onto every extracted record.
+                       { "per_noise": { "0.0": { "MethodA": {
+                           "equations": { "Eq1": {r2, rmse, ...} } } } } }
+
 Adding a new format
 -------------------
   Tier 1: add one entry to _TIER1_EXTRACTORS (guard + extract lambda).
@@ -212,6 +221,43 @@ _TIER2_EXTRACTORS = [
             {**v, "equation": v.get("equation", k)}
             for k, v in _non_meta(d).items()
             if isinstance(v, dict)
+        ],
+    ),
+    # suppB noise-sweep runner output:
+    #   { "generated": ..., "noise_levels": [...], "methods": [...],
+    #     "per_noise": { "0.0": { "MethodA": { "equations": { "EqName": {r2, rmse, ...} } } } },
+    #     "cross_noise_summary": { ... } }
+    # The meaningful unit for analysis is one (noise_level x method x equation) triple.
+    # Aggregate stats under per_noise[nl][method] (median_r2, recovery_rate, etc.) are
+    # hoisted onto every record so run_analysis.py has full context without a join.
+    (
+        "noise_sweep_per_noise",
+        lambda d: (
+            isinstance(d, dict)
+            and isinstance(d.get("per_noise"), dict)
+            and bool(d["per_noise"])
+        ),
+        lambda d: [
+            {
+                "noise_level":          nl,
+                "method":               method,
+                "equation":             eq,
+                "median_r2":            m_val.get("median_r2"),
+                "mean_r2":              m_val.get("mean_r2"),
+                "std_r2":               m_val.get("std_r2"),
+                "recovery_rate":        m_val.get("recovery_rate"),
+                "n_success":            m_val.get("n_success"),
+                "n_total":              m_val.get("n_total"),
+                "threshold_used":       m_val.get("threshold_used"),
+                "n_catastrophic":       m_val.get("n_catastrophic"),
+                **({k: v for k, v in eq_val.items()} if isinstance(eq_val, dict) else {}),
+            }
+            for nl, nl_val in d["per_noise"].items()
+            if isinstance(nl_val, dict)
+            for method, m_val in nl_val.items()
+            if isinstance(m_val, dict)
+            for eq, eq_val in m_val.get("equations", {}).items()
+            if isinstance(eq_val, dict)
         ],
     ),
     # Top-level dict, no "results" wrapper, equation->generic dict (merge_shards.py output)
@@ -422,6 +468,47 @@ _SELF_TEST_CASES = [
             "N2": {"equation_id": "N2", "test_r2": 0.8, "expression": "x+1"},
         },
         expected_n=2, expected_fmt="toplevel_generic_dicts", tier=2,
+    ),
+    dict(
+        name="tier2 / noise_sweep_per_noise  (suppB runner)",
+        payload={
+            "generated": "2026-05-22T18:22:26",
+            "noise_levels": [0.0, 0.05],
+            "methods": ["MethodA", "MethodB"],
+            "per_noise": {
+                "0.0": {
+                    "MethodA": {
+                        "median_r2": 0.999, "mean_r2": 0.998, "std_r2": 0.001,
+                        "recovery_rate": 0.9, "n_success": 9, "n_total": 10,
+                        "threshold_used": 0.95, "n_catastrophic": 0,
+                        "equations": {
+                            "Eq1": {"r2": 1.0, "rmse": 0.0, "success": True, "catastrophic": False},
+                            "Eq2": {"r2": 0.99, "rmse": 0.01, "success": True, "catastrophic": False},
+                        },
+                    },
+                    "MethodB": {
+                        "median_r2": 0.95, "mean_r2": 0.94, "std_r2": 0.02,
+                        "recovery_rate": 0.8, "n_success": 8, "n_total": 10,
+                        "threshold_used": 0.95, "n_catastrophic": 1,
+                        "equations": {
+                            "Eq1": {"r2": 0.95, "rmse": 0.1, "success": True, "catastrophic": False},
+                        },
+                    },
+                },
+                "0.05": {
+                    "MethodA": {
+                        "median_r2": 0.97, "mean_r2": 0.96, "std_r2": 0.02,
+                        "recovery_rate": 0.7, "n_success": 7, "n_total": 10,
+                        "threshold_used": 0.95, "n_catastrophic": 1,
+                        "equations": {
+                            "Eq1": {"r2": 0.97, "rmse": 0.05, "success": True, "catastrophic": False},
+                        },
+                    },
+                },
+            },
+            "cross_noise_summary": {},
+        },
+        expected_n=4, expected_fmt="noise_sweep_per_noise", tier=2,
     ),
     # ------------------------------------------------------------------
     # Error / no-match
