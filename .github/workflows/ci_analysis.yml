@@ -344,6 +344,15 @@ jobs:
             exit 0
           fi
 
+          # locate_analysis_input.sh may have already run merge_shards.py
+          # (its REQUIRE_MERGE fallback path) and set INPUT_MODE=merged.
+          # If _merged.json is already present, skip to avoid a double merge.
+          MERGED_JSON="${RESULT_DIR}/_merged.json"
+          if [[ -f "$MERGED_JSON" && "${INPUT_MODE:-}" == "merged" ]]; then
+            echo "  _merged.json already produced by locate step — skipping re-merge."
+            exit 0
+          fi
+
           python3 .github/scripts/merge_shards.py \
             --experiment    "$EXPERIMENT" \
             --input-root    "$RESULT_DIR" \

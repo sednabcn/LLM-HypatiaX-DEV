@@ -115,6 +115,7 @@ from pathlib import Path
 MERGE_REQUIRED_EXPERIMENTS = {
     "exp1b",
     "exp3b",
+    "instability",   # CSV-only; merge_shards.py converts CSVs → _merged.json
 }
 
 EXP_CONFIG: dict[str, dict] = {
@@ -900,7 +901,14 @@ def _write_csv(records: list[dict], path: Path) -> None:
 def _merge_instability_csvs(shard_files: list[Path], out_dir: Path) -> dict:
     """
     Concatenate instability_analysis.csv shards, deduplicate by case_id.
-    Writes _merged.csv, _stats.json, _checkpoint.json (no _merged.json).
+    Writes _merged.csv, _merged.json, _stats.json, _checkpoint.json.
+
+    _merged.json is written (as a JSON array of the same rows) so that
+    locate_analysis_input.sh can find it via its standard _merged.json
+    fast-path and route INPUT_MODE=merged to run_analysis.py --input-json.
+    Without it the locate script falls into shard mode, finds no *.json
+    files (the directory only contains CSVs/PDFs/PNGs), and exits with
+    "No shard JSON files found".
     """
     all_rows: list[dict] = []
     seen_ids: set[str] = set()
@@ -927,6 +935,12 @@ def _merge_instability_csvs(shard_files: list[Path], out_dir: Path) -> dict:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(all_rows)
+
+    # Write _merged.json — required by locate_analysis_input.sh fast-path.
+    # validate_analysis_input.py will match this as format=flat_list (Tier 1).
+    (out_dir / "_merged.json").write_text(
+        json.dumps(all_rows, indent=2, ensure_ascii=False)
+    )
 
     stats = {"n_tasks": len(all_rows), "n_shard_files": len(shard_files)}
     (out_dir / "_stats.json").write_text(json.dumps(stats, indent=2))

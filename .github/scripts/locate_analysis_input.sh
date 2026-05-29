@@ -19,9 +19,11 @@
 #    SHARD_MANIFEST  path to manifest file       (shards mode)
 #
 #  Architecture:
-#    exp1b, exp3b  (REQUIRE_MERGE=true):
+#    MERGE_REQUIRED_EXPERIMENTS (merge_shards.py) — dynamically detected:
 #      Fast path  — committed _merged.json exists → INPUT_MODE=merged
-#      Fallback   — run merge_shards.py on committed shard files → INPUT_MODE=merged
+#      Fallback   — run merge_shards.py on committed shard/CSV files → INPUT_MODE=merged
+#                   instability: CSV→_merged.json via _merge_instability_csvs()
+#                   exp1b/exp3b: JSON shards → _merged.json via standard path
 #    All others (REQUIRE_MERGE=false):
 #      DIRECT     — exactly 1 shard file → INPUT_MODE=direct
 #      SHARDS     — N>1 shard files      → INPUT_MODE=shards + manifest
@@ -63,12 +65,20 @@ echo
 echo "=== DETERMINE INPUT MODE ==="
 
 # ── Determine whether this experiment requires a merge ───────────────────────
-# Only exp1b and exp3b require merge.  Guard against substring matches on
-# "exp1b" being triggered for "exp1" (which must stay REQUIRE_MERGE=false).
-REQUIRE_MERGE=false
-if [[ "$EXPERIMENT" == "exp1b" || "$EXPERIMENT" == "exp3b" ]]; then
-  REQUIRE_MERGE=true
-fi
+# MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is the single source of truth.
+# Reading it here avoids duplicating the list in the shell script.
+REQUIRE_MERGE=$(python3 -c "
+import sys
+sys.path.insert(0, '.github/scripts')
+try:
+    from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+    print('true' if '$EXPERIMENT' in MERGE_REQUIRED_EXPERIMENTS else 'false')
+except Exception as e:
+    # Fallback: known merge experiments hard-coded as a safety net
+    print('true' if '$EXPERIMENT' in ('exp1b', 'exp3b', 'instability') else 'false',
+          file=sys.stdout)
+    print(f'::warning::Could not import MERGE_REQUIRED_EXPERIMENTS: {e}', file=sys.stderr)
+")
 echo "REQUIRE_MERGE=$REQUIRE_MERGE"
 
 # ==============================================================================
@@ -102,29 +112,32 @@ if [[ "$REQUIRE_MERGE" == "true" ]]; then
     exit 0
   fi
 
-  # ── Fallback: collect committed shard files and merge via merge_shards.py ───
-  # Workers may commit files named *_shard*_run*.json (re-run pattern) which
-  # are the final committed results for exp1b/exp3b.  Accept ALL *.json files
-  # that are not underscore-prefixed meta files.
+  # ── Fallback: run merge_shards.py against committed shard files ─────────────
+  # For JSON-shard experiments (exp1b, exp3b): collects *.json files.
+  # For CSV-only experiments (instability): collects *.csv files.
+  # merge_shards.py reads EXP_CONFIG[exp_id].shard_globs so it always finds
+  # the right files regardless of extension — we just need at least one file
+  # present to confirm the directory isn't empty before invoking it.
   echo
   echo "No _merged.json found — falling back to merge_shards.py."
 
-  mapfile -t EXP1B_SHARDS < <(
+  mapfile -t SHARD_FILES < <(
     find "$RESULT_DIR" \
       -maxdepth 2 \
       -type f \
-      -name '*.json' \
+      \( -name '*.json' -o -name '*.csv' \) \
       ! -name '_*.json' \
+      ! -name '_*.csv' \
       | sort
   )
 
-  if [[ ${#EXP1B_SHARDS[@]} -eq 0 ]]; then
-    echo "::error::No shard JSON files found in ${RESULT_DIR} and no _merged.json."
-    echo "         Ensure workers have committed result files or run ci_consolidate_experiment.yml."
+  if [[ ${#SHARD_FILES[@]} -eq 0 ]]; then
+    echo "::error::No shard files (*.json or *.csv) found in ${RESULT_DIR} and no _merged.json."
+    echo "         Ensure workers have committed result files."
     exit 1
   fi
 
-  echo "  Found ${#EXP1B_SHARDS[@]} shard file(s) — merging via merge_shards.py..."
+  echo "  Found ${#SHARD_FILES[@]} shard file(s) — merging via merge_shards.py..."
 
   python3 .github/scripts/merge_shards.py \
     --experiment    "$EXPERIMENT" \
