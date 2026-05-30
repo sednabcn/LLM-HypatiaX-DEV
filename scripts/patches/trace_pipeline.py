@@ -497,6 +497,126 @@ _STEP_CATALOGUE: list[dict] = [
               "suppB_sc", "suppB", "tables", "figures",
               "exp1b", "exp2", "exp3", "exp3b", "extrap"],
     ),
+
+    # ── 17: qualify ───────────────────────────────────────────────────────────
+    dict(
+        name="qualify",
+        description="verify_results.py spot-check + 7-dimension per-experiment gate (Phase 5)",
+        scripts=[
+            ("SCRIPTS_DIR/patches", "verify_results.py"),
+            ("REPO_ROOT",           "run_all_checkpoint.py"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "qualify_verify_run.log",
+            "qualify_run.log",
+            "logs/verify_report.json",
+        ],
+        inputs=[],
+        deps=["validate"],
+    ),
+
+    # ── 18: audit_paper ───────────────────────────────────────────────────────
+    dict(
+        name="audit_paper",
+        description="Cross-check every paper claim vs result JSONs via paper_targets.json",
+        scripts=[
+            ("REPO_ROOT", "run_all_checkpoint.py"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_paper_run.log",
+            "logs/paper_audit_findings.json",
+        ],
+        inputs=[],
+        deps=["qualify"],
+    ),
+
+    # ── 19: audit_setup ───────────────────────────────────────────────────────
+    dict(
+        name="audit_setup",
+        description="Copy .tex source files into notebooks/ for subsequent audit notebooks",
+        scripts=[],   # inline Python heredoc — no standalone script file
+        cwd_vars=["REPO_ROOT"],
+        outputs=[],   # copies files into notebooks/; no stable glob to track
+        inputs=[],
+        deps=["audit_paper"],
+    ),
+
+    # ── 20: audit_nb01 ────────────────────────────────────────────────────────
+    dict(
+        name="audit_nb01",
+        description="NB-01 Citation & Bibliography Audit (jupyter nbconvert)",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-01_Citation_Bibliography_Audit.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb01_run.log",
+        ],
+        inputs=[],
+        deps=["audit_setup"],
+    ),
+
+    # ── 21: audit_nb02 ────────────────────────────────────────────────────────
+    dict(
+        name="audit_nb02",
+        description="NB-02 Cross-Reference & Label Integrity (jupyter nbconvert)",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-02_CrossReference_Label_Audit.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb02_run.log",
+        ],
+        inputs=[],
+        deps=["audit_setup"],
+    ),
+
+    # ── 22: audit_nb03 ────────────────────────────────────────────────────────
+    dict(
+        name="audit_nb03",
+        description="NB-03 Section Structure & Numbering (jupyter nbconvert)",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-03_Section_Structure_Numbering.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb03_run.log",
+        ],
+        inputs=[],
+        deps=["audit_setup"],
+    ),
+
+    # ── 23: audit_nb04 ────────────────────────────────────────────────────────
+    dict(
+        name="audit_nb04",
+        description="NB-04 Numerical Consistency & Abstract Claims (jupyter nbconvert)",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-04_Numerical_Consistency_Checker.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb04_run.log",
+        ],
+        inputs=[],
+        deps=["audit_setup"],
+    ),
+
+    # ── 24: audit_nb05 ────────────────────────────────────────────────────────
+    dict(
+        name="audit_nb05",
+        description="NB-05 Figure Files & Image Dependencies (jupyter nbconvert)",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-05_Figure_Image_Dependency_Checker.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb05_run.log",
+        ],
+        inputs=[],
+        deps=["audit_setup"],
+    ),
 ]
 
 # Declared step order from run_all.sh _STEP_ORDER variable
@@ -504,6 +624,9 @@ _DECLARED_ORDER = [
     "env_check", "exp1", "exp1b", "extrap", "hybrid_all_domains",
     "instability", "exp2_feynman", "exp2_feynman_extrap", "exp2", "exp3", "exp3b",
     "suppA", "suppB", "suppB_sc", "tables", "figures", "validate",
+    # Phase 3 — qualification & paper audit (added 2026-05-30)
+    "qualify", "audit_paper", "audit_setup",
+    "audit_nb01", "audit_nb02", "audit_nb03", "audit_nb04", "audit_nb05",
 ]
 
 # CWD variable → repo-relative directory path
@@ -514,9 +637,11 @@ _CWD_MAP = {
     "CORE_DIR/generation/hybrid_all_domains_llm_nn":
                        "hypatiax/core/generation/hybrid_all_domains_llm_nn",
     "REPO_ROOT":       ".",
-    "REPO_ROOT/tables":  "tables",
-    "REPO_ROOT/figures": "figures",   # FIX: was missing — figures step uses this cwd
-    "SCRIPTS_DIR":     "scripts",
+    "REPO_ROOT/tables":     "tables",
+    "REPO_ROOT/figures":    "figures",   # FIX: was missing — figures step uses this cwd
+    "REPO_ROOT/notebooks":  "notebooks", # audit_nb01–nb05 jupyter notebooks
+    "SCRIPTS_DIR":          "scripts",
+    "SCRIPTS_DIR/patches":  "scripts/patches",  # qualify: verify_results.py
 }
 
 
