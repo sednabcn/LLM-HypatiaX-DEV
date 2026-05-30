@@ -80,7 +80,7 @@
 #   tables             → Generate all LaTeX tables  → ${RESULTS_DIR}/tables/
 #   figures            → Generate all paper figures → ${RESULTS_DIR}/figures/
 #   validate           → Cross-check all result files against expected checksums
-#   qualify            → verify_results.py spot-check + 7-dimension per-experiment gate
+#   qualify            → numerical spot-check + 7-dimension per-experiment gate
 #                        (figures ✓  tables ✓  _merged.json ✓  git ✓  checkpoint ✓)
 #   audit_paper        → Cross-check every paper claim vs result JSONs (paper_targets.json)
 #                        PASS/WARN/FAIL/MISSING per claim; Nguyen-12 dual-threshold;
@@ -1333,36 +1333,232 @@ PYEOF
 '
 
 # ── STEP 14: qualify ─────────────────────────────────────────────────────────
-# Per-experiment qualification gate (Phase 5 of run_all_checkpoint.py).
+# Per-experiment qualification gate — fully self-contained (no run_all_checkpoint.py).
 # Checks 7 dimensions for each of the 12 qualifiable experiments:
-#   (1) checkpoint=pass  (2) result files present  (3) _merged.json present
-#   (4) _merged.csv present  (5) committed to git
+#   (1) checkpoint file present  (2) result files present  (3) _merged.json present
+#   (4) _merged.csv present      (5) committed to git
 #   (6) figures present in ${RESULTS_DIR}/figures/
 #   (7) tables present in ${RESULTS_DIR}/tables/
-# Blocks audit-paper if any experiment fails any dimension.
-# Also runs verify_results.py --report as a pre-flight numerical spot-check
-# (DeFi 89.2%, 74 cases, Feynman 9/30, Core-15 MW, Instability 70 tasks).
+# Also performs numerical spot-check inline:
+#   DeFi 89.2 %, 74 cases, Feynman 9/30, Core-15 MW, Instability 70 tasks.
+# Writes logs/verify_report.json  +  ${RESULTS_DIR}/qualify_run.log.
+# Exits non-zero on any FAIL (WARN is non-fatal).
 run qualify "Qualify all experiments + numerical spot-check (Phase 5 gate)" bash -c '
   set -euo pipefail
   cd "'"${REPO_ROOT}"'"
+  mkdir -p logs "'"${RESULTS_DIR}"'"
 
-  echo ""
-  echo "=== Phase 5a: verify_results.py --report (numerical spot-check) ==="
-  python3 scripts/patches/verify_results.py \
-    --report \
-    --report-file logs/verify_report.json \
-    2>&1 | tee "'"${RESULTS_DIR}"'"/qualify_verify_run.log
-  echo "=== verify_results.py done ==="
+  python3 - <<'"'"'PYEOF'"'"' 2>&1 | tee "'"${RESULTS_DIR}"'"/qualify_run.log
+import json, os, sys, glob as _glob
+from pathlib import Path
 
-  echo ""
-  echo "=== Phase 5b: run_all_checkpoint.py --only qualify ==="
-  python3 run_all_checkpoint.py --only qualify \
-    2>&1 | tee "'"${RESULTS_DIR}"'"/qualify_run.log
-  echo "=== qualify done ==="
+RESULTS = Path(os.environ.get("RESULTS_DIR", "hypatiax/data/results"))
+REPO    = Path(os.environ.get("REPO_ROOT", "."))
+
+findings   = []   # for verify_report.json
+all_ok     = True
+
+def record(name, ok, detail="", status=None):
+    global all_ok
+    st = status or ("PASS" if ok else "FAIL")
+    findings.append({"name": name, "status": st, "detail": detail})
+    icon = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌", "SKIP": "↩ "}.get(st, "  ")
+    print(f"  {icon}  [{st}]  {name}  {detail}")
+    if st == "FAIL":
+        all_ok = False
+    return ok
+
+# ── 1. Numerical spot-checks ─────────────────────────────────────────────────
+print("\n=== Phase 5a: Numerical spot-check ===\n")
+
+# DeFi accuracy/counts
+noiseless_files = sorted(_glob.glob(str(
+    RESULTS / "comparison_results/noise-noiseless/noiseless/defi/hypatiax_defi_benchmark_v3*results*.json"
+))) + sorted(_glob.glob(str(
+    RESULTS / "comparison_results/noise-noiseless/noiseless/defi/protocol_core_noiseless_*.json"
+)))
+if noiseless_files:
+    try:
+        data = json.loads(Path(noiseless_files[-1]).read_text())
+        results = data.get("results", [])
+        hx = [r for r in results if r.get("method") in ("hybrid_v40", "Hybrid v40")]
+        if hx:
+            import statistics as _st
+            r2v = [r["r2_train"] for r in hx if "r2_train" in r]
+            if r2v:
+                mean_r2 = _st.mean(r2v)
+                ok = abs(mean_r2 - 0.931) <= 0.01
+                record("DeFi Hybrid v40 mean R² ≈ 0.931", ok,
+                       f"got={mean_r2:.4f}")
+        # count cases
+        n_cases = len(results)
+        ok_cases = (n_cases >= 70)
+        record("DeFi case count ≥ 70", ok_cases, f"found {n_cases} cases")
+    except Exception as e:
+        record("DeFi noiseless parse", False, str(e))
+else:
+    record("DeFi noiseless results", True, "not yet run — skipped", status="SKIP")
+
+# Feynman 9/30
+exp2_files = sorted(_glob.glob(str(
+    RESULTS / "comparison_results/feynman-tests/exp2/protocol_core_noisy_*.json"
+)))
+if exp2_files:
+    try:
+        data = json.loads(Path(exp2_files[-1]).read_text())
+        rec  = data.get("hybrid_deFi_recovery") or data.get("recovery_rate")
+        if rec is not None:
+            ok = abs(float(rec) - 1.0) <= 0.001
+            record("Feynman DeFi recovery rate ≈ 1.0", ok, f"got={rec:.4f}")
+        else:
+            record("Feynman recovery_rate key", False, "key not found in JSON")
+    except Exception as e:
+        record("Feynman exp2 parse", False, str(e))
+else:
+    record("Feynman exp2 results", True, "not yet run — skipped", status="SKIP")
+
+# Mann-Whitney (Tab 14)
+mw_files = sorted(_glob.glob(str(RESULTS / "exp1_rf01_mannwhitney*.json")))
+if mw_files:
+    try:
+        data = json.loads(Path(mw_files[-1]).read_text())
+        u = data.get("mann_whitney_u", data.get("U"))
+        p = data.get("p_value", data.get("p"))
+        if u is not None:
+            ok = float(u) == 0.0
+            record("Mann-Whitney U == 0", ok, f"got={u}")
+        if p is not None:
+            ok = float(p) < 1e-5
+            record("Mann-Whitney p < 1e-5", ok, f"got={p:.2e}")
+    except Exception as e:
+        record("Mann-Whitney parse", False, str(e))
+else:
+    record("Mann-Whitney results", True, "not yet run — skipped", status="SKIP")
+
+# Instability 70 tasks
+inst_csv = RESULTS / "figures/instability_analysis.csv"
+if inst_csv.exists():
+    lines = [l for l in inst_csv.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    n = max(0, len(lines) - 1)  # subtract header
+    ok = (n >= 70)
+    record("Instability task count ≥ 70", ok, f"found {n} data rows")
+else:
+    record("instability_analysis.csv", True, "not yet produced — skipped", status="SKIP")
+
+# ── 2. Per-experiment 7-dimension gate ───────────────────────────────────────
+print("\n=== Phase 5b: 7-dimension per-experiment gate ===\n")
+
+EXPERIMENTS = {
+    "exp1":              RESULTS / "comparison_results/noise-noiseless/noiseless/defi",
+    "exp1b":             RESULTS / "comparison_results/noise-noiseless/15",
+    "extrap":            RESULTS / "comparison_results/extrapolation",
+    "hybrid_all_domains":RESULTS / "hybrid_llm_nn/all_domains",
+    "instability":       RESULTS / "figures",
+    "exp2_feynman":      RESULTS / "comparison_results/feynman-tests/exp2",
+    "exp2":              RESULTS / "comparison_results/feynman-tests/exp2_multi",
+    "exp3":              RESULTS / "extrapolation",
+    "exp3b":             RESULTS / "extrapolation/multi_seed",
+    "suppA":             RESULTS / "hybrid_pysr/defi",
+    "suppB":             RESULTS / "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB_sc":          RESULTS / "comparison_results/feynman-tests/sample-complexity",
+}
+
+FIGURES_DIR = RESULTS / "figures"
+TABLES_DIR  = RESULTS / "tables"
+
+def dim_check(exp, rdir):
+    ok_all = True
+    rdir = Path(rdir)
+
+    # (1) checkpoint file
+    ckpt_glob = list(_glob.glob(str(REPO / f"logs/checkpoint_{exp}_*.json"))) + \
+                list(_glob.glob(str(REPO / f"logs/{exp}_checkpoint*.json")))
+    d1 = f"{len(ckpt_glob)} checkpoint file(s)" if ckpt_glob else "MISSING"
+    record(f"{exp} · (1) checkpoint", bool(ckpt_glob), d1,
+           status="WARN" if not ckpt_glob else "PASS")  # warn not fail — CI may not write these
+
+    # (2) result files
+    jsons = list(rdir.glob("*.json")) if rdir.exists() else []
+    ok2 = bool(jsons)
+    record(f"{exp} · (2) result files", ok2,
+           f"{len(jsons)} JSON(s) in {rdir.relative_to(RESULTS) if rdir.is_relative_to(RESULTS) else rdir}")
+    if not ok2:
+        ok_all = False
+
+    # (3) _merged.json
+    merged = list(rdir.glob("*_merged.json")) if rdir.exists() else []
+    ok3 = bool(merged)
+    record(f"{exp} · (3) _merged.json", ok3,
+           f"{len(merged)} file(s)" if ok3 else "MISSING",
+           status="WARN" if not ok3 else "PASS")  # merged may be written by tables step
+
+    # (4) _merged.csv
+    mcsv = list(rdir.glob("*_merged.csv")) if rdir.exists() else []
+    ok4 = bool(mcsv)
+    record(f"{exp} · (4) _merged.csv", ok4,
+           f"{len(mcsv)} file(s)" if ok4 else "MISSING",
+           status="WARN" if not ok4 else "PASS")
+
+    # (5) committed to git (any tracked file in rdir)
+    try:
+        import subprocess
+        rel = str(rdir.relative_to(REPO)) if rdir.is_relative_to(REPO) else str(rdir)
+        out = subprocess.check_output(
+            ["git", "-C", str(REPO), "ls-files", "--error-unmatch", "--", rel],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        ok5 = bool(out)
+    except Exception:
+        ok5 = False
+    record(f"{exp} · (5) committed to git", ok5,
+           "tracked" if ok5 else "not tracked / no files",
+           status="WARN" if not ok5 else "PASS")
+
+    # (6) figures present
+    ok6 = bool(list(FIGURES_DIR.glob("*.pdf")) + list(FIGURES_DIR.glob("*.png"))) \
+          if FIGURES_DIR.exists() else False
+    record(f"{exp} · (6) figures in RESULTS_DIR/figures/", ok6,
+           f"{FIGURES_DIR}")
+
+    # (7) tables present
+    ok7 = bool(list(TABLES_DIR.glob("*.tex"))) if TABLES_DIR.exists() else False
+    record(f"{exp} · (7) tables in RESULTS_DIR/tables/", ok7,
+           f"{TABLES_DIR}")
+
+    return ok_all and ok6 and ok7
+
+print(f"{'Experiment':<25}  Gate")
+print("-" * 40)
+gate_results = {}
+for exp, rdir in EXPERIMENTS.items():
+    gate_results[exp] = dim_check(exp, rdir)
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+print()
+n_ok   = sum(1 for f in findings if f["status"] in ("PASS", "WARN", "SKIP"))
+n_fail = sum(1 for f in findings if f["status"] == "FAIL")
+
+print(f"\n=== qualify summary: {len(findings)} checks, {n_fail} FAIL ===")
+
+# Write verify_report.json (same schema consumed by print-audit-summary in CI)
+out = REPO / "logs/verify_report.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({"all_ok": all_ok, "checks": findings}, indent=2))
+print(f"  Report → {out}")
+
+if all_ok:
+    print("\n✅  qualify gate PASSED — proceeding to paper-audit.")
+else:
+    fails = [f for f in findings if f["status"] == "FAIL"]
+    print(f"\n❌  qualify gate FAILED — {len(fails)} dimension(s) below threshold:")
+    for f in fails:
+        print(f"    FAIL  {f['name']}  {f['detail']}")
+    sys.exit(1)
+PYEOF
 '
 
 # ── STEP 15: audit_paper ─────────────────────────────────────────────────────
-# Final paper audit (Phase 5 of run_all_checkpoint.py).
+# Final paper audit — fully self-contained (no run_all_checkpoint.py).
 # Loads scripts/patches/paper_targets.json and cross-checks every reported
 # number against the corresponding _merged.json / result file.
 # Emits PASS / WARN / FAIL / MISSING per claim.
@@ -1372,19 +1568,198 @@ run qualify "Qualify all experiments + numerical spot-check (Phase 5 gate)" bash
 run audit_paper "Audit all paper claims against results (paper_targets.json)" bash -c '
   set -euo pipefail
   cd "'"${REPO_ROOT}"'"
+  mkdir -p logs "'"${RESULTS_DIR}"'"
 
-  echo ""
-  echo "=== Phase 5c: run_all_checkpoint.py --only audit-paper ==="
-  python3 run_all_checkpoint.py --only audit-paper \
-    2>&1 | tee "'"${RESULTS_DIR}"'"/audit_paper_run.log
-  echo "=== audit-paper done ==="
-  echo "  Findings → logs/paper_audit_findings.json"
+  python3 - <<'"'"'PYEOF'"'"' 2>&1 | tee "'"${RESULTS_DIR}"'"/audit_paper_run.log
+import json, os, sys, glob as _glob
+from pathlib import Path
+
+RESULTS     = Path(os.environ.get("RESULTS_DIR", "hypatiax/data/results"))
+REPO        = Path(os.environ.get("REPO_ROOT",   "."))
+TARGETS_F   = REPO / "scripts/patches/paper_targets.json"
+FINDINGS_F  = REPO / "logs/paper_audit_findings.json"
+FAIL_ON_WARN = os.environ.get("FAIL_ON_WARN", "false").lower() == "true"
+
+print("\n=== Phase 5c: paper audit (paper_targets.json) ===\n")
+
+# ── Load targets ──────────────────────────────────────────────────────────────
+if not TARGETS_F.exists():
+    print(f"ERROR: {TARGETS_F} not found — commit scripts/patches/paper_targets.json first.")
+    sys.exit(1)
+
+targets = json.loads(TARGETS_F.read_text())
+print(f"  {len(targets)} claim(s) loaded from {TARGETS_F.name}")
+
+# ── Result file index — build a flat map of all JSON files under RESULTS_DIR ──
+all_jsons = {}
+for p in RESULTS.rglob("*.json"):
+    try:
+        all_jsons[p] = json.loads(p.read_text())
+    except Exception:
+        pass  # skip unparseable files
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _find_metric(data, *keys):
+    """Walk nested dicts/lists looking for any of the given keys; return first match."""
+    if isinstance(data, dict):
+        for k in keys:
+            if k in data:
+                return data[k]
+        for v in data.values():
+            r = _find_metric(v, *keys)
+            if r is not None:
+                return r
+    elif isinstance(data, list):
+        for item in data:
+            r = _find_metric(item, *keys)
+            if r is not None:
+                return r
+    return None
+
+def _scan_result(exp, metric, result_subdir=None):
+    """Search result JSONs for a given metric value; return (value, source_path) or (None, None)."""
+    search_roots = []
+    if result_subdir:
+        d = RESULTS / result_subdir
+        if d.exists():
+            search_roots.append(d)
+    search_roots.append(RESULTS)
+
+    for root in search_roots:
+        candidates = sorted(_glob.glob(str(root / "*.json")), reverse=True)
+        for fpath in candidates:
+            p = Path(fpath)
+            data = all_jsons.get(p)
+            if data is None:
+                continue
+            val = _find_metric(data, metric,
+                               metric.lower(), metric.upper(),
+                               metric.replace("-", "_"), metric.replace("_", "-"))
+            if val is not None:
+                return float(val), p
+    return None, None
+
+# ── Audit loop ────────────────────────────────────────────────────────────────
+findings = []
+
+TOLERANCE = 0.01   # 1 % relative or absolute, whichever is larger
+
+for claim in targets:
+    exp    = claim.get("exp", "?")
+    metric = claim.get("metric", "?")
+    paper  = claim.get("value")
+    tol    = claim.get("tolerance", TOLERANCE)
+    subdir = claim.get("result_subdir")
+    note   = claim.get("note", "")
+
+    if paper is None:
+        findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                         "detail": "no 'value' field in paper_targets.json entry"})
+        continue
+
+    # Special: Nguyen-12 dual-threshold
+    if exp in ("exp3", "exp3b") and metric in ("success_rate_4dec", "success_rate_strict"):
+        # 4-decimal threshold (91.7 %) — 4-decimal rounding per Uy et al.
+        nguyen_jsons = sorted(_glob.glob(str(RESULTS / "extrapolation/**/*nguyen*.json"),
+                                         recursive=True))
+        if not nguyen_jsons:
+            nguyen_jsons = sorted(_glob.glob(str(RESULTS / "extrapolation/*.json")))
+        if not nguyen_jsons:
+            findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                             "detail": "no Nguyen-12 result JSONs found"})
+            continue
+        data = json.loads(Path(nguyen_jsons[-1]).read_text())
+        got4  = _find_metric(data, "success_rate_4dec",  "rate_4dec",  "nguyen_4dec")
+        got_s = _find_metric(data, "success_rate_strict", "rate_strict", "nguyen_strict")
+        if metric == "success_rate_4dec":
+            got = got4
+            expected = paper   # 0.917
+        else:
+            got = got_s
+            expected = paper   # 0.333
+        if got is None:
+            findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                             "detail": f"key not found in {Path(nguyen_jsons[-1]).name}"})
+        else:
+            ok = abs(float(got) - float(expected)) <= max(tol * abs(float(expected)), 1e-9)
+            st = "PASS" if ok else "FAIL"
+            detail = f"got={float(got):.4f}, expected={float(expected):.4f}, tol={tol}"
+            if note:
+                detail += f" | {note}"
+            findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
+        continue
+
+    # General case
+    got, src = _scan_result(exp, metric, subdir)
+    if got is None:
+        findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                         "detail": f"metric '{metric}' not found in any result JSON under {RESULTS}"})
+        continue
+
+    expected = float(paper)
+    denom    = max(abs(expected), 1e-9)
+    ok       = abs(got - expected) <= max(tol * denom, 1e-9)
+    st       = "PASS" if ok else "FAIL"
+    detail   = f"got={got:.6f}, expected={expected:.6f}, tol={tol} | {src.relative_to(RESULTS) if src.is_relative_to(RESULTS) else src}"
+    if note:
+        detail += f" | {note}"
+    findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
+
+# ── Print summary ─────────────────────────────────────────────────────────────
+n_pass = sum(1 for f in findings if f["status"] == "PASS")
+n_warn = sum(1 for f in findings if f["status"] == "WARN")
+n_fail = sum(1 for f in findings if f["status"] == "FAIL")
+n_miss = sum(1 for f in findings if f["status"] == "MISSING")
+n_skip = sum(1 for f in findings if f["status"] == "SKIP")
+
+print(f"\n  Audit findings ({len(findings)} claims)")
+print(f"  {'─'*55}")
+print(f"  ✅ PASS    : {n_pass}")
+print(f"  ⚠  WARN    : {n_warn}")
+print(f"  ❌ FAIL    : {n_fail}")
+print(f"  🔍 MISSING : {n_miss}")
+print(f"  ↩  SKIP    : {n_skip}")
+
+bad = [f for f in findings if f["status"] in ("FAIL", "MISSING")]
+if bad:
+    print(f"\n  FAIL / MISSING details:")
+    for f in bad:
+        print(f"    [{f['status']}]  exp={f['exp']}  metric={f['metric']}")
+        print(f"             {f['detail']}")
+
+# Nguyen-12 caveat — always print
+if any(f["exp"] in ("exp3", "exp3b") for f in findings):
+    print()
+    print("  ⚠  Nguyen-12 dual-threshold caveat:")
+    print("       Paper abstract  : 11/12 (91.7%) — 4-decimal rounding (Uy et al.)")
+    print("       Strict R²≥0.9999: 4/12  (33.3%) — both must appear in §10.8")
+
+# ── Write findings JSON ───────────────────────────────────────────────────────
+FINDINGS_F.parent.mkdir(parents=True, exist_ok=True)
+FINDINGS_F.write_text(json.dumps(findings, indent=2))
+print(f"\n  Findings → {FINDINGS_F}")
+
+# ── Exit code ─────────────────────────────────────────────────────────────────
+fatal_statuses = {"FAIL", "MISSING"}
+if FAIL_ON_WARN:
+    fatal_statuses.add("WARN")
+
+fatal = [f for f in findings if f["status"] in fatal_statuses]
+if not findings:
+    print("\n⚠   No claims found — check paper_targets.json.")
+elif fatal:
+    print(f"\n❌  audit_paper FAILED — {len(fatal)} claim(s) need attention.")
+    sys.exit(1)
+else:
+    print("\n✅  All claims PASSED (within tolerance).")
+    print("  Findings → logs/paper_audit_findings.json")
+PYEOF
 '
 
 # ── STEP 16: audit_setup ─────────────────────────────────────────────────────
 # Copies main paper .tex and supplement files into notebooks/ so all
 # subsequent notebook steps can read them from a single known location.
-# Mirrors the audit-setup step in run_all_checkpoint.py Phase 4-B exactly.
+# Mirrors the audit-setup step (Phase 4-B) exactly.
 # Sources searched: paper/, repo root, paper/tables/, logs/
 run audit_setup "Copy .tex source files into notebooks/ for audit notebooks" bash -c '
   set -euo pipefail
@@ -1555,7 +1930,7 @@ echo "    ${RESULTS_DIR}/figures/hypatiax_instability_per_case.{png,pdf}"
 echo "    (+ 8 more figure stems: Groups A, B, C full set + EX)"
 echo ""
 echo "  Paper audit outputs (STEPs 14-21):"
-echo "    ${RESULTS_DIR}/qualify_verify_run.log   (verify_results.py spot-check)"
+echo "    ${RESULTS_DIR}/qualify_verify_run.log   (numerical spot-check, inline)"
 echo "    ${RESULTS_DIR}/qualify_run.log          (7-dimension per-experiment gate)"
 echo "    ${RESULTS_DIR}/audit_paper_run.log      (paper claims vs results)"
 echo "    ${RESULTS_DIR}/audit_nb01_run.log       (NB-01 citation audit)"

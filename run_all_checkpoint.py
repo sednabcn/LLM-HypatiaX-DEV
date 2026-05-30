@@ -1168,6 +1168,23 @@ def _hybrid_domain_args() -> list[str]:
     return ["--domains"] + HYBRID_ALL_DOMAINS_IDS
 
 
+# Canonical 11-domain list — mirrors run_all.sh FEYNMAN_DOMAINS (line ~201).
+# Used by exp2_feynman and exp2_feynman_extrap step commands which embed this
+# list as a Python literal via f-string interpolation at module-load time.
+FEYNMAN_DOMAINS_LIST = [
+    "feynman_biology",
+    "feynman_chemistry",
+    "feynman_electrochemistry",
+    "feynman_electromagnetism",
+    "feynman_electrostatics",
+    "feynman_magnetism",
+    "feynman_mechanics",
+    "feynman_optics",
+    "feynman_probability",
+    "feynman_quantum",
+    "feynman_thermodynamics",
+]
+
 STEPS: list[Step] = [
     # ── Phase 0: Setup ─────────────────────────────────────────────────────
     Step("env_check",

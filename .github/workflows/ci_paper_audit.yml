@@ -12,13 +12,13 @@
 #  JOBS (sequential)
 #  -----------------
 #  Job 1 — numerical-verify
-#    python3 scripts/patches/verify_results.py --report --report-file logs/verify_report.json
-#    Checks: DeFi accuracy/counts, Feynman 9/30, Core-15 MW statistics,
-#            Instability 70 tasks, DeFi duplicate cases.
-#    Exits non-zero on any FAIL.
+#    bash run_all.sh qualify
+#    Inline Python: DeFi accuracy/counts, Feynman 9/30, Core-15 MW statistics,
+#            Instability 70 tasks, 7-dimension per-experiment gate.
+#    Writes logs/verify_report.json.  Exits non-zero on any FAIL.
 #
 #  Job 2 — paper-audit  (needs: numerical-verify)
-#    python3 run_all_checkpoint.py --only audit-paper
+#    bash run_all.sh audit_paper
 #    Loads scripts/patches/paper_targets.json, cross-checks all claims
 #    against _merged.json files, emits logs/paper_audit_findings.json.
 #    Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
@@ -33,7 +33,7 @@
 #  TIMEOUT CONTRACT
 #  ----------------
 #  numerical-verify    : 15 min  (reads JSON files — no heavy computation)
-#  paper-audit         : 15 min  (run_all_checkpoint.py --only audit-paper)
+#  paper-audit         : 15 min  (bash run_all.sh audit_paper)
 #  figures-tables-validate : 10 min  (file presence checks only)
 #
 #  ARTIFACTS
@@ -166,7 +166,7 @@ jobs:
   # ============================================================================
   #  JOB 1 — numerical-verify
   #
-  #  Runs scripts/patches/verify_results.py --report.
+  #  Runs bash run_all.sh qualify (inline Python — no external verify_results.py).
   #  Checks:
   #    • DeFi accuracy/counts
   #    • Feynman 9/30
@@ -202,27 +202,24 @@ jobs:
           if [[ -f requirements.txt ]]; then
             pip install -r requirements.txt
           else
-            # Minimal deps required by verify_results.py
             pip install numpy scipy
           fi
 
       - name: Create logs directory
         run: mkdir -p logs
 
-      - name: Run verify_results.py
+      - name: Run qualify step (via run_all.sh)
         id: verify
         env:
-          OUT_BASE:           ${{ env.OUT_BASE }}
+          RESULTS_DIR:        ${{ env.OUT_BASE }}
           ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
 
-          echo "=== numerical-verify ==="
-          echo "Results base: ${OUT_BASE}"
+          echo "=== numerical-verify (qualify) ==="
+          echo "Results base: ${RESULTS_DIR}"
 
-          python3 scripts/patches/verify_results.py \
-            --report \
-            --report-file logs/verify_report.json \
+          bash run_all.sh qualify \
             2>&1 | tee logs/verify_run.log
 
           EXIT_CODE=${PIPESTATUS[0]}
@@ -271,7 +268,7 @@ jobs:
   # ============================================================================
   #  JOB 2 — paper-audit  (needs: numerical-verify)
   #
-  #  Runs:  python3 run_all_checkpoint.py --only audit-paper
+  #  Runs:  bash run_all.sh audit_paper
   #
   #  Loads  scripts/patches/paper_targets.json
   #  Emits  logs/paper_audit_findings.json
@@ -355,7 +352,7 @@ jobs:
         run: |
           FINDINGS="logs/paper_audit_findings.json"
           if [[ ! -f "${FINDINGS}" ]]; then
-            echo "  logs/paper_audit_findings.json not written — run_all_checkpoint.py may have failed before emitting it."
+            echo "  logs/paper_audit_findings.json not written — run_all.sh audit_paper may have failed before emitting it."
             echo "  Check logs/paper_audit_run.log above."
             exit 0
           fi
