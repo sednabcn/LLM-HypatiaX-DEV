@@ -213,10 +213,22 @@ _STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_fey
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --step)   ONLY_STEP="$2"; shift 2 ;;
-    --from)   FROM_STEP="$2"; shift 2 ;;
+    --step)    ONLY_STEP="$2"; shift 2 ;;
+    --from)    FROM_STEP="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
-    *) echo "Unknown arg: $1"; exit 1 ;;
+    # Bare step name: "bash run_all.sh audit_paper" treated as "--step audit_paper".
+    # Validated against _STEP_ORDER so typos still produce a clear error.
+    *)
+      BARE="$1"; shift
+      if [[ " $_STEP_ORDER " == *" ${BARE} "* ]]; then
+        ONLY_STEP="$BARE"
+      else
+        echo "Unknown arg: ${BARE}"
+        echo "  Valid step names: ${_STEP_ORDER}"
+        echo "  Flags: --step <step> | --from <step> | --dry-run"
+        exit 1
+      fi
+      ;;
   esac
 done
 
