@@ -209,7 +209,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
+_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1213,7 +1213,8 @@ checks = []
 def check(label, got, expected, tol=TOLERANCE):
     ok = abs(got - expected) <= tol * max(abs(expected), 1e-9)
     checks.append((label, got, expected, ok))
-    print(f"  [{'OK' if ok else 'FAIL'}] {label}: got={got:.6f}, expected={expected:.6f}")
+    _tag = "OK" if ok else "FAIL"
+    print(f"  [{_tag}] {label}: got={got:.6f}, expected={expected:.6f}")
     return ok
 
 print("\n=== Validating key numerical results against JMLR v3.0 ===\n")
@@ -1255,7 +1256,8 @@ if mw_files:
     if p is not None:
         ok = p < 1e-5
         checks.append(("p-value < 1e-5", p, 1.11e-6, ok))
-        print(f"  [{'OK' if ok else 'FAIL'}] p-value < 1e-5: got={p:.2e}")
+        _tag = "OK" if ok else "FAIL"
+        print(f"  [{_tag}] p-value < 1e-5: got={p:.2e}")
 else:
     print("  [SKIP] Mann-Whitney results not found")
 
@@ -1263,16 +1265,19 @@ else:
 had = glob.glob(f"{RESULTS}/hybrid_llm_nn/all_domains/*.json")
 ok = bool(had)
 checks.append(("hybrid_all_domains output present (all_domains/)", 1.0 if ok else 0.0, 1.0, ok))
-print(f"  [{'OK' if ok else 'FAIL'}] hybrid_llm_nn/all_domains/: {len(had)} JSON file(s)")
+_tag = "OK" if ok else "FAIL"
+print(f"  [{_tag}] hybrid_llm_nn/all_domains/: {len(had)} JSON file(s)")
 
 # --- STEP 4a: instability outputs present ---
 inst_csv = os.path.isfile(f"{RESULTS}/figures/instability_analysis.csv")
 checks.append(("instability_analysis.csv present", 1.0 if inst_csv else 0.0, 1.0, inst_csv))
-print(f"  [{'OK' if inst_csv else 'FAIL'}] instability_analysis.csv")
+_tag = "OK" if inst_csv else "FAIL"
+print(f"  [{_tag}] instability_analysis.csv")
 inst_fig = glob.glob(f"{RESULTS}/figures/fig_paper_complexity_vs_instability.pdf")
 ok_ifig = bool(inst_fig)
 checks.append(("fig_paper_complexity_vs_instability.pdf present", 1.0 if ok_ifig else 0.0, 1.0, ok_ifig))
-print(f"  [{'OK' if ok_ifig else 'FAIL'}] fig_paper_complexity_vs_instability.pdf (KEY SS10.9 figure)")
+_tag = "OK" if ok_ifig else "FAIL"
+print(f"  [{_tag}] fig_paper_complexity_vs_instability.pdf (KEY SS10.9 figure)")
 
 # --- FIX CRITICAL 2: suppB_sc output present ---
 # Output path: comparison_results/feynman-tests/sample-complexity/
@@ -1280,7 +1285,8 @@ sc = (glob.glob(f"{RESULTS}/comparison_results/feynman-tests/sample-complexity/*
       glob.glob(f"{RESULTS}/comparison_results/feynman-tests/sample-complexity/**/*.json"))
 ok = bool(sc)
 checks.append(("suppB_sc output present (sample-complexity/)", 1.0 if ok else 0.0, 1.0, ok))
-print(f"  [{'OK' if ok else 'FAIL'}] sample-complexity outputs: {len(sc)} file(s)")
+_tag = "OK" if ok else "FAIL"
+print(f"  [{_tag}] sample-complexity outputs: {len(sc)} file(s)")
 
 # --- CRITICAL 4: suppB noise_sweep_*.json glob match ---
 # tables-generator uses glob 'noise_sweep_*.json' to find suppB results.
@@ -1305,8 +1311,9 @@ exp3b_files = glob.glob(f"{RESULTS}/extrapolation/multi_seed/*nguyen*.json")
 ok_exp3b = bool(exp3b_files)
 checks.append(("exp3b outputs in extrapolation/multi_seed/ (BUG 2)", 1.0 if ok_exp3b else 0.0, 1.0, ok_exp3b))
 suffix_exp3b = " (exp3b not yet run)" if not ok_exp3b else ""
+_tag = "OK" if ok_exp3b else "SKIP"
 print(
-    f"  [{'OK' if ok_exp3b else 'SKIP'}] extrapolation/multi_seed/: "
+    f"  [{_tag}] extrapolation/multi_seed/: "
     f"{len(exp3b_files)} nguyen JSON(s){suffix_exp3b}"
 )
 
@@ -1316,8 +1323,10 @@ fig = glob.glob(f"{RESULTS}/figures/*.pdf")
 ok_tbl = bool(tbl); ok_fig = bool(fig)
 checks.append(("tables in RESULTS_DIR/tables/", 1.0 if ok_tbl else 0.0, 1.0, ok_tbl))
 checks.append(("figures in RESULTS_DIR/figures/", 1.0 if ok_fig else 0.0, 1.0, ok_fig))
-print(f"  [{'OK' if ok_tbl else 'FAIL'}] {RESULTS}/tables/: {len(tbl)} .tex file(s)")
-print(f"  [{'OK' if ok_fig else 'FAIL'}] {RESULTS}/figures/: {len(fig)} .pdf file(s)")
+_tag_tbl = "OK" if ok_tbl else "FAIL"
+_tag_fig = "OK" if ok_fig else "FAIL"
+print(f"  [{_tag_tbl}] {RESULTS}/tables/: {len(tbl)} .tex file(s)")
+print(f"  [{_tag_fig}] {RESULTS}/figures/: {len(fig)} .pdf file(s)")
 
 # --- Summary ---
 total = len(checks); passed = sum(1 for item in checks if item[-1])
@@ -1563,7 +1572,8 @@ def dim_check(exp, rdir):
 
     return ok_all and ok6 and ok7
 
-print(f"{'Experiment':<25}  Gate")
+_hdr = "Experiment"
+print(f"{_hdr:<25}  Gate")
 print("-" * 40)
 gate_results = {}
 for exp, rdir in EXPERIMENTS.items():
@@ -1749,7 +1759,7 @@ n_miss = sum(1 for f in findings if f["status"] == "MISSING")
 n_skip = sum(1 for f in findings if f["status"] == "SKIP")
 
 print(f"\n  Audit findings ({len(findings)} claims)")
-print(f"  {'─'*55}")
+print("  " + chr(9472)*55)
 print(f"  ✅ PASS    : {n_pass}")
 print(f"  ⚠  WARN    : {n_warn}")
 print(f"  ❌ FAIL    : {n_fail}")
@@ -1929,389 +1939,6 @@ run audit_nb05 "NB-05: Figure Files & Image Dependencies" bash -c '
     notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb \
     2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb05_run.log
   echo "=== NB-05 done ==="
-'
-
-# ── STEP 22: audit_guard ──────────────────────────────────────────────────────
-# Evaluates workflow_run trigger: slot==12, run_full=true, conclusion=success.
-# Writes should_run=true/false to $GITHUB_OUTPUT.
-run audit_guard "Guard: evaluate trigger conditions (slot=12, run_full, success)" bash -c '
-  set -euo pipefail
-  python3 - <<'"'"'PYEOF'"'"'
-import os, re, sys
-
-event      = os.environ["EVENT_NAME"]
-conclusion = os.environ.get("TRIGGER_CONCLUSION", "")
-title      = os.environ.get("TRIGGER_TITLE", "")
-wf_name    = os.environ.get("TRIGGER_NAME", "")
-
-# Manual dispatch always proceeds
-if event == "workflow_dispatch":
-    print("Manual dispatch — proceeding unconditionally.")
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write("should_run=true\n")
-    sys.exit(0)
-
-# Auto trigger: only proceed when the upstream run succeeded
-if conclusion != "success":
-    print(f"Upstream run conclusion='"'"'{conclusion}'"'"' (not success) — skipping.")
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write("should_run=false\n")
-    sys.exit(0)
-
-# Parse the run-name: "HypatiaX pipeline — <experiment_index>"
-m = re.search(r"—\s*(\d+)([afcp]?)\s*$", title)
-if not m:
-    print(f"Could not parse slot from run title: '"'"'{title}'"'"' — skipping.")
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write("should_run=false\n")
-    sys.exit(0)
-
-slot   = int(m.group(1))
-suffix = m.group(2)   # "" = full pipeline, "a/f/c/p" = partial
-
-if slot != 12:
-    print(f"Slot={slot} (not 12) — skipping paper audit.")
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write("should_run=false\n")
-    sys.exit(0)
-
-if suffix != "":
-    print(f"Slot=12 but suffix='"'"'{suffix}'"'"' (run_full=false) — skipping paper audit.")
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write("should_run=false\n")
-    sys.exit(0)
-
-print(f"Slot=12, run_full=true, conclusion=success — paper audit WILL run.")
-with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-    f.write("should_run=true\n")
-PYEOF
-'
-
-# ── STEP 23: audit_print_verify ───────────────────────────────────────────────
-# Prints a human-readable summary of logs/verify_report.json to stdout.
-# Called after bash run_all.sh qualify; safe to call even when the file is absent.
-run audit_print_verify "Print verify summary from logs/verify_report.json" bash -c '
-  set -euo pipefail
-  if [[ ! -f logs/verify_report.json ]]; then
-    echo "  logs/verify_report.json not written — see verify_run.log above."
-    exit 0
-  fi
-  echo "=== verify_report.json ==="
-  python3 - <<'"'"'PYEOF'"'"'
-import json
-from pathlib import Path
-data   = json.loads(Path("logs/verify_report.json").read_text())
-checks = data if isinstance(data, list) else data.get("checks", [])
-n_ok   = sum(1 for c in checks if c.get("status") in ("OK", "PASS", "pass"))
-n_fail = sum(1 for c in checks if c.get("status") in ("FAIL", "fail"))
-n_warn = sum(1 for c in checks if c.get("status") in ("WARN", "warn"))
-print(f"  Checks : {len(checks)} total")
-print(f"  PASS   : {n_ok}")
-print(f"  WARN   : {n_warn}")
-print(f"  FAIL   : {n_fail}")
-if n_fail:
-    print("\n  Failed checks:")
-    for c in checks:
-        if c.get("status") in ("FAIL", "fail"):
-            print(f"    \u274c  {c.get(\"name\", c.get(\"check\", \"?\"))}: {c.get(\"detail\", \"\")}")
-PYEOF
-'
-
-# ── STEP 24: audit_print_findings ─────────────────────────────────────────────
-# Prints a human-readable summary of logs/paper_audit_findings.json to stdout.
-# Called after bash run_all.sh audit_paper; safe to call even when absent.
-run audit_print_findings "Print audit summary from logs/paper_audit_findings.json" bash -c '
-  set -euo pipefail
-  FINDINGS="logs/paper_audit_findings.json"
-  if [[ ! -f "${FINDINGS}" ]]; then
-    echo "  logs/paper_audit_findings.json not written — run_all.sh audit_paper may have failed before emitting it."
-    echo "  Check logs/paper_audit_run.log above."
-    exit 0
-  fi
-  python3 - <<'"'"'PYEOF'"'"'
-import json
-from pathlib import Path
-
-data   = json.loads(Path("logs/paper_audit_findings.json").read_text())
-n_pass = sum(1 for f in data if f["status"] == "PASS")
-n_warn = sum(1 for f in data if f["status"] == "WARN")
-n_fail = sum(1 for f in data if f["status"] == "FAIL")
-n_miss = sum(1 for f in data if f["status"] == "MISSING")
-n_skip = sum(1 for f in data if f["status"] == "SKIP")
-
-print(f"\n  Audit findings ({len(data)} claims)")
-print(f"  {chr(9472)*55}")
-print(f"  \u2705 PASS    : {n_pass}")
-print(f"  \u26a0  WARN    : {n_warn}")
-print(f"  \u274c FAIL    : {n_fail}")
-print(f"  \U0001f50d MISSING : {n_miss}")
-print(f"  \u21a9  SKIP    : {n_skip}")
-
-bad = [f for f in data if f["status"] in ("FAIL", "MISSING")]
-if bad:
-    print(f"\n  FAIL / MISSING details:")
-    for f in bad:
-        print(f"    [{f[\"status\"]}]  exp={f[\"exp\"]}  metric={f[\"metric\"]}")
-        print(f"             {f[\"detail\"]}")
-
-if any(f["exp"] in ("exp3", "exp3b") for f in data):
-    print()
-    print("  \u26a0  Nguyen-12 dual-threshold caveat:")
-    print("       Paper abstract  : 11/12 (91.7%) — 4-decimal rounding")
-    print("       Strict R\u00b2\u22650.9999: 4/12  (33.3%) — both must appear in \u00a710.8")
-
-if n_fail == 0 and n_miss == 0 and len(data) > 0:
-    print("\n  \u2705  All claims PASSED (within tolerance).")
-elif len(data) == 0:
-    print("\n  \u26a0   No claims found — check paper_targets.json.")
-else:
-    print(f"\n  \u274c  {n_fail} FAIL + {n_miss} MISSING — fix before submission.")
-PYEOF
-'
-
-# ── STEP 25: audit_figures_tables ─────────────────────────────────────────────
-# Validates expected figures (PDF/PNG) and LaTeX tables (TeX) are present under
-# RESULTS_DIR.  Writes logs/figures_tables_report.json.
-# Exits non-zero on any missing required file.
-run audit_figures_tables "Validate figures and tables presence under RESULTS_DIR" bash -c '
-  set -euo pipefail
-  mkdir -p logs
-  python3 - <<'"'"'PYEOF'"'"'
-import json, os, sys
-from pathlib import Path
-import glob as _glob
-
-OUT_BASE    = Path(os.environ.get("OUT_BASE", os.environ.get("RESULTS_DIR", "hypatiax/data/results")))
-FIGURES_DIR = OUT_BASE / "figures"
-TABLES_DIR  = OUT_BASE / "tables"
-
-findings = []
-all_ok   = True
-
-def record(category, name, ok, detail=""):
-    findings.append({"category": category, "name": name, "ok": ok, "detail": detail})
-    icon = "\u2705" if ok else "\u274c"
-    print(f"  {icon}  [{category}]  {name}  {detail}")
-    return ok
-
-# ── 1. Shared figures/ directory ─────────────────────────────────────────────
-print("\n\u2500\u2500 Shared figures directory \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-pdfs = list(FIGURES_DIR.glob("*.pdf")) if FIGURES_DIR.exists() else []
-pngs = list(FIGURES_DIR.glob("*.png")) if FIGURES_DIR.exists() else []
-record("figures", "shared figures dir exists", FIGURES_DIR.exists(), str(FIGURES_DIR))
-record("figures", ">=1 PDF in figures/",        bool(pdfs), f"{len(pdfs)} PDF(s)")
-record("figures", ">=1 PNG in figures/",        bool(pngs), f"{len(pngs)} PNG(s)")
-if not bool(pdfs): all_ok = False
-if not bool(pngs): all_ok = False
-
-# ── 2. Shared tables/ directory ──────────────────────────────────────────────
-print("\n\u2500\u2500 Shared tables directory \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-texs = list(TABLES_DIR.glob("*.tex")) if TABLES_DIR.exists() else []
-record("tables", "shared tables dir exists", TABLES_DIR.exists(), str(TABLES_DIR))
-record("tables", ">=1 TeX in tables/",        bool(texs), f"{len(texs)} TeX file(s)")
-if not bool(texs): all_ok = False
-
-# ── 3. KEY instability figures (run_all.sh STEP 4a) ──────────────────────────
-print("\n\u2500\u2500 KEY instability figures (\u00a710.9) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-KEY_FIG_STEMS = [
-    "fig_paper_complexity_vs_instability",
-    "fig_paper_instability_hist",
-    "fig_paper_regime_counts",
-    "hypatiax_instability_per_case",
-    "instability_analysis",
-]
-for stem in KEY_FIG_STEMS:
-    if stem == "instability_analysis":
-        csv_path = FIGURES_DIR / f"{stem}.csv"
-        ok = record("instability", f"{stem}.csv", csv_path.exists(),
-                    str(csv_path) if csv_path.exists() else f"MISSING at {csv_path}")
-        if not ok: all_ok = False
-    else:
-        found_any = any((FIGURES_DIR / f"{stem}{ext}").exists() for ext in (".pdf", ".png"))
-        ok = record("instability", f"{stem}[.pdf/.png]", found_any, f"in {FIGURES_DIR}")
-        if not found_any: all_ok = False
-
-extrap_csv = FIGURES_DIR / "instability_extrapolation.csv"
-record("instability", "instability_extrapolation.csv (Stage 2, optional)",
-       extrap_csv.exists(), "(absent if benchmark JSON not present — non-fatal)")
-
-# ── 4. Per-experiment result directories ─────────────────────────────────────
-print("\n\u2500\u2500 Per-experiment result directories \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-EXP_CHECKS = {
-    "exp1  (Tab 9, 10, 15)": (
-        "comparison_results/noise-noiseless/noiseless/defi",
-        ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
-    ),
-    "exp1b (Tab 11-13)": (
-        "comparison_results/noise-noiseless/15",
-        ["comparison_FIXED_*.json", "defi_v3_*.json",
-         "hypatiax_defi_benchmark_v3*results*.json"],
-    ),
-    "exp2_feynman (Tab 17)": (
-        "comparison_results/feynman-tests/exp2",
-        ["protocol_core_*.json", "benchmark_results.json"],
-    ),
-    "exp2  (Tab 19)": (
-        "comparison_results/feynman-tests/exp2_multi",
-        ["protocol_core_*.json", "benchmark_results.json"],
-    ),
-    "exp3  (tab:nguyen12 seed=42)": (
-        "extrapolation",
-        ["*nguyen*seed42*.json", "exp3_nguyen12_*.json"],
-    ),
-    "exp3b (tab:nguyen12 seeds 99/123/777/2024)": (
-        "extrapolation/multi_seed",
-        ["*nguyen*seed*.json", "exp3_nguyen12_*.json"],
-    ),
-    "suppA (Tab 11-13 routing)": (
-        "hybrid_pysr/defi",
-        ["consolidated_hybrid_*.json", "extrapolation_73cases*.json", "*73cases*.json"],
-    ),
-    "suppB (Tab 28, 29)": (
-        "comparison_results/feynman-tests/noise-sweep/noise-sweep",
-        ["noise_sweep_*.json", "noise_sweep_*.csv"],
-    ),
-    "suppB_sc (Tab 29 sc)": (
-        "comparison_results/feynman-tests/sample-complexity",
-        ["sample_complexity_*.json", "sample_complexity_*.csv"],
-    ),
-    "hybrid_all_domains (tab:hybrid_all \u00a710.9)": (
-        "hybrid_llm_nn/all_domains",
-        ["hybrid_llm_nn_all_domains_*.json"],
-    ),
-    "extrap (Tab 9 OOD columns)": (
-        "comparison_results/feynman-tests/exp2_extrap",
-        ["all_domains_extrap_v4_*.json", "protocol_core_*.json"],
-    ),
-}
-for label, (subdir, globs) in EXP_CHECKS.items():
-    result_dir  = OUT_BASE / subdir
-    found_files = []
-    if result_dir.exists():
-        for pattern in globs:
-            found_files.extend(f for f in result_dir.glob(pattern)
-                               if not f.name.startswith("_"))
-    found_files = list(set(found_files))
-    ok = bool(found_files)
-    record("result-files", label, ok,
-           f"{len(found_files)} file(s) in {subdir}" if ok
-           else f"MISSING — expected {globs[0]} in {subdir}")
-    if not ok: all_ok = False
-
-# ── 5. suppB noise_sweep_*.json glob alignment ───────────────────────────────
-print("\n\u2500\u2500 suppB noise_sweep_*.json glob alignment (CRITICAL 4) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-suppB_dir  = OUT_BASE / "comparison_results/feynman-tests/noise-sweep/noise-sweep"
-all_json   = list(suppB_dir.glob("*.json"))           if suppB_dir.exists() else []
-named_json = list(suppB_dir.glob("noise_sweep_*.json")) if suppB_dir.exists() else []
-if all_json:
-    ok = bool(named_json)
-    detail = (f"{len(named_json)}/{len(all_json)} JSON(s) match noise_sweep_*.json"
-              if ok else
-              f"0/{len(all_json)} JSON(s) match noise_sweep_*.json — actual: {[f.name for f in all_json[:3]]}")
-    record("suppB-glob", "noise_sweep_*.json glob alignment", ok, detail)
-    if not ok: all_ok = False
-else:
-    record("suppB-glob", "noise_sweep_*.json (suppB not yet run)", True,
-           "no JSON files found — skipped")
-
-# ── 6. hybrid_all_domains output path ────────────────────────────────────────
-print("\n\u2500\u2500 hybrid_all_domains output path (FIX CRITICAL 1/3) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-had_correct = list(_glob.glob(str(OUT_BASE / "hybrid_llm_nn/all_domains/*.json")))
-had_wrong   = list(_glob.glob(str(OUT_BASE / "hybrid_llm_nn/defi/*.json")))
-ok = bool(had_correct)
-record("hybrid-path", "hybrid_llm_nn/all_domains/ (correct)", ok, f"{len(had_correct)} JSON(s)")
-if had_wrong:
-    record("hybrid-path", "hybrid_llm_nn/defi/ (WRONG — FIX CRITICAL 1)", False,
-           f"{len(had_wrong)} misrouted JSON(s) — move to all_domains/")
-    all_ok = False
-if not ok: all_ok = False
-
-# ── 7. exp3b output path ─────────────────────────────────────────────────────
-print("\n\u2500\u2500 exp3b output path (BUG 2) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
-exp3b_correct = list(_glob.glob(str(OUT_BASE / "extrapolation/multi_seed/*nguyen*.json")))
-exp3b_wrong   = [f for f in _glob.glob(str(OUT_BASE / "extrapolation/*nguyen*.json"))
-                 if "multi_seed" not in f]
-ok = bool(exp3b_correct)
-record("exp3b-path", "extrapolation/multi_seed/ (correct)", ok, f"{len(exp3b_correct)} nguyen JSON(s)")
-if exp3b_wrong:
-    record("exp3b-path", "extrapolation/ root (WRONG — BUG 2)", False,
-           f"{len(exp3b_wrong)} misrouted JSON(s) — move to multi_seed/")
-    all_ok = False
-if not ok:
-    record("exp3b-path", "exp3b not yet present (warning)", True,
-           "non-fatal if exp3b has not run")
-
-# ── Summary ──────────────────────────────────────────────────────────────────
-print()
-n_ok   = sum(1 for f in findings if f["ok"])
-n_fail = sum(1 for f in findings if not f["ok"])
-print(f"  Figures/tables validation: {n_ok}/{len(findings)} checks passed")
-
-out = Path("logs/figures_tables_report.json")
-out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(json.dumps({"all_ok": all_ok, "findings": findings}, indent=2))
-print(f"\n  Report -> {out}")
-
-if all_ok:
-    print("  \u2705  All figures and tables present and correctly located.")
-else:
-    fails = [f for f in findings if not f["ok"]]
-    print(f"\n  \u274c  {len(fails)} check(s) failed:")
-    for f in fails:
-        print(f"    [{f[\"category\"]}]  {f[\"name\"]}  {f[\"detail\"]}")
-    sys.exit(1)
-PYEOF
-'
-
-# ── STEP 26: audit_final_gate ─────────────────────────────────────────────────
-# Aggregates numerical-verify, paper-audit, and figures-tables-validate outcomes.
-# Reads VERIFY_RESULT / AUDIT_RESULT / FIGS_RESULT from env (set by CI).
-# Prints consolidated health table; exits non-zero if any job failed.
-run audit_final_gate "Final gate: aggregate all audit job outcomes" bash -c '
-  set -euo pipefail
-  python3 - <<'"'"'PYEOF'"'"'
-import os, sys
-
-verify = os.environ["VERIFY_RESULT"]
-audit  = os.environ["AUDIT_RESULT"]
-figs   = os.environ["FIGS_RESULT"]
-
-ok_verify = verify in ("success", "skipped")
-ok_audit  = audit  == "success"
-ok_figs   = figs   == "success"
-
-SEP = "=" * 65
-print(f"\n{SEP}")
-print(f"  HypatiaX Paper Audit \u2014 Final Gate")
-print(SEP)
-print(f"  {\"Job\":<35}  {\"Result\":<10}  Status")
-print(f"  {\"-\"*35}  {\"-\"*10}  ------")
-
-rows = [
-    ("1. numerical-verify",        verify, ok_verify),
-    ("2. paper-audit",             audit,  ok_audit),
-    ("3. figures-tables-validate", figs,   ok_figs),
-]
-for label, result, ok in rows:
-    icon = "\u2705" if ok else "\u274c"
-    print(f"  {icon}  {label:<33}  {result:<10}")
-
-print(SEP)
-overall_ok = ok_verify and ok_audit and ok_figs
-if overall_ok:
-    print("  \u2705  Overall: PAPER AUDIT PASSED \u2014 ready for submission.")
-else:
-    print("  \u274c  Overall: PAPER AUDIT FAILED \u2014 fix issues listed above.")
-print(SEP)
-
-print()
-print("  \u26a0  Nguyen-12 caveat (exp3/exp3b):")
-print("       Paper abstract  : 11/12 (91.7%) \u2014 4-decimal rounding (Uy et al.)")
-print("       Strict R\u00b2\u22650.9999: 4/12  (33.3%) \u2014 both must appear in abstract + \u00a710.8")
-print()
-
-sys.exit(0 if overall_ok else 1)
-PYEOF
 '
 
 # ── Final summary ─────────────────────────────────────────────────────────────
