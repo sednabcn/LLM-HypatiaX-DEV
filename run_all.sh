@@ -209,7 +209,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05"
+_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1213,7 +1213,7 @@ checks = []
 def check(label, got, expected, tol=TOLERANCE):
     ok = abs(got - expected) <= tol * max(abs(expected), 1e-9)
     checks.append((label, got, expected, ok))
-    _tag = "OK" if ok else "FAIL"
+_tag = "OK" if ok else "FAIL"
     print(f"  [{_tag}] {label}: got={got:.6f}, expected={expected:.6f}")
     return ok
 
@@ -1939,6 +1939,188 @@ run audit_nb05 "NB-05: Figure Files & Image Dependencies" bash -c '
     notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb \
     2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb05_run.log
   echo "=== NB-05 done ==="
+'
+
+# ── STEP 22: audit_guard ──────────────────────────────────────────────────────
+# Evaluates workflow_run trigger: slot==12, run_full=true, conclusion=success.
+# Writes should_run=true/false to $GITHUB_OUTPUT.
+run audit_guard "Guard: evaluate trigger conditions (slot=12, run_full, success)" bash -c '
+  set -euo pipefail
+  python3 - <<'"'"'PYEOF'"'"'
+import os, re, sys
+
+event      = os.environ.get("EVENT_NAME", "")
+conclusion = os.environ.get("TRIGGER_CONCLUSION", "")
+title      = os.environ.get("TRIGGER_TITLE", "")
+gh_out     = os.environ.get("GITHUB_OUTPUT", "/dev/null")
+
+if event == "workflow_dispatch":
+    print("Manual dispatch — proceeding unconditionally.")
+    open(gh_out, "a").write("should_run=true\n")
+    sys.exit(0)
+
+if conclusion != "success":
+    print(f"Upstream conclusion={conclusion!r} (not success) — skipping.")
+    open(gh_out, "a").write("should_run=false\n")
+    sys.exit(0)
+
+m = re.search(r"—\s*(\d+)([afcp]?)\s*$", title)
+if not m:
+    print(f"Could not parse slot from run title: {title!r} — skipping.")
+    open(gh_out, "a").write("should_run=false\n")
+    sys.exit(0)
+
+slot   = int(m.group(1))
+suffix = m.group(2)
+
+if slot != 12:
+    print(f"Slot={slot} (not 12) — skipping paper audit.")
+    open(gh_out, "a").write("should_run=false\n")
+    sys.exit(0)
+
+if suffix != "":
+    print(f"Slot=12 but suffix={suffix!r} (run_full=false) — skipping.")
+    open(gh_out, "a").write("should_run=false\n")
+    sys.exit(0)
+
+print("Slot=12, run_full=true, conclusion=success — paper audit WILL run.")
+open(gh_out, "a").write("should_run=true\n")
+PYEOF
+'
+
+# ── STEP 23: audit_print_verify ───────────────────────────────────────────────
+# Prints a human-readable summary of logs/verify_report.json.
+run audit_print_verify "Print verify summary from logs/verify_report.json" bash -c '
+  set -euo pipefail
+  if [[ ! -f logs/verify_report.json ]]; then
+    echo "  logs/verify_report.json not written — see verify_run.log above."
+    exit 0
+  fi
+  echo "=== verify_report.json ==="
+  python3 - <<'"'"'PYEOF'"'"'
+import json
+from pathlib import Path
+data   = json.loads(Path("logs/verify_report.json").read_text())
+checks = data if isinstance(data, list) else data.get("checks", [])
+n_ok   = sum(1 for c in checks if c.get("status") in ("OK", "PASS", "pass"))
+n_fail = sum(1 for c in checks if c.get("status") in ("FAIL", "fail"))
+n_warn = sum(1 for c in checks if c.get("status") in ("WARN", "warn"))
+print(f"  Checks : {len(checks)} total  PASS={n_ok}  WARN={n_warn}  FAIL={n_fail}")
+if n_fail:
+    print("  Failed checks:")
+    for c in checks:
+        if c.get("status") in ("FAIL", "fail"):
+            print(f"    FAIL  {c.get('name', c.get('check', '?'))}: {c.get('detail', '')}")
+PYEOF
+'
+
+# ── STEP 24: audit_print_findings ─────────────────────────────────────────────
+# Prints a human-readable summary of logs/paper_audit_findings.json.
+run audit_print_findings "Print audit summary from logs/paper_audit_findings.json" bash -c '
+  set -euo pipefail
+  FINDINGS="logs/paper_audit_findings.json"
+  if [[ ! -f "${FINDINGS}" ]]; then
+    echo "  logs/paper_audit_findings.json not written — check logs/paper_audit_run.log"
+    exit 0
+  fi
+  python3 - <<'"'"'PYEOF'"'"'
+import json
+from pathlib import Path
+data   = json.loads(Path("logs/paper_audit_findings.json").read_text())
+n_pass = sum(1 for f in data if f["status"] == "PASS")
+n_warn = sum(1 for f in data if f["status"] == "WARN")
+n_fail = sum(1 for f in data if f["status"] == "FAIL")
+n_miss = sum(1 for f in data if f["status"] == "MISSING")
+n_skip = sum(1 for f in data if f["status"] == "SKIP")
+sep = chr(9472)*55
+print(f"  Audit findings ({len(data)} claims)")
+print(f"  {sep}")
+print(f"  PASS={n_pass}  WARN={n_warn}  FAIL={n_fail}  MISSING={n_miss}  SKIP={n_skip}")
+bad = [f for f in data if f["status"] in ("FAIL", "MISSING")]
+if bad:
+    print("  FAIL / MISSING details:")
+    for f in bad:
+        print(f"    [{f['status']}]  exp={f['exp']}  metric={f['metric']}")
+        print(f"             {f['detail']}")
+PYEOF
+'
+
+# ── STEP 25: audit_figures_tables ─────────────────────────────────────────────
+# Validates expected figures (PDF/PNG) and LaTeX tables (TeX) are present.
+# Writes logs/figures_tables_report.json.  Exits non-zero on missing required files.
+run audit_figures_tables "Validate figures and tables presence under RESULTS_DIR" bash -c '
+  set -euo pipefail
+  mkdir -p logs
+  python3 - <<'"'"'PYEOF'"'"'
+import json, os, sys, glob as _glob
+from pathlib import Path
+
+OUT_BASE    = Path(os.environ.get("OUT_BASE", os.environ.get("RESULTS_DIR", "hypatiax/data/results")))
+FIGURES_DIR = OUT_BASE / "figures"
+TABLES_DIR  = OUT_BASE / "tables"
+
+findings = []
+all_ok   = True
+
+def record(category, name, ok, detail=""):
+    findings.append({"category": category, "name": name, "ok": ok, "detail": detail})
+    tag = "OK" if ok else "FAIL"
+    print(f"  [{tag}]  [{category}]  {name}  {detail}")
+    return ok
+
+pdfs = list(FIGURES_DIR.glob("*.pdf")) if FIGURES_DIR.exists() else []
+pngs = list(FIGURES_DIR.glob("*.png")) if FIGURES_DIR.exists() else []
+if not record("figures", ">=1 PDF in figures/", bool(pdfs), f"{len(pdfs)} PDF(s)"): all_ok = False
+if not record("figures", ">=1 PNG in figures/", bool(pngs), f"{len(pngs)} PNG(s)"): all_ok = False
+
+texs = list(TABLES_DIR.glob("*.tex")) if TABLES_DIR.exists() else []
+if not record("tables", ">=1 TeX in tables/", bool(texs), f"{len(texs)} TeX file(s)"): all_ok = False
+
+out = Path("logs/figures_tables_report.json")
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({"all_ok": all_ok, "findings": findings}, indent=2))
+print(f"  Report -> {out}")
+if not all_ok:
+    sys.exit(1)
+PYEOF
+'
+
+# ── STEP 26: audit_final_gate ─────────────────────────────────────────────────
+# Aggregates numerical-verify, paper-audit, figures-tables-validate outcomes.
+# Reads VERIFY_RESULT / AUDIT_RESULT / FIGS_RESULT from env (set by CI).
+run audit_final_gate "Final gate: aggregate all audit job outcomes" bash -c '
+  set -euo pipefail
+  python3 - <<'"'"'PYEOF'"'"'
+import os, sys
+
+verify = os.environ.get("VERIFY_RESULT", "unknown")
+audit  = os.environ.get("AUDIT_RESULT",  "unknown")
+figs   = os.environ.get("FIGS_RESULT",   "unknown")
+
+ok_verify = verify in ("success", "skipped")
+ok_audit  = audit  == "success"
+ok_figs   = figs   == "success"
+
+sep = "=" * 65
+print(f"\n{sep}")
+print("  HypatiaX Paper Audit — Final Gate")
+print(sep)
+rows = [
+    ("1. numerical-verify",        verify, ok_verify),
+    ("2. paper-audit",             audit,  ok_audit),
+    ("3. figures-tables-validate", figs,   ok_figs),
+]
+for label, result, ok in rows:
+    tag = "PASS" if ok else "FAIL"
+    print(f"  [{tag}]  {label:<33}  {result}")
+print(sep)
+
+overall_ok = ok_verify and ok_audit and ok_figs
+status = "PASSED" if overall_ok else "FAILED"
+print(f"  Overall: PAPER AUDIT {status}")
+print(sep)
+sys.exit(0 if overall_ok else 1)
+PYEOF
 '
 
 # ── Final summary ─────────────────────────────────────────────────────────────
