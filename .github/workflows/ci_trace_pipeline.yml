@@ -36,6 +36,89 @@
 #      can optionally read it to cross-check hyperparameter coverage).
 #    - On a workflow_run trigger the resolved experiment_id is echoed in the job
 #      summary so the trace can be filtered to just that step.
+#
+#  Full 25-step pipeline (run_all.sh _STEP_ORDER):
+#    Phase 1 – Core experiments (steps 00–13):
+#      env_check, exp1, exp1b, extrap, hybrid_all_domains, instability,
+#      exp2_feynman, exp2_feynman_extrap, exp2, exp3, exp3b,
+#      suppA, suppB, suppB_sc
+#    Phase 2 – Outputs (steps 14–16):
+#      tables, figures, validate
+#    Phase 3 – Qualification & paper audit (steps 17–21):
+#      qualify        scripts/patches/verify_results.py + run_all_checkpoint.py --only qualify
+#      audit_paper    run_all_checkpoint.py --only audit-paper → logs/paper_audit_findings.json
+#      audit_setup    inline Python — copies .tex files into notebooks/
+#      audit_nb01     notebooks/NB-01_Citation_Bibliography_Audit.ipynb
+#      audit_nb02     notebooks/NB-02_CrossReference_Label_Audit.ipynb
+#      audit_nb03     notebooks/NB-03_Section_Structure_Numbering.ipynb
+#      audit_nb04     notebooks/NB-04_Numerical_Consistency_Checker.ipynb
+#      audit_nb05     notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb
+#
+#  REQUIRED COMPANION CHANGE — scripts/patches/trace_pipeline.py
+#  ──────────────────────────────────────────────────────────────
+#  The 8 new Phase-3 steps must be registered in _STEP_CATALOGUE and appended
+#  to _DECLARED_ORDER. Without this the tracer reports 9 errors (1 step-order
+#  mismatch + 1 per missing catalogue entry), exactly as seen in run
+#  26664028443. Add the following entries to _STEP_CATALOGUE:
+#
+#    "qualify": StepSpec(
+#        scripts=["scripts/patches/verify_results.py",
+#                 "run_all_checkpoint.py"],
+#        outputs=["logs/verify_report.json",
+#                 "qualify_verify_run.log",
+#                 "qualify_run.log"],
+#        inputs=[],
+#        deps=["validate"],
+#    ),
+#    "audit_paper": StepSpec(
+#        scripts=["run_all_checkpoint.py",
+#                 "scripts/patches/paper_targets.json"],
+#        outputs=["logs/paper_audit_findings.json",
+#                 "audit_paper_run.log"],
+#        inputs=[],
+#        deps=["qualify"],
+#    ),
+#    "audit_setup": StepSpec(
+#        scripts=[],          # inline Python; no standalone script file
+#        outputs=[],
+#        inputs=[],
+#        deps=["audit_paper"],
+#    ),
+#    "audit_nb01": StepSpec(
+#        scripts=["notebooks/NB-01_Citation_Bibliography_Audit.ipynb"],
+#        outputs=["audit_nb01_run.log"],
+#        inputs=[],
+#        deps=["audit_setup"],
+#    ),
+#    "audit_nb02": StepSpec(
+#        scripts=["notebooks/NB-02_CrossReference_Label_Audit.ipynb"],
+#        outputs=["audit_nb02_run.log"],
+#        inputs=[],
+#        deps=["audit_setup"],
+#    ),
+#    "audit_nb03": StepSpec(
+#        scripts=["notebooks/NB-03_Section_Structure_Numbering.ipynb"],
+#        outputs=["audit_nb03_run.log"],
+#        inputs=[],
+#        deps=["audit_setup"],
+#    ),
+#    "audit_nb04": StepSpec(
+#        scripts=["notebooks/NB-04_Numerical_Consistency_Checker.ipynb"],
+#        outputs=["audit_nb04_run.log"],
+#        inputs=[],
+#        deps=["audit_setup"],
+#    ),
+#    "audit_nb05": StepSpec(
+#        scripts=["notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb"],
+#        outputs=["audit_nb05_run.log"],
+#        inputs=[],
+#        deps=["audit_setup"],
+#    ),
+#
+#  And extend _DECLARED_ORDER to append after "validate":
+#    "qualify", "audit_paper", "audit_setup",
+#    "audit_nb01", "audit_nb02", "audit_nb03", "audit_nb04", "audit_nb05",
+#
 # ══════════════════════════════════════════════════════════════════════════════
 
 name: "HypatiaX — pipeline trace"
@@ -92,6 +175,14 @@ on:
           - tables
           - figures
           - validate
+          - qualify
+          - audit_paper
+          - audit_setup
+          - audit_nb01
+          - audit_nb02
+          - audit_nb03
+          - audit_nb04
+          - audit_nb05
       repo_root:
         description: "Repo root for on-disk script existence checks (blank = GITHUB_WORKSPACE)"
         required: false
