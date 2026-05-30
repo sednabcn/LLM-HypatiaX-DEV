@@ -617,6 +617,63 @@ _STEP_CATALOGUE: list[dict] = [
         inputs=[],
         deps=["audit_setup"],
     ),
+
+    # ── 25: audit_guard ───────────────────────────────────────────────────────
+    dict(
+        name="audit_guard",
+        description="CI guard: evaluate workflow_run trigger (slot=12, run_full, success)",
+        scripts=[],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[],
+        inputs=[],
+        deps=[],
+    ),
+
+    # ── 26: audit_print_verify ────────────────────────────────────────────────
+    dict(
+        name="audit_print_verify",
+        description="Print human-readable summary of logs/verify_report.json",
+        scripts=[],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[],
+        inputs=["logs/verify_report.json"],
+        deps=["qualify"],
+    ),
+
+    # ── 27: audit_print_findings ──────────────────────────────────────────────
+    dict(
+        name="audit_print_findings",
+        description="Print human-readable summary of logs/paper_audit_findings.json",
+        scripts=[],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[],
+        inputs=["logs/paper_audit_findings.json"],
+        deps=["audit_paper"],
+    ),
+
+    # ── 28: audit_figures_tables ──────────────────────────────────────────────
+    dict(
+        name="audit_figures_tables",
+        description="Validate expected figures (PDF/PNG) and LaTeX tables (TeX) are present",
+        scripts=[],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "logs/figures_tables_report.json",
+        ],
+        inputs=[],
+        deps=["qualify"],
+    ),
+
+    # ── 29: audit_final_gate ──────────────────────────────────────────────────
+    dict(
+        name="audit_final_gate",
+        description="Aggregate numerical-verify, paper-audit, figures-tables outcomes; set exit code",
+        scripts=[],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[],
+        inputs=[],
+        deps=["audit_paper", "audit_figures_tables"],
+    ),
 ]
 
 # Declared step order from run_all.sh _STEP_ORDER variable
@@ -627,6 +684,9 @@ _DECLARED_ORDER = [
     # Phase 3 — qualification & paper audit (added 2026-05-30)
     "qualify", "audit_paper", "audit_setup",
     "audit_nb01", "audit_nb02", "audit_nb03", "audit_nb04", "audit_nb05",
+    # Phase 4 — CI gate steps for ci_paper_audit.yml (added 2026-05-30)
+    "audit_guard", "audit_print_verify", "audit_print_findings",
+    "audit_figures_tables", "audit_final_gate",
 ]
 
 # CWD variable → repo-relative directory path
