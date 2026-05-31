@@ -1115,29 +1115,49 @@ run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routin
 # FIX CRITICAL 2: noise sweep now its own step; sample-complexity in suppB_sc
 run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Supplement B)" bash -c "
   # FIX-suppB-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug as all other steps.
-  # run_noise_sweep_benchmark.py uses os.getcwd()-relative paths; cd EXPERIMENTS_DIR
-  # caused outputs to land in .../benchmarks/hypatiax/data/results/... → never found.
   cd '${REPO_ROOT}'
-  # FIX-suppB-2: NOISE_LEVELS forwarded explicitly so run_noise_sweep_benchmark.py
-  # honours custom dispatch inputs (default: CI value 0.0,0.5,1.0,5.0,10.0).
-  # Without this the script silently uses its own internal default, which may diverge
-  # from the task-ID list the plan job built (noise{NL}__<domain> IDs).
+  # FIX-NOISE_LEVEL: extract the sigma from the CI shard task ID and export NOISE_LEVEL
+  # (singular) so run_noise_sweep_benchmark.py runs exactly one sigma per shard.
+  #
+  # Background: the script reads os.environ.get('NOISE_LEVEL','') at line 755.
+  # When set, it pins args.noise_levels=[sigma] (single-level run).  Without it the
+  # script runs its full _DEFAULT_NOISE_LEVELS=[0.0,0.005,0.01,0.05,0.10] sequentially,
+  # which takes ~5× longer and hits the 30-min CI job timeout after completing only
+  # sigma=0.0 — producing noise_levels:[0.0] in every output file.
+  #
+  # CI task ID format: noise{NL}__{domain}  e.g. noise0.5__feynman_biology
+  # SHARD_IDS / TASK_IDS contain the task IDs for this shard (space-separated).
+  # All tasks in one shard share the same noise level (plan groups by NL × domain).
+  # Extract sigma from the first task ID in this shard.
+  # Task format: noise{PCT}__{domain}  e.g. noise0.5__feynman_biology
+  # PCT values are percentages of signal std (0.0, 0.5, 1.0, 5.0, 10.0).
+  # The script expects NOISE_LEVEL as a fraction (÷100) OR as a value >1 which
+  # it divides by 100 itself.  To avoid the ambiguity for 0.5 and 1.0 (both ≤1
+  # but represent 0.5% and 1.0%), we convert all values to fractions here so
+  # the script receives unambiguous sigma fractions (0.0, 0.005, 0.01, 0.05, 0.10).
+  _SHARD_TASKS='${SHARD_IDS:-${TASK_IDS:-}}'
+  _FIRST_TASK=\$(echo \"\${_SHARD_TASKS}\" | tr ' ' '\n' | grep -v '^\$' | head -1)
+  if echo \"\${_FIRST_TASK}\" | grep -qE '^noise[0-9]'; then
+    _NL_PCT=\$(echo \"\${_FIRST_TASK}\" | sed 's/^noise\([0-9][0-9.]*\)__.*/\1/')
+    _NL_FRAC=\$(python3 -c \"v=float('\${_NL_PCT}'); print(f'{v/100:.6g}')\")
+    export NOISE_LEVEL=\"\${_NL_FRAC}\"
+    echo \"  [suppB] NOISE_LEVEL=\${NOISE_LEVEL} (sigma fraction from task \${_FIRST_TASK}, pct=\${_NL_PCT}%)\"
+  else
+    echo \"  [suppB] WARNING: no noise{NL}__ task ID found in SHARD_IDS — full sweep will run\"
+  fi
   # FIX-suppB-3: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
-  # forwarded as CLI flags to match repro.yaml paper-quality values.  The CI worker
-  # exports these as env vars; passing them explicitly ensures the script respects them
-  # even if it reads CLI args rather than the environment.
+  # forwarded as CLI flags to match repro.yaml paper-quality values.
   # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
-  # Scripts that read either var will resolve to the same canonical path.
-  NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}' \
-  OUT_BASE='${RESULTS_DIR}' \
-  RESULTS_DIR='${RESULTS_DIR}' \
-    python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \
-    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \
-    --samples ${FEYNMAN_SAMPLES} \
-    --pysr-timeout ${FEYNMAN_TIMEOUT} \
-    --method-timeout ${METHOD_TIMEOUT} \
-    --populations ${PYSR_POPULATIONS} \
-    --parsimony 0.01 \
+  NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}' \\
+  OUT_BASE='${RESULTS_DIR}' \\
+  RESULTS_DIR='${RESULTS_DIR}' \\
+    python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \\
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \\
+    --samples ${FEYNMAN_SAMPLES} \\
+    --pysr-timeout ${FEYNMAN_TIMEOUT} \\
+    --method-timeout ${METHOD_TIMEOUT} \\
+    --populations ${PYSR_POPULATIONS} \\
+    --parsimony 0.01 \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 "
 
@@ -1152,17 +1172,20 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
   # FIX-suppB_sc-2: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
   # forwarded as CLI flags to match repro.yaml paper-quality values (same fix as suppB).
   # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
-  NOISE_LEVEL='5.0' \
-  SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \
-  OUT_BASE='${RESULTS_DIR}' \
-  RESULTS_DIR='${RESULTS_DIR}' \
-    python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \
-    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \
-    --samples ${FEYNMAN_SAMPLES} \
-    --pysr-timeout ${FEYNMAN_TIMEOUT} \
-    --method-timeout ${METHOD_TIMEOUT} \
-    --populations ${PYSR_POPULATIONS} \
-    --parsimony 0.01 \
+  # FIX-suppB_sc-3: bare \\ → \\\\ (escaped line-continuations inside double-quoted bash -c string).
+  #   Inside \"...\", a bare \\ + newline is a literal backslash, not a line continuation,
+  #   so the command was malformed. Matches the pattern used correctly in the suppB step above.
+  NOISE_LEVEL='5.0' \\
+  SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \\
+  OUT_BASE='${RESULTS_DIR}' \\
+  RESULTS_DIR='${RESULTS_DIR}' \\
+    python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
+    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \\
+    --samples ${FEYNMAN_SAMPLES} \\
+    --pysr-timeout ${FEYNMAN_TIMEOUT} \\
+    --method-timeout ${METHOD_TIMEOUT} \\
+    --populations ${PYSR_POPULATIONS} \\
+    --parsimony 0.01 \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
 "
 

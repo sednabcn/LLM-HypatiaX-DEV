@@ -595,6 +595,11 @@ jobs:
       # Workers write this into result JSON so consolidate can cross-reference.
       SHARD_RUN_IDS:  ${{ matrix.run_ids }}
       EFFECTIVE_SEEDS: ${{ needs.plan.outputs.effective_seeds }}
+      # FIX-NOISE_LEVELS: forward from dispatch input so suppB worker receives the
+      # correct sweep range.  Previously NOISE_LEVELS was only set inside the plan
+      # job's Python step and never exported to worker jobs, so run_noise_sweep_benchmark.py
+      # silently fell back to its own internal default (noiseless only -> noise_levels:[0.0]).
+      NOISE_LEVELS:   "${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}"
 
     steps:
       - name: Checkout
