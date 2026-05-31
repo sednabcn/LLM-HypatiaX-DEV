@@ -92,6 +92,19 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-EHD-SCHEMA (2026-05-31):
+#   — _compute_ehd_noise_robust: added equation-name-keyed schema support for suppB.
+#     suppB JSON files use per_noise[noise_level][equation_name] = {r2: ...} (not
+#     the per_noise[noise_level] = {r2: ...} flat schema assumed previously).
+#     _iter_rows yielded the equation-name dict as a leaf (no recognised container key),
+#     making _r2_from_row return None for every row → n_total=0 → MISSING.
+#     Two-part fix:
+#     (1) _nested walk now checks each equation-keyed value directly as a metric row
+#         before falling through to per_equation/method_summary sub-keys.
+#     (2) Last-resort fallback now only appends a row when _r2_from_row succeeds on
+#         it directly, and recurses into its children if not — prevents appending
+#         equation-name dicts that have zero R² fields.
+#
 # FIXES (observ-02 audit 2026-05-27):
 #   — FIX-suppA-BUG-A : purge_dir moved BEFORE run_hybrid_system_benchmark.py in suppA.
 #                        Previously purge_dir ran after the script wrote its outputs,
@@ -2010,9 +2023,15 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                     _nested = [r for r in _iter_rows(_nv) if _r2_from_row(r) is not None]
                     if not _nested:
                         # Try one level deeper: treat each value as an equation entry
-                        # and recurse into it
+                        # and recurse into it.
+                        # FIX-EHD-SCHEMA: also try the equation-keyed value directly as
+                        # a metric row (suppB schema: per_noise[nl][eq_name] = {r2:...}).
                         for _eq_key, _eq_val in _nv.items():
                             if isinstance(_eq_val, dict):
+                                # Direct metric row (suppB equation-keyed schema)
+                                if _r2_from_row(_eq_val) is not None:
+                                    _nested.append(dict(_eq_val))
+                                    continue
                                 # Check per_equation sub-key directly
                                 _pe = _eq_val.get("per_equation") or _eq_val.get("per_eq") or {}
                                 if isinstance(_pe, dict) and _r2_from_row(_pe) is not None:
@@ -2034,7 +2053,13 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                             _nr.setdefault("method", _file_method)
                             flattened_rows.append(_nr)
                     else:
-                        # Last resort: flatten each sub-dict and inherit file-level r2
+                        # Last resort: flatten each sub-dict and inherit file-level r2.
+                        # FIX-EHD-SCHEMA: suppB files use equation-name-keyed dicts at the
+                        # per_noise[noise_level] level:
+                        #   per_noise["1.0"]["Allometric scaling law"] = {"r2": 0.87, ...}
+                        # The sub-dict IS the metric row; yield it directly.
+                        # If the sub-dict itself has no r2, recurse one level deeper
+                        # (handles nested per_equation / method_summary variants).
                         for _mn, _md in _nv.items():
                             if isinstance(_md, dict):
                                 row = dict(_md)
@@ -2042,7 +2067,16 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                                 row.setdefault("method", _file_method)
                                 if _r2_from_row(row) is None and _file_r2 is not None:
                                     row.setdefault("r2", _file_r2)
-                                flattened_rows.append(row)
+                                if _r2_from_row(row) is not None:
+                                    flattened_rows.append(row)
+                                else:
+                                    # Recurse one level deeper into the equation sub-dict
+                                    for _inner in _iter_rows(_md):
+                                        if _r2_from_row(_inner) is not None:
+                                            _inner = dict(_inner)
+                                            _inner.setdefault("noise_level", nl)
+                                            _inner.setdefault("method", _file_method)
+                                            flattened_rows.append(_inner)
                             elif isinstance(_md, (int, float)):
                                 flattened_rows.append({"noise_level": nl, "r2": float(_md), "method": _file_method})
                 else:
