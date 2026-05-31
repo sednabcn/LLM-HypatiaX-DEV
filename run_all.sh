@@ -1978,30 +1978,57 @@ def _compute_ehd_noise_robust(results_dir, threshold):
         return None, "no result JSONs found under comparison_results/feynman-tests/noise-sweep"
 
     # FIX-NOISE-SCHEMA: flatten per_noise dict into rows with explicit noise_level.
-    # Schema A: {"per_noise": {"1.0": {"r2": 0.9, "rmse": 0.1, ...}}}
-    # Schema B: {"per_noise": {"1.0": {"hypatiax": {"r2":0.9}, "pysr":{...}}}}
+    # Schema A: {"method":"hypatiax","r2":0.9,"per_noise":{"1.0":{"r2":0.85,"rmse":0.1}}}
+    # Schema B: {"per_noise":{"1.0":{"hypatiax":{"r2":0.85},"pysr":{...}}}}
+    # Key insight: file-level "method" and "r2" must be propagated into per_noise rows
+    # because the per_noise entry often only carries the noise-specific delta metrics.
     flattened_rows = []
     for _, data in pairs:
-        if isinstance(data, dict):
-            per_noise = data.get("per_noise")
-            if isinstance(per_noise, dict):
-                for _nk, _nv in per_noise.items():
-                    try: nl = float(_nk)
-                    except (TypeError, ValueError): continue
-                    if isinstance(_nv, dict):
-                        _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train"))
-                        if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
-                            # Schema B: method-keyed
-                            for _mn, _md in _nv.items():
-                                if isinstance(_md, dict):
-                                    row = dict(_md); row.setdefault("noise_level", nl); row.setdefault("method", _mn)
-                                    flattened_rows.append(row)
-                        else:
-                            row = dict(_nv); row.setdefault("noise_level", nl); flattened_rows.append(row)
-                    elif isinstance(_nv, list):
-                        for item in _nv:
-                            if isinstance(item, dict):
-                                row = dict(item); row.setdefault("noise_level", nl); flattened_rows.append(row)
+        if not isinstance(data, dict):
+            continue
+        per_noise = data.get("per_noise")
+        if not isinstance(per_noise, dict):
+            continue
+        # Inherit file-level fields as defaults for every flattened row
+        _file_method = data.get("method") or data.get("model") or data.get("system") or ""
+        _file_r2     = data.get("r2") or data.get("r2_test") or data.get("r2_train")
+        for _nk, _nv in per_noise.items():
+            try: nl = float(_nk)
+            except (TypeError, ValueError): continue
+            if isinstance(_nv, dict):
+                _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate"))
+                if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
+                    # Schema B: method-keyed sub-dicts
+                    for _mn, _md in _nv.items():
+                        if isinstance(_md, dict):
+                            row = dict(_md)
+                            row.setdefault("noise_level", nl)
+                            row.setdefault("method", _mn)
+                            # If per-method dict also lacks r2, use file-level r2
+                            if _r2_from_row(row) is None and _file_r2 is not None:
+                                row.setdefault("r2", _file_r2)
+                            flattened_rows.append(row)
+                else:
+                    row = dict(_nv)
+                    row.setdefault("noise_level", nl)
+                    row.setdefault("method", _file_method)
+                    # Inherit file-level r2 if per_noise entry lacks it
+                    if _r2_from_row(row) is None and _file_r2 is not None:
+                        row.setdefault("r2", _file_r2)
+                    flattened_rows.append(row)
+            elif isinstance(_nv, (int, float)):
+                # Scalar value: treat as r2 directly
+                row = {"noise_level": nl, "r2": float(_nv), "method": _file_method}
+                flattened_rows.append(row)
+            elif isinstance(_nv, list):
+                for item in _nv:
+                    if isinstance(item, dict):
+                        row = dict(item)
+                        row.setdefault("noise_level", nl)
+                        row.setdefault("method", _file_method)
+                        if _r2_from_row(row) is None and _file_r2 is not None:
+                            row.setdefault("r2", _file_r2)
+                        flattened_rows.append(row)
 
     generic_rows = []
     for _, data in pairs:
@@ -2072,7 +2099,15 @@ def _compute_ehd_noise_robust(results_dir, threshold):
         if r2 >= threshold:
             n_robust += 1
     if n_total == 0:
-        return None, "no rows at max noise=" + str(max_noise) + " found"
+        # Diagnostic: show a sample of flattened rows at max_noise so CI log reveals the issue
+        sample = [r for r in all_rows if abs(float(r.get("noise_level") or -1) - max_noise) <= 0.01][:3]
+        sample_info = ""
+        if sample:
+            sample_keys = set(k for r in sample for k in r.keys())
+            sample_r2   = [_r2_from_row(r) for r in sample]
+            sample_meth = [str(r.get("method",""))[:20] for r in sample]
+            sample_info = f" | {len(sample)} row(s) at max_noise: keys={sorted(sample_keys)[:10]} r2={sample_r2} method={sample_meth}"
+        return None, "no rows at max noise=" + str(max_noise) + " found" + sample_info
     return n_robust / n_total, "computed " + str(n_robust) + "/" + str(n_total) + " at max_noise=" + str(max_noise)
 
 # ── Computed metric: hybrid all-domains coverage ──────────────────────────────
