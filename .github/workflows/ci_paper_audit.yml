@@ -367,6 +367,16 @@ jobs:
           if-no-files-found: warn
           retention-days:    30
 
+      - name: Upload canonical figures/ and tables/ as artifact
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              canonical-assets-${{ github.run_id }}
+          path:              |
+            ${{ env.OUT_BASE }}/figures/
+            ${{ env.OUT_BASE }}/tables/
+          if-no-files-found: error
+          retention-days:    3
+
       - name: Summary
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
@@ -400,6 +410,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.2.2
 
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name:          canonical-assets-${{ github.run_id }}
+          path:          ${{ env.OUT_BASE }}
+
       - name: Assert figures dir is non-empty
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
@@ -407,14 +423,12 @@ jobs:
           set -euo pipefail
           FIGURES_DIR="${OUT_BASE}/figures"
           if [[ ! -d "${FIGURES_DIR}" ]]; then
-            echo "::error::${FIGURES_DIR} does not exist after collect-figures-tables."
-            echo "         Check the 'collect-figures-tables' job log for details."
+            echo "::error::${FIGURES_DIR} does not exist after download — upload may have failed in collect-figures-tables."
             exit 1
           fi
           COUNT=$(ls "${FIGURES_DIR}" | wc -l)
           if [[ "${COUNT}" -eq 0 ]]; then
-            echo "::error::${FIGURES_DIR} is empty after collect-figures-tables."
-            echo "         Either the source scan found nothing or generate_figures.py produced no output."
+            echo "::error::${FIGURES_DIR} is empty after download."
             exit 1
           fi
           echo "✅  figures OK — ${COUNT} file(s) in ${FIGURES_DIR}"
@@ -426,14 +440,12 @@ jobs:
           set -euo pipefail
           TABLES_DIR="${OUT_BASE}/tables"
           if [[ ! -d "${TABLES_DIR}" ]]; then
-            echo "::error::${TABLES_DIR} does not exist after collect-figures-tables."
-            echo "         Check the 'collect-figures-tables' job log for details."
+            echo "::error::${TABLES_DIR} does not exist after download — upload may have failed in collect-figures-tables."
             exit 1
           fi
           COUNT=$(ls "${TABLES_DIR}" | wc -l)
           if [[ "${COUNT}" -eq 0 ]]; then
-            echo "::error::${TABLES_DIR} is empty after collect-figures-tables."
-            echo "         Either the source scan found nothing or generate_tables.py produced no output."
+            echo "::error::${TABLES_DIR} is empty after download."
             exit 1
           fi
           echo "✅  tables OK — ${COUNT} file(s) in ${TABLES_DIR}"
@@ -475,6 +487,12 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: canonical-assets-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}
 
       - name: Install dependencies
         run: |
@@ -551,6 +569,12 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: canonical-assets-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}
 
       - name: Install dependencies
         run: |
@@ -640,6 +664,12 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: canonical-assets-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}
 
       - name: Create logs directory
         run: mkdir -p logs
