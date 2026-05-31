@@ -1998,21 +1998,33 @@ def _compute_ehd_noise_robust(results_dir, threshold):
             if isinstance(_nv, dict):
                 _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate"))
                 if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
-                    # Schema B: method-keyed sub-dicts
-                    for _mn, _md in _nv.items():
-                        if isinstance(_md, dict):
-                            row = dict(_md)
-                            row.setdefault("noise_level", nl)
-                            row.setdefault("method", _mn)
-                            # If per-method dict also lacks r2, use file-level r2
-                            if _r2_from_row(row) is None and _file_r2 is not None:
-                                row.setdefault("r2", _file_r2)
-                            flattened_rows.append(row)
+                    # Nested dict: equation-keyed OR method-keyed.
+                    # Recurse _iter_rows to collect all R²-bearing leaves at any depth,
+                    # then inject noise_level. Handles:
+                    #   method → {r2: ...}
+                    #   equation_name → {method_summary: ..., per_equation: {r2: ...}}
+                    _nested = [r for r in _iter_rows(_nv) if _r2_from_row(r) is not None]
+                    if _nested:
+                        for _nr in _nested:
+                            _nr.setdefault("noise_level", nl)
+                            _nr.setdefault("method", _file_method)
+                            flattened_rows.append(_nr)
+                    else:
+                        # No R² leaves — flatten each sub-dict and inherit file-level r2
+                        for _mn, _md in _nv.items():
+                            if isinstance(_md, dict):
+                                row = dict(_md)
+                                row.setdefault("noise_level", nl)
+                                row.setdefault("method", _file_method)
+                                if _r2_from_row(row) is None and _file_r2 is not None:
+                                    row.setdefault("r2", _file_r2)
+                                flattened_rows.append(row)
+                            elif isinstance(_md, (int, float)):
+                                flattened_rows.append({"noise_level": nl, "r2": float(_md), "method": _file_method})
                 else:
                     row = dict(_nv)
                     row.setdefault("noise_level", nl)
                     row.setdefault("method", _file_method)
-                    # Inherit file-level r2 if per_noise entry lacks it
                     if _r2_from_row(row) is None and _file_r2 is not None:
                         row.setdefault("r2", _file_r2)
                     flattened_rows.append(row)
