@@ -1821,6 +1821,10 @@ def _compute_nguyen12(results_dir, want_4dec):
         "solve_rate", "success_rate", "pass_rate",
         "nguyen12_pass_rate", "nguyen_pass_rate",
         "nguyen12_4dec", "nguyen_4decimal",
+        # FIX-NGUYEN-2: _analysis.json stores solve rate as h_rate
+        "h_rate", "hypatiax_rate", "hypatia_rate", "hx_rate",
+        "hypatiax_solve_rate", "hypatia_solve_rate",
+        "rate", "solved_rate", "solved_fraction",
     )
     keys  = (
         "nguyen12_solve_rate_strict", "success_rate_strict", "solve_rate_strict",
@@ -1835,55 +1839,28 @@ def _compute_nguyen12(results_dir, want_4dec):
     rows = list(_iter_rows(chosen_d))
     rows = [r for r in rows if _r2_from_row(r) is not None]
 
-    # FIX-NGUYEN-1: handle method-keyed top-level dict schema
-    # exp3_nguyen12_seed42.json may be {'hypatiax': {eq: r2, ...}, 'pysr': {eq: r2, ...}}
-    # or {'hypatiax': [{r2: ...}, ...], 'pysr': [...]} — _iter_rows misses these because
-    # it looks for well-known container keys ('results', 'data', etc.) before yielding the
-    # root dict as a leaf.  Detect this schema: if the file is a dict whose values are
-    # themselves dicts or lists (not scalars), treat each value as a per-method result block
-    # and recurse into it for R2 rows.
-    if not rows and isinstance(chosen_d, dict):
-        KNOWN_CONTAINER_KEYS = {
-            "results", "equation_results", "domain_results", "equations", "records",
-            "data", "rows", "items", "entries", "output", "outputs",
-            "benchmark_results", "eval_results", "test_results",
-            "experiments", "cases", "metrics", "summary", "details",
-        }
-        # If none of the top-level keys are known container keys, treat each value
-        # as a per-method block and collect any R2-bearing rows inside it.
-        if not any(k in KNOWN_CONTAINER_KEYS for k in chosen_d):
-            for method_name, method_data in chosen_d.items():
-                if isinstance(method_data, dict):
-                    # sub-dict may be {eq_name: r2_float} or {eq_name: {r2: float, ...}}
-                    for eq_name, eq_val in method_data.items():
-                        if isinstance(eq_val, (int, float)):
-                            rows.append({"equation": eq_name, "r2": float(eq_val), "_method": method_name})
-                        elif isinstance(eq_val, dict):
-                            rows += [r for r in _iter_rows(eq_val) if _r2_from_row(r) is not None]
-                elif isinstance(method_data, list):
-                    rows += [r for r in _iter_rows(method_data) if _r2_from_row(r) is not None]
+    # FIX-NGUYEN-1: handle method-keyed top-level dict {"hypatiax":{eq:r2},"pysr":{eq:r2}}
+    def _unpack_method_keyed(d):
+        _KNOWN = {"results","equation_results","domain_results","equations","records",
+                  "data","rows","items","entries","output","outputs","benchmark_results",
+                  "eval_results","test_results","experiments","cases","metrics","summary","details"}
+        out = []
+        if isinstance(d, dict) and not any(k in _KNOWN for k in d):
+            for _m, _md in d.items():
+                if isinstance(_md, dict):
+                    for _eq, _v in _md.items():
+                        if isinstance(_v, (int, float)): out.append({"equation":_eq,"r2":float(_v),"_method":_m})
+                        elif isinstance(_v, dict): out += [r for r in _iter_rows(_v) if _r2_from_row(r) is not None]
+                elif isinstance(_md, list): out += [r for r in _iter_rows(_md) if _r2_from_row(r) is not None]
+        return out
+
+    if not rows: rows = _unpack_method_keyed(chosen_d)
 
     if not rows:
         # FIX: if no R2 rows in the seed-42 file, try every candidate file
         for p, d in pairs:
             candidate_rows = [r for r in _iter_rows(d) if _r2_from_row(r) is not None]
-            if not candidate_rows and isinstance(d, dict):
-                KNOWN_CONTAINER_KEYS = {
-                    "results", "equation_results", "domain_results", "equations", "records",
-                    "data", "rows", "items", "entries", "output", "outputs",
-                    "benchmark_results", "eval_results", "test_results",
-                    "experiments", "cases", "metrics", "summary", "details",
-                }
-                if not any(k in KNOWN_CONTAINER_KEYS for k in d):
-                    for method_name, method_data in d.items():
-                        if isinstance(method_data, dict):
-                            for eq_name, eq_val in method_data.items():
-                                if isinstance(eq_val, (int, float)):
-                                    candidate_rows.append({"equation": eq_name, "r2": float(eq_val), "_method": method_name})
-                                elif isinstance(eq_val, dict):
-                                    candidate_rows += [r for r in _iter_rows(eq_val) if _r2_from_row(r) is not None]
-                        elif isinstance(method_data, list):
-                            candidate_rows += [r for r in _iter_rows(method_data) if _r2_from_row(r) is not None]
+            if not candidate_rows: candidate_rows = _unpack_method_keyed(d)
             if candidate_rows:
                 rows = candidate_rows
                 chosen_p = p
@@ -1895,8 +1872,6 @@ def _compute_nguyen12(results_dir, want_4dec):
         for r in _iter_rows(chosen_d):
             if isinstance(r, dict):
                 all_keys.update(r.keys())
-        if isinstance(chosen_d, dict):
-            all_keys.update(chosen_d.keys())
         key_hint = "actual keys in file: " + str(sorted(all_keys)[:30]) if all_keys else "file appears empty or has no dict rows"
         return None, "no equation rows with R2 found in " + chosen_p.name + " — " + key_hint
     n_total = len(rows)
@@ -2002,46 +1977,40 @@ def _compute_ehd_noise_robust(results_dir, threshold):
     if not pairs:
         return None, "no result JSONs found under comparison_results/feynman-tests/noise-sweep"
 
-    # FIX-NOISE-SCHEMA: the noise-sweep output uses a nested per_noise dict schema:
-    # { "domain": "feynman_biology", "noise_levels": [0.0, 0.5, ...],
-    #   "per_noise": { "0.0": {"method": "hypatiax", "r2": 0.95, ...},
-    #                  "0.5": {...}, ... } }
-    # Flatten this into synthetic per-row dicts before the generic extractor runs,
-    # so the noise_level and r2 values are visible to _get_noise_level / _r2_from_row.
+    # FIX-NOISE-SCHEMA: flatten per_noise dict into rows with explicit noise_level.
+    # Schema A: {"per_noise": {"1.0": {"r2": 0.9, "rmse": 0.1, ...}}}
+    # Schema B: {"per_noise": {"1.0": {"hypatiax": {"r2":0.9}, "pysr":{...}}}}
     flattened_rows = []
     for _, data in pairs:
         if isinstance(data, dict):
             per_noise = data.get("per_noise")
             if isinstance(per_noise, dict):
-                for noise_key, noise_val in per_noise.items():
-                    try:
-                        nl = float(noise_key)
-                    except (TypeError, ValueError):
-                        continue
-                    if isinstance(noise_val, dict):
-                        row = dict(noise_val)
-                        row.setdefault("noise_level", nl)
-                        flattened_rows.append(row)
-                    elif isinstance(noise_val, list):
-                        for item in noise_val:
+                for _nk, _nv in per_noise.items():
+                    try: nl = float(_nk)
+                    except (TypeError, ValueError): continue
+                    if isinstance(_nv, dict):
+                        _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train"))
+                        if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
+                            # Schema B: method-keyed
+                            for _mn, _md in _nv.items():
+                                if isinstance(_md, dict):
+                                    row = dict(_md); row.setdefault("noise_level", nl); row.setdefault("method", _mn)
+                                    flattened_rows.append(row)
+                        else:
+                            row = dict(_nv); row.setdefault("noise_level", nl); flattened_rows.append(row)
+                    elif isinstance(_nv, list):
+                        for item in _nv:
                             if isinstance(item, dict):
-                                row = dict(item)
-                                row.setdefault("noise_level", nl)
-                                flattened_rows.append(row)
+                                row = dict(item); row.setdefault("noise_level", nl); flattened_rows.append(row)
 
-    # Also handle: list of per-noise-level result objects at the top level of the file,
-    # or nested under other container keys (the generic _iter_rows path).
     generic_rows = []
     for _, data in pairs:
-        for row in _iter_rows(data):
-            generic_rows.append(row)
+        for row in _iter_rows(data): generic_rows.append(row)
 
-    # Merge: prefer flattened_rows when available (they have explicit noise_level)
-    all_rows_combined = flattened_rows + generic_rows
+    all_rows = flattened_rows + generic_rows
 
     # Auto-detect max noise level using centralised extractor
     noise_vals = set()
-    all_rows = all_rows_combined
     for row in all_rows:
         nl = _get_noise_level(row)   # FIX: use helper instead of inline triple-or
         if nl is not None:
@@ -2139,12 +2108,8 @@ def _compute_all_domains_coverage(results_dir, n_expected):
                 row.get("discipline") or row.get("area") or ""
             )
             r2 = _r2_from_row(row)
-            # FIX: count a domain as covered if either R² is present OR the row has
-            # a "status"/"completed"/"success" marker — handles summary-style outputs
-            # where domain completion is recorded separately from per-equation R² rows.
-            # FIX-HYBRID-DECISION: the hybrid_all_domains output uses a 'decision' field
-            # (values: "hybrid", "nn", "pysr", etc.) to signal that a domain completed.
-            # Any non-empty, non-null decision value means the domain was evaluated.
+            # FIX: count a domain as covered if R², status, or decision present.
+            # FIX-HYBRID-DECISION: hybrid_all_domains uses "decision" field.
             status = str(row.get("status", "")).lower()
             completed = row.get("completed") or row.get("success") or row.get("done")
             decision = row.get("decision") or row.get("decision_reason") or ""
@@ -2156,12 +2121,7 @@ def _compute_all_domains_coverage(results_dir, n_expected):
             )
             if domain and has_result:
                 covered.add(str(domain).lower().strip())
-        # FIX: also check top-level dict for domain+decision pair directly.
-        # The hybrid_all_domains output schema is one file per domain:
-        # {"domain": "biology", "decision": "hybrid", "n_total": 5, ...}
-        # _iter_rows yields this root dict as a leaf, but domain extraction
-        # only fires when has_result is True — and the root dict has no r2 field.
-        # We capture it here by checking domain+decision at the file root.
+        # FIX: scan top-level dict for domain+decision (hybrid_all_domains schema).
         if isinstance(data, dict):
             top_domain = (
                 data.get("domain") or data.get("domain_id") or
