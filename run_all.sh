@@ -92,6 +92,15 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-NOISE-LEVELS-KEY (2026-05-31):
+#   — _compute_ehd_noise_robust: noise_vals now seeded from file-level "noise_levels"
+#     list and "per_noise" dict keys before falling back to row-level field scan.
+#     suppB files store the noise schedule as top-level "noise_levels":[0.0,0.5,...]
+#     and as keys of "per_noise" — no per-row "noise_level" scalar exists, so the
+#     original row-scan found nothing and exited with "no noise_level field found".
+#   — _has_r2 widened to include "success","r2_mean","r2_median","mean_r2","median_r2"
+#     which appear in actual suppB noise-sweep JSON output files.
+#
 # FIX-EHD-SCHEMA (2026-05-31):
 #   — _compute_ehd_noise_robust: added equation-name-keyed schema support for suppB.
 #     suppB JSON files use per_noise[noise_level][equation_name] = {r2: ...} (not
@@ -2009,7 +2018,7 @@ def _compute_ehd_noise_robust(results_dir, threshold):
             try: nl = float(_nk)
             except (TypeError, ValueError): continue
             if isinstance(_nv, dict):
-                _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate"))
+                _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate","success","r2_mean","r2_median","mean_r2","median_r2"))
                 if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
                     # Nested dict: equation-keyed OR method-keyed.
                     # Recurse _iter_rows to collect all R²-bearing leaves at any depth,
@@ -2106,10 +2115,38 @@ def _compute_ehd_noise_robust(results_dir, threshold):
 
     all_rows = flattened_rows + generic_rows
 
-    # Auto-detect max noise level using centralised extractor
+    # Auto-detect max noise level using centralised extractor.
+    # FIX-NOISE-LEVELS-KEY: suppB files store the noise schedule as a top-level
+    # "noise_levels" list (e.g. [0.0, 0.5, 1.0, 5.0, 10.0]) and as keys of the
+    # "per_noise" dict — NOT as a per-row "noise_level" scalar field.
+    # Seed noise_vals from those file-level sources first so we never miss them.
     noise_vals = set()
+    for _, data in pairs:
+        if not isinstance(data, dict):
+            continue
+        # Source 1: top-level "noise_levels" list / scalar
+        for _nlkey in ("noise_levels", "noise_level", "noise_schedule",
+                       "sigma_levels", "sigma_list", "sigmas",
+                       "noise_fractions", "noise_values", "levels"):
+            _nlv = data.get(_nlkey)
+            if _nlv is None:
+                continue
+            if isinstance(_nlv, list):
+                for _v in _nlv:
+                    try: noise_vals.add(float(_v))
+                    except (TypeError, ValueError): pass
+            else:
+                try: noise_vals.add(float(_nlv))
+                except (TypeError, ValueError): pass
+        # Source 2: keys of the "per_noise" dict are noise-level strings
+        _pn = data.get("per_noise")
+        if isinstance(_pn, dict):
+            for _k in _pn:
+                try: noise_vals.add(float(_k))
+                except (TypeError, ValueError): pass
+    # Source 3: row-level noise_level fields (original logic)
     for row in all_rows:
-        nl = _get_noise_level(row)   # FIX: use helper instead of inline triple-or
+        nl = _get_noise_level(row)
         if nl is not None:
             noise_vals.add(nl)
     if not noise_vals:
