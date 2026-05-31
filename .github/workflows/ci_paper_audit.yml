@@ -198,37 +198,41 @@ jobs:
           FIGURES_DIR="${OUT_BASE}/figures"
           mkdir -p "${FIGURES_DIR}"
 
-          echo "=== Scanning for figures under ${OUT_BASE} ==="
-          # Find all pdf/png, excluding the canonical destination itself.
-          # Figures are not expected to share names across experiments, so
-          # we copy as-is and only prefix on an actual collision.
-          mapfile -t FOUND < <(
-            find "${OUT_BASE}" \
-              -path "${FIGURES_DIR}/*" -prune -o \
+          # Helper: scan the entire workspace for pdf/png, excluding:
+          #   - the canonical destination dir (avoid re-copying)
+          #   - .git
+          # We scan the full workspace (not just $OUT_BASE) because
+          # generate_figures.py writes to hypatiax/tools/figures/, which
+          # is outside $OUT_BASE.
+          scan_figures() {
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${FIGURES_DIR}/*" -prune -o \
               \( -name "*.pdf" -o -name "*.png" \) -print \
             | sort
-          )
+          }
+
+          echo "=== Scanning workspace for figures ==="
+          mapfile -t FOUND < <(scan_figures)
 
           if [[ ${#FOUND[@]} -eq 0 ]]; then
-            echo "::warning::No figures found under ${OUT_BASE} — attempting generation via figures/generate_figures.py"
+            echo "::warning::No figures found anywhere in workspace — attempting generation via figures/generate_figures.py"
             if [[ -f figures/generate_figures.py ]]; then
               python3 figures/generate_figures.py
             else
-              echo "::error::figures/generate_figures.py not found and no source figures exist under ${OUT_BASE}."
+              echo "::error::figures/generate_figures.py not found and no figures exist in workspace."
               echo "         Commit figure outputs or ensure generate_figures.py is present."
               exit 1
             fi
-            mapfile -t FOUND < <(
-              find "${OUT_BASE}" \
-                -path "${FIGURES_DIR}/*" -prune -o \
-                \( -name "*.pdf" -o -name "*.png" \) -print \
-              | sort
-            )
+            # Re-scan the full workspace after generation
+            mapfile -t FOUND < <(scan_figures)
           fi
 
           if [[ ${#FOUND[@]} -eq 0 ]]; then
             echo "::error::Figure pool is still empty after running generate_figures.py."
-            echo "         Cannot proceed — no figures to validate."
+            echo "         Script reported success but wrote no pdf/png files detectable by scan."
+            echo "         Check that generate_figures.py saves files with .pdf or .png extensions"
+            echo "         somewhere under the workspace (current dir: $(pwd))."
             exit 1
           fi
 
@@ -239,8 +243,6 @@ jobs:
               cp "${f}" "${DEST}"
             else
               # Collision: prefix with the immediate parent dir name.
-              # e.g. figures/fig_paper_mean_vs_instability.png from two
-              # different experiment dirs → exp2__fig_paper_mean_vs_instability.png
               PARENT="$(basename "$(dirname "${f}")")"
               EXT="${f##*.}"
               STEM="$(basename "${f%.*}")"
@@ -258,11 +260,11 @@ jobs:
           TABLES_DIR="${OUT_BASE}/tables"
           mkdir -p "${TABLES_DIR}"
 
-          echo "=== Scanning for .tex tables under ${OUT_BASE} ==="
+          echo "=== Scanning workspace for .tex tables ==="
           # Tables DO share names across experiments (feynman.tex, ablation.tex,
           # etc. appear under every experiment's tables/ subdir with different
           # content).  Strategy: ALWAYS prefix with the immediate parent of the
-          # tables/ dir (i.e. the experiment directory name) so every file gets
+          # tables/ subdir (the experiment directory name) so every file gets
           # a unique, traceable name in the canonical flat dir.
           #
           # Naming rule:
@@ -279,34 +281,37 @@ jobs:
           #
           # The canonical names written here are the ones audit_figures_tables
           # must reference in its manifest / paper_targets.json.
+          #
+          # Scan scope: entire workspace (not just $OUT_BASE) so that tables
+          # written by generate_tables.py outside $OUT_BASE are also captured.
 
-          mapfile -t FOUND < <(
-            find "${OUT_BASE}" \
-              -path "${TABLES_DIR}/*" -prune -o \
+          scan_tables() {
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${TABLES_DIR}/*" -prune -o \
               -name "*.tex" -print \
             | sort
-          )
+          }
+
+          mapfile -t FOUND < <(scan_tables)
 
           if [[ ${#FOUND[@]} -eq 0 ]]; then
-            echo "::warning::No .tex tables found — attempting generation via tables/generate_tables.py"
+            echo "::warning::No .tex tables found anywhere in workspace — attempting generation via tables/generate_tables.py"
             if [[ -f tables/generate_tables.py ]]; then
               python3 tables/generate_tables.py
             else
-              echo "::error::tables/generate_tables.py not found and no source tables exist under ${OUT_BASE}."
+              echo "::error::tables/generate_tables.py not found and no .tex files exist in workspace."
               echo "         Commit table outputs or ensure generate_tables.py is present."
               exit 1
             fi
-            mapfile -t FOUND < <(
-              find "${OUT_BASE}" \
-                -path "${TABLES_DIR}/*" -prune -o \
-                -name "*.tex" -print \
-              | sort
-            )
+            mapfile -t FOUND < <(scan_tables)
           fi
 
           if [[ ${#FOUND[@]} -eq 0 ]]; then
             echo "::error::Tables pool is still empty after running generate_tables.py."
-            echo "         Cannot proceed — no tables to validate."
+            echo "         Script reported success but wrote no .tex files detectable by scan."
+            echo "         Check that generate_tables.py saves files with .tex extension"
+            echo "         somewhere under the workspace (current dir: $(pwd))."
             exit 1
           fi
 
