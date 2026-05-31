@@ -92,6 +92,16 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-SCHEMA-C (2026-05-31):
+#   — _compute_ehd_noise_robust: added Schema C handler for suppB files that have
+#     NO per_noise dict. Actual suppB output is one-file-per-equation-per-noise-level
+#     with r2 at the top level and noise level in noise_levels:[x] list.
+#     flattened=0 confirmed per_noise was absent from every file; the per_noise loop
+#     skipped all via "if not isinstance(per_noise, dict): continue".
+#     Fix: after the per_noise loop, scan files without per_noise, extract file-level
+#     r2 and noise level (noise_levels list / cross_noise_summary / scalar / filename),
+#     and emit one synthetic row per file for the max-noise robustness check.
+#
 # FIX-FORCE-NOISE-LEVEL (2026-05-31):
 #   — _compute_ehd_noise_robust: noise_level is now FORCE-ASSIGNED from the per_noise
 #     dict key (not setdefault). setdefault was silently losing to inner dict fields
@@ -2118,6 +2128,76 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                 for item in _nv:
                     if isinstance(item, dict):
                         _emit(item)
+
+    # FIX-SCHEMA-C: handle single-equation/single-noise-level files that have NO per_noise dict.
+    # Actual suppB schema (confirmed by flattened=0, noise_vals populated from noise_levels list):
+    #   { "domain":"...", "formula":"...", "method":"hypatiax", "r2":0.87, "rmse":0.05,
+    #     "noise_levels":[0.05], "success":true, "tests":10, "cross_noise_summary":{...} }
+    # Each file is one equation at one noise level; the applicable noise level is the
+    # single entry in noise_levels, or can be derived from cross_noise_summary keys,
+    # or from the filename.  We emit one synthetic row per file for the max-noise check.
+    import re as _re2
+    for _p, data in pairs:
+        if not isinstance(data, dict):
+            continue
+        if isinstance(data.get("per_noise"), dict):
+            continue   # already handled by per_noise flattening above
+        # Extract file-level R²
+        _fr2 = None
+        for _k in ("r2", "r2_test", "r2_train", "r2_mean", "r2_median",
+                   "mean_r2", "median_r2", "best_r2", "final_r2"):
+            _v = data.get(_k)
+            if _v is not None:
+                try: _fr2 = float(_v); break
+                except (TypeError, ValueError): pass
+        if _fr2 is None:
+            continue  # no R² anywhere — skip
+        _fm = data.get("method") or data.get("model") or data.get("system") or ""
+        # Determine the noise level for this file.
+        # Priority: (1) single-entry noise_levels list, (2) cross_noise_summary keys,
+        # (3) scalar noise_level/sigma field, (4) filename pattern.
+        _file_nls = []
+        _nlv = data.get("noise_levels") or data.get("noise_schedule") or data.get("sigma_levels")
+        if isinstance(_nlv, list):
+            for _v in _nlv:
+                try: _file_nls.append(float(_v))
+                except (TypeError, ValueError): pass
+        elif _nlv is not None:
+            try: _file_nls.append(float(_nlv))
+            except (TypeError, ValueError): pass
+        # Also try cross_noise_summary keys
+        _cns = data.get("cross_noise_summary")
+        if isinstance(_cns, dict):
+            for _k in _cns:
+                try: _file_nls.append(float(_k))
+                except (TypeError, ValueError): pass
+        # Scalar field fallback
+        if not _file_nls:
+            _nl_scalar = _get_noise_level(data)
+            if _nl_scalar is not None:
+                _file_nls.append(_nl_scalar)
+        # Filename fallback
+        if not _file_nls:
+            _m = _re2.search(r"(?:noise|sigma|pct|level)[_\-]?(\d+(?:[p\.]\d+)?)(?:pct|percent)?",
+                             _p.stem, _re2.IGNORECASE)
+            if _m:
+                _raw = _m.group(1).replace("p", ".")
+                try:
+                    _nl = float(_raw)
+                    if _nl > 1 and ("pct" in _p.stem.lower() or "percent" in _p.stem.lower()):
+                        _nl /= 100.0
+                    _file_nls.append(_nl)
+                except ValueError:
+                    pass
+        if not _file_nls:
+            continue  # cannot determine noise level — skip
+        # Emit one row per noise level associated with this file.
+        # If the file has a single-entry list, it represents exactly that noise level.
+        # If multi-entry (full schedule stored per file), emit for the max only to
+        # avoid double-counting — the per_noise path handles multi-noise files better.
+        _target_nls = _file_nls if len(_file_nls) == 1 else [max(_file_nls)]
+        for _nl in _target_nls:
+            flattened_rows.append({"noise_level": _nl, "r2": _fr2, "method": _fm})
 
     generic_rows = []
     for _, data in pairs:
