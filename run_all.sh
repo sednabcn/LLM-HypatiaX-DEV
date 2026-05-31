@@ -2003,14 +2003,38 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                     # then inject noise_level. Handles:
                     #   method → {r2: ...}
                     #   equation_name → {method_summary: ..., per_equation: {r2: ...}}
+                    # Walk the nested dict collecting every R²-bearing leaf.
+                    # Strategy: try _iter_rows first; if that finds nothing, do a
+                    # two-level targeted walk for the known per_equation/method_summary
+                    # schema: per_noise[nl][eq_name][per_equation][r2].
                     _nested = [r for r in _iter_rows(_nv) if _r2_from_row(r) is not None]
+                    if not _nested:
+                        # Try one level deeper: treat each value as an equation entry
+                        # and recurse into it
+                        for _eq_key, _eq_val in _nv.items():
+                            if isinstance(_eq_val, dict):
+                                # Check per_equation sub-key directly
+                                _pe = _eq_val.get("per_equation") or _eq_val.get("per_eq") or {}
+                                if isinstance(_pe, dict) and _r2_from_row(_pe) is not None:
+                                    _nested.append(dict(_pe))
+                                # Also check method_summary for scalar r2 values
+                                _ms = _eq_val.get("method_summary") or {}
+                                if isinstance(_ms, dict):
+                                    for _mname, _mval in _ms.items():
+                                        if isinstance(_mval, (int, float)):
+                                            _nested.append({"r2": float(_mval), "method": _mname})
+                                        elif isinstance(_mval, dict) and _r2_from_row(_mval) is not None:
+                                            _nested.append(dict(_mval))
+                                # Recurse one more level if still nothing
+                                if not _nested:
+                                    _nested += [r for r in _iter_rows(_eq_val) if _r2_from_row(r) is not None]
                     if _nested:
                         for _nr in _nested:
                             _nr.setdefault("noise_level", nl)
                             _nr.setdefault("method", _file_method)
                             flattened_rows.append(_nr)
                     else:
-                        # No R² leaves — flatten each sub-dict and inherit file-level r2
+                        # Last resort: flatten each sub-dict and inherit file-level r2
                         for _mn, _md in _nv.items():
                             if isinstance(_md, dict):
                                 row = dict(_md)
