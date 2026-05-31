@@ -92,33 +92,6 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
-# FIXES (audit-missing-4-computed 2026-05-31):
-#   — FIX-COMPUTED-METRICS : audit_paper now computes all four missing metrics
-#                            on-the-fly from raw result files rather than doing
-#                            a key lookup.  The experiment scripts write per-
-#                            equation / per-domain rows but never a rolled-up
-#                            metric key.  Previous fix tried to write summary
-#                            JSONs from experiment steps, but audit_paper runs
-#                            standalone in a separate CI job and has no way to
-#                            trigger experiment steps — it only reads committed
-#                            result files.
-#
-#                            Four new computed-metric helpers added to the
-#                            audit_paper Python block:
-#                            _compute_nguyen12_solve_rate   → nguyen12_solve_rate_4dec/strict
-#                            _compute_feynman30_solve_rate  → feynman30_solve_rate
-#                            _compute_ehd_noise_robust      → ehd_noise_robust_100pct
-#                            _compute_all_domains_coverage  → all_domains_coverage
-#
-#                            Each helper: (1) tries pre-computed key first for
-#                            backwards-compat, (2) falls back to deriving the
-#                            value from per-row R² data if the key is absent.
-#                            MISSING is only reported if no result files exist
-#                            at all; otherwise the claim becomes PASS or FAIL.
-#
-#   — FIX-SCAN-RECURSIVE   : _scan_result uses recursive glob for all other
-#                            metrics so subdirectory result files are found.
-#
 # FIXES (observ-02 audit 2026-05-27):
 #   — FIX-suppA-BUG-A : purge_dir moved BEFORE run_hybrid_system_benchmark.py in suppA.
 #                        Previously purge_dir ran after the script wrote its outputs,
@@ -1690,7 +1663,7 @@ def _find_metric(data, *keys):
     return None
 
 def _scan_result(exp, metric, result_subdir=None):
-    """Search result JSONs for a given metric value; return (value, source_path) or (None, None).
+    """Search result JSONs for a given metric key; return (value, source_path) or (None, None).
     Uses recursive glob so results in subdirectories are found."""
     search_roots = []
     if result_subdir:
@@ -1698,7 +1671,6 @@ def _scan_result(exp, metric, result_subdir=None):
         if d.exists():
             search_roots.append(d)
     search_roots.append(RESULTS)
-
     for root in search_roots:
         candidates = sorted(_glob.glob(str(root / "**" / "*.json"), recursive=True), reverse=True)
         for fpath in candidates:
@@ -1713,274 +1685,217 @@ def _scan_result(exp, metric, result_subdir=None):
                 return float(val), p
     return None, None
 
-# ── Computed-metric helpers ────────────────────────────────────────────────────
-# These four metrics are never stored as a single key in the raw result JSONs —
-# they must be derived from per-equation / per-domain rows at audit time.
-# Each helper returns (float_value, str_source_description) or (None, str_reason).
-
-def _compute_nguyen12_solve_rate(results_dir, want_4dec):
-    """Compute Nguyen-12 solve rate from per-equation R² rows.
-    want_4dec=True  → round(R²,4) >= 0.9999  (paper abstract 91.7%)
-    want_4dec=False → R² >= 0.9999 exact      (strict 33.3%)
-    Searches extrapolation/ and RESULTS root for seed=42 or seed=99 Nguyen JSONs.
+def _iter_rows(data):
+    """Yield every dict-record from a JSON document regardless of nesting schema.
+    Handles: {results:[...]} {equation_results:[...]} {domain_results:{...}}
+    top-level list, list-of-lists, and deeply nested variants.
+    Never raises — skips non-dict leaves silently.
     """
-    search_patterns = [
+    if isinstance(data, dict):
+        # Try well-known row-container keys first
+        for key in ("results", "equation_results", "domain_results",
+                    "equations", "records", "data", "rows"):
+            v = data.get(key)
+            if v is not None:
+                for r in _iter_rows(v):
+                    yield r
+                return
+        # Leaf dict — yield it as a row candidate
+        yield data
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                yield item
+            elif isinstance(item, list):
+                for sub in _iter_rows(item):
+                    yield sub
+            # scalars in a list are ignored
+
+def _r2_from_row(row):
+    """Extract a float R² value from a result row dict, or return None."""
+    for key in ("r2", "r2_test", "r2_train", "best_r2", "r2_score",
+                "R2", "R2_test", "R2_train"):
+        v = row.get(key)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+def _load_json_files(patterns):
+    """Glob a list of patterns and return list of (Path, parsed_data) pairs."""
+    seen = set()
+    results = []
+    for pat in patterns:
+        for fpath in sorted(_glob.glob(pat, recursive=True)):
+            if fpath in seen:
+                continue
+            seen.add(fpath)
+            p = Path(fpath)
+            data = all_jsons.get(p)
+            if data is None:
+                try:
+                    data = json.loads(p.read_text())
+                except Exception:
+                    continue
+            results.append((p, data))
+    return results
+
+# ── Computed metric: Nguyen-12 solve rate ─────────────────────────────────────
+def _compute_nguyen12(results_dir, want_4dec):
+    patterns = [
         str(results_dir / "extrapolation" / "**" / "*nguyen*seed42*.json"),
         str(results_dir / "extrapolation" / "**" / "*nguyen*.json"),
         str(results_dir / "extrapolation" / "*.json"),
         str(results_dir / "**" / "*nguyen*.json"),
         str(results_dir / "exp3*.json"),
     ]
-    candidate_files = []
-    for pat in search_patterns:
-        found = sorted(_glob.glob(pat, recursive=True))
-        for f in found:
-            if f not in candidate_files:
-                candidate_files.append(f)
-    if not candidate_files:
+    pairs = _load_json_files(patterns)
+    if not pairs:
         return None, "no Nguyen-12 result JSONs found under RESULTS_DIR"
-
-    # Prefer seed=42 (primary exp3 result)
-    seed42 = [f for f in candidate_files if "seed42" in f or "seed_42" in f]
-    chosen_file = seed42[-1] if seed42 else candidate_files[-1]
-
-    try:
-        data = json.loads(Path(chosen_file).read_text())
-    except Exception as e:
-        return None, "could not parse " + Path(chosen_file).name + ": " + str(e)
-
-    # First try pre-computed keys (written by an earlier pipeline run)
-    if want_4dec:
-        pre = _find_metric(data, "nguyen12_solve_rate_4dec", "success_rate_4dec",
-                           "solve_rate_4dec", "rate_4dec", "nguyen_4dec")
-    else:
-        pre = _find_metric(data, "nguyen12_solve_rate_strict", "success_rate_strict",
-                           "solve_rate_strict", "rate_strict", "nguyen_strict")
+    # Prefer seed=42 file
+    seed42 = [(p, d) for p, d in pairs if "seed42" in p.name or "seed_42" in p.name]
+    chosen_p, chosen_d = (seed42[-1] if seed42 else pairs[-1])
+    # Try pre-computed key first
+    key4  = ("nguyen12_solve_rate_4dec", "success_rate_4dec", "solve_rate_4dec", "rate_4dec", "nguyen_4dec")
+    keys  = ("nguyen12_solve_rate_strict", "success_rate_strict", "solve_rate_strict", "rate_strict", "nguyen_strict")
+    pre = _find_metric(chosen_d, *(key4 if want_4dec else keys))
     if pre is not None:
-        return float(pre), "pre-computed from " + Path(chosen_file).name
-
+        return float(pre), "pre-computed key from " + chosen_p.name
     # Compute from per-equation rows
-    results = data.get("results") or data.get("equation_results") or []
-    if isinstance(results, dict):
-        results = list(results.values())
-    if not results:
-        return None, "no equation results found in " + Path(chosen_file).name
-
-    n_total = len(results)
+    rows = list(_iter_rows(chosen_d))
+    rows = [r for r in rows if _r2_from_row(r) is not None]
+    if not rows:
+        return None, "no equation rows with R2 found in " + chosen_p.name
+    n_total = len(rows)
     n_pass = 0
-    for r in results:
-        if not isinstance(r, dict):
-            continue
-        r2 = (r.get("r2") or r.get("r2_test") or r.get("r2_train") or
-              r.get("best_r2") or r.get("r2_score") or 0.0) or 0.0
-        try:
-            r2 = float(r2)
-        except (TypeError, ValueError):
-            r2 = 0.0
-        if want_4dec:
-            if round(r2, 4) >= 0.9999:
-                n_pass += 1
-        else:
-            if r2 >= 0.9999:
-                n_pass += 1
+    for r in rows:
+        r2 = _r2_from_row(r)
+        passed = (round(r2, 4) >= 0.9999) if want_4dec else (r2 >= 0.9999)
+        if passed:
+            n_pass += 1
+    rate = n_pass / n_total
+    label = "4dec" if want_4dec else "strict"
+    return rate, "computed " + str(n_pass) + "/" + str(n_total) + " " + label + " from " + chosen_p.name
 
-    rate = n_pass / n_total if n_total > 0 else 0.0
-    thr_label = "4dec" if want_4dec else "strict"
-    src_desc = "computed " + str(n_pass) + "/" + str(n_total) + " (" + thr_label + ") from " + Path(chosen_file).name
-    return rate, src_desc
-
-
-def _compute_feynman30_solve_rate(results_dir, threshold):
-    """Compute fraction of Feynman equations solved (R² >= threshold) by best method."""
-    exp2_dirs = [
-        results_dir / "comparison_results" / "feynman-tests" / "exp2",
-        results_dir / "comparison_results" / "feynman-tests",
-        results_dir / "comparison_results",
-        results_dir,
+# ── Computed metric: Feynman-30 solve rate ────────────────────────────────────
+def _compute_feynman30(results_dir, threshold):
+    patterns = [
+        str(results_dir / "comparison_results" / "feynman-tests" / "exp2" / "**" / "*.json"),
+        str(results_dir / "comparison_results" / "feynman-tests" / "**" / "*.json"),
+        str(results_dir / "comparison_results" / "**" / "*.json"),
     ]
-    result_files = []
-    for d in exp2_dirs:
-        if d.exists():
-            found = sorted(_glob.glob(str(d / "**" / "*.json"), recursive=True))
-            for f in found:
-                if f not in result_files and "checkpoint" not in f and "audit_summary" not in f:
-                    result_files.append(f)
-    if not result_files:
-        return None, "no result JSONs found under comparison_results/feynman-tests/exp2"
-
     PREFERRED = {"hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia"}
-    n_total = 0
-    n_pass = 0
-    for fpath in result_files:
-        try:
-            data = all_jsons.get(Path(fpath)) or json.loads(Path(fpath).read_text())
-        except Exception:
-            continue
-        rows = data.get("results") or data.get("equation_results") or []
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            method = str(r.get("method", "")).lower().replace("-", "").replace("_", "")
+    pairs = [(p, d) for p, d in _load_json_files(patterns)
+             if "checkpoint" not in p.name and "audit_summary" not in p.name]
+    if not pairs:
+        return None, "no result JSONs found under comparison_results/feynman-tests/exp2"
+    n_total = n_pass = 0
+    for _, data in pairs:
+        for row in _iter_rows(data):
+            method = str(row.get("method", "")).lower().replace("-", "").replace("_", "")
             if method and not any(p in method for p in PREFERRED):
                 continue
-            r2 = (r.get("r2") or r.get("r2_test") or r.get("r2_train") or
-                  r.get("best_r2") or r.get("r2_score"))
+            r2 = _r2_from_row(row)
             if r2 is None:
-                continue
-            try:
-                r2 = float(r2)
-            except (TypeError, ValueError):
                 continue
             n_total += 1
             if r2 >= threshold:
                 n_pass += 1
-
     if n_total == 0:
-        return None, "no valid R2 rows found in feynman exp2 result files"
-    rate = n_pass / n_total
-    return rate, "computed " + str(n_pass) + "/" + str(n_total) + " at threshold=" + str(threshold)
+        return None, "no HypatiaX R2 rows found in feynman exp2 result files"
+    return n_pass / n_total, "computed " + str(n_pass) + "/" + str(n_total) + " at threshold=" + str(threshold)
 
-
+# ── Computed metric: EHD noise robustness ─────────────────────────────────────
 def _compute_ehd_noise_robust(results_dir, threshold):
-    """Compute fraction of equations robust at max noise level (R² >= threshold)."""
-    noise_dirs = [
-        results_dir / "comparison_results" / "feynman-tests" / "noise-sweep" / "noise-sweep",
-        results_dir / "comparison_results" / "feynman-tests" / "noise-sweep",
-        results_dir / "comparison_results",
-        results_dir,
+    patterns = [
+        str(results_dir / "comparison_results" / "feynman-tests" / "noise-sweep" / "**" / "*.json"),
+        str(results_dir / "comparison_results" / "feynman-tests" / "**" / "*.json"),
+        str(results_dir / "comparison_results" / "**" / "*.json"),
     ]
-    result_files = []
-    for d in noise_dirs:
-        if d.exists():
-            found = sorted(_glob.glob(str(d / "**" / "*.json"), recursive=True))
-            for f in found:
-                if f not in result_files and "checkpoint" not in f and "audit_summary" not in f:
-                    result_files.append(f)
-    if not result_files:
-        return None, "no result JSONs found under comparison_results/feynman-tests/noise-sweep"
-
-    # Find the maximum noise level present in the data
     PREFERRED = {"hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia"}
-    all_noise_levels = set()
+    pairs = [(p, d) for p, d in _load_json_files(patterns)
+             if "checkpoint" not in p.name and "audit_summary" not in p.name]
+    if not pairs:
+        return None, "no result JSONs found under comparison_results/feynman-tests/noise-sweep"
+    # Auto-detect max noise level
+    noise_vals = set()
     all_rows = []
-    for fpath in result_files:
-        try:
-            data = all_jsons.get(Path(fpath)) or json.loads(Path(fpath).read_text())
-        except Exception:
-            continue
-        rows = data.get("results") or data.get("equation_results") or []
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            noise = r.get("noise_level") or r.get("noise") or r.get("sigma")
-            if noise is not None:
+    for _, data in pairs:
+        for row in _iter_rows(data):
+            nl = row.get("noise_level") or row.get("noise") or row.get("sigma")
+            if nl is not None:
                 try:
-                    all_noise_levels.add(float(noise))
+                    noise_vals.add(float(nl))
                 except (TypeError, ValueError):
                     pass
-            all_rows.append(r)
-
-    if not all_noise_levels:
-        return None, "no noise_level field found in any noise-sweep result JSON"
-    max_noise = max(all_noise_levels)
-
-    n_total = 0
-    n_robust = 0
-    for r in all_rows:
-        noise = r.get("noise_level") or r.get("noise") or r.get("sigma")
-        if noise is None:
+            all_rows.append(row)
+    if not noise_vals:
+        return None, "no noise_level field found in any noise-sweep JSON"
+    max_noise = max(noise_vals)
+    n_total = n_robust = 0
+    for row in all_rows:
+        nl = row.get("noise_level") or row.get("noise") or row.get("sigma")
+        if nl is None:
             continue
         try:
-            if abs(float(noise) - max_noise) > 0.01:
+            if abs(float(nl) - max_noise) > 0.01:
                 continue
         except (TypeError, ValueError):
             continue
-        method = str(r.get("method", "")).lower().replace("-", "").replace("_", "")
+        method = str(row.get("method", "")).lower().replace("-", "").replace("_", "")
         if method and not any(p in method for p in PREFERRED):
             continue
-        r2 = (r.get("r2") or r.get("r2_test") or r.get("r2_train") or
-              r.get("best_r2") or r.get("r2_score"))
+        r2 = _r2_from_row(row)
         if r2 is None:
-            continue
-        try:
-            r2 = float(r2)
-        except (TypeError, ValueError):
             continue
         n_total += 1
         if r2 >= threshold:
             n_robust += 1
-
     if n_total == 0:
-        return None, "no rows at max noise level=" + str(max_noise) + " found"
-    rate = n_robust / n_total
-    return rate, "computed " + str(n_robust) + "/" + str(n_total) + " at max_noise=" + str(max_noise)
+        return None, "no rows at max noise=" + str(max_noise) + " found"
+    return n_robust / n_total, "computed " + str(n_robust) + "/" + str(n_total) + " at max_noise=" + str(max_noise)
 
-
+# ── Computed metric: hybrid all-domains coverage ──────────────────────────────
 def _compute_all_domains_coverage(results_dir, n_expected):
-    """Compute fraction of expected hybrid_all_domains domains with at least one result."""
-    hybrid_dirs = [
-        results_dir / "hybrid_llm_nn" / "all_domains",
-        results_dir / "hybrid_llm_nn",
-        results_dir,
+    patterns = [
+        str(results_dir / "hybrid_llm_nn" / "all_domains" / "**" / "*.json"),
+        str(results_dir / "hybrid_llm_nn" / "**" / "*.json"),
+        str(results_dir / "**" / "hybrid_llm_nn*.json"),
+        str(results_dir / "**" / "hybrid*all*domain*.json"),
     ]
-    result_files = []
-    for d in hybrid_dirs:
-        if d.exists():
-            found = sorted(_glob.glob(str(d / "**" / "*.json"), recursive=True))
-            for f in found:
-                if f not in result_files and "checkpoint" not in f and "audit_summary" not in f:
-                    result_files.append(f)
-    if not result_files:
+    pairs = [(p, d) for p, d in _load_json_files(patterns)
+             if "checkpoint" not in p.name and "audit_summary" not in p.name]
+    if not pairs:
         return None, "no result JSONs found under hybrid_llm_nn/"
-
     covered = set()
-    for fpath in result_files:
-        try:
-            data = all_jsons.get(Path(fpath)) or json.loads(Path(fpath).read_text())
-        except Exception:
-            continue
-        rows = data.get("results") or data.get("domain_results") or data.get("equation_results") or []
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            domain = (r.get("domain") or r.get("domain_id") or r.get("benchmark_domain") or
-                      r.get("domain_name") or "")
-            r2 = (r.get("r2") or r.get("r2_test") or r.get("r2_train") or r.get("best_r2"))
+    for _, data in pairs:
+        for row in _iter_rows(data):
+            domain = (row.get("domain") or row.get("domain_id") or
+                      row.get("benchmark_domain") or row.get("domain_name") or "")
+            r2 = _r2_from_row(row)
             if domain and r2 is not None:
-                try:
-                    if float(r2) > -1e9:
-                        covered.add(str(domain))
-                except (TypeError, ValueError):
-                    pass
-
+                covered.add(str(domain))
     n_covered = len(covered)
-    if n_expected <= 0:
-        n_expected = 10
-    rate = n_covered / n_expected
-    return rate, "computed " + str(n_covered) + "/" + str(n_expected) + " domains covered: " + str(sorted(covered))
+    denom = n_expected if n_expected > 0 else 10
+    rate = n_covered / denom
+    return rate, "computed " + str(n_covered) + "/" + str(denom) + " domains: " + str(sorted(covered))
 
 # ── Audit loop ────────────────────────────────────────────────────────────────
 findings = []
 
-TOLERANCE = 0.01   # 1 % relative or absolute, whichever is larger
+TOLERANCE         = 0.01
 FEYNMAN_THRESHOLD = float(os.environ.get("FEYNMAN_NOISELESS_THRESHOLD", "0.9999"))
 NOISE_THRESHOLD   = float(os.environ.get("NOISE_THRESHOLD", "0.9"))
 HYBRID_N_DOMAINS  = int(os.environ.get("HYBRID_N_DOMAINS", "10"))
 
 for claim in targets:
-    # Skip commentary/excluded entries — they have no exp/metric/paper_value
     if "_EXCLUDED" in claim:
         continue
 
     exp    = claim.get("exp", "?")
     metric = claim.get("metric", "?")
-    # JSON key is "paper_value" (not "value") — matches paper_targets.json schema
     paper  = claim.get("paper_value")
     tol    = claim.get("tolerance", TOLERANCE)
     subdir = claim.get("result_subdir")
@@ -1991,90 +1906,51 @@ for claim in targets:
                          "detail": "no 'paper_value' field in paper_targets.json entry"})
         continue
 
-    # ── Nguyen-12 dual-threshold (computed from per-equation rows) ────────────
+    # ── Dispatch to computed-metric handlers ──────────────────────────────────
     if exp in ("exp3", "exp3b") and metric in (
-        "nguyen12_solve_rate_4dec", "nguyen12_solve_rate_strict",
-        "success_rate_4dec",        "success_rate_strict",
-    ):
+            "nguyen12_solve_rate_4dec", "nguyen12_solve_rate_strict",
+            "success_rate_4dec",        "success_rate_strict"):
         want_4dec = metric in ("nguyen12_solve_rate_4dec", "success_rate_4dec")
-        got, src_desc = _compute_nguyen12_solve_rate(RESULTS, want_4dec)
-        if got is None:
-            findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                             "detail": src_desc})
-        else:
-            expected = float(paper)
-            ok = abs(got - expected) <= max(tol * abs(expected), 1e-9)
-            st = "PASS" if ok else "FAIL"
-            detail = "got=" + str(round(got, 4)) + ", expected=" + str(round(expected, 4)) + ", tol=" + str(tol) + " | " + src_desc
-            if note:
-                detail += " | " + note
-            findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
-        continue
+        got, src_desc = _compute_nguyen12(RESULTS, want_4dec)
 
-    # ── feynman30_solve_rate (computed from per-equation R² rows) ─────────────
-    if metric == "feynman30_solve_rate":
-        got, src_desc = _compute_feynman30_solve_rate(RESULTS, FEYNMAN_THRESHOLD)
-        if got is None:
-            findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                             "detail": src_desc})
-        else:
-            expected = float(paper)
-            ok = abs(got - expected) <= max(tol * max(abs(expected), 1e-9), 1e-9)
-            st = "PASS" if ok else "FAIL"
-            detail = "got=" + str(round(got, 4)) + ", expected=" + str(round(expected, 4)) + ", tol=" + str(tol) + " | " + src_desc
-            if note:
-                detail += " | " + note
-            findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
-        continue
+    elif metric == "feynman30_solve_rate":
+        got, src_desc = _compute_feynman30(RESULTS, FEYNMAN_THRESHOLD)
 
-    # ── ehd_noise_robust_100pct (computed from noise-sweep rows at max sigma) ──
-    if metric == "ehd_noise_robust_100pct":
+    elif metric == "ehd_noise_robust_100pct":
         got, src_desc = _compute_ehd_noise_robust(RESULTS, NOISE_THRESHOLD)
-        if got is None:
-            findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                             "detail": src_desc})
-        else:
-            expected = float(paper)
-            ok = abs(got - expected) <= max(tol * max(abs(expected), 1e-9), 1e-9)
-            st = "PASS" if ok else "FAIL"
-            detail = "got=" + str(round(got, 4)) + ", expected=" + str(round(expected, 4)) + ", tol=" + str(tol) + " | " + src_desc
-            if note:
-                detail += " | " + note
-            findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
-        continue
 
-    # ── all_domains_coverage (computed from hybrid_llm_nn result rows) ─────────
-    if metric == "all_domains_coverage":
+    elif metric == "all_domains_coverage":
         got, src_desc = _compute_all_domains_coverage(RESULTS, HYBRID_N_DOMAINS)
-        if got is None:
+
+    else:
+        # General key-lookup path
+        got_val, src_path = _scan_result(exp, metric, subdir)
+        if got_val is None:
             findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                             "detail": src_desc})
-        else:
-            expected = float(paper)
-            ok = abs(got - expected) <= max(tol * max(abs(expected), 1e-9), 1e-9)
-            st = "PASS" if ok else "FAIL"
-            detail = "got=" + str(round(got, 4)) + ", expected=" + str(round(expected, 4)) + ", tol=" + str(tol) + " | " + src_desc
-            if note:
-                detail += " | " + note
-            findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
+                             "detail": f"metric '{metric}' not found in any result JSON under {RESULTS}"})
+            continue
+        expected = float(paper)
+        ok = abs(got_val - expected) <= max(tol * max(abs(expected), 1e-9), 1e-9)
+        st = "PASS" if ok else "FAIL"
+        src_rel = str(src_path.relative_to(RESULTS)) if src_path.is_relative_to(RESULTS) else str(src_path)
+        detail  = f"got={got_val:.6f}, expected={expected:.6f}, tol={tol} | {src_rel}"
+        if note:
+            detail += f" | {note}"
+        findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
         continue
 
-    # ── General case: key lookup across all result JSONs ──────────────────────
-    got, src = _scan_result(exp, metric, subdir)
+    # ── Evaluate computed result ───────────────────────────────────────────────
     if got is None:
         findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                         "detail": "metric '" + metric + "' not found in any result JSON under " + str(RESULTS)})
-        continue
-
-    expected = float(paper)
-    denom    = max(abs(expected), 1e-9)
-    ok       = abs(got - expected) <= max(tol * denom, 1e-9)
-    st       = "PASS" if ok else "FAIL"
-    src_rel  = str(src.relative_to(RESULTS)) if src.is_relative_to(RESULTS) else str(src)
-    detail   = "got=" + str(round(got, 6)) + ", expected=" + str(round(expected, 6)) + ", tol=" + str(tol) + " | " + src_rel
-    if note:
-        detail += " | " + note
-    findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
+                         "detail": src_desc})
+    else:
+        expected = float(paper)
+        ok = abs(got - expected) <= max(tol * max(abs(expected), 1e-9), 1e-9)
+        st = "PASS" if ok else "FAIL"
+        detail = f"got={got:.4f}, expected={expected:.4f}, tol={tol} | {src_desc}"
+        if note:
+            detail += f" | {note}"
+        findings.append({"exp": exp, "metric": metric, "status": st, "detail": detail})
 
 # ── Print summary ─────────────────────────────────────────────────────────────
 n_pass = sum(1 for f in findings if f["status"] == "PASS")
