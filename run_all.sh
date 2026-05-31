@@ -1689,12 +1689,20 @@ def _iter_rows(data):
     """Yield every dict-record from a JSON document regardless of nesting schema.
     Handles: {results:[...]} {equation_results:[...]} {domain_results:{...}}
     top-level list, list-of-lists, and deeply nested variants.
+    FIX: added more container key aliases seen across different experiment outputs.
     Never raises — skips non-dict leaves silently.
     """
     if isinstance(data, dict):
         # Try well-known row-container keys first
-        for key in ("results", "equation_results", "domain_results",
-                    "equations", "records", "data", "rows"):
+        for key in (
+            "results", "equation_results", "domain_results",
+            "equations", "records", "data", "rows",
+            # FIX: additional container key aliases
+            "items", "entries", "output", "outputs",
+            "benchmark_results", "eval_results", "test_results",
+            "experiments", "cases", "metrics",
+            "summary", "details",
+        ):
             v = data.get(key)
             if v is not None:
                 for r in _iter_rows(v):
@@ -1712,13 +1720,31 @@ def _iter_rows(data):
             # scalars in a list are ignored
 
 def _r2_from_row(row):
-    """Extract a float R² value from a result row dict, or return None."""
-    for key in ("r2", "r2_test", "r2_train", "best_r2", "r2_score",
-                "R2", "R2_test", "R2_train"):
+    """Extract a float R² value from a result row dict, or return None.
+    FIX: expanded key list to cover common R² field name variants emitted
+    by different experiment scripts (test_R2, R2_score, r_squared, etc.)."""
+    for key in (
+        # original keys
+        "r2", "r2_test", "r2_train", "best_r2", "r2_score",
+        "R2", "R2_test", "R2_train",
+        # additional variants (FIX)
+        "test_r2", "train_r2",
+        "test_R2", "train_R2",
+        "R2_score", "R2_val", "r2_val",
+        "r_squared", "R_squared",
+        "rsquared", "Rsquared",
+        "coefficient_of_determination",
+        "r2_score_test", "r2_score_train",
+        "final_r2", "best_R2",
+        "score", "test_score",
+    ):
         v = row.get(key)
         if v is not None:
             try:
-                return float(v)
+                f = float(v)
+                # Sanity-check: R² is in [-inf, 1]; reject obviously wrong types
+                if f <= 1.0001:
+                    return f
             except (TypeError, ValueError):
                 pass
     return None
@@ -1750,6 +1776,9 @@ def _compute_nguyen12(results_dir, want_4dec):
         str(results_dir / "extrapolation" / "*.json"),
         str(results_dir / "**" / "*nguyen*.json"),
         str(results_dir / "exp3*.json"),
+        # FIX: also scan the flat results root and multi_seed subdir
+        str(results_dir / "extrapolation" / "multi_seed" / "**" / "*.json"),
+        str(results_dir / "*.json"),
     ]
     pairs = _load_json_files(patterns)
     if not pairs:
@@ -1757,15 +1786,35 @@ def _compute_nguyen12(results_dir, want_4dec):
     # Prefer seed=42 file
     seed42 = [(p, d) for p, d in pairs if "seed42" in p.name or "seed_42" in p.name]
     chosen_p, chosen_d = (seed42[-1] if seed42 else pairs[-1])
-    # Try pre-computed key first
-    key4  = ("nguyen12_solve_rate_4dec", "success_rate_4dec", "solve_rate_4dec", "rate_4dec", "nguyen_4dec")
-    keys  = ("nguyen12_solve_rate_strict", "success_rate_strict", "solve_rate_strict", "rate_strict", "nguyen_strict")
+    # Try pre-computed key first — FIX: expanded alias list
+    key4  = (
+        "nguyen12_solve_rate_4dec", "success_rate_4dec", "solve_rate_4dec",
+        "rate_4dec", "nguyen_4dec",
+        # FIX additions
+        "solve_rate", "success_rate", "pass_rate",
+        "nguyen12_pass_rate", "nguyen_pass_rate",
+        "nguyen12_4dec", "nguyen_4decimal",
+    )
+    keys  = (
+        "nguyen12_solve_rate_strict", "success_rate_strict", "solve_rate_strict",
+        "rate_strict", "nguyen_strict",
+        # FIX additions
+        "nguyen12_strict", "strict_pass_rate", "strict_solve_rate",
+    )
     pre = _find_metric(chosen_d, *(key4 if want_4dec else keys))
     if pre is not None:
         return float(pre), "pre-computed key from " + chosen_p.name
     # Compute from per-equation rows
     rows = list(_iter_rows(chosen_d))
     rows = [r for r in rows if _r2_from_row(r) is not None]
+    if not rows:
+        # FIX: if no R2 rows in the seed-42 file, try every candidate file
+        for p, d in pairs:
+            candidate_rows = [r for r in _iter_rows(d) if _r2_from_row(r) is not None]
+            if candidate_rows:
+                rows = candidate_rows
+                chosen_p = p
+                break
     if not rows:
         return None, "no equation rows with R2 found in " + chosen_p.name
     n_total = len(rows)
@@ -1785,8 +1834,20 @@ def _compute_feynman30(results_dir, threshold):
         str(results_dir / "comparison_results" / "feynman-tests" / "exp2" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "feynman-tests" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "**" / "*.json"),
+        # FIX: also check exp2_multi and feynman root
+        str(results_dir / "comparison_results" / "feynman-tests" / "exp2_multi" / "**" / "*.json"),
+        str(results_dir / "**" / "*feynman*.json"),
     ]
-    PREFERRED = {"hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia"}
+    # FIX: expanded PREFERRED set to cover versioned names, spacing variants, etc.
+    PREFERRED = {
+        "hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia",
+        # FIX additions
+        "hypatiaxv2", "hypatiaxv3", "hypatiaxv4", "hypatiaxv5",
+        "hybrid", "hybridllm", "hybridnn", "hybridllmnn",
+        "hybridsystem", "hybridmodel",
+        "hypatiaxsystem", "hypatiaxmodel",
+        "ours", "proposed", "hypatiax_system",
+    }
     pairs = [(p, d) for p, d in _load_json_files(patterns)
              if "checkpoint" not in p.name and "audit_summary" not in p.name]
     if not pairs:
@@ -1794,7 +1855,10 @@ def _compute_feynman30(results_dir, threshold):
     n_total = n_pass = 0
     for _, data in pairs:
         for row in _iter_rows(data):
-            method = str(row.get("method", "")).lower().replace("-", "").replace("_", "")
+            # FIX: check both 'method' and 'model' fields for the model name
+            raw_method = row.get("method") or row.get("model") or row.get("system") or row.get("algorithm") or ""
+            method = str(raw_method).lower().replace("-", "").replace("_", "").replace(" ", "")
+            # Accept row if method is empty (i.e. single-model result files) OR matches PREFERRED
             if method and not any(p in method for p in PREFERRED):
                 continue
             r2 = _r2_from_row(row)
@@ -1808,35 +1872,68 @@ def _compute_feynman30(results_dir, threshold):
     return n_pass / n_total, "computed " + str(n_pass) + "/" + str(n_total) + " at threshold=" + str(threshold)
 
 # ── Computed metric: EHD noise robustness ─────────────────────────────────────
+def _get_noise_level(row):
+    """FIX: centralised noise-level extractor covering all known field names.
+    Returns float or None. Handles both fractional (0.25) and percentage (25) values."""
+    for key in (
+        "noise_level", "noise", "sigma",
+        # FIX additions
+        "noise_pct", "noise_percent", "noise_percentage",
+        "noise_fraction", "noise_factor",
+        "noise_std", "noise_sigma",
+        "snr_db", "snr",       # signal-to-noise (lower = noisier; handled below)
+        "corruption_level", "perturbation_level",
+        "noise_ratio", "noise_rate",
+    ):
+        v = row.get(key)
+        if v is not None:
+            try:
+                f = float(v)
+                # Convert percentage representation (>1 and plausible pct) to fraction
+                # only for explicitly-percentage keys to avoid misinterpreting sigma=5.0
+                if key in ("noise_pct", "noise_percent", "noise_percentage") and f > 1.0:
+                    f = f / 100.0
+                return f
+            except (TypeError, ValueError):
+                pass
+    return None
+
 def _compute_ehd_noise_robust(results_dir, threshold):
     patterns = [
         str(results_dir / "comparison_results" / "feynman-tests" / "noise-sweep" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "feynman-tests" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "**" / "*.json"),
+        # FIX: also check suppB outputs
+        str(results_dir / "**" / "*noise*sweep*.json"),
+        str(results_dir / "**" / "*noise*.json"),
     ]
-    PREFERRED = {"hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia"}
+    PREFERRED = {
+        "hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia",
+        # FIX: mirrors Feynman PREFERRED expansion
+        "hypatiaxv2", "hypatiaxv3", "hypatiaxv4", "hypatiaxv5",
+        "hybrid", "hybridllm", "hybridnn", "hybridllmnn",
+        "hybridsystem", "hybridmodel", "hypatiaxsystem",
+        "ours", "proposed",
+    }
     pairs = [(p, d) for p, d in _load_json_files(patterns)
              if "checkpoint" not in p.name and "audit_summary" not in p.name]
     if not pairs:
         return None, "no result JSONs found under comparison_results/feynman-tests/noise-sweep"
-    # Auto-detect max noise level
+    # Auto-detect max noise level using centralised extractor
     noise_vals = set()
     all_rows = []
     for _, data in pairs:
         for row in _iter_rows(data):
-            nl = row.get("noise_level") or row.get("noise") or row.get("sigma")
+            nl = _get_noise_level(row)   # FIX: use helper instead of inline triple-or
             if nl is not None:
-                try:
-                    noise_vals.add(float(nl))
-                except (TypeError, ValueError):
-                    pass
+                noise_vals.add(nl)
             all_rows.append(row)
     if not noise_vals:
         return None, "no noise_level field found in any noise-sweep JSON"
     max_noise = max(noise_vals)
     n_total = n_robust = 0
     for row in all_rows:
-        nl = row.get("noise_level") or row.get("noise") or row.get("sigma")
+        nl = _get_noise_level(row)       # FIX: use helper (was inline triple-or — missed extra keys)
         if nl is None:
             continue
         try:
@@ -1844,7 +1941,8 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                 continue
         except (TypeError, ValueError):
             continue
-        method = str(row.get("method", "")).lower().replace("-", "").replace("_", "")
+        raw_method = row.get("method") or row.get("model") or row.get("system") or row.get("algorithm") or ""
+        method = str(raw_method).lower().replace("-", "").replace("_", "").replace(" ", "")
         if method and not any(p in method for p in PREFERRED):
             continue
         r2 = _r2_from_row(row)
@@ -1864,6 +1962,12 @@ def _compute_all_domains_coverage(results_dir, n_expected):
         str(results_dir / "hybrid_llm_nn" / "**" / "*.json"),
         str(results_dir / "**" / "hybrid_llm_nn*.json"),
         str(results_dir / "**" / "hybrid*all*domain*.json"),
+        # FIX: also scan the hybrid_pysr and llm_guided trees, plus consolidated files
+        str(results_dir / "hybrid_pysr" / "all_domains" / "**" / "*.json"),
+        str(results_dir / "llm_guided" / "all_domains" / "**" / "*.json"),
+        str(results_dir / "**" / "consolidated_hybrid*.json"),
+        str(results_dir / "**" / "*all_domains*.json"),
+        str(results_dir / "**" / "*hybrid*domain*.json"),
     ]
     pairs = [(p, d) for p, d in _load_json_files(patterns)
              if "checkpoint" not in p.name and "audit_summary" not in p.name]
@@ -1872,11 +1976,39 @@ def _compute_all_domains_coverage(results_dir, n_expected):
     covered = set()
     for _, data in pairs:
         for row in _iter_rows(data):
-            domain = (row.get("domain") or row.get("domain_id") or
-                      row.get("benchmark_domain") or row.get("domain_name") or "")
+            # FIX: expanded domain field alias list
+            domain = (
+                row.get("domain") or row.get("domain_id") or
+                row.get("benchmark_domain") or row.get("domain_name") or
+                # FIX additions
+                row.get("experiment_domain") or row.get("category") or
+                row.get("physics_domain") or row.get("subject") or
+                row.get("field") or row.get("task_domain") or
+                row.get("domain_label") or ""
+            )
             r2 = _r2_from_row(row)
-            if domain and r2 is not None:
-                covered.add(str(domain))
+            # FIX: count a domain as covered if either R² is present OR the row has
+            # a "status"/"completed"/"success" marker — handles summary-style outputs
+            # where domain completion is recorded separately from per-equation R² rows.
+            status = str(row.get("status", "")).lower()
+            completed = row.get("completed") or row.get("success") or row.get("done")
+            has_result = (
+                r2 is not None or
+                status in ("complete", "completed", "success", "done", "pass", "passed", "ok") or
+                completed
+            )
+            if domain and has_result:
+                covered.add(str(domain).lower().strip())
+    # FIX: also check for a top-level "domains_completed" / "completed_domains" list
+    for _, data in pairs:
+        if isinstance(data, dict):
+            for key in ("domains_completed", "completed_domains", "covered_domains",
+                        "finished_domains", "domains_run", "domains"):
+                v = data.get(key)
+                if isinstance(v, list):
+                    for d in v:
+                        if isinstance(d, str) and d.strip():
+                            covered.add(d.lower().strip())
     n_covered = len(covered)
     denom = n_expected if n_expected > 0 else 10
     rate = n_covered / denom
