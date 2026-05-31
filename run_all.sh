@@ -1139,26 +1139,31 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   _FIRST_TASK=\$(echo \"\${_SHARD_TASKS}\" | tr ' ' '\n' | grep -v '^\$' | head -1)
   if echo \"\${_FIRST_TASK}\" | grep -qE '^noise[0-9]'; then
     _NL_PCT=\$(echo \"\${_FIRST_TASK}\" | sed 's/^noise\([0-9][0-9.]*\)__.*/\1/')
-    _NL_FRAC=\$(python3 -c \"v=float('\${_NL_PCT}'); print(f'{v/100:.6g}')\")
+    # FIX-NOISE_LEVEL-FORMAT: use %.10g instead of :.6g so 0.0/100 → '0.0' not '0'.
+    # The script checks NOISE_LEVEL != '' to decide whether to pin a single level;
+    # '0' may be falsy in some Python contexts. Always emit a decimal to be safe.
+    _NL_FRAC=\$(python3 -c \"v=float('\${_NL_PCT}')/100; print(f'{v:.10g}')\")
     export NOISE_LEVEL=\"\${_NL_FRAC}\"
     echo \"  [suppB] NOISE_LEVEL=\${NOISE_LEVEL} (sigma fraction from task \${_FIRST_TASK}, pct=\${_NL_PCT}%)\"
   else
     echo \"  [suppB] WARNING: no noise{NL}__ task ID found in SHARD_IDS — full sweep will run\"
   fi
   # FIX-suppB-3 (revised): --output-dir, --populations, --parsimony are NOT in
-  # run_noise_sweep_benchmark.py's argparse (confirmed from CI log: "unrecognized arguments").
-  # Removed all three.  Output location is controlled by OUT_BASE env var (set below).
-  # PYSR_POPULATIONS is already in the environment; the script reads it directly.
-  # --parsimony has no CLI equivalent — drop it (no regression: script uses its own default).
-  # --log FILE is a valid flag; point it at the canonical suppB log path.
+  # run_noise_sweep_benchmark.py's argparse (confirmed from CI log: unrecognized arguments).
+  # Removed all three. Output location controlled by OUT_BASE env var set below.
+  # PYSR_POPULATIONS already in env; script reads it directly.
+  # FIX-RESUME: explicitly set RESUME=false so the script ignores any stale
+  # _checkpoint_shard0.json committed from a prior failed run. Without this,
+  # RESUME=true (set globally by CI) causes the script to read the committed
+  # checkpoint, conclude all tasks are done, and exit silently with 0 outputs.
   NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}' \\
   OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
+  RESUME='false' \\
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \\
     --samples ${FEYNMAN_SAMPLES} \\
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
-    --log '${RESULTS_DIR}/suppB_run.log' \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 "
 
@@ -1170,15 +1175,14 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   # FIX-suppB_sc-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug.
   cd '${REPO_ROOT}'
-  # FIX-suppB_sc-2 (revised): --output-dir, --populations, --parsimony are NOT in
-  # run_sample_complexity_benchmark.py's argparse — same bug as suppB confirmed from CI log.
-  # Removed all three.  Output controlled via OUT_BASE env var set below.
-  # PYSR_POPULATIONS already in env; script reads it directly.
+  # FIX-suppB_sc-2: --output-dir, --populations, --parsimony are NOT in argparse — removed.
   # FIX-suppB_sc-3: bare \\ → \\\\ (line-continuations inside double-quoted bash -c string).
+  # FIX-RESUME: RESUME=false so stale committed checkpoint doesn't skip all work silently.
   NOISE_LEVEL='5.0' \\
   SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \\
   OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
+  RESUME='false' \\
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
     --samples ${FEYNMAN_SAMPLES} \\
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
