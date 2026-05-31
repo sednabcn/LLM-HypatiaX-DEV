@@ -16,7 +16,23 @@
 #    bash run_all.sh audit_guard
 #    Sets should_run=true/false based on slot + conclusion.
 #
-#  Job 1 — numerical-verify
+#  Job 0b — collect-figures-tables  (needs: guard)
+#    Scans $OUT_BASE recursively for all *.pdf/*.png (figures) and
+#    *.tex (tables) and copies them into the canonical flat dirs:
+#      $OUT_BASE/figures/   — expected by dimension (6) gate
+#      $OUT_BASE/tables/    — expected by dimension (7) gate
+#    If both source pools are empty after scanning, the job prints a
+#    clear error and exits non-zero (pipeline stops here).
+#    Falls back to running generate_figures.py / generate_tables.py
+#    (repo root) when the scanned pools are empty.
+#
+#  Job 0c — preflight-check  (needs: collect-figures-tables)
+#    Hard-checks that $OUT_BASE/figures/ and $OUT_BASE/tables/ each
+#    contain at least one file before any quality gate runs.
+#    Exits non-zero with a descriptive message if either dir is absent
+#    or empty — prevents misleading FAIL output from downstream jobs.
+#
+#  Job 1 — numerical-verify  (needs: preflight-check)
 #    bash run_all.sh qualify
 #    Numerical spot-checks + 7-dimension per-experiment gate.
 #    Writes logs/verify_report.json.  Exits non-zero on any FAIL.
@@ -41,6 +57,8 @@
 #  TIMEOUT CONTRACT
 #  ----------------
 #  guard                   :  5 min
+#  collect-figures-tables  : 10 min  (scan + copy or generate)
+#  preflight-check         :  5 min  (existence assertion only)
 #  numerical-verify        : 15 min  (bash run_all.sh qualify)
 #  paper-audit             : 15 min  (bash run_all.sh audit_paper)
 #  figures-tables-validate : 10 min  (bash run_all.sh audit_figures_tables)
@@ -121,6 +139,311 @@ jobs:
 
 
   # ============================================================================
+  #  JOB 0b — collect-figures-tables  (needs: guard)
+  #
+  #  Scans $OUT_BASE recursively for figures (*.pdf, *.png) and tables
+  #  (*.tex) that live inside any experiment sub-directory, then copies
+  #  them into the two canonical flat directories expected by the audit:
+  #
+  #    $OUT_BASE/figures/   ← dimension (6) gate
+  #    $OUT_BASE/tables/    ← dimension (7) gate
+  #
+  #  Source-pool logic (per asset type):
+  #    1. Find all matching files anywhere under $OUT_BASE, skipping the
+  #       canonical destination dirs themselves to avoid re-copying.
+  #    2. If the pool is empty → try to generate by running the
+  #       corresponding script at the repo root:
+  #         figures : python3 figures/generate_figures.py
+  #         tables  : python3 tables/generate_tables.py
+  #    3. If the pool is still empty after the generation attempt →
+  #       print a descriptive error and exit 1 (pipeline stops).
+  #
+  #  Duplicate filenames: last writer wins (matches behaviour of the
+  #  existing audit_figures_tables step which uses a flat manifest).
+  # ============================================================================
+  collect-figures-tables:
+    name: "Job 0b · Collect figures & tables into canonical dirs"
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: needs.guard.outputs.should_run == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then
+            pip install -r requirements.txt
+          else
+            pip install numpy scipy matplotlib
+          fi
+
+      - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          FIGURES_DIR="${OUT_BASE}/figures"
+          mkdir -p "${FIGURES_DIR}"
+
+          echo "=== Scanning for figures under ${OUT_BASE} ==="
+          # Find all pdf/png, excluding the canonical destination itself.
+          # Figures are not expected to share names across experiments, so
+          # we copy as-is and only prefix on an actual collision.
+          mapfile -t FOUND < <(
+            find "${OUT_BASE}" \
+              -path "${FIGURES_DIR}/*" -prune -o \
+              \( -name "*.pdf" -o -name "*.png" \) -print \
+            | sort
+          )
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::warning::No figures found under ${OUT_BASE} — attempting generation via figures/generate_figures.py"
+            if [[ -f figures/generate_figures.py ]]; then
+              python3 figures/generate_figures.py
+            else
+              echo "::error::figures/generate_figures.py not found and no source figures exist under ${OUT_BASE}."
+              echo "         Commit figure outputs or ensure generate_figures.py is present."
+              exit 1
+            fi
+            mapfile -t FOUND < <(
+              find "${OUT_BASE}" \
+                -path "${FIGURES_DIR}/*" -prune -o \
+                \( -name "*.pdf" -o -name "*.png" \) -print \
+              | sort
+            )
+          fi
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::error::Figure pool is still empty after running generate_figures.py."
+            echo "         Cannot proceed — no figures to validate."
+            exit 1
+          fi
+
+          echo "Found ${#FOUND[@]} figure file(s) — copying into ${FIGURES_DIR}/"
+          for f in "${FOUND[@]}"; do
+            DEST="${FIGURES_DIR}/$(basename "${f}")"
+            if [[ ! -e "${DEST}" ]]; then
+              cp "${f}" "${DEST}"
+            else
+              # Collision: prefix with the immediate parent dir name.
+              # e.g. figures/fig_paper_mean_vs_instability.png from two
+              # different experiment dirs → exp2__fig_paper_mean_vs_instability.png
+              PARENT="$(basename "$(dirname "${f}")")"
+              EXT="${f##*.}"
+              STEM="$(basename "${f%.*}")"
+              cp "${f}" "${FIGURES_DIR}/${PARENT}__${STEM}.${EXT}"
+              echo "  ⚠ collision: $(basename "${f}") — saved as ${PARENT}__${STEM}.${EXT}"
+            fi
+          done
+          echo "Figures directory now contains $(ls "${FIGURES_DIR}" | wc -l) file(s)."
+
+      - name: Collect tables (TeX) into $OUT_BASE/tables/
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          TABLES_DIR="${OUT_BASE}/tables"
+          mkdir -p "${TABLES_DIR}"
+
+          echo "=== Scanning for .tex tables under ${OUT_BASE} ==="
+          # Tables DO share names across experiments (feynman.tex, ablation.tex,
+          # etc. appear under every experiment's tables/ subdir with different
+          # content).  Strategy: ALWAYS prefix with the immediate parent of the
+          # tables/ dir (i.e. the experiment directory name) so every file gets
+          # a unique, traceable name in the canonical flat dir.
+          #
+          # Naming rule:
+          #   <OUT_BASE>/comparison_results/feynman-tests/exp2/tables/feynman.tex
+          #   → <TABLES_DIR>/exp2__feynman.tex          (parent of tables/ = exp2)
+          #
+          #   <OUT_BASE>/extrapolation/tables/feynman.tex
+          #   → <TABLES_DIR>/extrapolation__feynman.tex
+          #
+          # If two experiments share the same immediate parent name (unlikely
+          # given the tree, but guarded), we fall back to the grandparent:
+          #   exp2__feynman.tex already exists
+          #   → feynman-tests__exp2__feynman.tex
+          #
+          # The canonical names written here are the ones audit_figures_tables
+          # must reference in its manifest / paper_targets.json.
+
+          mapfile -t FOUND < <(
+            find "${OUT_BASE}" \
+              -path "${TABLES_DIR}/*" -prune -o \
+              -name "*.tex" -print \
+            | sort
+          )
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::warning::No .tex tables found — attempting generation via tables/generate_tables.py"
+            if [[ -f tables/generate_tables.py ]]; then
+              python3 tables/generate_tables.py
+            else
+              echo "::error::tables/generate_tables.py not found and no source tables exist under ${OUT_BASE}."
+              echo "         Commit table outputs or ensure generate_tables.py is present."
+              exit 1
+            fi
+            mapfile -t FOUND < <(
+              find "${OUT_BASE}" \
+                -path "${TABLES_DIR}/*" -prune -o \
+                -name "*.tex" -print \
+              | sort
+            )
+          fi
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::error::Tables pool is still empty after running generate_tables.py."
+            echo "         Cannot proceed — no tables to validate."
+            exit 1
+          fi
+
+          echo "Found ${#FOUND[@]} table file(s) — copying into ${TABLES_DIR}/ with experiment prefix"
+          for f in "${FOUND[@]}"; do
+            STEM="$(basename "${f}" .tex)"
+            # The immediate parent of the file is the tables/ subdir itself.
+            # One level up from that is the experiment directory.
+            EXPERIMENT="$(basename "$(dirname "$(dirname "${f}")")")"
+            DEST="${TABLES_DIR}/${EXPERIMENT}__${STEM}.tex"
+
+            if [[ ! -e "${DEST}" ]]; then
+              cp "${f}" "${DEST}"
+            else
+              # Two source paths share the same experiment dir name — use
+              # the grandparent to break the tie.
+              GRANDPARENT="$(basename "$(dirname "$(dirname "$(dirname "${f}")")")")"
+              DEST="${TABLES_DIR}/${GRANDPARENT}__${EXPERIMENT}__${STEM}.tex"
+              cp "${f}" "${DEST}"
+              echo "  ⚠ experiment-name collision: used grandparent prefix → $(basename "${DEST}")"
+            fi
+            echo "  ✅  $(basename "${f}") from ${EXPERIMENT} → $(basename "${DEST}")"
+          done
+          echo "Tables directory now contains $(ls "${TABLES_DIR}" | wc -l) file(s)."
+
+      - name: Generate tables manifest (logs/tables_manifest.json)
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          TABLES_DIR="${OUT_BASE}/tables"
+          # Emit a JSON array of every prefixed filename now in the canonical
+          # tables/ dir.  audit_figures_tables and paper_targets.json should
+          # reference these exact names.
+          python3 - <<'EOF'
+          import os, json, pathlib
+          tables_dir = pathlib.Path(os.environ["OUT_BASE"]) / "tables"
+          names = sorted(f.name for f in tables_dir.iterdir() if f.suffix == ".tex")
+          manifest = {"tables_dir": str(tables_dir), "count": len(names), "files": names}
+          out = pathlib.Path("logs/tables_manifest.json")
+          out.write_text(json.dumps(manifest, indent=2))
+          print(f"Manifest written: {out}  ({len(names)} entries)")
+          for n in names:
+              print(f"  {n}")
+          EOF
+
+      - name: Upload tables manifest
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              tables-manifest-${{ github.run_id }}
+          path:              logs/tables_manifest.json
+          if-no-files-found: warn
+          retention-days:    30
+
+      - name: Summary
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          echo "=== collect-figures-tables summary ==="
+          echo "  figures : $(ls "${OUT_BASE}/figures" 2>/dev/null | wc -l) file(s)"
+          echo "  tables  : $(ls "${OUT_BASE}/tables"  2>/dev/null | wc -l) file(s)"
+          echo "  manifest: logs/tables_manifest.json"
+
+
+  # ============================================================================
+  #  JOB 0c — preflight-check  (needs: collect-figures-tables)
+  #
+  #  Hard assertion: both canonical dirs must exist AND be non-empty.
+  #  Runs before any quality gate so failures are immediately actionable
+  #  rather than buried inside the 7-dimension gate output.
+  #
+  #  Exit codes:
+  #    0  — both dirs present and non-empty → downstream jobs proceed
+  #    1  — either dir absent or empty      → pipeline stops with a clear
+  #           error message pointing to the collection job
+  # ============================================================================
+  preflight-check:
+    name: "Job 0c · Preflight — verify canonical figures/ and tables/ exist"
+    needs: [guard, collect-figures-tables]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: needs.guard.outputs.should_run == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Assert figures dir is non-empty
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          FIGURES_DIR="${OUT_BASE}/figures"
+          if [[ ! -d "${FIGURES_DIR}" ]]; then
+            echo "::error::${FIGURES_DIR} does not exist after collect-figures-tables."
+            echo "         Check the 'collect-figures-tables' job log for details."
+            exit 1
+          fi
+          COUNT=$(ls "${FIGURES_DIR}" | wc -l)
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::${FIGURES_DIR} is empty after collect-figures-tables."
+            echo "         Either the source scan found nothing or generate_figures.py produced no output."
+            exit 1
+          fi
+          echo "✅  figures OK — ${COUNT} file(s) in ${FIGURES_DIR}"
+
+      - name: Assert tables dir is non-empty
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          TABLES_DIR="${OUT_BASE}/tables"
+          if [[ ! -d "${TABLES_DIR}" ]]; then
+            echo "::error::${TABLES_DIR} does not exist after collect-figures-tables."
+            echo "         Check the 'collect-figures-tables' job log for details."
+            exit 1
+          fi
+          COUNT=$(ls "${TABLES_DIR}" | wc -l)
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::${TABLES_DIR} is empty after collect-figures-tables."
+            echo "         Either the source scan found nothing or generate_tables.py produced no output."
+            exit 1
+          fi
+          echo "✅  tables OK — ${COUNT} file(s) in ${TABLES_DIR}"
+
+      - name: Preflight passed
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          echo "=== preflight-check PASSED ==="
+          echo "  ${OUT_BASE}/figures/ : $(ls "${OUT_BASE}/figures" | wc -l) file(s)"
+          echo "  ${OUT_BASE}/tables/  : $(ls "${OUT_BASE}/tables"  | wc -l) file(s)"
+          echo "Proceeding to numerical-verify."
+
+
+  # ============================================================================
   #  JOB 1 — numerical-verify
   #  bash run_all.sh qualify
   #  Numerical spot-checks + 7-dimension per-experiment gate.
@@ -128,10 +451,11 @@ jobs:
   # ============================================================================
   numerical-verify:
     name: "Job 1 · Numerical verify"
-    needs: guard
+    needs: [guard, preflight-check]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: needs.guard.outputs.should_run == 'true' &&
+        needs.preflight-check.result == 'success' &&
         github.event.inputs.skip_verify != 'true'
 
     steps:
@@ -338,7 +662,7 @@ jobs:
   # ============================================================================
   final-gate:
     name: "Final gate"
-    needs: [guard, numerical-verify, paper-audit, figures-tables-validate]
+    needs: [guard, collect-figures-tables, preflight-check, numerical-verify, paper-audit, figures-tables-validate]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always() && needs.guard.outputs.should_run == 'true'
