@@ -185,13 +185,30 @@ jobs:
         run: |
           # BUG 3 FIX: github.event.workflow_run.name is the static workflow `name:` field
           # and never contains the experiment ID.  display_title reflects the dynamic
-          # `run-name:` ("HypatiaX - exp2_feynman . run_all.sh") which does embed it.
-          # ci_experiment.yml run-name uses ASCII hyphen (-) and period (.) — not em-dash
-          # or middle-dot.  Kept in sync with ci_consolidate_experiment.yml sed pattern.
+          # `run-name:` which does embed it.
+          # FIX-SEPARATOR: ci_runner.yml run-name is "HypatiaX - runner · suppB" using
+          # a middle-dot (·, U+00B7) as separator, NOT a period (.).  The previous sed
+          # pattern 's/.*- \(.*\) \. .*/\1/' never matched, so EXP was set to the full
+          # title string "runner · suppB", causing trace_pipeline.py to receive
+          # '--step runner · suppB' and exit with 'unrecognized arguments'.
+          # Fix: strip everything up to and including '· ' to extract the experiment ID.
+          # Falls back to stripping after the last ' - ' for any run-name format that
+          # uses a hyphen separator (e.g. older ci_experiment.yml runs).
           WF_TITLE="${{ github.event.workflow_run.display_title }}"
           if [[ -n "$WF_TITLE" ]]; then
-            EXP=$(echo "$WF_TITLE" | sed 's/.*- \(.*\) \. .*/\1/')
-            echo "Parsed experiment from triggering workflow display_title: $EXP"
+            # Try middle-dot separator first (ci_runner.yml format: "... · <exp>")
+            if echo "$WF_TITLE" | grep -q '·'; then
+              EXP=$(echo "$WF_TITLE" | sed 's/.*· //')
+            else
+              # Fallback: period separator ("... - <exp> . run_all.sh")
+              EXP=$(echo "$WF_TITLE" | sed 's/.*- \(.*\) \. .*/\1/')
+            fi
+            # Validate: if EXP still looks like a full title, clear it
+            if echo "$EXP" | grep -q ' '; then
+              echo "::warning::Could not parse experiment from display_title: '$WF_TITLE' — running full trace"
+              EXP=""
+            fi
+            echo "Parsed experiment from triggering workflow display_title: '$EXP'"
             echo "exp=$EXP" >> "$GITHUB_OUTPUT"
           else
             echo "exp=" >> "$GITHUB_OUTPUT"
