@@ -92,6 +92,31 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIXES (audit-missing-4 2026-05-31):
+#   — FIX-SCAN-RECURSIVE : _scan_result now uses recursive glob (** / *.json).
+#                          The previous non-recursive *.json glob only searched
+#                          one level under RESULTS_DIR, missing feynman/,
+#                          noise_sweep/, and hybrid_llm_nn/all_domains/ subdirs.
+#                          Fixes MISSING for feynman30_solve_rate (exp2),
+#                          ehd_noise_robust_100pct (suppB), and
+#                          all_domains_coverage (hybrid_all_domains).
+#   — FIX-NGUYEN-GUARD   : Nguyen-12 metric== dispatch now matches the actual
+#                          paper_targets.json metric name
+#                          "nguyen12_solve_rate_4dec" (was only "success_rate_4dec").
+#                          The mismatch silently routed all 4dec claims to the
+#                          strict branch, returning got=None → MISSING.
+#   — FIX-NGUYEN-ALIASES : Extended _find_metric key list for both thresholds to
+#                          cover "nguyen12_solve_rate_4dec", "solve_rate_4dec",
+#                          "nguyen12_4dec" (4dec) and "nguyen12_solve_rate_strict",
+#                          "solve_rate_strict", "nguyen12_strict" (strict) so the
+#                          exp3 script may write any of these without audit breaks.
+#   — FIX-NGUYEN-FALLBACK: Added two fallback glob tiers for Nguyen JSON discovery:
+#                          (1) RESULTS/**/*nguyen*.json (any subdir),
+#                          (2) RESULTS/exp3*.json (root).
+#                          exp3_nguyen12_seed99.json lands at RESULTS root (not
+#                          in extrapolation/) when run from REPO_ROOT; previously
+#                          this caused an immediate MISSING before any key lookup.
+#
 # FIXES (observ-02 audit 2026-05-27):
 #   — FIX-suppA-BUG-A : purge_dir moved BEFORE run_hybrid_system_benchmark.py in suppA.
 #                        Previously purge_dir ran after the script wrote its outputs,
@@ -1663,7 +1688,14 @@ def _find_metric(data, *keys):
     return None
 
 def _scan_result(exp, metric, result_subdir=None):
-    """Search result JSONs for a given metric value; return (value, source_path) or (None, None)."""
+    """Search result JSONs for a given metric value; return (value, source_path) or (None, None).
+
+    FIX: glob is now recursive (** / *.json) so results written into subdirectories
+    (e.g. feynman/, noise_sweep/, hybrid_llm_nn/all_domains/) are found.
+    Previously the non-recursive *.json glob only searched one level deep, causing
+    feynman30_solve_rate, ehd_noise_robust_100pct, and all_domains_coverage to be
+    reported as MISSING even when the files existed under RESULTS_DIR.
+    """
     search_roots = []
     if result_subdir:
         d = RESULTS / result_subdir
@@ -1672,7 +1704,7 @@ def _scan_result(exp, metric, result_subdir=None):
     search_roots.append(RESULTS)
 
     for root in search_roots:
-        candidates = sorted(_glob.glob(str(root / "*.json")), reverse=True)
+        candidates = sorted(_glob.glob(str(root / "**" / "*.json"), recursive=True), reverse=True)
         for fpath in candidates:
             p = Path(fpath)
             data = all_jsons.get(p)
@@ -1714,19 +1746,40 @@ for claim in targets:
         "nguyen12_solve_rate_4dec", "nguyen12_solve_rate_strict",
         "success_rate_4dec",        "success_rate_strict",
     ):
-        # 4-decimal threshold (91.7 %) — 4-decimal rounding per Uy et al.
+        # FIX: search extrapolation/ recursively first, then fall back to RESULTS root.
+        # exp3_nguyen12_seed99.json may land directly under RESULTS (not in extrapolation/)
+        # depending on which step wrote it.  Previously a missing extrapolation/ subdir
+        # caused an immediate MISSING even when the file existed at the root.
         nguyen_jsons = sorted(_glob.glob(str(RESULTS / "extrapolation/**/*nguyen*.json"),
                                          recursive=True))
         if not nguyen_jsons:
             nguyen_jsons = sorted(_glob.glob(str(RESULTS / "extrapolation/*.json")))
         if not nguyen_jsons:
+            # Fallback: any nguyen JSON anywhere under RESULTS
+            nguyen_jsons = sorted(_glob.glob(str(RESULTS / "**/*nguyen*.json"), recursive=True))
+        if not nguyen_jsons:
+            # Last resort: any exp3* JSON at the RESULTS root
+            nguyen_jsons = sorted(_glob.glob(str(RESULTS / "exp3*.json")))
+        if not nguyen_jsons:
             findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                             "detail": "no Nguyen-12 result JSONs found"})
+                             "detail": "no Nguyen-12 result JSONs found under RESULTS_DIR"})
             continue
         data = json.loads(Path(nguyen_jsons[-1]).read_text())
-        got4  = _find_metric(data, "success_rate_4dec",  "rate_4dec",  "nguyen_4dec")
-        got_s = _find_metric(data, "success_rate_strict", "rate_strict", "nguyen_strict")
-        if metric == "success_rate_4dec":
+        # FIX: extended key aliases to cover all names the exp3 script may emit.
+        # The script writes e.g. "solve_rate", "nguyen12_solve_rate_4dec",
+        # "success_rate_4dec", "rate_4dec", or "nguyen_4dec" — check all.
+        got4  = _find_metric(data,
+                             "nguyen12_solve_rate_4dec", "success_rate_4dec",
+                             "solve_rate_4dec", "rate_4dec", "nguyen_4dec",
+                             "nguyen12_4dec")
+        got_s = _find_metric(data,
+                             "nguyen12_solve_rate_strict", "success_rate_strict",
+                             "solve_rate_strict", "rate_strict", "nguyen_strict",
+                             "nguyen12_strict")
+        # FIX: guard now matches the metric names actually used in paper_targets.json
+        # ("nguyen12_solve_rate_4dec" / "nguyen12_solve_rate_strict") in addition to
+        # the legacy "success_rate_4dec" / "success_rate_strict" names.
+        if metric in ("nguyen12_solve_rate_4dec", "success_rate_4dec"):
             got = got4
             expected = paper   # 0.917
         else:
