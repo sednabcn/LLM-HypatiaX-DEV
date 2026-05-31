@@ -1145,19 +1145,20 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   else
     echo \"  [suppB] WARNING: no noise{NL}__ task ID found in SHARD_IDS — full sweep will run\"
   fi
-  # FIX-suppB-3: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
-  # forwarded as CLI flags to match repro.yaml paper-quality values.
-  # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
+  # FIX-suppB-3 (revised): --output-dir, --populations, --parsimony are NOT in
+  # run_noise_sweep_benchmark.py's argparse (confirmed from CI log: "unrecognized arguments").
+  # Removed all three.  Output location is controlled by OUT_BASE env var (set below).
+  # PYSR_POPULATIONS is already in the environment; the script reads it directly.
+  # --parsimony has no CLI equivalent — drop it (no regression: script uses its own default).
+  # --log FILE is a valid flag; point it at the canonical suppB log path.
   NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}' \\
-  OUT_BASE='${RESULTS_DIR}' \\
+  OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \\
-    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \\
     --samples ${FEYNMAN_SAMPLES} \\
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
-    --populations ${PYSR_POPULATIONS} \\
-    --parsimony 0.01 \\
+    --log '${RESULTS_DIR}/suppB_run.log' \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 "
 
@@ -1169,23 +1170,19 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   # FIX-suppB_sc-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug.
   cd '${REPO_ROOT}'
-  # FIX-suppB_sc-2: --samples, --pysr-timeout, --method-timeout, --populations, --parsimony
-  # forwarded as CLI flags to match repro.yaml paper-quality values (same fix as suppB).
-  # OUT_BASE and RESULTS_DIR both set to match CI's explicit dual-set (suppB/suppB_sc).
-  # FIX-suppB_sc-3: bare \\ → \\\\ (escaped line-continuations inside double-quoted bash -c string).
-  #   Inside \"...\", a bare \\ + newline is a literal backslash, not a line continuation,
-  #   so the command was malformed. Matches the pattern used correctly in the suppB step above.
+  # FIX-suppB_sc-2 (revised): --output-dir, --populations, --parsimony are NOT in
+  # run_sample_complexity_benchmark.py's argparse — same bug as suppB confirmed from CI log.
+  # Removed all three.  Output controlled via OUT_BASE env var set below.
+  # PYSR_POPULATIONS already in env; script reads it directly.
+  # FIX-suppB_sc-3: bare \\ → \\\\ (line-continuations inside double-quoted bash -c string).
   NOISE_LEVEL='5.0' \\
   SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \\
-  OUT_BASE='${RESULTS_DIR}' \\
+  OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
-    --output-dir '${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \\
     --samples ${FEYNMAN_SAMPLES} \\
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
-    --populations ${PYSR_POPULATIONS} \\
-    --parsimony 0.01 \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
 "
 
@@ -1746,23 +1743,9 @@ def _r2_from_row(row):
     """Extract a float R² value from a result row dict, or return None.
     FIX: expanded key list to cover common R² field name variants emitted
     by different experiment scripts (test_R2, R2_score, r_squared, etc.).
-    FIX-SCHEMA: also descend into {"evaluation": {"r2": ...}} which is the
-    layout used by exp3 Nguyen-12 result files.
     NOTE: 'score' / 'test_score' intentionally excluded — too ambiguous
     (could be RMSE, count, accuracy, etc.) and caused false negatives when
     the sanity-check f<=1.0001 rejected non-R² numeric fields."""
-    # FIX-SCHEMA: check evaluation sub-dict first (exp3 layout)
-    if isinstance(row, dict):
-        eval_block = row.get("evaluation")
-        if isinstance(eval_block, dict):
-            v = eval_block.get("r2") or eval_block.get("R2") or eval_block.get("r2_score")
-            if v is not None:
-                try:
-                    f = float(v)
-                    if f <= 1.01:
-                        return f
-                except (TypeError, ValueError):
-                    pass
     for key in (
         # original keys
         "r2", "r2_test", "r2_train", "best_r2", "r2_score",
@@ -1848,45 +1831,9 @@ def _compute_nguyen12(results_dir, want_4dec):
     rows = list(_iter_rows(chosen_d))
     rows = [r for r in rows if _r2_from_row(r) is not None]
     if not rows:
-        # FIX-SCHEMA: results value may be a method-keyed dict
-        # e.g. {"results": {"hypatiax": [...], "pysr": [...]}}
-        # _iter_rows yields the inner dict as a single row (no R²) because
-        # it returns early on the first recognised container key ("results").
-        # Descend into each value of that dict to find per-equation lists.
-        raw_results = chosen_d.get("results") if isinstance(chosen_d, dict) else None
-        if isinstance(raw_results, dict):
-            for method_rows in raw_results.values():
-                for r in _iter_rows(method_rows):
-                    if _r2_from_row(r) is not None:
-                        rows.append(r)
-        # Also try evaluation.r2 nesting: rows may be dicts with {"evaluation": {"r2": ...}}
-        if not rows:
-            for r in list(_iter_rows(chosen_d)):
-                if isinstance(r, dict):
-                    eval_block = r.get("evaluation")
-                    if isinstance(eval_block, dict) and "r2" in eval_block:
-                        # Synthesise a flat row so _r2_from_row can find it
-                        rows.append({"r2": eval_block["r2"], **{k: v for k, v in r.items() if k != "evaluation"}})
-    if not rows:
         # FIX: if no R2 rows in the seed-42 file, try every candidate file
         for p, d in pairs:
-            # Try method-keyed sub-dicts first
-            candidate_rows = []
-            raw = d.get("results") if isinstance(d, dict) else None
-            if isinstance(raw, dict):
-                for method_rows in raw.values():
-                    for r in _iter_rows(method_rows):
-                        if _r2_from_row(r) is not None:
-                            candidate_rows.append(r)
-            if not candidate_rows:
-                # Also try evaluation.r2 nesting
-                for r in _iter_rows(d):
-                    if isinstance(r, dict):
-                        eval_block = r.get("evaluation")
-                        if isinstance(eval_block, dict) and "r2" in eval_block:
-                            candidate_rows.append({"r2": eval_block["r2"], **{k: v for k, v in r.items() if k != "evaluation"}})
-            if not candidate_rows:
-                candidate_rows = [r for r in _iter_rows(d) if _r2_from_row(r) is not None]
+            candidate_rows = [r for r in _iter_rows(d) if _r2_from_row(r) is not None]
             if candidate_rows:
                 rows = candidate_rows
                 chosen_p = p
@@ -2006,48 +1953,7 @@ def _compute_ehd_noise_robust(results_dir, threshold):
     noise_vals = set()
     all_rows = []
     for _, data in pairs:
-        # FIX-SCHEMA: noise-sweep files store per-noise rows inside
-        # "per_noise" (dict keyed by noise level) or "noise_levels" (list).
-        # _iter_rows yields the top-level dict as a single row when none of
-        # its top-level keys match the container aliases — so descend manually.
-        extra_rows = []
-        if isinstance(data, dict):
-            per_noise = data.get("per_noise")
-            if isinstance(per_noise, dict):
-                # {"per_noise": {"0.0": {...}, "0.1": {...}, ...}}
-                for noise_key, noise_val in per_noise.items():
-                    try:
-                        nl_key = float(noise_key)
-                    except (TypeError, ValueError):
-                        nl_key = None
-                    for r in _iter_rows(noise_val):
-                        if isinstance(r, dict):
-                            tagged = dict(r)
-                            if nl_key is not None and _get_noise_level(tagged) is None:
-                                tagged["noise_level"] = nl_key
-                            extra_rows.append(tagged)
-            noise_levels_val = data.get("noise_levels")
-            if isinstance(noise_levels_val, list):
-                # [{"noise_level": 0.1, "r2": 0.95, ...}, ...]
-                for item in noise_levels_val:
-                    if isinstance(item, dict):
-                        extra_rows.append(item)
-            # Also check method_summary / per_noise_summary sub-dicts
-            for key in ("method_summary", "per_noise_summary", "noise_summary"):
-                sub = data.get(key)
-                if isinstance(sub, dict):
-                    for noise_key, noise_val in sub.items():
-                        try:
-                            nl_key = float(noise_key)
-                        except (TypeError, ValueError):
-                            nl_key = None
-                        for r in _iter_rows(noise_val):
-                            if isinstance(r, dict):
-                                tagged = dict(r)
-                                if nl_key is not None and _get_noise_level(tagged) is None:
-                                    tagged["noise_level"] = nl_key
-                                extra_rows.append(tagged)
-        for row in (extra_rows or list(_iter_rows(data))):
+        for row in _iter_rows(data):
             nl = _get_noise_level(row)   # FIX: use helper instead of inline triple-or
             if nl is not None:
                 noise_vals.add(nl)
@@ -2150,18 +2056,10 @@ def _compute_all_domains_coverage(results_dir, n_expected):
             # where domain completion is recorded separately from per-equation R² rows.
             status = str(row.get("status", "")).lower()
             completed = row.get("completed") or row.get("success") or row.get("done")
-            # FIX-SCHEMA: hybrid all-domains files use {"evaluation": {...}}
-            # to record per-domain results; _r2_from_row now checks evaluation.r2
-            # but we also treat any non-empty "evaluation" or "hybrid_decisions"
-            # block as a completion signal.
-            eval_block = row.get("evaluation")
-            hybrid_block = row.get("hybrid_decisions")
             has_result = (
                 r2 is not None or
                 status in ("complete", "completed", "success", "done", "pass", "passed", "ok", "true") or
-                completed is True or completed == 1 or str(completed).lower() in ("true", "1", "yes") or
-                (isinstance(eval_block, dict) and eval_block) or
-                (isinstance(hybrid_block, (dict, list)) and hybrid_block)
+                completed is True or completed == 1 or str(completed).lower() in ("true", "1", "yes")
             )
             if domain and has_result:
                 covered.add(str(domain).lower().strip())
