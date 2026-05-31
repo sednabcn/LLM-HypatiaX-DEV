@@ -92,6 +92,17 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-FORCE-NOISE-LEVEL (2026-05-31):
+#   — _compute_ehd_noise_robust: noise_level is now FORCE-ASSIGNED from the per_noise
+#     dict key (not setdefault). setdefault was silently losing to inner dict fields
+#     that carried a stale noise_level value from a different noise bucket, causing
+#     all rows to appear at the wrong noise level and failing the max_noise filter.
+#   — _file_r2 extraction switched from "or" chaining to explicit None check so
+#     r2=0.0 (a valid value) is not treated as absent.
+#   — _emit() helper consolidates row construction in one place for all code paths.
+#   — sample diagnostic upgraded: explicit None check (not "or -1"), plus
+#     flattened row count and all noise values seen in rows for CI debugging.
+#
 # FIX-NOISE-LEVELS-KEY (2026-05-31):
 #   — _compute_ehd_noise_robust: noise_vals now seeded from file-level "noise_levels"
 #     list and "per_noise" dict keys before falling back to row-level field scan.
@@ -2011,14 +2022,35 @@ def _compute_ehd_noise_robust(results_dir, threshold):
         per_noise = data.get("per_noise")
         if not isinstance(per_noise, dict):
             continue
-        # Inherit file-level fields as defaults for every flattened row
+        # Inherit file-level fields as defaults for every flattened row.
         _file_method = data.get("method") or data.get("model") or data.get("system") or ""
-        _file_r2     = data.get("r2") or data.get("r2_test") or data.get("r2_train")
+        # FIX-FALSY-R2: use explicit None check — 'or' treats r2=0.0 as missing.
+        _file_r2 = None
+        for _r2k in ("r2", "r2_test", "r2_train", "r2_mean", "r2_median",
+                     "mean_r2", "median_r2", "best_r2", "final_r2"):
+            _v = data.get(_r2k)
+            if _v is not None:
+                try:
+                    _file_r2 = float(_v)
+                    break
+                except (TypeError, ValueError):
+                    pass
         for _nk, _nv in per_noise.items():
             try: nl = float(_nk)
             except (TypeError, ValueError): continue
+            # Helper: emit one row with noise_level FORCE-ASSIGNED from the per_noise key.
+            # Never use setdefault for noise_level — an inner dict may carry a stale value.
+            def _emit(d, _nl=nl, _fm=_file_method, _fr=_file_r2):
+                row = dict(d)
+                row["noise_level"] = _nl          # FORCE-ASSIGN — overrides any inner value
+                row.setdefault("method", _fm)
+                if _r2_from_row(row) is None and _fr is not None:
+                    row["r2"] = _fr
+                if _r2_from_row(row) is not None:
+                    flattened_rows.append(row)
             if isinstance(_nv, dict):
-                _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate","success","r2_mean","r2_median","mean_r2","median_r2"))
+                _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate",
+                                                    "success","r2_mean","r2_median","mean_r2","median_r2"))
                 if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
                     # Nested dict: equation-keyed OR method-keyed.
                     # Recurse _iter_rows to collect all R²-bearing leaves at any depth,
@@ -2058,11 +2090,9 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                                     _nested += [r for r in _iter_rows(_eq_val) if _r2_from_row(r) is not None]
                     if _nested:
                         for _nr in _nested:
-                            _nr.setdefault("noise_level", nl)
-                            _nr.setdefault("method", _file_method)
-                            flattened_rows.append(_nr)
+                            _emit(_nr)
                     else:
-                        # Last resort: flatten each sub-dict and inherit file-level r2.
+                        # Last resort: flatten each sub-dict.
                         # FIX-EHD-SCHEMA: suppB files use equation-name-keyed dicts at the
                         # per_noise[noise_level] level:
                         #   per_noise["1.0"]["Allometric scaling law"] = {"r2": 0.87, ...}
@@ -2071,43 +2101,23 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                         # (handles nested per_equation / method_summary variants).
                         for _mn, _md in _nv.items():
                             if isinstance(_md, dict):
-                                row = dict(_md)
-                                row.setdefault("noise_level", nl)
-                                row.setdefault("method", _file_method)
-                                if _r2_from_row(row) is None and _file_r2 is not None:
-                                    row.setdefault("r2", _file_r2)
-                                if _r2_from_row(row) is not None:
-                                    flattened_rows.append(row)
+                                if _r2_from_row(_md) is not None:
+                                    _emit(_md)
                                 else:
-                                    # Recurse one level deeper into the equation sub-dict
                                     for _inner in _iter_rows(_md):
                                         if _r2_from_row(_inner) is not None:
-                                            _inner = dict(_inner)
-                                            _inner.setdefault("noise_level", nl)
-                                            _inner.setdefault("method", _file_method)
-                                            flattened_rows.append(_inner)
+                                            _emit(_inner)
                             elif isinstance(_md, (int, float)):
                                 flattened_rows.append({"noise_level": nl, "r2": float(_md), "method": _file_method})
                 else:
-                    row = dict(_nv)
-                    row.setdefault("noise_level", nl)
-                    row.setdefault("method", _file_method)
-                    if _r2_from_row(row) is None and _file_r2 is not None:
-                        row.setdefault("r2", _file_r2)
-                    flattened_rows.append(row)
+                    _emit(_nv)
             elif isinstance(_nv, (int, float)):
                 # Scalar value: treat as r2 directly
-                row = {"noise_level": nl, "r2": float(_nv), "method": _file_method}
-                flattened_rows.append(row)
+                flattened_rows.append({"noise_level": nl, "r2": float(_nv), "method": _file_method})
             elif isinstance(_nv, list):
                 for item in _nv:
                     if isinstance(item, dict):
-                        row = dict(item)
-                        row.setdefault("noise_level", nl)
-                        row.setdefault("method", _file_method)
-                        if _r2_from_row(row) is None and _file_r2 is not None:
-                            row.setdefault("r2", _file_r2)
-                        flattened_rows.append(row)
+                        _emit(item)
 
     generic_rows = []
     for _, data in pairs:
@@ -2206,14 +2216,21 @@ def _compute_ehd_noise_robust(results_dir, threshold):
         if r2 >= threshold:
             n_robust += 1
     if n_total == 0:
-        # Diagnostic: show a sample of flattened rows at max_noise so CI log reveals the issue
-        sample = [r for r in all_rows if abs(float(r.get("noise_level") or -1) - max_noise) <= 0.01][:3]
-        sample_info = ""
+        # FIX-DIAGNOSTIC: use explicit None check so noise_level=0.0 rows are not hidden.
+        # Also report flattened row count and all noise values seen in rows for CI debugging.
+        def _nl_matches_max(r, mx=max_noise):
+            _v = r.get("noise_level")
+            if _v is None: return False
+            try: return abs(float(_v) - mx) <= 0.01
+            except (TypeError, ValueError): return False
+        sample = [r for r in all_rows if _nl_matches_max(r)][:3]
+        all_noise_in_rows = sorted({r.get("noise_level") for r in all_rows if r.get("noise_level") is not None})
+        sample_info = f" | flattened={len(flattened_rows)} noise_vals={sorted(noise_vals)} row_noise_vals={all_noise_in_rows[:10]}"
         if sample:
             sample_keys = set(k for r in sample for k in r.keys())
             sample_r2   = [_r2_from_row(r) for r in sample]
             sample_meth = [str(r.get("method",""))[:20] for r in sample]
-            sample_info = f" | {len(sample)} row(s) at max_noise: keys={sorted(sample_keys)[:10]} r2={sample_r2} method={sample_meth}"
+            sample_info += f" | {len(sample)} row(s) at max_noise: keys={sorted(sample_keys)[:10]} r2={sample_r2} method={sample_meth}"
         return None, "no rows at max noise=" + str(max_noise) + " found" + sample_info
     return n_robust / n_total, "computed " + str(n_robust) + "/" + str(n_total) + " at max_noise=" + str(max_noise)
 
