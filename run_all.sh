@@ -1691,20 +1691,29 @@ findings = []
 TOLERANCE = 0.01   # 1 % relative or absolute, whichever is larger
 
 for claim in targets:
+    # Skip commentary/excluded entries — they have no exp/metric/paper_value
+    if "_EXCLUDED" in claim:
+        continue
+
     exp    = claim.get("exp", "?")
     metric = claim.get("metric", "?")
-    paper  = claim.get("value")
+    # JSON key is "paper_value" (not "value") — matches paper_targets.json schema
+    paper  = claim.get("paper_value")
     tol    = claim.get("tolerance", TOLERANCE)
     subdir = claim.get("result_subdir")
     note   = claim.get("note", "")
 
     if paper is None:
         findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                         "detail": "no 'value' field in paper_targets.json entry"})
+                         "detail": "no 'paper_value' field in paper_targets.json entry"})
         continue
 
     # Special: Nguyen-12 dual-threshold
-    if exp in ("exp3", "exp3b") and metric in ("success_rate_4dec", "success_rate_strict"):
+    # Matches both the legacy names and the actual name used in paper_targets.json
+    if exp in ("exp3", "exp3b") and metric in (
+        "nguyen12_solve_rate_4dec", "nguyen12_solve_rate_strict",
+        "success_rate_4dec",        "success_rate_strict",
+    ):
         # 4-decimal threshold (91.7 %) — 4-decimal rounding per Uy et al.
         nguyen_jsons = sorted(_glob.glob(str(RESULTS / "extrapolation/**/*nguyen*.json"),
                                          recursive=True))

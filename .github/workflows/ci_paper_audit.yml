@@ -168,6 +168,12 @@ jobs:
     timeout-minutes: 10
     if: needs.guard.outputs.should_run == 'true'
 
+    outputs:
+      # 'true' when the restore-keys cache hit — canonical dirs were already
+      # built on a previous run with the same source content.  Downstream
+      # jobs use this to skip redundant work and go straight to download.
+      assets-cache-hit: ${{ steps.asset-cache.outputs.cache-hit }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -181,7 +187,26 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # ── Cache key strategy ──────────────────────────────────────────────────
+      # Key   : hash of every source .tex and figure file under the repo.
+      #         Changes only when source content actually changes.
+      # Paths : the two canonical dirs.  On a hit the dirs are restored
+      #         from cache and the collection steps are skipped entirely.
+      #         On a miss the steps run, populate the dirs, and the cache
+      #         is saved for the next run.
+      - name: Restore canonical assets cache
+        id: asset-cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ${{ env.OUT_BASE }}/figures
+            ${{ env.OUT_BASE }}/tables
+          key: canonical-assets-${{ hashFiles('**/*.tex', '**/*.pdf', '**/*.png') }}
+          restore-keys: |
+            canonical-assets-
+
       - name: Install dependencies
+        if: steps.asset-cache.outputs.cache-hit != 'true'
         run: |
           python3 -m pip install --upgrade pip
           if [[ -f requirements.txt ]]; then
@@ -191,6 +216,7 @@ jobs:
           fi
 
       - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
+        if: steps.asset-cache.outputs.cache-hit != 'true'
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -253,6 +279,7 @@ jobs:
           echo "Figures directory now contains $(ls "${FIGURES_DIR}" | wc -l) file(s)."
 
       - name: Collect tables (TeX) into $OUT_BASE/tables/
+        if: steps.asset-cache.outputs.cache-hit != 'true'
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -338,6 +365,7 @@ jobs:
           echo "Tables directory now contains $(ls "${TABLES_DIR}" | wc -l) file(s)."
 
       - name: Generate tables manifest (logs/tables_manifest.json)
+        if: steps.asset-cache.outputs.cache-hit != 'true'
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -360,6 +388,7 @@ jobs:
           EOF
 
       - name: Upload tables manifest
+        if: steps.asset-cache.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v4.3.6
         with:
           name:              tables-manifest-${{ github.run_id }}
@@ -381,10 +410,15 @@ jobs:
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
+          CACHE_HIT="${{ steps.asset-cache.outputs.cache-hit }}"
           echo "=== collect-figures-tables summary ==="
+          if [[ "${CACHE_HIT}" == 'true' ]]; then
+            echo "  ⚡ Cache hit — canonical dirs restored from cache, collection skipped."
+          else
+            echo "  🔨 Cache miss — dirs collected fresh and saved to cache."
+          fi
           echo "  figures : $(ls "${OUT_BASE}/figures" 2>/dev/null | wc -l) file(s)"
           echo "  tables  : $(ls "${OUT_BASE}/tables"  2>/dev/null | wc -l) file(s)"
-          echo "  manifest: logs/tables_manifest.json"
 
 
   # ============================================================================
