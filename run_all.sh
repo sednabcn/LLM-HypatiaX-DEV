@@ -92,6 +92,13 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-0.05 (2026-06-01):
+#   — NOISE_LEVELS default updated from "0.0,0.5,1.0,5.0,10.0" to "0.0,0.05,0.1,0.5,1.0"
+#     at both the global export (line ~210) and the suppB inline env override.
+#     The audit script expects noise_vals=[0.0,0.05,0.1,0.5,1.0]; the old default
+#     omitted 0.05 (5%), causing noise_vals=[] / MISSING ehd_noise_robust_5pct.
+#     New schedule matches paper audit expectations and CI dispatch input values.
+#
 # FIX-SCHEMA-C-NOISE (2026-06-01):
 #   — _compute_ehd_noise_robust Schema C: fixed noise level extraction order.
 #     suppB files are one-file-per-equation-per-noise-level; "noise_levels" in
@@ -205,9 +212,10 @@ export PYSR_SEED=42
 export PYSR_POPULATIONS="${PYSR_POPULATIONS:-30}"
 
 # FIX-B: export NOISE_LEVELS globally so CI and local runs are consistent.
+# FIX-0.05: include 0.05 (5%) in the default sweep to match paper audit expectations.
 # Without this, suppB silently falls back to the script's own default,
 # causing reproducibility drift vs. CI (which sets this via dispatch input).
-export NOISE_LEVELS="${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}"
+export NOISE_LEVELS="${NOISE_LEVELS:-0.0,0.05,0.1,0.5,1.0}"
 
 # Method timeouts — mirrors ci_experiment.yml global env block.
 # METHOD_TIMEOUT: PySR methods 5/6 budget (repro.yaml timeouts.method_seconds).
@@ -1214,7 +1222,7 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # _checkpoint_shard0.json committed from a prior failed run. Without this,
   # RESUME=true (set globally by CI) causes the script to read the committed
   # checkpoint, conclude all tasks are done, and exit silently with 0 outputs.
-  NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.5,1.0,5.0,10.0}' \\
+  NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.05,0.1,0.5,1.0}' \\
   OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
