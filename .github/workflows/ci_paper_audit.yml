@@ -205,14 +205,30 @@ jobs:
           restore-keys: |
             canonical-assets-
 
+      - name: Free disk space
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+
+      - name: Cache pip packages
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4.2.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
       - name: Install dependencies
         if: steps.asset-cache.outputs.cache-hit != 'true'
         run: |
           python3 -m pip install --upgrade pip
           if [[ -f requirements.txt ]]; then
-            pip install -r requirements.txt
+            pip install --no-cache-dir -r requirements.txt
           else
-            pip install numpy scipy matplotlib
+            pip install --no-cache-dir numpy scipy matplotlib
           fi
 
       - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
@@ -528,13 +544,27 @@ jobs:
           name: canonical-assets-${{ github.run_id }}
           path: ${{ env.OUT_BASE }}
 
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+
+      - name: Cache pip packages
+        uses: actions/cache@v4.2.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
           if [[ -f requirements.txt ]]; then
-            pip install -r requirements.txt
+            pip install --no-cache-dir -r requirements.txt
           else
-            pip install numpy scipy
+            pip install --no-cache-dir numpy scipy
           fi
 
       - name: Create logs directory
@@ -610,13 +640,27 @@ jobs:
           name: canonical-assets-${{ github.run_id }}
           path: ${{ env.OUT_BASE }}
 
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+
+      - name: Cache pip packages
+        uses: actions/cache@v4.2.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
           if [[ -f requirements.txt ]]; then
-            pip install -r requirements.txt
+            pip install --no-cache-dir -r requirements.txt
           else
-            pip install numpy scipy pyyaml
+            pip install --no-cache-dir numpy scipy pyyaml
           fi
 
       - name: Create logs directory
