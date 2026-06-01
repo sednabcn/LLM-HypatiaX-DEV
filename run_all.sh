@@ -2085,6 +2085,29 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                 _has_r2 = any(k in _nv for k in ("r2","rmse","R2","r2_test","r2_train","success_rate","solve_rate",
                                                     "success","r2_mean","r2_median","mean_r2","median_r2"))
                 if not _has_r2 and any(isinstance(v, dict) for v in _nv.values()):
+                    # FIX-METHOD-SUMMARY-SCHEMA (2026-06-01):
+                    # Actual suppB schema: per_noise["1.0000"] = {
+                    #   "method_summary": {
+                    #     "EnhancedHybridSystemDeFi (core)": {"mean_r2": 0.999, ...},
+                    #     "HybridSystemLLMNN all-domains (core)": {"mean_r2": 0.999, ...}
+                    #   },
+                    #   "catastrophic_failures": [...],  "per_equation": {...}
+                    # }
+                    # _iter_rows never reaches mean_r2/median_r2 inside method_summary
+                    # because _r2_from_row only checks "r2" keys, not "mean_r2".
+                    # Handle this schema explicitly before the _iter_rows fallback.
+                    _ms_top = _nv.get("method_summary")
+                    if isinstance(_ms_top, dict):
+                        for _mname, _mval in _ms_top.items():
+                            if isinstance(_mval, dict):
+                                _row = dict(_mval)
+                                _row["method"] = _mname
+                                if _r2_from_row(_row) is None:
+                                    for _rk in ("mean_r2", "median_r2"):
+                                        if _mval.get(_rk) is not None:
+                                            try: _row["r2"] = float(_mval[_rk]); break
+                                            except (TypeError, ValueError): pass
+                                _emit(_row)
                     # Nested dict: equation-keyed OR method-keyed.
                     # Recurse _iter_rows to collect all R²-bearing leaves at any depth,
                     # then inject noise_level. Handles:
