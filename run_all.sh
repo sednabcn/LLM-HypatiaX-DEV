@@ -2129,19 +2129,15 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                     if isinstance(item, dict):
                         _emit(item)
 
-    # FIX-SCHEMA-C: handle single-equation/single-noise-level files that have NO per_noise dict.
-    # Actual suppB schema (confirmed by flattened=0, noise_vals populated from noise_levels list):
-    #   { "domain":"...", "formula":"...", "method":"hypatiax", "r2":0.87, "rmse":0.05,
-    #     "noise_levels":[0.05], "success":true, "tests":10, "cross_noise_summary":{...} }
-    # Each file is one equation at one noise level; the applicable noise level is the
-    # single entry in noise_levels, or can be derived from cross_noise_summary keys,
-    # or from the filename.  We emit one synthetic row per file for the max-noise check.
+    # FIX-SCHEMA-C: handle single-equation/single-noise-level files with NO per_noise dict.
     import re as _re2
+    _schemaC_skipped = []
     for _p, data in pairs:
         if not isinstance(data, dict):
+            _schemaC_skipped.append(f"{_p.name}: not-dict")
             continue
         if isinstance(data.get("per_noise"), dict):
-            continue   # already handled by per_noise flattening above
+            continue
         # Extract file-level R²
         _fr2 = None
         for _k in ("r2", "r2_test", "r2_train", "r2_mean", "r2_median",
@@ -2151,11 +2147,32 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                 try: _fr2 = float(_v); break
                 except (TypeError, ValueError): pass
         if _fr2 is None:
-            continue  # no R² anywhere — skip
+            # Try one level deeper in known container keys
+            for _ck in ("results", "summary", "metrics", "output", "data"):
+                _sub = data.get(_ck)
+                if isinstance(_sub, dict):
+                    for _k in ("r2", "r2_test", "r2_train", "r2_mean", "mean_r2"):
+                        _v = _sub.get(_k)
+                        if _v is not None:
+                            try: _fr2 = float(_v); break
+                            except (TypeError, ValueError): pass
+                    if _fr2 is not None: break
+                elif isinstance(_sub, list):
+                    for _item in _sub:
+                        if isinstance(_item, dict):
+                            for _k in ("r2", "r2_test", "r2_train", "r2_mean", "mean_r2"):
+                                _v = _item.get(_k)
+                                if _v is not None:
+                                    try: _fr2 = float(_v); break
+                                    except (TypeError, ValueError): pass
+                            if _fr2 is not None: break
+                    if _fr2 is not None: break
+        if _fr2 is None:
+            _schemaC_skipped.append(f"{_p.name}: no-r2 keys={sorted(data.keys())[:8]}")
+            continue
         _fm = data.get("method") or data.get("model") or data.get("system") or ""
+        _fm_norm = _fm.lower().replace(" ", "").replace("-", "")
         # Determine the noise level for this file.
-        # Priority: (1) single-entry noise_levels list, (2) cross_noise_summary keys,
-        # (3) scalar noise_level/sigma field, (4) filename pattern.
         _file_nls = []
         _nlv = data.get("noise_levels") or data.get("noise_schedule") or data.get("sigma_levels")
         if isinstance(_nlv, list):
@@ -2165,23 +2182,21 @@ def _compute_ehd_noise_robust(results_dir, threshold):
         elif _nlv is not None:
             try: _file_nls.append(float(_nlv))
             except (TypeError, ValueError): pass
-        # Also try cross_noise_summary keys
         _cns = data.get("cross_noise_summary")
         if isinstance(_cns, dict):
             for _k in _cns:
                 try: _file_nls.append(float(_k))
                 except (TypeError, ValueError): pass
-        # Scalar field fallback
         if not _file_nls:
             _nl_scalar = _get_noise_level(data)
             if _nl_scalar is not None:
                 _file_nls.append(_nl_scalar)
-        # Filename fallback
         if not _file_nls:
-            _m = _re2.search(r"(?:noise|sigma|pct|level)[_\-]?(\d+(?:[p\.]\d+)?)(?:pct|percent)?",
-                             _p.stem, _re2.IGNORECASE)
-            if _m:
-                _raw = _m.group(1).replace("p", ".")
+            _m2 = _re2.search(
+                r"(?:noise|sigma|pct|level)[_-]?(\d+(?:[p.]\d+)?)(?:pct|percent)?",
+                _p.stem, _re2.IGNORECASE)
+            if _m2:
+                _raw = _m2.group(1).replace("p", ".")
                 try:
                     _nl = float(_raw)
                     if _nl > 1 and ("pct" in _p.stem.lower() or "percent" in _p.stem.lower()):
@@ -2190,15 +2205,16 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                 except ValueError:
                     pass
         if not _file_nls:
-            continue  # cannot determine noise level — skip
-        # Emit one row per noise level associated with this file.
-        # If the file has a single-entry list, it represents exactly that noise level.
-        # If multi-entry (full schedule stored per file), emit for the max only to
-        # avoid double-counting — the per_noise path handles multi-noise files better.
+            _schemaC_skipped.append(
+                f"{_p.name}: no-noise-level r2={_fr2} nlv={data.get('noise_levels')} keys={sorted(data.keys())[:6]}")
+            continue
         _target_nls = _file_nls if len(_file_nls) == 1 else [max(_file_nls)]
         for _nl in _target_nls:
-            flattened_rows.append({"noise_level": _nl, "r2": _fr2, "method": _fm})
-
+            flattened_rows.append({"noise_level": _nl, "r2": _fr2, "method": _fm_norm})
+    if _schemaC_skipped:
+        import sys as _sys
+        print(f"  [schemaC-debug] {len(_schemaC_skipped)} file(s) skipped: {_schemaC_skipped[:3]}",
+              file=_sys.stderr)
     generic_rows = []
     for _, data in pairs:
         for row in _iter_rows(data): generic_rows.append(row)
@@ -2311,6 +2327,8 @@ def _compute_ehd_noise_robust(results_dir, threshold):
             sample_r2   = [_r2_from_row(r) for r in sample]
             sample_meth = [str(r.get("method",""))[:20] for r in sample]
             sample_info += f" | {len(sample)} row(s) at max_noise: keys={sorted(sample_keys)[:10]} r2={sample_r2} method={sample_meth}"
+        _schC = len([r for r in flattened_rows if abs(float(r.get("noise_level") or -999) - max_noise) <= 0.01])
+        sample_info += f" | schemaC_at_max={_schC} pairs={len(pairs)}"
         return None, "no rows at max noise=" + str(max_noise) + " found" + sample_info
     return n_robust / n_total, "computed " + str(n_robust) + "/" + str(n_total) + " at max_noise=" + str(max_noise)
 
