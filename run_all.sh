@@ -92,6 +92,21 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-SCHEMA-C-NOISE (2026-06-01):
+#   — _compute_ehd_noise_robust Schema C: fixed noise level extraction order.
+#     suppB files are one-file-per-equation-per-noise-level; "noise_levels" in
+#     each file is the FULL schedule (e.g. [0.0,0.05,0.1,0.5,1.0]) stored as
+#     config metadata — NOT the noise level that file was actually run at.
+#     The old code took max(noise_levels) = 1.0 for every file, so all rows
+#     appeared to be at max_noise while the actual per-file noise level was lost.
+#     New priority order:
+#       1. Scalar "noise_level"/"sigma"/"noise" field in the JSON body
+#       2. Noise level encoded in the filename
+#       3. noise_levels list ONLY when it has exactly one element (unambiguous)
+#          OR cross_noise_summary dict keys (true per-noise aggregates)
+#     This restores the correct per-file noise level so max-noise rows are only
+#     counted for files genuinely run at noise=1.0, resolving MISSING ehd_noise_robust_100pct.
+#
 # FIX-SCHEMA-C (2026-05-31):
 #   — _compute_ehd_noise_robust: added Schema C handler for suppB files that have
 #     NO per_noise dict. Actual suppB output is one-file-per-equation-per-noise-level
@@ -2173,24 +2188,26 @@ def _compute_ehd_noise_robust(results_dir, threshold):
         _fm = data.get("method") or data.get("model") or data.get("system") or ""
         _fm_norm = _fm.lower().replace(" ", "").replace("-", "")
         # Determine the noise level for this file.
+        # FIX-SCHEMA-C-NOISE: suppB files are one-file-per-equation-per-noise-level.
+        # The "noise_levels" key stores the FULL schedule (e.g. [0.0,0.05,0.1,0.5,1.0])
+        # as config metadata — NOT the noise level this specific file was run at.
+        # Taking max(noise_levels) assigned noise=1.0 to EVERY file, causing all rows
+        # to cluster at max_noise while the actual per-file noise level was unrecorded.
+        #
+        # Correct priority:
+        #   1. Scalar "noise_level" / "sigma" / "noise" field in the JSON body
+        #   2. Noise level extracted from the filename
+        #   3. "noise_levels" list ONLY when it has exactly one element (truly single-level)
+        #      OR cross_noise_summary keys (those are per-noise aggregates, not schedule)
+        # Never use max(noise_levels_list) when the list has >1 element.
         _file_nls = []
-        _nlv = data.get("noise_levels") or data.get("noise_schedule") or data.get("sigma_levels")
-        if isinstance(_nlv, list):
-            for _v in _nlv:
-                try: _file_nls.append(float(_v))
-                except (TypeError, ValueError): pass
-        elif _nlv is not None:
-            try: _file_nls.append(float(_nlv))
-            except (TypeError, ValueError): pass
-        _cns = data.get("cross_noise_summary")
-        if isinstance(_cns, dict):
-            for _k in _cns:
-                try: _file_nls.append(float(_k))
-                except (TypeError, ValueError): pass
-        if not _file_nls:
-            _nl_scalar = _get_noise_level(data)
-            if _nl_scalar is not None:
-                _file_nls.append(_nl_scalar)
+
+        # Priority 1: scalar noise_level in JSON body
+        _nl_scalar = _get_noise_level(data)
+        if _nl_scalar is not None:
+            _file_nls.append(_nl_scalar)
+
+        # Priority 2: filename-encoded noise level
         if not _file_nls:
             _m2 = _re2.search(
                 r"(?:noise|sigma|pct|level)[_-]?(\d+(?:[p.]\d+)?)(?:pct|percent)?",
@@ -2204,12 +2221,30 @@ def _compute_ehd_noise_robust(results_dir, threshold):
                     _file_nls.append(_nl)
                 except ValueError:
                     pass
+
+        # Priority 3a: single-element noise_levels list (unambiguous — file IS that level)
+        if not _file_nls:
+            _nlv = data.get("noise_levels") or data.get("noise_schedule") or data.get("sigma_levels")
+            if isinstance(_nlv, list) and len(_nlv) == 1:
+                try: _file_nls.append(float(_nlv[0]))
+                except (TypeError, ValueError): pass
+            elif _nlv is not None and not isinstance(_nlv, list):
+                try: _file_nls.append(float(_nlv))
+                except (TypeError, ValueError): pass
+
+        # Priority 3b: cross_noise_summary keys (per-noise aggregate entries)
+        if not _file_nls:
+            _cns = data.get("cross_noise_summary")
+            if isinstance(_cns, dict):
+                for _k in _cns:
+                    try: _file_nls.append(float(_k))
+                    except (TypeError, ValueError): pass
+
         if not _file_nls:
             _schemaC_skipped.append(
                 f"{_p.name}: no-noise-level r2={_fr2} nlv={data.get('noise_levels')} keys={sorted(data.keys())[:6]}")
             continue
-        _target_nls = _file_nls if len(_file_nls) == 1 else [max(_file_nls)]
-        for _nl in _target_nls:
+        for _nl in _file_nls:
             flattened_rows.append({"noise_level": _nl, "r2": _fr2, "method": _fm_norm})
     if _schemaC_skipped:
         import sys as _sys
