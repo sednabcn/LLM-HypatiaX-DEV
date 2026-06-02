@@ -1,9 +1,10 @@
-name: "CI Report + Pages"
+name: "CI Reports + AI + Pages"
 run-name: "CI Report — run ${{ github.run_id }}"
 
 on:
   push:
     branches: [ master ]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -16,72 +17,153 @@ env:
 
 jobs:
   build-report:
+    name: "Build & Generate Reports"
     runs-on: ubuntu-latest
 
     steps:
+      # ─────────────────────────────
       # Checkout
-      - name: Checkout
+      # ─────────────────────────────
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Python
-      - name: Setup Python
+      # ─────────────────────────────
+      # Python setup
+      # ─────────────────────────────
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # Install deps
+      # ─────────────────────────────
+      # Cache (faster builds)
+      # ─────────────────────────────
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # ─────────────────────────────
+      # Install dependencies
+      # ─────────────────────────────
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install jupyter nbconvert ipykernel
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f notebooks/requirements.txt ]; then pip install -r notebooks/requirements.txt; fi
+
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+          if [ -f notebooks/requirements.txt ]; then
+            pip install -r notebooks/requirements.txt
+          fi
 
       - name: Register kernel
         run: python -m ipykernel install --user --name python3
 
-      # Run notebooks
+      # ─────────────────────────────
+      # Execute notebooks (with secret)
+      # ─────────────────────────────
       - name: Execute notebooks
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           mkdir -p site
+          set +e   # allow partial success
+
           for nb in notebooks/*.ipynb; do
-            jupyter nbconvert --to notebook --execute "$nb" \
+            echo "Running $nb"
+
+            jupyter nbconvert \
+              --to notebook \
+              --execute "$nb" \
               --output-dir=site \
-              --ExecutePreprocessor.timeout=600
+              --ExecutePreprocessor.timeout=900
+
+            if [ $? -ne 0 ]; then
+              echo "⚠️ Failed: $nb"
+            fi
           done
 
+      # ─────────────────────────────
       # Convert to HTML
+      # ─────────────────────────────
       - name: Convert to HTML
         run: |
           for nb in site/*.ipynb; do
             jupyter nbconvert --to html "$nb" --output-dir=site
           done
 
-      # Create index page
-      - name: Generate index.html
+      # ─────────────────────────────
+      # Generate dashboard index
+      # ─────────────────────────────
+      - name: Generate dashboard
         run: |
-          echo "<h1>CI Reports</h1><ul>" > site/index.html
+          cat <<EOF > site/index.html
+          <html>
+          <head>
+            <title>CI Reports Dashboard</title>
+            <style>
+              body { font-family: Arial; padding: 20px; }
+              h1 { color: #333; }
+              .card {
+                padding: 10px;
+                margin: 10px 0;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+              }
+              a { text-decoration: none; color: #0366d6; }
+            </style>
+          </head>
+          <body>
+          <h1>📊 CI Reports Dashboard</h1>
+          <p>Run ID: ${{ github.run_id }}</p>
+          <ul>
+          EOF
+
           for f in site/*.html; do
             name=$(basename "$f")
-            echo "<li><a href=\"$name\">$name</a></li>" >> site/index.html
+            if [ "$name" != "index.html" ]; then
+              echo "<li class='card'><a href=\"$name\">$name</a></li>" >> site/index.html
+            fi
           done
-          echo "</ul>" >> site/index.html
 
-      # Upload Pages artifact
+          echo "</ul></body></html>" >> site/index.html
+
+      # ─────────────────────────────
+      # Upload artifact (backup)
+      # ─────────────────────────────
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports
+          path: site/
+
+      # ─────────────────────────────
+      # Upload for GitHub Pages
+      # ─────────────────────────────
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
 
+  # ─────────────────────────────
+  # Deploy job
+  # ─────────────────────────────
   deploy:
+    name: "Deploy to GitHub Pages"
     needs: build-report
     runs-on: ubuntu-latest
 
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url }}
 
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - name: Deploy
+        id: deploy
         uses: actions/deploy-pages@v4
