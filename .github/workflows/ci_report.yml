@@ -178,6 +178,16 @@ jobs:
           echo "=== Downloaded notebook artifacts ==="
           find notebooks -type f | sort || echo "(none)"
 
+      # ── Write the body-extraction helper (avoids quoting issues in YAML) ────
+      - name: Write HTML body extractor script
+        run: |
+          cat > /tmp/_extract_body.py << 'PYEOF'
+import sys, re
+html = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+m = re.search(r"<body[^>]*>(.*?)</body>", html, re.DOTALL | re.IGNORECASE)
+print(m.group(1) if m else html)
+PYEOF
+
       # ── Build combined HTML report ──────────────────────────────────────────
       - name: Build combined audit report
         run: |
@@ -324,8 +334,7 @@ jobs:
             if [ -f "${NB}" ]; then
               # Convert the already-executed notebook to an HTML body fragment.
               # --no-input hides source cells; only outputs are rendered.
-              # Python extraction handles edge cases (sparse outputs, minimal
-              # HTML) that break the sed range approach.
+              # The extractor script is written once before the loop (see above).
               jupyter nbconvert \
                 --to html \
                 --no-input \
@@ -333,12 +342,8 @@ jobs:
                 --output /tmp/_nb_frag \
                 "${NB}" 2>/dev/null
 
-              python3 - /tmp/_nb_frag.html >> site/index.html <<'PYEOF'
-import sys, re
-html = open(sys.argv[1], encoding='utf-8', errors='replace').read()
-m = re.search(r'<body[^>]*>(.*?)</body>', html, re.DOTALL | re.IGNORECASE)
-print(m.group(1) if m else html)
-PYEOF
+              python3 /tmp/_extract_body.py /tmp/_nb_frag.html >> site/index.html
+
             else
               echo "        <div class='missing'>⚠️ Notebook not found — the upstream job may have failed or been skipped.</div>" \
                 >> site/index.html
