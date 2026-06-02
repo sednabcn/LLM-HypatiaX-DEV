@@ -178,15 +178,10 @@ jobs:
           echo "=== Downloaded notebook artifacts ==="
           find notebooks -type f | sort || echo "(none)"
 
-      # ── Write the body-extraction helper (avoids quoting issues in YAML) ────
+      # ── Write the body-extraction helper (base64-encoded, no quoting risk) ─
       - name: Write HTML body extractor script
         run: |
-          cat > /tmp/_extract_body.py << 'PYEOF'
-import sys, re
-html = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-m = re.search(r"<body[^>]*>(.*?)</body>", html, re.DOTALL | re.IGNORECASE)
-print(m.group(1) if m else html)
-PYEOF
+          python3 -c "import base64; open('/tmp/_extract_body.py','wb').write(base64.b64decode('aW1wb3J0IHN5cywgcmUKaHRtbCA9IG9wZW4oc3lzLmFyZ3ZbMV0sIGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0icmVwbGFjZSIpLnJlYWQoKQptID0gcmUuc2VhcmNoKHIiPGJvZHlbXj5dKj4oLio/KTwvYm9keT4iLCBodG1sLCByZS5ET1RBTEwgfCByZS5JR05PUkVDQVNFKQpwcmludChtLmdyb3VwKDEpIGlmIG0gZWxzZSBodG1sKQo='))"
 
       # ── Build combined HTML report ──────────────────────────────────────────
       - name: Build combined audit report
