@@ -366,16 +366,10 @@ jobs:
           path: notebooks/NB-06_Code_Quality_Pipeline_Integrity.ipynb
           retention-days: 7
 
-  # ──────────────────────────────────────────────
-  # Job 8 — report
-  # Downloads all 6 executed notebooks, converts
-  # each to HTML, and combines them into one
-  # combined audit report artifact.
-  # Runs even if upstream jobs failed (if: always())
-  # ──────────────────────────────────────────────
-  report:
-    name: "Generate Combined Audit Report"
+  bundle-artifacts:
+    name: "Bundle Notebook Artifacts"
     runs-on: ubuntu-latest
+
     needs:
       - nb-01-citations
       - nb-02-crossref
@@ -383,188 +377,29 @@ jobs:
       - nb-04-numerical
       - nb-05-figures
       - nb-06-integrity
+
     if: always()
 
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5.3.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
-      - name: Install dependencies
+      - name: Download all notebook artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: notebooks
+
+      - name: Show contents
         run: |
-          pip install --upgrade pip
-          pip install jupyter nbconvert ipykernel
-          python -m ipykernel install --user --name python3
+          find notebooks -type f
 
-      - name: Download NB-01 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NB-01_Citation_Bibliography_Audit
-          path: notebooks/NB-01
-        continue-on-error: true
-
-      - name: Download NB-02 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NB-02_CrossRef_Label_Audit
-          path: notebooks/NB-02
-        continue-on-error: true
-
-      - name: Download NB-03 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NB-03_Section_Structure_Audit
-          path: notebooks/NB-03
-        continue-on-error: true
-
-      - name: Download NB-04 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NB-04_Numerical_Consistency_Audit
-          path: notebooks/NB-04
-        continue-on-error: true
-
-      - name: Download NB-05 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NB-05_Figure_Audit
-          path: notebooks/NB-05
-        continue-on-error: true
-
-      - name: Download NB-06 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: NB-06_Code_Quality_Pipeline_Integrity
-          path: notebooks/NB-06
-        continue-on-error: true
-
-      - name: Convert notebooks to HTML and combine
-        run: |
-          set -e
-          mkdir -p notebooks
-
-          # Ordered list of notebooks to include
-          declare -a NOTEBOOKS=(
-            "notebooks/NB-01/NB-01_Citation_Bibliography_Audit.ipynb"
-            "notebooks/NB-02/NB-02_CrossReference_Label_Audit.ipynb"
-            "notebooks/NB-03/NB-03_Section_Structure_Numbering.ipynb"
-            "notebooks/NB-04/NB-04_Numerical_Consistency_Checker.ipynb"
-            "notebooks/NB-05/NB-05_Figure_Image_Dependency_Checker.ipynb"
-            "notebooks/NB-06/NB-06_Code_Quality_Pipeline_Integrity.ipynb"
-          )
-
-          declare -a TITLES=(
-            "NB-01: Citation &amp; Bibliography Audit"
-            "NB-02: Cross-Reference &amp; Label Integrity"
-            "NB-03: Section Structure &amp; Numbering"
-            "NB-04: Numerical Consistency &amp; Abstract Claims"
-            "NB-05: Figure Files &amp; Environment Audit"
-            "NB-06: Code Quality &amp; Pipeline Integrity"
-          )
-
-          RUN_DATE=$(date -u "+%Y-%m-%d %H:%M UTC")
-
-          # Write combined report header
-          cat > notebooks/audit_report.html << HTML
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>HypatiaX Paper Audit Report</title>
-            <style>
-              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                     margin: 0; background: #f5f5f5; color: #222; }
-              .cover { background: #1a1a2e; color: white; padding: 60px 40px; text-align: center; }
-              .cover h1 { margin: 0 0 12px; font-size: 2.2em; }
-              .cover p  { margin: 4px 0; opacity: 0.75; font-size: 1em; }
-              .toc { background: white; max-width: 860px; margin: 32px auto; padding: 28px 36px;
-                     border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-              .toc h2 { margin-top: 0; font-size: 1.2em; color: #444; }
-              .toc ol  { padding-left: 20px; line-height: 2; }
-              .toc a   { color: #0066cc; text-decoration: none; }
-              .toc a:hover { text-decoration: underline; }
-              .nb-section { background: white; max-width: 860px; margin: 24px auto;
-                            border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-                            overflow: hidden; }
-              .nb-header  { background: #16213e; color: white; padding: 18px 28px; }
-              .nb-header h2 { margin: 0; font-size: 1.15em; }
-              .nb-body    { padding: 0 28px 24px; }
-              .missing    { background: #fff8e1; border-left: 4px solid #f9a825;
-                            padding: 16px 20px; margin: 20px 0; border-radius: 4px; }
-              .footer     { text-align: center; padding: 40px; color: #888; font-size: 0.85em; }
-              /* nbconvert output styles */
-              .nb-body pre  { background: #f8f8f8; padding: 12px; border-radius: 4px;
-                              overflow-x: auto; font-size: 0.88em; }
-              .nb-body .output_area pre { background: #f0f0f0; }
-            </style>
-          </head>
-          <body>
-            <div class="cover">
-              <h1>HypatiaX Paper Audit Report</h1>
-              <p>Generated: ${RUN_DATE}</p>
-              <p>Run ID: ${{ github.run_id }}</p>
-            </div>
-            <div class="toc">
-              <h2>Contents</h2>
-              <ol>
-                <li><a href="#nb01">NB-01: Citation &amp; Bibliography Audit</a></li>
-                <li><a href="#nb02">NB-02: Cross-Reference &amp; Label Integrity</a></li>
-                <li><a href="#nb03">NB-03: Section Structure &amp; Numbering</a></li>
-                <li><a href="#nb04">NB-04: Numerical Consistency &amp; Abstract Claims</a></li>
-                <li><a href="#nb05">NB-05: Figure Files &amp; Environment Audit</a></li>
-                <li><a href="#nb06">NB-06: Code Quality &amp; Pipeline Integrity</a></li>
-              </ol>
-            </div>
-          HTML
-
-          # Section anchors matching ToC
-          declare -a ANCHORS=(nb01 nb02 nb03 nb04 nb05 nb06)
-
-          # Convert each notebook and embed into the combined report
-          for i in "${!NOTEBOOKS[@]}"; do
-            NB="${NOTEBOOKS[$i]}"
-            TITLE="${TITLES[$i]}"
-            ANCHOR="${ANCHORS[$i]}"
-
-            echo "" >> notebooks/audit_report.html
-            echo "<div class='nb-section' id='${ANCHOR}'>" >> notebooks/audit_report.html
-            echo "  <div class='nb-header'><h2>${TITLE}</h2></div>" >> notebooks/audit_report.html
-            echo "  <div class='nb-body'>" >> notebooks/audit_report.html
-
-            if [ -f "$NB" ]; then
-              # Convert notebook to HTML body fragment
-              jupyter nbconvert --to html --no-prompt \
-                --template classic \
-                --stdout "$NB" 2>/dev/null \
-                | sed -n '/<body/,/<\/body>/p' \
-                | sed 's/<body[^>]*>//;s/<\/body>//' \
-                >> notebooks/audit_report.html
-            else
-              echo "  <div class='missing'>⚠️ This notebook did not run — upstream job may have failed.</div>" \
-                >> notebooks/audit_report.html
-            fi
-
-            echo "  </div></div>" >> notebooks/audit_report.html
-          done
-
-          # Write footer and close
-          cat >> notebooks/audit_report.html << HTML
-            <div class="footer">
-              HypatiaX Paper Audit &bull; GitHub Actions Run ${{ github.run_id }} &bull; ${RUN_DATE}
-            </div>
-          </body>
-          </html>
-          HTML
-
-          echo "Report generated: $(wc -c < notebooks/audit_report.html) bytes"
-
-      - name: Upload combined audit report
-        if: always()
+      - name: Upload combined artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HypatiaX_Audit_Report
-          path: notebooks/audit_report.html
+          name: paper-audit-notebooks
+          path: notebooks/
           retention-days: 30
+
+  # Job 8 (report) has been moved to ci_report.yml.
+  # ci_report.yml triggers on completion of this workflow, downloads the
+  # NB-01…NB-06 artifacts produced above, converts them to HTML, builds the
+  # combined audit report, and deploys it to GitHub Pages — without re-running
+  # any notebooks.

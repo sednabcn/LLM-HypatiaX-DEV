@@ -1,159 +1,338 @@
-name: "CI Reports + AI + Pages"
-run-name: "CI Report — run ${{ github.run_id }}"
+name: "HypatiaX - CI Report & GitHub Pages"
+run-name: "HypatiaX CI Report — run ${{ github.run_id }}"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Triggers
+#   • Automatically after ci_paper_notebooks.yml completes (any conclusion —
+#     we still want a report even when some notebooks failed).
+#   • Manual dispatch for re-runs / debugging.
+#
+# NOTE: workflow_run only fires when this file is on the default branch.
+# ──────────────────────────────────────────────────────────────────────────────
 on:
-  push:
-    branches: [ master ]
-  pull_request:
+  workflow_run:
+    workflows: ["HypatiaX - paper notebooks"]
+    types:
+      - completed
+
   workflow_dispatch:
 
+# Pages needs these three permissions; contents:read is enough for checkout.
 permissions:
   contents: read
-  pages: write
+  pages:    write
   id-token: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PYTHON_VERSION: "3.12"
 
+# Only one Pages deployment at a time; cancel any in-progress run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job: build-report
+  #
+  # Downloads the six already-executed NB artifacts produced by
+  # ci_paper_notebooks.yml, converts each .ipynb → HTML fragment (no kernel
+  # involved — nbconvert --no-input just renders the stored outputs), assembles
+  # the combined audit report, and uploads a Pages artifact.
+  #
+  # No notebook is executed here.  The `download-artifact` action fetches
+  # artifacts from the triggering workflow_run when run_id is provided;
+  # on manual dispatch it falls back to the most-recent successful run of
+  # ci_paper_notebooks.yml via `github-token`.
+  # ────────────────────────────────────────────────────────────────────────────
   build-report:
-    name: "Build & Generate Reports"
+    name: "Build Combined Audit Report"
     runs-on: ubuntu-latest
+    # Run even when the upstream workflow failed — we still want whatever
+    # notebooks completed to appear in the report.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'failure'
 
     steps:
-      # ─────────────────────────────
-      # Checkout
-      # ─────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      # ─────────────────────────────
-      # Python setup
-      # ─────────────────────────────
+      # ── Python + nbconvert (no kernel needed — rendering stored outputs only)
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # ─────────────────────────────
-      # Cache (faster builds)
-      # ─────────────────────────────
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      # ─────────────────────────────
-      # Install dependencies
-      # ─────────────────────────────
-      - name: Install dependencies
+      - name: Install nbconvert
         run: |
           pip install --upgrade pip
-          pip install jupyter nbconvert ipykernel
+          pip install jupyter nbconvert
 
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+      # ── Download the six executed-notebook artifacts ────────────────────────
+      # Each artifact lands in its own sub-directory so filenames never collide.
+      # `continue-on-error: true` ensures a missing artifact (failed upstream
+      # job) doesn't abort the report — a warning card is shown instead.
 
-          if [ -f notebooks/requirements.txt ]; then
-            pip install -r notebooks/requirements.txt
-          fi
+      - name: Download NB-01 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NB-01_Citation_Bibliography_Audit
+          path: notebooks/NB-01
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
 
-      - name: Register kernel
-        run: python -m ipykernel install --user --name python3
+      - name: Download NB-02 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NB-02_CrossRef_Label_Audit
+          path: notebooks/NB-02
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
 
-      # ─────────────────────────────
-      # Execute notebooks (with secret)
-      # ─────────────────────────────
-      - name: Execute notebooks
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Download NB-03 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NB-03_Section_Structure_Audit
+          path: notebooks/NB-03
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Download NB-04 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NB-04_Numerical_Consistency_Audit
+          path: notebooks/NB-04
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Download NB-05 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NB-05_Figure_Audit
+          path: notebooks/NB-05
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Download NB-06 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: NB-06_Code_Quality_Pipeline_Integrity
+          path: notebooks/NB-06
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # ── Diagnostics ─────────────────────────────────────────────────────────
+      - name: Show downloaded files
         run: |
+          echo "=== Downloaded notebook artifacts ==="
+          find notebooks -type f | sort || echo "(none)"
+
+      # ── Build combined HTML report ──────────────────────────────────────────
+      - name: Build combined audit report
+        run: |
+          set -euo pipefail
           mkdir -p site
-          set +e   # allow partial success
 
-          for nb in notebooks/*.ipynb; do
-            echo "Running $nb"
+          # ── Metadata ────────────────────────────────────────────────────────
+          RUN_DATE=$(date -u "+%Y-%m-%d %H:%M UTC")
+          UPSTREAM_RUN="${{ github.event.workflow_run.id || github.run_id }}"
 
-            jupyter nbconvert \
-              --to notebook \
-              --execute "$nb" \
-              --output-dir=site \
-              --ExecutePreprocessor.timeout=900
+          # ── Notebook registry (ordered) ──────────────────────────────────────
+          declare -a NB_PATHS=(
+            "notebooks/NB-01/NB-01_Citation_Bibliography_Audit.ipynb"
+            "notebooks/NB-02/NB-02_CrossReference_Label_Audit.ipynb"
+            "notebooks/NB-03/NB-03_Section_Structure_Numbering.ipynb"
+            "notebooks/NB-04/NB-04_Numerical_Consistency_Checker.ipynb"
+            "notebooks/NB-05/NB-05_Figure_Image_Dependency_Checker.ipynb"
+            "notebooks/NB-06/NB-06_Code_Quality_Pipeline_Integrity.ipynb"
+          )
+          declare -a NB_TITLES=(
+            "NB-01: Citation &amp; Bibliography Audit"
+            "NB-02: Cross-Reference &amp; Label Integrity"
+            "NB-03: Section Structure &amp; Numbering"
+            "NB-04: Numerical Consistency &amp; Abstract Claims"
+            "NB-05: Figure Files &amp; Environment Audit"
+            "NB-06: Code Quality &amp; Pipeline Integrity"
+          )
+          declare -a NB_ANCHORS=(nb01 nb02 nb03 nb04 nb05 nb06)
 
-            if [ $? -ne 0 ]; then
-              echo "⚠️ Failed: $nb"
-            fi
-          done
-
-      # ─────────────────────────────
-      # Convert to HTML
-      # ─────────────────────────────
-      - name: Convert to HTML
-        run: |
-          for nb in site/*.ipynb; do
-            jupyter nbconvert --to html "$nb" --output-dir=site
-          done
-
-      # ─────────────────────────────
-      # Generate dashboard index
-      # ─────────────────────────────
-      - name: Generate dashboard
-        run: |
-          cat <<EOF > site/index.html
-          <html>
+          # ── HTML header ──────────────────────────────────────────────────────
+          cat > site/index.html << HTML
+          <!DOCTYPE html>
+          <html lang="en">
           <head>
-            <title>CI Reports Dashboard</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>HypatiaX Paper Audit Report</title>
             <style>
-              body { font-family: Arial; padding: 20px; }
-              h1 { color: #333; }
-              .card {
-                padding: 10px;
-                margin: 10px 0;
-                border: 1px solid #ddd;
-                border-radius: 8px;
+              *, *::before, *::after { box-sizing: border-box; }
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                margin: 0; background: #f0f2f5; color: #1a1a2e;
               }
-              a { text-decoration: none; color: #0366d6; }
+              /* ── Cover ── */
+              .cover {
+                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+                color: white; padding: 64px 40px 48px; text-align: center;
+              }
+              .cover h1 { margin: 0 0 14px; font-size: 2.4em; letter-spacing: -0.5px; }
+              .cover .meta { opacity: 0.7; font-size: 0.95em; line-height: 1.8; }
+              .badge {
+                display: inline-block; background: rgba(255,255,255,0.12);
+                border: 1px solid rgba(255,255,255,0.25); border-radius: 20px;
+                padding: 4px 14px; font-size: 0.82em; margin-top: 12px;
+              }
+              /* ── Layout ── */
+              .container { max-width: 900px; margin: 0 auto; padding: 0 20px 60px; }
+              /* ── ToC ── */
+              .toc {
+                background: white; border-radius: 10px; padding: 28px 36px;
+                margin: 32px 0 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+              }
+              .toc h2 { margin: 0 0 16px; font-size: 1.05em; text-transform: uppercase;
+                         letter-spacing: .08em; color: #666; }
+              .toc ol  { margin: 0; padding-left: 22px; line-height: 2.1; }
+              .toc a   { color: #0066cc; text-decoration: none; font-weight: 500; }
+              .toc a:hover { text-decoration: underline; }
+              /* ── Notebook sections ── */
+              .nb-section {
+                background: white; border-radius: 10px; margin-bottom: 24px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.07); overflow: hidden;
+              }
+              .nb-header {
+                background: linear-gradient(90deg, #16213e, #0f3460);
+                color: white; padding: 18px 28px; display: flex;
+                align-items: center; gap: 12px;
+              }
+              .nb-header h2 { margin: 0; font-size: 1.1em; }
+              .nb-body { padding: 8px 28px 28px; overflow-x: auto; }
+              /* ── Missing notebook warning ── */
+              .missing {
+                background: #fff8e1; border-left: 4px solid #f9a825;
+                padding: 16px 20px; margin: 20px 0; border-radius: 4px;
+                font-size: 0.95em;
+              }
+              /* ── nbconvert output normalization ── */
+              .nb-body pre {
+                background: #f8f8f8; padding: 12px 16px; border-radius: 6px;
+                overflow-x: auto; font-size: 0.87em; line-height: 1.5;
+              }
+              .nb-body .output_area pre { background: #f0f0f0; }
+              .nb-body table {
+                border-collapse: collapse; width: 100%; font-size: 0.9em;
+              }
+              .nb-body th, .nb-body td {
+                border: 1px solid #ddd; padding: 8px 12px; text-align: left;
+              }
+              .nb-body th { background: #f5f5f5; font-weight: 600; }
+              /* ── Footer ── */
+              .footer {
+                text-align: center; padding: 40px 20px;
+                color: #999; font-size: 0.82em; line-height: 1.8;
+              }
             </style>
           </head>
           <body>
-          <h1>📊 CI Reports Dashboard</h1>
-          <p>Run ID: ${{ github.run_id }}</p>
-          <ul>
-          EOF
+            <div class="cover">
+              <h1>📋 HypatiaX Paper Audit Report</h1>
+              <div class="meta">
+                Generated: ${RUN_DATE}<br>
+                Notebook run ID: ${UPSTREAM_RUN} &nbsp;·&nbsp; Report run ID: ${{ github.run_id }}
+              </div>
+              <div class="badge">ci_report.yml — no notebooks re-executed</div>
+            </div>
 
-          for f in site/*.html; do
-            name=$(basename "$f")
-            if [ "$name" != "index.html" ]; then
-              echo "<li class='card'><a href=\"$name\">$name</a></li>" >> site/index.html
+            <div class="container">
+              <div class="toc">
+                <h2>Contents</h2>
+                <ol>
+                  <li><a href="#nb01">NB-01: Citation &amp; Bibliography Audit</a></li>
+                  <li><a href="#nb02">NB-02: Cross-Reference &amp; Label Integrity</a></li>
+                  <li><a href="#nb03">NB-03: Section Structure &amp; Numbering</a></li>
+                  <li><a href="#nb04">NB-04: Numerical Consistency &amp; Abstract Claims</a></li>
+                  <li><a href="#nb05">NB-05: Figure Files &amp; Environment Audit</a></li>
+                  <li><a href="#nb06">NB-06: Code Quality &amp; Pipeline Integrity</a></li>
+                </ol>
+              </div>
+          HTML
+
+          # ── Per-notebook sections ────────────────────────────────────────────
+          for i in "${!NB_PATHS[@]}"; do
+            NB="${NB_PATHS[$i]}"
+            TITLE="${NB_TITLES[$i]}"
+            ANCHOR="${NB_ANCHORS[$i]}"
+
+            {
+              echo ""
+              echo "      <div class='nb-section' id='${ANCHOR}'>"
+              echo "        <div class='nb-header'><h2>${TITLE}</h2></div>"
+              echo "        <div class='nb-body'>"
+            } >> site/index.html
+
+            if [ -f "${NB}" ]; then
+              # Convert the already-executed notebook to an HTML body fragment.
+              # --no-input hides source cells; only outputs are rendered.
+              # --template classic produces clean, self-contained body HTML.
+              jupyter nbconvert \
+                --to html \
+                --no-input \
+                --template classic \
+                --stdout "${NB}" 2>/dev/null \
+                | sed -n '/<body/,/<\/body>/p' \
+                | sed 's/<body[^>]*>//; s/<\/body>//' \
+                >> site/index.html
+            else
+              echo "        <div class='missing'>⚠️ Notebook not found — the upstream job may have failed or been skipped.</div>" \
+                >> site/index.html
             fi
+
+            echo "        </div></div>" >> site/index.html
           done
 
-          echo "</ul></body></html>" >> site/index.html
+          # ── Footer + close ───────────────────────────────────────────────────
+          cat >> site/index.html << HTML
+            </div><!-- .container -->
 
-      # ─────────────────────────────
-      # Upload artifact (backup)
-      # ─────────────────────────────
-      - name: Upload artifacts
+            <div class="footer">
+              HypatiaX Paper Audit &bull; Notebook run ${UPSTREAM_RUN}
+              &bull; Report run ${{ github.run_id }} &bull; ${RUN_DATE}<br>
+              Generated by <code>ci_report.yml</code> — no notebooks were re-executed.
+            </div>
+          </body>
+          </html>
+          HTML
+
+          echo "Report built: $(wc -c < site/index.html) bytes  |  $(wc -l < site/index.html) lines"
+
+      # ── Backup artifact (downloadable even without Pages) ───────────────────
+      - name: Upload report artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-reports
-          path: site/
+          name: HypatiaX_Audit_Report
+          path: site/index.html
+          retention-days: 30
 
-      # ─────────────────────────────
-      # Upload for GitHub Pages
-      # ─────────────────────────────
+      # ── GitHub Pages artifact ────────────────────────────────────────────────
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/
+          path: site
 
-  # ─────────────────────────────
-  # Deploy job
-  # ─────────────────────────────
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job: deploy
+  #
+  # Deploys the Pages artifact produced by build-report.
+  # Runs only after build-report succeeds.
+  # ────────────────────────────────────────────────────────────────────────────
   deploy:
     name: "Deploy to GitHub Pages"
     needs: build-report
@@ -161,9 +340,9 @@ jobs:
 
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Deploy
-        id: deploy
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
