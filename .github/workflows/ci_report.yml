@@ -59,6 +59,47 @@ jobs:
 
     steps:
 
+      # ── Resolve the source run ID ────────────────────────────────────────────
+      # When triggered by workflow_run the ID is in the event payload.
+      # When triggered via workflow_dispatch (manual re-run / debugging) that
+      # field is empty, so we query the API for the most recent completed run of
+      # ci_paper_notebooks.yml on the same branch and use its ID instead.
+      # The resolved ID is written to $GITHUB_OUTPUT so every download step can
+      # reference it as ${{ steps.resolve-run.outputs.notebooks_run_id }}.
+      - name: Resolve notebook run ID
+        id: resolve-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          BRANCH:   ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${EVENT_RUN_ID}" ]]; then
+            echo "Triggered by workflow_run — using event run ID: ${EVENT_RUN_ID}"
+            echo "notebooks_run_id=${EVENT_RUN_ID}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Manual dispatch — querying API for most recent ci_paper_notebooks.yml run on branch ${BRANCH}"
+            RESOLVED=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_notebooks.yml \
+              --branch "${BRANCH}" \
+              --status completed \
+              --limit 5 \
+              --json databaseId,conclusion \
+              --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+
+            if [[ -z "${RESOLVED}" ]]; then
+              echo "::warning::No completed ci_paper_notebooks.yml run found on branch ${BRANCH}."
+              echo "notebooks_run_id=" >> "${GITHUB_OUTPUT}"
+            else
+              echo "Resolved notebook run ID: ${RESOLVED}"
+              echo "notebooks_run_id=${RESOLVED}" >> "${GITHUB_OUTPUT}"
+            fi
+          fi
+
       # ── Python + nbconvert (no kernel needed — rendering stored outputs only)
       - name: Set up Python
         uses: actions/setup-python@v5.3.0
@@ -74,13 +115,15 @@ jobs:
       # Each artifact lands in its own sub-directory so filenames never collide.
       # `continue-on-error: true` ensures a missing artifact (failed upstream
       # job) doesn't abort the report — a warning card is shown instead.
+      # run-id comes from the resolved step above so both workflow_run and
+      # workflow_dispatch triggers find the correct artifacts.
 
       - name: Download NB-01 artifact
         uses: actions/download-artifact@v4
         with:
           name: NB-01_Citation_Bibliography_Audit
           path: notebooks/NB-01
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
@@ -89,7 +132,7 @@ jobs:
         with:
           name: NB-02_CrossRef_Label_Audit
           path: notebooks/NB-02
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
@@ -98,7 +141,7 @@ jobs:
         with:
           name: NB-03_Section_Structure_Audit
           path: notebooks/NB-03
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
@@ -107,7 +150,7 @@ jobs:
         with:
           name: NB-04_Numerical_Consistency_Audit
           path: notebooks/NB-04
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
@@ -116,7 +159,7 @@ jobs:
         with:
           name: NB-05_Figure_Audit
           path: notebooks/NB-05
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
@@ -125,7 +168,7 @@ jobs:
         with:
           name: NB-06_Code_Quality_Pipeline_Integrity
           path: notebooks/NB-06
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
@@ -143,7 +186,8 @@ jobs:
 
           # ── Metadata ────────────────────────────────────────────────────────
           RUN_DATE=$(date -u "+%Y-%m-%d %H:%M UTC")
-          UPSTREAM_RUN="${{ github.event.workflow_run.id || github.run_id }}"
+          UPSTREAM_RUN="${{ steps.resolve-run.outputs.notebooks_run_id }}"
+          UPSTREAM_RUN="${UPSTREAM_RUN:-${{ github.run_id }}}"
 
           # ── Notebook registry (ordered) ──────────────────────────────────────
           declare -a NB_PATHS=(
