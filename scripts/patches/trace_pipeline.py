@@ -106,6 +106,10 @@ class StepDef:
     # Steps that MUST have run before this one (derived from input→output matching)
     declared_deps: list[str] = field(default_factory=list)
 
+    # If True, the step's notebooks/scripts are not yet committed to the repo.
+    # script_exists check emits WARN (not ERROR) and step_order skips run() check.
+    pending:      bool = False
+
     findings:     list[Finding] = field(default_factory=list)
 
 
@@ -278,13 +282,17 @@ _STEP_CATALOGUE: list[dict] = [
     # ── 7: exp2_feynman_pca_4060 ─────────────────────────────────────────────
     dict(
         name="exp2_feynman_pca_4060",
-        description="Feynman SR benchmark — PCA 40/60 train/test split rerun (FIX-C3)",
+        description="FIX-C3: Feynman rerun with PCA 40/60 split — corrected §10.7 result",
         scripts=[
             ("EXPERIMENTS_DIR", "run_comparative_suite_benchmark_v2.py"),
         ],
         cwd_vars=["EXPERIMENTS_DIR"],
         outputs=[
-            "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_results*.json",
+            # Per-domain results written to exp2_pca_4060/ (never overwrites legacy exp2/)
+            "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json",
+            "comparison_results/feynman-tests/exp2_pca_4060/split_protocol_disclosure.json",
+            # fixc3_baseline.json locks the original 9/30 result before any corrected run
+            "fixc3_baseline.json",
             "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_run.log",
         ],
         inputs=[],
@@ -443,7 +451,7 @@ _STEP_CATALOGUE: list[dict] = [
             # ablation files are at RESULTS_DIR root (shell mv is flat, not into subdir)
             "ablation_*.json",
             "portfolio_variance*.json",
-            "comparison_results/feynman-tests/exp2/*.json",
+            "comparison_results/feynman-tests/exp2/exp2_results*.json",
             "exp3*nguyen12*.json",
             "figures/instability_analysis.csv",
             "comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json",
@@ -637,12 +645,13 @@ _STEP_CATALOGUE: list[dict] = [
     # ── 26: audit_nb06_fixc3_disclosure ──────────────────────────────────────
     dict(
         name="audit_nb06_fixc3_disclosure",
-        description="NB-06 FIX-C3 disclosure: document Feynman random-80/20 vs DeFi PCA-40/60 split mismatch",
-        scripts=[
-            ("REPO_ROOT/notebooks", "NB-06_FIX_C3_Disclosure.ipynb"),
-        ],
+        description="NB-06 FIX-C3 Action A: Disclose Feynman random-80/20 vs DeFi PCA-40/60 split mismatch",
+        # Inline Python heredoc in run_all.sh — no external notebook or script file
+        scripts=[],
         cwd_vars=["REPO_ROOT"],
         outputs=[
+            # Machine-readable disclosure record; required by audit_paper and Action B
+            "fixc3_split_disclosure.json",
             "audit_nb06_fixc3_disclosure_run.log",
         ],
         inputs=[],
@@ -652,16 +661,22 @@ _STEP_CATALOGUE: list[dict] = [
     # ── 27: audit_nb06_fixc3_rerun ────────────────────────────────────────────
     dict(
         name="audit_nb06_fixc3_rerun",
-        description="NB-06 FIX-C3 rerun: re-run Feynman benchmark with PCA 40/60 split",
-        scripts=[
-            ("REPO_ROOT/notebooks", "NB-06_FIX_C3_Rerun.ipynb"),
-        ],
+        description="NB-06 FIX-C3 Action B: Rerun Feynman with PCA 40/60 split; report revised 9/30 result",
+        # Inline Python heredoc in run_all.sh — no external notebook or script file
+        scripts=[],
         cwd_vars=["REPO_ROOT"],
         outputs=[
+            # Per-domain results in exp2_fixc3/ (distinct from exp2_pca_4060/ of exp2_feynman_pca_4060)
+            "comparison_results/feynman-tests/exp2_fixc3/protocol_core_fixc3_*.json",
+            "comparison_results/feynman-tests/exp2_fixc3/fixc3_run.log",
+            # Solve-rate summary written by the inline Python analysis block
+            "fixc3_rerun_summary.json",
             "audit_nb06_fixc3_rerun_run.log",
-            "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_results*.json",
         ],
-        inputs=[],
+        inputs=[
+            # Action A must run first and produce this disclosure record
+            "fixc3_split_disclosure.json",
+        ],
         deps=["audit_nb06_fixc3_disclosure", "exp2_feynman_pca_4060"],
     ),
 
@@ -790,6 +805,7 @@ class PipelineTracer:
                 outputs       = cat["outputs"],
                 inputs        = cat["inputs"],
                 declared_deps = cat["deps"],
+                pending       = cat.get("pending", False),
             )
             self.steps[cat["name"]] = sd
 
@@ -875,9 +891,11 @@ class PipelineTracer:
                     detail = f"Expected: {script_path}"
                     if close:
                         detail += f"\n    Possible matches in dir: {', '.join(close[:5])}"
-                    self._add(Finding("ERROR", name, "script_exists",
+                    severity = "WARN" if step.pending else "ERROR"
+                    self._add(Finding(severity, name, "script_exists",
                         f"✗ Script NOT FOUND: {script}  (cwd={cwd_var})",
-                        detail))
+                        detail + ("\n    (pending — notebook not yet committed to repo)"
+                                  if step.pending else "")))
 
     # ── Check 3: dependency graph ─────────────────────────────────────────────
 
@@ -1091,9 +1109,15 @@ class PipelineTracer:
         for s in missing:
             # Some steps (env_check, validate) use different invocation patterns
             if s not in ("env_check", "validate"):
-                self._add(Finding("WARN", s, "step_order",
-                    f"Step '{s}' is in catalogue but no run() call found in shell parse",
-                    "Verify the step has a run() invocation in run_all.sh"))
+                step_obj = self.steps.get(s)
+                if step_obj and step_obj.pending:
+                    # Pending steps are not yet wired into run_all.sh — expected
+                    self._add(Finding("INFO", s, "step_order",
+                        f"✓ '{s}' is pending — no run() call in shell yet (expected)"))
+                else:
+                    self._add(Finding("WARN", s, "step_order",
+                        f"Step '{s}' is in catalogue but no run() call found in shell parse",
+                        "Verify the step has a run() invocation in run_all.sh"))
             else:
                 self._add(Finding("INFO", s, "step_order",
                     f"✓ '{s}' invocation pattern is non-standard (expected)"))
