@@ -275,7 +275,23 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 7: exp2_feynman_extrap ────────────────────────────────────────────────
+    # ── 7: exp2_feynman_pca_4060 ─────────────────────────────────────────────
+    dict(
+        name="exp2_feynman_pca_4060",
+        description="Feynman SR benchmark — PCA 40/60 train/test split rerun (FIX-C3)",
+        scripts=[
+            ("EXPERIMENTS_DIR", "run_comparative_suite_benchmark_v2.py"),
+        ],
+        cwd_vars=["EXPERIMENTS_DIR"],
+        outputs=[
+            "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_results*.json",
+            "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_run.log",
+        ],
+        inputs=[],
+        deps=["env_check", "exp2_feynman"],
+    ),
+
+    # ── 8: exp2_feynman_extrap ────────────────────────────────────────────────
     dict(
         name="exp2_feynman_extrap",
         description="Feynman SR benchmark — OOD extrapolation protocol (Tab 16-18 OOD)",
@@ -291,7 +307,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check", "exp2_feynman"],
     ),
 
-    # ── 8: exp2 ───────────────────────────────────────────────────────────────
+    # ── 9: exp2 ───────────────────────────────────────────────────────────────
     dict(
         name="exp2",
         description="Combined five-system comparison — all Methods (Tab 19 full)",
@@ -307,7 +323,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 9: exp3 ───────────────────────────────────────────────────────────────
+    # ── 10: exp3 ──────────────────────────────────────────────────────────────
     dict(
         name="exp3",
         description="Nguyen-12 benchmark — SEED=42 (tab:nguyen12 · §10.8)",
@@ -323,7 +339,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 10: exp3b ──────────────────────────────────────────────────────────────
+    # ── 11: exp3b ──────────────────────────────────────────────────────────────
     dict(
         name="exp3b",
         description="Nguyen-12 stability seeds 99/123/777/2024",
@@ -338,7 +354,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check", "exp3"],  # reuses same script; logically after exp3
     ),
 
-    # ── 11: suppA ─────────────────────────────────────────────────────────────
+    # ── 12: suppA ─────────────────────────────────────────────────────────────
     dict(
         name="suppA",
         description="DeFi routing improvement experiments (Supplement A · Tab 11-13 routing)",
@@ -360,7 +376,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check", "hybrid_all_domains"],
     ),
 
-    # ── 12: suppB ─────────────────────────────────────────────────────────────
+    # ── 13: suppB ─────────────────────────────────────────────────────────────
     dict(
         name="suppB",
         description="Noise sweep benchmark σ ∈ {0,0.5,1,5,10}% (Tab 28, 29)",
@@ -376,7 +392,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 13: suppB_sc ──────────────────────────────────────────────────────────
+    # ── 14: suppB_sc ──────────────────────────────────────────────────────────
     dict(
         name="suppB_sc",
         description="Sample-complexity sweep n ∈ {50…1000} (Tab 29 · Supplement B §6)",
@@ -392,7 +408,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
-    # ── 14: tables ────────────────────────────────────────────────────────────
+    # ── 15: tables ────────────────────────────────────────────────────────────
     dict(
         name="tables",
         description="Generate all LaTeX tables from result JSONs → ${RESULTS_DIR}/tables/",
@@ -438,7 +454,7 @@ _STEP_CATALOGUE: list[dict] = [
               "exp3", "exp3b", "suppB", "suppB_sc"],
     ),
 
-    # ── 15: figures ───────────────────────────────────────────────────────────
+    # ── 16: figures ───────────────────────────────────────────────────────────
     dict(
         name="figures",
         description="Generate all paper figures from results → ${RESULTS_DIR}/figures/",
@@ -464,7 +480,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["exp1", "exp1b", "instability"],
     ),
 
-    # ── 16: validate ──────────────────────────────────────────────────────────
+    # ── 17: validate ──────────────────────────────────────────────────────────
     dict(
         name="validate",
         description="Cross-check all results against paper-reported values",
@@ -498,7 +514,7 @@ _STEP_CATALOGUE: list[dict] = [
               "exp1b", "exp2", "exp3", "exp3b", "extrap"],
     ),
 
-    # ── 17: qualify ───────────────────────────────────────────────────────────
+    # ── 18: qualify ───────────────────────────────────────────────────────────
     dict(
         name="qualify",
         description="verify_results.py spot-check + 7-dimension per-experiment gate (Phase 5)",
@@ -516,7 +532,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["validate"],
     ),
 
-    # ── 18: audit_paper ───────────────────────────────────────────────────────
+    # ── 19: audit_paper ───────────────────────────────────────────────────────
     dict(
         name="audit_paper",
         description="Cross-check every paper claim vs result JSONs via paper_targets.json",
@@ -532,7 +548,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["qualify"],
     ),
 
-    # ── 19: audit_setup ───────────────────────────────────────────────────────
+    # ── 20: audit_setup ───────────────────────────────────────────────────────
     dict(
         name="audit_setup",
         description="Copy .tex source files into notebooks/ for subsequent audit notebooks",
@@ -543,7 +559,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_paper"],
     ),
 
-    # ── 20: audit_nb01 ────────────────────────────────────────────────────────
+    # ── 21: audit_nb01 ────────────────────────────────────────────────────────
     dict(
         name="audit_nb01",
         description="NB-01 Citation & Bibliography Audit (jupyter nbconvert)",
@@ -558,7 +574,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_setup"],
     ),
 
-    # ── 21: audit_nb02 ────────────────────────────────────────────────────────
+    # ── 22: audit_nb02 ────────────────────────────────────────────────────────
     dict(
         name="audit_nb02",
         description="NB-02 Cross-Reference & Label Integrity (jupyter nbconvert)",
@@ -573,7 +589,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_setup"],
     ),
 
-    # ── 22: audit_nb03 ────────────────────────────────────────────────────────
+    # ── 23: audit_nb03 ────────────────────────────────────────────────────────
     dict(
         name="audit_nb03",
         description="NB-03 Section Structure & Numbering (jupyter nbconvert)",
@@ -588,7 +604,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_setup"],
     ),
 
-    # ── 23: audit_nb04 ────────────────────────────────────────────────────────
+    # ── 24: audit_nb04 ────────────────────────────────────────────────────────
     dict(
         name="audit_nb04",
         description="NB-04 Numerical Consistency & Abstract Claims (jupyter nbconvert)",
@@ -603,7 +619,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_setup"],
     ),
 
-    # ── 24: audit_nb05 ────────────────────────────────────────────────────────
+    # ── 25: audit_nb05 ────────────────────────────────────────────────────────
     dict(
         name="audit_nb05",
         description="NB-05 Figure Files & Image Dependencies (jupyter nbconvert)",
@@ -618,7 +634,38 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_setup"],
     ),
 
-    # ── 25: audit_guard ───────────────────────────────────────────────────────
+    # ── 26: audit_nb06_fixc3_disclosure ──────────────────────────────────────
+    dict(
+        name="audit_nb06_fixc3_disclosure",
+        description="NB-06 FIX-C3 disclosure: document Feynman random-80/20 vs DeFi PCA-40/60 split mismatch",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-06_FIX_C3_Disclosure.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb06_fixc3_disclosure_run.log",
+        ],
+        inputs=[],
+        deps=["audit_setup"],
+    ),
+
+    # ── 27: audit_nb06_fixc3_rerun ────────────────────────────────────────────
+    dict(
+        name="audit_nb06_fixc3_rerun",
+        description="NB-06 FIX-C3 rerun: re-run Feynman benchmark with PCA 40/60 split",
+        scripts=[
+            ("REPO_ROOT/notebooks", "NB-06_FIX_C3_Rerun.ipynb"),
+        ],
+        cwd_vars=["REPO_ROOT"],
+        outputs=[
+            "audit_nb06_fixc3_rerun_run.log",
+            "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_results*.json",
+        ],
+        inputs=[],
+        deps=["audit_nb06_fixc3_disclosure", "exp2_feynman_pca_4060"],
+    ),
+
+    # ── 30: audit_guard ───────────────────────────────────────────────────────
     dict(
         name="audit_guard",
         description="CI guard: evaluate workflow_run trigger (slot=12, run_full, success)",
@@ -629,7 +676,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=[],
     ),
 
-    # ── 26: audit_print_verify ────────────────────────────────────────────────
+    # ── 31: audit_print_verify ────────────────────────────────────────────────
     dict(
         name="audit_print_verify",
         description="Print human-readable summary of logs/verify_report.json",
@@ -640,7 +687,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["qualify"],
     ),
 
-    # ── 27: audit_print_findings ──────────────────────────────────────────────
+    # ── 32: audit_print_findings ──────────────────────────────────────────────
     dict(
         name="audit_print_findings",
         description="Print human-readable summary of logs/paper_audit_findings.json",
@@ -651,7 +698,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["audit_paper"],
     ),
 
-    # ── 28: audit_figures_tables ──────────────────────────────────────────────
+    # ── 33: audit_figures_tables ──────────────────────────────────────────────
     dict(
         name="audit_figures_tables",
         description="Validate expected figures (PDF/PNG) and LaTeX tables (TeX) are present",
@@ -664,7 +711,7 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["qualify"],
     ),
 
-    # ── 29: audit_final_gate ──────────────────────────────────────────────────
+    # ── 34: audit_final_gate ──────────────────────────────────────────────────
     dict(
         name="audit_final_gate",
         description="Aggregate numerical-verify, paper-audit, figures-tables outcomes; set exit code",
@@ -679,11 +726,14 @@ _STEP_CATALOGUE: list[dict] = [
 # Declared step order from run_all.sh _STEP_ORDER variable
 _DECLARED_ORDER = [
     "env_check", "exp1", "exp1b", "extrap", "hybrid_all_domains",
-    "instability", "exp2_feynman", "exp2_feynman_extrap", "exp2", "exp3", "exp3b",
+    "instability", "exp2_feynman", "exp2_feynman_pca_4060", "exp2_feynman_extrap",
+    "exp2", "exp3", "exp3b",
     "suppA", "suppB", "suppB_sc", "tables", "figures", "validate",
     # Phase 3 — qualification & paper audit (added 2026-05-30)
     "qualify", "audit_paper", "audit_setup",
     "audit_nb01", "audit_nb02", "audit_nb03", "audit_nb04", "audit_nb05",
+    # FIX-C3 audit notebooks (added 2026-06-03)
+    "audit_nb06_fixc3_disclosure", "audit_nb06_fixc3_rerun",
     # Phase 4 — CI gate steps for ci_paper_audit.yml (added 2026-05-30)
     "audit_guard", "audit_print_verify", "audit_print_findings",
     "audit_figures_tables", "audit_final_gate",
