@@ -113,6 +113,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
           pip install numpy scipy scikit-learn pysr juliacall
 
       - name: Run exp2_feynman_pca_4060 via run_all.sh
@@ -219,14 +220,14 @@ jobs:
           else:
               print("  [OK]  pca_directed_split present in source")
 
-          # ── Check 2: pca_directed_split is imported from pca_split_utils ──
-          has_pca_import = "pca_split_utils" in src and "pca_directed_split" in src
+          # ── Check 2: pca_directed_split is imported from hypatiax.tools.utils ──
+          has_pca_import = "hypatiax.tools.utils" in src and "pca_directed_split" in src
           if not has_pca_import:
               failures.append(
-                  "pca_directed_split import from pca_split_utils not found"
+                  "pca_directed_split import from hypatiax.tools.utils not found"
               )
           else:
-              print("  [OK]  pca_directed_split imported from pca_split_utils")
+              print("  [OK]  pca_directed_split imported from hypatiax.tools.utils")
 
           # ── Check 3: pca_directed_split called with test_size=0.6 ─────────
           import re
@@ -276,7 +277,7 @@ jobs:
           import numpy as np, sys
 
           def pca_directed_split(X, y, test_size=0.6, random_state=42):
-              \"\"\"Reference PCA-directed split shim for Gate A.\"\"\"\
+              \"\"\"Reference PCA-directed split shim for Gate A.\"\"\"
               from sklearn.decomposition import PCA
               pca = PCA(n_components=1)
               scores = pca.fit_transform(X).ravel()

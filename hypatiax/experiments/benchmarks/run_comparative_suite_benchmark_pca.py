@@ -13,7 +13,7 @@ are directly comparable.
 
 Changes vs v2:
   - sklearn train_test_split replaced with pca_directed_split(test_size=0.6)
-  - pca_split_utils imported from hypatiax.utils.pca_split_utils
+  - pca_split_utils imported from hypatiax.tools.utils
   - Script name / checkpoint default updated to reflect the PCA variant
   - _CHECKPOINT_NAME default: "protocol_core_pca_checkpoint"
   - Output mode label: "pca" instead of "noisy/noiseless"
@@ -675,7 +675,7 @@ except ImportError:
     print("⚠️  torch / sklearn not available — NN-based methods will be skipped")
 
 # PCA-directed split utility (FIX-C3: replaces random 80/20 train_test_split)
-from hypatiax.utils.pca_split_utils import pca_directed_split
+from hypatiax.tools.utils import pca_directed_split
 
 # ---------------------------------------------------------------------------
 # Anthropic client

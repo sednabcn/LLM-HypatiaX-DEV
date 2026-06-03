@@ -95,7 +95,7 @@
 # FIX-C3 (2026-06-02):
 #   — exp2_feynman_pca_4060 step added (STEP 5b) immediately after exp2_feynman.
 #     Reruns the Feynman benchmark using the PCA-directed 40/60 extrapolation
-#     split (build_extrap_split, extrap_train_frac=0.4) identical to all DeFi
+#     split (build_extrap_split, extrap_train_frac=0.6) identical to all DeFi
 #     benchmarks.  Outputs land in comparison_results/feynman-tests/exp2_pca_4060/
 #     alongside a split_protocol_disclosure.json so downstream consumers can
 #     detect any future split-config mismatch immediately.
@@ -1076,7 +1076,7 @@ summary = {
     'fixc3_step':      'exp2_feynman_pca_4060',
     'description':     'Corrected Feynman result — PCA-directed 40/60 extrapolation split',
     'split_protocol':  'pca_40_60',
-    'extrap_train_frac': 0.4,
+    'extrap_train_frac': 0.6,
     'extrap_multiplier': 2.0,
     'n_pass':          n_pass,
     'n_total':         n_total,
@@ -1137,7 +1137,7 @@ PYEOF
     echo 'WARNING: exp2_pca_4060_summary.json not found — domain runs may not have completed yet'
   fi
   if [[ \"\${_NDISC}\" -eq 0 ]]; then
-    echo 'WARNING: split_protocol_disclosure.json not found — Gate B in ci_runner_disclosure_new.yml will FAIL'
+    echo 'WARNING: split_protocol_disclosure.json not found — Gate B in ci_runner_disclosure.yml will FAIL'
   fi
   echo '=== end exp2_feynman_pca_4060 ==='
 "
@@ -3304,11 +3304,8 @@ run audit_nb06_fixc3_rerun \
     PYSR_FIT_WALL_TIMEOUT='"${PYSR_FIT_WALL_TIMEOUT}"' \
     PYSR_FIT_GRACE_SECS='"${PYSR_FIT_GRACE_SECS}"' \
     JOB_DEADLINE='"${JOB_DEADLINE}"' \
-      python3 "'"${EXPERIMENTS_DIR}"'"/run_comparative_suite_benchmark_v2.py \
+      python3 "'"${EXPERIMENTS_DIR}"'"/run_comparative_suite_benchmark_pca.py \
         --benchmark feynman \
-        --extrap \
-        --extrap-train-frac 0.6 \
-        --extrap-multiplier 2.0 \
         --domain "${DOMAIN_ID}" \
         --samples '"${FEYNMAN_SAMPLES}"' \
         --pysr-timeout '"${FEYNMAN_TIMEOUT}"' \
@@ -3316,6 +3313,9 @@ run audit_nb06_fixc3_rerun \
         --populations '"${PYSR_POPULATIONS}"' \
         --parsimony 0.01 \
         --noiseless \
+        --use-transcendental-compositions \
+        --nn-seeds 3 \
+        --no-llm-cache \
         --threshold '"${FEYNMAN_NOISELESS_THRESHOLD}"' \
         --checkpoint-name "fixc3_checkpoint_${DOMAIN_ID}" \
         --output-dir "'"${RESULTS_DIR}"'"/comparison_results/feynman-tests/exp2_fixc3 \
