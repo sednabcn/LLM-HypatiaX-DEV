@@ -3377,9 +3377,9 @@ def _iter_rows(data):
         for key in ("results", "equation_results", "data", "rows", "items"):
             v = data.get(key)
             if v is not None:
-                for r in _iter_rows(v); break
-        else:
-            yield data
+                yield from _iter_rows(v)
+                return
+        yield data
     elif isinstance(data, list):
         for item in data:
             if isinstance(item, dict):

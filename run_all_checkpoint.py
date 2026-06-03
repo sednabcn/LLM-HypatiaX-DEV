@@ -27,13 +27,20 @@ Step IDs (use with --only / --from):
     Setup    : deps  patches-gen  patches-apply  fixup-init  fixup-tex
                validate-patches  validate-paper-config  check-hypatiax-protocols
     Phase 1  : exp1  exp1_analysis  exp1b  extrap  hybrid_all_domains
-               instability  exp2_feynman  exp2  exp3  exp3b
+               instability  exp2_feynman  exp2_feynman_pca_4060
+               exp2_feynman_extrap  exp2  exp3  exp3b
     Phase 2  : suppA  suppB  suppB_sc
     Phase 3  : provenance  discover-provenance  scan-imports  verify  hashlock
-    Phase 4  : tables  figures
-    Phase 4B : audit-setup  audit-NB-01 ... audit-NB-05
-    Phase 5  : qualify        ← per-experiment qualification gate
-               audit-paper    ← final results-vs-paper audit
+    Phase 4  : tables  figures  validate
+    Phase 4B : audit_setup  audit_nb01 ... audit_nb05
+               audit_nb06_fixc3_disclosure  audit_nb06_fixc3_rerun
+    Phase 5  : audit_guard  audit_print_verify  audit_print_findings
+               audit_figures_tables  audit_final_gate
+               qualify        ← per-experiment qualification gate
+               audit_paper    ← final results-vs-paper audit
+
+    NOTE: Step IDs match run_all.sh _STEP_ORDER exactly (underscores).
+          Legacy hyphenated IDs (audit-NB-01 etc.) still accepted via --only.
 
 Notes:
     --from requires --resume to have any effect; alone it is a no-op.
@@ -250,8 +257,10 @@ EXP_RESULT_SUBDIR: dict[str, str] = {
     #           Correct values match ci_experiment.yml plan meta.
     "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
     "exp1b":             "comparison_results/noise-noiseless/15",
-    "exp2_feynman":      "comparison_results/feynman-tests/exp2",
-    "exp2":              "comparison_results/feynman-tests/exp2_multi",
+    "exp2_feynman":           "comparison_results/feynman-tests/exp2",
+    "exp2_feynman_pca_4060":  "comparison_results/feynman-tests/exp2_pca_4060",
+    "exp2_feynman_extrap":    "comparison_results/feynman-tests/exp2_extrap",
+    "exp2":                   "comparison_results/feynman-tests/exp2_multi",
     "exp3":              "extrapolation",
     "exp3b":             "extrapolation/multi_seed",
     "suppA":             "hybrid_pysr/defi",
@@ -340,7 +349,7 @@ def _suppb_result_glob() -> str:
 
 # Experiments that must be qualified before audit-paper is allowed to run.
 QUALIFIABLE_EXPERIMENTS = [
-    "exp1", "exp1b", "exp2_feynman", "exp2",
+    "exp1", "exp1b", "exp2_feynman", "exp2_feynman_pca_4060", "exp2_feynman_extrap", "exp2",
     "exp3", "exp3b",
     "suppA", "suppB", "suppB_sc",
     "hybrid_all_domains", "instability", "extrap",
@@ -1523,6 +1532,117 @@ STEPS: list[Step] = [
                  "1" if os.environ.get("ONE_EQUATION") == "1"
                  else str(int(os.environ.get("N_FEYNMAN_TASKS", "30")))
              ),
+             "PYSR_TIMEOUT":                str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
+             "POPULATIONS":                 str(int(os.environ.get("POPULATIONS",  "30"))),
+             "N_ITERATIONS":                str(int(os.environ.get("N_ITERATIONS", "1000"))),
+             \"FEYNMAN_NOISELESS_THRESHOLD\": os.environ.get(\"FEYNMAN_NOISELESS_THRESHOLD\", \"0.999999\"),
+         }),
+
+    # FIX-C3: Corrected Feynman benchmark with PCA-directed 40/60 extrapolation split.
+    # Mirrors run_all.sh STEP 5b (exp2_feynman_pca_4060).
+    # Locks the legacy 9/30 baseline in fixc3_baseline.json, then reruns every
+    # Feynman domain via run_comparative_suite_benchmark_pca.py (PCA split is
+    # hard-wired at method level — no --extrap flags needed).
+    # Writes results to exp2_pca_4060/ alongside split_protocol_disclosure.json
+    # so Gates A/B/C in ci_runner_disclosure.yml can verify protocol parity.
+    Step("exp2_feynman_pca_4060",
+         "Exp 2 FIX-C3 · Feynman rerun with PCA 40/60 split — corrected §10.7 result",
+         [sys.executable, "-c", "\n".join([
+             "import subprocess, sys, os, pathlib",
+             f"domains = {repr(FEYNMAN_DOMAINS_LIST)}",
+             "results_dir = pathlib.Path(os.environ.get('RESULTS_DIR', 'hypatiax/data/results'))",
+             "pca_dir = results_dir / 'comparison_results' / 'feynman-tests' / 'exp2_pca_4060'",
+             "pca_dir.mkdir(parents=True, exist_ok=True)",
+             "script = 'hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_pca.py'",
+             "samples     = os.environ.get('FEYNMAN_SAMPLES', '200')",
+             "timeout     = os.environ.get('FEYNMAN_TIMEOUT', '1100')",
+             "m_timeout   = os.environ.get('METHOD_TIMEOUT',  '900')",
+             "populations = os.environ.get('PYSR_POPULATIONS', '30')",
+             "threshold   = os.environ.get('FEYNMAN_NOISELESS_THRESHOLD', '0.999999')",
+             "for domain in domains:",
+             "    print(f'=== exp2_feynman_pca_4060: domain={domain} ===')",
+             "    cmd = [sys.executable, script,",
+             "           '--benchmark', 'feynman',",
+             "           '--domain', domain,",
+             "           '--samples', samples,",
+             "           '--pysr-timeout', timeout,",
+             "           '--method-timeout', m_timeout,",
+             "           '--populations', populations,",
+             "           '--parsimony', '0.01',",
+             "           '--noiseless',",
+             "           '--threshold', threshold,",
+             "           '--checkpoint-name', f'pca4060_checkpoint_{domain}',",
+             "           '--output-dir', str(pca_dir),",
+             "           '--resume']",
+             "    r = subprocess.run(cmd, env=os.environ)",
+             "    if r.returncode != 0:",
+             "        print(f'WARNING: domain {domain} exited non-zero — continuing')",
+             "sys.exit(0)",
+         ])],
+         phase="1 · Core experiments",
+         slow=True,
+         expected=(
+             "exp2_pca_4060_summary.json + split_protocol_disclosure.json written; "
+             "corrected solve rate replaces 9/30 (random_80_20) from §10.7"
+         ),
+         result_glob="comparison_results/feynman-tests/exp2_pca_4060/*.json",
+         env_extra={
+             "PYSR_TIMEOUT":                str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
+             "POPULATIONS":                 str(int(os.environ.get("POPULATIONS",  "30"))),
+             "N_ITERATIONS":                str(int(os.environ.get("N_ITERATIONS", "1000"))),
+             "FEYNMAN_NOISELESS_THRESHOLD": os.environ.get("FEYNMAN_NOISELESS_THRESHOLD", "0.999999"),
+         }),
+
+    # Feynman far-region R² (extrap_r2_far) for Mann-Whitney ablation (Tab 14).
+    # Mirrors run_all.sh STEP exp2_feynman_extrap.
+    # Runs run_comparative_suite_benchmark_v2.py with --extrap per domain,
+    # writing to exp2_extrap/ so ci_analysis.yml can merge into ablation_paired.json.
+    Step("exp2_feynman_extrap",
+         "Exp 2 extrap · Feynman far-region R² (extrap_r2_far for Mann-Whitney ablation)",
+         [sys.executable, "-c", "\n".join([
+             "import subprocess, sys, os, pathlib",
+             f"domains = {repr(FEYNMAN_DOMAINS_LIST)}",
+             "results_dir = pathlib.Path(os.environ.get('RESULTS_DIR', 'hypatiax/data/results'))",
+             "ext_dir = results_dir / 'comparison_results' / 'feynman-tests' / 'exp2_extrap'",
+             "ext_dir.mkdir(parents=True, exist_ok=True)",
+             "script = 'hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py'",
+             "samples     = os.environ.get('FEYNMAN_SAMPLES', '200')",
+             "timeout     = os.environ.get('FEYNMAN_TIMEOUT', '1100')",
+             "m_timeout   = os.environ.get('METHOD_TIMEOUT',  '900')",
+             "populations = os.environ.get('PYSR_POPULATIONS', '30')",
+             "threshold   = os.environ.get('FEYNMAN_NOISELESS_THRESHOLD', '0.999999')",
+             "active = os.environ.get('DOMAIN_FILTER', ' '.join(domains)).split()",
+             "for domain in active:",
+             "    print(f'=== exp2_feynman_extrap: domain={domain} ===')",
+             "    cmd = [sys.executable, script,",
+             "           '--benchmark', 'feynman',",
+             "           '--extrap',",
+             "           '--extrap-multiplier', '2.0',",
+             "           '--extrap-train-frac', '0.8',",
+             "           '--domain', domain,",
+             "           '--samples', samples,",
+             "           '--pysr-timeout', timeout,",
+             "           '--method-timeout', m_timeout,",
+             "           '--populations', populations,",
+             "           '--parsimony', '0.01',",
+             "           '--noiseless',",
+             "           '--threshold', threshold,",
+             "           '--checkpoint-name', f'feynman_extrap_checkpoint_{domain}',",
+             "           '--output-dir', str(ext_dir),",
+             "           '--resume']",
+             "    r = subprocess.run(cmd, env=os.environ)",
+             "    if r.returncode != 0:",
+             "        print(f'WARNING: domain {domain} exited non-zero — continuing')",
+             "sys.exit(0)",
+         ])],
+         phase="1 · Core experiments",
+         slow=True,
+         expected=(
+             "protocol_core_extrap_*.json + benchmark_results_extrap.json in exp2_extrap/; "
+             "extrap_r2_far populated for ablation Mann-Whitney test (Tab 14)"
+         ),
+         result_glob="comparison_results/feynman-tests/exp2_extrap/protocol_core_extrap_*.json",
+         env_extra={
              "PYSR_TIMEOUT":                str(int(os.environ.get("PYSR_TIMEOUT", "1100"))),
              "POPULATIONS":                 str(int(os.environ.get("POPULATIONS",  "30"))),
              "N_ITERATIONS":                str(int(os.environ.get("N_ITERATIONS", "1000"))),
