@@ -12,7 +12,9 @@
 #    C5 → ci_paper_notebooks.yml  — NB-01…NB-06 notebook audit chain (mandatory gate)
 #                                   (slot 12 only: fires after C4 passes)
 #    C5b→ ci_report.yml           — build combined audit report + deploy GitHub Pages
-#                                   (slot 12 only: fires after C5 passes; non-blocking)
+#                                   (slot 12 only: fires after C5c passes; non-blocking)
+#    C5c→ ci_runner_disclosure.yml — FIX-C3 split-protocol gates A/B/C
+#                                   (slot 12 only: fires after C5 passes; blocks C5b)
 #    C6 → self-dispatch            — next experiment slot (if multi-slot run)
 #
 #  Manual modes (experiment_index suffix):
@@ -85,7 +87,7 @@ on:
       noise_levels:
         description: "Noise levels for suppB"
         required: false
-        default: "0.0,0.5,1.0,5.0,10.0"
+        default: "0.0,0.05,0.1,0.5,1.0"
 
       dry_run:
         description: "Dry-run — print commands without executing (true/false)"
@@ -173,6 +175,7 @@ jobs:
               "exp1",
               "exp1b",
               "exp2_feynman",
+              "exp2_feynman_pca_4060",   # FIX-C3: PCA-directed 40/60 split (slot 3)
               "exp2_feynman_extrap",
               "exp2",
               "exp3",
@@ -290,7 +293,7 @@ jobs:
           PHASE:        ${{ needs.resolve.outputs.phase }}
           FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
           SEEDS:        ${{ github.event.inputs.seeds || '42,99,123,777,2024' }}
-          NOISE_LEVELS: ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          NOISE_LEVELS: ${{ github.event.inputs.noise_levels || '0.0,0.05,0.1,0.5,1.0' }}
           OUT_BASE:     hypatiax/data/results
         run: |
           python3 - <<'PYEOF'
@@ -1292,9 +1295,98 @@ jobs:
           done
 
   # ============================================================================
+  #  JOB: run-ci-runner-disclosure  —  C5c: dispatch ci_runner_disclosure.yml
+  #                                         (slot 12 only, before ci_report)
+  #
+  #  Fires after run-paper-notebooks passes.  Runs the three FIX-C3 split-
+  #  protocol gates (Gate A: split_protocol_test, Gate B: protocol_parity_test,
+  #  Gate C: baseline_lock_test) that verify the Feynman PCA 40/60 correction
+  #  is in place and the legacy 9/30 baseline is locked before reporting.
+  #
+  #  Blocking for ci_report: run-ci-report depends on this job so the audit
+  #  report always reflects the outcome of the disclosure gates.
+  #
+  #  TIMEOUT CONTRACT: 20 min (three Python gate scripts)
+  # ============================================================================
+  run-ci-runner-disclosure:
+    name: "C5c · FIX-C3 disclosure gates (slot 12)"
+    needs: [resolve, run-paper-notebooks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '12' &&
+      needs.run-paper-notebooks.result == 'success'
+
+    steps:
+      - name: Dispatch ci_runner_disclosure.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_runner_disclosure.yml (FIX-C3 split-protocol gates)"
+
+          gh workflow run ci_runner_disclosure.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_runner_disclosure.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_runner_disclosure.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found for ci_runner_disclosure.yml."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_runner_disclosure.yml) ..."
+          DEADLINE=$(( $(date +%s) + 1080 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] disclosure run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_runner_disclosure.yml run ${DISPATCHED_ID} FAILED — FIX-C3 gates not cleared."
+                echo "  Review Gate A/B/C output in the disclosure run before proceeding to ci_report."
+                exit 1
+              fi
+              echo "ci_runner_disclosure.yml passed — FIX-C3 gates cleared (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_runner_disclosure.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
   #  JOB: run-ci-report  —  C5b: dispatch ci_report.yml (slot 12 only)
   #
-  #  Fires after run-paper-notebooks passes.  ci_report.yml downloads the
+  #  Fires after run-ci-runner-disclosure passes.  ci_report.yml downloads the
   #  already-executed NB-01…NB-06 artifacts, converts them to HTML, and
   #  deploys the combined audit report to GitHub Pages.
   #  No notebooks are re-executed.
@@ -1306,14 +1398,15 @@ jobs:
   # ============================================================================
   run-ci-report:
     name: "C5b · CI report & Pages (slot 12)"
-    needs: [resolve, run-paper-notebooks]
+    needs: [resolve, run-paper-notebooks, run-ci-runner-disclosure]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
       needs.resolve.outputs.slot == '12' &&
-      needs.run-paper-notebooks.result == 'success'
+      needs.run-paper-notebooks.result == 'success' &&
+      needs.run-ci-runner-disclosure.result == 'success'
 
     steps:
       - name: Dispatch ci_report.yml
@@ -1421,8 +1514,8 @@ jobs:
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
 
           # Keep in sync with len(QUEUE) in the resolve job.
-          # Slot 12 (extrap) is the last slot; next-slot exits 0 (no-op) for it.
-          QUEUE_SIZE=13
+          # Slot 13 (extrap) is the last slot; next-slot exits 0 (no-op) for it.
+          QUEUE_SIZE=14
 
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
             echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."

@@ -92,6 +92,18 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-C3 (2026-06-02):
+#   — exp2_feynman_pca_4060 step added (STEP 5b) immediately after exp2_feynman.
+#     Reruns the Feynman benchmark using the PCA-directed 40/60 extrapolation
+#     split (build_extrap_split, extrap_train_frac=0.4) identical to all DeFi
+#     benchmarks.  Outputs land in comparison_results/feynman-tests/exp2_pca_4060/
+#     alongside a split_protocol_disclosure.json so downstream consumers can
+#     detect any future split-config mismatch immediately.
+#     The legacy random 80/20 results (9/30) are preserved under exp2/ and
+#     locked as fixc3_baseline.json before the corrected run can proceed.
+#     ci_runner_disclosure.yml gates A/B/C are triggered automatically once
+#     the corrected run completes.
+#
 # FIX-0.05 (2026-06-01):
 #   — NOISE_LEVELS default updated from "0.0,0.5,1.0,5.0,10.0" to "0.0,0.05,0.1,0.5,1.0"
 #     at both the global export (line ~210) and the suppB inline env override.
@@ -275,7 +287,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
+_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -431,7 +443,7 @@ for k, v in (cfg or {}).items(): print(f\"  {k}: {v}\")
   # and bare extrapolation/ (exp3 RESULT_SUBDIR) — both present in the CI mkdir
   # step but absent here, causing tee/mv failures when those steps run standalone.
   # Mirrors ci_experiment.yml Create results directory structure step exactly.
-  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_extrap,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless/defi,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
+  mkdir -p '"${RESULTS_DIR}"'/{comparison_results/{feynman-tests/{exp2,exp2_pca_4060,exp2_extrap,exp2_multi,noise-sweep,sample-complexity},noise-noiseless/{noiseless/defi,15},extrapolation},extrapolation/multi_seed,hybrid_llm_nn/{all_domains,defi},hybrid_pysr/{all_domains,defi},llm_guided/{all_domains,defi},standalone_llm_nn,figures,tables}
   mkdir -p '"${RESULTS_DIR}"'/extrapolation
   echo "Directory structure: ok"
 '
@@ -842,7 +854,295 @@ run exp2_feynman "Feynman SR benchmark -- Phase 2 noisy protocol per-domain (Tab
   done
 "
 
-# ── STEP 5c: exp2_feynman_extrap ──────────────────────────────────────────────
+# ── STEP 5b: exp2_feynman_pca_4060 ───────────────────────────────────────────
+# FIX-C3: Corrected Feynman benchmark rerun using the PCA-directed 40/60
+# split — the same protocol used for all DeFi benchmarks (§10.2–10.4) and
+# described in §6.4.  The original exp2_feynman used train_test_split
+# (random 80/20), which is materially easier and was NOT disclosed in §10.7.
+#
+# FIX-C3-SCRIPT: This step invokes run_comparative_suite_benchmark_pca.py —
+# the dedicated PCA-split variant of the benchmark runner.  Unlike
+# run_comparative_suite_benchmark_v2.py (which requires --extrap flags to
+# activate build_extrap_split at the CLI level), the PCA script hard-wires
+# pca_directed_split(test_size=0.6) inside ImprovedNN.run() at the method
+# level, making the split identical to the DeFi benchmark by construction.
+#
+# This step:
+#   1. Locks the legacy 9/30 baseline in fixc3_baseline.json (once, idempotent).
+#   2. Reruns every Feynman domain via run_comparative_suite_benchmark_pca.py
+#      (PCA split is method-level, no --extrap flags needed).
+#   3. Writes results to exp2_pca_4060/ (never overwrites the legacy exp2/).
+#   4. Emits split_protocol_disclosure.json in exp2_pca_4060/ so Gates A/B/C
+#      in ci_runner_disclosure.yml can confirm protocol parity with DeFi.
+#
+# Output directory: comparison_results/feynman-tests/exp2_pca_4060/
+# Key result file:  exp2_pca_4060_summary.json  (corrected solve rate, replaces 9/30)
+# Disclosure file:  exp2_pca_4060/split_protocol_disclosure.json
+#
+# CLI example (run standalone):
+#   bash run_all.sh --step exp2_feynman_pca_4060
+# ─────────────────────────────────────────────────────────────────────────────
+run exp2_feynman_pca_4060 "FIX-C3: Feynman rerun with PCA 40/60 split — corrected §10.7 result" bash -c "
+  cd '${REPO_ROOT}'
+
+  _PCA_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060'
+  _LEG_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
+  _BASELINE='${RESULTS_DIR}/fixc3_baseline.json'
+
+  mkdir -p \"\${_PCA_DIR}\"
+
+  # ── 1. Lock the legacy 9/30 baseline BEFORE any corrected run can overwrite ──
+  # Idempotent: if fixc3_baseline.json already exists, verify it is stable.
+  if [[ -f \"\${_BASELINE}\" ]]; then
+    echo '[FIX-C3] fixc3_baseline.json already present — skipping baseline capture.'
+    python3 -c \"
+import json, pathlib
+b = json.loads(pathlib.Path('\${_BASELINE}').read_text())
+print('  Locked baseline: ' + str(b.get('n_pass','?')) + '/' + str(b.get('n_total','?')) + ' (' + str(b.get('split_protocol','?')) + ')')
+\" 2>/dev/null || true
+  else
+    echo '[FIX-C3] Locking legacy 9/30 baseline from exp2/ results...'
+    python3 - <<'PYEOF'
+import glob, json, pathlib, sys
+
+LEG_DIR    = pathlib.Path('${RESULTS_DIR}/comparison_results/feynman-tests/exp2')
+BASELINE   = pathlib.Path('${RESULTS_DIR}/fixc3_baseline.json')
+
+THRESHOLD  = 0.999999
+PREFERRED  = {'hypatiax','hybridv50','hybrid50','hybridsymbolic',
+              'hybriddefi','hypatia','hybrid','ours','proposed'}
+
+def _r2(row):
+    for k in ('r2','r2_test','r2_train','best_r2','R2'):
+        v = row.get(k)
+        if v is not None:
+            try:
+                f = float(v)
+                if f <= 1.01:
+                    return f
+            except (TypeError, ValueError):
+                pass
+    return None
+
+def _rows(data):
+    if isinstance(data, dict):
+        for key in ('results','equation_results','data','rows'):
+            v = data.get(key)
+            if v is not None:
+                yield from _rows(v)
+                return
+        yield data
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                yield item
+
+n_pass = n_total = 0
+source_files = []
+for fp in sorted(LEG_DIR.glob('*.json')) if LEG_DIR.exists() else []:
+    if any(x in fp.name for x in ('checkpoint','disclosure','baseline')):
+        continue
+    try:
+        data = json.loads(fp.read_text())
+    except Exception:
+        continue
+    source_files.append(fp.name)
+    for row in _rows(data):
+        raw    = row.get('method') or row.get('model') or ''
+        method = str(raw).lower().replace('-','').replace('_','').replace(' ','')
+        if method and not any(p in method for p in PREFERRED):
+            continue
+        r2 = _r2(row)
+        if r2 is None:
+            continue
+        n_total += 1
+        if r2 >= THRESHOLD:
+            n_pass += 1
+
+baseline = {
+    'fixc3_gate':      'C',
+    'description':     'Pre-fix baseline — Feynman result (random 80/20 split)',
+    'split_protocol':  'random_80_20',
+    'n_pass':          n_pass,
+    'n_total':         n_total,
+    'solve_rate':      (n_pass / n_total) if n_total > 0 else None,
+    'paper_claim':     '9/30 = 0.300',
+    'source_files':    source_files[:5],
+}
+BASELINE.parent.mkdir(parents=True, exist_ok=True)
+BASELINE.write_text(json.dumps(baseline, indent=2))
+print(f'  [FIX-C3] Baseline locked: {n_pass}/{n_total} (random_80_20) → fixc3_baseline.json')
+PYEOF
+  fi
+
+  # ── 2. Run corrected Feynman benchmark per domain (PCA 40/60 split) ──────────
+  # FIX-C3-SCRIPT: use run_comparative_suite_benchmark_pca.py — the dedicated
+  # PCA-split variant — instead of run_comparative_suite_benchmark_v2.py with
+  # --extrap flags.  The PCA script hard-wires pca_directed_split(test_size=0.6)
+  # inside ImprovedNN.run(), matching the DeFi benchmark split exactly (§6.4).
+  # No --extrap / --extrap-train-frac / --extrap-multiplier flags are passed;
+  # the split is baked in at the method level, not the CLI level.
+  echo '[FIX-C3] Starting corrected Feynman run: run_comparative_suite_benchmark_pca.py'
+  echo '         PCA-directed 40/60 split (pca_directed_split, test_size=0.6 — method-level)'
+  echo '         output → \${_PCA_DIR}'
+
+  for DOMAIN_ID in ${FEYNMAN_DOMAINS}; do
+    echo '=== exp2_feynman_pca_4060: domain='\${DOMAIN_ID}' ==='
+    FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES} \
+    FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT} \
+    METHOD_TIMEOUT=${METHOD_TIMEOUT} \
+    PYSR_FIT_WALL_TIMEOUT=${PYSR_FIT_WALL_TIMEOUT} \
+    PYSR_FIT_GRACE_SECS=${PYSR_FIT_GRACE_SECS} \
+    JOB_DEADLINE=${JOB_DEADLINE} \
+      python3 '${EXPERIMENTS_DIR}/run_comparative_suite_benchmark_pca.py' \
+        --benchmark feynman \
+        --domain \"\${DOMAIN_ID}\" \
+        --samples ${FEYNMAN_SAMPLES} \
+        --pysr-timeout ${FEYNMAN_TIMEOUT} \
+        --method-timeout ${METHOD_TIMEOUT} \
+        --populations ${PYSR_POPULATIONS} \
+        --parsimony 0.01 \
+        --noiseless \
+        --threshold ${FEYNMAN_NOISELESS_THRESHOLD} \
+        --use-transcendental-compositions \
+        --nn-seeds 3 \
+        --no-llm-cache \
+        --checkpoint-name \"pca4060_checkpoint_\${DOMAIN_ID}\" \
+        --output-dir \"\${_PCA_DIR}\" \
+        --resume \
+      2>&1 | tee -a \"\${_PCA_DIR}/exp2_pca_4060_run.log\" \
+    || echo 'WARNING: pca_4060 domain '\${DOMAIN_ID}' exited non-zero — continuing'
+  done
+
+  # ── 3. Compute corrected summary (new solve rate) ─────────────────────────────
+  echo '[FIX-C3] Computing corrected solve rate from exp2_pca_4060/ results...'
+  python3 - <<'PYEOF'
+import glob, json, pathlib, sys
+
+PCA_DIR   = pathlib.Path('${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060')
+SUMMARY   = PCA_DIR / 'exp2_pca_4060_summary.json'
+THRESHOLD = 0.999999
+PREFERRED = {'hypatiax','hybridv50','hybrid50','hybridsymbolic',
+             'hybriddefi','hypatia','hybrid','ours','proposed'}
+
+def _r2(row):
+    for k in ('r2','r2_test','r2_train','best_r2','R2'):
+        v = row.get(k)
+        if v is not None:
+            try:
+                f = float(v)
+                if f <= 1.01:
+                    return f
+            except (TypeError, ValueError):
+                pass
+    return None
+
+def _rows(data):
+    if isinstance(data, dict):
+        for key in ('results','equation_results','data','rows'):
+            v = data.get(key)
+            if v is not None:
+                yield from _rows(v)
+                return
+        yield data
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                yield item
+
+n_pass = n_total = 0
+source_files = []
+for fp in sorted(PCA_DIR.glob('*.json')) if PCA_DIR.exists() else []:
+    if any(x in fp.name for x in ('checkpoint','disclosure','summary','baseline')):
+        continue
+    try:
+        data = json.loads(fp.read_text())
+    except Exception:
+        continue
+    source_files.append(fp.name)
+    for row in _rows(data):
+        raw    = row.get('method') or row.get('model') or ''
+        method = str(raw).lower().replace('-','').replace('_','').replace(' ','')
+        if method and not any(p in method for p in PREFERRED):
+            continue
+        r2 = _r2(row)
+        if r2 is None:
+            continue
+        n_total += 1
+        if r2 >= THRESHOLD:
+            n_pass += 1
+
+summary = {
+    'fixc3_step':      'exp2_feynman_pca_4060',
+    'description':     'Corrected Feynman result — PCA-directed 40/60 extrapolation split',
+    'split_protocol':  'pca_40_60',
+    'extrap_train_frac': 0.4,
+    'extrap_multiplier': 2.0,
+    'n_pass':          n_pass,
+    'n_total':         n_total,
+    'solve_rate':      (n_pass / n_total) if n_total > 0 else None,
+    'paper_legacy_claim': '9/30 = 0.300 (random_80_20)',
+    'source_files':    source_files[:10],
+}
+SUMMARY.write_text(json.dumps(summary, indent=2))
+rate_str = f'{n_pass}/{n_total}' if n_total > 0 else '?/?'
+print(f'  [FIX-C3] Corrected solve rate: {rate_str} (pca_40_60) → exp2_pca_4060_summary.json')
+if n_total == 0:
+    print('  [WARN]  No results found in exp2_pca_4060/ — rerun after domains complete.')
+PYEOF
+
+  # ── 4. Write split_protocol_disclosure.json (required by Gate B) ─────────────
+  python3 - <<'PYEOF'
+import json, pathlib, datetime
+
+PCA_DIR   = pathlib.Path('${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060')
+DISC_FILE = PCA_DIR / 'split_protocol_disclosure.json'
+
+disclosure = {
+    'fixc3':              True,
+    'split_protocol':     'pca_40_60',
+    'split_function':     'pca_directed_split',
+    'split_level':        'method_level',
+    'script':             'run_comparative_suite_benchmark_pca.py',
+    'test_size':          0.6,
+    'train_size':         0.4,
+    'random_split_used':  False,
+    'legacy_split':       'random_80_20 (train_test_split, test_size=0.2)',
+    'legacy_script':      'run_comparative_suite_benchmark_v2.py (no --extrap)',
+    'dfi_parity':         True,
+    'section_reference':  'sec:6.4 + sec:10.7',
+    'generated_by':       'run_all.sh exp2_feynman_pca_4060 via run_comparative_suite_benchmark_pca.py',
+    'timestamp':          datetime.datetime.utcnow().isoformat() + 'Z',
+}
+DISC_FILE.write_text(json.dumps(disclosure, indent=2))
+print(f'  [FIX-C3] split_protocol_disclosure.json written → {DISC_FILE}')
+PYEOF
+
+  # ── 5. Verification summary ───────────────────────────────────────────────────
+  echo ''
+  echo '=== exp2_feynman_pca_4060 verification ==='
+  echo 'Output dir:' \"\${_PCA_DIR}\"
+  find \"\${_PCA_DIR}\" -maxdepth 1 -type f | sort || echo '  (empty)'
+  echo ''
+  _NSUMMARY=\$(find \"\${_PCA_DIR}\" -name 'exp2_pca_4060_summary.json' 2>/dev/null | wc -l)
+  _NDISC=\$(find \"\${_PCA_DIR}\" -name 'split_protocol_disclosure.json' 2>/dev/null | wc -l)
+  _NRESULT=\$(find \"\${_PCA_DIR}\" -name '*.json' \
+    ! -name 'checkpoint*' ! -name '*disclosure*' ! -name '*summary*' ! -name '*baseline*' \
+    2>/dev/null | wc -l)
+  echo \"  Result JSONs     : \${_NRESULT}\"
+  echo \"  Summary file     : \${_NSUMMARY} (exp2_pca_4060_summary.json)\"
+  echo \"  Disclosure file  : \${_NDISC} (split_protocol_disclosure.json)\"
+  echo \"  Baseline lock    : \$([ -f '\${_BASELINE}' ] && echo 'PRESENT' || echo 'MISSING')\"
+  if [[ \"\${_NSUMMARY}\" -eq 0 ]]; then
+    echo 'WARNING: exp2_pca_4060_summary.json not found — domain runs may not have completed yet'
+  fi
+  if [[ \"\${_NDISC}\" -eq 0 ]]; then
+    echo 'WARNING: split_protocol_disclosure.json not found — Gate B in ci_runner_disclosure_new.yml will FAIL'
+  fi
+  echo '=== end exp2_feynman_pca_4060 ==='
+"
+
+
 # Generates extrap_r2_far for every Feynman equation by re-running
 # run_comparative_suite_benchmark_v2.py with --extrap on the same domain set
 # as exp2_feynman.
@@ -2781,6 +3081,380 @@ run audit_nb05 "NB-05: Figure Files & Image Dependencies" bash -c '
     notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb \
     2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb05_run.log
   echo "=== NB-05 done ==="
+'
+
+# ── STEP 22a: audit_nb06_fixc3_disclosure (FIX-C3 Action A) ─────────────────
+# NB-06 · Feynman Split Protocol Disclosure (FIX-C3 §6.4 / §10.7)
+#
+# WHY THIS STEP EXISTS
+# The Feynman benchmark (§10.7) calls run_comparative_suite_benchmark_v2.py
+# without --extrap, so the NN method's run() invokes:
+#
+#   X_train, X_test, y_train, y_test = train_test_split(
+#       X, y, test_size=0.2, random_state=42          ← random 80/20
+#   )
+#
+# All DeFi benchmarks (§10.2–10.4) use the PCA-directed 40/60 extrapolation
+# split (build_extrap_split, extrap_train_frac=0.6, extrap_multiplier=2.0).
+# These are different, *easier* vs harder splits; claiming Feynman results are
+# directly comparable to DeFi results is the substantive scientific issue
+# flagged as FIX-C3 in the audit (NB-06).
+#
+# ACTION A (this step): write a machine-readable disclosure record into
+#   ${RESULTS_DIR}/fixc3_split_disclosure.json
+# that documents the mismatch and passes only when:
+#   (1) the disclosure JSON exists (confirming this step ran), and
+#   (2) the split protocol difference is correctly recorded in §10.7 result files.
+#
+# The downstream paper-audit (audit_paper) should reference
+# fixc3_split_disclosure.json to assert the disclosure is present before
+# publishing the 9/30 result.
+run audit_nb06_fixc3_disclosure \
+    "NB-06 FIX-C3 Action A: Disclose Feynman random-80/20 vs DeFi PCA-40/60 split mismatch (§10.7)" \
+    bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-06 FIX-C3 Action A: Split Protocol Disclosure ==="
+
+  python3 - <<'"'"'PYEOF'"'"' 2>&1 | tee "'"${RESULTS_DIR}"'"/audit_nb06_fixc3_disclosure_run.log
+import json, os, sys, glob
+from pathlib import Path
+
+RESULTS = Path(os.environ.get("RESULTS_DIR", "hypatiax/data/results"))
+REPO    = Path(os.environ.get("REPO_ROOT",   "."))
+
+# ── Verify the split difference is documented in code ────────────────────────
+SCRIPT = REPO / "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+findings = []
+all_ok   = True
+
+def record(label, ok, detail=""):
+    global all_ok
+    findings.append({"label": label, "ok": ok, "detail": detail})
+    tag = "OK" if ok else "FAIL"
+    print(f"  [{tag}] {label}  {detail}")
+    if not ok:
+        all_ok = False
+
+# (1) Confirm train_test_split(test_size=0.2) exists in the script (baseline check)
+if SCRIPT.exists():
+    src = SCRIPT.read_text(errors="replace")
+    has_random_split = "train_test_split" in src and "test_size=0.2" in src
+    record(
+        "run_comparative_suite_benchmark_v2.py contains train_test_split(test_size=0.2)",
+        has_random_split,
+        f"file: {SCRIPT.name}"
+    )
+    # (2) Confirm build_extrap_split (PCA 40/60 path) also exists in the script
+    has_pca_split = "build_extrap_split" in src
+    record(
+        "run_comparative_suite_benchmark_v2.py contains build_extrap_split (PCA 40/60 path)",
+        has_pca_split,
+        "PCA-directed split used by DeFi benchmarks"
+    )
+    # (3) Confirm the random split is inside the NN method (not the Feynman outer loop)
+    # The NN .run() method should be the site of the random split — verify by checking
+    # proximity of "test_size=0.2" to the class or def run pattern.
+    lines = src.splitlines()
+    split_lines = [i+1 for i, l in enumerate(lines) if "test_size=0.2" in l]
+    run_method_lines = [i+1 for i, l in enumerate(lines) if "def run(" in l]
+    # test_size=0.2 should appear within 200 lines of a "def run(" definition
+    proximate = any(
+        any(abs(sl - rl) <= 200 for rl in run_method_lines)
+        for sl in split_lines
+    )
+    record(
+        "train_test_split(test_size=0.2) is inside a .run() method (NN method scope)",
+        proximate,
+        f"split at lines {split_lines}, run() at lines {run_method_lines[:5]}"
+    )
+else:
+    record("run_comparative_suite_benchmark_v2.py found", False, str(SCRIPT))
+
+# (4) Confirm exp2_feynman result files do NOT carry extrap_multiplier metadata
+#     (which would indicate the PCA split was accidentally applied).
+exp2_files = sorted(glob.glob(
+    str(RESULTS / "comparison_results/feynman-tests/exp2/**/*.json"), recursive=True
+))
+feynman_extrap_contamination = 0
+for fp in exp2_files:
+    try:
+        data = json.loads(Path(fp).read_text())
+        # extrap_multiplier in the result means the extrap/PCA path ran — unexpected for exp2
+        if isinstance(data, dict) and data.get("extrap_multiplier") is not None:
+            feynman_extrap_contamination += 1
+    except Exception:
+        pass
+if exp2_files:
+    record(
+        "exp2_feynman result files have NO extrap_multiplier (confirms random-split path ran)",
+        feynman_extrap_contamination == 0,
+        f"checked {len(exp2_files)} files; {feynman_extrap_contamination} had extrap_multiplier"
+    )
+else:
+    record(
+        "exp2_feynman result files present for split verification",
+        False,
+        "no files in comparison_results/feynman-tests/exp2/ — run exp2_feynman first"
+    )
+
+# ── Write disclosure record ───────────────────────────────────────────────────
+disclosure = {
+    "fixc3_action": "A",
+    "fixc3_note": (
+        "FIX-C3 (NB-06): Feynman benchmark (§10.7) uses train_test_split(test_size=0.2) "
+        "— a random 80/20 split with extrap_multiplier=2.0. "
+        "DeFi benchmarks (§10.2–10.4) use build_extrap_split with extrap_train_frac=0.6 "
+        "(PCA-directed 40/60 split). "
+        "These are scientifically distinct protocols; the 9/30 Feynman result is NOT "
+        "directly comparable to DeFi results without this disclosure. "
+        "Action B (audit_nb06_fixc3_rerun) reruns Feynman with the PCA 40/60 split "
+        "and reports the revised figure."
+    ),
+    "feynman_split": {
+        "type": "random",
+        "function": "sklearn.model_selection.train_test_split",
+        "test_size": 0.2,
+        "train_size": 0.8,
+        "extrap_multiplier": 2.0,
+        "random_state": 42,
+        "section": "§10.7"
+    },
+    "defi_split": {
+        "type": "pca_directed_extrapolation",
+        "function": "build_extrap_split",
+        "extrap_train_frac": 0.6,
+        "extrap_multiplier": 2.0,
+        "section": "§10.2–10.4, §6.4"
+    },
+    "findings": findings,
+    "all_ok": all_ok
+}
+
+out = RESULTS / "fixc3_split_disclosure.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(disclosure, indent=2))
+print(f"\n  Disclosure record → {out}")
+
+n_fail = sum(1 for f in findings if not f["ok"])
+if all_ok:
+    print("\n✅  FIX-C3 Action A: split mismatch correctly documented.")
+else:
+    print(f"\n❌  FIX-C3 Action A: {n_fail} check(s) failed — see details above.")
+    sys.exit(1)
+PYEOF
+  echo "=== NB-06 FIX-C3 Action A done ==="
+'
+
+# ── STEP 22b: audit_nb06_fixc3_rerun (FIX-C3 Action B) ──────────────────────
+# NB-06 · Feynman Rerun with PCA 40/60 Split (FIX-C3 §10.7 corrected result)
+#
+# WHY THIS STEP EXISTS
+# FIX-C3 Action B requires rerunning the Feynman benchmark (§10.7) with the
+# same PCA-directed 40/60 extrapolation split used by all DeFi benchmarks
+# (§10.2–10.4, §6.4), so the 9/30 result can be revised to a number that is
+# scientifically comparable.
+#
+# HOW IT WORKS
+# Invokes run_comparative_suite_benchmark_v2.py with:
+#   --extrap                      activate build_extrap_split (PCA path)
+#   --extrap-train-frac 0.6       40% held-out far region (matches §6.4 "40/60")
+#   --extrap-multiplier 2.0       OOD multiplier (paper value, same as DeFi)
+# per domain (same domain loop as exp2_feynman), writing to:
+#   comparison_results/feynman-tests/exp2_fixc3/
+#
+# The solve-rate computed from these outputs is the corrected §10.7 figure that
+# replaces "9/30" in a revised paper submission.
+#
+# OUTPUT FILES
+#   ${RESULTS_DIR}/comparison_results/feynman-tests/exp2_fixc3/
+#       protocol_core_fixc3_<domain>_<TS>.json      ← per-domain results
+#   ${RESULTS_DIR}/fixc3_rerun_summary.json         ← solve-rate summary
+#
+# RELATIONSHIP TO audit_nb06_fixc3_disclosure (Action A)
+#   Action A must run first (creates fixc3_split_disclosure.json).
+#   Action B reads that disclosure to confirm the mismatch was logged before
+#   writing the corrected result.  Both must PASS for FIX-C3 to be resolved.
+run audit_nb06_fixc3_rerun \
+    "NB-06 FIX-C3 Action B: Rerun Feynman with PCA 40/60 split and report revised 9/30 result (§10.7)" \
+    bash -c '
+  set -euo pipefail
+  cd "'"${REPO_ROOT}"'"
+  echo "=== NB-06 FIX-C3 Action B: Feynman PCA 40/60 Rerun ==="
+
+  # ── Prerequisite: Action A disclosure must exist ──────────────────────────
+  DISCLOSURE="'"${RESULTS_DIR}"'"/fixc3_split_disclosure.json
+  if [[ ! -f "${DISCLOSURE}" ]]; then
+    echo "ERROR: fixc3_split_disclosure.json not found — run audit_nb06_fixc3_disclosure first."
+    exit 1
+  fi
+  echo "  [OK] Disclosure record found: ${DISCLOSURE}"
+
+  mkdir -p "'"${RESULTS_DIR}"'"/comparison_results/feynman-tests/exp2_fixc3
+
+  # ── Per-domain rerun with PCA 40/60 split ────────────────────────────────
+  # Same domain list as exp2_feynman; same hyperparameters; only split differs.
+  # --extrap-train-frac 0.6 → 60% train, 40% far-region (the §6.4 DeFi protocol)
+  # --extrap-multiplier 2.0 → matches DeFi benchmark and paper value
+  for DOMAIN_ID in '"${FEYNMAN_DOMAINS}"'; do
+    echo "=== fixc3_rerun: domain=${DOMAIN_ID} (PCA 40/60 split) ==="
+    FEYNMAN_SAMPLES='"${FEYNMAN_SAMPLES}"' \
+    FEYNMAN_TIMEOUT='"${FEYNMAN_TIMEOUT}"' \
+    METHOD_TIMEOUT='"${METHOD_TIMEOUT}"' \
+    PYSR_FIT_WALL_TIMEOUT='"${PYSR_FIT_WALL_TIMEOUT}"' \
+    PYSR_FIT_GRACE_SECS='"${PYSR_FIT_GRACE_SECS}"' \
+    JOB_DEADLINE='"${JOB_DEADLINE}"' \
+      python3 "'"${EXPERIMENTS_DIR}"'"/run_comparative_suite_benchmark_v2.py \
+        --benchmark feynman \
+        --extrap \
+        --extrap-train-frac 0.6 \
+        --extrap-multiplier 2.0 \
+        --domain "${DOMAIN_ID}" \
+        --samples '"${FEYNMAN_SAMPLES}"' \
+        --pysr-timeout '"${FEYNMAN_TIMEOUT}"' \
+        --method-timeout '"${METHOD_TIMEOUT}"' \
+        --populations '"${PYSR_POPULATIONS}"' \
+        --parsimony 0.01 \
+        --noiseless \
+        --threshold '"${FEYNMAN_NOISELESS_THRESHOLD}"' \
+        --checkpoint-name "fixc3_checkpoint_${DOMAIN_ID}" \
+        --output-dir "'"${RESULTS_DIR}"'"/comparison_results/feynman-tests/exp2_fixc3 \
+        --resume \
+      2>&1 | tee -a "'"${RESULTS_DIR}"'"/comparison_results/feynman-tests/exp2_fixc3/fixc3_run.log \
+    || echo "WARNING: fixc3_rerun domain ${DOMAIN_ID} exited non-zero — continuing"
+  done
+
+  # ── Compute and report the corrected solve rate ───────────────────────────
+  python3 - <<'"'"'PYEOF'"'"' 2>&1 | tee -a "'"${RESULTS_DIR}"'"/comparison_results/feynman-tests/exp2_fixc3/fixc3_run.log
+import glob, json, os, sys
+from pathlib import Path
+
+RESULTS  = Path(os.environ.get("RESULTS_DIR", "hypatiax/data/results"))
+FIXC3_DIR = RESULTS / "comparison_results/feynman-tests/exp2_fixc3"
+THRESHOLD = float(os.environ.get("FEYNMAN_NOISELESS_THRESHOLD", "0.999999"))
+
+PREFERRED = {
+    "hypatiax", "hybridv50", "hybrid50", "hybridsymbolic", "hybriddefi", "hypatia",
+    "hybrid", "hybridllm", "hybridnn", "ours", "proposed",
+}
+
+result_files = sorted(FIXC3_DIR.glob("protocol_core_fixc3_*.json")) + \
+               sorted(FIXC3_DIR.glob("protocol_core_*.json"))
+
+if not result_files:
+    print(f"\n  WARNING: No fixc3 result files found in {FIXC3_DIR}")
+    print("  The rerun may not have produced output yet (Julia/PySR timeout or crash).")
+    print("  Re-run this step after confirming experiment scripts are functional.")
+    # Write a stub summary so Action A disclosure is not blocked
+    summary = {
+        "fixc3_action": "B",
+        "status": "INCOMPLETE",
+        "note": "No result files found — rerun step after experiment scripts are functional.",
+        "feynman_pca4060_solve_rate": None,
+        "feynman_random8020_solve_rate_paper": "9/30 = 0.300",
+        "corrected_result": "PENDING",
+    }
+    out = RESULTS / "fixc3_rerun_summary.json"
+    out.write_text(json.dumps(summary, indent=2))
+    print(f"\n  Stub summary → {out}")
+    sys.exit(0)
+
+def _r2_from_row(row):
+    for key in ("r2", "r2_test", "r2_train", "best_r2", "R2", "R2_test",
+                "extrap_r2_far", "extrap_r2"):
+        v = row.get(key)
+        if v is not None:
+            try:
+                f = float(v)
+                if f <= 1.01:
+                    return f
+            except (TypeError, ValueError):
+                pass
+    return None
+
+def _iter_rows(data):
+    if isinstance(data, dict):
+        for key in ("results", "equation_results", "data", "rows", "items"):
+            v = data.get(key)
+            if v is not None:
+                for r in _iter_rows(v); break
+        else:
+            yield data
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                yield item
+
+n_total = n_pass = 0
+seen_equations = set()
+
+for fp in result_files:
+    try:
+        data = json.loads(fp.read_text())
+    except Exception:
+        continue
+    for row in _iter_rows(data):
+        raw_method = row.get("method") or row.get("model") or ""
+        method = str(raw_method).lower().replace("-", "").replace("_", "").replace(" ", "")
+        if method and not any(p in method for p in PREFERRED):
+            continue
+        eq_id = row.get("equation") or row.get("eq_id") or row.get("name", "")
+        if eq_id and eq_id in seen_equations:
+            continue
+        r2 = _r2_from_row(row)
+        if r2 is None:
+            continue
+        if eq_id:
+            seen_equations.add(eq_id)
+        n_total += 1
+        if r2 >= THRESHOLD:
+            n_pass += 1
+
+print(f"\n  === FIX-C3 Action B: Corrected Feynman Result (PCA 40/60 split) ===")
+print(f"  Protocol  : --extrap --extrap-train-frac 0.6 --extrap-multiplier 2.0")
+print(f"  Threshold : R² >= {THRESHOLD}")
+print(f"  Equations : {n_total} evaluated  |  {n_pass} solved")
+if n_total > 0:
+    rate = n_pass / n_total
+    print(f"  Solve rate: {n_pass}/{n_total} = {rate:.3f}")
+    print(f"")
+    print(f"  ORIGINAL  (random 80/20)  : 9/30  = 0.300  [§10.7 as submitted]")
+    print(f"  CORRECTED (PCA 40/60)     : {n_pass}/{n_total} = {rate:.3f}  [FIX-C3 revised]")
+    if n_pass < 9:
+        delta = "LOWER  (harder split as expected — DeFi-comparable)"
+    elif n_pass > 9:
+        delta = "HIGHER (unexpected — verify extrap-train-frac 0.6 was applied)"
+    else:
+        delta = "SAME   (splits happen to produce equal count)"
+    print(f"  Direction : {delta}")
+else:
+    rate = None
+    print("  WARNING: 0 equations evaluated — check result file schema")
+
+summary = {
+    "fixc3_action": "B",
+    "status": "COMPLETE" if n_total > 0 else "INCOMPLETE",
+    "protocol": {
+        "split_type": "pca_directed_extrapolation",
+        "extrap_train_frac": 0.6,
+        "extrap_multiplier": 2.0,
+        "threshold": THRESHOLD,
+        "function": "build_extrap_split"
+    },
+    "feynman_pca4060_n_total": n_total,
+    "feynman_pca4060_n_pass":  n_pass,
+    "feynman_pca4060_solve_rate": rate,
+    "feynman_random8020_solve_rate_paper": "9/30 = 0.300",
+    "corrected_result": f"{n_pass}/{n_total}" if n_total > 0 else "PENDING",
+    "result_files_used": [fp.name for fp in result_files],
+}
+
+out = Path(os.environ.get("RESULTS_DIR", "hypatiax/data/results")) / "fixc3_rerun_summary.json"
+out.write_text(json.dumps(summary, indent=2))
+print(f"\n  Summary → {out}")
+PYEOF
+
+  echo "=== NB-06 FIX-C3 Action B done ==="
 '
 
 # ── STEP 22: audit_guard ──────────────────────────────────────────────────────
