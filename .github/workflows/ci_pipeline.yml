@@ -8,13 +8,13 @@
 #    C2 → ci_postprocess.yml      — figures + tables
 #    C3 → ci_pipeline_check.yml   — qualification + paper audit gate
 #    C4 → ci_paper_audit.yml      — cross-experiment numerical verify + paper claim audit
-#                                   (slot 12 only: fires after final experiment completes)
+#                                   (slot 13 only: fires after final experiment completes)
 #    C5 → ci_paper_notebooks.yml  — NB-01…NB-06 notebook audit chain (mandatory gate)
-#                                   (slot 12 only: fires after C4 passes)
+#                                   (slot 13 only: fires after C4 passes)
 #    C5b→ ci_report.yml           — build combined audit report + deploy GitHub Pages
-#                                   (slot 12 only: fires after C5c passes; non-blocking)
+#                                   (slot 13 only: fires after C5c passes; non-blocking)
 #    C5c→ ci_runner_disclosure.yml — FIX-C3 split-protocol gates A/B/C
-#                                   (slot 12 only: fires after C5 passes; blocks C5b)
+#                                   (slot 13 only: fires after C5 passes; blocks C5b)
 #    C6 → self-dispatch            — next experiment slot (if multi-slot run)
 #
 #  Manual modes (experiment_index suffix):
@@ -314,6 +314,7 @@ jobs:
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2_feynman_pca_4060": "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
@@ -333,6 +334,8 @@ jobs:
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json",
                                      "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_feynman_pca_4060": ["exp2_pca_4060_summary.json",
+                                         "split_protocol_disclosure.json"],
               "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json",
                                      "protocol_core_*.json"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
@@ -356,6 +359,7 @@ jobs:
               "exp1":               1,    # single-shard, ~1 protocol JSON
               "exp1b":              4,    # 5 seeds × multi-shard
               "exp2_feynman":       1,
+              "exp2_feynman_pca_4060": 1,
               "exp2_feynman_extrap": 1,
               "exp2":               1,
               "exp3":               1,
@@ -1144,7 +1148,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '12' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-checkpoint.result == 'success'
 
     steps:
@@ -1227,7 +1231,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '12' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-paper-audit.result == 'success'
 
     steps:
@@ -1316,7 +1320,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '12' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-paper-notebooks.result == 'success'
 
     steps:
@@ -1404,7 +1408,7 @@ jobs:
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '12' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-paper-notebooks.result == 'success' &&
       needs.run-ci-runner-disclosure.result == 'success'
 

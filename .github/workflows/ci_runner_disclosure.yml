@@ -173,6 +173,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   gate_a_split_protocol_test:
     name: "Gate A: split_protocol_test"
+    needs: [run_exp2_feynman_pca_4060]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -352,6 +353,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   gate_b_protocol_parity_test:
     name: "Gate B: protocol_parity_test"
+    needs: [run_exp2_feynman_pca_4060]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -506,6 +508,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   gate_c_baseline_lock_test:
     name: "Gate C: baseline_lock_test"
+    needs: [run_exp2_feynman_pca_4060]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -574,8 +577,7 @@ jobs:
                       for key in ("results","equation_results","data","rows"):
                           v = data.get(key)
                           if v is not None:
-                              for r in _iter_rows(v):
-                              yield r
+                              yield from _iter_rows(v)
                           return
                       yield data
                   elif isinstance(data, list):
