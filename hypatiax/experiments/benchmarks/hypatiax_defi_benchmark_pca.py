@@ -796,33 +796,7 @@ def _hybrid_predict_and_eval(
 # FIX-C3: PCA-directed 40/60 split — inlined, no local package import needed.
 # Identical to the reference implementation verified by Gate A of
 # ci_runner_disclosure.yml.  Replaces _aggressive_split() for every case.
-def pca_directed_split(
-    X: np.ndarray,
-    y: np.ndarray,
-    test_size: float = 0.6,
-    random_state: int = 42,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Sort samples by PC1 score; train on lowest (1-test_size) fraction.
-
-    This is the canonical FIX-C3 protocol split:
-      - PC1 is computed via SVD on mean-centred X.
-      - Samples are sorted along PC1 ascending.
-      - The lower 40 % (by default) become train; the upper 60 % become test.
-      - This imposes a genuine extrapolation challenge — the model must
-        generalise to the high-PC1 region it never saw during training.
-
-    Returns (X_train, X_test, y_train, y_test).
-    """
-    from sklearn.decomposition import PCA  # already in requirements.txt
-    rng = np.random.default_rng(random_state)  # for reproducibility; not used directly
-    pca = PCA(n_components=1, random_state=random_state)
-    scores = pca.fit_transform(X).ravel()
-    sorted_idx = np.argsort(scores)
-    n_train = int(len(X) * (1.0 - test_size))
-    train_idx = sorted_idx[:n_train]
-    test_idx  = sorted_idx[n_train:]
-    return X[train_idx], X[test_idx], y[train_idx], y[test_idx]
-
+from hypatiax.tools.utils.pca_split_utils import pca_directed_split
 
 def _aggressive_split(
     X: np.ndarray, y: np.ndarray, config: dict
@@ -830,26 +804,18 @@ def _aggressive_split(
     """
     Train on lower 40% of primary variable; test on upper 60%.
     Falls back to index-based split when array is too small.
+    Backward-compatible wrapper around
+    pca_directed_split().
     """
-    var_idx    = config.get("split_var_idx", 0)
-    split_type = config.get("split_type", "high")
-    vals       = X[:, var_idx] if (X.ndim >= 2 and X.shape[1] > var_idx) else X.flatten()
 
-    if split_type == "high":
-        thresh      = np.percentile(vals, 40)
-        train_mask  = vals <= thresh
-        test_mask   = vals >  thresh
-    else:
-        thresh      = np.percentile(vals, 60)
-        train_mask  = vals >= thresh
-        test_mask   = vals <  thresh
+    test_size = config.get("test_size", 0.6)
 
-    if train_mask.sum() < 20 or test_mask.sum() < 20:
-        idx        = np.arange(len(X))
-        train_mask = idx < int(0.4 * len(X))
-        test_mask  = ~train_mask
-
-    return X[train_mask], y[train_mask], X[test_mask], y[test_mask]
+    return pca_directed_split(
+        X,
+        y,
+        test_size=test_size,
+        random_state=42,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

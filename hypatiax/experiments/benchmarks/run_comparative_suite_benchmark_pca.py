@@ -675,7 +675,7 @@ except ImportError:
     print("⚠️  torch / sklearn not available — NN-based methods will be skipped")
 
 # PCA-directed split utility (FIX-C3: replaces random 80/20 train_test_split)
-from hypatiax.tools.utils import pca_directed_split
+from hypatiax.tools.utils import pca_directed_split 
 
 # ---------------------------------------------------------------------------
 # Anthropic client
