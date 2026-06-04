@@ -92,6 +92,20 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-C3-ESCAPE (2026-06-04):
+#   — exp1_pca and exp1b_pca: removed erroneous backslash-escaping on
+#     REPO_ROOT, EXPERIMENTS_DIR, and RESULTS_DIR inside the outer bash -c
+#     double-quoted string.  \${REPO_ROOT} was passed as a literal string to
+#     the subshell (which has no such variable), causing:
+#       bash: cd: ${REPO_ROOT}: No such file or directory
+#       python3: can't open file '.../${EXPERIMENTS_DIR}/...': No such file or directory
+#       FileNotFoundError: .../defi_pca/split_protocol_disclosure.json
+#     All three outer-scope variables (REPO_ROOT, EXPERIMENTS_DIR, RESULTS_DIR)
+#     now use unescaped ${VAR} so bash expands them at parse time, matching the
+#     pattern used correctly in exp1, exp1b, extrap, suppA, and all other steps.
+#     Inner subshell variables (_PCA_DEFI_DIR, _PCA15_DIR, _SHARD, etc.) retain
+#     their \${ escaping so they are evaluated inside the subshell as intended.
+#
 # FIX-C3 (2026-06-02):
 #   — exp2_feynman_pca_4060 step added (STEP 5b) immediately after exp2_feynman.
 #     Reruns the Feynman benchmark using the PCA-directed 40/60 extrapolation
@@ -627,17 +641,17 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
 #   bash run_all.sh --step exp1_pca
 # ─────────────────────────────────────────────────────────────────────────────
 run exp1_pca "FIX-C3 DeFi: all 74 cases with PCA 40/60 split (mirrors exp1 with PCA split)" bash -c "
-  cd '\${REPO_ROOT}'
-  _PCA_DEFI_DIR='\${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca'
+  cd '${REPO_ROOT}'
+  _PCA_DEFI_DIR='${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca'
   mkdir -p \"\${_PCA_DEFI_DIR}\"
 
   # --force-fresh is passed to the script itself — guarantees fresh results
   # even when the script is invoked directly, bypassing this shell wrapper.
   echo '[exp1_pca] Running hypatiax_defi_benchmark_pca.py (all 74 DeFi cases, PCA 40/60 split)'
-  python3 '\${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
+  python3 '${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
     --output-dir \"\${_PCA_DEFI_DIR}\" \\
     --force-fresh \\
-    2>&1 | tee '\${RESULTS_DIR}/exp1_pca_run.log'
+    2>&1 | tee '${RESULTS_DIR}/exp1_pca_run.log'
 
   # Write split_protocol_disclosure.json (required by Gate B)
   python3 - <<'PYEOF'
@@ -692,8 +706,8 @@ PYEOF
 #   bash run_all.sh --step exp1b_pca
 # ─────────────────────────────────────────────────────────────────────────────
 run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with PCA split)" bash -c "
-  cd '\${REPO_ROOT}'
-  _PCA15_DIR='\${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca'
+  cd '${REPO_ROOT}'
+  _PCA15_DIR='${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca'
   mkdir -p \"\${_PCA15_DIR}\"
 
   # --force-fresh is passed to the script itself — guarantees fresh results
@@ -701,15 +715,15 @@ run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with P
   echo '[exp1b_pca] Running hypatiax_defi_benchmark_pca.py (portfolio seed sweep, PCA 40/60 split)'
   DEFI_TASK_FILTER=portfolio \\
   DEFI_SEEDS='42,99,123,777,2024' \\
-    python3 '\${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
+    python3 '${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
       --output-dir \"\${_PCA15_DIR}\" \\
       --force-fresh \\
-      2>&1 | tee '\${RESULTS_DIR}/exp1b_pca_run.log'
+      2>&1 | tee '${RESULTS_DIR}/exp1b_pca_run.log'
 
   # Move any loose outputs (same pattern as exp1b move block)
   _SHARD=\${SHARD_INDEX:-0}
   _SEED_TAG=\$(echo \"\${DEFI_SEEDS:-42}\" | tr ',' '_')
-  for _search_root in '\${EXPERIMENTS_DIR}' '\${RESULTS_DIR}'; do
+  for _search_root in '${EXPERIMENTS_DIR}' '${RESULTS_DIR}'; do
     find \"\${_search_root}\" -maxdepth 1 \\
     \\( \\
         -name 'defi_pca_v3_*.json' \\
