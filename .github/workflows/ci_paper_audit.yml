@@ -821,6 +821,65 @@ jobs:
           if-no-files-found: warn
           retention-days:    30
 
+      # ── Normalised summary for ci_report dynamic conclusions ─────────────────
+      # Converts logs/paper_audit_findings.json into the shared audit_summary
+      # schema consumed by ci_report.yml's generate-conclusions step.
+      # Schema: { "source": str, "run_id": str, "generated_at": str,
+      #           "findings": [ { "id", "severity", "status",
+      #                           "description", "action", "nb" } ] }
+      - name: Write audit-paper summary JSON
+        if: always()
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, datetime
+          from pathlib import Path
+
+          run_id = os.environ["RUN_ID"]
+          findings_path = Path("logs/paper_audit_findings.json")
+
+          # Build findings list from paper_audit_findings.json if it exists,
+          # otherwise emit an empty list so ci_report always gets valid JSON.
+          findings = []
+          if findings_path.exists():
+              try:
+                  raw = json.loads(findings_path.read_text())
+                  # paper_audit_findings.json may be a list or a dict with a
+                  # "findings" key — normalise either shape.
+                  items = raw if isinstance(raw, list) else raw.get("findings", [])
+                  for item in items:
+                      findings.append({
+                          "id":          item.get("id", item.get("fix_id", "UNKNOWN")),
+                          "severity":    item.get("severity", item.get("level", "UNKNOWN")).upper(),
+                          "status":      item.get("status", "OPEN").upper(),
+                          "description": item.get("description", item.get("message", "")),
+                          "action":      item.get("action", item.get("fix", "")),
+                          "nb":          item.get("nb", item.get("notebook", "paper-audit")),
+                      })
+              except Exception as exc:
+                  print(f"  WARN: could not parse paper_audit_findings.json: {exc}")
+
+          summary = {
+              "source":       "ci_paper_audit",
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "findings":     findings,
+          }
+          out = Path("logs/audit_paper_summary.json")
+          out.write_text(json.dumps(summary, indent=2))
+          print(f"Wrote {out} — {len(findings)} finding(s)")
+          PYEOF
+
+      - name: Upload audit-paper summary
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              audit-paper-summary-${{ github.run_id }}
+          path:              logs/audit_paper_summary.json
+          if-no-files-found: warn
+          retention-days:    30
+
 
   # ============================================================================
   #  JOB 3 — figures-tables-validate  (needs: numerical-verify)

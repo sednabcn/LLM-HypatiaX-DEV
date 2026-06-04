@@ -398,6 +398,159 @@ jobs:
           path: notebooks/
           retention-days: 30
 
+      # ── Normalised summary for ci_report dynamic conclusions ─────────────────
+      # Walks every downloaded .ipynb in notebooks/ and extracts structured
+      # findings written by each notebook into its last output cell as JSON
+      # (convention: cell tagged "audit_findings" or last code cell whose
+      # last output contains a JSON block starting with {"findings":}).
+      # Falls back to the static fix-status manifest baked into ci_paper_audit.yml
+      # comments when no structured output is found.
+      # Schema matches audit_paper_summary.json produced by ci_paper_audit.yml.
+      - name: Write notebooks audit summary JSON
+        if: always()
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          pip install --quiet jupyter nbconvert ipykernel 2>/dev/null || true
+          python3 - <<'PYEOF'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          run_id  = os.environ["RUN_ID"]
+
+          # ── Static fallback fixture ──────────────────────────────────────────
+          # Mirrors the AUDIT FIX STATUS table in ci_paper_audit.yml comments.
+          # ci_report doctor step may override statuses from live artifacts.
+          STATIC_FIXES = [
+              {"id":"FIX-B1",  "severity":"CRITICAL","status":"OPEN",    "nb":"NB-01",
+               "description":"koza1994genetic cited but no \\bibitem — will produce [?] in PDF.",
+               "action":"Add \\bibitem{koza1994genetic} or redirect \\cite calls to koza1992gp."},
+              {"id":"FIX-B2",  "severity":"HIGH",    "status":"OPEN",    "nb":"NB-01",
+               "description":"cranmer2023pysr and cranmer2023interpretable are the same arXiv paper (2305.01582).",
+               "action":"Remove cranmer2023interpretable; replace all \\cite calls with cranmer2023pysr."},
+              {"id":"FIX-B3",  "severity":"HIGH",    "status":"OPEN",    "nb":"NB-01",
+               "description":"udrescu2020ai and udrescu2020aifeynman are the same paper.",
+               "action":"Remove udrescu2020aifeynman; replace all uses with udrescu2020ai."},
+              {"id":"FIX-XR1","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
+               "description":"sec:llm_limitations and sec:llm_domain both defined on Section 3 — duplicate labels.",
+               "action":"Remove \\label{sec:llm_domain}; update \\ref call sites."},
+              {"id":"FIX-XR2","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
+               "description":"\\label{sec:r2_bugfix} sits inside \\item block — \\ref will produce garbled output.",
+               "action":"Move label to \\subsection heading or replace call sites with sec:corrections."},
+              {"id":"FIX-XR3","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
+               "description":"Supp A references Section 7.3 for Proposition 1; main paper places Component 3 in §7.4.",
+               "action":"Change 7.3 → 7.4 in supp_routing_improvements.tex."},
+              {"id":"FIX-XR4","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
+               "description":"Supp A references filename jmlr_paper_main.tex; actual file is jmlr-hypatiax-paper-final.tex.",
+               "action":"Update all filename strings in Supp A."},
+              {"id":"FIX-N1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
+               "description":"Spearman footnote says '71 cases'; table caption (tab:instability) correctly says '70 tasks'.",
+               "action":"Change '71 cases' → '70 tasks' in instability section body (line 1637)."},
+              {"id":"FIX-N2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
+               "description":"§8.3 heading reads 'Five-Layer Architecture Overview'; abstract/intro/§7 use 'five-stage routing'.",
+               "action":"Rename §8.3 to 'Five-Stage Routing Architecture Overview'."},
+              {"id":"FIX-N3", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
+               "description":"Nguyen-12 numbers need verification after seed=123 rerun.",
+               "action":"Rerun Nguyen-12 with seed=123 and update paper figures."},
+              {"id":"FIX-F1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
+               "description":"hypatiaX_three_systems MISSING — \\fbox placeholder in §7.1.",
+               "action":"Replace \\fbox placeholder with final PDF/PNG from Figures/architecture_figures/."},
+              {"id":"FIX-F2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
+               "description":"fig18_r2_heatmap_improved.pdf missing from figures/.",
+               "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
+              {"id":"FIX-F3", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
+               "description":"fig09_r2_heatmap_regimes.pdf missing from figures/.",
+               "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
+              {"id":"FIX-F4", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
+               "description":"fig1_seed_sweep.pdf missing from figures/.",
+               "action":"Copy from Figures/figures-portfolio-variance/ → figures/."},
+              {"id":"FIX-C1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-06",
+               "description":"Three duplicate case names in hypatiax_defi_benchmark_v3c.py.",
+               "action":"Rename duplicates (e.g. add (basic)/(extended) suffixes) and rerun checkpoint."},
+              {"id":"FIX-C2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-06",
+               "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py (lines 29, 266, 2070, 2404).",
+               "action":"Replace with hybrid_system_v50_2 throughout."},
+              {"id":"FIX-C3", "severity":"MEDIUM",  "status":"RESOLVED","nb":"NB-06 / ci_runner_disclosure",
+               "description":"Feynman split-protocol corrected: PCA 40/60 run in exp2_pca_4060/; Gates A/B/C passed.",
+               "action":"Report corrected result from exp2_pca_4060/ in §10.7 or add explicit disclosure of random 80/20 baseline."},
+              {"id":"FIX-C4", "severity":"INFO",    "status":"RESOLVED","nb":"NB-06",
+               "description":"FALSE POSITIVE — REMOVED. NB-06 Step 4 scan result: OK - no exposed API keys found.",
+               "action":"No action required."},
+          ]
+
+          # ── Try to extract structured findings from executed notebooks ────────
+          nb_findings = {}   # id → finding dict (live data wins over static)
+
+          for nb_path in sorted(Path("notebooks").rglob("*.ipynb")):
+              try:
+                  nb = json.loads(nb_path.read_text(encoding="utf-8"))
+              except Exception:
+                  continue
+              for cell in nb.get("cells", []):
+                  tags = cell.get("metadata", {}).get("tags", [])
+                  outputs = cell.get("outputs", [])
+                  # Look for a cell tagged "audit_findings" or whose last text
+                  # output is a JSON block with a "findings" key.
+                  is_findings_cell = "audit_findings" in tags
+                  for out in outputs:
+                      text = ""
+                      if out.get("output_type") in ("stream", "execute_result", "display_data"):
+                          raw = out.get("text", out.get("data", {}).get("text/plain", ""))
+                          text = "".join(raw) if isinstance(raw, list) else str(raw)
+                      # Strip optional ```json fence
+                      text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                      text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
+                      if is_findings_cell or (text.startswith("{") and '"findings"' in text):
+                          try:
+                              data = json.loads(text)
+                              for f in data.get("findings", []):
+                                  fid = f.get("id", "")
+                                  if fid:
+                                      nb_findings[fid] = {
+                                          "id":          fid,
+                                          "severity":    f.get("severity", "UNKNOWN").upper(),
+                                          "status":      f.get("status", "OPEN").upper(),
+                                          "description": f.get("description", ""),
+                                          "action":      f.get("action", ""),
+                                          "nb":          f.get("nb", nb_path.stem),
+                                      }
+                          except Exception:
+                              pass
+
+          # Merge: static provides all rows; live notebook data overrides status/description.
+          merged = []
+          for fix in STATIC_FIXES:
+              live = nb_findings.get(fix["id"])
+              if live:
+                  fix = {**fix, **live}   # live wins
+              merged.append(fix)
+          # Append any findings from notebooks not in the static list.
+          static_ids = {f["id"] for f in STATIC_FIXES}
+          for fid, f in nb_findings.items():
+              if fid not in static_ids:
+                  merged.append(f)
+
+          summary = {
+              "source":       "ci_paper_notebooks",
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "findings":     merged,
+          }
+          out = Path("notebooks/notebooks_audit_summary.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(summary, indent=2))
+          print(f"Wrote {out} — {len(merged)} finding(s) ({len(nb_findings)} from live notebooks)")
+          PYEOF
+
+      - name: Upload notebooks audit summary
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: notebooks-audit-summary-${{ github.run_id }}
+          path: notebooks/notebooks_audit_summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
   # Job 8 (report) has been moved to ci_report.yml.
   # ci_report.yml triggers on completion of this workflow, downloads the
   # NB-01…NB-06 artifacts produced above, converts them to HTML, builds the
