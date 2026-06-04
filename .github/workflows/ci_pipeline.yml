@@ -1131,7 +1131,7 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: run-paper-audit  —  C4: dispatch ci_paper_audit.yml (slot 12 only)
+  #  JOB: run-paper-audit  —  C4: dispatch ci_paper_audit.yml (slot 13 only)
   #
   #  Only runs when slot == 12 AND run_full == 'true' AND run-checkpoint passed.
   #  Dispatches ci_paper_audit.yml and polls until it completes.
@@ -1141,7 +1141,7 @@ jobs:
   #                            figures-tables 10 + polling buffer 5)
   # ============================================================================
   run-paper-audit:
-    name: "C4 · Paper audit (slot 12)"
+    name: "C4 · Paper audit (slot 13)"
     needs: [resolve, run-checkpoint]
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -1160,7 +1160,7 @@ jobs:
           set -euo pipefail
 
           BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "Dispatching ci_paper_audit.yml (slot 12 — extrap complete)"
+          echo "Dispatching ci_paper_audit.yml (slot 13 — extrap complete)"
 
           gh workflow run ci_paper_audit.yml \
             --repo "${REPO}" \
@@ -1205,7 +1205,7 @@ jobs:
             if [[ "${READ_STATUS}" == "completed" ]]; then
               if [[ "${CONCLUSION}" != "success" ]]; then
                 echo "::error::ci_paper_audit.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
-                echo "  Fix paper audit issues, then re-trigger ci_pipeline.yml for slot 12."
+                echo "  Fix paper audit issues, then re-trigger ci_pipeline.yml for slot 13."
                 exit 1
               fi
               echo "ci_paper_audit.yml passed (run ${DISPATCHED_ID})."; break
@@ -1216,7 +1216,7 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: run-paper-notebooks  —  C5: dispatch ci_paper_notebooks.yml (slot 12 only)
+  #  JOB: run-paper-notebooks  —  C5: dispatch ci_paper_notebooks.yml (slot 13 only)
   #
   #  Runs after run-paper-audit passes. Mandatory — notebook audit chain
   #  (NB-01 through NB-06) is the final paper-readiness gate.
@@ -1224,7 +1224,7 @@ jobs:
   #  TIMEOUT CONTRACT: 60 min (6 notebooks × ~8 min each + polling buffer)
   # ============================================================================
   run-paper-notebooks:
-    name: "C5 · Paper notebooks (slot 12)"
+    name: "C5 · Paper notebooks (slot 13)"
     needs: [resolve, run-paper-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 65
@@ -1300,7 +1300,7 @@ jobs:
 
   # ============================================================================
   #  JOB: run-ci-runner-disclosure  —  C5c: dispatch ci_runner_disclosure.yml
-  #                                         (slot 12 only, before ci_report)
+  #                                         (slot 13 only, before ci_report)
   #
   #  Fires after run-paper-notebooks passes.  Runs the three FIX-C3 split-
   #  protocol gates (Gate A: split_protocol_test, Gate B: protocol_parity_test,
@@ -1310,13 +1310,13 @@ jobs:
   #  Blocking for ci_report: run-ci-report depends on this job so the audit
   #  report always reflects the outcome of the disclosure gates.
   #
-  #  TIMEOUT CONTRACT: 20 min (three Python gate scripts)
+  #  TIMEOUT CONTRACT: 720 min (3 run jobs up to 340 min each: exp2_feynman_pca_4060 ∥ exp1_pca → exp1b_pca; then 3 gate scripts ~15 min)
   # ============================================================================
   run-ci-runner-disclosure:
-    name: "C5c · FIX-C3 disclosure gates (slot 12)"
+    name: "C5c · FIX-C3 disclosure gates (slot 13)"
     needs: [resolve, run-paper-notebooks]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 720  # 3 run jobs × up to 340 min each (2 parallel + 1 sequential)
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
@@ -1364,7 +1364,7 @@ jobs:
           [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found for ci_runner_disclosure.yml."; exit 1; }
 
           echo "Polling run ${DISPATCHED_ID} (ci_runner_disclosure.yml) ..."
-          DEADLINE=$(( $(date +%s) + 1080 ))
+          DEADLINE=$(( $(date +%s) + 41400 ))  # 690 min — covers 2×340 min run jobs + gates
           SLEEP=20
           while true; do
             RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
@@ -1388,7 +1388,7 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: run-ci-report  —  C5b: dispatch ci_report.yml (slot 12 only)
+  #  JOB: run-ci-report  —  C5b: dispatch ci_report.yml (slot 13 only)
   #
   #  Fires after run-ci-runner-disclosure passes.  ci_report.yml downloads the
   #  already-executed NB-01…NB-06 artifacts, converts them to HTML, and
@@ -1401,7 +1401,7 @@ jobs:
   #  TIMEOUT CONTRACT: 15 min (nbconvert on stored outputs + Pages deploy)
   # ============================================================================
   run-ci-report:
-    name: "C5b · CI report & Pages (slot 12)"
+    name: "C5b · CI report & Pages (slot 13)"
     needs: [resolve, run-paper-notebooks, run-ci-runner-disclosure]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1482,7 +1482,7 @@ jobs:
   #
   #  Only runs in full-pipeline mode (not Na/Nf/Nc manual phases).
   #  Only runs when run-checkpoint passes — qualification failure aborts chain.
-  #  On slot 12, also waits for run-paper-notebooks (the terminal paper gate).
+  #  On slot 13, also waits for run-paper-notebooks (the terminal paper gate).
   #  run-ci-report is non-blocking so next-slot does NOT depend on it.
   #  Slots 0-11: next-slot fires immediately after run-checkpoint.
   #  Slot 12: next-slot is a no-op (QUEUE_SIZE guard exits 0) but is still

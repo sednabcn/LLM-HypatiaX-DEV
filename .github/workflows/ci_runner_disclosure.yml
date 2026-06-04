@@ -3,29 +3,15 @@
 #
 #  Job order:
 #
-#    run_exp2_feynman_pca_4060  (NEW — C5c-0)
-#      • Checks out repo and runs:
-#          bash run_all.sh --step exp2_feynman_pca_4060
-#        which invokes run_comparative_suite_benchmark_pca.py — the dedicated
-#        PCA-split variant (pca_directed_split baked in at method level).
-#      • Commits and pushes results to the branch before the gates run.
-#      • Skipped when skip_experiment=true (already ran, re-gate only).
+#    run_exp2_feynman_pca_4060  (NEW — C5c-0)  ─┐  parallel
+#    run_exp1_pca               (NEW — C5c-1)  ─┤  parallel
+#    run_exp1b_pca              (NEW — C5c-2)    │  depends on run_exp1_pca
+#                                              ─┘
+#      All three produce outputs; run_exp1b_pca depends on run_exp1_pca.
 #
-#    Gate A: split_protocol_test          (depends on run_exp2_feynman_pca_4060)
-#      • Asserts run_comparative_suite_benchmark_pca.py uses pca_directed_split
-#      • Asserts train set is ≤40 % of total samples (test_size=0.6)
-#      • Asserts sklearn train_test_split is NOT called in active code paths
-#
-#    Gate B: protocol_parity_test         (depends on run_exp2_feynman_pca_4060)
-#      • Asserts that run_comparative_suite_benchmark_pca.py uses pca_directed_split
-#        and hypatiax_defi_benchmark_v3c uses build_extrap_split (both PCA-directed)
-#      • Fails loudly when split configs differ between the two suites
-#
-#    Gate C: baseline_lock_test           (depends on run_exp2_feynman_pca_4060)
-#      • Records the current 9/30 (random 80/20) result as a pre-fix baseline
-#        in fixc3_baseline.json before the corrected run can overwrite it
-#      • Asserts the corrected result lands in a different output path
-#        (exp2_pca_4060/) so no overwrite of the legacy 9/30 files occurs
+#    Gate A: split_protocol_test          (depends on all three run jobs)
+#    Gate B: protocol_parity_test         (depends on all three run jobs)
+#    Gate C: baseline_lock_test           (depends on all three run jobs)
 #
 #  Triggered: by ci_pipeline.yml (C5c stage, slot 12 only), or manually.
 # ==============================================================================
@@ -163,6 +149,151 @@ jobs:
             echo "Results committed and pushed."
           fi
 
+  # ============================================================================
+  #  JOB: run_exp1_pca  —  C5c-1: run DeFi all-74 benchmark with PCA 40/60 split
+  #
+  #  Runs bash run_all.sh --step exp1_pca which invokes
+  #  hypatiax_defi_benchmark_pca.py for all 74 DeFi cases.
+  #  Outputs land in comparison_results/noise-noiseless/noiseless/defi_pca/
+  #  alongside split_protocol_disclosure.json required by Gate B.
+  #
+  #  Runs IN PARALLEL with run_exp2_feynman_pca_4060.
+  #  run_exp1b_pca depends on this job.
+  # ============================================================================
+  run_exp1_pca:
+    name: "C5c-1 · Run exp1_pca (DeFi all-74, PCA 40/60)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    if: |
+      github.event.inputs.skip_experiment != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
+          pip install numpy scipy scikit-learn pysr juliacall
+
+      - name: Run exp1_pca via run_all.sh
+        env:
+          RESULTS_DIR:         ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          FEYNMAN_SAMPLES:     ${{ github.event.inputs.n_samples || '200' }}
+          DRY_RUN:             ${{ github.event.inputs.dry_run || 'false' }}
+          JOB_DEADLINE:        "19800"
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "Running: bash run_all.sh --step exp1_pca"
+          echo "  RESULTS_DIR=${RESULTS_DIR}"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[dry-run] Would execute: bash run_all.sh --step exp1_pca"
+            exit 0
+          fi
+          bash run_all.sh --step exp1_pca
+
+      - name: Commit and push results
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PCA_DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca"
+          git add "${PCA_DEFI_DIR}"/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "ci: FIX-C3 exp1_pca results (DeFi all-74, PCA 40/60) [skip ci]"
+            git push origin HEAD:"${{ github.ref_name }}"
+            echo "Results committed and pushed."
+          fi
+
+  # ============================================================================
+  #  JOB: run_exp1b_pca  —  C5c-2: run DeFi portfolio seed sweep with PCA 40/60
+  #
+  #  Runs bash run_all.sh --step exp1b_pca which invokes
+  #  hypatiax_defi_benchmark_pca.py with DEFI_TASK_FILTER=portfolio
+  #  (seeds 42/99/123/777/2024). Outputs land in
+  #  comparison_results/noise-noiseless/15_pca/.
+  #
+  #  Depends on run_exp1_pca (sequential within DeFi PCA jobs).
+  #  Runs in parallel with run_exp2_feynman_pca_4060.
+  # ============================================================================
+  run_exp1b_pca:
+    name: "C5c-2 · Run exp1b_pca (DeFi portfolio seed sweep, PCA 40/60)"
+    needs: [run_exp1_pca]
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    if: |
+      github.event.inputs.skip_experiment != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
+          pip install numpy scipy scikit-learn pysr juliacall
+
+      - name: Run exp1b_pca via run_all.sh
+        env:
+          RESULTS_DIR:         ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          FEYNMAN_SAMPLES:     ${{ github.event.inputs.n_samples || '200' }}
+          DRY_RUN:             ${{ github.event.inputs.dry_run || 'false' }}
+          JOB_DEADLINE:        "19800"
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "Running: bash run_all.sh --step exp1b_pca"
+          echo "  RESULTS_DIR=${RESULTS_DIR}"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[dry-run] Would execute: bash run_all.sh --step exp1b_pca"
+            exit 0
+          fi
+          bash run_all.sh --step exp1b_pca
+
+      - name: Commit and push results
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PCA15_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca"
+          git add "${PCA15_DIR}"/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "ci: FIX-C3 exp1b_pca results (DeFi portfolio seed sweep, PCA 40/60) [skip ci]"
+            git push origin HEAD:"${{ github.ref_name }}"
+            echo "Results committed and pushed."
+          fi
+
   # ────────────────────────────────────────────────────────────────────────────
   # Gate A: split_protocol_test
   #
@@ -174,7 +305,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   gate_a_split_protocol_test:
     name: "Gate A: split_protocol_test"
-    needs: [run_exp2_feynman_pca_4060]
+    needs: [run_exp2_feynman_pca_4060, run_exp1_pca, run_exp1b_pca]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -354,7 +485,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   gate_b_protocol_parity_test:
     name: "Gate B: protocol_parity_test"
-    needs: [run_exp2_feynman_pca_4060]
+    needs: [run_exp2_feynman_pca_4060, run_exp1_pca, run_exp1b_pca]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -509,7 +640,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   gate_c_baseline_lock_test:
     name: "Gate C: baseline_lock_test"
-    needs: [run_exp2_feynman_pca_4060]
+    needs: [run_exp2_feynman_pca_4060, run_exp1_pca, run_exp1b_pca]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

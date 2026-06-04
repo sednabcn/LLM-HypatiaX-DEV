@@ -43,6 +43,11 @@
 #    against _merged.json files, emits logs/paper_audit_findings.json.
 #    Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
 #    Exits non-zero on any FAIL or MISSING.
+#    NOTE: NB-06 Step 4 API key scan confirmed CLEAN — no exposed keys
+#    in any notebook.  FIX-C4 in the original fix recipe was a false positive
+#    and has been removed.  ANTHROPIC_API_KEY is correctly injected via
+#    ${{ secrets.ANTHROPIC_API_KEY }} in this pipeline (Jobs 1 & 2) and
+#    must never be hardcoded in notebook cells.
 #
 #  Job 3 — figures-tables-validate  (needs: numerical-verify)
 #    bash run_all.sh audit_figures_tables
@@ -69,6 +74,31 @@
 #  logs/verify_report.json         → verify-report-<run_id>
 #  logs/paper_audit_findings.json  → paper-audit-findings-<run_id>
 #  logs/figures_tables_report.json → figures-tables-report-<run_id>
+#
+#  AUDIT FIX STATUS (20 actionable fixes — FIX-C4 removed as false positive)
+#  --------------------------------------------------------------------------
+#  NB-01  FIX-B1  OPEN  koza1994genetic undefined (lines 327, 1888)
+#  NB-01  FIX-B2  OPEN  Alias collision cranmer2023pysr / cranmer2023interpretable
+#  NB-01  FIX-B3  OPEN  Alias collision udrescu2020ai / udrescu2020aifeynman
+#  NB-02  FIX-XR1 OPEN  Duplicate section labels sec:llm_limitations / sec:llm_domain
+#  NB-02  FIX-XR2 OPEN  \label{sec:r2_bugfix} inside \item block
+#  NB-02  FIX-XR3 OPEN  Supp A references Section 7.3 — should be 7.4
+#  NB-02  FIX-XR4 OPEN  Supp A filename jmlr_paper_main.tex → jmlr-hypatiax-paper-final.tex
+#  NB-03  FIX-S1  OPEN  All 12 top-level \section commands missing \label
+#  NB-03  FIX-S2  OPEN  All subsections missing \label
+#  NB-04  FIX-N1  OPEN  71 cases → 70 tasks in instability section (line 1637)
+#  NB-04  FIX-N2  OPEN  Terminology: five-stage vs Five-Layer Architecture (§8.3)
+#  NB-04  FIX-N3  OPEN  Verify Nguyen-12 numbers after seed=123 rerun
+#  NB-05  FIX-F1  OPEN  hypatiaX_three_systems MISSING — replace \fbox placeholder
+#  NB-05  FIX-F2  OPEN  fig18_r2_heatmap_improved MISSING
+#  NB-05  FIX-F3  OPEN  fig09_r2_heatmap_regimes MISSING
+#  NB-05  FIX-F4  OPEN  fig1_seed_sweep MISSING
+#  NB-05  FIX-F5  OPEN  Verify hypatiaX_algorithm1_routing_cascade_v2 compiles
+#  NB-06  FIX-C1  OPEN  Duplicate case names in benchmark catalogue
+#  NB-06  FIX-C2  OPEN  Stale hybrid_system_v40 imports (lines 29, 266, 2070, 2404)
+#  NB-06  FIX-C3  OPEN  Feynman split protocol mismatch: random 80/20 ≠ PCA 40/60
+#  NB-06  FIX-C4  FALSE POSITIVE — REMOVED
+#          NB-06 Step 4 scan result: "OK - no exposed API keys found in notebooks"
 # ==============================================================================
 
 name: "HypatiaX - paper audit"
@@ -674,6 +704,25 @@ jobs:
           fi
           N=$(python3 -c "import json; d=json.load(open('scripts/patches/paper_targets.json')); print(len(d))")
           echo "paper_targets.json: ${N} claim(s)"
+
+      - name: Assert no API keys hardcoded in notebooks
+        # NB-06 Step 4 confirmed CLEAN (scan result: "OK - no exposed API keys found").
+        # FIX-C4 in the original audit fix recipe was a false positive and has been removed.
+        # This step re-runs the same pattern scan on every push so the clean status
+        # is continuously verified rather than assumed.
+        run: |
+          set -euo pipefail
+          echo "=== API key scan (NB-06 Step 4 equivalent) ==="
+          # Scan all .ipynb files for hardcoded sk-ant-* patterns
+          HITS=$(grep -rn --include="*.ipynb" 'sk-ant-api' . 2>/dev/null || true)
+          if [[ -n "${HITS}" ]]; then
+            echo "::error::Hardcoded Anthropic API key detected in notebook(s):"
+            echo "${HITS}"
+            echo "Rotate the key at console.anthropic.com and replace with"
+            echo "os.environ['ANTHROPIC_API_KEY'] or a Secrets reference."
+            exit 1
+          fi
+          echo "OK - no exposed API keys found in notebooks"
 
       - name: Run audit-paper step
         id: audit

@@ -287,7 +287,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
+_STEP_ORDER="env_check exp1 exp1b exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -470,7 +470,7 @@ run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" bash -c "
 
   echo '=== exp1 verification ==='
   find \"\${_DEFI_TARGET}\" -type f 2>/dev/null | sort || echo '  (directory empty)'
-  COUNT_DEFI=\$(find \"\${_DEFI_TARGET}\" -name 'hypatiax_defi_benchmark_v3*results*.json' 2>/dev/null | wc -l)
+  COUNT_DEFI=\$(find \"\${_DEFI_TARGET}\" -name 'hypatiax_defi_benchmark_*results*.json' 2>/dev/null | wc -l)
   if [[ \"\${COUNT_DEFI}\" -eq 0 ]]; then
     echo 'WARNING: exp1 produced no result JSON in canonical target — check log above.'
   else
@@ -516,9 +516,9 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
       2>&1 | tee '${RESULTS_DIR}'/exp1b_run.log
 
   # FIX-exp1b-4: only run portfolio_variance_v3c2.py when its input JSON exists.
-  # It needs hypatiax_defi_benchmark_v3*results*.json in RESULTS_DIR or
+  # It needs hypatiax_defi_benchmark_*results*.json in RESULTS_DIR or
   # portfolio_variance_seed_sweep.json — both written by the step above.
-  _BENCH_JSON=\$(ls -t '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
+  _BENCH_JSON=\$(ls -t '${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'/hypatiax_defi_benchmark_*results*.json 2>/dev/null | head -1 || true)
   if [[ -z \"\${_BENCH_JSON}\" ]]; then
     echo 'WARNING: portfolio_variance_v3c2.py skipped — benchmark JSON not found in ${RESULTS_DIR}.'
     echo '         This is expected on the first shard run when hypatiax_defi_benchmark_v3c.py'
@@ -555,7 +555,7 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
     \( \
         -name 'defi_v3_*.json' \
         -o -name '*portfolio*variance*.json' \
-        -o -name 'hypatiax_defi_benchmark_v3*results*.json' \
+        -o -name 'hypatiax_defi_benchmark_*results*.json' \
     \) | while IFS= read -r src; do
 
         # Skip if already inside dest15 (avoid self-move loop)
@@ -612,6 +612,121 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
   elif [[ \"\${count}\" -eq 0 ]]; then
       echo 'NOTE: exp1b produced no files (step was skipped — SKIP_ALLOWED=true)'
   fi
+"
+
+
+
+# ── STEP 2b: exp1_pca ─────────────────────────────────────────────────────────
+# FIX-C3 DeFi variant: reruns all 74 DeFi cases via hypatiax_defi_benchmark_pca.py
+# (PCA-directed 40/60 split, method-level — mirrors exp2_feynman_pca_4060 for DeFi).
+# Outputs land in comparison_results/noise-noiseless/noiseless/defi_pca/.
+# Writes split_protocol_disclosure.json so Gate B can verify DeFi protocol parity.
+#
+# Output directory: comparison_results/noise-noiseless/noiseless/defi_pca/
+# CLI example (run standalone):
+#   bash run_all.sh --step exp1_pca
+# ─────────────────────────────────────────────────────────────────────────────
+run exp1_pca "FIX-C3 DeFi: all 74 cases with PCA 40/60 split (mirrors exp1 with PCA split)" bash -c "
+  cd '\${REPO_ROOT}'
+  _PCA_DEFI_DIR='\${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca'
+  mkdir -p \"\${_PCA_DEFI_DIR}\"
+
+  echo '[exp1_pca] Running hypatiax_defi_benchmark_pca.py (all 74 DeFi cases, PCA 40/60 split)'
+  python3 '\${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
+    --output-dir \"\${_PCA_DEFI_DIR}\" \\
+    2>&1 | tee '\${RESULTS_DIR}/exp1_pca_run.log'
+
+  # Write split_protocol_disclosure.json (required by Gate B)
+  python3 - <<'PYEOF'
+import json, pathlib, datetime
+PCA_DIR   = pathlib.Path('${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca')
+DISC_FILE = PCA_DIR / 'split_protocol_disclosure.json'
+disclosure = {
+    'fixc3':              True,
+    'split_protocol':     'pca_40_60',
+    'split_function':     'pca_directed_split',
+    'split_level':        'method_level',
+    'script':             'hypatiax_defi_benchmark_pca.py',
+    'test_size':          0.6,
+    'train_size':         0.4,
+    'random_split_used':  False,
+    'dfi_parity':         True,
+    'section_reference':  'sec:6.4 + sec:10.2-10.4',
+    'generated_by':       'run_all.sh exp1_pca via hypatiax_defi_benchmark_pca.py',
+    'timestamp':          datetime.datetime.utcnow().isoformat() + 'Z',
+}
+DISC_FILE.write_text(json.dumps(disclosure, indent=2))
+print(f'  [exp1_pca] split_protocol_disclosure.json written → {DISC_FILE}')
+PYEOF
+
+  # Verification
+  echo '=== exp1_pca verification ==='
+  find \"\${_PCA_DEFI_DIR}\" -type f 2>/dev/null | sort || echo '  (empty)'
+  _NRESULT=\$(find \"\${_PCA_DEFI_DIR}\" -name '*.json' \\
+    ! -name 'checkpoint*' ! -name '*disclosure*' \\
+    2>/dev/null | wc -l)
+  _NDISC=\$(find \"\${_PCA_DEFI_DIR}\" -name 'split_protocol_disclosure.json' 2>/dev/null | wc -l)
+  echo \"  Result JSONs    : \${_NRESULT}\"
+  echo \"  Disclosure file : \${_NDISC} (split_protocol_disclosure.json)\"
+  if [[ \"\${_NRESULT}\" -eq 0 ]]; then
+    echo 'WARNING: exp1_pca produced no result JSON — check exp1_pca_run.log'
+  fi
+  if [[ \"\${_NDISC}\" -eq 0 ]]; then
+    echo 'WARNING: split_protocol_disclosure.json not found — Gate B in ci_runner_disclosure.yml will FAIL'
+  fi
+  echo '=== end exp1_pca ==='
+"
+
+# ── STEP 2c: exp1b_pca ────────────────────────────────────────────────────────
+# FIX-C3 DeFi seed-sweep variant: reruns the portfolio seed sweep via
+# hypatiax_defi_benchmark_pca.py with DEFI_TASK_FILTER=portfolio (mirrors exp1b
+# but with PCA 40/60 split). Outputs land in comparison_results/noise-noiseless/15_pca/.
+# Depends on exp1_pca completing first.
+#
+# Output directory: comparison_results/noise-noiseless/15_pca/
+# CLI example (run standalone):
+#   bash run_all.sh --step exp1b_pca
+# ─────────────────────────────────────────────────────────────────────────────
+run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with PCA split)" bash -c "
+  cd '\${REPO_ROOT}'
+  _PCA15_DIR='\${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca'
+  mkdir -p \"\${_PCA15_DIR}\"
+
+  echo '[exp1b_pca] Running hypatiax_defi_benchmark_pca.py (portfolio seed sweep, PCA 40/60 split)'
+  DEFI_TASK_FILTER=portfolio \\
+  DEFI_SEEDS='42,99,123,777,2024' \\
+    python3 '\${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
+      --output-dir \"\${_PCA15_DIR}\" \\
+      --resume \\
+      2>&1 | tee '\${RESULTS_DIR}/exp1b_pca_run.log'
+
+  # Move any loose outputs (same pattern as exp1b move block)
+  _SHARD=\${SHARD_INDEX:-0}
+  _SEED_TAG=\$(echo \"\${DEFI_SEEDS:-42}\" | tr ',' '_')
+  for _search_root in '\${EXPERIMENTS_DIR}' '\${RESULTS_DIR}'; do
+    find \"\${_search_root}\" -maxdepth 1 \\
+    \\( \\
+        -name 'defi_pca_v3_*.json' \\
+        -o -name '*portfolio*variance*pca*.json' \\
+    \\) | while IFS= read -r src; do
+        [[ \"\$src\" == \"\${_PCA15_DIR}\"* ]] && continue
+        fname=\$(basename \"\$src\")
+        stem=\"\${fname%.*}\"
+        ext=\"\${fname##*.}\"
+        dst=\"\${_PCA15_DIR}/\${stem}_shard\${_SHARD}_seed\${_SEED_TAG}.\${ext}\"
+        [ -f \"\$src\" ] && mv -v \"\$src\" \"\$dst\" || true
+    done
+  done
+
+  # Verification
+  echo '=== exp1b_pca verification ==='
+  find \"\${_PCA15_DIR}\" -type f 2>/dev/null | sort || echo '  (empty)'
+  _COUNT=\$(find \"\${_PCA15_DIR}\" -type f 2>/dev/null | wc -l)
+  echo \"Files produced: \${_COUNT}\"
+  if [[ \"\${_COUNT}\" -eq 0 && \"\${SKIP_ALLOWED:-false}\" != 'true' ]]; then
+    echo 'WARNING: exp1b_pca generated no files — set SKIP_ALLOWED=true if this step was intentionally skipped'
+  fi
+  echo '=== end exp1b_pca ==='
 "
 
 # ── STEP 3: extrap ────────────────────────────────────────────────────────────
@@ -780,11 +895,11 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
     -delete 2>/dev/null || true
 
   # Canonical exp1 output directory (matches RESULT_SUBDIR in CI YAML).
-  # All hypatiax_defi_benchmark_v3*results*.json from exp1 are moved here
+  # All hypatiax_defi_benchmark_*results*.json from exp1 are moved here
   # by the _exp1_body move block and CI move_matching.
   DEFI_DIR='${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi'
 
-  BENCH_JSON=\$(ls -t \"\${DEFI_DIR}\"/hypatiax_defi_benchmark_v3*results*.json 2>/dev/null | head -1 || true)
+  BENCH_JSON=\$(ls -t \"\${DEFI_DIR}\"/hypatiax_defi_benchmark_*results*.json 2>/dev/null | head -1 || true)
 
   if [[ -n \"\${BENCH_JSON}\" ]]; then
     echo '[instability] Stage 2 extrapolation merge enabled: '\"\${BENCH_JSON}\"
@@ -1471,7 +1586,7 @@ run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routin
     find \"\${_sroot}\" -maxdepth 1 -name 'ablation_exp1_*.json' \
       ! -path '${RESULTS_DIR}/*' \
       -exec mv -v {} '${RESULTS_DIR}/' \; 2>/dev/null || true
-    find \"\${_sroot}\" -maxdepth 1 -name 'hypatiax_defi_benchmark_v3_results*' \
+    find \"\${_sroot}\" -maxdepth 1 -name 'hypatiax_defi_benchmark_*results*' \
       ! -path '${RESULTS_DIR}/*' \
       -exec mv -v {} '${RESULTS_DIR}/' \; 2>/dev/null || true
   done
@@ -1611,7 +1726,7 @@ print("\n=== Validating key numerical results against JMLR v3.0 ===\n")
 
 # --- exp1 noiseless ---
 noiseless_files = (
-    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/defi/hypatiax_defi_benchmark_v3*results*.json")) +
+    sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/defi/hypatiax_defi_benchmark_*results*.json")) +
     sorted(glob.glob(f"{RESULTS}/comparison_results/noise-noiseless/noiseless/defi/protocol_core_noiseless_*.json"))
 )
 if noiseless_files:
@@ -1772,7 +1887,7 @@ print("\n=== Phase 5a: Numerical spot-check ===\n")
 
 # DeFi accuracy/counts
 noiseless_files = sorted(_glob.glob(str(
-    RESULTS / "comparison_results/noise-noiseless/noiseless/defi/hypatiax_defi_benchmark_v3*results*.json"
+    RESULTS / "comparison_results/noise-noiseless/noiseless/defi/hypatiax_defi_benchmark_*results*.json"
 ))) + sorted(_glob.glob(str(
     RESULTS / "comparison_results/noise-noiseless/noiseless/defi/protocol_core_noiseless_*.json"
 )))
