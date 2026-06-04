@@ -213,7 +213,10 @@ jobs:
     timeout-minutes: 10
     if: |
       needs.guard.outputs.should_run == 'true' &&
-      needs.guard.outputs.jobs_already_done != 'true' — canonical dirs were already
+      needs.guard.outputs.jobs_already_done != 'true'
+
+    outputs:
+      # 'true' when the restore-keys cache hit — canonical dirs were already
       # built on a previous run with the same source content.  Downstream
       # jobs use this to skip redundant work and go straight to download.
       assets-cache-hit: ${{ steps.asset-cache.outputs.cache-hit }}
@@ -501,6 +504,12 @@ jobs:
     if: |
       needs.guard.outputs.should_run == 'true' &&
       needs.guard.outputs.jobs_already_done != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Download canonical assets from collect-figures-tables
         uses: actions/download-artifact@v4.1.8
         with:
           name:          canonical-assets-${{ github.run_id }}
