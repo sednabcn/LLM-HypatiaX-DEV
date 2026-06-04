@@ -677,20 +677,90 @@ DISC_FILE.write_text(json.dumps(disclosure, indent=2))
 print(f'  [exp1_pca] split_protocol_disclosure.json written → {DISC_FILE}')
 PYEOF
 
+  # FIX-C5c-3: Compute exp1_pca_summary.json so qualify/audit_paper can read
+  # the DeFi PCA solve rate without globbing raw JSONs.
+  # Uses results.hybrid.test_r2 — the actual structure of hypatiax_defi_benchmark_pca_results.json
+  # (list of 74 case dicts, each with results.hybrid.test_r2).
+  echo '[exp1_pca] Computing exp1_pca_summary.json...'
+  python3 - <<'PYEOF_SUMMARY'
+import json, pathlib, datetime
+
+PCA_DIR   = pathlib.Path('${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca')
+SUMMARY   = PCA_DIR / 'exp1_pca_summary.json'
+THRESHOLD = 0.999999
+
+n_pass = n_total = 0
+source_files = []
+for fp in sorted(PCA_DIR.glob('*.json')) if PCA_DIR.exists() else []:
+    if any(x in fp.name for x in ('checkpoint', 'disclosure', 'summary', 'baseline')):
+        continue
+    try:
+        data = json.loads(fp.read_text())
+    except Exception:
+        continue
+    source_files.append(fp.name)
+    cases = data if isinstance(data, list) else data.get('results', [data])
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        hybrid = case.get('results', {}).get('hybrid', {})
+        r2 = hybrid.get('test_r2')
+        if r2 is None:
+            for k in ('r2', 'r2_test', 'best_r2', 'R2'):
+                v = case.get(k)
+                if v is not None:
+                    r2 = v
+                    break
+        if r2 is None:
+            continue
+        try:
+            r2 = float(r2)
+        except (TypeError, ValueError):
+            continue
+        if r2 > 1.01:
+            continue
+        n_total += 1
+        if r2 >= THRESHOLD:
+            n_pass += 1
+
+summary = {
+    'fixc3_step':     'exp1_pca',
+    'description':    'DeFi PCA result — PCA-directed 40/60 split (all 74 cases)',
+    'split_protocol': 'pca_40_60',
+    'test_size':      0.6,
+    'train_size':     0.4,
+    'n_pass':         n_pass,
+    'n_total':        n_total,
+    'solve_rate':     (n_pass / n_total) if n_total > 0 else None,
+    'source_files':   source_files[:10],
+    'timestamp':      datetime.datetime.now(datetime.timezone.utc).isoformat(),
+}
+SUMMARY.write_text(json.dumps(summary, indent=2))
+rate_str = f'{n_pass}/{n_total}' if n_total > 0 else '?/?'
+print(f'  [exp1_pca] DeFi PCA solve rate: {rate_str} → exp1_pca_summary.json')
+if n_total == 0:
+    print('  [WARN]  No results in defi_pca/ yet — rerun after benchmark completes.')
+PYEOF_SUMMARY
+
   # Verification
   echo '=== exp1_pca verification ==='
   find \"\${_PCA_DEFI_DIR}\" -type f 2>/dev/null | sort || echo '  (empty)'
   _NRESULT=\$(find \"\${_PCA_DEFI_DIR}\" -name '*.json' \\
-    ! -name 'checkpoint*' ! -name '*disclosure*' \\
+    ! -name 'checkpoint*' ! -name '*disclosure*' ! -name '*summary*' \\
     2>/dev/null | wc -l)
   _NDISC=\$(find \"\${_PCA_DEFI_DIR}\" -name 'split_protocol_disclosure.json' 2>/dev/null | wc -l)
+  _NSUMMARY=\$(find \"\${_PCA_DEFI_DIR}\" -name 'exp1_pca_summary.json' 2>/dev/null | wc -l)
   echo \"  Result JSONs    : \${_NRESULT}\"
   echo \"  Disclosure file : \${_NDISC} (split_protocol_disclosure.json)\"
+  echo \"  Summary file    : \${_NSUMMARY} (exp1_pca_summary.json)\"
   if [[ \"\${_NRESULT}\" -eq 0 ]]; then
     echo 'WARNING: exp1_pca produced no result JSON — check exp1_pca_run.log'
   fi
   if [[ \"\${_NDISC}\" -eq 0 ]]; then
     echo 'WARNING: split_protocol_disclosure.json not found — Gate B in ci_runner_disclosure.yml will FAIL'
+  fi
+  if [[ \"\${_NSUMMARY}\" -eq 0 ]]; then
+    echo 'WARNING: exp1_pca_summary.json not found — qualify/audit steps will not see DeFi PCA solve rate'
   fi
   echo '=== end exp1_pca ==='
 "
@@ -2021,18 +2091,24 @@ else:
 print("\n=== Phase 5b: 7-dimension per-experiment gate ===\n")
 
 EXPERIMENTS = {
-    "exp1":              RESULTS / "comparison_results/noise-noiseless/noiseless/defi",
-    "exp1b":             RESULTS / "comparison_results/noise-noiseless/15",
-    "extrap":            RESULTS / "comparison_results/extrapolation",
-    "hybrid_all_domains":RESULTS / "hybrid_llm_nn/all_domains",
-    "instability":       RESULTS / "figures",
-    "exp2_feynman":      RESULTS / "comparison_results/feynman-tests/exp2",
-    "exp2":              RESULTS / "comparison_results/feynman-tests/exp2_multi",
-    "exp3":              RESULTS / "extrapolation",
-    "exp3b":             RESULTS / "extrapolation/multi_seed",
-    "suppA":             RESULTS / "hybrid_pysr/defi",
-    "suppB":             RESULTS / "comparison_results/feynman-tests/noise-sweep/noise-sweep",
-    "suppB_sc":          RESULTS / "comparison_results/feynman-tests/sample-complexity",
+    "exp1":                   RESULTS / "comparison_results/noise-noiseless/noiseless/defi",
+    "exp1b":                  RESULTS / "comparison_results/noise-noiseless/15",
+    # FIX-C3-QUALIFY: PCA-corrected DeFi runs added so the 7-dimension gate checks
+    # the corrected split results, not just the legacy dirs.
+    "exp1_pca":               RESULTS / "comparison_results/noise-noiseless/noiseless/defi_pca",
+    "exp1b_pca":              RESULTS / "comparison_results/noise-noiseless/15_pca",
+    "extrap":                 RESULTS / "comparison_results/extrapolation",
+    "hybrid_all_domains":     RESULTS / "hybrid_llm_nn/all_domains",
+    "instability":            RESULTS / "figures",
+    "exp2_feynman":           RESULTS / "comparison_results/feynman-tests/exp2",
+    # FIX-C3-QUALIFY: PCA-corrected Feynman run — replaces the legacy 9/30 result.
+    "exp2_feynman_pca_4060":  RESULTS / "comparison_results/feynman-tests/exp2_pca_4060",
+    "exp2":                   RESULTS / "comparison_results/feynman-tests/exp2_multi",
+    "exp3":                   RESULTS / "extrapolation",
+    "exp3b":                  RESULTS / "extrapolation/multi_seed",
+    "suppA":                  RESULTS / "hybrid_pysr/defi",
+    "suppB":                  RESULTS / "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB_sc":               RESULTS / "comparison_results/feynman-tests/sample-complexity",
 }
 
 FIGURES_DIR = RESULTS / "figures"
@@ -2390,7 +2466,24 @@ def _compute_nguyen12(results_dir, want_4dec):
 
 # ── Computed metric: Feynman-30 solve rate ────────────────────────────────────
 def _compute_feynman30(results_dir, threshold):
+    # FIX-C3-AUDIT: prefer exp2_pca_4060/ (PCA-corrected 40/60 split) over the
+    # legacy exp2/ directory (random 80/20 split, 9/30 baseline).
+    # If exp2_pca_4060_summary.json exists, return its solve_rate directly.
+    pca_summary = results_dir / "comparison_results" / "feynman-tests" / "exp2_pca_4060" / "exp2_pca_4060_summary.json"
+    if pca_summary.exists():
+        try:
+            import json as _json
+            _s = _json.loads(pca_summary.read_text())
+            rate = _s.get("solve_rate") or _s.get("pca_solve_rate")
+            n_pass  = _s.get("n_solved",  _s.get("n_pass",  "?"))
+            n_total = _s.get("n_total",   _s.get("n_cases", "?"))
+            if rate is not None:
+                return float(rate), f"exp2_pca_4060_summary.json  {n_pass}/{n_total}  (PCA 40/60 split)"
+        except Exception:
+            pass  # fall through to full scan
     patterns = [
+        # FIX-C3-AUDIT: scan pca_4060 first so corrected results take priority
+        str(results_dir / "comparison_results" / "feynman-tests" / "exp2_pca_4060" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "feynman-tests" / "exp2" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "feynman-tests" / "**" / "*.json"),
         str(results_dir / "comparison_results" / "**" / "*.json"),

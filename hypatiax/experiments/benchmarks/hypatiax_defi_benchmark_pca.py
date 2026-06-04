@@ -1353,6 +1353,8 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
         "script":           Path(__file__).name,
         "test_size":        0.6,
         "split_function":   "pca_directed_split",
+        "split_level":      "outer_loop",
+        "force_fresh":      True,
         "description":      "PC1-directed sort; train on lowest 40%, test on highest 60%",
         "timestamp_utc":    _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }

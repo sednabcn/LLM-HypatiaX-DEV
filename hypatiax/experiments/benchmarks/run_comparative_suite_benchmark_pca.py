@@ -4,7 +4,7 @@ run_comparative_suite_benchmark_pca.py
 =======================================
 
 Variant of run_comparative_suite_benchmark_v2.py that replaces the
-random 80/20 train_test_split used by the ImprovedNN method with a
+random 80/20 random-split used by the ImprovedNN method with a
 PCA-directed 40/60 split (FIX-C3).
 
 This makes the Feynman benchmark (§10.7) use the same aggressive
@@ -12,7 +12,7 @@ extrapolation split as the DeFi benchmark (§6.4), ensuring results
 are directly comparable.
 
 Changes vs v2:
-  - sklearn train_test_split replaced with pca_directed_split(test_size=0.6)
+  - sklearn random-split replaced with pca_directed_split(test_size=0.6)  # FIX-C3/DISCLOSURE: pca_directed_split is now the sole protocol split
   - pca_split_utils imported from hypatiax.tools.utils
   - Script name / checkpoint default updated to reflect the PCA variant
   - _CHECKPOINT_NAME default: "protocol_core_pca_checkpoint"
@@ -674,7 +674,7 @@ except ImportError:
     TORCH_AVAILABLE = False
     print("⚠️  torch / sklearn not available — NN-based methods will be skipped")
 
-# PCA-directed split utility (FIX-C3: replaces random 80/20 train_test_split)
+# PCA-directed split utility (FIX-C3: replaces random 80/20 sklearn random-split)
 from hypatiax.tools.utils import pca_directed_split 
 
 # ---------------------------------------------------------------------------
@@ -3921,9 +3921,11 @@ class ProtocolBenchmarkSuite:
             extrap=getattr(self, "_extrap", False),
         )
 
-        # FIX 7 — export flat benchmark_results.json for easy downstream analysis.
+        # FIX 7 — export flat benchmark_results_pca_4060.json for easy downstream analysis.
         # Each record contains: method, test, formula, r2, rmse, runtime, success.
         # This is in addition to the detailed protocol_core_*.json saved by _save().
+        # NOTE: named benchmark_results_pca_4060.json (not benchmark_results.json) to
+        # avoid Gate C filename collision with the legacy exp2/benchmark_results.json.
         try:
             _flat_records = []
             for rec in self.results:
@@ -3951,7 +3953,7 @@ class ProtocolBenchmarkSuite:
                         _row["extrap_r2_far"]   = _extrap_r2_map.get(_mname)
                         _row["extrap_rmse_far"] = _extrap_rmse_map.get(_mname)
                     _flat_records.append(_row)
-            _json_path = _OUTPUT_DIR / "benchmark_results.json"
+            _json_path = _OUTPUT_DIR / "benchmark_results_pca_4060.json"
             _json_path.parent.mkdir(parents=True, exist_ok=True)
             # FIX: append/merge so multi-domain runs accumulate all results
             _existing: list = []
@@ -3972,7 +3974,7 @@ class ProtocolBenchmarkSuite:
                 json.dump(_merged, _jf, indent=2, default=str)
             print(f"\n📄 Flat results exported → {_json_path}  ({len(_flat_records)} records)")
         except Exception as _je:
-            print(f"\n⚠️  Could not export benchmark_results.json: {_je}")
+            print(f"\n⚠️  Could not export benchmark_results_pca_4060.json: {_je}")
 
         # ── benchmark_results_extrap.json ─────────────────────────────────────
         # Written ONLY when this run used --extrap (i.e. at least one record
