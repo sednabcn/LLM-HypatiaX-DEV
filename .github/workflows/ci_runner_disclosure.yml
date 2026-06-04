@@ -297,11 +297,12 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   # Gate A: split_protocol_test
   #
-  # Verifies that run_comparative_suite_benchmark_pca.py uses pca_directed_split
-  # (method-level PCA split, test_size=0.6) rather than train_test_split:
-  #   1. pca_directed_split is imported and called inside ImprovedNN.run()
-  #   2. The training fraction is ≤ 0.40 of the full sample count
-  #   3. sklearn train_test_split is NOT called on the same data path
+  # Verifies that run_comparative_suite_benchmark_pca.py applies pca_directed_split
+  # at the OUTER LOOP (before method dispatch, test_size=0.6), not method-level:
+  #   1. pca_directed_split is imported from hypatiax.tools.utils
+  #   2. pca_directed_split(test_size=0.6) is called at outer-loop scope
+  #   3. Any train_test_split call is inside a FIX-C3/DISCLOSURE block
+  #   4. The numeric 40/60 ratio and PC1 ordering hold for a reference call
   # ────────────────────────────────────────────────────────────────────────────
   gate_a_split_protocol_test:
     name: "Gate A: split_protocol_test"
@@ -338,8 +339,8 @@ jobs:
 
           # ── Check 1: pca_directed_split is imported in source ─────────────
           if not SCRIPT.exists():
-              print(f"  [SKIP] {SCRIPT} not found — gate A cannot run without source file.")
-              sys.exit(0)
+              print(f"  [FAIL] {SCRIPT} not found — FIX-C3 is not implemented.")
+              sys.exit(1)
 
           src = SCRIPT.read_text(errors="replace")
 
@@ -380,26 +381,46 @@ jobs:
                   "pca_directed_split(test_size=...) call not found in source"
               )
 
-          # ── Check 4: assert train_test_split NOT called in ImprovedNN.run()─
-          # pca_directed_split must fully replace train_test_split in the method.
+          # ── Check 4: pca_directed_split called at outer-loop scope ──────────
+          # The split must be applied before method dispatch so ALL methods
+          # receive pre-split data.  A call only inside a class body (e.g.
+          # ImprovedNNMethod.run, indent ≥20) would leave LLM/hybrid unsplit.
+          # Outer-loop / shallow-function scope means indentation ≤ 16 spaces.
           lines = src.splitlines()
-          pca_fn_lines   = [i for i, l in enumerate(lines) if "pca_directed_split" in l]
-          split_fn_lines = [i for i, l in enumerate(lines) if "train_test_split" in l]
 
+          outer_pca_lines = [
+              i for i, l in enumerate(lines)
+              if "pca_directed_split" in l
+              and not l.strip().startswith("#")
+              and "import" not in l
+              and len(l) - len(l.lstrip()) <= 16
+          ]
+          if not outer_pca_lines:
+              failures.append(
+                  "pca_directed_split not called at outer-loop scope (indentation ≤16) — "
+                  "the split must be applied before method dispatch, not only inside a class"
+              )
+          else:
+              print(f"  [OK]  pca_directed_split called at outer-loop scope "
+                    f"(line(s) {[l+1 for l in outer_pca_lines]})")
+
+          # train_test_split is permitted ONLY inside FIX-C3/DISCLOSURE blocks
+          # (e.g. internal val split on the already-PCA-split training data).
+          split_fn_lines = [i for i, l in enumerate(lines) if "train_test_split" in l]
           for sl in split_fn_lines:
               stripped = lines[sl].strip()
               if stripped.startswith("#"):
                   continue
-              context = "\n".join(lines[max(0, sl-3): sl+4])
+              context = "\n".join(lines[max(0, sl-6): sl+4])
               if any(kw in context for kw in ("DISCLOSURE", "FIX-C3", "random_80_20", "LEGACY")):
                   continue
               failures.append(
-                  f"train_test_split found on line {sl+1} outside a disclosure block — "
-                  "pca_directed_split must be the sole split function in this script"
+                  f"train_test_split found on line {sl+1} outside a FIX-C3/DISCLOSURE block — "
+                  "only the outer-loop pca_directed_split is the protocol split"
               )
 
           if not any("train_test_split" in f for f in failures):
-              print("  [OK]  train_test_split absent from active code paths")
+              print("  [OK]  all train_test_split calls are in FIX-C3/DISCLOSURE blocks")
 
           # ── Check 5: numeric split-ratio assertion (functional) ───────────
           # Synthesise a minimal call to pca_directed_split and verify the
@@ -557,6 +578,8 @@ jobs:
 
           # ── Check 2: PCA script must NOT call train_test_split anywhere ───
           # (DeFi script may have it in legacy/disclosure blocks — that is fine.)
+          # Context window is 6 lines (matching Gate A) so DISCLOSURE annotations
+          # several lines above the call are still caught.
           for path in (FEYNMAN_SCRIPT,):
               if not path.exists():
                   continue
@@ -568,7 +591,7 @@ jobs:
                   stripped = line.strip()
                   if stripped.startswith("#"):
                       continue
-                  context = "\n".join(lines[max(0, i-3): i+4])
+                  context = "\n".join(lines[max(0, i-6): i+4])
                   if any(kw in context for kw in (
                       "DISCLOSURE", "FIX-C3", "random_80_20",
                       "LEGACY", "MISMATCH", "baseline"
@@ -588,6 +611,8 @@ jobs:
           # After any completed run, both exp2_pca_4060 and the DeFi results
           # must carry a split_protocol_disclosure.json so downstream consumers
           # can detect a mismatch immediately.
+          # split_level must be 'outer_loop' (not 'method_level') and
+          # force_fresh must be True — confirming the corrected run protocol.
           import os, json
           OUT_BASE = pathlib.Path(os.environ.get("OUT_BASE", "hypatiax/data/results"))
           for subdir, label in (
@@ -598,8 +623,10 @@ jobs:
               if disc.exists():
                   try:
                       meta = json.loads(disc.read_text())
-                      proto = meta.get("split_protocol", "")
-                      script = meta.get("script", "")
+                      proto       = meta.get("split_protocol", "")
+                      script      = meta.get("script", "")
+                      split_level = meta.get("split_level", "")
+                      force_fresh = meta.get("force_fresh", False)
                       if "MISMATCH" in proto:
                           failures.append(
                               f"{label} split_protocol_disclosure.json reports "
@@ -610,6 +637,22 @@ jobs:
                               f"  [OK]  {label} disclosure: split_protocol={proto!r}"
                               + (f" script={script!r}" if script else "")
                           )
+                      if split_level and split_level != "outer_loop":
+                          failures.append(
+                              f"{label} split_protocol_disclosure.json has "
+                              f"split_level={split_level!r} — must be 'outer_loop' "
+                              f"(method-level split is no longer correct)"
+                          )
+                      elif split_level == "outer_loop":
+                          print(f"  [OK]  {label} disclosure: split_level='outer_loop'")
+                      if not force_fresh:
+                          failures.append(
+                              f"{label} split_protocol_disclosure.json has "
+                              f"force_fresh={force_fresh!r} — must be True to confirm "
+                              f"stale checkpoints were not replayed"
+                          )
+                      else:
+                          print(f"  [OK]  {label} disclosure: force_fresh=True")
                   except Exception as e:
                       print(f"  [WARN] Could not parse {disc}: {e}")
               else:

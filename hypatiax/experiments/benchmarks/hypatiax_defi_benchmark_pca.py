@@ -1437,6 +1437,12 @@ Examples:
     )
     parser.add_argument("--resume",      action="store_true",
                         help="Resume from checkpoint")
+    parser.add_argument("--force-fresh", action="store_true", dest="force_fresh",
+                        help=(
+                            "Delete any existing checkpoint and results files before "
+                            "running, guaranteeing fresh results regardless of how "
+                            "the script is invoked. Overrides --resume."
+                        ))
     parser.add_argument("--verify-fix5", action="store_true",
                         help="Run only the 4 cases targeted by Fix 5 to verify the fix")
     parser.add_argument("--report-only", action="store_true",
@@ -1465,6 +1471,21 @@ Examples:
     if args.report_only:
         report_only()
     else:
+        # --force-fresh overrides --resume: purge stale files before calling run_benchmark
+        if getattr(args, "force_fresh", False):
+            import glob as _glob
+            for _stale in [CHECKPOINT_FILE, FINAL_OUTPUT]:
+                if _stale.exists():
+                    _stale.unlink()
+                    print(f"  [--force-fresh] Removed stale file: {_stale}")
+            # Also purge any shard/seed-tagged variants in the same directory
+            for _pat in ["hypatiax_defi_benchmark_pca_checkpoint*.json",
+                         "hypatiax_defi_benchmark_pca_results*.json"]:
+                for _f in CHECKPOINT_FILE.parent.glob(_pat):
+                    _f.unlink()
+                    print(f"  [--force-fresh] Removed stale file: {_f}")
+            args.resume = False
+            print("  [--force-fresh] Checkpoint cleared — running fresh.")
         run_benchmark(
             resume=args.resume,
             verify_fix5=args.verify_fix5,

@@ -1509,11 +1509,12 @@ class ImprovedNNMethod(BaseMethod):
             return self._unavailable("ImprovedNN not available")
 
         try:
-            # FIX-C3: PCA-directed 40/60 split (replaces random 80/20)
-            # Matches the DeFi benchmark split described in §6.4 of the paper.
-            X_train, X_test, y_train, y_test = pca_directed_split(
-                X, y, test_size=0.6, random_state=42
-            )
+            # FIX-C3 DISCLOSURE: outer loop already applied pca_directed_split(test_size=0.6)
+            # before dispatching to this method.  X/y here is the 40% training slice.
+            # This secondary split is for internal train/val only — not the protocol split.
+            # random_80_20 — LEGACY internal split, not the protocol split.
+            from sklearn.model_selection import train_test_split as _tts_internal
+            X_train, X_test, y_train, y_test = _tts_internal(X, y, test_size=0.2, random_state=42)
 
             # ── Log-space detection ──────────────────────────────────────────
             # Equations like Coulomb (1/r²), Newton (G*m1*m2/r²), Ideal Gas
@@ -3591,6 +3592,31 @@ class ProtocolBenchmarkSuite:
             record["extrap_n_test"]      = metadata.get("extrap_n_test")
             record["extrap_x_train_max"] = metadata.get("extrap_x_train_max")
             record["extrap_far_ceiling"] = metadata.get("extrap_far_ceiling")
+
+        # FIX-C3: when the outer-loop PCA 40/60 split was applied, evaluate
+        # each method's formula against the held-out 60% test set and store
+        # pca_test_r2 in the record for downstream analysis.
+        if metadata.get("split_protocol") == "pca_40_60" and X_far is not None and y_far is not None and len(y_far) > 1:
+            _pca_r2: Dict[str, Optional[float]] = {}
+            for _mname, _mres in results.items():
+                _formula = None
+                if isinstance(_mres, MethodResult):
+                    _formula = _mres.formula
+                    # NN methods return architecture tags, not evaluable formulas
+                    if _formula and any(kw in str(_formula) for kw in ("layers=", "hidden=", "NN:", "neural")):
+                        _pca_r2[_mname] = None
+                        continue
+                if _formula:
+                    try:
+                        _pca_r2[_mname] = _RUNNER_EVAL_FORMULA(_formula, X_far, y_far, var_names)
+                    except Exception:
+                        _pca_r2[_mname] = None
+                else:
+                    _pca_r2[_mname] = None
+            record["pca_test_r2"]       = _pca_r2
+            record["pca_split_protocol"] = "pca_40_60"
+            record["pca_n_train"]        = metadata.get("n_train")
+            record["pca_n_test"]         = metadata.get("n_test")
         self.results.append(record)
         return record
 
@@ -4326,6 +4352,18 @@ Examples
         ),
     )
     parser.add_argument(
+        "--force-fresh",
+        action="store_true",
+        dest="force_fresh",
+        help=(
+            "Delete any existing checkpoint file before running, guaranteeing "
+            "fresh results regardless of how the script is invoked. "
+            "Overrides --resume. Use this for PCA benchmark runs to ensure "
+            "stale checkpoints from a previous (possibly mis-split) run are "
+            "never replayed."
+        ),
+    )
+    parser.add_argument(
         "--clear-checkpoint",
         action="store_true",
         dest="clear_checkpoint",
@@ -4685,9 +4723,31 @@ Examples
               f"Each uses {int(_efrac*100)}% of samples for training.\n")
 
     else:
-        # Non-extrap path: pad every tuple with (None, None) so the main loop
-        # can always unpack 8 elements regardless of mode.
-        all_tests = [(*t, None, None) for t in all_tests]
+        # FIX-C3: apply PCA 40/60 split at the outer loop so ALL methods
+        # receive pre-split data, not just ImprovedNNMethod.
+        # Each tuple is (desc, X, y, var_names, meta, domain) → 6 elements.
+        # After splitting: (desc, X_train, y_train, var_names, meta, domain, X_test, y_test)
+        _pca_tests = []
+        _pca_fail  = 0
+        for _t in all_tests:
+            _desc, _X, _y, _vnames, _meta, _dom = _t
+            try:
+                _Xtr, _Xte, _ytr, _yte = pca_directed_split(_X, _y, test_size=0.6, random_state=42)
+                _meta_pca = {
+                    **_meta,
+                    "split_protocol": "pca_40_60",
+                    "n_train": int(len(_Xtr)),
+                    "n_test":  int(len(_Xte)),
+                }
+                _pca_tests.append((_desc, _Xtr, _ytr, _vnames, _meta_pca, _dom, _Xte, _yte))
+            except Exception as _pca_exc:
+                _pca_fail += 1
+                print(f"  ⚠️  PCA split failed for '{_desc[:50]}': {_pca_exc} — using full data")
+                _pca_tests.append((_desc, _X, _y, _vnames, _meta, _dom, None, None))
+        all_tests = _pca_tests
+        _n_split  = len(all_tests) - _pca_fail
+        print(f"   Applied PCA 40/60 split to {_n_split}/{len(all_tests)} test(s). "
+              f"All methods receive pre-split data.\n")
 
 
     global _CHECKPOINT_NAME
@@ -4705,6 +4765,24 @@ Examples
     if getattr(args, "output_dir", None):
         _OUTPUT_DIR = Path(args.output_dir).resolve()
         _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── --force-fresh: purge stale checkpoint before doing anything ─────────
+    # This guarantees fresh results regardless of how the script is invoked —
+    # even if --resume is also passed, --force-fresh wins.
+    if getattr(args, "force_fresh", False):
+        _fresh_path = ProtocolBenchmarkSuite._checkpoint_path()
+        if _fresh_path.exists():
+            _fresh_path.unlink()
+            print(f"  [--force-fresh] Removed stale checkpoint: {_fresh_path}")
+        else:
+            print("  [--force-fresh] No existing checkpoint — starting clean.")
+        # Also clear any results that were partially written
+        _fresh_results = _fresh_path.with_name(_fresh_path.stem.replace("checkpoint", "results") + ".json")
+        if _fresh_results.exists():
+            _fresh_results.unlink()
+            print(f"  [--force-fresh] Removed stale results: {_fresh_results}")
+        args.resume = False
+        print("  [--force-fresh] Checkpoint cleared — this run produces fresh results.\n")
 
     # ── --clear-checkpoint ───────────────────────────────────────────────────
     if getattr(args, "clear_checkpoint", False):

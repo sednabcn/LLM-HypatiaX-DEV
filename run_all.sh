@@ -631,9 +631,12 @@ run exp1_pca "FIX-C3 DeFi: all 74 cases with PCA 40/60 split (mirrors exp1 with 
   _PCA_DEFI_DIR='\${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca'
   mkdir -p \"\${_PCA_DEFI_DIR}\"
 
+  # --force-fresh is passed to the script itself — guarantees fresh results
+  # even when the script is invoked directly, bypassing this shell wrapper.
   echo '[exp1_pca] Running hypatiax_defi_benchmark_pca.py (all 74 DeFi cases, PCA 40/60 split)'
   python3 '\${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
     --output-dir \"\${_PCA_DEFI_DIR}\" \\
+    --force-fresh \\
     2>&1 | tee '\${RESULTS_DIR}/exp1_pca_run.log'
 
   # Write split_protocol_disclosure.json (required by Gate B)
@@ -645,7 +648,8 @@ disclosure = {
     'fixc3':              True,
     'split_protocol':     'pca_40_60',
     'split_function':     'pca_directed_split',
-    'split_level':        'method_level',
+    'split_level':        'outer_loop',
+    'force_fresh':        True,
     'script':             'hypatiax_defi_benchmark_pca.py',
     'test_size':          0.6,
     'train_size':         0.4,
@@ -692,12 +696,14 @@ run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with P
   _PCA15_DIR='\${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca'
   mkdir -p \"\${_PCA15_DIR}\"
 
+  # --force-fresh is passed to the script itself — guarantees fresh results
+  # even when the script is invoked directly, bypassing this shell wrapper.
   echo '[exp1b_pca] Running hypatiax_defi_benchmark_pca.py (portfolio seed sweep, PCA 40/60 split)'
   DEFI_TASK_FILTER=portfolio \\
   DEFI_SEEDS='42,99,123,777,2024' \\
     python3 '\${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
       --output-dir \"\${_PCA15_DIR}\" \\
-      --resume \\
+      --force-fresh \\
       2>&1 | tee '\${RESULTS_DIR}/exp1b_pca_run.log'
 
   # Move any loose outputs (same pattern as exp1b move block)
@@ -1092,14 +1098,15 @@ PYEOF
 
   # ── 2. Run corrected Feynman benchmark per domain (PCA 40/60 split) ──────────
   # FIX-C3-SCRIPT: use run_comparative_suite_benchmark_pca.py — the dedicated
-  # PCA-split variant — instead of run_comparative_suite_benchmark_v2.py with
-  # --extrap flags.  The PCA script hard-wires pca_directed_split(test_size=0.6)
-  # inside ImprovedNN.run(), matching the DeFi benchmark split exactly (§6.4).
-  # No --extrap / --extrap-train-frac / --extrap-multiplier flags are passed;
-  # the split is baked in at the method level, not the CLI level.
+  # PCA-split variant. The PCA script applies pca_directed_split(test_size=0.6)
+  # at the OUTER LOOP before method dispatch, so ALL methods receive pre-split
+  # data (40% train / 60% test), matching the DeFi benchmark split (§6.4).
+  # --resume is NOT passed: stale domain checkpoints from the old method-level
+  # split must not be replayed — each domain runs fresh under the corrected split.
   echo '[FIX-C3] Starting corrected Feynman run: run_comparative_suite_benchmark_pca.py'
-  echo '         PCA-directed 40/60 split (pca_directed_split, test_size=0.6 — method-level)'
-  echo '         output → \${_PCA_DIR}'
+  echo '         PCA-directed 40/60 split (pca_directed_split, test_size=0.6 — outer-loop)'
+  echo '         --force-fresh ensures fresh results even on direct script invocation'
+  echo '         output ➒ \${_PCA_DIR}'
 
   for DOMAIN_ID in ${FEYNMAN_DOMAINS}; do
     echo '=== exp2_feynman_pca_4060: domain='\${DOMAIN_ID}' ==='
@@ -1124,7 +1131,7 @@ PYEOF
         --no-llm-cache \
         --checkpoint-name \"pca4060_checkpoint_\${DOMAIN_ID}\" \
         --output-dir \"\${_PCA_DIR}\" \
-        --resume \
+        --force-fresh \
       2>&1 | tee -a \"\${_PCA_DIR}/exp2_pca_4060_run.log\" \
     || echo 'WARNING: pca_4060 domain '\${DOMAIN_ID}' exited non-zero — continuing'
   done
@@ -1217,7 +1224,8 @@ disclosure = {
     'fixc3':              True,
     'split_protocol':     'pca_40_60',
     'split_function':     'pca_directed_split',
-    'split_level':        'method_level',
+    'split_level':        'outer_loop',
+    'force_fresh':        True,
     'script':             'run_comparative_suite_benchmark_pca.py',
     'test_size':          0.6,
     'train_size':         0.4,
