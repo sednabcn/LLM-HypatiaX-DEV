@@ -91,18 +91,35 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
 
+      - name: Check if exp2_feynman_pca_4060 results already exist
+        id: check_exp2
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          PCA_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060"
+          if [ -d "${PCA_DIR}" ] && [ -n "$(ls -A "${PCA_DIR}"/*.json 2>/dev/null)" ]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Results already present in ${PCA_DIR} — C5c-0 will not re-run."
+          else
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            echo "[run] No results found in ${PCA_DIR} — C5c-0 will run."
+          fi
+
       - name: Set up Python
+        if: steps.check_exp2.outputs.already_done != 'true'
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
+        if: steps.check_exp2.outputs.already_done != 'true'
         run: |
           pip install --upgrade pip
           if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
           pip install numpy scipy scikit-learn pysr juliacall
 
       - name: Run exp2_feynman_pca_4060 via run_all.sh
+        if: steps.check_exp2.outputs.already_done != 'true'
         env:
           RESULTS_DIR:         ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
           FEYNMAN_SAMPLES:     ${{ github.event.inputs.n_samples || '200' }}
@@ -125,7 +142,9 @@ jobs:
           bash run_all.sh --step exp2_feynman_pca_4060
 
       - name: Commit and push results
-        if: github.event.inputs.dry_run != 'true'
+        if: |
+          github.event.inputs.dry_run != 'true' &&
+          steps.check_exp2.outputs.already_done != 'true'
         env:
           RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
         run: |
@@ -145,7 +164,10 @@ jobs:
             echo "Nothing new to commit — results already up to date."
           else
             git commit -m "ci: FIX-C3 exp2_feynman_pca_4060 results (PCA 40/60) [skip ci]"
-            git push origin HEAD:"${{ github.ref_name }}"
+            for i in 1 2 3; do
+              git pull --rebase origin "${{ github.ref_name }}" && \
+              git push origin HEAD:"${{ github.ref_name }}" && break || sleep 5
+            done
             echo "Results committed and pushed."
           fi
 
@@ -174,18 +196,35 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
 
+      - name: Check if exp1_pca results already exist
+        id: check_exp1
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          PCA_DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca"
+          if [ -d "${PCA_DEFI_DIR}" ] && [ -n "$(ls -A "${PCA_DEFI_DIR}"/*.json 2>/dev/null)" ]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Results already present in ${PCA_DEFI_DIR} — C5c-1 will not re-run."
+          else
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            echo "[run] No results found in ${PCA_DEFI_DIR} — C5c-1 will run."
+          fi
+
       - name: Set up Python
+        if: steps.check_exp1.outputs.already_done != 'true'
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
+        if: steps.check_exp1.outputs.already_done != 'true'
         run: |
           pip install --upgrade pip
           if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
           pip install numpy scipy scikit-learn pysr juliacall
 
       - name: Run exp1_pca via run_all.sh
+        if: steps.check_exp1.outputs.already_done != 'true'
         env:
           RESULTS_DIR:         ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
           FEYNMAN_SAMPLES:     ${{ github.event.inputs.n_samples || '200' }}
@@ -204,7 +243,9 @@ jobs:
           bash run_all.sh --step exp1_pca
 
       - name: Commit and push results
-        if: github.event.inputs.dry_run != 'true'
+        if: |
+          github.event.inputs.dry_run != 'true' &&
+          steps.check_exp1.outputs.already_done != 'true'
         env:
           RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
         run: |
@@ -217,7 +258,10 @@ jobs:
             echo "Nothing new to commit."
           else
             git commit -m "ci: FIX-C3 exp1_pca results (DeFi all-74, PCA 40/60) [skip ci]"
-            git push origin HEAD:"${{ github.ref_name }}"
+            for i in 1 2 3; do
+              git pull --rebase origin "${{ github.ref_name }}" && \
+              git push origin HEAD:"${{ github.ref_name }}" && break || sleep 5
+            done
             echo "Results committed and pushed."
           fi
 
@@ -247,18 +291,35 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
 
+      - name: Check if exp1b_pca results already exist
+        id: check_exp1b
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          PCA15_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca"
+          if [ -d "${PCA15_DIR}" ] && [ -n "$(ls -A "${PCA15_DIR}"/*.json 2>/dev/null)" ]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Results already present in ${PCA15_DIR} — C5c-2 will not re-run."
+          else
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            echo "[run] No results found in ${PCA15_DIR} — C5c-2 will run."
+          fi
+
       - name: Set up Python
+        if: steps.check_exp1b.outputs.already_done != 'true'
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
+        if: steps.check_exp1b.outputs.already_done != 'true'
         run: |
           pip install --upgrade pip
           if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
           pip install numpy scipy scikit-learn pysr juliacall
 
       - name: Run exp1b_pca via run_all.sh
+        if: steps.check_exp1b.outputs.already_done != 'true'
         env:
           RESULTS_DIR:         ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
           FEYNMAN_SAMPLES:     ${{ github.event.inputs.n_samples || '200' }}
@@ -277,7 +338,9 @@ jobs:
           bash run_all.sh --step exp1b_pca
 
       - name: Commit and push results
-        if: github.event.inputs.dry_run != 'true'
+        if: |
+          github.event.inputs.dry_run != 'true' &&
+          steps.check_exp1b.outputs.already_done != 'true'
         env:
           RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
         run: |
@@ -290,7 +353,10 @@ jobs:
             echo "Nothing new to commit."
           else
             git commit -m "ci: FIX-C3 exp1b_pca results (DeFi portfolio seed sweep, PCA 40/60) [skip ci]"
-            git push origin HEAD:"${{ github.ref_name }}"
+            for i in 1 2 3; do
+              git pull --rebase origin "${{ github.ref_name }}" && \
+              git push origin HEAD:"${{ github.ref_name }}" && break || sleep 5
+            done
             echo "Results committed and pushed."
           fi
 
