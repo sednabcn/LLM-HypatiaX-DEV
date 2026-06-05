@@ -322,7 +322,7 @@ achieves median $\Rsq=-0.47$ under our 40\,\%/60\,\% extrapolation split.
 % =============================================================================
 % === SECTION: Empirical Evidence (from jmlr_paper_final.tex §3) ===
 \section{Empirical Evidence of LLM Performance Across Domains}
-\label{sec:llm_limitations}\label{sec:llm_domain}
+\label{sec:llm_limitations}
 
 To evaluate whether large language models (LLMs) can perform analytical formula discovery without symbolic constraints or external solvers, we conducted a systematic study of pure LLM-based formula generation \citep{koza1994genetic,kambhampati2024llms}. No symbolic regression, constraint enforcement, or post-generation correction was applied.
 
@@ -369,7 +369,7 @@ Even when the LLM achieves near-perfect interpolation ($\Rsq \approx 1$), extrap
 \subsection{Formal Definitions}
 
 \begin{definition}[Analytical Expression Discovery]
-Let $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^n$ where $x_i \in \mathbb{R}^d$, $y_i \in \mathbb{R}$~\citep{udrescu2020aifeynman}. An analytical expression discovery system produces $E: \mathbb{R}^d \to \mathbb{R}$ satisfying:
+Let $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^n$ where $x_i \in \mathbb{R}^d$, $y_i \in \mathbb{R}$~\citep{udrescu2020ai}. An analytical expression discovery system produces $E: \mathbb{R}^d \to \mathbb{R}$ satisfying:
 \begin{enumerate}
   \item \textit{Symbolic form}: $E$ is expressible using operators $\mathcal{O}$ in closed form
   \item \textit{Physical consistency}: $E$ satisfies domain constraints $\mathcal{C}$
@@ -411,7 +411,7 @@ Maximum-likelihood training minimises $-\mathbb{E}[\log P_\theta(x)]$, concentra
 
 \subsection{Implications for Discovery}
 
-Finding~\ref{thm:llm_reproductive} explains the domain-dependence pattern in Section~\ref{sec:llm_domain}: LLM performance correlates with equation prevalence ($\rho = 0.89$) because reproductive behaviour ties output quality to training exposure. This motivates hybrid architectures that use LLM structural guidance while correcting via symbolic search.
+Finding~\ref{thm:llm_reproductive} explains the domain-dependence pattern in Section~\ref{sec:llm_limitations}: LLM performance correlates with equation prevalence ($\rho = 0.89$) because reproductive behaviour ties output quality to training exposure. This motivates hybrid architectures that use LLM structural guidance while correcting via symbolic search.
 
 \subsection{Functional Form Recovery and Inductive Bias Alignment}
 
@@ -582,6 +582,7 @@ samples) and does not substantially reduce the extrapolation challenge.
 \end{remark}
 
 \subsection{Pipeline Corrections in v3.0}
+\label{sec:r2_bugfix}
 \label{sec:corrections}
 
 HypatiaX v3.0 incorporates four corrections over prior versions that systematically
@@ -598,7 +599,7 @@ biased reported results:
     training set for multivariate tasks.  v3.0 uses the PCA-directed ordering
     described above.
 
-  \item \textbf{Inconsistent formula evaluation}\label{sec:r2_bugfix}: Earlier
+  \item \textbf{Inconsistent formula evaluation}: Earlier
     versions used multiple evaluation backends (SymPy, eval, NumExpr) without a
     unified type-coercion layer, causing silent mismatches.  A specific bug in
     \texttt{evaluate\_llm\_formula} used a hardcoded absolute sum-of-squares
@@ -851,7 +852,7 @@ $\Rsq$ values depending on the evaluation backend.
   $\sigma = 0.05 \cdot \mathrm{std}(y)$ in all main experiments.
 \end{enumerate}
 
-\subsection{Five-Layer Architecture Overview}
+\subsection{Five-Stage Routing Architecture Overview}
 \label{sec:validation_framework}
 
 Layer~1--2: data ingestion and preprocessing.
@@ -1634,7 +1635,7 @@ stochastic collapse.
 claims should be treated as \emph{preliminary evidence} pending a larger
 C-Collapse sample.  A reviewer should not read the Spearman $\rho=-0.70$ result
 as driven by the C-Collapse cases alone: the correlation is computed across all
-71 cases, with A-Symbolic cases at ($\II=0$, $\Rsq=1$) and C-Collapse cases at
+70 tasks, with A-Symbolic cases at ($\II=0$, $\Rsq=1$) and C-Collapse cases at
 (high $\II$, low $\Rsq$) forming the two poles of the distribution.  The
 \textbf{aggregate Spearman $\rho=-0.70$ ($p<0.001$) is the primary statistical
 result}; the regime typology is an interpretive overlay.
@@ -1792,7 +1793,7 @@ Based on our findings across 74 DeFi tasks and 30 Feynman equations, we propose 
 
 \subsection{Comparison with Related Work}
 
-HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020aifeynman} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Our approach differs by targeting financial and biochemical domains where such symmetries are absent, and by adding LLM-guided initialisation. DSR~\citep{landajuela2022unified} uses reinforcement learning to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX achieves 9/30 successes (30.0\%) under our aggressive PCA-directed extrapolation protocol, comparable to AI Feynman 2.0 under similar conditions. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
+HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020ai} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Our approach differs by targeting financial and biochemical domains where such symmetries are absent, and by adding LLM-guided initialisation. DSR~\citep{landajuela2022unified} uses reinforcement learning to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX achieves 9/30 successes (30.0\%) under our aggressive PCA-directed extrapolation protocol, comparable to AI Feynman 2.0 under similar conditions. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
 
 \subsection{Ethical Considerations}
 
@@ -1886,9 +1887,9 @@ under any configuration that allows multi-process PySR execution.
 %% ── Bibliography ─────────────────────────────────────────────────────────────
 %% references.bib must include entries for: sahoo2018eql, liu2022discover,
 %% jin2020bayesian, koza1992gp/koza1994genetic, raissi2019physics,
-%% karniadakis2021physics, cranmer2023pysr/cranmer2023interpretable,
+%% karniadakis2021physics, cranmer2023pysr/cranmer2023pysr,
 %% hornik1989multilayer, wolpert1997no, petersen2021deep, landajuela2022unified,
-%% sun2022symbolic, udrescu2020ai/udrescu2020aifeynman, kambhampati2024llms,
+%% sun2022symbolic, udrescu2020ai/udrescu2020ai, kambhampati2024llms,
 %% openai2023gpt4, biggio2021neural, shojaee2023transformer, la_cava_2021_srbench,
 %% cranmer2020lagrangian, wei2022chain, xu2021neural, uy2011semantically.
 \bibliographystyle{plainnat}
@@ -1904,7 +1905,7 @@ Cranmer, M.\ (2023).
 Interpretable machine learning for science with PySR and SymbolicRegression.jl.
 \emph{arXiv preprint arXiv:2305.01582}.
 
-\bibitem[Cranmer(2023)]{cranmer2023interpretable}
+\bibitem[Cranmer(2023)]{cranmer2023pysr}
 Cranmer, M.\ (2023).
 Interpretable machine learning for science with PySR and SymbolicRegression.jl.
 \emph{arXiv preprint arXiv:2305.01582}.
@@ -1995,7 +1996,7 @@ Udrescu, S.-M.\ and Tegmark, M.\ (2020).
 AI Feynman: A physics-inspired method for symbolic regression.
 \emph{Science Advances}, 6(16):eaay2631.
 
-\bibitem[Udrescu \& Tegmark(2020)]{udrescu2020aifeynman}
+\bibitem[Udrescu \& Tegmark(2020)]{udrescu2020ai}
 Udrescu, S.-M.\ and Tegmark, M.\ (2020).
 AI Feynman: A physics-inspired method for symbolic regression.
 \emph{Science Advances}, 6(16):eaay2631.
