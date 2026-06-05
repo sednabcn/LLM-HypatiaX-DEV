@@ -60,8 +60,15 @@ def patch(original: str, old: str, new: str, label: str) -> tuple[str, int]:
         print(f"  {label}: replaced {count} occurrence(s)")
     return original.replace(old, new), count
 
-def patch_re(original: str, pattern: str, repl: str, label: str,
+def patch_re(original: str, pattern: str, repl, label: str,
              flags: int = 0) -> tuple[str, int]:
+    """Replace regex pattern with repl (string or callable) in original.
+
+    Use a lambda whenever the replacement contains literal LaTeX backslash
+    commands (e.g. \\label, \\subsection) — Python's regex engine interprets
+    \\l, \\s etc. as escape sequences inside plain replacement strings and
+    raises re.error: bad escape.
+    """
     new, count = re.subn(pattern, repl, original, flags=flags)
     if count:
         print(f"  {label}: replaced {count} occurrence(s)")
@@ -183,11 +190,14 @@ def fix_xr2_label_in_item(text: str) -> str:
     text, removed = patch(text, label, "", "FIX-XR2: remove misplaced label")
 
     if removed:
-        # Re-attach to subsection heading
+        # Re-attach to subsection heading.
+        # Must use a lambda — label contains \label which has \l, an invalid
+        # regex escape sequence that causes re.error: bad escape \l at position 4
+        # when passed as a plain replacement string to re.subn.
         text, attached = patch_re(
             text,
             subsec_pattern,
-            r"\1\n" + label,
+            lambda m: m.group(1) + "\n" + label,
             "FIX-XR2: attach label to subsection",
         )
         if not attached:
