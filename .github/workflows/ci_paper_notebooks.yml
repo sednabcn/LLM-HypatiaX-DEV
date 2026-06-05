@@ -13,6 +13,11 @@ on:
 
   # Allow manual trigger for debugging / re-runs, and for dispatch from ci_pipeline.yml C5
   workflow_dispatch:
+    inputs:
+      apply_fixes_only:
+        description: "Run fix_paper_issues.py only — skip all notebook execution (true/false)"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -23,20 +28,106 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 0 — apply-fixes  (standalone, workflow_dispatch only)
+  #
+  # Runs fix_paper_issues.py directly against the checked-out .tex and .py
+  # sources without executing any notebook.  Triggered by setting the
+  # workflow_dispatch input apply_fixes_only=true.
+  #
+  # Commits the patched files back to the branch so downstream tools (LaTeX
+  # build, reviewers) see the corrected source immediately.
+  #
+  # When apply_fixes_only=false (default) this job is skipped entirely and
+  # the normal audit-setup → NB-01…NB-06 pipeline runs as usual.
+  # ──────────────────────────────────────────────────────────────────────────
+  apply-fixes:
+    name: "Apply non-numerical paper fixes (standalone)"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.apply_fixes_only == 'true'
+
+    permissions:
+      contents: write   # needed to push the patched files back
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Run fix_paper_issues.py
+        run: |
+          if [ -f scripts/patches/fix_paper_issues.py ]; then
+            echo "Running fix_paper_issues.py from scripts/patches/"
+            python scripts/patches/fix_paper_issues.py \
+              --tex-dir . --supp-dir . --py-dir . --dry-run false
+          else
+            echo "ERROR: scripts/patches/fix_paper_issues.py not found"
+            exit 1
+          fi
+
+      - name: Commit patched files
+        id: commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — all fixes already applied."
+            echo "patches_applied=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "ci: apply non-numerical paper fixes via fix_paper_issues.py [skip ci]"
+            git push
+            echo "Patched files committed and pushed."
+            echo "patches_applied=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch ci_report
+        # Only dispatch when the fix script and commit both succeeded.
+        # 'success' here means the commit step exited 0 — covers both the
+        # "committed & pushed" and "nothing to commit" outcomes.
+        # Skipped automatically if any earlier step in this job failed.
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          BRANCH:   ${{ github.ref_name }}
+          PATCHES:  ${{ steps.commit.outputs.patches_applied }}
+        run: |
+          gh workflow run ci_report.yml \
+            --repo "$REPO" \
+            --ref  "$BRANCH"
+          if [[ "$PATCHES" == "true" ]]; then
+            echo "ci_report.yml dispatched — report will rebuild with patched sources."
+          else
+            echo "ci_report.yml dispatched — sources were already clean, report will confirm."
+          fi
+
   # ──────────────────────────────────────────────
   # Job 1 — audit-setup
   # Checks out the repo, sets up Python/Jupyter,
-  # and copies .tex source files into notebooks/
+  # copies .tex source files into notebooks/, and
+  # runs fix_paper_issues.py to auto-patch all
+  # non-numerical issues before any notebook runs.
+  # Skipped when apply_fixes_only=true (Job 0 runs instead).
   # ──────────────────────────────────────────────
   audit-setup:
-    name: "audit-setup: copy .tex files into notebooks/"
+    name: "audit-setup: copy .tex files + apply non-numerical fixes"
     runs-on: ubuntu-latest
 
-    # Only run when the triggering workflow succeeded
-    # (remove this condition if you want non-blocking / always-run behaviour)
+    # Skip when the caller only wants fixes applied (Job 0 handles that path).
+    # Otherwise run on workflow_run success or manual dispatch.
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.inputs.apply_fixes_only != 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.workflow_run.conclusion == 'success')
 
     steps:
       - name: Checkout repository
@@ -46,13 +137,11 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install jupyter nbconvert ipykernel
-          # Install any additional requirements your notebooks need
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f notebooks/requirements.txt ]; then pip install -r notebooks/requirements.txt; fi
 
@@ -68,7 +157,28 @@ jobs:
             ! -path "./.git/*" \
             -exec cp -v {} notebooks/ \;
 
-      # Upload the prepared notebooks/ directory so downstream jobs can use it
+      # ── Apply all automatable non-numerical fixes ──────────────────────────
+      # Runs fix_paper_issues.py which patches jmlr-hypatiax-paper-final.tex
+      # and supp_routing_improvements.tex in-place before notebooks execute.
+      # The script exits 0 even if the .tex files are absent (graceful no-op)
+      # so this step never blocks the pipeline.
+      # Fixes applied: FIX-B1, FIX-B2, FIX-B3, FIX-XR1, FIX-XR2, FIX-XR3,
+      #                FIX-XR4, FIX-N1, FIX-N2, FIX-C2 (import replacement)
+      - name: Apply non-numerical paper fixes
+        run: |
+          if [ -f scripts/fix_paper_issues.py ]; then
+            echo "Running fix_paper_issues.py from scripts/"
+            python scripts/fix_paper_issues.py --tex-dir . --supp-dir . --dry-run false
+          elif [ -f fix_paper_issues.py ]; then
+            echo "Running fix_paper_issues.py from repo root"
+            python fix_paper_issues.py --tex-dir . --supp-dir . --dry-run false
+          else
+            echo "fix_paper_issues.py not found — skipping auto-fix step"
+            echo "Place fix_paper_issues.py in the repo root or scripts/ to enable."
+          fi
+
+      # Upload the prepared notebooks/ directory so downstream jobs can use it.
+      # Includes patched .tex copies so every NB sees the fixed source.
       - name: Upload notebooks workspace
         uses: actions/upload-artifact@v4.3.6
         with:
@@ -76,15 +186,37 @@ jobs:
           path: notebooks/
           retention-days: 3
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # NOTE ON DEPENDENCY STRUCTURE
+  # ──────────────────────────────────────────────────────────────────────────
+  # Each NB job depends only on audit-setup (not on the previous NB job).
+  # This breaks the old strict serial chain:
+  #   audit-setup → NB-01 → NB-02 → NB-03 → NB-04 → NB-05 → NB-06
+  # which caused NB-02…NB-06 to be SKIPPED whenever NB-01 failed, producing
+  # "⚠️ Notebook not found" in the report for those sections.
+  #
+  # New structure (all fan out from audit-setup):
+  #   audit-setup → NB-01
+  #              → NB-02
+  #              → NB-03
+  #              → NB-04
+  #              → NB-05
+  #              → NB-06
+  #              → bundle-artifacts (needs: all six, if: always())
+  #
+  # Each NB job uses `if: always() && needs.audit-setup.result != 'skipped'`
+  # so a failing notebook does not cascade to its siblings.
+  # ──────────────────────────────────────────────────────────────────────────
+
   # ──────────────────────────────────────────────
   # Job 2 — nb-01-citations
-  # Catches: koza1994genetic missing,
-  #          cranmer2023pysr/cranmer2023interp alias collision
   # ──────────────────────────────────────────────
   nb-01-citations:
     name: "NB-01: Citation & Bibliography Audit"
     runs-on: ubuntu-latest
     needs: audit-setup
+    # Run even if audit-setup produced warnings; only skip if it was skipped.
+    if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
       - name: Checkout repository
@@ -94,7 +226,6 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
@@ -126,14 +257,12 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job 3 — nb-02-crossref
-  # Catches: undefined refs, duplicate labels,
-  #          \label inside \item,
-  #          Supp A section 7.3 → 7.4 mismatch
   # ──────────────────────────────────────────────
   nb-02-crossref:
     name: "NB-02: Cross-Reference & Label Integrity"
     runs-on: ubuntu-latest
-    needs: nb-01-citations
+    needs: audit-setup
+    if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
       - name: Checkout repository
@@ -143,7 +272,6 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
@@ -175,12 +303,12 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job 4 — nb-03-structure
-  # Catches: section structure and numbering issues
   # ──────────────────────────────────────────────
   nb-03-structure:
     name: "NB-03: Section Structure & Numbering"
     runs-on: ubuntu-latest
-    needs: nb-02-crossref
+    needs: audit-setup
+    if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
       - name: Checkout repository
@@ -190,7 +318,6 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
@@ -222,15 +349,12 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job 5 — nb-04-numerical
-  # Catches: abstract claim presence,
-  #          70 vs 71 discrepancy,
-  #          five-stage vs five-layer,
-  #          timing arithmetic errors
   # ──────────────────────────────────────────────
   nb-04-numerical:
     name: "NB-04: Numerical Consistency & Abstract Claims"
     runs-on: ubuntu-latest
-    needs: nb-03-structure
+    needs: audit-setup
+    if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
       - name: Checkout repository
@@ -240,7 +364,6 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
@@ -272,14 +395,12 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job 6 — nb-05-figures
-  # Catches: all 5 \includegraphics on disk,
-  #          \fbox placeholder detection,
-  #          figure environment completeness
   # ──────────────────────────────────────────────
   nb-05-figures:
     name: "NB-05: Figure Files & Environment Audit"
     runs-on: ubuntu-latest
-    needs: nb-04-numerical
+    needs: audit-setup
+    if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
       - name: Checkout repository
@@ -289,7 +410,6 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
@@ -321,12 +441,12 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job 7 — nb-06-integrity
-  # Catches: code quality and pipeline integrity
   # ──────────────────────────────────────────────
   nb-06-integrity:
     name: "NB-06: Code Quality & Pipeline Integrity"
     runs-on: ubuntu-latest
-    needs: nb-05-figures
+    needs: audit-setup
+    if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
       - name: Checkout repository
@@ -336,7 +456,6 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # cache: pip
 
       - name: Install dependencies
         run: |
@@ -399,13 +518,9 @@ jobs:
           retention-days: 30
 
       # ── Normalised summary for ci_report dynamic conclusions ─────────────────
-      # Walks every downloaded .ipynb in notebooks/ and extracts structured
-      # findings written by each notebook into its last output cell as JSON
-      # (convention: cell tagged "audit_findings" or last code cell whose
-      # last output contains a JSON block starting with {"findings":}).
-      # Falls back to the static fix-status manifest baked into ci_paper_audit.yml
-      # comments when no structured output is found.
-      # Schema matches audit_paper_summary.json produced by ci_paper_audit.yml.
+      # (unchanged from original — omitted here for brevity; keep the full
+      #  Python block from the original file starting at "Write notebooks audit
+      #  summary JSON" and ending at "Upload notebooks audit summary")
       - name: Write notebooks audit summary JSON
         if: always()
         env:
@@ -418,9 +533,6 @@ jobs:
 
           run_id  = os.environ["RUN_ID"]
 
-          # ── Static fallback fixture ──────────────────────────────────────────
-          # Mirrors the AUDIT FIX STATUS table in ci_paper_audit.yml comments.
-          # ci_report doctor step may override statuses from live artifacts.
           STATIC_FIXES = [
               {"id":"FIX-B1",  "severity":"CRITICAL","status":"OPEN",    "nb":"NB-01",
                "description":"koza1994genetic cited but no \\bibitem — will produce [?] in PDF.",
@@ -478,9 +590,7 @@ jobs:
                "action":"No action required."},
           ]
 
-          # ── Try to extract structured findings from executed notebooks ────────
-          nb_findings = {}   # id → finding dict (live data wins over static)
-
+          nb_findings = {}
           for nb_path in sorted(Path("notebooks").rglob("*.ipynb")):
               try:
                   nb = json.loads(nb_path.read_text(encoding="utf-8"))
@@ -489,15 +599,12 @@ jobs:
               for cell in nb.get("cells", []):
                   tags = cell.get("metadata", {}).get("tags", [])
                   outputs = cell.get("outputs", [])
-                  # Look for a cell tagged "audit_findings" or whose last text
-                  # output is a JSON block with a "findings" key.
                   is_findings_cell = "audit_findings" in tags
                   for out in outputs:
                       text = ""
                       if out.get("output_type") in ("stream", "execute_result", "display_data"):
                           raw = out.get("text", out.get("data", {}).get("text/plain", ""))
                           text = "".join(raw) if isinstance(raw, list) else str(raw)
-                      # Strip optional ```json fence
                       text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
                       text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
                       if is_findings_cell or (text.startswith("{") and '"findings"' in text):
@@ -517,14 +624,12 @@ jobs:
                           except Exception:
                               pass
 
-          # Merge: static provides all rows; live notebook data overrides status/description.
           merged = []
           for fix in STATIC_FIXES:
               live = nb_findings.get(fix["id"])
               if live:
-                  fix = {**fix, **live}   # live wins
+                  fix = {**fix, **live}
               merged.append(fix)
-          # Append any findings from notebooks not in the static list.
           static_ids = {f["id"] for f in STATIC_FIXES}
           for fid, f in nb_findings.items():
               if fid not in static_ids:
