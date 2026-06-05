@@ -94,13 +94,25 @@ jobs:
         # 'success' here means the commit step exited 0 — covers both the
         # "committed & pushed" and "nothing to commit" outcomes.
         # Skipped automatically if any earlier step in this job failed.
+        #
+        # GITHUB_TOKEN cannot trigger workflow_dispatch on other workflows
+        # (HTTP 403: Resource not accessible by integration).
+        # Requires a PAT with the 'workflow' scope stored as PAT_WORKFLOW.
+        # Create one at: github.com/settings/tokens → Fine-grained or Classic
+        # Scopes needed: repo + workflow
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_WORKFLOW }}
           REPO:     ${{ github.repository }}
           BRANCH:   ${{ github.ref_name }}
           PATCHES:  ${{ steps.commit.outputs.patches_applied }}
         run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "ERROR: PAT_WORKFLOW secret is not set."
+            echo "Create a PAT with 'workflow' scope at github.com/settings/tokens"
+            echo "then add it as a repository secret named PAT_WORKFLOW."
+            exit 1
+          fi
           gh workflow run ci_report.yml \
             --repo "$REPO" \
             --ref  "$BRANCH"
