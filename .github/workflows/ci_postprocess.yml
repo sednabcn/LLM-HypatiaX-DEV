@@ -35,6 +35,7 @@ jobs:
         with: { python-version: "3.12" }
 
       - name: Install dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn "sympy>=1.12"
@@ -47,6 +48,7 @@ jobs:
         env:
           DISPATCH_EXP: ${{ github.event.inputs.experiment }}
           DISPATCH_SUB: ${{ github.event.inputs.result_subdir }}
+        shell: bash
         run: |
           set -euo pipefail
           SUB="${DISPATCH_SUB}"
@@ -80,6 +82,7 @@ jobs:
         id: overwrite_audit
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
         run: |
           set -euo pipefail
           FIGS="${OUT_BASE}/${SUB}/figures"
@@ -131,6 +134,7 @@ jobs:
       - name: Generate figures
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
         run: |
           # Pre-create output dirs — the generator scripts may not create them,
           # and git add must find the paths even when no files are produced.
@@ -149,6 +153,7 @@ jobs:
       - name: Generate tables
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
         run: |
           # BUG 2a FIX: same wrong-path bug as generate_figures — was tables/generate_tables.py.
           python scripts/generate_tables.py \
@@ -161,6 +166,7 @@ jobs:
           github.event.inputs.experiment == 'exp3b'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -170,7 +176,7 @@ jobs:
           # Guard: ci_analysis must have run first and committed the CSV.
           if [[ ! -f "$CSV" ]]; then
             echo "::error::symbolic_equivalence_report.csv not found at ${CSV}"
-            echo "  Run ci_analysis.yml for ${EXPERIMENT} first, then re-run postprocess."
+            echo "  Run ci_analysis.yml for ${{ github.event.inputs.experiment }} first, then re-run postprocess."
             exit 1
           fi
 
@@ -182,6 +188,7 @@ jobs:
         if: github.event.inputs.experiment == 'exp2_feynman_pca'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -198,6 +205,7 @@ jobs:
           SUB: ${{ steps.meta.outputs.result_subdir }}
           N_EXISTING_FIGS: ${{ steps.overwrite_audit.outputs.n_existing_figs }}
           N_EXISTING_TABS: ${{ steps.overwrite_audit.outputs.n_existing_tabs }}
+        shell: bash
         run: |
           set -euo pipefail
           FIGS="${OUT_BASE}/${SUB}/figures"
@@ -257,6 +265,7 @@ jobs:
       - name: Commit outputs
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
