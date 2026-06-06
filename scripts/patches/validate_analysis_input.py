@@ -79,6 +79,26 @@ Two tiers of schema handling are provided:
                        { "per_n": { "50": { "per_equation": {
                            "Eq1": { "MethodA": {r2, ...} } } } } }
 
+    experiment_summary_dict
+                       Aggregate stats file (e.g. exp2_pca_4060_summary.json).
+                       Contains n_pass, n_total, solve_rate at the top level.
+                       No per-record data; returns [].
+                       { "n_pass": 162, "n_total": 180, "solve_rate": 0.9, ... }
+
+    protocol_disclosure_dict
+                       Split/protocol metadata written by experiment runners
+                       (e.g. split_protocol_disclosure.json).  Must contain
+                       "split_protocol" plus at least one other canonical
+                       disclosure key.  No per-record data; returns [].
+                       Covers both the original variant (split_level,
+                       force_fresh, script, extrap_train_frac) and the extended
+                       fixc3 variant (split_function, test_size, train_size,
+                       random_split_used, legacy_split, legacy_script,
+                       dfi_parity, section_reference, generated_by).
+                       { "split_protocol": "random_7030",
+                         "split_function": "train_test_split",
+                         "fixc3": "...", "dfi_parity": "checked", ... }
+
 Adding a new format
 -------------------
   Tier 1: add one entry to _TIER1_EXTRACTORS (guard + extract lambda).
@@ -167,6 +187,19 @@ _TIER1_EXTRACTORS = [
 # Tier 2 — Legacy / third-party extractors
 # Same tuple shape as Tier 1.  Heuristic guards; document the source runner.
 # ---------------------------------------------------------------------------
+
+# Canonical disclosure keys accepted by the protocol_disclosure_dict guard.
+# Covers both the original variant and the extended fixc3 variant that adds
+# split_function, test_size, train_size, random_split_used, legacy_split,
+# legacy_script, dfi_parity, section_reference, and generated_by.
+_PROTOCOL_DISCLOSURE_KEYS = {
+    # original variant
+    "split_level", "force_fresh", "script", "extrap_train_frac",
+    # extended fixc3 variant
+    "split_function", "test_size", "train_size", "random_split_used",
+    "legacy_split", "legacy_script", "dfi_parity", "section_reference",
+    "generated_by",
+}
 
 _TIER2_EXTRACTORS = [
     # Old runner: results keyed by equation, each value a dict of method->metrics
@@ -334,17 +367,22 @@ _TIER2_EXTRACTORS = [
         ),
         lambda d: [],   # no per-record data to validate
     ),
-    # Protocol disclosure / split metadata dict (e.g. split_protocol_disclosure.json).
-    # Written by exp2_feynman_pca_4060 / exp1_pca to document the split protocol used.
-    # Keys: split_protocol, split_level, force_fresh, script, … — no records inside.
-    # Guard: top-level dict containing 'split_protocol' and at least one of the other
-    # canonical disclosure keys, with no list-of-records or results children.
+    # Protocol disclosure / split metadata dict.
+    # Written by experiment runners to document the split protocol used.
+    # Examples: split_protocol_disclosure.json (original variant, exp2_feynman_pca_4060 /
+    # exp1_pca) and the extended fixc3 variant that additionally carries split_function,
+    # test_size, train_size, random_split_used, legacy_split, legacy_script, dfi_parity,
+    # section_reference, and generated_by.
+    #
+    # Guard: top-level dict containing 'split_protocol' and at least one key from
+    # _PROTOCOL_DISCLOSURE_KEYS (covers both original and extended variants), with no
+    # list-of-records or results children that would indicate an actual data file.
     (
         "protocol_disclosure_dict",
         lambda d: (
             isinstance(d, dict)
             and "split_protocol" in d.keys()
-            and bool({"split_level", "force_fresh", "script", "extrap_train_frac"} & d.keys())
+            and bool(_PROTOCOL_DISCLOSURE_KEYS & d.keys())
             and not isinstance(d.get("results"), (list, dict))
             and not isinstance(d.get("tests"), list)
             and not isinstance(d.get("per_noise"), dict)
@@ -449,8 +487,9 @@ def main():
             records = load_records(line)
             print(f"Records: {len(records)}")
             total += len(records)
-            # experiment_summary_dict shards legitimately return 0 records;
-            # track them so we don't misfire FATAL: EMPTY DATASET.
+            # experiment_summary_dict and protocol_disclosure_dict shards
+            # legitimately return 0 records; track them so we don't misfire
+            # FATAL: EMPTY DATASET.
             if len(records) == 0:
                 n_summary_shards += 1
 
@@ -676,7 +715,7 @@ _SELF_TEST_CASES = [
         expected_n=0, expected_fmt="experiment_summary_dict", tier=2,
     ),
     dict(
-        name="tier2 / protocol_disclosure_dict  (split_protocol_disclosure.json)",
+        name="tier2 / protocol_disclosure_dict  (original variant — split_protocol_disclosure.json)",
         payload={
             "split_protocol":  "pca_40_60",
             "split_level":     "outer_loop",
@@ -684,6 +723,27 @@ _SELF_TEST_CASES = [
             "script":          "run_comparative_suite_benchmark_pca.py",
             "extrap_train_frac": 0.4,
             "generated":       "2026-06-04T13:51:59",
+        },
+        expected_n=0, expected_fmt="protocol_disclosure_dict", tier=2,
+    ),
+    dict(
+        name="tier2 / protocol_disclosure_dict  (extended fixc3 variant)",
+        payload={
+            "fixc3":               "fixc3_step_label",
+            "split_protocol":      "random_7030",
+            "split_function":      "train_test_split",
+            "split_level":         "outer_loop",
+            "force_fresh":         True,
+            "script":              "run_comparative_suite_benchmark.py",
+            "test_size":           0.3,
+            "train_size":          0.7,
+            "random_split_used":   True,
+            "legacy_split":        False,
+            "legacy_script":       "run_old_benchmark.py",
+            "dfi_parity":          "checked",
+            "section_reference":   "Section 4.2",
+            "generated_by":        "ci_runner.yml",
+            "timestamp":           "2026-06-04T13:51:59",
         },
         expected_n=0, expected_fmt="protocol_disclosure_dict", tier=2,
     ),
