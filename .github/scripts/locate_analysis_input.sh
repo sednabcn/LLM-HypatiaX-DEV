@@ -30,6 +30,23 @@
 #
 #  NO inline benchmark merge for non-merge experiments.  This prevents
 #  field-name mismatches (e.g. exp2/Feynman records don't have far-R²).
+#
+#  METADATA FILE EXCLUSIONS (shard/direct mode):
+#    The following filename patterns are excluded from the shard manifest
+#    because they are metadata / disclosure / summary files that contain
+#    no per-record experiment data.  validate_analysis_input.py uses the
+#    same list (METADATA_FILENAME_PATTERNS) as its single source of truth.
+#
+#    *_disclosure.json         split_protocol_disclosure.json etc.
+#    *_summary.json            exp2_pca_4060_summary.json etc.
+#    *_pca_comparison.*        PCA comparison tables
+#    *_comparison.*            generic comparison output files
+#    ablation_paired.json      exp2_feynman_extrap ablation output
+#    symbolic_equivalence*     symbolic equivalence report files
+#
+#    If a new metadata filename pattern is introduced, add it to BOTH:
+#      • the METADATA_EXCLUSIONS array below
+#      • METADATA_FILENAME_PATTERNS in validate_analysis_input.py
 # ==============================================================================
 
 set -euo pipefail
@@ -40,6 +57,22 @@ set -euo pipefail
 : "${RESULT_SUBDIR:?RESULT_SUBDIR must be set}"
 OUTPUT_TARGET="${OUTPUT_TARGET:-env}"
 
+# ── Metadata filename patterns excluded from the shard manifest ───────────────
+# These are known non-record files committed alongside result shards.
+# Keep in sync with METADATA_FILENAME_PATTERNS in validate_analysis_input.py.
+METADATA_EXCLUSIONS=(
+  '*_disclosure.json'
+  '*_summary.json'
+  '*_pca_comparison.json'
+  '*_comparison.json'
+  '*_comparison.csv'
+  '*_comparison.md'
+  'ablation_paired.json'
+  'symbolic_equivalence*.json'
+  'symbolic_equivalence*.csv'
+  'symbolic_equivalence*.txt'
+)
+
 # ── Helper: write a key=value to the correct GitHub output channel ────────────
 emit() {
   local key="$1" val="$2"
@@ -48,6 +81,16 @@ emit() {
   else
     echo "${key}=${val}" >> "$GITHUB_ENV"
   fi
+}
+
+# ── Helper: build the -not -name ... exclusion args for find ─────────────────
+# Returns a sequence of:  ! -name '<pattern>' ! -name '<pattern>' ...
+metadata_exclusion_args() {
+  local args=()
+  for pat in "${METADATA_EXCLUSIONS[@]}"; do
+    args+=( '!' '-name' "$pat" )
+  done
+  printf '%s\0' "${args[@]}"
 }
 
 echo "=== RESULT DIRECTORY ==="
@@ -60,6 +103,10 @@ if [[ -d "$RESULT_DIR" ]]; then
 else
   echo "Directory does not exist: $RESULT_DIR"
 fi
+
+echo
+echo "=== METADATA EXCLUSIONS ==="
+printf '  %s\n' "${METADATA_EXCLUSIONS[@]}"
 
 echo
 echo "=== DETERMINE INPUT MODE ==="
@@ -161,27 +208,41 @@ fi
 echo
 echo "Shard mode activated"
 
-# Collect ALL non-meta JSON files.
-# - No *_shard*_run*.json exclusion: those ARE the final committed results
-#   for many experiments (re-run worker naming pattern).
-# - maxdepth 2: catches both flat layouts (depth 1) and one-level-nested
-#   layouts like suppB's noise-sweep/noise-sweep/*.json.
+# ── Build the find exclusion args from METADATA_EXCLUSIONS ───────────────────
+# We need: ! -name 'pat1' ! -name 'pat2' ...
+# Bash arrays can't be passed to find as a single arg safely, so we build
+# the command as an array and expand it with "${FIND_ARGS[@]}".
+FIND_ARGS=(
+  find "$RESULT_DIR"
+  -maxdepth 2
+  -type f
+  -name '*.json'
+  '!' -name '_*.json'
+  '!' -name 'benchmark_results.json'
+)
+for pat in "${METADATA_EXCLUSIONS[@]}"; do
+  # only add JSON-shaped exclusions to the JSON find (csv/txt patterns are
+  # for the merged-mode find above and won't match *.json anyway, but we
+  # skip them explicitly to keep the output clean)
+  case "$pat" in
+    *.json|'*'*.json) FIND_ARGS+=( '!' '-name' "$pat" ) ;;
+  esac
+done
+
+# Collect non-meta JSON shard files
 mapfile -t SHARD_FILES < <(
-  find "$RESULT_DIR" \
-    -maxdepth 2 \
-    -type f \
-    -name '*.json' \
-    ! -name '_*.json' \
-    ! -name 'benchmark_results.json' \
-    | sort
+  "${FIND_ARGS[@]}" | sort
 )
 
 if [[ ${#SHARD_FILES[@]} -eq 0 ]]; then
   echo "::error::No shard JSON files found in ${RESULT_DIR}."
-  echo "  Searched: ${RESULT_DIR}/**/*.json (maxdepth 2)"
-  echo "  Excluded: _*.json, benchmark_results.json"
+  echo "  Searched:  ${RESULT_DIR}/**/*.json (maxdepth 2)"
+  echo "  Excluded:  _*.json  benchmark_results.json  ${METADATA_EXCLUSIONS[*]}"
   exit 1
 fi
+
+echo "  Found ${#SHARD_FILES[@]} candidate shard file(s):"
+printf '    %s\n' "${SHARD_FILES[@]}"
 
 N_SHARDS=${#SHARD_FILES[@]}
 
@@ -206,3 +267,8 @@ cat "$MANIFEST"
 emit "INPUT_MODE" "shards"
 emit "INPUT_JSON" ""
 emit "SHARD_MANIFEST" "$MANIFEST"
+SCRIPT_EOF
+echo "Exit: $?"
+
+
+
