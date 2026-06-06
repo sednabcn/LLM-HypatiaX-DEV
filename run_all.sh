@@ -92,6 +92,27 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-SYNC-CI (2026-06-05):
+#   — exp2_feynman_pca_comparison_table step added (STEP 5c) after exp2_feynman_pca_4060.
+#     Calls scripts/patches/generate_exp2_pca_comparison_table.py to produce
+#     exp2_pca_comparison.{tex,csv,md} — mirrors ci_analysis.yml and ci_postprocess.yml.
+#   — exp3_symbolic_equivalence step added (STEP 8b) after exp3b.
+#     Calls scripts/check_symbolic_equivalence.py against all
+#     exp3_nguyen12_seed*.json files — mirrors ci_analysis.yml Check symbolic
+#     equivalence step.  Output: symbolic_equivalence_report.csv + _summary.txt.
+#   — merge_extrap_into_benchmark.py now called inside exp2_feynman_extrap step
+#     (replacing the NOTE that deferred it entirely to ci_analysis.yml).
+#     Produces ablation_paired.json in exp2_extrap/ so qualify and audit_paper
+#     can run locally without requiring ci_analysis.yml to run first.
+#     Skips gracefully when the script or benchmark_results_extrap*.json is absent.
+#   — tables step now also calls generate_exp2_pca_comparison_table.py and
+#     generate_nguyen12_symequiv_table.py — mirrors ci_postprocess.yml's
+#     "Generate PCA comparison table" and "Generate symbolic equivalence table"
+#     steps.  Both are skipped gracefully when prerequisite files are absent.
+#   — _STEP_ORDER updated with three new steps:
+#     exp2_feynman_pca_comparison_table, exp3_symbolic_equivalence
+#     (merge_extrap is part of exp2_feynman_extrap, not a separate step).
+#
 # FIX-C3-ESCAPE (2026-06-04):
 #   — exp1_pca and exp1b_pca: removed erroneous backslash-escaping on
 #     REPO_ROOT, EXPERIMENTS_DIR, and RESULTS_DIR inside the outer bash -c
@@ -301,7 +322,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
+_STEP_ORDER="env_check exp1 exp1b exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_pca_comparison_table exp2_feynman_extrap exp2 exp3 exp3b exp3_symbolic_equivalence suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1350,6 +1371,49 @@ PYEOF
 "
 
 
+# ── STEP 5c: exp2_feynman_pca_comparison_table ───────────────────────────────
+# Produces the side-by-side LaTeX/CSV/Markdown comparison of exp2_feynman
+# (random_state=42, 80/20 split) vs exp2_feynman_pca_4060 (PCA 40/60 split).
+# Mirrors the "Generate PCA comparison table" step in ci_analysis.yml which
+# calls scripts/patches/generate_exp2_pca_comparison_table.py with:
+#   --results-dir  hypatiax/data/results
+#   --output-dir   .../exp2_pca_4060/
+#   --formats      tex,csv,md
+# Skipped gracefully if exp2_pca_4060_summary.json is not yet present
+# (i.e. exp2_feynman_pca_4060 has not completed).
+run exp2_feynman_pca_comparison_table \
+  "FIX-C3: Generate PCA vs random-split comparison table (tex/csv/md)" bash -c "
+  set -euo pipefail
+
+  _PCA_SUMMARY='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json'
+  _SCRIPT='${REPO_ROOT}/scripts/patches/generate_exp2_pca_comparison_table.py'
+
+  if [[ ! -f \"\${_PCA_SUMMARY}\" ]]; then
+    echo '[SKIP] exp2_pca_4060_summary.json not found — run exp2_feynman_pca_4060 first.'
+    exit 0
+  fi
+
+  if [[ ! -f \"\${_SCRIPT}\" ]]; then
+    echo '[ERROR] generate_exp2_pca_comparison_table.py not found at: '\${_SCRIPT}
+    echo '        Commit scripts/patches/generate_exp2_pca_comparison_table.py to the repo.'
+    exit 1
+  fi
+
+  echo '[FIX-C3] Generating PCA comparison table (tex, csv, md) ...'
+  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060'
+
+  python3 \"\${_SCRIPT}\" \
+    --results-dir '${RESULTS_DIR}' \
+    --output-dir  '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060' \
+    --formats     'tex,csv,md' \
+    2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_run.log'
+
+  echo '[FIX-C3] PCA comparison table written to exp2_pca_4060/:'
+  ls '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_comparison'* 2>/dev/null || \
+    echo '  WARNING: exp2_pca_comparison.{tex,csv,md} not found — check generator output above'
+"
+
+
 # Generates extrap_r2_far for every Feynman equation by re-running
 # run_comparative_suite_benchmark_v2.py with --extrap on the same domain set
 # as exp2_feynman.
@@ -1497,10 +1561,37 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
     echo \"OK: benchmark_results_extrap.json present (shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json)\"
     echo '    ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
   fi
-  # NOTE: merge_extrap_into_benchmark.py is intentionally NOT called here.
-  # ci_analysis.yml is the sole owner of the merge: it reads benchmark_results_extrap.json
-  # from exp2_extrap/ and writes ablation_paired.json to exp2_extrap/.
-  # Running the merge here would write to exp2/ (wrong path) and race ci_analysis.
+  # LOCAL EQUIVALENT of ci_analysis.yml 'Merge extrap into benchmark' step.
+  # ci_analysis.yml calls merge_extrap_into_benchmark.py as a dedicated step;
+  # run_all.sh must do the same so ablation_paired.json exists for the qualify
+  # and audit_paper steps that follow (run_analysis.py ablation mode reads it).
+  # Output: exp2_extrap/ablation_paired.json  (same path ci_analysis.yml writes).
+  _SCRIPT_MERGE='${REPO_ROOT}/scripts/merge_extrap_into_benchmark.py'
+  _EXTRAP_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
+  _BENCHMARK_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
+  _PAIRED=\\\"\\${_EXTRAP_DIR}/ablation_paired.json\\\"
+
+  if [[ ! -f \\\"\${_SCRIPT_MERGE}\\\" ]]; then
+    echo '[WARN] merge_extrap_into_benchmark.py not found at '\${_SCRIPT_MERGE}
+    echo '       ablation_paired.json will not be produced locally — ci_analysis.yml will generate it.'
+  else
+    _BENCH_EXT=\\\"\\$(find \\\"\\${_EXTRAP_DIR}\\\" -name 'benchmark_results_extrap*.json' | head -1)\\\"
+    if [[ -z \\\"\${_BENCH_EXT}\\\" ]]; then
+      echo '[SKIP] benchmark_results_extrap*.json not found — run exp2_feynman_extrap first.'
+    else
+      echo '[merge] Running merge_extrap_into_benchmark.py → ablation_paired.json'
+      python3 \\\"\${_SCRIPT_MERGE}\\\" \
+        --extrap-benchmark-dir \\\"\${_EXTRAP_DIR}\\\" \
+        --benchmark-dir        \\\"\${_BENCHMARK_DIR}\\\" \
+        --output               \\\"\${_PAIRED}\\\" \
+        2>&1 | tee -a \\\"\${_EXTRAP_DIR}/ablation_paired_run.log\\\" \
+      || echo 'WARNING: merge_extrap_into_benchmark.py exited non-zero — ablation_paired.json may be incomplete'
+      if [[ -f \\\"\${_PAIRED}\\\" ]]; then
+        _NR=\\\$(python3 -c \\\"import json; print(len(json.load(open('\\\"\${_PAIRED}\\\"'))))\\\" 2>/dev/null || echo '?')
+        echo \\\"[merge] ablation_paired.json: \\\${_NR} paired record(s) → \\\${_PAIRED}\\\"
+      fi
+    fi
+  fi
 "
 
 
@@ -1636,6 +1727,55 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
     -exec mv -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \;
   find '${RESULTS_DIR}' -maxdepth 1 -name 'experiment_registry.json' \
     -exec cp -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \; 2>/dev/null || true
+"
+
+
+# ── STEP 8b: exp3_symbolic_equivalence ───────────────────────────────────────
+# Local equivalent of ci_analysis.yml 'Check symbolic equivalence (exp3/exp3b)'
+# step.  Calls check_symbolic_equivalence.py against all exp3_nguyen12_seed*.json
+# files and writes:
+#   extrapolation/multi_seed/symbolic_equivalence_report.csv
+#   extrapolation/multi_seed/symbolic_equivalence_summary.txt
+# Skipped gracefully when no seed files are present or the script is missing.
+run exp3_symbolic_equivalence \
+  "Check symbolic equivalence for Nguyen-12 results (exp3/exp3b)" bash -c "
+  set -euo pipefail
+
+  _SCRIPT='${REPO_ROOT}/scripts/check_symbolic_equivalence.py'
+  _SEED_DIR='${RESULTS_DIR}/extrapolation/multi_seed'
+  _REPORT=\\\"\${_SEED_DIR}/symbolic_equivalence_report.csv\\\"
+  _SUMMARY=\\\"\${_SEED_DIR}/symbolic_equivalence_summary.txt\\\"
+
+  # Collect seed files from both exp3 (seed42) and exp3b (other seeds)
+  _SEED_FILES=\\\$(find '${RESULTS_DIR}/extrapolation' -maxdepth 2 \
+    -name 'exp3_nguyen12_seed*.json' 2>/dev/null | sort)
+
+  if [[ -z \\\"\${_SEED_FILES}\\\" ]]; then
+    echo '[SKIP] No exp3_nguyen12_seed*.json files found — run exp3 and exp3b first.'
+    exit 0
+  fi
+
+  if [[ ! -f \\\"\${_SCRIPT}\\\" ]]; then
+    echo '[SKIP] check_symbolic_equivalence.py not found at '\${_SCRIPT}
+    echo '       Symbolic equivalence report will not be produced locally.'
+    exit 0
+  fi
+
+  echo '[exp3_sym] Running check_symbolic_equivalence.py ...'
+  mkdir -p \\\"\${_SEED_DIR}\\\"
+
+  python3 \\\"\${_SCRIPT}\\\" \
+    --result-dir  \\\"\${_SEED_DIR}\\\" \
+    --output-csv  \\\"\${_REPORT}\\\" \
+    --output-txt  \\\"\${_SUMMARY}\\\" \
+    2>&1 | tee \\\"\${_SEED_DIR}/symbolic_equivalence_run.log\\\"
+
+  if [[ -f \\\"\${_REPORT}\\\" ]]; then
+    _NR=\\\$(wc -l < \\\"\${_REPORT}\\\" || echo '?')
+    echo \\\"[exp3_sym] symbolic_equivalence_report.csv: \\\${_NR} line(s) → \\\${_REPORT}\\\"
+  else
+    echo '[WARN] symbolic_equivalence_report.csv was not produced — check script output above.'
+  fi
 "
 
 # ── STEP 9: suppA ─────────────────────────────────────────────────────────────
@@ -1778,6 +1918,43 @@ run tables "Generate all LaTeX tables from result JSONs -> \${RESULTS_DIR}/table
       2>&1 | tee '${RESULTS_DIR}'/tables_run.log
   echo 'Tables written to: ${RESULTS_DIR}/tables/'
   ls '${RESULTS_DIR}/tables/'
+
+  # ── PCA comparison table (FIX-C3) ─────────────────────────────────────────
+  # Mirrors ci_postprocess.yml 'Generate PCA comparison table (exp2_feynman_pca)'
+  # step and ci_analysis.yml 'Generate PCA comparison table (exp2_feynman_pca)'.
+  # Produces exp2_pca_comparison.{tex,csv,md} in the exp2_pca_4060/ subdir.
+  _PCA_SCRIPT='${REPO_ROOT}/scripts/patches/generate_exp2_pca_comparison_table.py'
+  _PCA_SUMMARY='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json'
+  _PCA_OUTDIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060'
+  if [[ -f \"\${_PCA_SCRIPT}\" && -f \"\${_PCA_SUMMARY}\" ]]; then
+    echo '[tables] Generating FIX-C3 PCA comparison table ...'
+    mkdir -p \"\${_PCA_OUTDIR}\"
+    python3 \"\${_PCA_SCRIPT}\" \
+      --results-dir '${RESULTS_DIR}' \
+      --output-dir  \"\${_PCA_OUTDIR}\" \
+      --formats     'tex,csv,md' \
+      2>&1 | tee -a '${RESULTS_DIR}/tables_run.log'
+  elif [[ ! -f \"\${_PCA_SUMMARY}\" ]]; then
+    echo '[tables] SKIP: exp2_pca_4060_summary.json not found — run exp2_feynman_pca_4060 first.'
+  else
+    echo '[tables] WARN: generate_exp2_pca_comparison_table.py not found — skipping PCA table.'
+  fi
+
+  # ── Nguyen-12 symbolic equivalence table (exp3/exp3b) ─────────────────────
+  # Mirrors ci_postprocess.yml 'Generate symbolic equivalence table (exp3/exp3b)'.
+  _SYM_SCRIPT='${REPO_ROOT}/scripts/patches/generate_nguyen12_symequiv_table.py'
+  _SYM_CSV='${RESULTS_DIR}/extrapolation/multi_seed/symbolic_equivalence_report.csv'
+  if [[ -f \"\${_SYM_SCRIPT}\" && -f \"\${_SYM_CSV}\" ]]; then
+    echo '[tables] Generating Nguyen-12 symbolic equivalence table ...'
+    python3 \"\${_SYM_SCRIPT}\" \
+      --results-dir '${RESULTS_DIR}/extrapolation/multi_seed' \
+      --output-dir  '${RESULTS_DIR}/tables' \
+      2>&1 | tee -a '${RESULTS_DIR}/tables_run.log'
+  elif [[ ! -f \"\${_SYM_CSV}\" ]]; then
+    echo '[tables] SKIP: symbolic_equivalence_report.csv not found — run exp3_symbolic_equivalence first.'
+  else
+    echo '[tables] SKIP: generate_nguyen12_symequiv_table.py not found.'
+  fi
 "
 
 # ── STEP 12: figures ─────────────────────────────────────────────────────────

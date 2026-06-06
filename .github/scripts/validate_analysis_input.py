@@ -316,6 +316,24 @@ _TIER2_EXTRACTORS = [
             if isinstance(eq_val, dict)
         ],
     ),
+    # Experiment summary / metadata dict (e.g. exp2_pca_4060_summary.json).
+    # These files hold aggregate stats (n_pass, n_total, solve_rate, …) for
+    # human inspection and are not record files.  We recognise them explicitly
+    # so load_records returns [] rather than raising "no extractor matched".
+    # Guard: top-level dict that has ALL of the canonical summary keys and
+    # contains NO list-of-records or results-keyed children.
+    (
+        "experiment_summary_dict",
+        lambda d: (
+            isinstance(d, dict)
+            and {"n_pass", "n_total", "solve_rate"}.issubset(d.keys())
+            and not isinstance(d.get("results"), (list, dict))
+            and not isinstance(d.get("tests"), list)
+            and not isinstance(d.get("per_noise"), dict)
+            and not isinstance(d.get("per_n"), dict)
+        ),
+        lambda d: [],   # no per-record data to validate
+    ),
     # Top-level dict, no "results" wrapper, equation->generic dict (merge_shards.py output)
     (
         "toplevel_generic_dicts",
@@ -404,6 +422,7 @@ def main():
             print(f"::error::SHARD_MANIFEST='{manifest_path}' is not a file.")
             sys.exit(1)
         manifest = pathlib.Path(manifest_path)
+        n_summary_shards = 0
         for line in manifest.read_text().splitlines():
             line = line.strip()
             if not line:
@@ -412,6 +431,10 @@ def main():
             records = load_records(line)
             print(f"Records: {len(records)}")
             total += len(records)
+            # experiment_summary_dict shards legitimately return 0 records;
+            # track them so we don't misfire FATAL: EMPTY DATASET.
+            if len(records) == 0:
+                n_summary_shards += 1
 
     else:
         print(f"::error::Unknown INPUT_MODE='{mode}'. Expected: merged | direct | shards")
@@ -419,7 +442,10 @@ def main():
 
     print(f"TOTAL_RECORDS={total}")
 
-    if total == 0:
+    # Fail only when there are zero records AND no shard was a recognised
+    # summary/metadata file (which legitimately contributes 0 records).
+    _n_summary = n_summary_shards if mode == "shards" else 0
+    if total == 0 and _n_summary == 0:
         print()
         print("FATAL: EMPTY DATASET")
         sys.exit(1)
@@ -614,6 +640,22 @@ _SELF_TEST_CASES = [
         },
         # 50: 2 eq x 2 methods = 4, 100: 1 eq x 1 method = 1  → total 5
         expected_n=5, expected_fmt="sample_complexity_per_n", tier=2,
+    ),
+    dict(
+        name="tier2 / experiment_summary_dict  (exp2_pca_4060_summary.json)",
+        payload={
+            "fixc3_step": "pca_4060",
+            "description": "PCA 40/60 split summary",
+            "split_protocol": "pca",
+            "extrap_train_frac": 0.4,
+            "extrap_multiplier": 1.5,
+            "n_pass": 162,
+            "n_total": 180,
+            "solve_rate": 0.9,
+            "paper_legacy_claim": 0.88,
+            "source_files": ["benchmark_results_extrap.json"],
+        },
+        expected_n=0, expected_fmt="experiment_summary_dict", tier=2,
     ),
     # ------------------------------------------------------------------
     # Error / no-match
