@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       apply_fixes_only:
-        description: "Run fix_paper_issues.py only — skip all notebook execution (true/false)"
+        description: "Run hypatia_inspector.py only — skip all notebook execution (true/false)"
         required: false
         default: "false"
 
@@ -26,20 +26,18 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PYTHON_VERSION: "3.12"
+  # Single canonical path for the registry used by hypatia_inspector.py
+  REGISTRY_PATH: "scripts/patches/issue_registry.json"
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
   # Job 0 — apply-fixes  (standalone, workflow_dispatch only)
   #
-  # Runs fix_paper_issues.py directly against the checked-out .tex and .py
-  # sources without executing any notebook.  Triggered by setting the
-  # workflow_dispatch input apply_fixes_only=true.
+  # Runs hypatia_inspector.py --apply --update-registry directly against
+  # the checked-out sources without executing any notebook.
+  # Triggered by setting apply_fixes_only=true.
   #
-  # Commits the patched files back to the branch so downstream tools (LaTeX
-  # build, reviewers) see the corrected source immediately.
-  #
-  # When apply_fixes_only=false (default) this job is skipped entirely and
-  # the normal audit-setup → NB-01…NB-06 pipeline runs as usual.
+  # Commits the patched files AND the updated registry back to the branch.
   # ──────────────────────────────────────────────────────────────────────────
   apply-fixes:
     name: "Apply non-numerical paper fixes (standalone)"
@@ -47,7 +45,7 @@ jobs:
     if: github.event.inputs.apply_fixes_only == 'true'
 
     permissions:
-      contents: write   # needed to push the patched files back
+      contents: write   # needed to push patched files + registry back
 
     steps:
       - name: Checkout repository
@@ -62,18 +60,32 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Run fix_paper_issues.py
+      # ── Run hypatia_inspector.py in apply + update-registry mode ───────────
+      # --apply           : write real file changes (not a dry-run)
+      # --update-registry : mark applied fixes as 'resolved' in the registry
+      # --json-out        : emit findings.json for artifact upload
+      - name: Run hypatia_inspector.py (apply + update-registry)
         run: |
-          if [ -f scripts/patches/fix_paper_issues.py ]; then
-            echo "Running fix_paper_issues.py from scripts/patches/"
-            python scripts/patches/fix_paper_issues.py \
-              --tex-dir . --supp-dir . --py-dir . --dry-run false
-          else
-            echo "ERROR: scripts/patches/fix_paper_issues.py not found"
-            exit 1
-          fi
+          python hypatia_inspector.py \
+            --repo . \
+            --registry "${{ env.REGISTRY_PATH }}" \
+            --apply \
+            --update-registry \
+            --json-out findings.json
+        # Exit 1 means open issues remain; that's expected on first run.
+        # We still want the commit step to capture whatever was applied.
+        continue-on-error: true
 
-      - name: Commit patched files
+      - name: Upload findings artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: hypatia-findings-${{ github.run_id }}
+          path: findings.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Commit patched files and updated registry
         id: commit
         run: |
           git config user.name  "github-actions[bot]"
@@ -83,23 +95,13 @@ jobs:
             echo "Nothing to commit — all fixes already applied."
             echo "patches_applied=false" >> "$GITHUB_OUTPUT"
           else
-            git commit -m "ci: apply non-numerical paper fixes via fix_paper_issues.py [skip ci]"
+            git commit -m "ci: apply paper fixes via hypatia_inspector.py [skip ci]"
             git push
-            echo "Patched files committed and pushed."
+            echo "Patched files and registry committed and pushed."
             echo "patches_applied=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Dispatch ci_report
-        # Only dispatch when the fix script and commit both succeeded.
-        # 'success' here means the commit step exited 0 — covers both the
-        # "committed & pushed" and "nothing to commit" outcomes.
-        # Skipped automatically if any earlier step in this job failed.
-        #
-        # GITHUB_TOKEN cannot trigger workflow_dispatch on other workflows
-        # (HTTP 403: Resource not accessible by integration).
-        # Requires a PAT with the 'workflow' scope stored as PAT_WORKFLOW.
-        # Create one at: github.com/settings/tokens → Fine-grained or Classic
-        # Scopes needed: repo + workflow
         if: success()
         env:
           GH_TOKEN: ${{ secrets.PAT_WORKFLOW }}
@@ -109,33 +111,31 @@ jobs:
         run: |
           if [[ -z "$GH_TOKEN" ]]; then
             echo "ERROR: PAT_WORKFLOW secret is not set."
-            echo "Create a PAT with 'workflow' scope at github.com/settings/tokens"
-            echo "then add it as a repository secret named PAT_WORKFLOW."
+            echo "Create a PAT with 'workflow' scope and add it as PAT_WORKFLOW."
             exit 1
           fi
           gh workflow run ci_report.yml \
             --repo "$REPO" \
-            --ref  "$BRANCH"
+            --ref  "$BRANCH" \
+            --field no_notebooks=true
           if [[ "$PATCHES" == "true" ]]; then
             echo "ci_report.yml dispatched — report will rebuild with patched sources."
           else
-            echo "ci_report.yml dispatched — sources were already clean, report will confirm."
+            echo "ci_report.yml dispatched — sources were already clean."
           fi
 
   # ──────────────────────────────────────────────
   # Job 1 — audit-setup
   # Checks out the repo, sets up Python/Jupyter,
   # copies .tex source files into notebooks/, and
-  # runs fix_paper_issues.py to auto-patch all
+  # runs hypatia_inspector.py to auto-patch all
   # non-numerical issues before any notebook runs.
-  # Skipped when apply_fixes_only=true (Job 0 runs instead).
+  # Skipped when apply_fixes_only=true.
   # ──────────────────────────────────────────────
   audit-setup:
     name: "audit-setup: copy .tex files + apply non-numerical fixes"
     runs-on: ubuntu-latest
 
-    # Skip when the caller only wants fixes applied (Job 0 handles that path).
-    # Otherwise run on workflow_run success or manual dispatch.
     if: >
       github.event.inputs.apply_fixes_only != 'true' &&
       (github.event_name == 'workflow_dispatch' ||
@@ -162,7 +162,6 @@ jobs:
 
       - name: Copy .tex files into notebooks/
         run: |
-          # Mirrors the audit-setup step in run_all_checkpoint.py
           mkdir -p notebooks
           find . -maxdepth 2 -name "*.tex" \
             ! -path "./notebooks/*" \
@@ -170,24 +169,39 @@ jobs:
             -exec cp -v {} notebooks/ \;
 
       # ── Apply all automatable non-numerical fixes ──────────────────────────
-      # Runs fix_paper_issues.py which patches jmlr-hypatiax-paper-final.tex
-      # and supp_routing_improvements.tex in-place before notebooks execute.
-      # The script exits 0 even if the .tex files are absent (graceful no-op)
-      # so this step never blocks the pipeline.
-      # Fixes applied: FIX-B1, FIX-B2, FIX-B3, FIX-XR1, FIX-XR2, FIX-XR3,
-      #                FIX-XR4, FIX-N1, FIX-N2, FIX-C2 (import replacement)
-      - name: Apply non-numerical paper fixes
+      # Uses hypatia_inspector.py as the single source of truth.
+      # --apply           : write real changes
+      # --update-registry : mark resolved fixes in the registry JSON
+      # --json-out        : write findings.json for downstream artifact upload
+      #
+      # Fixes applied (auto_fixable=true, status=open in registry):
+      #   FIX-B1, FIX-B2, FIX-B3,
+      #   FIX-XR1, FIX-XR2, FIX-XR3, FIX-XR4,
+      #   FIX-N1, FIX-N2, FIX-C2,
+      #   FIX-F2, FIX-F3, FIX-F4  (when source files are present)
+      - name: Apply non-numerical paper fixes (hypatia_inspector)
         run: |
-          if [ -f scripts/fix_paper_issues.py ]; then
-            echo "Running fix_paper_issues.py from scripts/"
-            python scripts/fix_paper_issues.py --tex-dir . --supp-dir . --dry-run false
-          elif [ -f fix_paper_issues.py ]; then
-            echo "Running fix_paper_issues.py from repo root"
-            python fix_paper_issues.py --tex-dir . --supp-dir . --dry-run false
+          if [ -f hypatia_inspector.py ]; then
+            python hypatia_inspector.py \
+              --repo . \
+              --registry "${{ env.REGISTRY_PATH }}" \
+              --apply \
+              --update-registry \
+              --json-out findings.json
           else
-            echo "fix_paper_issues.py not found — skipping auto-fix step"
-            echo "Place fix_paper_issues.py in the repo root or scripts/ to enable."
+            echo "::warning::hypatia_inspector.py not found — skipping auto-fix step"
           fi
+        # continue-on-error so open issues don't block notebook execution
+        continue-on-error: true
+
+      - name: Upload findings artifact (audit-setup)
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: hypatia-findings-setup-${{ github.run_id }}
+          path: findings.json
+          if-no-files-found: warn
+          retention-days: 30
 
       # Upload the prepared notebooks/ directory so downstream jobs can use it.
       # Includes patched .tex copies so every NB sees the fixed source.
@@ -200,14 +214,9 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # NOTE ON DEPENDENCY STRUCTURE
-  # ──────────────────────────────────────────────────────────────────────────
-  # Each NB job depends only on audit-setup (not on the previous NB job).
-  # This breaks the old strict serial chain:
-  #   audit-setup → NB-01 → NB-02 → NB-03 → NB-04 → NB-05 → NB-06
-  # which caused NB-02…NB-06 to be SKIPPED whenever NB-01 failed, producing
-  # "⚠️ Notebook not found" in the report for those sections.
+  # Each NB job fans out from audit-setup (not from the previous NB job).
+  # This prevents a failing NB-01 from cascading to NB-02…NB-06.
   #
-  # New structure (all fan out from audit-setup):
   #   audit-setup → NB-01
   #              → NB-02
   #              → NB-03
@@ -215,9 +224,6 @@ jobs:
   #              → NB-05
   #              → NB-06
   #              → bundle-artifacts (needs: all six, if: always())
-  #
-  # Each NB job uses `if: always() && needs.audit-setup.result != 'skipped'`
-  # so a failing notebook does not cascade to its siblings.
   # ──────────────────────────────────────────────────────────────────────────
 
   # ──────────────────────────────────────────────
@@ -227,7 +233,6 @@ jobs:
     name: "NB-01: Citation & Bibliography Audit"
     runs-on: ubuntu-latest
     needs: audit-setup
-    # Run even if audit-setup produced warnings; only skip if it was skipped.
     if: always() && needs.audit-setup.result != 'skipped'
 
     steps:
@@ -309,7 +314,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          name: NB-02_CrossRef_Label_Audit
+          name: NB-02_CrossReference_Label_Audit
           path: notebooks/NB-02_CrossReference_Label_Audit.ipynb
           retention-days: 7
 
@@ -355,7 +360,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          name: NB-03_Section_Structure_Audit
+          name: NB-03_Section_Structure_Numbering
           path: notebooks/NB-03_Section_Structure_Numbering.ipynb
           retention-days: 7
 
@@ -401,7 +406,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          name: NB-04_Numerical_Consistency_Audit
+          name: NB-04_Numerical_Consistency_Checker
           path: notebooks/NB-04_Numerical_Consistency_Checker.ipynb
           retention-days: 7
 
@@ -447,7 +452,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
-          name: NB-05_Figure_Audit
+          name: NB-05_Figure_Image_Dependency_Checker
           path: notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb
           retention-days: 7
 
@@ -509,9 +514,6 @@ jobs:
       - nb-05-figures
       - nb-06-integrity
 
-    # Skip entirely when apply_fixes_only=true — notebooks were never run so
-    # there are no artifacts to bundle.  apply-fixes dispatches ci_report
-    # directly in that path.
     if: >
       always() &&
       github.event.inputs.apply_fixes_only != 'true'
@@ -519,8 +521,6 @@ jobs:
     steps:
 
       - name: Download all notebook artifacts
-        # continue-on-error so a missing artifact (e.g. a notebook that failed
-        # to upload) does not abort the entire bundle job.
         continue-on-error: true
         uses: actions/download-artifact@v4.1.8
         with:
@@ -542,9 +542,16 @@ jobs:
           retention-days: 30
 
       # ── Normalised summary for ci_report dynamic conclusions ─────────────────
-      # (unchanged from original — omitted here for brevity; keep the full
-      #  Python block from the original file starting at "Write notebooks audit
-      #  summary JSON" and ending at "Upload notebooks audit summary")
+      # Reads findings.json produced by hypatia_inspector.py (from the
+      # hypatia-findings-setup-* artifact) plus live notebook outputs, and
+      # writes a merged notebooks_audit_summary.json in the shared schema.
+      - name: Download hypatia findings artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: hypatia-findings-setup-${{ github.run_id }}
+          path: /tmp/hypatia_findings
+
       - name: Write notebooks audit summary JSON
         if: always()
         env:
@@ -555,7 +562,33 @@ jobs:
           import json, os, re, datetime
           from pathlib import Path
 
-          run_id  = os.environ["RUN_ID"]
+          run_id = os.environ["RUN_ID"]
+
+          # ── Load hypatia_inspector findings.json if available ─────────────────
+          hypatia_findings = {}
+          for candidate in [
+              "/tmp/hypatia_findings/findings.json",
+          ]:
+              try:
+                  raw = json.loads(Path(candidate).read_text())
+                  for f in raw:
+                      fid = f.get("fix_id") or f.get("id", "")
+                      if fid:
+                          hypatia_findings[fid] = {
+                              "id":          fid,
+                              "severity":    f.get("severity", "MEDIUM").upper(),
+                              "status":      ("RESOLVED" if f.get("status") == "fixed"
+                                              else "OPEN"   if f.get("status") in ("detected","manual")
+                                              else f.get("status", "OPEN").upper()),
+                              "description": f.get("summary", ""),
+                              "action":      "",
+                              "nb":          "hypatia_inspector",
+                              "auto_fixable": f.get("auto_fixable", False),
+                          }
+                  print(f"Loaded {len(hypatia_findings)} findings from hypatia_inspector")
+                  break
+              except Exception as exc:
+                  print(f"Could not load hypatia findings: {exc}")
 
           STATIC_FIXES = [
               {"id":"FIX-B1",  "severity":"CRITICAL","status":"OPEN",    "nb":"NB-01",
@@ -571,8 +604,8 @@ jobs:
                "description":"sec:llm_limitations and sec:llm_domain both defined on Section 3 — duplicate labels.",
                "action":"Remove \\label{sec:llm_domain}; update \\ref call sites."},
               {"id":"FIX-XR2","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
-               "description":"\\label{sec:r2_bugfix} sits inside \\item block — \\ref will produce garbled output.",
-               "action":"Move label to \\subsection heading or replace call sites with sec:corrections."},
+               "description":"\\label{sec:r2_bugfix} sits inside \\item block — garbled \\ref output.",
+               "action":"Move label to \\subsection heading."},
               {"id":"FIX-XR3","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
                "description":"Supp A references Section 7.3 for Proposition 1; main paper places Component 3 in §7.4.",
                "action":"Change 7.3 → 7.4 in supp_routing_improvements.tex."},
@@ -580,10 +613,10 @@ jobs:
                "description":"Supp A references filename jmlr_paper_main.tex; actual file is jmlr-hypatiax-paper-final.tex.",
                "action":"Update all filename strings in Supp A."},
               {"id":"FIX-N1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
-               "description":"Spearman footnote says '71 cases'; table caption (tab:instability) correctly says '70 tasks'.",
+               "description":"Spearman footnote says '71 cases'; table caption correctly says '70 tasks'.",
                "action":"Change '71 cases' → '70 tasks' in instability section body (line 1637)."},
               {"id":"FIX-N2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
-               "description":"§8.3 heading reads 'Five-Layer Architecture Overview'; abstract/intro/§7 use 'five-stage routing'.",
+               "description":"§8.3 heading reads 'Five-Layer Architecture Overview'; rest of paper uses 'five-stage routing'.",
                "action":"Rename §8.3 to 'Five-Stage Routing Architecture Overview'."},
               {"id":"FIX-N3", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
                "description":"Nguyen-12 numbers need verification after seed=123 rerun.",
@@ -604,16 +637,28 @@ jobs:
                "description":"Three duplicate case names in hypatiax_defi_benchmark_v3c.py.",
                "action":"Rename duplicates (e.g. add (basic)/(extended) suffixes) and rerun checkpoint."},
               {"id":"FIX-C2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-06",
-               "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py (lines 29, 266, 2070, 2404).",
+               "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py.",
                "action":"Replace with hybrid_system_v50_2 throughout."},
               {"id":"FIX-C3", "severity":"MEDIUM",  "status":"RESOLVED","nb":"NB-06 / ci_runner_disclosure",
                "description":"Feynman split-protocol corrected: PCA 40/60 run in exp2_pca_4060/; Gates A/B/C passed.",
-               "action":"Report corrected result from exp2_pca_4060/ in §10.7 or add explicit disclosure of random 80/20 baseline."},
-              {"id":"FIX-C4", "severity":"INFO",    "status":"RESOLVED","nb":"NB-06",
-               "description":"FALSE POSITIVE — REMOVED. NB-06 Step 4 scan result: OK - no exposed API keys found.",
-               "action":"No action required."},
+               "action":"Report corrected result from exp2_pca_4060/ in §10.7 or add explicit disclosure of random 80/20 baseline.",
+               "status":"RESOLVED"},
           ]
 
+          # Merge: hypatia_inspector status takes precedence over static fallback
+          merged = []
+          for f in STATIC_FIXES:
+              live = hypatia_findings.get(f["id"])
+              if live:
+                  merged.append({**f, "status": live["status"]})
+              else:
+                  merged.append(f)
+          static_ids = {f["id"] for f in STATIC_FIXES}
+          for fid, f in hypatia_findings.items():
+              if fid not in static_ids:
+                  merged.append(f)
+
+          # Also scan live notebook outputs for any findings cells
           nb_findings = {}
           for nb_path in sorted(Path("notebooks").rglob("*.ipynb")):
               try:
@@ -648,15 +693,10 @@ jobs:
                           except Exception:
                               pass
 
-          merged = []
-          for fix in STATIC_FIXES:
-              live = nb_findings.get(fix["id"])
-              if live:
-                  fix = {**fix, **live}
-              merged.append(fix)
-          static_ids = {f["id"] for f in STATIC_FIXES}
+          # Layer live notebook findings on top
+          merged_ids = {f["id"] for f in merged}
           for fid, f in nb_findings.items():
-              if fid not in static_ids:
+              if fid not in merged_ids:
                   merged.append(f)
 
           summary = {
@@ -668,7 +708,9 @@ jobs:
           out = Path("notebooks/notebooks_audit_summary.json")
           out.parent.mkdir(parents=True, exist_ok=True)
           out.write_text(json.dumps(summary, indent=2))
-          print(f"Wrote {out} — {len(merged)} finding(s) ({len(nb_findings)} from live notebooks)")
+          print(f"Wrote {out} — {len(merged)} finding(s) "
+                f"({len(hypatia_findings)} from hypatia_inspector, "
+                f"{len(nb_findings)} from live notebooks)")
           PYEOF
 
       - name: Upload notebooks audit summary
@@ -680,8 +722,4 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  # Job 8 (report) has been moved to ci_report.yml.
-  # ci_report.yml triggers on completion of this workflow, downloads the
-  # NB-01…NB-06 artifacts produced above, converts them to HTML, builds the
-  # combined audit report, and deploys it to GitHub Pages — without re-running
-  # any notebooks.
+  # Job 8 (report) lives in ci_report.yml.

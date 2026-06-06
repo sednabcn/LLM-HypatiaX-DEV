@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn "sympy>=1.12"
 
       # ISSUE 3 FIX: resolve result_subdir from experiment name (same canonical
       # mapping used by ci_analysis.yml) so the scripts receive the correct
@@ -58,6 +58,7 @@ jobs:
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
+              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
@@ -153,6 +154,44 @@ jobs:
           python scripts/generate_tables.py \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: Generate symbolic equivalence table (exp3 / exp3b)
+        if: |
+          github.event.inputs.experiment == 'exp3' ||
+          github.event.inputs.experiment == 'exp3b'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+
+          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
+          TABS="${OUT_BASE}/${SUB}/tables"
+
+          # Guard: ci_analysis must have run first and committed the CSV.
+          if [[ ! -f "$CSV" ]]; then
+            echo "::error::symbolic_equivalence_report.csv not found at ${CSV}"
+            echo "  Run ci_analysis.yml for ${EXPERIMENT} first, then re-run postprocess."
+            exit 1
+          fi
+
+          python scripts/patches/generate_nguyen12_symequiv_table.py \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "$TABS"
+
+      - name: Generate PCA comparison table (exp2_feynman_pca)
+        if: github.event.inputs.experiment == 'exp2_feynman_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+
+          # The comparison script reads BOTH exp2 (random 80/20) and exp2_pca_4060
+          # result trees from the committed repo.  Output is written directly into
+          # the exp2_pca_4060 subdirectory (tables are committed by the Commit step).
+          python scripts/patches/generate_exp2_pca_comparison_table.py \
+            --results-dir "${OUT_BASE}" \
+            --output-dir  "${OUT_BASE}/${SUB}" \
+            --formats     "tex,csv,md"
 
       - name: Post-run overwrite summary
         env:

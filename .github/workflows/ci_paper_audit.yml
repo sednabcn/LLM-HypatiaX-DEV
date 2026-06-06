@@ -137,6 +137,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   OUT_BASE: "hypatiax/data/results"
   PYTHON_VERSION: "3.12"
+  REGISTRY_PATH: "scripts/patches/issue_registry.json"
 
 jobs:
 
@@ -729,6 +730,31 @@ jobs:
           fi
           N=$(python3 -c "import json; d=json.load(open('scripts/patches/paper_targets.json')); print(len(d))")
           echo "paper_targets.json: ${N} claim(s)"
+
+      # ── Run hypatia_inspector.py (dry-run) before paper-audit ──────────────
+      # Produces findings.json with current fix statuses without modifying files.
+      # (apply mode already ran in audit-setup / apply-fixes in ci_paper_notebooks.yml)
+      - name: Run hypatia_inspector.py (dry-run report)
+        run: |
+          if [ -f hypatia_inspector.py ]; then
+            python hypatia_inspector.py \
+              --repo . \
+              --registry "${{ env.REGISTRY_PATH }}" \
+              --json-out findings.json \
+              --severity critical,high,medium
+          else
+            echo "::warning::hypatia_inspector.py not found at repo root — skipping inspector step"
+          fi
+        continue-on-error: true
+
+      - name: Upload inspector findings artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: hypatia-findings-audit-${{ github.run_id }}
+          path: findings.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Assert no API keys hardcoded in notebooks
         # NB-06 Step 4 confirmed CLEAN (scan result: "OK - no exposed API keys found").

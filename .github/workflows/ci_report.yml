@@ -33,6 +33,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PYTHON_VERSION: "3.12"
+  REGISTRY_PATH: "scripts/patches/issue_registry.json"
 
 # Only one Pages deployment at a time; cancel any in-progress run.
 concurrency:
@@ -383,6 +384,24 @@ jobs:
             --dir /tmp/audit_summary 2>/dev/null || true
           ls -la /tmp/audit_summary/ 2>/dev/null || echo "No audit summary artifacts downloaded"
 
+
+      - name: Download hypatia inspector findings artifact
+        # Tries the artifact uploaded by the audit-setup job in ci_paper_notebooks
+        # and by the paper-audit job in ci_paper_audit.  Used to show real-time
+        # fix statuses (RESOLVED vs OPEN) in the conclusions section.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          SUM_RUN:  ${{ github.event.inputs.summary_run_id || steps.resolve-run.outputs.notebooks_run_id }}
+        run: |
+          mkdir -p /tmp/hypatia_findings
+          if [[ -n "$SUM_RUN" ]]; then
+            gh run download "$SUM_RUN"               --repo "$REPO"               --name "hypatia-findings-setup-${SUM_RUN}"               --dir /tmp/hypatia_findings 2>/dev/null || true
+            gh run download "$SUM_RUN"               --repo "$REPO"               --name "hypatia-findings-audit-${SUM_RUN}"               --dir /tmp/hypatia_findings 2>/dev/null || true
+          fi
+          ls -la /tmp/hypatia_findings/ 2>/dev/null || echo "No hypatia findings artifacts downloaded"
+
       - name: Render dynamic conclusions section
         # Reads notebooks_audit_summary.json (from downloaded artifact or the
         # static fallback list) and writes a live conclusions section to
@@ -414,6 +433,29 @@ jobs:
                   break
               except Exception:
                   pass
+
+          # ── Load hypatia_inspector findings (override statuses) ───────────────
+          hypatia_statuses = {}
+          for candidate in [
+              "/tmp/hypatia_findings/findings.json",
+          ]:
+              try:
+                  raw = json.loads(Path(candidate).read_text())
+                  for f in raw:
+                      fid = f.get("fix_id") or f.get("id", "")
+                      if fid:
+                          st = f.get("status", "")
+                          if st == "fixed":
+                              hypatia_statuses[fid] = "RESOLVED"
+                          elif st in ("detected", "manual"):
+                              hypatia_statuses[fid] = "OPEN"
+                          elif st == "skipped":
+                              # skipped = false_positive or already resolved
+                              hypatia_statuses[fid] = "RESOLVED"
+                  print(f"Loaded {len(hypatia_statuses)} statuses from hypatia_inspector")
+                  break
+              except Exception as exc:
+                  print(f"Could not load hypatia findings: {exc}")
 
           # Static fallback (same list as in ci_paper_notebooks.yml) used when
           # no artifact was downloaded and when no_notebooks=true.
@@ -486,6 +528,13 @@ jobs:
               for f in STATIC_FIXES:
                   status = f.get("status", "RESOLVED" if f["id"] in AUTO_RESOLVED else "OPEN")
                   findings.append({**f, "status": status})
+
+          # Apply hypatia_inspector status overrides (most up-to-date source of truth)
+          if hypatia_statuses:
+              for f in findings:
+                  if f.get("id") in hypatia_statuses:
+                      f["status"] = hypatia_statuses[f["id"]]
+              print(f"Applied {len(hypatia_statuses)} hypatia_inspector status override(s)")
 
           # ── Helpers ───────────────────────────────────────────────────────────
           SEV_STYLE = {

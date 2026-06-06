@@ -203,6 +203,7 @@ jobs:
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
+              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
@@ -372,6 +373,87 @@ jobs:
           echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
+      # Symbolic equivalence check (exp3 / exp3b only)
+      # Runs check_symbolic_equivalence.py against all exp3_nguyen12_seed*.json
+      # files in RESULT_DIR and commits two outputs:
+      #   symbolic_equivalence_report.csv    (machine-readable, per-seed rows)
+      #   symbolic_equivalence_summary.txt   (paper-ready summary)
+      # Must run AFTER Merge shards so exp3b has its full seed set committed.
+      # -----------------------------------------------------------------------
+
+      - name: Install symbolic-equivalence dependencies (exp3 / exp3b)
+        if: |
+          github.event.inputs.experiment == 'exp3' ||
+          github.event.inputs.experiment == 'exp3b'
+        shell: bash
+        run: |
+          pip install "sympy>=1.12"
+
+      - name: Run symbolic equivalence check (exp3 / exp3b)
+        if: |
+          github.event.inputs.experiment == 'exp3' ||
+          github.event.inputs.experiment == 'exp3b'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Collect all seed files in RESULT_DIR (exp3: one file; exp3b: four).
+          # Use a glob — do not hardcode seed numbers, so new seeds added to
+          # multi_seed/ are picked up automatically without YAML changes.
+          SEED_FILES=( "${RESULT_DIR}"/exp3_nguyen12_seed*.json )
+
+          if [[ ${#SEED_FILES[@]} -eq 0 || ! -f "${SEED_FILES[0]}" ]]; then
+            echo "::error::No exp3_nguyen12_seed*.json files found in ${RESULT_DIR}"
+            exit 1
+          fi
+
+          echo "Found ${#SEED_FILES[@]} seed file(s): ${SEED_FILES[*]}"
+
+          # Script writes its outputs next to the seed files by default.
+          # Override the CWD so relative-path outputs land in RESULT_DIR.
+          cd "$RESULT_DIR"
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/check_symbolic_equivalence.py" \
+            "${SEED_FILES[@]}"
+
+          # Verify both outputs were produced.
+          [[ -f symbolic_equivalence_report.csv ]] || {
+            echo "::error::check_symbolic_equivalence.py did not produce symbolic_equivalence_report.csv"
+            exit 1
+          }
+          [[ -f symbolic_equivalence_summary.txt ]] || {
+            echo "::error::check_symbolic_equivalence.py did not produce symbolic_equivalence_summary.txt"
+            exit 1
+          }
+
+          echo "Symbolic equivalence outputs:"
+          ls -lh symbolic_equivalence_report.csv symbolic_equivalence_summary.txt
+
+      - name: Commit symbolic equivalence outputs (exp3 / exp3b)
+        if: |
+          github.event.inputs.experiment == 'exp3' ||
+          github.event.inputs.experiment == 'exp3b'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git pull --rebase origin ${{ github.ref_name }}
+
+          git add -f \
+            "${RESULT_DIR}/symbolic_equivalence_report.csv" \
+            "${RESULT_DIR}/symbolic_equivalence_summary.txt"
+
+          if git diff --cached --quiet; then
+            echo "Symbolic equivalence outputs unchanged — nothing to commit."
+          else
+            git commit -m "data: symbolic equivalence ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed symbolic equivalence outputs."
+          fi
+
+      # -----------------------------------------------------------------------
       # Merge extrap into benchmark (exp2_feynman_extrap only)
       # -----------------------------------------------------------------------
       # merge_extrap_into_benchmark.py joins benchmark_results.json (train r2)
@@ -461,6 +543,57 @@ jobs:
             git commit -m "data: ablation_paired.json ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
             echo "Pushed ablation_paired.json to master."
+          fi
+
+      # -----------------------------------------------------------------------
+      # Generate PCA comparison table (exp2_feynman_pca only)
+      # -----------------------------------------------------------------------
+      # Runs generate_exp2_pca_comparison_table.py to produce a side-by-side
+      # LaTeX/CSV/Markdown comparison of exp2-feynman (random_state=42, 80/20)
+      # vs exp2_feynman_pca (PCA-directed 40/60 split).  The script reads both
+      # result subtrees from the committed repo so it works in both scheduled
+      # and manual re-run modes with no source_run_id required.
+
+      - name: Generate PCA comparison table (exp2_feynman_pca)
+        if: github.event.inputs.experiment == 'exp2_feynman_pca'
+        env:
+          SUB: ${{ env.RESULT_SUBDIR }}
+        run: |
+          set -euo pipefail
+
+          RESULTS_ROOT="hypatiax/data/results"
+          OUTPUT_DIR="${RESULTS_ROOT}/comparison_results/feynman-tests/exp2_pca_4060"
+
+          echo "Running generate_exp2_pca_comparison_table.py ..."
+          python3 scripts/patches/generate_exp2_pca_comparison_table.py \
+            --results-dir "${RESULTS_ROOT}" \
+            --output-dir  "${OUTPUT_DIR}" \
+            --formats     "tex,csv,md"
+
+          echo "PCA comparison table written to ${OUTPUT_DIR}."
+
+      - name: Commit PCA comparison table (exp2_feynman_pca)
+        if: github.event.inputs.experiment == 'exp2_feynman_pca'
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git reset HEAD 2>/dev/null || true
+
+          OUTPUT_DIR="hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060"
+          git add -f \
+            "${OUTPUT_DIR}/exp2_pca_comparison.tex" \
+            "${OUTPUT_DIR}/exp2_pca_comparison.csv" \
+            "${OUTPUT_DIR}/exp2_pca_comparison.md"
+
+          if git diff --cached --quiet; then
+            echo "PCA comparison table unchanged — nothing to commit."
+          else
+            git commit -m "data: exp2 PCA comparison table (FIX-C3) - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed PCA comparison table to master."
           fi
 
       # -----------------------------------------------------------------------
@@ -591,7 +724,9 @@ jobs:
           path: |
             ${{ env.RESULT_DIR }}/_report.md
             ${{ env.RESULT_DIR }}/_analysis.json
-          if-no-files-found: error
+            ${{ env.RESULT_DIR }}/symbolic_equivalence_report.csv
+            ${{ env.RESULT_DIR }}/symbolic_equivalence_summary.txt
+          if-no-files-found: warn        # warn not error: non-exp3 runs won't have these
           retention-days: 30
 
       # -----------------------------------------------------------------------
