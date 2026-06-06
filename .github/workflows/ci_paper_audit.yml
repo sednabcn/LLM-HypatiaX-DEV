@@ -7,13 +7,13 @@
 #  which is the last experiment in the queue.  Gated on:
 #    slot == '12'  AND  run_full == 'true'
 #
-#  ALL logic lives in run_all.sh — this file only wires CI plumbing.
-#  Steps call: bash run_all.sh <step_name>
+#  ALL logic lives in scripts/patches/run_audit.sh — this file only wires CI plumbing.
+#  Steps call: bash scripts/patches/run_audit.sh <step_name>
 #
 #  JOBS (sequential)
 #  -----------------
 #  Job 0 — guard
-#    bash run_all.sh audit_guard
+#    bash scripts/patches/run_audit.sh audit_guard
 #    Sets should_run=true/false based on slot + conclusion.
 #
 #  Job 0b — collect-figures-tables  (needs: guard)
@@ -33,12 +33,12 @@
 #    or empty — prevents misleading FAIL output from downstream jobs.
 #
 #  Job 1 — numerical-verify  (needs: preflight-check)
-#    bash run_all.sh qualify
+#    bash scripts/patches/run_audit.sh qualify
 #    Numerical spot-checks + 7-dimension per-experiment gate.
 #    Writes logs/verify_report.json.  Exits non-zero on any FAIL.
 #
 #  Job 2 — paper-audit  (needs: numerical-verify)
-#    bash run_all.sh audit_paper
+#    bash scripts/patches/run_audit.sh audit_paper
 #    Loads scripts/patches/paper_targets.json, cross-checks all claims
 #    against _merged.json files, emits logs/paper_audit_findings.json.
 #    Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
@@ -50,13 +50,13 @@
 #    must never be hardcoded in notebook cells.
 #
 #  Job 3 — figures-tables-validate  (needs: numerical-verify)
-#    bash run_all.sh audit_figures_tables
+#    bash scripts/patches/run_audit.sh audit_figures_tables
 #    Validates that all expected figures (PDF/PNG) and tables (TeX) are
 #    present in RESULTS_DIR/figures/ and RESULTS_DIR/tables/.
 #    Exits non-zero on any missing file.
 #
 #  Job 4 — final-gate
-#    bash run_all.sh audit_final_gate
+#    bash scripts/patches/run_audit.sh audit_final_gate
 #    Aggregates results and sets the workflow conclusion.
 #
 #  TIMEOUT CONTRACT
@@ -64,10 +64,10 @@
 #  guard                   :  5 min
 #  collect-figures-tables  : 10 min  (scan + copy or generate)
 #  preflight-check         :  5 min  (existence assertion only)
-#  numerical-verify        : 15 min  (bash run_all.sh qualify)
-#  paper-audit             : 15 min  (bash run_all.sh audit_paper)
-#  figures-tables-validate : 10 min  (bash run_all.sh audit_figures_tables)
-#  final-gate              :  5 min  (bash run_all.sh audit_final_gate)
+#  numerical-verify        : 15 min  (bash scripts/patches/run_audit.sh qualify)
+#  paper-audit             : 15 min  (bash scripts/patches/run_audit.sh audit_paper)
+#  figures-tables-validate : 10 min  (bash scripts/patches/run_audit.sh audit_figures_tables)
+#  final-gate              :  5 min  (bash scripts/patches/run_audit.sh audit_final_gate)
 #
 #  ARTIFACTS
 #  ---------
@@ -143,7 +143,7 @@ jobs:
 
   # ============================================================================
   #  JOB 0 — guard
-  #  bash run_all.sh audit_guard
+  #  bash scripts/patches/run_audit.sh audit_guard
   #  Outputs: should_run — "true" if workflow should proceed, "false" to skip.
   # ============================================================================
   guard:
@@ -173,7 +173,7 @@ jobs:
           TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
           PAPER_AUDIT_ONLY:   ${{ github.event.inputs.paper_audit_only || 'false' }}
         run: |
-          bash run_all.sh audit_guard
+          bash scripts/patches/run_audit.sh audit_guard
           # If caller set paper_audit_only=true, signal that all upstream jobs
           # are already done so they can be skipped by downstream job conditions.
           if [[ "${PAPER_AUDIT_ONLY}" == "true" ]]; then
@@ -276,7 +276,7 @@ jobs:
           if [[ -f requirements.txt ]]; then
             pip install --no-cache-dir -r requirements.txt
           else
-            pip install --no-cache-dir numpy scipy matplotlib
+            pip install --no-cache-dir numpy scipy matplotlib sympy
           fi
 
       - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
@@ -562,7 +562,7 @@ jobs:
 
   # ============================================================================
   #  JOB 1 — numerical-verify
-  #  bash run_all.sh qualify
+  #  bash scripts/patches/run_audit.sh qualify
   #  Numerical spot-checks + 7-dimension per-experiment gate.
   #  Writes logs/verify_report.json.
   # ============================================================================
@@ -616,7 +616,7 @@ jobs:
           if [[ -f requirements.txt ]]; then
             pip install --no-cache-dir -r requirements.txt
           else
-            pip install --no-cache-dir numpy scipy
+            pip install --no-cache-dir numpy scipy sympy
           fi
 
       - name: Create logs directory
@@ -631,7 +631,7 @@ jobs:
           set -euo pipefail
           echo "=== numerical-verify (qualify) ==="
           echo "Results base: ${RESULTS_DIR}"
-          bash run_all.sh qualify 2>&1 | tee logs/verify_run.log
+          bash scripts/patches/run_audit.sh qualify 2>&1 | tee logs/verify_run.log
           EXIT_CODE=${PIPESTATUS[0]}
           echo "verify_exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
           exit ${EXIT_CODE}
@@ -640,7 +640,7 @@ jobs:
         if: always()
         env:
           RESULTS_DIR: ${{ env.OUT_BASE }}
-        run: bash run_all.sh audit_print_verify
+        run: bash scripts/patches/run_audit.sh audit_print_verify
 
       - name: Upload verify report
         if: always()
@@ -656,7 +656,7 @@ jobs:
 
   # ============================================================================
   #  JOB 2 — paper-audit  (needs: numerical-verify)
-  #  bash run_all.sh audit_paper
+  #  bash scripts/patches/run_audit.sh audit_paper
   #  Loads scripts/patches/paper_targets.json.
   #  Emits logs/paper_audit_findings.json.
   #  Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
@@ -716,7 +716,7 @@ jobs:
           if [[ -f requirements.txt ]]; then
             pip install --no-cache-dir -r requirements.txt
           else
-            pip install --no-cache-dir numpy scipy pyyaml
+            pip install --no-cache-dir numpy scipy sympy pyyaml
           fi
 
       - name: Create logs directory
@@ -820,8 +820,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== paper-audit ==="
-          echo "Invoking: bash run_all.sh audit_paper"
-          bash run_all.sh audit_paper 2>&1 | tee logs/paper_audit_run.log
+          echo "Invoking: bash scripts/patches/run_audit.sh audit_paper"
+          bash scripts/patches/run_audit.sh audit_paper 2>&1 | tee logs/paper_audit_run.log
           EXIT_CODE=${PIPESTATUS[0]}
           echo ""
           echo "=== Nguyen-12 dual-threshold caveat ==="
@@ -834,7 +834,7 @@ jobs:
         if: always()
         env:
           RESULTS_DIR: ${{ env.OUT_BASE }}
-        run: bash run_all.sh audit_print_findings
+        run: bash scripts/patches/run_audit.sh audit_print_findings
 
       - name: Upload audit findings
         if: always()
@@ -909,7 +909,7 @@ jobs:
 
   # ============================================================================
   #  JOB 3 — figures-tables-validate  (needs: numerical-verify)
-  #  bash run_all.sh audit_figures_tables
+  #  bash scripts/patches/run_audit.sh audit_figures_tables
   #  Validates expected figures (PDF/PNG) and LaTeX tables (TeX) are present.
   #  Exits non-zero on any missing file.
   #  Writes logs/figures_tables_report.json.
@@ -952,7 +952,7 @@ jobs:
         id: validate
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
-        run: bash run_all.sh audit_figures_tables
+        run: bash scripts/patches/run_audit.sh audit_figures_tables
 
       - name: Upload figures/tables report
         if: always()
@@ -966,7 +966,7 @@ jobs:
 
   # ============================================================================
   #  JOB 4 — final-gate
-  #  bash run_all.sh audit_final_gate
+  #  bash scripts/patches/run_audit.sh audit_final_gate
   #  Aggregates outcomes, prints consolidated health table.
   # ============================================================================
   final-gate:
@@ -990,4 +990,4 @@ jobs:
           VERIFY_RESULT: ${{ needs.numerical-verify.result }}
           AUDIT_RESULT:  ${{ needs.paper-audit.result }}
           FIGS_RESULT:   ${{ needs.figures-tables-validate.result }}
-        run: bash run_all.sh audit_final_gate
+        run: bash scripts/patches/run_audit.sh audit_final_gate
