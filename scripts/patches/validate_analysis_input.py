@@ -419,10 +419,38 @@ def load_records(path):
 
     Prints a single diagnostic line to stdout:
         format=<name>  tier=<1|2>  records=<n>
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
 
+    Raises ValueError (with a clear ::error:: prefix message) for:
+      - file not found / unreadable
+      - empty file
+      - invalid JSON
+      - no extractor matched
+      - extractor raised during extraction
+    All error messages are prefixed with ::error:: so GitHub Actions
+    surfaces them as annotations rather than bare tracebacks.
+    """
+    p = pathlib.Path(path)
+
+    # ---- file existence / readability ----------------------------------------
+    if not p.exists():
+        raise ValueError(f"::error::{path}: file does not exist.")
+    if not p.is_file():
+        raise ValueError(f"::error::{path}: path exists but is not a regular file.")
+
+    raw = p.read_text(encoding="utf-8").strip()
+    if not raw:
+        raise ValueError(f"::error::{path}: file is empty (0 bytes after strip).")
+
+    # ---- JSON parse ----------------------------------------------------------
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"::error::{path}: invalid JSON — {exc.msg} "
+            f"(line {exc.lineno}, col {exc.colno})."
+        ) from exc
+
+    # ---- extractor loop ------------------------------------------------------
     for tier, extractors in ((1, _TIER1_EXTRACTORS), (2, _TIER2_EXTRACTORS)):
         for name, guard, extract in extractors:
             try:
@@ -434,14 +462,14 @@ def load_records(path):
                     records = extract(data)
                 except Exception as exc:
                     raise ValueError(
-                        f"{path}: extractor '{name}' (tier {tier}) raised: {exc}"
+                        f"::error::{path}: extractor '{name}' (tier {tier}) raised: {exc}"
                     ) from exc
                 print(f"  format={name}  tier={tier}  records={len(records)}")
                 return records
 
     top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
     raise ValueError(
-        f"{path}: no extractor matched.\n"
+        f"::error::{path}: no extractor matched.\n"
         f"  Top-level type : {type(data).__name__}\n"
         f"  Top-level keys : {top}\n"
         f"  Add a new extractor to _TIER1_EXTRACTORS or _TIER2_EXTRACTORS\n"
@@ -468,7 +496,11 @@ def main():
             sys.exit(1)
         label = "Merged" if mode == "merged" else "Direct"
         print(f"{label} file: {path}")
-        records = load_records(path)
+        try:
+            records = load_records(path)
+        except ValueError as exc:
+            print(str(exc))
+            sys.exit(1)
         print(f"Records: {len(records)}")
         total += len(records)
 
@@ -484,7 +516,24 @@ def main():
             if not line:
                 continue
             print(f"Shard: {line}")
-            records = load_records(line)
+            # Pre-flight: check file exists and is non-empty before calling
+            # load_records so a missing or empty shard emits a clear annotation
+            # rather than a bare Python traceback.
+            shard_path = pathlib.Path(line)
+            if not shard_path.exists():
+                print(f"::error::Shard file does not exist: {line}")
+                sys.exit(1)
+            if not shard_path.is_file():
+                print(f"::error::Shard path is not a regular file: {line}")
+                sys.exit(1)
+            if shard_path.stat().st_size == 0:
+                print(f"::error::Shard file is empty (0 bytes): {line}")
+                sys.exit(1)
+            try:
+                records = load_records(line)
+            except ValueError as exc:
+                print(str(exc))
+                sys.exit(1)
             print(f"Records: {len(records)}")
             total += len(records)
             # experiment_summary_dict and protocol_disclosure_dict shards
