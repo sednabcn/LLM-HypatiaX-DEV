@@ -334,6 +334,24 @@ _TIER2_EXTRACTORS = [
         ),
         lambda d: [],   # no per-record data to validate
     ),
+    # Protocol disclosure / split metadata dict (e.g. split_protocol_disclosure.json).
+    # Written by exp2_feynman_pca_4060 / exp1_pca to document the split protocol used.
+    # Keys: split_protocol, split_level, force_fresh, script, … — no records inside.
+    # Guard: top-level dict containing 'split_protocol' and at least one of the other
+    # canonical disclosure keys, with no list-of-records or results children.
+    (
+        "protocol_disclosure_dict",
+        lambda d: (
+            isinstance(d, dict)
+            and "split_protocol" in d.keys()
+            and bool({"split_level", "force_fresh", "script", "extrap_train_frac"} & d.keys())
+            and not isinstance(d.get("results"), (list, dict))
+            and not isinstance(d.get("tests"), list)
+            and not isinstance(d.get("per_noise"), dict)
+            and not isinstance(d.get("per_n"), dict)
+        ),
+        lambda d: [],   # no per-record data to validate
+    ),
     # Top-level dict, no "results" wrapper, equation->generic dict (merge_shards.py output)
     (
         "toplevel_generic_dicts",
@@ -656,6 +674,18 @@ _SELF_TEST_CASES = [
             "source_files": ["benchmark_results_extrap.json"],
         },
         expected_n=0, expected_fmt="experiment_summary_dict", tier=2,
+    ),
+    dict(
+        name="tier2 / protocol_disclosure_dict  (split_protocol_disclosure.json)",
+        payload={
+            "split_protocol":  "pca_40_60",
+            "split_level":     "outer_loop",
+            "force_fresh":     True,
+            "script":          "run_comparative_suite_benchmark_pca.py",
+            "extrap_train_frac": 0.4,
+            "generated":       "2026-06-04T13:51:59",
+        },
+        expected_n=0, expected_fmt="protocol_disclosure_dict", tier=2,
     ),
     # ------------------------------------------------------------------
     # Error / no-match
