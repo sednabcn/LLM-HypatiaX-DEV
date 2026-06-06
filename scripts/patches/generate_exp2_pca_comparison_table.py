@@ -386,7 +386,8 @@ def main():
     try:
         meta_legacy = load_summary(results_dir, "exp2")
         n_leg, n_leg_tot, r_leg, note_leg, per_eq_leg = meta_legacy
-        print(f"      Solved: {n_leg}/{n_leg_tot}  rate={r_leg:.3f if r_leg else 'N/A'}  src={note_leg}")
+        r_leg_disp = f"{r_leg:.3f}" if r_leg is not None else "N/A"
+        print(f"      Solved: {n_leg}/{n_leg_tot}  rate={r_leg_disp}  src={note_leg}")
     except Exception as e:
         print(f"  ERROR loading exp2: {e}", file=sys.stderr)
         sys.exit(1)
@@ -396,7 +397,8 @@ def main():
     try:
         meta_pca = load_summary(results_dir, "exp2_pca_4060")
         n_pca, n_pca_tot, r_pca, note_pca, per_eq_pca = meta_pca
-        print(f"      Solved: {n_pca}/{n_pca_tot}  rate={r_pca:.3f if r_pca else 'N/A'}  src={note_pca}")
+        r_pca_disp = f"{r_pca:.3f}" if r_pca is not None else "N/A"
+        print(f"      Solved: {n_pca}/{n_pca_tot}  rate={r_pca_disp}  src={note_pca}")
     except Exception as e:
         print(f"  ERROR loading exp2_pca_4060: {e}", file=sys.stderr)
         sys.exit(1)
