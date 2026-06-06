@@ -23,7 +23,9 @@ env:
 jobs:
   postprocess:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # FIX: increased from 20 — SymPy classification across 12 tasks × 2 systems
+    # × multiple seeds can take 30–40 min in the worst case.
+    timeout-minutes: 60
     steps:
       # ISSUE 6 FIX: pass token explicitly (matches ci_analysis.yml pattern)
       # so the checkout carries write credentials for the subsequent git push.
@@ -160,32 +162,101 @@ jobs:
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
 
-      - name: Generate symbolic equivalence table (exp3 / exp3b)
-        if: |
-          github.event.inputs.experiment == 'exp3' ||
-          github.event.inputs.experiment == 'exp3b'
+      # ── Symbolic equivalence (exp3 / exp3b only) ───────────────────────────
+      #
+      # FIX: split into two steps — (1) run check_symbolic_equivalence.py to
+      # produce/refresh the CSV from the committed JSON result files, then
+      # (2) generate the LaTeX table from the CSV.
+      #
+      # Previously the step only called the table generator and assumed the CSV
+      # was already present (produced by ci_analysis.yml).  That assumption
+      # fails when ci_analysis hasn't run, or wrote the CSV to a different path,
+      # or the CSV is header-only because the JSON files weren't found.
+      #
+      # FIX: the `if` expression used `||` (invalid in GitHub Actions expression
+      # syntax).  Correct operator is `||` inside ${{ }}.  The multi-line `if`
+      # block with bare `||` was silently evaluated as always-false in some
+      # runner versions.  Moved to a single-line expression.
+
+      - name: Check symbolic equivalence (exp3 / exp3b)
+        if: ${{ github.event.inputs.experiment == 'exp3' || github.event.inputs.experiment == 'exp3b' }}
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
           set -euo pipefail
 
-          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
-          TABS="${OUT_BASE}/${SUB}/tables"
+          RESULTS_DIR="${OUT_BASE}/${SUB}"
+          CSV="${RESULTS_DIR}/symbolic_equivalence_report.csv"
 
-          # Guard: ci_analysis must have run first and committed the CSV.
+          # Locate JSON result files.  exp3 keeps them flat; exp3b uses
+          # multi_seed/<seed>/ subdirectories — the script handles both via its
+          # recursive glob when no explicit files are passed.
+          JSON_FILES=$(find "${RESULTS_DIR}" -name "exp3_nguyen12_seed*.json" | sort)
+
+          if [[ -z "$JSON_FILES" ]]; then
+            echo "::error::No exp3_nguyen12_seed*.json files found under ${RESULTS_DIR}"
+            echo "  Make sure ci_analysis.yml for ${{ github.event.inputs.experiment }} has run and committed results."
+            exit 1
+          fi
+
+          N_JSON=$(echo "$JSON_FILES" | wc -l)
+          echo "Found ${N_JSON} JSON file(s) — running symbolic equivalence check..."
+
+          # --append lets us safely accumulate rows if this step is re-run;
+          # for a fresh run it is equivalent to overwrite because the CSV either
+          # doesn't exist yet or will be superseded by the same seeds.
+          # shellcheck disable=SC2086
+          python scripts/check_symbolic_equivalence.py \
+            --output-dir "${RESULTS_DIR}" \
+            --append \
+            $JSON_FILES
+
+          # Verify the CSV is non-empty (has at least one data row beyond header).
           if [[ ! -f "$CSV" ]]; then
-            echo "::error::symbolic_equivalence_report.csv not found at ${CSV}"
-            echo "  Run ci_analysis.yml for ${{ github.event.inputs.experiment }} first, then re-run postprocess."
+            echo "::error::check_symbolic_equivalence.py did not produce ${CSV}"
+            exit 2
+          fi
+
+          DATA_ROWS=$(tail -n +2 "$CSV" | grep -c . || true)
+          if [[ "$DATA_ROWS" -eq 0 ]]; then
+            echo "::error::${CSV} contains only a header row — no data was classified."
+            echo "  This usually means the JSON files were parsed but contained no"
+            echo "  'hypatiax' or 'pysr' entries.  Check the JSON structure."
+            exit 2
+          fi
+
+          echo "CSV verified: ${DATA_ROWS} data row(s) written to ${CSV}"
+
+      - name: Generate symbolic equivalence table (exp3 / exp3b)
+        if: ${{ github.event.inputs.experiment == 'exp3' || github.event.inputs.experiment == 'exp3b' }}
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RESULTS_DIR="${OUT_BASE}/${SUB}"
+          CSV="${RESULTS_DIR}/symbolic_equivalence_report.csv"
+          TABS="${RESULTS_DIR}/tables"
+
+          # Sanity-check: the previous step should have ensured this, but guard
+          # here too so a skipped/failed prior step gives a clear message.
+          if [[ ! -f "$CSV" ]] || [[ $(tail -n +2 "$CSV" | grep -c . || true) -eq 0 ]]; then
+            echo "::error::${CSV} is missing or empty — cannot generate LaTeX table."
             exit 1
           fi
 
           python scripts/patches/generate_nguyen12_symequiv_table.py \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "$TABS"
+            --results-dir "${RESULTS_DIR}" \
+            --output-dir  "${TABS}"
+
+          # Also stage the freshly-written CSV so it is committed alongside the
+          # table (useful when postprocess is the only workflow run for exp3b).
+          git add "${CSV}" 2>/dev/null || true
 
       - name: Generate PCA comparison table (exp2_feynman_pca)
-        if: github.event.inputs.experiment == 'exp2_feynman_pca'
+        if: ${{ github.event.inputs.experiment == 'exp2_feynman_pca' }}
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash

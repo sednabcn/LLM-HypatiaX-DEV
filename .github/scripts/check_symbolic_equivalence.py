@@ -10,29 +10,37 @@ Three-tier classification per (seed, system, task):
   FAIL      – r² < R2_THRESHOLD  OR  numerical error >= NUM_TOL
 
 Usage:
-  python check_symbolic_equivalence.py [seed_file1.json ...]
+  python check_symbolic_equivalence.py [options] [seed_file1.json ...]
 
   If no files are given, the script globs for exp3_nguyen12_seed*.json
-  in the current directory.
+  under --results-dir (default: current directory).
+
+Options:
+  --results-dir DIR   Root directory to glob for JSON files (default: .)
+  --output-dir  DIR   Directory to write CSV and TXT outputs (default: same
+                      as --results-dir)
+  --append            Append rows to an existing CSV instead of overwriting.
+                      Safe to use when running seeds in parallel.
 
 Output:
   • Console table (per seed)
-  • symbolic_equivalence_report.csv   (machine-readable)
-  • symbolic_equivalence_summary.txt  (paper-ready summary)
+  • <output-dir>/symbolic_equivalence_report.csv   (machine-readable)
+  • <output-dir>/symbolic_equivalence_summary.txt  (paper-ready summary)
 """
 
+import argparse
+import csv
+import glob
 import json
 import sys
-import glob
-import csv
 import time
-import warnings
 import traceback
+import warnings
 from pathlib import Path
 
 import numpy as np
 import sympy as sp
-from sympy import symbols, sympify, simplify, lambdify
+from sympy import lambdify, simplify, sympify
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 R2_THRESHOLD  = 0.9999   # below this → FAIL immediately
@@ -93,7 +101,7 @@ def try_symbolic(found_str: str, gt_str: str, task_id: str):
                 return True, f"simplify→0 [{domain} domain, {elapsed:.1f}s]"
             if time.time() - t0 > SYMPY_TIMEOUT:
                 return False, "sympy timeout"
-        except Exception as e:
+        except Exception:
             pass  # try next assumption
     return False, "simplify≠0"
 
@@ -130,8 +138,8 @@ def try_numerical(found_str: str, gt_str: str, task_id: str):
             g_vals = np.asarray(g_func(*np_vars), dtype=complex)
 
         # Discard complex / nan / inf results
-        valid = np.isfinite(f_vals.real) & np.isfinite(g_vals.real) & \
-                (np.abs(f_vals.imag) < 1e-6) & (np.abs(g_vals.imag) < 1e-6)
+        valid = (np.isfinite(f_vals.real) & np.isfinite(g_vals.real) &
+                 (np.abs(f_vals.imag) < 1e-6) & (np.abs(g_vals.imag) < 1e-6))
 
         if valid.sum() < 10:
             return False, float('nan'), "too few valid points"
@@ -198,12 +206,15 @@ def process_file(path: str):
     print(f"  {'─'*5} {'─'*10} {'─'*8}  {'─'*10}  {'─'*40}")
 
     for system_key in ('hypatiax', 'pysr'):
-        entries = data['results'][system_key]
+        entries = data['results'].get(system_key, [])
+        if not entries:
+            print(f"  (no entries for {system_key} in this file)")
+            continue
         for entry in entries:
-            tid      = entry['metadata']['nguyen_id']
-            gt_str   = entry['metadata']['ground_truth']
+            tid       = entry['metadata']['nguyen_id']
+            gt_str    = entry['metadata']['ground_truth']
             found_str = entry['expression']
-            r2       = entry['evaluation']['r2']
+            r2        = entry['evaluation']['r2']
 
             res = classify(r2, found_str, gt_str, tid)
 
@@ -229,6 +240,10 @@ def process_file(path: str):
 def print_summary(all_rows):
     from collections import defaultdict
 
+    if not all_rows:
+        print("\n  (no rows to summarise)")
+        return
+
     print(f"\n{'═'*72}")
     print("  CROSS-SEED SUMMARY")
     print(f"{'═'*72}")
@@ -251,7 +266,7 @@ def print_summary(all_rows):
             line = f"  {task:<5}"
             for s in seeds:
                 match = [r for r in all_rows
-                         if r['seed']==s and r['system']==system and r['task']==task]
+                         if r['seed'] == s and r['system'] == system and r['task'] == task]
                 if match:
                     tier = match[0]['tier']
                     sym  = TIER_SYMBOL[tier]
@@ -265,7 +280,6 @@ def print_summary(all_rows):
 
         print(f"\n  {'Totals':<5}", end="")
         for s in seeds:
-            total = sym_counts[s] + num_counts[s] + fail_counts[s]
             line = f"S:{sym_counts[s]} N:{num_counts[s]} F:{fail_counts[s]}"
             print(f"  {line:<11}", end="")
         print()
@@ -279,16 +293,20 @@ def print_summary(all_rows):
         num_by_seed  = {}
         fail_by_seed = {}
         for s in seeds:
-            rows_s = [r for r in all_rows if r['seed']==s and r['system']==system]
-            sym_by_seed[s]  = sum(r['tier']=='SYMBOLIC'  for r in rows_s)
-            num_by_seed[s]  = sum(r['tier']=='NUMERICAL' for r in rows_s)
-            fail_by_seed[s] = sum(r['tier']=='FAIL'      for r in rows_s)
+            rows_s = [r for r in all_rows if r['seed'] == s and r['system'] == system]
+            sym_by_seed[s]  = sum(r['tier'] == 'SYMBOLIC'  for r in rows_s)
+            num_by_seed[s]  = sum(r['tier'] == 'NUMERICAL' for r in rows_s)
+            fail_by_seed[s] = sum(r['tier'] == 'FAIL'      for r in rows_s)
 
-        sym_range  = f"{min(sym_by_seed.values())}–{max(sym_by_seed.values())}"
-        num_range  = f"{min(num_by_seed.values())}–{max(num_by_seed.values())}"
+        if sym_by_seed:
+            sym_range  = f"{min(sym_by_seed.values())}–{max(sym_by_seed.values())}"
+            num_range  = f"{min(num_by_seed.values())}–{max(num_by_seed.values())}"
+        else:
+            sym_range = num_range = "N/A"
+
         fail_tasks = sorted(set(
             r['task'] for r in all_rows
-            if r['system']==system and r['tier']=='FAIL'
+            if r['system'] == system and r['tier'] == 'FAIL'
         ))
         print(f"\n  [{system.upper()}]")
         print(f"  Symbolic matches : {sym_range}/12 across seeds")
@@ -299,17 +317,51 @@ def print_summary(all_rows):
             print(f"  Failures         : none")
 
 
-def write_csv(all_rows, out_path="symbolic_equivalence_report.csv"):
-    fields = ['seed','system','task','r2','tier','symbolic','numerical',
-              'max_err','ground_truth','found_expression','detail']
-    with open(out_path, 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+CSV_FIELDS = ['seed', 'system', 'task', 'r2', 'tier', 'symbolic', 'numerical',
+              'max_err', 'ground_truth', 'found_expression', 'detail']
+
+
+def write_csv(all_rows, out_path: Path, append: bool = False):
+    """
+    Write (or append) rows to the CSV at out_path.
+
+    append=True: reads existing rows first, deduplicates on
+    (seed, system, task), then rewrites the file.  This is safe for parallel
+    per-seed invocations provided they don't race on the same seed.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if append and out_path.exists():
+        # Read existing rows, keeping them unless the new run supersedes them.
+        existing = []
+        with out_path.open(newline='') as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames:          # non-empty file
+                existing = list(reader)
+
+        # Index existing rows; new rows for the same (seed, system, task) win.
+        index = {(r['seed'], r['system'], r['task']): r for r in existing}
+        for r in all_rows:
+            key = (str(r['seed']), r['system'], r['task'])
+            index[key] = {k: str(v) for k, v in r.items()}
+        merged = list(index.values())
+    else:
+        merged = all_rows
+
+    with out_path.open('w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction='ignore')
         w.writeheader()
-        w.writerows(all_rows)
-    print(f"\n  CSV saved → {out_path}")
+        w.writerows(merged)
+
+    mode_label = "(appended/merged)" if append else "(overwritten)"
+    print(f"\n  CSV saved {mode_label} → {out_path}  ({len(merged)} data rows)")
 
 
-def write_summary_txt(all_rows, out_path="symbolic_equivalence_summary.txt"):
+def write_summary_txt(all_rows, out_path: Path):
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
     seeds   = sorted(set(r['seed'] for r in all_rows))
     systems = sorted(set(r['system'] for r in all_rows))
     tasks   = [f'N{i}' for i in range(1, 13)]
@@ -332,7 +384,7 @@ def write_summary_txt(all_rows, out_path="symbolic_equivalence_summary.txt"):
             row_line = f"  {task:<5}"
             for s in seeds:
                 match = [r for r in all_rows
-                         if r['seed']==s and r['system']==system and r['task']==task]
+                         if r['seed'] == s and r['system'] == system and r['task'] == task]
                 if match:
                     tier = match[0]['tier']
                     row_line += f"  {tier:<10}"
@@ -341,27 +393,66 @@ def write_summary_txt(all_rows, out_path="symbolic_equivalence_summary.txt"):
             lines.append(row_line)
         lines.append("")
 
-    with open(out_path, 'w') as f:
-        f.write("\n".join(lines))
+    out_path.write_text("\n".join(lines), encoding='utf-8')
     print(f"  TXT saved → {out_path}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == '__main__':
-    files = sys.argv[1:] if len(sys.argv) > 1 else sorted(
-        glob.glob("exp3_nguyen12_seed*.json")
+def build_arg_parser():
+    ap = argparse.ArgumentParser(
+        description="Check symbolic equivalence for Nguyen-12 JSON result files."
     )
+    ap.add_argument(
+        'files', nargs='*',
+        help="Explicit JSON file paths.  If omitted, globs for "
+             "exp3_nguyen12_seed*.json under --results-dir."
+    )
+    ap.add_argument(
+        '--results-dir', default='.',
+        help="Directory to glob for exp3_nguyen12_seed*.json (default: .)"
+    )
+    ap.add_argument(
+        '--output-dir', default=None,
+        help="Directory for CSV and TXT outputs (default: same as --results-dir)"
+    )
+    ap.add_argument(
+        '--append', action='store_true',
+        help="Merge new rows into an existing CSV rather than overwriting it. "
+             "Useful when running one seed at a time in CI."
+    )
+    return ap
+
+
+if __name__ == '__main__':
+    args = build_arg_parser().parse_args()
+
+    results_dir = Path(args.results_dir)
+    output_dir  = Path(args.output_dir) if args.output_dir else results_dir
+
+    # ── Resolve input files ───────────────────────────────────────────────────
+    if args.files:
+        files = args.files
+    else:
+        # Search recursively one level deep so exp3b's multi_seed/ layout works.
+        files = sorted(
+            glob.glob(str(results_dir / "exp3_nguyen12_seed*.json")) +
+            glob.glob(str(results_dir / "*" / "exp3_nguyen12_seed*.json"))
+        )
 
     if not files:
-        print("No JSON files found. Pass file paths as arguments or run from "
-              "the directory containing exp3_nguyen12_seed*.json files.")
+        print(
+            f"No JSON files found under '{results_dir}'.\n"
+            "Pass explicit file paths, or set --results-dir to the directory "
+            "containing exp3_nguyen12_seed*.json files."
+        )
         sys.exit(1)
 
     print(f"\nChecking {len(files)} file(s): {[Path(f).name for f in files]}")
     print(f"Thresholds: r²≥{R2_THRESHOLD}, num_tol={NUM_TOL}, n_sample={N_SAMPLE}")
+    print(f"Output dir: {output_dir}")
 
-    all_rows = []
+    all_rows: list[dict] = []
     for path in files:
         try:
             all_rows.extend(process_file(path))
@@ -369,7 +460,17 @@ if __name__ == '__main__':
             print(f"\nERROR reading {path}: {e}")
             traceback.print_exc()
 
+    if not all_rows:
+        print(
+            "\n::error:: No data rows were produced — all input files failed to "
+            "parse or contained no entries.  Check that the JSON files have the "
+            "expected structure: data['config']['seed'] and "
+            "data['results']['hypatiax'] / data['results']['pysr']."
+        )
+        sys.exit(2)
+
     print_summary(all_rows)
-    write_csv(all_rows)
-    write_summary_txt(all_rows)
+    write_csv(all_rows, output_dir / "symbolic_equivalence_report.csv",
+              append=args.append)
+    write_summary_txt(all_rows, output_dir / "symbolic_equivalence_summary.txt")
     print("\nDone.\n")
