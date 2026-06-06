@@ -267,8 +267,7 @@ cat "$MANIFEST"
 emit "INPUT_MODE" "shards"
 emit "INPUT_JSON" ""
 emit "SHARD_MANIFEST" "$MANIFEST"
-SCRIPT_EOF
-echo "Exit: $?"
+
 
 
 
