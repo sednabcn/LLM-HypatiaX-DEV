@@ -93,13 +93,15 @@
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
 # FIX-SYNC-CI (2026-06-05):
-#   — exp2_feynman_pca_comparison_table step added (STEP 5c) after exp2_feynman_pca_4060.
+#   — exp2_feynman_pca_comparison_table logic inlined after exp2_feynman_pca_4060.
 #     Calls scripts/patches/generate_exp2_pca_comparison_table.py to produce
 #     exp2_pca_comparison.{tex,csv,md} — mirrors ci_analysis.yml and ci_postprocess.yml.
-#   — exp3_symbolic_equivalence step added (STEP 8b) after exp3b.
+#     NOT a separate registered step; runs as plain shell after exp2_feynman_pca_4060.
+#   — exp3_symbolic_equivalence logic inlined after exp3b.
 #     Calls scripts/check_symbolic_equivalence.py against all
 #     exp3_nguyen12_seed*.json files — mirrors ci_analysis.yml Check symbolic
 #     equivalence step.  Output: symbolic_equivalence_report.csv + _summary.txt.
+#     NOT a separate registered step; runs as plain shell after exp3b.
 #   — merge_extrap_into_benchmark.py now called inside exp2_feynman_extrap step
 #     (replacing the NOTE that deferred it entirely to ci_analysis.yml).
 #     Produces ablation_paired.json in exp2_extrap/ so qualify and audit_paper
@@ -109,9 +111,8 @@
 #     generate_nguyen12_symequiv_table.py — mirrors ci_postprocess.yml's
 #     "Generate PCA comparison table" and "Generate symbolic equivalence table"
 #     steps.  Both are skipped gracefully when prerequisite files are absent.
-#   — _STEP_ORDER updated with three new steps:
-#     exp2_feynman_pca_comparison_table, exp3_symbolic_equivalence
-#     (merge_extrap is part of exp2_feynman_extrap, not a separate step).
+#   — _STEP_ORDER kept at 35 entries (tracer _DECLARED_ORDER); the two new
+#     sub-steps are not registered so --step / --from targeting is unaffected.
 #
 # FIX-C3-ESCAPE (2026-06-04):
 #   — exp1_pca and exp1b_pca: removed erroneous backslash-escaping on
@@ -322,7 +323,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_pca_comparison_table exp2_feynman_extrap exp2 exp3 exp3b exp3_symbolic_equivalence suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
+_STEP_ORDER="env_check exp1 exp1b exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1371,47 +1372,33 @@ PYEOF
 "
 
 
-# ── STEP 5c: exp2_feynman_pca_comparison_table ───────────────────────────────
-# Produces the side-by-side LaTeX/CSV/Markdown comparison of exp2_feynman
-# (random_state=42, 80/20 split) vs exp2_feynman_pca_4060 (PCA 40/60 split).
-# Mirrors the "Generate PCA comparison table" step in ci_analysis.yml which
-# calls scripts/patches/generate_exp2_pca_comparison_table.py with:
-#   --results-dir  hypatiax/data/results
-#   --output-dir   .../exp2_pca_4060/
-#   --formats      tex,csv,md
-# Skipped gracefully if exp2_pca_4060_summary.json is not yet present
-# (i.e. exp2_feynman_pca_4060 has not completed).
-run exp2_feynman_pca_comparison_table \
-  "FIX-C3: Generate PCA vs random-split comparison table (tex/csv/md)" bash -c "
+# ── STEP 5c (inlined into exp2_feynman_pca_4060): PCA comparison table ────────
+# exp2_feynman_pca_comparison_table is NOT a separate registered step.
+# Its logic runs unconditionally after exp2_feynman_pca_4060 completes.
+# Mirrors the "Generate PCA comparison table" step in ci_analysis.yml.
+(
   set -euo pipefail
-
-  _PCA_SUMMARY='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json'
-  _SCRIPT='${REPO_ROOT}/scripts/patches/generate_exp2_pca_comparison_table.py'
-
-  if [[ ! -f \"\${_PCA_SUMMARY}\" ]]; then
-    echo '[SKIP] exp2_pca_4060_summary.json not found — run exp2_feynman_pca_4060 first.'
-    exit 0
-  fi
-
-  if [[ ! -f \"\${_SCRIPT}\" ]]; then
-    echo '[ERROR] generate_exp2_pca_comparison_table.py not found at: '\${_SCRIPT}
-    echo '        Commit scripts/patches/generate_exp2_pca_comparison_table.py to the repo.'
+  _PCA_SUMMARY="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json"
+  _SCRIPT="${REPO_ROOT}/scripts/patches/generate_exp2_pca_comparison_table.py"
+  if [[ ! -f "${_PCA_SUMMARY}" ]]; then
+    echo "[SKIP] exp2_pca_4060_summary.json not found — PCA comparison table skipped."
+  elif [[ ! -f "${_SCRIPT}" ]]; then
+    echo "[ERROR] generate_exp2_pca_comparison_table.py not found at: ${_SCRIPT}"
+    echo "        Commit scripts/patches/generate_exp2_pca_comparison_table.py to the repo."
     exit 1
+  else
+    echo "[FIX-C3] Generating PCA comparison table (tex, csv, md) ..."
+    mkdir -p "${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060"
+    python3 "${_SCRIPT}" \
+      --results-dir "${RESULTS_DIR}" \
+      --output-dir  "${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060" \
+      --formats     "tex,csv,md" \
+      2>&1 | tee -a "${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_run.log"
+    echo "[FIX-C3] PCA comparison table written to exp2_pca_4060/:"
+    ls "${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_comparison"* 2>/dev/null || \
+      echo "  WARNING: exp2_pca_comparison.{tex,csv,md} not found — check generator output above"
   fi
-
-  echo '[FIX-C3] Generating PCA comparison table (tex, csv, md) ...'
-  mkdir -p '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060'
-
-  python3 \"\${_SCRIPT}\" \
-    --results-dir '${RESULTS_DIR}' \
-    --output-dir  '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060' \
-    --formats     'tex,csv,md' \
-    2>&1 | tee -a '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_run.log'
-
-  echo '[FIX-C3] PCA comparison table written to exp2_pca_4060/:'
-  ls '${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_comparison'* 2>/dev/null || \
-    echo '  WARNING: exp2_pca_comparison.{tex,csv,md} not found — check generator output above'
-"
+)
 
 
 # Generates extrap_r2_far for every Feynman equation by re-running
@@ -1730,53 +1717,39 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
 "
 
 
-# ── STEP 8b: exp3_symbolic_equivalence ───────────────────────────────────────
-# Local equivalent of ci_analysis.yml 'Check symbolic equivalence (exp3/exp3b)'
-# step.  Calls check_symbolic_equivalence.py against all exp3_nguyen12_seed*.json
-# files and writes:
-#   extrapolation/multi_seed/symbolic_equivalence_report.csv
-#   extrapolation/multi_seed/symbolic_equivalence_summary.txt
-# Skipped gracefully when no seed files are present or the script is missing.
-run exp3_symbolic_equivalence \
-  "Check symbolic equivalence for Nguyen-12 results (exp3/exp3b)" bash -c "
+# ── STEP 8b (inlined into exp3b): symbolic equivalence ───────────────────────
+# exp3_symbolic_equivalence is NOT a separate registered step.
+# Its logic runs unconditionally after exp3b completes.
+# Mirrors the "Check symbolic equivalence (exp3/exp3b)" step in ci_analysis.yml.
+(
   set -euo pipefail
-
-  _SCRIPT='${REPO_ROOT}/scripts/check_symbolic_equivalence.py'
-  _SEED_DIR='${RESULTS_DIR}/extrapolation/multi_seed'
-  _REPORT=\\\"\${_SEED_DIR}/symbolic_equivalence_report.csv\\\"
-  _SUMMARY=\\\"\${_SEED_DIR}/symbolic_equivalence_summary.txt\\\"
-
-  # Collect seed files from both exp3 (seed42) and exp3b (other seeds)
-  _SEED_FILES=\\\$(find '${RESULTS_DIR}/extrapolation' -maxdepth 2 \
-    -name 'exp3_nguyen12_seed*.json' 2>/dev/null | sort)
-
-  if [[ -z \\\"\${_SEED_FILES}\\\" ]]; then
-    echo '[SKIP] No exp3_nguyen12_seed*.json files found — run exp3 and exp3b first.'
-    exit 0
-  fi
-
-  if [[ ! -f \\\"\${_SCRIPT}\\\" ]]; then
-    echo '[SKIP] check_symbolic_equivalence.py not found at '\${_SCRIPT}
-    echo '       Symbolic equivalence report will not be produced locally.'
-    exit 0
-  fi
-
-  echo '[exp3_sym] Running check_symbolic_equivalence.py ...'
-  mkdir -p \\\"\${_SEED_DIR}\\\"
-
-  python3 \\\"\${_SCRIPT}\\\" \
-    --result-dir  \\\"\${_SEED_DIR}\\\" \
-    --output-csv  \\\"\${_REPORT}\\\" \
-    --output-txt  \\\"\${_SUMMARY}\\\" \
-    2>&1 | tee \\\"\${_SEED_DIR}/symbolic_equivalence_run.log\\\"
-
-  if [[ -f \\\"\${_REPORT}\\\" ]]; then
-    _NR=\\\$(wc -l < \\\"\${_REPORT}\\\" || echo '?')
-    echo \\\"[exp3_sym] symbolic_equivalence_report.csv: \\\${_NR} line(s) → \\\${_REPORT}\\\"
+  _SCRIPT="${REPO_ROOT}/scripts/check_symbolic_equivalence.py"
+  _SEED_DIR="${RESULTS_DIR}/extrapolation/multi_seed"
+  _REPORT="${_SEED_DIR}/symbolic_equivalence_report.csv"
+  _SUMMARY="${_SEED_DIR}/symbolic_equivalence_summary.txt"
+  _SEED_FILES=$(find "${RESULTS_DIR}/extrapolation" -maxdepth 2 \
+    -name "exp3_nguyen12_seed*.json" 2>/dev/null | sort)
+  if [[ -z "${_SEED_FILES}" ]]; then
+    echo "[SKIP] No exp3_nguyen12_seed*.json files found — symbolic equivalence check skipped."
+  elif [[ ! -f "${_SCRIPT}" ]]; then
+    echo "[SKIP] check_symbolic_equivalence.py not found at ${_SCRIPT}"
+    echo "       Symbolic equivalence report will not be produced locally."
   else
-    echo '[WARN] symbolic_equivalence_report.csv was not produced — check script output above.'
+    echo "[exp3_sym] Running check_symbolic_equivalence.py ..."
+    mkdir -p "${_SEED_DIR}"
+    python3 "${_SCRIPT}" \
+      --result-dir  "${_SEED_DIR}" \
+      --output-csv  "${_REPORT}" \
+      --output-txt  "${_SUMMARY}" \
+      2>&1 | tee "${_SEED_DIR}/symbolic_equivalence_run.log"
+    if [[ -f "${_REPORT}" ]]; then
+      _NR=$(wc -l < "${_REPORT}" || echo "?")
+      echo "[exp3_sym] symbolic_equivalence_report.csv: ${_NR} line(s) → ${_REPORT}"
+    else
+      echo "[WARN] symbolic_equivalence_report.csv was not produced — check script output above."
+    fi
   fi
-"
+)
 
 # ── STEP 9: suppA ─────────────────────────────────────────────────────────────
 # FIX-suppA-1: cd to REPO_ROOT (not EXPERIMENTS_DIR) so all repo-relative paths
@@ -2101,6 +2074,56 @@ _tag_tbl = "OK" if ok_tbl else "FAIL"
 _tag_fig = "OK" if ok_fig else "FAIL"
 print(f"  [{_tag_tbl}] {RESULTS}/tables/: {len(tbl)} .tex file(s)")
 print(f"  [{_tag_fig}] {RESULTS}/figures/: {len(fig)} .pdf file(s)")
+
+# --- exp1_pca: PCA-directed DeFi noiseless outputs (FIX-C3-ESCAPE) ---
+# Tracer [validate] warning: exp1_pca outputs not covered by validate step.
+# Guard: SKIP when exp1_pca has not run (no defi_pca dir at all).
+pca_defi_dir = f"{RESULTS}/comparison_results/noise-noiseless/noiseless/defi_pca"
+if os.path.isdir(pca_defi_dir):
+    pca_disc = os.path.isfile(f"{pca_defi_dir}/split_protocol_disclosure.json")
+    checks.append(("exp1_pca split_protocol_disclosure.json present", 1.0 if pca_disc else 0.0, 1.0, pca_disc))
+    _tag = "OK" if pca_disc else "FAIL"
+    print(f"  [{_tag}] exp1_pca: split_protocol_disclosure.json")
+    pca_jsons = glob.glob(f"{pca_defi_dir}/defi_pca_v3_*.json")
+    ok_pca = bool(pca_jsons)
+    checks.append(("exp1_pca defi_pca_v3_*.json present", 1.0 if ok_pca else 0.0, 1.0, ok_pca))
+    _tag = "OK" if ok_pca else "FAIL"
+    print(f"  [{_tag}] exp1_pca: {len(pca_jsons)} defi_pca_v3_*.json file(s)")
+else:
+    print("  [SKIP] exp1_pca: defi_pca dir not found (exp1_pca not yet run)")
+
+# --- exp1b_pca: PCA-directed DeFi noise=15 outputs (FIX-C3-ESCAPE) ---
+# Tracer [validate] warning: exp1b_pca outputs not covered by validate step.
+pca15_dir = f"{RESULTS}/comparison_results/noise-noiseless/15_pca"
+if os.path.isdir(pca15_dir):
+    pca15_jsons = (glob.glob(f"{pca15_dir}/defi_pca_v3_*.json") +
+                   glob.glob(f"{pca15_dir}/*portfolio*variance*pca*.json"))
+    ok_pca15 = bool(pca15_jsons)
+    checks.append(("exp1b_pca outputs present in 15_pca/", 1.0 if ok_pca15 else 0.0, 1.0, ok_pca15))
+    _tag = "OK" if ok_pca15 else "FAIL"
+    print(f"  [{_tag}] exp1b_pca: {len(pca15_jsons)} JSON file(s) in 15_pca/")
+else:
+    print("  [SKIP] exp1b_pca: 15_pca dir not found (exp1b_pca not yet run)")
+
+# --- exp2_feynman_pca_4060: PCA 40/60 split Feynman outputs (FIX-C3) ---
+# Tracer [validate] warning: exp2_feynman_pca_4060 outputs not covered by validate step.
+pca4060_dir = f"{RESULTS}/comparison_results/feynman-tests/exp2_pca_4060"
+if os.path.isdir(pca4060_dir):
+    pca4060_summary = os.path.isfile(f"{pca4060_dir}/exp2_pca_4060_summary.json")
+    checks.append(("exp2_feynman_pca_4060 summary present", 1.0 if pca4060_summary else 0.0, 1.0, pca4060_summary))
+    _tag = "OK" if pca4060_summary else "FAIL"
+    print(f"  [{_tag}] exp2_feynman_pca_4060: exp2_pca_4060_summary.json")
+    pca4060_disc = os.path.isfile(f"{pca4060_dir}/split_protocol_disclosure.json")
+    checks.append(("exp2_feynman_pca_4060 disclosure present", 1.0 if pca4060_disc else 0.0, 1.0, pca4060_disc))
+    _tag = "OK" if pca4060_disc else "WARN"
+    print(f"  [{_tag}] exp2_feynman_pca_4060: split_protocol_disclosure.json")
+    pca4060_jsons = glob.glob(f"{pca4060_dir}/benchmark_results_*.json")
+    ok_pca4060 = bool(pca4060_jsons)
+    checks.append(("exp2_feynman_pca_4060 benchmark_results_*.json present", 1.0 if ok_pca4060 else 0.0, 1.0, ok_pca4060))
+    _tag = "OK" if ok_pca4060 else "FAIL"
+    print(f"  [{_tag}] exp2_feynman_pca_4060: {len(pca4060_jsons)} benchmark_results_*.json file(s)")
+else:
+    print("  [SKIP] exp2_feynman_pca_4060: exp2_pca_4060 dir not found (step not yet run)")
 
 # --- Summary ---
 total = len(checks); passed = sum(1 for item in checks if item[-1])
