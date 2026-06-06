@@ -1556,13 +1556,13 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   _SCRIPT_MERGE='${REPO_ROOT}/scripts/merge_extrap_into_benchmark.py'
   _EXTRAP_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
   _BENCHMARK_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
-  _PAIRED=\\\"\\${_EXTRAP_DIR}/ablation_paired.json\\\"
+  _PAIRED=\\\"\${_EXTRAP_DIR}/ablation_paired.json\\\"
 
   if [[ ! -f \\\"\${_SCRIPT_MERGE}\\\" ]]; then
     echo '[WARN] merge_extrap_into_benchmark.py not found at '\${_SCRIPT_MERGE}
     echo '       ablation_paired.json will not be produced locally — ci_analysis.yml will generate it.'
   else
-    _BENCH_EXT=\\\"\\$(find \\\"\\${_EXTRAP_DIR}\\\" -name 'benchmark_results_extrap*.json' | head -1)\\\"
+    _BENCH_EXT=\\\"\$(find \\\"\${_EXTRAP_DIR}\\\" -name 'benchmark_results_extrap*.json' | head -1)\\\"
     if [[ -z \\\"\${_BENCH_EXT}\\\" ]]; then
       echo '[SKIP] benchmark_results_extrap*.json not found — run exp2_feynman_extrap first.'
     else
