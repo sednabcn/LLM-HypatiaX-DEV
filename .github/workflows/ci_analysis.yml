@@ -141,9 +141,9 @@ jobs:
     timeout-minutes: 120
 
     env:
-      EXPERIMENT:        ${{ github.event.inputs.experiment }}
+      EXPERIMENT:          ${{ github.event.inputs.experiment }}
       INPUT_RESULT_SUBDIR: ${{ github.event.inputs.result_subdir }}
-      SOURCE_RUN_ID:     ${{ github.event.inputs.source_run_id }}
+      SOURCE_RUN_ID:       ${{ github.event.inputs.source_run_id }}
 
     steps:
 
@@ -199,20 +199,20 @@ jobs:
               print(inp)
               sys.exit(0)
           MAPPING = {
-              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
-              'exp1b':              'comparison_results/noise-noiseless/15',
-              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp1':                'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1b':               'comparison_results/noise-noiseless/15',
+              'exp2_feynman':        'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
-              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
-              'exp2':               'comparison_results/feynman-tests/exp2_multi',
-              'exp3':               'extrapolation',
-              'exp3b':              'extrapolation/multi_seed',
-              'suppA':              'hybrid_pysr/defi',
-              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
-              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
-              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
-              'instability':        'figures',
-              'extrap':             'comparison_results/extrapolation',
+              'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
+              'exp2':                'comparison_results/feynman-tests/exp2_multi',
+              'exp3':                'extrapolation',
+              'exp3b':               'extrapolation/multi_seed',
+              'suppA':               'hybrid_pysr/defi',
+              'suppB':               'comparison_results/feynman-tests/noise-sweep/noise-sweep',
+              'suppB_sc':            'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains':  'hybrid_llm_nn/all_domains',
+              'instability':         'figures',
+              'extrap':              'comparison_results/extrapolation',
           }
           exp = os.environ['EXPERIMENT']
           result = MAPPING.get(exp, exp)
@@ -374,11 +374,21 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Symbolic equivalence check (exp3 / exp3b only)
+      # -----------------------------------------------------------------------
       # Runs check_symbolic_equivalence.py against all exp3_nguyen12_seed*.json
       # files in RESULT_DIR and commits two outputs:
       #   symbolic_equivalence_report.csv    (machine-readable, per-seed rows)
       #   symbolic_equivalence_summary.txt   (paper-ready summary)
       # Must run AFTER Merge shards so exp3b has its full seed set committed.
+      #
+      # FIX: The glob expansion must happen AFTER cd into RESULT_DIR.
+      # Previously SEED_FILES was expanded before the cd using absolute paths,
+      # but check_symbolic_equivalence.py resolved those paths relative to the
+      # post-cd working directory, producing double-rooted paths that did not
+      # exist on disk (FALSE POSITIVE file-not-found errors).  Expanding the
+      # glob after the cd ensures the paths passed to the script are relative
+      # to the same directory the script uses for all file I/O and output
+      # writing, which is RESULT_DIR.
       # -----------------------------------------------------------------------
 
       - name: Install symbolic-equivalence dependencies (exp3 / exp3b)
@@ -397,10 +407,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Collect all seed files in RESULT_DIR (exp3: one file; exp3b: four).
-          # Use a glob — do not hardcode seed numbers, so new seeds added to
-          # multi_seed/ are picked up automatically without YAML changes.
-          SEED_FILES=( "${RESULT_DIR}"/exp3_nguyen12_seed*.json )
+          # cd FIRST so that the glob expansion below and all relative-path
+          # output writes by check_symbolic_equivalence.py are anchored to the
+          # same directory.  This is the fix for the FALSE POSITIVE
+          # "No such file or directory" errors seen when SEED_FILES was
+          # expanded before the cd using absolute paths.
+          cd "$RESULT_DIR"
+
+          # Collect all seed files (exp3: one file; exp3b: four or more).
+          # Glob is evaluated after cd so paths are relative — no double-root.
+          # Do not hardcode seed numbers; new seeds added to multi_seed/ are
+          # picked up automatically without YAML changes.
+          SEED_FILES=( exp3_nguyen12_seed*.json )
 
           if [[ ${#SEED_FILES[@]} -eq 0 || ! -f "${SEED_FILES[0]}" ]]; then
             echo "::error::No exp3_nguyen12_seed*.json files found in ${RESULT_DIR}"
@@ -409,13 +427,11 @@ jobs:
 
           echo "Found ${#SEED_FILES[@]} seed file(s): ${SEED_FILES[*]}"
 
-          # Script writes its outputs next to the seed files by default.
-          # Override the CWD so relative-path outputs land in RESULT_DIR.
-          cd "$RESULT_DIR"
           python3 "${GITHUB_WORKSPACE}/.github/scripts/check_symbolic_equivalence.py" \
             "${SEED_FILES[@]}"
 
-          # Verify both outputs were produced.
+          # Verify both outputs were produced (paths relative to RESULT_DIR,
+          # which is still the working directory after the cd above).
           [[ -f symbolic_equivalence_report.csv ]] || {
             echo "::error::check_symbolic_equivalence.py did not produce symbolic_equivalence_report.csv"
             exit 1
@@ -428,6 +444,14 @@ jobs:
           echo "Symbolic equivalence outputs:"
           ls -lh symbolic_equivalence_report.csv symbolic_equivalence_summary.txt
 
+      # -----------------------------------------------------------------------
+      # Generate Nguyen-12 symbolic equivalence table (exp3 / exp3b)
+      # -----------------------------------------------------------------------
+      # Reads symbolic_equivalence_report.csv from RESULT_DIR (written by the
+      # prior step) and produces tables/nguyen12_symequiv.tex alongside the
+      # other per-experiment tables.
+      # -----------------------------------------------------------------------
+
       - name: Generate Nguyen-12 symbolic equivalence table (exp3 / exp3b)
         if: |
           github.event.inputs.experiment == 'exp3' ||
@@ -436,9 +460,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # generate_nguyen12_symequiv_table.py reads symbolic_equivalence_report.csv
-          # from RESULT_DIR (written and committed by the prior step) and produces
-          # tables/nguyen12_symequiv.tex alongside the other per-experiment tables.
           TABLES_DIR="${RESULT_DIR}/tables"
           mkdir -p "${TABLES_DIR}"
 
@@ -689,7 +710,7 @@ jobs:
           python3 .github/scripts/run_analysis.py \
             --experiment "$EXPERIMENT" \
             --result-dir "$RESULT_DIR" \
-            "${INPUT_FLAG[@]}" 
+            "${INPUT_FLAG[@]}"
 
       # -----------------------------------------------------------------------
       # Verify outputs
