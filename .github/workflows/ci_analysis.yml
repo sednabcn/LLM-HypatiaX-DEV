@@ -485,7 +485,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Stash any unstaged changes written by the previous step so that
+          # git pull --rebase does not refuse with "You have unstaged changes."
+          git stash --include-untracked || true
           git pull --rebase origin ${{ github.ref_name }}
+          git stash pop || true
 
           git add -f "${RESULT_DIR}/tables/nguyen12_symequiv.tex"
 
@@ -508,7 +512,9 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git stash --include-untracked || true
           git pull --rebase origin ${{ github.ref_name }}
+          git stash pop || true
 
           git add -f \
             "${RESULT_DIR}/symbolic_equivalence_report.csv" \
@@ -602,7 +608,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           # Pull any commits that landed since checkout (other shards, racing workflows).
+          # Stash first so unstaged files written by the prior step do not block rebase.
+          git stash --include-untracked || true
           git pull --rebase origin ${{ github.ref_name }}
+          git stash pop || true
 
           git add -f "${RESULT_DIR}/ablation_paired.json"
 
@@ -651,7 +660,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git reset HEAD 2>/dev/null || true
+          # Stash unstaged files written by the prior Generate step, pull to
+          # pick up any concurrent commits, then restore the generated files.
+          git stash --include-untracked || true
+          git pull --rebase origin ${{ github.ref_name }}
+          git stash pop || true
 
           OUTPUT_DIR="hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060"
           git add -f \
