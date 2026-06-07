@@ -85,6 +85,49 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # ── Deploy figures and aggregate tables in standalone apply-fixes mode ──
+      # FIX: The apply-fixes job ran hypatia_inspector --apply (which copies
+      # FIX-F2/F3/F4 source files) but then committed with "git add -A" which
+      # stages everything — including any inspector-written files — only if
+      # inspector itself physically copied them.  The deploy + aggregate steps
+      # below mirror audit-setup so the standalone job also lands figures/tables
+      # at $ROOT even when no notebook jobs are run.
+      - name: "FIX-F2/F3/F4: Deploy figures to $ROOT/figures/ (standalone)"
+        run: |
+          set -euo pipefail
+          mkdir -p figures
+
+          deploy_fig() {
+            local src="$1"
+            if [[ -f "$src" ]]; then cp -v "$src" "figures/$(basename "$src")"; fi
+          }
+
+          deploy_fig "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf"
+          deploy_fig "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf"
+          if [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" ]]; then
+            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf"
+          elif [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.png" ]]; then
+            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.png"
+          fi
+          for ext in pdf png jpg eps svg; do
+            candidate="Figures/architecture_figures/hypatiaX_three_systems.${ext}"
+            [[ -f "$candidate" ]] && deploy_fig "$candidate" && break
+          done
+
+          echo "--- figures/ ---"; ls -lh figures/ 2>/dev/null || echo "(empty)"
+
+      - name: "Aggregate experiment tables to $ROOT/tables/ (standalone)"
+        run: |
+          set -euo pipefail
+          mkdir -p tables
+          N=0
+          while IFS= read -r -d '' tex_file; do
+            cp "$tex_file" "tables/$(basename "$tex_file")"
+            N=$((N+1))
+          done < <(find hypatiax/data/results -path "*/tables/*.tex" -type f -print0 2>/dev/null)
+          echo "Aggregated ${N} .tex file(s) into tables/"
+          ls -lh tables/ 2>/dev/null || echo "(empty)"
+
       - name: Commit patched files and updated registry
         id: commit
         run: |
@@ -203,13 +246,123 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # ── Deploy figures to $ROOT/figures/ ──────────────────────────────────
+      # FIX: Previously this step did not exist.  hypatia_inspector.py detected
+      # FIX-F2/F3/F4 and printed fix recipes, but nothing ever acted on them.
+      # The source files (Figures/figures-cosmetic-last/, etc.) exist in the
+      # checked-out repo here in audit-setup but were never included in the
+      # notebooks-workspace artifact, so NB-05's SEARCH_DIRS always resolved
+      # against an empty figures/ stub.  This step performs the actual copies.
+      #
+      # FIX-F1 (hypatiaX_three_systems / \fbox placeholder) is auto_fixable=false
+      # and requires a human-produced PDF; it is logged as a warning, not an error.
+      - name: "FIX-F2/F3/F4: Deploy figures to $ROOT/figures/"
+        run: |
+          set -euo pipefail
+          mkdir -p figures
+
+          deploy_fig() {
+            local src="$1" dest="figures/$(basename "$1")"
+            if [[ -f "$src" ]]; then
+              cp -v "$src" "$dest"
+              echo "  [OK]  Deployed: $dest"
+            else
+              echo "::warning::FIX source not found — skipping: $src"
+            fi
+          }
+
+          # FIX-F2: R² heatmap clipped
+          deploy_fig "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf"
+          # FIX-F3: R² heatmap raw
+          deploy_fig "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf"
+          # FIX-F4: Portfolio Variance seed sweep (prefer PDF, fall back to PNG)
+          if [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" ]]; then
+            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf"
+          elif [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.png" ]]; then
+            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.png"
+          else
+            echo "::warning::FIX-F4: neither fig1_seed_sweep.pdf nor .png found"
+          fi
+
+          # FIX-F1 guard: check for the architecture figure; warn if still missing
+          ARCH_FOUND=false
+          for ext in pdf png jpg eps svg; do
+            candidate="Figures/architecture_figures/hypatiaX_three_systems.${ext}"
+            if [[ -f "$candidate" ]]; then
+              deploy_fig "$candidate"
+              ARCH_FOUND=true
+              break
+            fi
+          done
+          if [[ "$ARCH_FOUND" == "false" ]]; then
+            echo "::warning::FIX-F1 (MANUAL): hypatiaX_three_systems not found in Figures/architecture_figures/ — \\fbox placeholder remains in §7.1"
+          fi
+
+          echo "--- figures/ after deploy ---"
+          ls -lh figures/ 2>/dev/null || echo "(empty)"
+
+      # ── Aggregate tables from all experiment subdirs to $ROOT/tables/ ──────
+      # FIX: generate_tables.py writes into per-experiment subdirs
+      # (hypatiax/data/results/{sub}/tables/) but the paper's \input{tables/…}
+      # directives resolve against $ROOT/tables/.  Nothing bridged the two.
+      # This step collects every final .tex table file from all experiment
+      # subdirectories into the single $ROOT/tables/ directory the paper expects.
+      - name: "Aggregate experiment tables to $ROOT/tables/"
+        run: |
+          set -euo pipefail
+          mkdir -p tables
+          RESULTS_BASE="hypatiax/data/results"
+
+          N=0
+          while IFS= read -r -d '' tex_file; do
+            dest="tables/$(basename "$tex_file")"
+            if [[ -f "$dest" ]]; then
+              echo "  [COLLISION] $(basename "$tex_file") — overwriting with: $tex_file"
+            fi
+            cp "$tex_file" "$dest"
+            N=$((N+1))
+          done < <(find "$RESULTS_BASE" -path "*/tables/*.tex" -type f -print0 2>/dev/null)
+
+          echo "Aggregated ${N} .tex file(s) into tables/"
+          ls -lh tables/ 2>/dev/null || echo "(empty — no experiment tables committed yet)"
+
+      # ── Commit $ROOT/figures/ and $ROOT/tables/ back to the branch ─────────
+      # FIX: Without this commit, the deployed figures and aggregated tables
+      # exist only on this runner for the duration of this job.  The LaTeX build
+      # and any downstream workflow that checks out the repo would find neither
+      # figures/ nor tables/ at the root.  Committing here makes them permanent.
+      - name: "Commit $ROOT/figures/ and $ROOT/tables/ to repo"
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git pull --rebase --autostash origin "${{ github.ref_name }}" 2>/dev/null || true
+
+          # -f overrides any .gitignore rules that exclude *.pdf or data dirs
+          [[ -d figures ]] && git add -f figures/ || true
+          [[ -d tables  ]] && git add -f tables/  || true
+
+          if git diff --cached --quiet; then
+            echo "figures/ and tables/ unchanged — nothing to commit."
+          else
+            STAGED=$(git diff --cached --name-only | wc -l)
+            git commit -m "ci: deploy paper figures+tables to repo root (${STAGED} file(s)) — run ${{ github.run_id }}"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed ${STAGED} figure/table file(s) to repo root."
+          fi
+
       # Upload the prepared notebooks/ directory so downstream jobs can use it.
-      # Includes patched .tex copies so every NB sees the fixed source.
+      # FIX: now includes figures/ and tables/ so NB-05's SEARCH_DIRS resolves
+      # correctly inside the notebooks/ workspace (paths: figures/, ../figures/).
       - name: Upload notebooks workspace
         uses: actions/upload-artifact@v4.3.6
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: |
+            notebooks/
+            figures/
+            tables/
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -442,6 +595,26 @@ jobs:
           name: notebooks-workspace
           path: notebooks/
 
+      # FIX: the notebooks-workspace artifact now contains figures/ and tables/
+      # alongside notebooks/.  Restore them to the paths NB-05 SEARCH_DIRS uses:
+      #   Path("figures")      → ./figures/      (cwd = repo root during nbconvert)
+      #   Path("../figures")   → ../figures/     (fallback)
+      # Both are satisfied by placing figures/ at the runner workspace root.
+      - name: Restore figures/ and tables/ for NB-05 SEARCH_DIRS
+        run: |
+          mkdir -p figures tables
+          # The artifact lands everything under notebooks/; lift subdirs to root.
+          if [[ -d notebooks/figures ]]; then
+            cp -r notebooks/figures/. figures/
+            echo "Restored $(ls figures/ | wc -l) file(s) to figures/"
+          else
+            echo "::warning::figures/ not present in notebooks-workspace artifact"
+          fi
+          if [[ -d notebooks/tables ]]; then
+            cp -r notebooks/tables/. tables/
+            echo "Restored $(ls tables/ | wc -l) file(s) to tables/"
+          fi
+
       - name: Execute NB-05
         run: |
           jupyter nbconvert --to notebook --execute --inplace \
@@ -540,6 +713,57 @@ jobs:
           name: paper-audit-notebooks
           path: notebooks/
           retention-days: 30
+
+      # ── Persist $ROOT/figures/ and $ROOT/tables/ from the workspace artifact ─
+      # FIX: audit-setup committed figures/tables from ITS runner, but the
+      # bundle-artifacts job runs on a fresh runner with a clean checkout.
+      # We re-download the workspace artifact (already downloaded above into
+      # notebooks/) and copy figures/ + tables/ back out, then commit again
+      # in case any NB job added or modified files during execution.
+      - name: Checkout repository (for commit)
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: "Re-commit $ROOT/figures/ and $ROOT/tables/ (bundle step)"
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git pull --rebase --autostash origin "${{ github.ref_name }}" 2>/dev/null || true
+
+          mkdir -p figures tables
+
+          # Lift figures and tables from the downloaded workspace artifact.
+          if [[ -d notebooks/figures ]]; then
+            cp -r notebooks/figures/. figures/
+          fi
+          if [[ -d notebooks/tables ]]; then
+            cp -r notebooks/tables/. tables/
+          fi
+
+          # Also re-sweep for any tables written since audit-setup ran.
+          RESULTS_BASE="hypatiax/data/results"
+          while IFS= read -r -d '' tex_file; do
+            dest="tables/$(basename "$tex_file")"
+            [[ -f "$dest" ]] && echo "  [COLLISION] $(basename "$tex_file")"
+            cp "$tex_file" "$dest"
+          done < <(find "$RESULTS_BASE" -path "*/tables/*.tex" -type f -print0 2>/dev/null)
+
+          [[ -d figures ]] && git add -f figures/ || true
+          [[ -d tables  ]] && git add -f tables/  || true
+
+          if git diff --cached --quiet; then
+            echo "figures/ and tables/ already up-to-date in repo — nothing to commit."
+          else
+            STAGED=$(git diff --cached --name-only | wc -l)
+            git commit -m "ci: re-sync paper figures+tables to repo root (${STAGED} file(s)) — run ${{ github.run_id }}"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed ${STAGED} file(s) → ${{ github.ref_name }}"
+          fi
 
       # ── Normalised summary for ci_report dynamic conclusions ─────────────────
       # Reads findings.json produced by hypatia_inspector.py (from the

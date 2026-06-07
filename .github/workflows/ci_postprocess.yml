@@ -1,34 +1,101 @@
 name: "HypatiaX - post-process (figures + tables)"
+
+# ==============================================================================
+#  ci_postprocess.yml — per-experiment figures + tables
+#
+#  ROOT CAUSE OF PRIOR BUGS (all fixed here):
+#
+#    BUG-A  ALL EXPERIMENTS GOT THE SAME TABLE LIST
+#           generate_tables.py was called once with --results-dir pointing at
+#           each experiment's own subdirectory, but that script unconditionally
+#           generated EVERY table type (including suppB noise-sweep tables) for
+#           every experiment. When the required source data was absent the
+#           script either crashed silently or emitted zero-row placeholders that
+#           overwrote real tables committed by a prior suppB run.
+#
+#    BUG-B  WRONG SOURCE DIRECTORY FOR suppB / suppB_sc TABLES
+#           suppB tables require noise_sweep_*.json files under
+#           noise-sweep/noise-sweep/. When postprocess ran for ANY other
+#           experiment (e.g. instability, exp3b) it called generate_tables.py
+#           with --results-dir pointing at THAT experiment's dir, found no
+#           noise_sweep_*.json, and wrote empty suppb_*.tex placeholders into
+#           the wrong location, destroying previously committed suppB data.
+#
+#    BUG-C  MANY EXPERIMENTS PRODUCED ZERO TABLES
+#           exp1, exp1b, exp2_feynman, exp2, suppA, hybrid_all_domains, extrap,
+#           exp2_feynman_extrap, exp2_feynman_pca had no dedicated table step
+#           and relied on the single generic generate_tables.py call which
+#           silently no-op'd because the expected data keys were absent.
+#
+#    BUG-D  MISSING --experiment FLAG ON generate_tables.py
+#           generate_tables.py was never told which experiment was running;
+#           it fell back to generating every table it knew about, using
+#           whatever data happened to be present in --results-dir.
+#
+#  FIX STRATEGY:
+#    1. Every experiment has its own NAMED step that:
+#         a. Passes --experiment <id> to generate_tables.py so it only
+#            generates tables relevant to that experiment.
+#         b. Points --results-dir at the CANONICAL source for that experiment.
+#         c. Is gated with `if:` so it only runs for the matching experiment.
+#    2. suppB and suppB_sc tables are always written to THEIR OWN canonical
+#       subdirectories; other experiments never touch those directories.
+#    3. A GUARD step runs BEFORE any table generation for non-suppB experiments
+#       to verify that existing suppB tables will not be touched.
+#    4. generate_figures.py is also passed --experiment so it can scope its
+#       figure selection to the relevant experiment.
+#    5. The Commit step stages ALL directories that may have been written,
+#       including cross-experiment canonical dirs for exp2_feynman_pca.
+# ==============================================================================
+
 on:
   workflow_dispatch:
     inputs:
       experiment:
         description: "Experiment ID"
         required: true
-        type: string
+        type: choice
+        options:
+          - exp1
+          - exp1b
+          - exp2_feynman
+          - exp2_feynman_extrap
+          - exp2_feynman_pca
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
       result_subdir:
         description: "Result subdirectory (derived from experiment if blank)"
         required: false
         type: string
         default: ""
 
-# ISSUE 5 FIX: declare write permission so git push succeeds on repos
-# that default to contents: read.
 permissions:
   contents: write
 
 env:
   OUT_BASE: "hypatiax/data/results"
 
+  # ── Canonical subdirs for cross-experiment outputs ────────────────────────
+  # These are referenced both in per-experiment steps and in the Commit step.
+  SUPPB_SUBDIR:    "comparison_results/feynman-tests/noise-sweep/noise-sweep"
+  SUPPB_SC_SUBDIR: "comparison_results/feynman-tests/sample-complexity"
+  EXP2_PCA_SUBDIR: "comparison_results/feynman-tests/exp2_pca_4060"
+  EXP2_SUBDIR:     "comparison_results/feynman-tests/exp2"
+
 jobs:
   postprocess:
     runs-on: ubuntu-latest
-    # FIX: increased from 20 — SymPy classification across 12 tasks × 2 systems
-    # × multiple seeds can take 30–40 min in the worst case.
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
-      # ISSUE 6 FIX: pass token explicitly (matches ci_analysis.yml pattern)
-      # so the checkout carries write credentials for the subsequent git push.
+
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
       - uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,11 +107,18 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn "sympy>=1.12"
+          pip install \
+            "numpy>=1.26" \
+            "scipy>=1.11" \
+            "pandas>=2.0" \
+            "matplotlib" \
+            "seaborn" \
+            "sympy>=1.12" \
+            "tabulate>=0.9"
 
-      # ISSUE 3 FIX: resolve result_subdir from experiment name (same canonical
-      # mapping used by ci_analysis.yml) so the scripts receive the correct
-      # per-experiment subtree instead of the entire results tree.
+      # ── 2. Resolve result_subdir ─────────────────────────────────────────────
+      # Single canonical mapping — kept in sync with ci_runner.yml and
+      # ci_analysis.yml.  If a new experiment is added update all three files.
       - name: Resolve result_subdir
         id: meta
         env:
@@ -57,30 +131,36 @@ jobs:
           if [[ -z "$SUB" ]]; then
             SUB=$(EXP_ID="$DISPATCH_EXP" python3 -c "
           import os
-          mapping = {
-              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
-              'exp1b':              'comparison_results/noise-noiseless/15',
-              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+          MAPPING = {
+              'exp1':                'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1b':               'comparison_results/noise-noiseless/15',
+              'exp2_feynman':        'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
-              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
-              'exp2':               'comparison_results/feynman-tests/exp2_multi',
-              'exp3':               'extrapolation',
-              'exp3b':              'extrapolation/multi_seed',
-              'suppA':              'hybrid_pysr/defi',
-              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
-              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
-              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
-              'instability':        'figures',
-              'extrap':             'comparison_results/extrapolation',
+              'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
+              'exp2':                'comparison_results/feynman-tests/exp2_multi',
+              'exp3':                'extrapolation',
+              'exp3b':               'extrapolation/multi_seed',
+              'suppA':               'hybrid_pysr/defi',
+              'suppB':               'comparison_results/feynman-tests/noise-sweep/noise-sweep',
+              'suppB_sc':            'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains':  'hybrid_llm_nn/all_domains',
+              'instability':         'figures',
+              'extrap':              'comparison_results/extrapolation',
           }
           exp = os.environ['EXP_ID']
-          print(mapping.get(exp, exp))
+          sub = MAPPING.get(exp)
+          if sub is None:
+              import sys
+              print(f'::error::No subdir mapping for experiment \"{exp}\"', file=sys.stderr)
+              sys.exit(1)
+          print(sub)
           ")
           fi
           echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
-          echo "Resolved result_subdir=${SUB} for experiment=${DISPATCH_EXP}"
+          echo "Resolved: experiment=${DISPATCH_EXP} → result_subdir=${SUB}"
 
-      - name: Detect existing figures and tables (overwrite audit)
+      # ── 3. Pre-run overwrite audit ──────────────────────────────────────────
+      - name: Overwrite audit (pre-run snapshot)
         id: overwrite_audit
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
@@ -89,281 +169,521 @@ jobs:
           set -euo pipefail
           FIGS="${OUT_BASE}/${SUB}/figures"
           TABS="${OUT_BASE}/${SUB}/tables"
-
-          # Snapshot which files already exist so we can report overwrites after
-          # the generator scripts run.  Files are listed with their sizes so the
-          # operator can spot unexpectedly large replacements.
-          echo "--- Pre-run snapshot ---"
-          if [[ -d "$FIGS" ]]; then
-            EXISTING_FIGS=$(find "$FIGS" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) | sort)
-            N_EXISTING_FIGS=$(echo "$EXISTING_FIGS" | grep -c . || true)
-            echo "Figures dir  : $FIGS"
-            echo "  Existing   : ${N_EXISTING_FIGS} file(s)"
-            if [[ $N_EXISTING_FIGS -gt 0 ]]; then
-              echo "$EXISTING_FIGS" | while IFS= read -r f; do
-                printf "    [WILL OVERWRITE] %s  (%s)\n" "$(basename "$f")" "$(du -sh "$f" | cut -f1)"
-              done
-            fi
-          else
-            N_EXISTING_FIGS=0
-            echo "Figures dir  : $FIGS  (does not exist yet — no overwrites)"
-          fi
-
-          if [[ -d "$TABS" ]]; then
-            EXISTING_TABS=$(find "$TABS" -maxdepth 1 -type f -name "*.tex" | sort)
-            N_EXISTING_TABS=$(echo "$EXISTING_TABS" | grep -c . || true)
-            echo "Tables dir   : $TABS"
-            echo "  Existing   : ${N_EXISTING_TABS} file(s)"
-            if [[ $N_EXISTING_TABS -gt 0 ]]; then
-              echo "$EXISTING_TABS" | while IFS= read -r f; do
-                printf "    [WILL OVERWRITE] %s  (%s)\n" "$(basename "$f")" "$(du -sh "$f" | cut -f1)"
-              done
-            fi
-          else
-            N_EXISTING_TABS=0
-            echo "Tables dir   : $TABS  (does not exist yet — no overwrites)"
-          fi
-
-          # Export counts for the post-run diff step.
-          echo "n_existing_figs=${N_EXISTING_FIGS}" >> "$GITHUB_OUTPUT"
-          echo "n_existing_tabs=${N_EXISTING_TABS}" >> "$GITHUB_OUTPUT"
-
-          # Persist the file lists to temp files so the diff step can compare.
           mkdir -p /tmp/postprocess_audit
-          find "$FIGS" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) 2>/dev/null | sort > /tmp/postprocess_audit/figs_before.txt || true
-          find "$TABS" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > /tmp/postprocess_audit/tabs_before.txt || true
+
+          snapshot_dir() {
+            local label="$1" dir="$2" ext="$3" out="$4"
+            if [[ -d "$dir" ]]; then
+              find "$dir" -maxdepth 1 -type f -name "$ext" 2>/dev/null | sort > "$out" || true
+              local n; n=$(wc -l < "$out")
+              echo "${label} dir  : $dir"
+              echo "  Existing   : ${n} file(s)"
+              if [[ $n -gt 0 ]]; then
+                while IFS= read -r f; do
+                  printf "    [WILL OVERWRITE] %s  (%s)\n" "$(basename "$f")" "$(du -sh "$f" | cut -f1)"
+                done < "$out"
+              fi
+            else
+              touch "$out"
+              echo "${label} dir  : $dir  (does not exist yet)"
+            fi
+          }
+
+          echo "--- Pre-run snapshot ---"
+          snapshot_dir "Figures" "$FIGS" "*.pdf" /tmp/postprocess_audit/figs_before.txt
+          snapshot_dir "Figures" "$FIGS" "*.png" /tmp/postprocess_audit/figs_png_before.txt
+          snapshot_dir "Tables"  "$TABS" "*.tex" /tmp/postprocess_audit/tabs_before.txt
+
+          N_FIGS=$(wc -l < /tmp/postprocess_audit/figs_before.txt)
+          N_TABS=$(wc -l < /tmp/postprocess_audit/tabs_before.txt)
+          echo "n_existing_figs=${N_FIGS}" >> "$GITHUB_OUTPUT"
+          echo "n_existing_tabs=${N_TABS}" >> "$GITHUB_OUTPUT"
+
+      # ── 4. Guard: protect suppB tables from non-suppB runs ─────────────────
+      # If this is NOT a suppB/suppB_sc run, verify the suppB table directories
+      # are NOT touched by any subsequent step.  We record their current state;
+      # the Commit step will verify nothing changed in those paths.
+      - name: "Guard: snapshot suppB table dirs (non-suppB runs)"
+        if: |
+          github.event.inputs.experiment != 'suppB' &&
+          github.event.inputs.experiment != 'suppB_sc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for DIR in \
+            "${OUT_BASE}/${SUPPB_SUBDIR}/tables" \
+            "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"; do
+            SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
+            find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$SNAP" || touch "$SNAP"
+            echo "Guard snapshot: $(wc -l < "$SNAP") .tex file(s) in ${DIR}"
+          done
+
+      # ── 5. Pre-create output directories ────────────────────────────────────
+      - name: Create output directories
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          mkdir -p \
+            "${OUT_BASE}/${SUB}/figures" \
+            "${OUT_BASE}/${SUB}/tables"
+
+      # ════════════════════════════════════════════════════════════════════════
+      #  SECTION A: FIGURES  (per-experiment, scoped via --experiment)
+      # ════════════════════════════════════════════════════════════════════════
 
       - name: Generate figures
         env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
+          SUB:        ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT: ${{ github.event.inputs.experiment }}
         shell: bash
         run: |
-          # Pre-create output dirs — the generator scripts may not create them,
-          # and git add must find the paths even when no files are produced.
-          # BUG 2b FIX: tables dir was missing; only figures dir was pre-created,
-          # so git add "${TABS}/" would warn and tables were never committed.
-          mkdir -p "${OUT_BASE}/${SUB}/figures"
-          mkdir -p "${OUT_BASE}/${SUB}/tables"
-          # BUG 2a FIX: script was invoked as figures/generate_figures.py — that path
-          # resolves to the output subdirectory, not the script source location.
-          # Scripts live under scripts/ (same prefix as scripts/patches/paper_targets.json).
+          set -euo pipefail
+          # --experiment scopes generate_figures.py to only produce plots that
+          # correspond to this experiment.  Before this fix the flag was absent,
+          # causing the script to attempt generating ALL figure types using data
+          # that did not exist in this experiment's subdirectory.
           python scripts/generate_figures.py \
+            --experiment  "${EXPERIMENT}" \
             --repo-root   "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source auto
+            --source      auto
 
-      - name: Generate tables
+      # ════════════════════════════════════════════════════════════════════════
+      #  SECTION B: TABLES — one step per experiment family
+      #
+      #  WHY SEPARATED:
+      #    • Each experiment has different source data files, different table
+      #      schemas, and different --results-dir roots.
+      #    • Passing --experiment to generate_tables.py prevents it from
+      #      attempting to build tables for which no source data exists in SUB.
+      #    • suppB tables (noise-sweep and sample-complexity) ALWAYS read from
+      #      their canonical subdirectory, never from another experiment's dir.
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── B1: exp1 — noiseless DeFi comparison (Tab 1 / Tab 2) ───────────────
+      - name: "Tables: exp1 — noiseless DeFi"
+        if: github.event.inputs.experiment == 'exp1'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
-          # BUG 2a FIX: same wrong-path bug as generate_figures — was tables/generate_tables.py.
+          set -euo pipefail
+          # Source: protocol_core_noiseless_*.json in noise-noiseless/noiseless/defi
+          # Produces: main_comparison_noiseless.tex, method_summary.tex
           python scripts/generate_tables.py \
+            --experiment  exp1 \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
 
-      # ── Symbolic equivalence (exp3 / exp3b only) ───────────────────────────
-      #
-      # FIX: split into two steps — (1) run check_symbolic_equivalence.py to
-      # produce/refresh the CSV from the committed JSON result files, then
-      # (2) generate the LaTeX table from the CSV.
-      #
-      # Previously the step only called the table generator and assumed the CSV
-      # was already present (produced by ci_analysis.yml).  That assumption
-      # fails when ci_analysis hasn't run, or wrote the CSV to a different path,
-      # or the CSV is header-only because the JSON files weren't found.
-      #
-      # FIX: the `if` expression used `||` (invalid in GitHub Actions expression
-      # syntax).  Correct operator is `||` inside ${{ }}.  The multi-line `if`
-      # block with bare `||` was silently evaluated as always-false in some
-      # runner versions.  Moved to a single-line expression.
-
-      - name: Check symbolic equivalence (exp3 / exp3b)
-        if: ${{ github.event.inputs.experiment == 'exp3' || github.event.inputs.experiment == 'exp3b' }}
+      # ── B2: exp1b — noise-robust DeFi (Tab 3, multi-seed) ──────────────────
+      - name: "Tables: exp1b — noise-robust DeFi (multi-seed)"
+        if: github.event.inputs.experiment == 'exp1b'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
           set -euo pipefail
-
-          RESULTS_DIR="${OUT_BASE}/${SUB}"
-          CSV="${RESULTS_DIR}/symbolic_equivalence_report.csv"
-
-          # Locate JSON result files.  exp3 keeps them flat; exp3b uses
-          # multi_seed/<seed>/ subdirectories — the script handles both via its
-          # recursive glob when no explicit files are passed.
-          JSON_FILES=$(find "${RESULTS_DIR}" -name "exp3_nguyen12_seed*.json" | sort)
-
-          if [[ -z "$JSON_FILES" ]]; then
-            echo "::error::No exp3_nguyen12_seed*.json files found under ${RESULTS_DIR}"
-            echo "  Make sure ci_analysis.yml for ${{ github.event.inputs.experiment }} has run and committed results."
+          # Source: _merged.json (merged by ci_analysis before postprocess).
+          # Guard: if _merged.json is absent, ci_analysis must run first.
+          MERGED="${OUT_BASE}/${SUB}/_merged.json"
+          if [[ ! -f "$MERGED" ]]; then
+            echo "::error::${MERGED} not found. Run ci_analysis.yml for exp1b first."
             exit 1
           fi
+          # Produces: noise_robust_comparison.tex, seed_variance_table.tex
+          python scripts/generate_tables.py \
+            --experiment  exp1b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
 
-          N_JSON=$(echo "$JSON_FILES" | wc -l)
-          echo "Found ${N_JSON} JSON file(s) — running symbolic equivalence check..."
-
-          # --append lets us safely accumulate rows if this step is re-run;
-          # for a fresh run it is equivalent to overwrite because the CSV either
-          # doesn't exist yet or will be superseded by the same seeds.
-          # shellcheck disable=SC2086
-          python scripts/check_symbolic_equivalence.py \
-            --output-dir "${RESULTS_DIR}" \
-            --append \
-            $JSON_FILES
-
-          # Verify the CSV is non-empty (has at least one data row beyond header).
-          if [[ ! -f "$CSV" ]]; then
-            echo "::error::check_symbolic_equivalence.py did not produce ${CSV}"
-            exit 2
-          fi
-
-          DATA_ROWS=$(tail -n +2 "$CSV" | grep -c . || true)
-          if [[ "$DATA_ROWS" -eq 0 ]]; then
-            echo "::error::${CSV} contains only a header row — no data was classified."
-            echo "  This usually means the JSON files were parsed but contained no"
-            echo "  'hypatiax' or 'pysr' entries.  Check the JSON structure."
-            exit 2
-          fi
-
-          echo "CSV verified: ${DATA_ROWS} data row(s) written to ${CSV}"
-
-      - name: Generate symbolic equivalence table (exp3 / exp3b)
-        if: ${{ github.event.inputs.experiment == 'exp3' || github.event.inputs.experiment == 'exp3b' }}
+      # ── B3: exp2_feynman — Feynman benchmark (Tab 4 / Tab 5, random 80/20) ─
+      - name: "Tables: exp2_feynman — Feynman benchmark"
+        if: github.event.inputs.experiment == 'exp2_feynman'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
           set -euo pipefail
+          # Source: per-domain protocol_core_feynman_*.json in feynman-tests/exp2
+          # Produces: feynman_benchmark_main.tex, method_rank_table.tex
+          python scripts/generate_tables.py \
+            --experiment  exp2_feynman \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
 
-          RESULTS_DIR="${OUT_BASE}/${SUB}"
-          CSV="${RESULTS_DIR}/symbolic_equivalence_report.csv"
-          TABS="${RESULTS_DIR}/tables"
-
-          # Sanity-check: the previous step should have ensured this, but guard
-          # here too so a skipped/failed prior step gives a clear message.
-          if [[ ! -f "$CSV" ]] || [[ $(tail -n +2 "$CSV" | grep -c . || true) -eq 0 ]]; then
-            echo "::error::${CSV} is missing or empty — cannot generate LaTeX table."
+      # ── B4: exp2_feynman_extrap — extrapolation comparison (Tab 6) ──────────
+      - name: "Tables: exp2_feynman_extrap — extrapolation comparison"
+        if: github.event.inputs.experiment == 'exp2_feynman_extrap'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: ablation_paired.json committed by ci_analysis merge_extrap step.
+          PAIRED="${OUT_BASE}/${SUB}/ablation_paired.json"
+          if [[ ! -f "$PAIRED" ]]; then
+            echo "::error::${PAIRED} not found."
+            echo "  Run ci_analysis.yml for exp2_feynman_extrap first (it generates ablation_paired.json)."
             exit 1
           fi
+          # Produces: extrap_comparison.tex
+          python scripts/generate_tables.py \
+            --experiment  exp2_feynman_extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
 
-          python scripts/patches/generate_nguyen12_symequiv_table.py \
-            --results-dir "${RESULTS_DIR}" \
-            --output-dir  "${TABS}"
-
-          # Also stage the freshly-written CSV so it is committed alongside the
-          # table (useful when postprocess is the only workflow run for exp3b).
-          git add "${CSV}" 2>/dev/null || true
-
-      - name: Generate PCA comparison table (exp2_feynman_pca)
-        if: ${{ github.event.inputs.experiment == 'exp2_feynman_pca' }}
+      # ── B5: exp2_feynman_pca — PCA split comparison table ───────────────────
+      # Uses the dedicated comparison script (reads BOTH exp2 and exp2_pca_4060).
+      # Output lives in the pca subdirectory (canonical for cross-experiment table).
+      - name: "Tables: exp2_feynman_pca — PCA 40/60 vs random 80/20"
+        if: github.event.inputs.experiment == 'exp2_feynman_pca'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
           set -euo pipefail
-
-          # The comparison script reads BOTH exp2 (random 80/20) and exp2_pca_4060
-          # result trees from the committed repo.  Output is written directly into
-          # the exp2_pca_4060 subdirectory (tables are committed by the Commit step).
+          # Source: reads BOTH ${OUT_BASE}/exp2/ AND ${OUT_BASE}/exp2_pca_4060/
+          # Output goes to exp2_pca_4060 (canonical cross-experiment table dir).
+          # generate_tables.py is NOT called here because this table requires
+          # data from TWO experiment directories simultaneously.
           python scripts/patches/generate_exp2_pca_comparison_table.py \
             --results-dir "${OUT_BASE}" \
             --output-dir  "${OUT_BASE}/${SUB}" \
             --formats     "tex,csv,md"
 
-      - name: Post-run overwrite summary
+          # Also generate per-experiment tables for the pca subdir itself.
+          python scripts/generate_tables.py \
+            --experiment  exp2_feynman_pca \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B6: exp2 — all-30 multi-domain table ─────────────────────────────────
+      - name: "Tables: exp2 — all-30 multi-domain"
+        if: github.event.inputs.experiment == 'exp2'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: per-domain JSONs in feynman-tests/exp2_multi
+          # Produces: all30_domain_summary.tex, multi_domain_rank_table.tex
+          python scripts/generate_tables.py \
+            --experiment  exp2 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B7: exp3 — Nguyen-12 symbolic equivalence table ─────────────────────
+      - name: "Tables: exp3 — Nguyen-12 symbolic equivalence"
+        if: github.event.inputs.experiment == 'exp3'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: symbolic_equivalence_report.csv (committed by ci_analysis).
+          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
+          if [[ ! -f "$CSV" ]]; then
+            echo "::error::${CSV} not found."
+            echo "  Run ci_analysis.yml for exp3 first (it generates symbolic_equivalence_report.csv)."
+            exit 1
+          fi
+          # Dedicated script — produces nguyen12_symequiv.tex
+          python scripts/patches/generate_nguyen12_symequiv_table.py \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          # Generic per-experiment tables (R² distribution, method rank)
+          python scripts/generate_tables.py \
+            --experiment  exp3 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B8: exp3b — multi-seed Nguyen-12 ─────────────────────────────────────
+      - name: "Tables: exp3b — multi-seed Nguyen-12"
+        if: github.event.inputs.experiment == 'exp3b'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: symbolic_equivalence_report.csv (requires merged + ci_analysis).
+          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
+          if [[ ! -f "$CSV" ]]; then
+            echo "::error::${CSV} not found."
+            echo "  Run ci_analysis.yml for exp3b first (merge + symbolic equivalence check)."
+            exit 1
+          fi
+          python scripts/patches/generate_nguyen12_symequiv_table.py \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          python scripts/generate_tables.py \
+            --experiment  exp3b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B9: suppA — hybrid PySR + DeFi ───────────────────────────────────────
+      - name: "Tables: suppA — hybrid PySR + DeFi"
+        if: github.event.inputs.experiment == 'suppA'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: per-task JSONs from run_hybrid_system_benchmark.py in hybrid_pysr/defi
+          # Produces: suppa_hybrid_pysr_defi.tex
+          python scripts/generate_tables.py \
+            --experiment  suppA \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B10: suppB — noise-sweep tables ──────────────────────────────────────
+      # CRITICAL: reads from the CANONICAL suppB source directory.
+      # ONLY this step (and B11 for suppB_sc) ever writes suppb_*.tex files.
+      # No other experiment step touches these directories.
+      - name: "Tables: suppB — noise-sweep (canonical source)"
+        if: github.event.inputs.experiment == 'suppB'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: noise_sweep_*.json in noise-sweep/noise-sweep (SUPPB_SUBDIR)
+          # Verify the source data exists before running.
+          NOISE_DATA=$(find "${OUT_BASE}/${SUPPB_SUBDIR}" -maxdepth 2 \
+            -name "noise_sweep_*.json" -o -name "noise*.json" 2>/dev/null | head -1 || true)
+          if [[ -z "$NOISE_DATA" ]]; then
+            echo "::error::No noise_sweep_*.json found in ${OUT_BASE}/${SUPPB_SUBDIR}"
+            echo "  Run ci_runner.yml for suppB first, then re-run postprocess."
+            exit 1
+          fi
+          echo "Found noise-sweep source data: ${NOISE_DATA}"
+          # Produces: suppb_noiseless.tex, suppb_noise_sweep.tex
+          # --results-dir MUST point at the canonical suppB noise-sweep directory.
+          python scripts/generate_tables.py \
+            --experiment  suppB \
+            --results-dir "${OUT_BASE}/${SUPPB_SUBDIR}" \
+            --output-dir  "${OUT_BASE}/${SUPPB_SUBDIR}/tables"
+
+      # ── B11: suppB_sc — sample-complexity tables ─────────────────────────────
+      # CRITICAL: reads from the CANONICAL suppB_sc source directory.
+      - name: "Tables: suppB_sc — sample-complexity (canonical source)"
+        if: github.event.inputs.experiment == 'suppB_sc'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: sc_n*__*.json in sample-complexity (SUPPB_SC_SUBDIR)
+          SC_DATA=$(find "${OUT_BASE}/${SUPPB_SC_SUBDIR}" -maxdepth 2 \
+            -name "sc_n*.json" -o -name "*sample_complexity*.json" 2>/dev/null | head -1 || true)
+          if [[ -z "$SC_DATA" ]]; then
+            echo "::error::No sample-complexity JSONs found in ${OUT_BASE}/${SUPPB_SC_SUBDIR}"
+            echo "  Run ci_runner.yml for suppB_sc first, then re-run postprocess."
+            exit 1
+          fi
+          echo "Found sample-complexity source data: ${SC_DATA}"
+          # Produces: suppb_sc_summary.tex, suppb_sc_by_sample.tex
+          python scripts/generate_tables.py \
+            --experiment  suppB_sc \
+            --results-dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}" \
+            --output-dir  "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"
+
+      # ── B12: hybrid_all_domains — LLM + NN all-domain table ─────────────────
+      - name: "Tables: hybrid_all_domains — LLM+NN all-domain"
+        if: github.event.inputs.experiment == 'hybrid_all_domains'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: per-domain JSONs from hybrid_system_llm_nn_all_domains.py
+          # in hybrid_llm_nn/all_domains
+          # Produces: hybrid_all_domains_summary.tex, domain_rank_table.tex
+          python scripts/generate_tables.py \
+            --experiment  hybrid_all_domains \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B13: instability — Instability Index S10.9 ───────────────────────────
+      - name: "Tables: instability — Instability Index S10.9"
+        if: github.event.inputs.experiment == 'instability'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: hypatiax_defi_variance_results.json and benchmark JSON.
+          # RESULT_SUBDIR for instability is "figures" (not a tables-centric dir).
+          # Tables are written into figures/tables/ to match the runner's layout.
+          VARIANCE_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 2 \
+            -name "hypatiax_defi_variance_results.json" \
+            -o -name "*instability*.json" \
+            -o -name "*variance*.json" 2>/dev/null | head -1 || true)
+          if [[ -z "$VARIANCE_JSON" ]]; then
+            echo "::error::No instability/variance JSON found in ${OUT_BASE}/${SUB}"
+            echo "  Run ci_runner.yml for instability first."
+            exit 1
+          fi
+          echo "Found instability source data: ${VARIANCE_JSON}"
+          # Produces: instability_index_table.tex, group_summary_table.tex
+          python scripts/generate_tables.py \
+            --experiment  instability \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── B14: extrap — OOD extrapolation table (Tab 9) ─────────────────────
+      - name: "Tables: extrap — OOD extrapolation"
+        if: github.event.inputs.experiment == 'extrap'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: per-domain extrap JSONs in comparison_results/extrapolation
+          # (all_domains_extrap_v4_*.json, extrap_r2 per method per equation).
+          # Produces: extrap_ood_table.tex (Tab 9 OOD columns)
+          python scripts/generate_tables.py \
+            --experiment  extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ════════════════════════════════════════════════════════════════════════
+      #  SECTION C: Post-run overwrite summary
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: Post-run overwrite summary
+        env:
+          SUB:            ${{ steps.meta.outputs.result_subdir }}
           N_EXISTING_FIGS: ${{ steps.overwrite_audit.outputs.n_existing_figs }}
           N_EXISTING_TABS: ${{ steps.overwrite_audit.outputs.n_existing_tabs }}
+          EXPERIMENT:     ${{ github.event.inputs.experiment }}
         shell: bash
         run: |
           set -euo pipefail
           FIGS="${OUT_BASE}/${SUB}/figures"
           TABS="${OUT_BASE}/${SUB}/tables"
 
+          diff_dir() {
+            local label="$1" before="$2" dir="$3" ext="$4"
+            local after="/tmp/postprocess_audit/${label}_after.txt"
+            find "$dir" -maxdepth 1 -type f -name "$ext" 2>/dev/null | sort > "$after" || true
+            local n_after n_over n_new n_del
+            n_after=$(wc -l < "$after")
+            n_over=$(comm -12 "$before" "$after" | wc -l)
+            n_new=$(comm  -13 "$before" "$after" | wc -l)
+            n_del=$(comm  -23 "$before" "$after" | wc -l)
+            echo "${label}: ${n_after} total | ${n_over} overwritten | ${n_new} new | ${n_del} deleted"
+            [[ $n_over -gt 0 ]] && comm -12 "$before" "$after" | while IFS= read -r f; do
+              printf "  ✏  %s\n" "$(basename "$f")"
+            done
+            [[ $n_new -gt 0 ]] && comm -13 "$before" "$after" | while IFS= read -r f; do
+              printf "  ✚  %s\n" "$(basename "$f")"
+            done
+            # Export counts for step summary
+            echo "n_after_${label}=${n_after}" >> "$GITHUB_ENV"
+            echo "n_over_${label}=${n_over}"   >> "$GITHUB_ENV"
+            echo "n_new_${label}=${n_new}"     >> "$GITHUB_ENV"
+            echo "n_del_${label}=${n_del}"     >> "$GITHUB_ENV"
+          }
+
           echo "--- Post-run overwrite summary ---"
+          diff_dir "figs" /tmp/postprocess_audit/figs_before.txt "$FIGS" "*.pdf"
+          diff_dir "tabs" /tmp/postprocess_audit/tabs_before.txt "$TABS" "*.tex"
 
-          # Figures
-          find "$FIGS" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) 2>/dev/null | sort > /tmp/postprocess_audit/figs_after.txt || true
-          N_AFTER_FIGS=$(wc -l < /tmp/postprocess_audit/figs_after.txt || echo 0)
-          N_OVERWRITTEN_FIGS=$(comm -12 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | wc -l || echo 0)
-          N_NEW_FIGS=$(comm -13 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | wc -l || echo 0)
-          N_DELETED_FIGS=$(comm -23 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | wc -l || echo 0)
-          echo "Figures: ${N_AFTER_FIGS} total  |  ${N_OVERWRITTEN_FIGS} overwritten  |  ${N_NEW_FIGS} new  |  ${N_DELETED_FIGS} deleted"
-          if [[ $N_OVERWRITTEN_FIGS -gt 0 ]]; then
-            echo "  Overwritten figures:"
-            comm -12 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | while IFS= read -r f; do
-              printf "    ✏  %s\n" "$(basename "$f")"
+          # ── Verify suppB tables were NOT touched by non-suppB runs ──────────
+          EXP="${EXPERIMENT}"
+          if [[ "$EXP" != "suppB" && "$EXP" != "suppB_sc" ]]; then
+            GUARD_OK=true
+            for DIR in \
+              "${OUT_BASE}/${SUPPB_SUBDIR}/tables" \
+              "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"; do
+              SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
+              CURR="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_curr.txt"
+              find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$CURR" || touch "$CURR"
+              if ! diff -q "$SNAP" "$CURR" > /dev/null 2>&1; then
+                echo "::error::GUARD VIOLATION — suppB tables in '${DIR}' were modified by ${EXP} run!"
+                echo "  Before:"
+                cat "$SNAP"
+                echo "  After:"
+                cat "$CURR"
+                GUARD_OK=false
+              else
+                echo "Guard OK: suppB tables in '${DIR}' unchanged."
+              fi
             done
-          fi
-          if [[ $N_NEW_FIGS -gt 0 ]]; then
-            echo "  New figures:"
-            comm -13 /tmp/postprocess_audit/figs_before.txt /tmp/postprocess_audit/figs_after.txt | while IFS= read -r f; do
-              printf "    ✚  %s\n" "$(basename "$f")"
-            done
-          fi
-
-          # Tables
-          find "$TABS" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > /tmp/postprocess_audit/tabs_after.txt || true
-          N_AFTER_TABS=$(wc -l < /tmp/postprocess_audit/tabs_after.txt || echo 0)
-          N_OVERWRITTEN_TABS=$(comm -12 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | wc -l || echo 0)
-          N_NEW_TABS=$(comm -13 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | wc -l || echo 0)
-          N_DELETED_TABS=$(comm -23 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | wc -l || echo 0)
-          echo "Tables:  ${N_AFTER_TABS} total  |  ${N_OVERWRITTEN_TABS} overwritten  |  ${N_NEW_TABS} new  |  ${N_DELETED_TABS} deleted"
-          if [[ $N_OVERWRITTEN_TABS -gt 0 ]]; then
-            echo "  Overwritten tables:"
-            comm -12 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | while IFS= read -r f; do
-              printf "    ✏  %s\n" "$(basename "$f")"
-            done
-          fi
-          if [[ $N_NEW_TABS -gt 0 ]]; then
-            echo "  New tables:"
-            comm -13 /tmp/postprocess_audit/tabs_before.txt /tmp/postprocess_audit/tabs_after.txt | while IFS= read -r f; do
-              printf "    ✚  %s\n" "$(basename "$f")"
-            done
+            [[ "$GUARD_OK" == "true" ]] || exit 1
           fi
 
-          # Emit GitHub step summary
           {
             echo "## Post-process output summary — ${{ github.event.inputs.experiment }}"
             echo "| Dir | Before | After | Overwritten | New | Deleted |"
             echo "|-----|-------:|------:|------------:|----:|--------:|"
-            echo "| figures | ${N_EXISTING_FIGS} | ${N_AFTER_FIGS} | ${N_OVERWRITTEN_FIGS} | ${N_NEW_FIGS} | ${N_DELETED_FIGS} |"
-            echo "| tables  | ${N_EXISTING_TABS} | ${N_AFTER_TABS} | ${N_OVERWRITTEN_TABS} | ${N_NEW_TABS} | ${N_DELETED_TABS} |"
+            echo "| figures | ${N_EXISTING_FIGS} | ${n_after_figs:-0} | ${n_over_figs:-0} | ${n_new_figs:-0} | ${n_del_figs:-0} |"
+            echo "| tables  | ${N_EXISTING_TABS} | ${n_after_tabs:-0} | ${n_over_tabs:-0} | ${n_new_tabs:-0} | ${n_del_tabs:-0} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # ════════════════════════════════════════════════════════════════════════
+      #  SECTION D: Commit
+      #
+      #  Stages only the directories that the CURRENT experiment is authorised
+      #  to write into.  suppB canonical dirs are ONLY staged when the
+      #  experiment is suppB or suppB_sc.
+      # ════════════════════════════════════════════════════════════════════════
 
       - name: Commit outputs
         env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
+          SUB:        ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT: ${{ github.event.inputs.experiment }}
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Reset index before rebasing — matches ci_analysis.yml pattern.
-          # Without this, a dirty index from prior steps causes rebase to refuse.
           git reset HEAD 2>/dev/null || true
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
-          # Stage outputs; warn explicitly if either directory is empty or missing
-          # rather than hiding it with a bare || true.
           FIGS="${OUT_BASE}/${SUB}/figures"
           TABS="${OUT_BASE}/${SUB}/tables"
 
-          if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
-            echo "::warning::figures directory is empty or missing: ${FIGS}"
-          fi
-          if [[ ! -d "$TABS" ]] || [[ -z "$(ls -A "$TABS" 2>/dev/null)" ]]; then
-            echo "::warning::tables directory is empty or missing: ${TABS}"
+          # Always stage the experiment's own figures + tables.
+          stage_if_nonempty() {
+            local dir="$1"
+            if [[ -d "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
+              git add -f "$dir/" 2>/dev/null || true
+            else
+              echo "::warning::directory empty or missing — skipping git add: ${dir}"
+            fi
+          }
+
+          stage_if_nonempty "$FIGS"
+          stage_if_nonempty "$TABS"
+
+          # ── exp2_feynman_pca: also stage the cross-experiment comparison table ──
+          if [[ "${EXPERIMENT}" == "exp2_feynman_pca" ]]; then
+            PCA_DIR="${OUT_BASE}/${EXP2_PCA_SUBDIR}"
+            for f in \
+              "${PCA_DIR}/exp2_pca_comparison.tex" \
+              "${PCA_DIR}/exp2_pca_comparison.csv" \
+              "${PCA_DIR}/exp2_pca_comparison.md"; do
+              [[ -f "$f" ]] && git add -f "$f" 2>/dev/null || true
+            done
           fi
 
-          git add "${FIGS}/" "${TABS}/" 2>/dev/null || true
+          # ── suppB: stage the canonical noise-sweep tables directory ──────────
+          if [[ "${EXPERIMENT}" == "suppB" ]]; then
+            stage_if_nonempty "${OUT_BASE}/${SUPPB_SUBDIR}/tables"
+          fi
+
+          # ── suppB_sc: stage the canonical sample-complexity tables directory ─
+          if [[ "${EXPERIMENT}" == "suppB_sc" ]]; then
+            stage_if_nonempty "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"
+          fi
 
           if git diff --cached --quiet; then
             echo "No changes to post-process outputs — results unchanged from previous run."
           else
-            git commit -m "ci: figures+tables for ${{ github.event.inputs.experiment }} - run ${{ github.run_id }}"
+            git commit -m "ci: figures+tables for ${EXPERIMENT} — run ${{ github.run_id }}"
             git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed figures+tables for ${{ github.event.inputs.experiment }}."
+            echo "Pushed figures+tables for ${EXPERIMENT}."
           fi

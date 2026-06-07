@@ -92,6 +92,17 @@
 #   audit_nb04         → NB-04 Numerical Consistency & Abstract Claims
 #   audit_nb05         → NB-05 Figure Files & Image Dependencies
 #
+# FIX-MERGE-QUOTING (2026-06-07):
+#   — exp2_feynman_extrap merge block: extracted from bash -c "" into a standalone
+#     ( ) subshell block.  The original \\\\\\" (3-backslash+quote) and \\\\\\$
+#     (3-backslash+dollar) patterns inside the double-quoted outer string produced
+#     literal backslashes in paths after bash parsing (_PAIRED=\"path\") and
+#     suppressed command substitution (_NR=\$(...) never ran).  Rewritten as plain
+#     bash with no nesting, matching the exp2_feynman_pca_comparison_table and
+#     exp3_symbolic_equivalence inlined blocks.
+#   — Final summary: corrected phantom log reference qualify_verify_run.log ->
+#     qualify_run.log (the qualify step only ever writes qualify_run.log).
+#
 # FIX-SYNC-CI (2026-06-05):
 #   — exp2_feynman_pca_comparison_table logic inlined after exp2_feynman_pca_4060.
 #     Calls scripts/patches/generate_exp2_pca_comparison_table.py to produce
@@ -1548,38 +1559,43 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
     echo \"OK: benchmark_results_extrap.json present (shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json)\"
     echo '    ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
   fi
-  # LOCAL EQUIVALENT of ci_analysis.yml 'Merge extrap into benchmark' step.
-  # ci_analysis.yml calls merge_extrap_into_benchmark.py as a dedicated step;
-  # run_all.sh must do the same so ablation_paired.json exists for the qualify
-  # and audit_paper steps that follow (run_analysis.py ablation mode reads it).
-  # Output: exp2_extrap/ablation_paired.json  (same path ci_analysis.yml writes).
-  _SCRIPT_MERGE='${REPO_ROOT}/scripts/merge_extrap_into_benchmark.py'
-  _EXTRAP_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap'
-  _BENCHMARK_DIR='${RESULTS_DIR}/comparison_results/feynman-tests/exp2'
-  _PAIRED=\\\"\${_EXTRAP_DIR}/ablation_paired.json\\\"
+"
 
-  if [[ ! -f \\\"\${_SCRIPT_MERGE}\\\" ]]; then
-    echo '[WARN] merge_extrap_into_benchmark.py not found at '\${_SCRIPT_MERGE}
-    echo '       ablation_paired.json will not be produced locally — ci_analysis.yml will generate it.'
+# LOCAL EQUIVALENT of ci_analysis.yml 'Merge extrap into benchmark' step.
+# FIX-MERGE-QUOTING: extracted from bash -c "" into a standalone ( ) subshell block
+# to eliminate quoting-nesting bugs (3-backslash+quote produced literal backslashes
+# in paths; 3-backslash+dollar suppressed command substitution for _NR).
+# Pattern mirrors exp2_feynman_pca_comparison_table and exp3_symbolic_equivalence.
+# Output: exp2_extrap/ablation_paired.json  (same path ci_analysis.yml writes).
+(
+  set -euo pipefail
+  _SCRIPT_MERGE="${REPO_ROOT}/scripts/merge_extrap_into_benchmark.py"
+  _EXTRAP_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap"
+  _BENCHMARK_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2"
+  _PAIRED="${_EXTRAP_DIR}/ablation_paired.json"
+
+  if [[ ! -f "${_SCRIPT_MERGE}" ]]; then
+    echo "[WARN] merge_extrap_into_benchmark.py not found at ${_SCRIPT_MERGE}"
+    echo "       ablation_paired.json will not be produced locally — ci_analysis.yml will generate it."
   else
-    _BENCH_EXT=\\\"\$(find \\\"\${_EXTRAP_DIR}\\\" -name 'benchmark_results_extrap*.json' | head -1)\\\"
-    if [[ -z \\\"\${_BENCH_EXT}\\\" ]]; then
-      echo '[SKIP] benchmark_results_extrap*.json not found — run exp2_feynman_extrap first.'
+    _BENCH_EXT="$(find "${_EXTRAP_DIR}" -name 'benchmark_results_extrap*.json' | head -1)"
+    if [[ -z "${_BENCH_EXT}" ]]; then
+      echo "[SKIP] benchmark_results_extrap*.json not found — run exp2_feynman_extrap first."
     else
-      echo '[merge] Running merge_extrap_into_benchmark.py → ablation_paired.json'
-      python3 \\\"\${_SCRIPT_MERGE}\\\" \
-        --extrap-benchmark-dir \\\"\${_EXTRAP_DIR}\\\" \
-        --benchmark-dir        \\\"\${_BENCHMARK_DIR}\\\" \
-        --output               \\\"\${_PAIRED}\\\" \
-        2>&1 | tee -a \\\"\${_EXTRAP_DIR}/ablation_paired_run.log\\\" \
-      || echo 'WARNING: merge_extrap_into_benchmark.py exited non-zero — ablation_paired.json may be incomplete'
-      if [[ -f \\\"\${_PAIRED}\\\" ]]; then
-        _NR=\\\$(python3 -c \\\"import json; print(len(json.load(open('\\\"\${_PAIRED}\\\"'))))\\\" 2>/dev/null || echo '?')
-        echo \\\"[merge] ablation_paired.json: \\\${_NR} paired record(s) → \\\${_PAIRED}\\\"
+      echo "[merge] Running merge_extrap_into_benchmark.py → ablation_paired.json"
+      python3 "${_SCRIPT_MERGE}" \
+        --extrap-benchmark-dir "${_EXTRAP_DIR}" \
+        --benchmark-dir        "${_BENCHMARK_DIR}" \
+        --output               "${_PAIRED}" \
+        2>&1 | tee -a "${_EXTRAP_DIR}/ablation_paired_run.log" \
+      || echo "WARNING: merge_extrap_into_benchmark.py exited non-zero — ablation_paired.json may be incomplete"
+      if [[ -f "${_PAIRED}" ]]; then
+        _NR=$(python3 -c "import json; print(len(json.load(open('${_PAIRED}'))))" 2>/dev/null || echo "?")
+        echo "[merge] ablation_paired.json: ${_NR} paired record(s) → ${_PAIRED}"
       fi
     fi
   fi
-"
+)
 
 
 # FIX: --protocol all30 does not exist in run_comparative_suite_benchmark_v2.py
@@ -4084,7 +4100,7 @@ echo "    ${RESULTS_DIR}/figures/hypatiax_instability_per_case.{png,pdf}"
 echo "    (+ 8 more figure stems: Groups A, B, C full set + EX)"
 echo ""
 echo "  Paper audit outputs (STEPs 14-21):"
-echo "    ${RESULTS_DIR}/qualify_verify_run.log   (numerical spot-check, inline)"
+echo "    ${RESULTS_DIR}/qualify_run.log          (numerical spot-check + 7-dim gate)"
 echo "    ${RESULTS_DIR}/qualify_run.log          (7-dimension per-experiment gate)"
 echo "    ${RESULTS_DIR}/audit_paper_run.log      (paper claims vs results)"
 echo "    ${RESULTS_DIR}/audit_nb01_run.log       (NB-01 citation audit)"

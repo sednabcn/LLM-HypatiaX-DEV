@@ -504,22 +504,56 @@ class Fixer:
 
     def apply_FIX_B2(self):
         for p in self._tex_files():
+            # Step 1: redirect any surviving alias cite keys
             self._patch_re(p, r"cranmer2023interpretable", "cranmer2023pysr",
                            "FIX-B2 redirect cite")
+            # Step 2: remove alias bibitem block if it still exists
             self._patch_re(
                 p,
                 r"\\bibitem(?:\[.*?\])?\{cranmer2023interpretable\}[^\n]*\n(?:[^\n]*\n)*?(?=\\bibitem|\\end\{thebibliography\}|\Z)",
                 "", "FIX-B2 remove alias bibitem")
+            # Step 3: remove exact duplicate bibitem{cranmer2023pysr} blocks
+            #         (keeps the first occurrence, removes subsequent identical blocks)
+            src = read(p)
+            pattern = re.compile(
+                r"(\\bibitem(?:\[[^\]]*\])?\{cranmer2023pysr\}[^\n]*\n(?:[^\n]*\n)*?)"
+                r"(?=\\bibitem|\\end\{thebibliography\}|\Z)",
+                re.DOTALL)
+            blocks = pattern.findall(src)
+            if len(blocks) > 1:
+                # Rebuild bib section keeping only the first match
+                new_src = src
+                for dup in blocks[1:]:
+                    new_src = new_src.replace(dup, "", 1)
+                if new_src != src:
+                    print(DIM(f"              FIX-B2: removed {len(blocks)-1} duplicate bibitem(s) in {p.name}"))
+                    write(p, new_src, self.dry_run)
         self.applied.append("FIX-B2")
 
     def apply_FIX_B3(self):
         for p in self._tex_files():
+            # Step 1: redirect any surviving alias cite keys
             self._patch_re(p, r"udrescu2020aifeynman", "udrescu2020ai",
                            "FIX-B3 redirect cite")
+            # Step 2: remove alias bibitem block if it still exists
             self._patch_re(
                 p,
                 r"\\bibitem(?:\[.*?\])?\{udrescu2020aifeynman\}[^\n]*\n(?:[^\n]*\n)*?(?=\\bibitem|\\end\{thebibliography\}|\Z)",
                 "", "FIX-B3 remove alias bibitem")
+            # Step 3: remove exact duplicate bibitem{udrescu2020ai} blocks
+            src = read(p)
+            pattern = re.compile(
+                r"(\\bibitem(?:\[[^\]]*\])?\{udrescu2020ai\}[^\n]*\n(?:[^\n]*\n)*?)"
+                r"(?=\\bibitem|\\end\{thebibliography\}|\Z)",
+                re.DOTALL)
+            blocks = pattern.findall(src)
+            if len(blocks) > 1:
+                new_src = src
+                for dup in blocks[1:]:
+                    new_src = new_src.replace(dup, "", 1)
+                if new_src != src:
+                    print(DIM(f"              FIX-B3: removed {len(blocks)-1} duplicate bibitem(s) in {p.name}"))
+                    write(p, new_src, self.dry_run)
         self.applied.append("FIX-B3")
 
     def apply_FIX_XR1(self):
@@ -562,16 +596,166 @@ class Fixer:
         for p in self._supp_files():
             if "supp_routing_improvements" not in p.name: continue
             n  = self._patch_re(p, r"Section\s+7\.3(\s*\(Component\s+3\))",
-                                r"Section 7.4\1", "FIX-XR3 7.3→7.4")
+                                r"Section 7.4\1", "FIX-XR3 7.3→7.4 (Component 3)")
             n += self._patch_re(p, r"(Proposition\s+1[^.]*?Section\s+)7\.3",
                                 r"\g<1>7.4", "FIX-XR3 Prop 1 ref", flags=re.DOTALL)
+            # Catch any remaining bare "Section~7.3" or "Section 7.3" patterns
+            n += self._patch_re(p, r"(Section[~\s]+)7\.3\b",
+                                r"\g<1>7.4", "FIX-XR3 bare section ref")
             if n: self.applied.append(f"FIX-XR3 — {p.name}")
 
     def apply_FIX_XR4(self):
+        # Fix stale filename in ALL supplementary files, not just routing
         for p in self._supp_files():
             n = self._patch_str(p, "jmlr_paper_main.tex", "jmlr-hypatiax-paper-final.tex",
                                 "FIX-XR4 filename")
+            n += self._patch_re(p, r"\\texttt\{jmlr_paper_main\}",
+                                r"\\texttt{jmlr-hypatiax-paper-final}", "FIX-XR4 texttt")
             if n: self.applied.append(f"FIX-XR4 — {p.name}")
+
+    # ── Section / subsection label fixes ──────────────────────────────────────
+
+    # Expected top-level section labels (title fragment → label key)
+    _SECTION_LABELS: dict[str, str] = {
+        "Introduction":                      "sec:intro",
+        "Related Work":                      "sec:related",
+        "Empirical Evidence":                "sec:llm_limitations",
+        "Theoretical Framework":             "sec:theory",
+        "Problem Formulation":               "sec:problem",
+        "Benchmark Design":                  "sec:benchmark",
+        "Methodology":                       "sec:method",
+        "HypatiaX Architecture":             "sec:architecture",
+        "Experimental Setup":                "sec:setup",
+        "Results":                           "sec:results",
+        "Discussion":                        "sec:discussion",
+        "Conclusion":                        "sec:conclusion",
+        "Reproducibility":                   "sec:reproducibility",
+        "Full Benchmark Case":               "app:cases",
+        "Benchmark Version History":         "app:versions",
+        "Corrected Runtime Claim":           "app:timing",
+    }
+
+    # Subsection labels (title fragment → label key)
+    _SUBSEC_LABELS: dict[str, str] = {
+        "Contributions":                     "subsec:contributions",
+        "Symbolic Regression":               "subsec:sr",
+        "LLMs for Mathematical":             "subsec:llm_math",
+        "Equation Learners":                 "subsec:eql",
+        "Hybrid Symbolic":                   "subsec:hybrid_related",
+        "Extrapolation in Neural":           "subsec:nn_extrap",
+        "Experimental Design":               "subsec:exp_design",
+        "Baseline Results":                  "subsec:baseline",
+        "Failure Mode Taxonomy":             "subsec:failure_modes",
+        "Case Studies":                      "subsec:case_studies",
+        "Success Pattern":                   "subsec:success_patterns",
+        "Extrapolation Testing":             "subsec:extrap_testing",
+        "Formal Definitions":               "subsec:formal_defs",
+        "Main Theoretical Result":           "subsec:main_result",
+        "Implications for Discovery":        "subsec:implications",
+        "Functional Form Recovery":          "subsec:functional_form",
+        "Overview and Scope":               "subsec:overview",
+        "Difficulty Classification":         "subsec:difficulty_class",
+        "Data Generation":                   "subsec:data_gen",
+        "Extrapolation Protocol":            "sec:split",
+        "Architecture Overview":             "subsec:arch_overview",
+        "Component 1":                       "sec:llm_gen",
+        "Component 2":                       "sec:nn",
+        "Component 3":                       "sec:routing",
+        "Unified Formula Executor":          "sec:executor",
+        "Design Principles":                 "subsec:design_principles",
+        "Assumptions":                       "sec:assumptions",
+        "Five-Stage Routing Architecture":   "sec:validation_framework",
+        "System Variants":                   "subsec:variants",
+        "Hybrid DeFi Variant":               "sec:hybrid_defi_spec",
+        "Symbolic Discovery Core":           "subsec:symbolic_core",
+        "Multi-Layer Validation":            "sec:validation_detail",
+        "Benchmark Summary":                 "subsec:bench_summary",
+        "Methods Compared":                  "subsec:methods",
+        "Evaluation Metrics":               "subsec:metrics",
+        "Runtime Measurement":               "sec:timing_setup",
+        "Implementation Details":            "subsec:impl",
+        "Five-System Comparative":           "sec:five_systems",
+        "Overall Extrapolation":             "subsec:overall",
+        "Performance by Difficulty":         "sec:difficulty",
+        "Runtime Analysis":                  "sec:timing",
+        "Portfolio Variance":                "sec:portfolio_seed_sweep",
+        "Ablation":                          "sec:ablation_core15",
+        "Feynman Extrapolation":             "sec:feynman30",
+        "Nguyen-12":                         "sec:nguyen12",
+        "Stability Under Stochastic":        "sec:instability_results",
+        "Three Core Findings":               "subsec:three_findings",
+        "Arrhenius and Scale":               "sec:arrhenius_failure",
+        "Stability--Accuracy":               "subsec:stability_accuracy",
+        "Why Transcendental":                "subsec:transcendental",
+        "OOD Metric":                        "sec:ood_proxy",
+        "Design Principles for Analytical":  "subsec:design_principles_disc",
+        "Comparison with Related":           "subsec:comparison",
+        "Ethical Considerations":            "subsec:ethics",
+        "Broader Applicability":             "subsec:broader",
+        "Limitations and Future":            "sec:limitations",
+    }
+
+    def _add_labels_to_headings(self, p: "Path", cmd: str,
+                                label_map: "dict[str, str]") -> int:
+        """Insert \\label{key} after any \\cmd{Title} that is missing its label.
+        Returns the number of labels inserted."""
+        src   = read(p)
+        lines = src.splitlines()
+        out   = []
+        added = 0
+        i = 0
+        while i < len(lines):
+            ln = lines[i]
+            m  = re.match(
+                r'^(\s*\\' + cmd + r'\*?\s*(?:\[[^\]]*\])?\s*\{)(.+?)(\})\s*$',
+                ln)
+            if m:
+                title     = m.group(2)
+                label_key = next(
+                    (lbl for frag, lbl in label_map.items()
+                     if frag.lower() in title.lower()),
+                    None)
+                out.append(ln)
+                if label_key:
+                    # Check next 3 lines for existing label
+                    lookahead = "\n".join(lines[i+1:i+4])
+                    if f"\\label{{{label_key}}}" not in lookahead:
+                        out.append(f"\\label{{{label_key}}}")
+                        added += 1
+                        print(DIM(f"              FIX-S: +\\label{{{label_key}}} after '{title[:50]}'"))
+            else:
+                out.append(ln)
+            i += 1
+        if added:
+            new_src = "\n".join(out)
+            # Deduplicate: if a label now appears twice, remove the second
+            for lbl in label_map.values():
+                tag   = f"\\label{{{lbl}}}"
+                parts = new_src.split(tag)
+                if len(parts) > 2:          # more than one occurrence
+                    new_src = parts[0] + tag + "".join(parts[1:]).replace(tag, "", len(parts)-2)
+            write(p, new_src, self.dry_run)
+        return added
+
+    def apply_FIX_S1(self):
+        """Add \\label to every top-level \\section missing one."""
+        total = 0
+        for p in self._tex_files():
+            total += self._add_labels_to_headings(p, "section", self._SECTION_LABELS)
+        if total:
+            self.applied.append(f"FIX-S1 — {total} section label(s) added")
+        else:
+            self.applied.append("FIX-S1 (all section labels already present)")
+
+    def apply_FIX_S2(self):
+        """Add \\label to every \\subsection missing one."""
+        total = 0
+        for p in self._tex_files():
+            total += self._add_labels_to_headings(p, "subsection", self._SUBSEC_LABELS)
+        if total:
+            self.applied.append(f"FIX-S2 — {total} subsection label(s) added")
+        else:
+            self.applied.append("FIX-S2 (all subsection labels already present)")
 
     def apply_FIX_N1(self):
         for p in self._tex_files():
