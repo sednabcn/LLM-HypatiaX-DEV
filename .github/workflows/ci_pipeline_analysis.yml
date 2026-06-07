@@ -29,7 +29,8 @@
 #
 #  CANONICAL EXPERIMENT ORDER
 #  --------------------------
-#  exp1 → exp1b → exp2_feynman → exp2 → exp3 → exp3b →
+#  exp1 → exp1b → exp2_feynman → exp2_feynman_extrap → exp2_feynman_pca →
+#  exp2 → exp3 → exp3b →
 #  suppA → suppB → suppB_sc → hybrid_all_domains → instability → extrap
 #
 #  exp1b and exp3b are the only experiments that require a _merged.json
@@ -63,6 +64,7 @@ on:
           - exp1b
           - exp2_feynman
           - exp2_feynman_extrap
+          - exp2_feynman_pca
           - exp2
           - exp3
           - exp3b
@@ -138,7 +140,7 @@ jobs:
           ALL = [
               # FIX 1: exp2_feynman_extrap was missing — caused it to be silently
               # skipped on every "all" run.  Order matches canonical QUEUE in ci_pipeline.yml.
-              "exp1", "exp1b", "exp2_feynman", "exp2_feynman_extrap", "exp2",
+              "exp1", "exp1b", "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca", "exp2",
               "exp3", "exp3b", "suppA", "suppB", "suppB_sc",
               "hybrid_all_domains", "instability", "extrap",
           ]
@@ -234,6 +236,7 @@ jobs:
               'exp1b':              'comparison_results/noise-noiseless/15',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
+              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
@@ -459,7 +462,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn \
+            "sympy>=1.12" "tabulate>=0.9"
 
       - name: Resolve result_subdir
         id: meta
@@ -476,6 +480,7 @@ jobs:
               # FIX 3: exp2_feynman_extrap was missing from postprocess mapping —
               # it would fall back to the bare experiment name as subdir (wrong path).
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
+              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
               'exp2':               'comparison_results/feynman-tests/exp2_multi',
               'exp3':               'extrapolation',
               'exp3b':              'extrapolation/multi_seed',
@@ -490,31 +495,266 @@ jobs:
           ")
           echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
 
+      # ── Pre-create output directories ─────────────────────────────────────────
+      - name: Create output directories
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          mkdir -p "${OUT_BASE}/${SUB}/figures" "${OUT_BASE}/${SUB}/tables"
+
+      # ── Guard: snapshot suppB table dirs before any non-suppB run ─────────────
+      # Records the current state of suppB canonical dirs so the Commit step can
+      # verify they were not modified.  Mirrors ci_postprocess.yml guard logic.
+      - name: "Guard: snapshot suppB table dirs (non-suppB runs)"
+        if: |
+          matrix.experiment != 'suppB' &&
+          matrix.experiment != 'suppB_sc'
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/postprocess_audit
+          for DIR in \
+            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables" \
+            "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"; do
+            SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
+            find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$SNAP" || touch "$SNAP"
+            echo "Guard snapshot: $(wc -l < "$SNAP") .tex file(s) in ${DIR}"
+          done
+
+      # ── SECTION A: Figures (--experiment scoped) ──────────────────────────────
       - name: Generate figures
         env:
           EXP: ${{ matrix.experiment }}
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
-          # FIX 2a: scripts live under scripts/, not figures/ or tables/.
-          # "figures/generate_figures.py" resolves into the OUTPUT subtree, not the repo root.
-          # FIX 2b: pre-create tables/ dir alongside figures/ — without it git add
-          # "${TABS}/" warns and tables are never committed (same bug as ci_postprocess.yml).
-          mkdir -p "${OUT_BASE}/${SUB}/figures"
-          mkdir -p "${OUT_BASE}/${SUB}/tables"
+          # --experiment scopes generate_figures.py to only produce plots relevant
+          # to this experiment, preventing cross-experiment data contamination.
           python scripts/generate_figures.py \
+            --experiment  "${EXP}" \
             --repo-root   "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source auto
+            --source      auto
 
-      - name: Generate tables
+      # ── SECTION B: Tables — one step per experiment family ────────────────────
+      # Each step is gated with if: so only the matching experiment runs it.
+      # suppB/suppB_sc steps point --results-dir at their canonical source dirs.
+      # All other steps point at their own SUB directory.
+
+      - name: "Tables: exp1 — noiseless DeFi"
+        if: matrix.experiment == 'exp1'
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         run: |
-          # FIX 2a (continued): was tables/generate_tables.py — same wrong-path bug.
           python scripts/generate_tables.py \
+            --experiment  exp1 \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
 
+      - name: "Tables: exp1b — noise-robust DeFi (multi-seed)"
+        if: matrix.experiment == 'exp1b'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          MERGED="${OUT_BASE}/${SUB}/_merged.json"
+          if [[ ! -f "$MERGED" ]]; then
+            echo "::error::${MERGED} not found. Run ci_analysis for exp1b first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  exp1b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: exp2_feynman — Feynman benchmark"
+        if: matrix.experiment == 'exp2_feynman'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python scripts/generate_tables.py \
+            --experiment  exp2_feynman \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: exp2_feynman_extrap — extrapolation comparison"
+        if: matrix.experiment == 'exp2_feynman_extrap'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          PAIRED="${OUT_BASE}/${SUB}/ablation_paired.json"
+          if [[ ! -f "$PAIRED" ]]; then
+            echo "::error::${PAIRED} not found."
+            echo "  Run ci_analysis for exp2_feynman_extrap first (generates ablation_paired.json)."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  exp2_feynman_extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: exp2_feynman_pca — PCA 40/60 vs random 80/20"
+        if: matrix.experiment == 'exp2_feynman_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          # Reads BOTH exp2/ AND exp2_pca_4060/; output goes to the pca canonical dir.
+          python scripts/patches/generate_exp2_pca_comparison_table.py \
+            --results-dir "${OUT_BASE}" \
+            --output-dir  "${OUT_BASE}/${SUB}" \
+            --formats     "tex,csv,md"
+          # Per-experiment tables for the pca subdir itself.
+          python scripts/generate_tables.py \
+            --experiment  exp2_feynman_pca \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: exp2 — all-30 multi-domain"
+        if: matrix.experiment == 'exp2'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python scripts/generate_tables.py \
+            --experiment  exp2 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: exp3 — Nguyen-12 symbolic equivalence"
+        if: matrix.experiment == 'exp3'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
+          if [[ ! -f "$CSV" ]]; then
+            echo "::error::${CSV} not found. Run ci_analysis for exp3 first."
+            exit 1
+          fi
+          python scripts/patches/generate_nguyen12_symequiv_table.py \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          python scripts/generate_tables.py \
+            --experiment  exp3 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: exp3b — multi-seed Nguyen-12"
+        if: matrix.experiment == 'exp3b'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
+          if [[ ! -f "$CSV" ]]; then
+            echo "::error::${CSV} not found. Run ci_analysis for exp3b first."
+            exit 1
+          fi
+          python scripts/patches/generate_nguyen12_symequiv_table.py \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          python scripts/generate_tables.py \
+            --experiment  exp3b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: suppA — hybrid PySR + DeFi"
+        if: matrix.experiment == 'suppA'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python scripts/generate_tables.py \
+            --experiment  suppA \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: suppB — noise-sweep (canonical source)"
+        if: matrix.experiment == 'suppB'
+        run: |
+          NOISE_DATA=$(find "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
+            -maxdepth 2 -name "noise_sweep_*.json" -o -name "noise*.json" 2>/dev/null | head -1 || true)
+          if [[ -z "$NOISE_DATA" ]]; then
+            echo "::error::No noise_sweep_*.json found. Run ci_runner for suppB first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  suppB \
+            --results-dir "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
+            --output-dir  "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables"
+
+      - name: "Tables: suppB_sc — sample-complexity (canonical source)"
+        if: matrix.experiment == 'suppB_sc'
+        run: |
+          SC_DATA=$(find "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
+            -maxdepth 2 -name "sc_n*.json" -o -name "*sample_complexity*.json" 2>/dev/null | head -1 || true)
+          if [[ -z "$SC_DATA" ]]; then
+            echo "::error::No sample-complexity JSONs found. Run ci_runner for suppB_sc first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  suppB_sc \
+            --results-dir "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
+            --output-dir  "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"
+
+      - name: "Tables: hybrid_all_domains — LLM+NN all-domain"
+        if: matrix.experiment == 'hybrid_all_domains'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python scripts/generate_tables.py \
+            --experiment  hybrid_all_domains \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: instability — Instability Index"
+        if: matrix.experiment == 'instability'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          VARIANCE_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 2 \
+            -name "hypatiax_defi_variance_results.json" \
+            -o -name "*instability*.json" \
+            -o -name "*variance*.json" 2>/dev/null | head -1 || true)
+          if [[ -z "$VARIANCE_JSON" ]]; then
+            echo "::error::No instability/variance JSON found in ${OUT_BASE}/${SUB}"
+            echo "  Run ci_runner for instability first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  instability \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: "Tables: extrap — OOD extrapolation"
+        if: matrix.experiment == 'extrap'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python scripts/generate_tables.py \
+            --experiment  extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      # ── Post-run guard: verify suppB tables not modified by non-suppB runs ────
+      - name: "Guard: verify suppB tables unchanged (non-suppB runs)"
+        if: |
+          matrix.experiment != 'suppB' &&
+          matrix.experiment != 'suppB_sc'
+        env:
+          EXP: ${{ matrix.experiment }}
+        run: |
+          set -euo pipefail
+          GUARD_OK=true
+          for DIR in \
+            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables" \
+            "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"; do
+            SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
+            CURR="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_curr.txt"
+            find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$CURR" || touch "$CURR"
+            if [[ -f "$SNAP" ]] && ! diff -q "$SNAP" "$CURR" > /dev/null 2>&1; then
+              echo "::error::GUARD VIOLATION — suppB tables in '${DIR}' were modified by ${EXP} run!"
+              GUARD_OK=false
+            else
+              echo "Guard OK: suppB tables in '${DIR}' unchanged."
+            fi
+          done
+          [[ "$GUARD_OK" == "true" ]] || exit 1
+
+      # ── Commit postprocess outputs ─────────────────────────────────────────────
       - name: Commit postprocess outputs
         env:
           EXP: ${{ matrix.experiment }}
@@ -528,14 +768,38 @@ jobs:
           FIGS="${OUT_BASE}/${SUB}/figures"
           TABS="${OUT_BASE}/${SUB}/tables"
 
-          if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
-            echo "::warning::figures directory empty or missing: ${FIGS}"
-          fi
-          if [[ ! -d "$TABS" ]] || [[ -z "$(ls -A "$TABS" 2>/dev/null)" ]]; then
-            echo "::warning::tables directory empty or missing: ${TABS}"
+          stage_if_nonempty() {
+            local dir="$1"
+            if [[ -d "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
+              git add -f "$dir/" 2>/dev/null || true
+            else
+              echo "::warning::directory empty or missing — skipping git add: ${dir}"
+            fi
+          }
+
+          stage_if_nonempty "$FIGS"
+          stage_if_nonempty "$TABS"
+
+          # exp2_feynman_pca: also stage the cross-experiment comparison table.
+          if [[ "${EXP}" == "exp2_feynman_pca" ]]; then
+            PCA_DIR="${OUT_BASE}/comparison_results/feynman-tests/exp2_pca_4060"
+            for f in \
+              "${PCA_DIR}/exp2_pca_comparison.tex" \
+              "${PCA_DIR}/exp2_pca_comparison.csv" \
+              "${PCA_DIR}/exp2_pca_comparison.md"; do
+              [[ -f "$f" ]] && git add -f "$f" 2>/dev/null || true
+            done
           fi
 
-          git add "${FIGS}/" "${TABS}/" 2>/dev/null || true
+          # suppB: stage canonical noise-sweep tables directory.
+          if [[ "${EXP}" == "suppB" ]]; then
+            stage_if_nonempty "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables"
+          fi
+
+          # suppB_sc: stage canonical sample-complexity tables directory.
+          if [[ "${EXP}" == "suppB_sc" ]]; then
+            stage_if_nonempty "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"
+          fi
 
           if git diff --cached --quiet; then
             echo "No changes — outputs unchanged."
@@ -599,6 +863,7 @@ jobs:
               # FIX 4: exp2_feynman_extrap missing from check SUBDIR — caused
               # the check job to report it as MISSING even when results were present.
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
+              "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
@@ -616,6 +881,7 @@ jobs:
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
               # FIX 4 (continued): exp2_feynman_extrap missing from RESULT_GLOBS.
               "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json", "protocol_core_*.json"],
+              "exp2_feynman_pca":   ["protocol_core_*.json", "benchmark_results.json", "exp2_pca_comparison.tex"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "exp3b":              ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
