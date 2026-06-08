@@ -583,9 +583,16 @@ jobs:
             --formats     "tex,csv,md"
 
           # Also generate per-experiment tables for the pca subdir itself.
+          # NOTE: --results-dir is intentionally ${OUT_BASE} (the repo root),
+          # NOT ${OUT_BASE}/${SUB}.  generate_tables.py for exp2_feynman_pca
+          # needs to locate JSONs from sibling experiments (e.g. feynman-tests/
+          # noise-sweep, noise-noiseless/noiseless) that live under the repo
+          # root, not inside the pca subdir.  Passing the subdir caused all
+          # cross-experiment JSON lookups to fail with "Searched: .../exp2_pca_4060/..."
+          # and silently fell back to paper-verified hardcoded numbers.
           python scripts/generate_tables.py \
             --experiment  exp2_feynman_pca \
-            --results-dir "${OUT_BASE}/${SUB}" \
+            --results-dir "${OUT_BASE}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
           if [[ $N_TABS -eq 0 ]]; then
