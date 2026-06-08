@@ -448,6 +448,7 @@ def _find_shard_files(root: Path, globs: list[str]) -> list[Path]:
     _SKIP_NAMES = frozenset({
         "_report.md", "_merged.json", "_merged.csv",
         "_stats.json", "_checkpoint.json",
+        "_analysis.json",   # pipeline output from run_analysis.py — never a valid shard
     })
 
     # Derive allowed suffixes from the glob patterns; always include .json.
@@ -1122,7 +1123,8 @@ def merge_experiment(
     # ── 6. Write _merged.json ───────────────────────────────────────────────
     merged_json_path = output_dir / "_merged.json"
     merged_json_path.write_text(
-        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(list(merged.values()), indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
 
     # ── 7. Write _merged.csv ────────────────────────────────────────────────
