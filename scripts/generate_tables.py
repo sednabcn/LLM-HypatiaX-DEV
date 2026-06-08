@@ -67,6 +67,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--sample-complexity-json", type=Path, default=None,
                    dest="sample_complexity", metavar="PATH",
                    help="Explicit sample_complexity_*.json (auto-detected if omitted).")
+    p.add_argument("--experiment", type=str, default=None, dest="experiment",
+                   metavar="NAME",
+                   help="Optional experiment tag (e.g. exp2_feynman_pca). "
+                        "Currently informational only; all tables are regenerated "
+                        "regardless of this value.")
     return p.parse_args()
 
 
@@ -1526,7 +1531,10 @@ def main() -> None:
     print("  Table Generator — HypatiaX JMLR + Supplement B")
     print("═" * 65)
     print(f"  Results dir : {RESULTS}")
-    print(f"  Output dir  : {TABLES_DIR}\n")
+    print(f"  Output dir  : {TABLES_DIR}")
+    if _ARGS.experiment:
+        print(f"  Experiment  : {_ARGS.experiment}")
+    print()
 
     # ── Missing JSON audit ────────────────────────────────────────────────────
     # Check every expected JSON before running generators so the user gets a
