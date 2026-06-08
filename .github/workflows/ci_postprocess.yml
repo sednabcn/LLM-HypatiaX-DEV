@@ -32,6 +32,14 @@ name: "HypatiaX - post-process (figures + tables)"
 #           it fell back to generating every table it knew about, using
 #           whatever data happened to be present in --results-dir.
 #
+#    BUG-E  SINGLE GENERIC FIGURES STEP WRITES TO WRONG PATH
+#           generate_figures.py ignored --repo-root and --figures-dir, instead
+#           hardcoding output to hypatiax/tools/figures/results.pdf (a tools-
+#           level path).  The experiment's own figures/ directory was always
+#           left empty, causing the Commit step to skip staging it entirely.
+#           plot_results.py (called as a subprocess) reported success but wrote
+#           nothing observable to the experiment's figures dir either.
+#
 #  FIX STRATEGY:
 #    1. Every experiment has its own NAMED step that:
 #         a. Passes --experiment <id> to generate_tables.py so it only
@@ -42,10 +50,15 @@ name: "HypatiaX - post-process (figures + tables)"
 #       subdirectories; other experiments never touch those directories.
 #    3. A GUARD step runs BEFORE any table generation for non-suppB experiments
 #       to verify that existing suppB tables will not be touched.
-#    4. generate_figures.py is also passed --experiment so it can scope its
-#       figure selection to the relevant experiment.
+#    4. FIGURES now mirror the same per-experiment gated-step pattern as tables
+#       (BUG-E fix): each experiment has its own named "Figures: <exp>" step
+#       that passes --experiment, --results-dir (canonical source), and
+#       --figures-dir (canonical output) explicitly.  suppB/suppB_sc figures
+#       point at their canonical subdirectory, not at $SUB.  The old single
+#       generic "Generate figures" step is removed.
 #    5. The Commit step stages ALL directories that may have been written,
-#       including cross-experiment canonical dirs for exp2_feynman_pca.
+#       including cross-experiment canonical dirs for exp2_feynman_pca and
+#       the suppB/suppB_sc figures directories when those experiments run.
 # ==============================================================================
 
 on:
@@ -80,6 +93,7 @@ permissions:
   contents: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   OUT_BASE: "hypatiax/data/results"
 
   # ── Canonical subdirs for cross-experiment outputs ────────────────────────
@@ -211,11 +225,14 @@ jobs:
         run: |
           set -euo pipefail
           for DIR in \
+            "${OUT_BASE}/${SUPPB_SUBDIR}/figures" \
             "${OUT_BASE}/${SUPPB_SUBDIR}/tables" \
+            "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" \
             "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"; do
             SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
-            find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$SNAP" || touch "$SNAP"
-            echo "Guard snapshot: $(wc -l < "$SNAP") .tex file(s) in ${DIR}"
+            find "$DIR" -maxdepth 1 -type f \( -name "*.tex" -o -name "*.pdf" -o -name "*.png" \) \
+              2>/dev/null | sort > "$SNAP" || touch "$SNAP"
+            echo "Guard snapshot: $(wc -l < "$SNAP") file(s) in ${DIR}"
           done
 
       # ── 5. Pre-create output directories ────────────────────────────────────
@@ -230,22 +247,211 @@ jobs:
 
       # ════════════════════════════════════════════════════════════════════════
       #  SECTION A: FIGURES  (per-experiment, scoped via --experiment)
+      #
+      #  WHY SEPARATED (BUG-E fix):
+      #    The previous single generic step called generate_figures.py with
+      #    --repo-root and --figures-dir pointing at the experiment's subdir,
+      #    but the script ignored those flags and hardcoded its output to
+      #    hypatiax/tools/figures/results.pdf.  The experiment's figures/ dir
+      #    was always left empty, causing the Commit step to skip staging it.
+      #
+      #    Each step below explicitly passes:
+      #      --experiment  <id>         → scopes which figures are generated
+      #      --results-dir <canonical>  → canonical JSON source for that exp
+      #      --figures-dir <canonical>  → canonical output directory
+      #    suppB/suppB_sc point at their own canonical subdirs, not at $SUB.
       # ════════════════════════════════════════════════════════════════════════
 
-      - name: Generate figures
+      # ── A1: exp1 ────────────────────────────────────────────────────────────
+      - name: "Figures: exp1 — noiseless DeFi"
+        if: github.event.inputs.experiment == 'exp1'
         env:
-          SUB:        ${{ steps.meta.outputs.result_subdir }}
-          EXPERIMENT: ${{ github.event.inputs.experiment }}
+          SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
           set -euo pipefail
-          # --experiment scopes generate_figures.py to only produce plots that
-          # correspond to this experiment.  Before this fix the flag was absent,
-          # causing the script to attempt generating ALL figure types using data
-          # that did not exist in this experiment's subdirectory.
           python scripts/generate_figures.py \
-            --experiment  "${EXPERIMENT}" \
-            --repo-root   "${OUT_BASE}/${SUB}" \
+            --experiment  exp1 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A2: exp1b ───────────────────────────────────────────────────────────
+      - name: "Figures: exp1b — noise-robust DeFi (multi-seed)"
+        if: github.event.inputs.experiment == 'exp1b'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp1b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A3: exp2_feynman ────────────────────────────────────────────────────
+      - name: "Figures: exp2_feynman — Feynman benchmark"
+        if: github.event.inputs.experiment == 'exp2_feynman'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp2_feynman \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A4: exp2_feynman_extrap ──────────────────────────────────────────────
+      - name: "Figures: exp2_feynman_extrap — extrapolation comparison"
+        if: github.event.inputs.experiment == 'exp2_feynman_extrap'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp2_feynman_extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A5: exp2_feynman_pca ─────────────────────────────────────────────────
+      - name: "Figures: exp2_feynman_pca — PCA 40/60 vs random 80/20"
+        if: github.event.inputs.experiment == 'exp2_feynman_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp2_feynman_pca \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A6: exp2 ─────────────────────────────────────────────────────────────
+      - name: "Figures: exp2 — all-30 multi-domain"
+        if: github.event.inputs.experiment == 'exp2'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp2 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A7: exp3 ─────────────────────────────────────────────────────────────
+      - name: "Figures: exp3 — Nguyen-12 symbolic equivalence"
+        if: github.event.inputs.experiment == 'exp3'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp3 \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A8: exp3b ────────────────────────────────────────────────────────────
+      - name: "Figures: exp3b — multi-seed Nguyen-12"
+        if: github.event.inputs.experiment == 'exp3b'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp3b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A9: suppA ────────────────────────────────────────────────────────────
+      - name: "Figures: suppA — hybrid PySR + DeFi"
+        if: github.event.inputs.experiment == 'suppA'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  suppA \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A10: suppB — noise-sweep figures (canonical source) ──────────────────
+      # CRITICAL: reads from and writes to the CANONICAL suppB subdirectory.
+      - name: "Figures: suppB — noise-sweep (canonical source)"
+        if: github.event.inputs.experiment == 'suppB'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  suppB \
+            --results-dir "${OUT_BASE}/${SUPPB_SUBDIR}" \
+            --figures-dir "${OUT_BASE}/${SUPPB_SUBDIR}/figures" \
+            --source      auto
+
+      # ── A11: suppB_sc — sample-complexity figures (canonical source) ──────────
+      - name: "Figures: suppB_sc — sample-complexity (canonical source)"
+        if: github.event.inputs.experiment == 'suppB_sc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  suppB_sc \
+            --results-dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}" \
+            --figures-dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" \
+            --source      auto
+
+      # ── A12: hybrid_all_domains ───────────────────────────────────────────────
+      - name: "Figures: hybrid_all_domains — LLM+NN all-domain"
+        if: github.event.inputs.experiment == 'hybrid_all_domains'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  hybrid_all_domains \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A13: instability ─────────────────────────────────────────────────────
+      - name: "Figures: instability — Instability Index S10.9"
+        if: github.event.inputs.experiment == 'instability'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  instability \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A14: extrap ───────────────────────────────────────────────────────────
+      - name: "Figures: extrap — OOD extrapolation"
+        if: github.event.inputs.experiment == 'extrap'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
             --source      auto
 
@@ -611,20 +817,23 @@ jobs:
           if [[ "$EXP" != "suppB" && "$EXP" != "suppB_sc" && "${JOB_STATUS}" == "success" ]]; then
             GUARD_OK=true
             for DIR in \
+              "${OUT_BASE}/${SUPPB_SUBDIR}/figures" \
               "${OUT_BASE}/${SUPPB_SUBDIR}/tables" \
+              "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" \
               "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"; do
               SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
               CURR="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_curr.txt"
-              find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$CURR" || touch "$CURR"
+              find "$DIR" -maxdepth 1 -type f \( -name "*.tex" -o -name "*.pdf" -o -name "*.png" \) \
+                2>/dev/null | sort > "$CURR" || touch "$CURR"
               if ! diff -q "$SNAP" "$CURR" > /dev/null 2>&1; then
-                echo "::error::GUARD VIOLATION — suppB tables in '${DIR}' were modified by ${EXP} run!"
+                echo "::error::GUARD VIOLATION — suppB outputs in '${DIR}' were modified by ${EXP} run!"
                 echo "  Before:"
                 cat "$SNAP"
                 echo "  After:"
                 cat "$CURR"
                 GUARD_OK=false
               else
-                echo "Guard OK: suppB tables in '${DIR}' unchanged."
+                echo "Guard OK: suppB outputs in '${DIR}' unchanged."
               fi
             done
             [[ "$GUARD_OK" == "true" ]] || exit 1
@@ -697,13 +906,15 @@ jobs:
             done
           fi
 
-          # ── suppB: stage the canonical noise-sweep tables directory ──────────
+          # ── suppB: stage the canonical noise-sweep figures + tables directory ──
           if [[ "${EXPERIMENT}" == "suppB" ]]; then
+            stage_if_nonempty "${OUT_BASE}/${SUPPB_SUBDIR}/figures"
             stage_if_nonempty "${OUT_BASE}/${SUPPB_SUBDIR}/tables"
           fi
 
-          # ── suppB_sc: stage the canonical sample-complexity tables directory ─
+          # ── suppB_sc: stage the canonical sample-complexity figures + tables ─
           if [[ "${EXPERIMENT}" == "suppB_sc" ]]; then
+            stage_if_nonempty "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures"
             stage_if_nonempty "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"
           fi
 
