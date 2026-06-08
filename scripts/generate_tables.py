@@ -69,9 +69,9 @@ def _parse_args() -> argparse.Namespace:
                    help="Explicit sample_complexity_*.json (auto-detected if omitted).")
     p.add_argument("--experiment", type=str, default=None, dest="experiment",
                    metavar="NAME",
-                   help="Optional experiment tag (e.g. exp2_feynman_pca). "
-                        "Currently informational only; all tables are regenerated "
-                        "regardless of this value.")
+                   help="Experiment tag (e.g. exp2_feynman_pca).  When supplied, "
+                        "only the tables relevant to that experiment are generated. "
+                        "Omit (or pass 'all') to regenerate every table.")
     return p.parse_args()
 
 
@@ -1625,35 +1625,86 @@ def main() -> None:
         print("  sample_complexity : NOT FOUND — suppB SC tables will be placeholders")
     print()
 
-    # ── Main paper tables ─────────────────────────────────────────────────────
-    print("  ── Main paper tables ───────────────────────────────────────")
-    gen_five_system()       # Tab 1  §10.1
-    gen_defi_main()         # Tab 2  §10.2
-    gen_defi_tiers()        # Tab 3  §10.3
-    gen_runtime()           # Tab 4  §10.4
-    gen_portfolio_seed_sweep()  # Tab 5  §10.5
-    gen_ablation()          # Tab 6  §10.6
-    gen_feynman_results()   # Tab 7  §10.7
-    gen_nguyen12()          # Tab 8  §10.8
-    gen_instability()       # Tab 9  §10.9
-    gen_version_history()   # Tab 10 Appendix B
-    gen_timing_detail()     # Tab 11 Appendix C
-    gen_repro_macros()
+    # ── Dispatch: which generators to run ────────────────────────────────────
+    # When --experiment is supplied, only the tables that belong to that
+    # experiment are generated.  This prevents:
+    #   - suppB tables being written into every other experiment's output dir
+    #   - main-paper tables being overwritten by a pca/extrap/suppB run
+    #   - cross-experiment JSON searches failing because --results-dir points
+    #     at a subdir that doesn't contain sibling experiment data
+    #
+    # Mapping: experiment id -> list of (section_label, [callables])
+    # "all" (or None) keeps the original behaviour of running everything.
+    _EXP = (_ARGS.experiment or "all").lower()
 
-    # ── Supplement B tables — noise sweep (Tab 28 data) ───────────────────────
-    print("\n  ── Supplement B — noise sweep (suppB STEP 10) ──────────────")
-    gen_suppb_r2_noise(noise_data)
-    gen_suppb_rr_noise(noise_data)
-    gen_suppb_time_noise(noise_data)
-    gen_suppb_noiseless()
+    def _main_paper_section():
+        return ("── Main paper tables ───────────────────────────────────────", [
+            lambda: gen_five_system(),
+            lambda: gen_defi_main(),
+            lambda: gen_defi_tiers(),
+            lambda: gen_runtime(),
+            lambda: gen_portfolio_seed_sweep(),
+            lambda: gen_ablation(),
+            lambda: gen_feynman_results(),
+            lambda: gen_nguyen12(),
+            lambda: gen_instability(),
+            lambda: gen_version_history(),
+            lambda: gen_timing_detail(),
+            lambda: gen_repro_macros(),
+        ])
 
-    # ── Supplement B tables — sample complexity (Tab 29 data) ────────────────
-    print("\n  ── Supplement B — sample complexity (suppB STEP 10) ────────")
-    gen_suppb_sc_metrics(sc_data)
+    def _suppb_noise_section():
+        return ("── Supplement B — noise sweep (suppB STEP 10) ──────────────", [
+            lambda: gen_suppb_r2_noise(noise_data),
+            lambda: gen_suppb_rr_noise(noise_data),
+            lambda: gen_suppb_time_noise(noise_data),
+            lambda: gen_suppb_noiseless(),
+        ])
 
-    # ── Supplement B — combined win-rate (both sweeps) ────────────────────────
-    print("\n  ── Supplement B — win rate (both sweeps) ───────────────────")
-    gen_suppb_winrate(noise_data, sc_data)
+    def _suppb_sc_section():
+        return ("── Supplement B — sample complexity (suppB STEP 10) ────────", [
+            lambda: gen_suppb_sc_metrics(sc_data),
+        ])
+
+    def _suppb_winrate_section():
+        return ("── Supplement B — win rate (both sweeps) ───────────────────", [
+            lambda: gen_suppb_winrate(noise_data, sc_data),
+        ])
+
+    # Per-experiment gate: maps experiment id -> sections to run.
+    # Main-paper experiments only get main-paper tables.
+    # suppB variants only get their own suppB sections.
+    _DISPATCH = {
+        "exp1":                [_main_paper_section()],
+        "exp1b":               [_main_paper_section()],
+        "exp2_feynman":        [_main_paper_section()],
+        "exp2_feynman_extrap": [_main_paper_section()],
+        # exp2_feynman_pca: --results-dir is set to the repo root in ci_postprocess.yml
+        # B5 so cross-experiment JSONs resolve correctly; main-paper tables only.
+        "exp2_feynman_pca":    [_main_paper_section()],
+        "exp2":                [_main_paper_section()],
+        "exp3":                [_main_paper_section()],
+        "exp3b":               [_main_paper_section()],
+        "suppa":               [_main_paper_section()],
+        "hybrid_all_domains":  [_main_paper_section()],
+        "instability":         [_main_paper_section()],
+        "extrap":              [_main_paper_section()],
+        # suppB: noise-sweep + sample-complexity + win-rate only.
+        "suppb":               [_suppb_noise_section(), _suppb_sc_section(), _suppb_winrate_section()],
+        "suppb_sc":            [_suppb_sc_section(), _suppb_winrate_section()],
+        # "all" / unknown: run everything (original behaviour).
+        "all":                 [_main_paper_section(), _suppb_noise_section(),
+                                _suppb_sc_section(), _suppb_winrate_section()],
+    }
+
+    sections = _DISPATCH.get(_EXP, _DISPATCH["all"])
+    if _EXP not in _DISPATCH:
+        print(f"  \u26a0  Unknown --experiment '{_EXP}' — running all table generators.")
+
+    for section_label, generators in sections:
+        print(f"\n  {section_label}")
+        for fn in generators:
+            fn()
 
     print(f"\n{'═'*65}")
     print(f"  Generated: {GENERATED} table files")
