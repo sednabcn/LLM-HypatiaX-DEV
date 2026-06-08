@@ -787,6 +787,20 @@ jobs:
             "$RESULT_DIR/_report.md" \
             "$RESULT_DIR/_analysis.json"
 
+          # Commit _merged.json for merge-required experiments (exp1b, exp3b) so
+          # that ci_postprocess.yml can read it without re-running ci_analysis.yml.
+          # merge_shards.py produces _merged.json in RESULT_DIR; it is never
+          # staged elsewhere, so this is the only place it reaches the repo.
+          NEEDS_MERGE=$(python3 -c "
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+          print('true' if '${EXPERIMENT}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
+          ")
+          if [[ "$NEEDS_MERGE" == "true" && -f "$RESULT_DIR/_merged.json" ]]; then
+            git add -f "$RESULT_DIR/_merged.json"
+          fi
+
           if git diff --cached --quiet; then
             echo "No analysis changes to commit"
             exit 0
