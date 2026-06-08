@@ -552,11 +552,16 @@ jobs:
       # ════════════════════════════════════════════════════════════════════════
 
       - name: Post-run overwrite summary
+        # Run on success AND failure so partial runs are still summarised
+        # accurately.  Prior-step failure is surfaced via a STATUS row in the
+        # summary table so readers understand why After < Before.
+        if: always()
         env:
-          SUB:            ${{ steps.meta.outputs.result_subdir }}
+          SUB:             ${{ steps.meta.outputs.result_subdir }}
           N_EXISTING_FIGS: ${{ steps.overwrite_audit.outputs.n_existing_figs }}
           N_EXISTING_TABS: ${{ steps.overwrite_audit.outputs.n_existing_tabs }}
-          EXPERIMENT:     ${{ github.event.inputs.experiment }}
+          EXPERIMENT:      ${{ github.event.inputs.experiment }}
+          JOB_STATUS:      ${{ job.status }}
         shell: bash
         run: |
           set -euo pipefail
@@ -566,7 +571,9 @@ jobs:
           diff_dir() {
             local label="$1" before="$2" dir="$3" ext="$4"
             local after="/tmp/postprocess_audit/${label}_after.txt"
-            find "$dir" -maxdepth 1 -type f -name "$ext" 2>/dev/null | sort > "$after" || true
+            # Snapshot the current state (may be identical to before if the
+            # generation step failed and wrote nothing).
+            find "$dir" -maxdepth 1 -type f -name "$ext" 2>/dev/null | sort > "$after" || touch "$after"
             local n_after n_over n_new n_del
             n_after=$(wc -l < "$after")
             n_over=$(comm -12 "$before" "$after" | wc -l)
@@ -579,7 +586,6 @@ jobs:
             [[ $n_new -gt 0 ]] && comm -13 "$before" "$after" | while IFS= read -r f; do
               printf "  ✚  %s\n" "$(basename "$f")"
             done
-            # Export counts for step summary
             echo "n_after_${label}=${n_after}" >> "$GITHUB_ENV"
             echo "n_over_${label}=${n_over}"   >> "$GITHUB_ENV"
             echo "n_new_${label}=${n_new}"     >> "$GITHUB_ENV"
@@ -587,12 +593,22 @@ jobs:
           }
 
           echo "--- Post-run overwrite summary ---"
+          # Guard: before-snapshots may be absent if the overwrite_audit step
+          # itself failed.  Touch empty files so diff_dir always has a baseline.
+          mkdir -p /tmp/postprocess_audit
+          touch \
+            /tmp/postprocess_audit/figs_before.txt \
+            /tmp/postprocess_audit/tabs_before.txt \
+            2>/dev/null || true
+
           diff_dir "figs" /tmp/postprocess_audit/figs_before.txt "$FIGS" "*.pdf"
           diff_dir "tabs" /tmp/postprocess_audit/tabs_before.txt "$TABS" "*.tex"
 
           # ── Verify suppB tables were NOT touched by non-suppB runs ──────────
+          # Only enforce the guard when the job is otherwise succeeding — a
+          # failed table-generation step cannot have modified suppB tables.
           EXP="${EXPERIMENT}"
-          if [[ "$EXP" != "suppB" && "$EXP" != "suppB_sc" ]]; then
+          if [[ "$EXP" != "suppB" && "$EXP" != "suppB_sc" && "${JOB_STATUS}" == "success" ]]; then
             GUARD_OK=true
             for DIR in \
               "${OUT_BASE}/${SUPPB_SUBDIR}/tables" \
@@ -614,12 +630,23 @@ jobs:
             [[ "$GUARD_OK" == "true" ]] || exit 1
           fi
 
+          # ── Write step summary ───────────────────────────────────────────────
+          # STATUS row makes clear whether counts reflect a complete run or a
+          # partial one (e.g. table-generation step failed early).
+          STATUS_ICON="✅"
+          STATUS_NOTE="complete"
+          if [[ "${JOB_STATUS}" != "success" ]]; then
+            STATUS_ICON="❌"
+            STATUS_NOTE="FAILED — table-generation step did not complete; file counts may not reflect a full run. Check earlier steps for the root cause (e.g. missing _merged.json requires ci_analysis.yml to run first)."
+          fi
           {
             echo "## Post-process output summary — ${{ github.event.inputs.experiment }}"
             echo "| Dir | Before | After | Overwritten | New | Deleted |"
             echo "|-----|-------:|------:|------------:|----:|--------:|"
-            echo "| figures | ${N_EXISTING_FIGS} | ${n_after_figs:-0} | ${n_over_figs:-0} | ${n_new_figs:-0} | ${n_del_figs:-0} |"
-            echo "| tables  | ${N_EXISTING_TABS} | ${n_after_tabs:-0} | ${n_over_tabs:-0} | ${n_new_tabs:-0} | ${n_del_tabs:-0} |"
+            echo "| figures | ${N_EXISTING_FIGS:-?} | ${n_after_figs:-?} | ${n_over_figs:-?} | ${n_new_figs:-?} | ${n_del_figs:-?} |"
+            echo "| tables  | ${N_EXISTING_TABS:-?} | ${n_after_tabs:-?} | ${n_over_tabs:-?} | ${n_new_tabs:-?} | ${n_del_tabs:-?} |"
+            echo ""
+            echo "**Status:** ${STATUS_ICON} ${STATUS_NOTE}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ════════════════════════════════════════════════════════════════════════
