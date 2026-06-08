@@ -164,8 +164,57 @@ env:
 #  JOB 1 - plan
 # ==============================================================================
 jobs:
+
+  # ============================================================================
+  #  JOB 0 - redirect
+  #
+  #  PCA experiments (exp1_pca, exp1b_pca, exp2_feynman_pca) are fully defined
+  #  in ci_runner_disclosure.yml — their run scripts, run_all.sh steps, and
+  #  gate logic do not exist in this workflow.  When one of these experiment
+  #  IDs is dispatched here, this job triggers ci_runner_disclosure via the
+  #  GitHub API and sets redirect_only=true so that the plan and worker jobs
+  #  below are skipped entirely.
+  #
+  #  All other experiments pass through normally (redirect_only=false).
+  # ============================================================================
+  redirect:
+    name: "Redirect check - ${{ github.event.inputs.experiment }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      redirect_only: ${{ steps.check.outputs.redirect_only }}
+
+    steps:
+      - name: Check if PCA experiment — trigger ci_runner_disclosure if so
+        id: check
+        env:
+          EXP:        ${{ github.event.inputs.experiment }}
+          DRY_RUN:    ${{ github.event.inputs.dry_run || 'false' }}
+          REPO:       ${{ github.repository }}
+          REF:        ${{ github.ref_name }}
+          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PCA_EXPS="exp1_pca exp1b_pca exp2_feynman_pca"
+          if echo "$PCA_EXPS" | grep -qw "$EXP"; then
+            echo "redirect_only=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${EXP} is a PCA experiment — delegating to ci_runner_disclosure.yml"
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "[dry-run] Would trigger ci_runner_disclosure.yml with experiment=${EXP}"
+            else
+              gh api                 --method POST                 -H "Accept: application/vnd.github+json"                 "/repos/${REPO}/actions/workflows/ci_runner_disclosure.yml/dispatches"                 -f ref="${REF}"                 -f "inputs[experiment]=${EXP}"                 -f "inputs[skip_experiment]=false"                 -f "inputs[dry_run]=false"
+              echo "Triggered ci_runner_disclosure.yml for ${EXP}."
+            fi
+          else
+            echo "redirect_only=false" >> "$GITHUB_OUTPUT"
+            echo "${EXP} is a standard experiment — proceeding with plan/worker."
+          fi
+
   plan:
     name: "Plan - ${{ github.event.inputs.experiment }}"
+    needs: redirect
+    if: needs.redirect.outputs.redirect_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -212,10 +261,6 @@ jobs:
               SCRIPT="hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
               NEEDS_JULIA=false
               RESULT_SUBDIR="comparison_results/noise-noiseless/15"
-            elif [[ "$EXP_ID" == "exp1_pca" ]]; then
-              RESULT_SUBDIR="comparison_results/noise-noiseless/noiseless/defi_pca"
-            elif [[ "$EXP_ID" == "exp1b_pca" ]]; then
-              RESULT_SUBDIR="comparison_results/noise-noiseless/15_pca"
               DEFAULT_SEEDS="${SEEDS_IN:-42,99,123,777,2024}"
               ;;
 
@@ -579,7 +624,7 @@ jobs:
 # ==============================================================================
   worker:
     name: "Worker - ${{ github.event.inputs.experiment }} shard ${{ matrix.shard }}"
-    needs: plan
+    needs: [redirect, plan]
     runs-on: ubuntu-latest
     timeout-minutes: 330
 
@@ -588,7 +633,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.plan.outputs.shard_matrix) }}
 
-    if: ${{ needs.plan.outputs.shard_matrix != '[]' && needs.plan.outputs.shard_matrix != '' }}
+    if: ${{ needs.redirect.outputs.redirect_only == 'false' && needs.plan.outputs.shard_matrix != '[]' && needs.plan.outputs.shard_matrix != '' }}
 
     env:
       EXP:            ${{ needs.plan.outputs.exp_id }}
