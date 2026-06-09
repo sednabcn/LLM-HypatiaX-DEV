@@ -460,7 +460,7 @@ _STEP_CATALOGUE: list[dict] = [
         name="tables",
         description="Generate all LaTeX tables from result JSONs → ${RESULTS_DIR}/tables/",
         scripts=[
-            ("REPO_ROOT/tables", "generate_tables.py"),
+            ("REPO_ROOT/scripts", "generate_tables.py"),
         ],
         cwd_vars=["REPO_ROOT"],
         outputs=[
@@ -506,7 +506,7 @@ _STEP_CATALOGUE: list[dict] = [
         name="figures",
         description="Generate all paper figures from results → ${RESULTS_DIR}/figures/",
         scripts=[
-            ("REPO_ROOT/figures", "generate_figures.py"),
+            ("REPO_ROOT/scripts", "generate_figures.py"),
         ],
         cwd_vars=["REPO_ROOT"],
         outputs=[
