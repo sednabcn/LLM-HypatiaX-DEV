@@ -2924,7 +2924,10 @@ jobs:
           print(f"  [OK]  Corrected path: {CORRECTED_DIR.relative_to(OUT_BASE)}")
 
           # ── Check 2: if legacy results exist, capture baseline ────────────
-          legacy_jsons = sorted(LEGACY_DIR.glob("*.json")) if LEGACY_DIR.exists() else []
+          legacy_jsons = [
+              f for f in (sorted(LEGACY_DIR.glob("*.json")) if LEGACY_DIR.exists() else [])
+              if not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
+          ]
 
           if legacy_jsons:
               # Extract 9/30 solve rate from legacy results
@@ -3045,7 +3048,9 @@ jobs:
           )
           corrected_jsons = [
               f for f in corrected_jsons
-              if "checkpoint" not in f.name and "disclosure" not in f.name
+              if "checkpoint" not in f.name
+              and "disclosure" not in f.name
+              and not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
           ]
 
           if corrected_jsons:

@@ -8,6 +8,10 @@
 # FIX STEP-11-12 : tables (Step 11) + figures (Step 12) both write to
 #                  ${RESULTS_DIR}/tables  and  ${RESULTS_DIR}/figures
 #                  — previously tables wrote to ${REPO_ROOT}/scripts/paper/tables
+# FIX STEP-11-12b: tables and figures steps now cd to REPO_ROOT and invoke
+#                  scripts/generate_tables.py and scripts/generate_figures.py
+#                  — previously used cd REPO_ROOT/tables and cd REPO_ROOT/figures
+#                    which caused tracer errors: script NOT FOUND at those dirs.
 # FIX WARN-2     : HYBRID_ALL_DOMAINS_EXPECTED corrected to 10-domain list that
 #                  matches CI HYBRID_ALL_DOMAINS_IDS and ExperimentProtocolAll
 # FIX STEP-ORDER : removed exp2_sym / exp2_hyb (no run-blocks exist for them)
@@ -1898,10 +1902,10 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
 # the path used by inventory_results() and tables-generator glob checks.
 run tables "Generate all LaTeX tables from result JSONs -> \${RESULTS_DIR}/tables/" bash -c "
   mkdir -p '${RESULTS_DIR}/tables'
-  cd '${REPO_ROOT}/tables'
+  cd '${REPO_ROOT}'
   TABLE_OUTDIR='${RESULTS_DIR}/tables' \
   VERIFY_RESULTS_DIR='${RESULTS_DIR}' \
-    python3 generate_tables.py \
+    python3 scripts/generate_tables.py \
       --results-dir '${RESULTS_DIR}' \
       --output-dir  '${RESULTS_DIR}/tables' \
       2>&1 | tee '${RESULTS_DIR}'/tables_run.log
@@ -1951,8 +1955,8 @@ run tables "Generate all LaTeX tables from result JSONs -> \${RESULTS_DIR}/table
 # with Step 11 (tables) now also writing under \${RESULTS_DIR}/.
 run figures "Generate all paper figures from results -> \${RESULTS_DIR}/figures/" bash -c "
   mkdir -p '${RESULTS_DIR}/figures'
-  cd '${REPO_ROOT}/figures'
-  python3 generate_figures.py \
+  cd '${REPO_ROOT}'
+  python3 scripts/generate_figures.py \
     --results-dir '${RESULTS_DIR}' \
     --output-dir  '${RESULTS_DIR}/figures' \
     2>&1 | tee '${RESULTS_DIR}'/figures_run.log
