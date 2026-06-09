@@ -210,6 +210,16 @@ jobs:
             ! -path "./notebooks/*" \
             ! -path "./.git/*" \
             -exec cp -v {} notebooks/ \;
+          # Explicitly copy the main paper tex to notebooks/ so notebook cells
+          # that open it relative to their working directory always find it,
+          # regardless of whether find's maxdepth captured it or not.
+          if [[ -f "jmlr-hypatiax-paper-final.tex" ]]; then
+            cp -v jmlr-hypatiax-paper-final.tex notebooks/
+            echo "  [OK] jmlr-hypatiax-paper-final.tex → notebooks/"
+          else
+            echo "::error::jmlr-hypatiax-paper-final.tex not found at repo root"
+            exit 1
+          fi
 
       # ── Apply all automatable non-numerical fixes ──────────────────────────
       # Uses hypatia_inspector.py as the single source of truth.
@@ -363,6 +373,7 @@ jobs:
             notebooks/
             figures/
             tables/
+            jmlr-hypatiax-paper-final.tex
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -409,7 +420,7 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: .
 
       - name: Execute NB-01
         run: |
@@ -455,7 +466,7 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: .
 
       - name: Execute NB-02
         run: |
@@ -501,7 +512,7 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: .
 
       - name: Execute NB-03
         run: |
@@ -547,7 +558,7 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: .
 
       - name: Execute NB-04
         run: |
@@ -593,7 +604,7 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: .
 
       # FIX: the notebooks-workspace artifact now contains figures/ and tables/
       # alongside notebooks/.  Restore them to the paths NB-05 SEARCH_DIRS uses:
@@ -659,7 +670,7 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: notebooks-workspace
-          path: notebooks/
+          path: .
 
       - name: Execute NB-06
         run: |

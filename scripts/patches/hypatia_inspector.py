@@ -957,6 +957,20 @@ def main() -> int:
     py_root   = (repo / args.py_dir).resolve()  if args.py_dir   else repo
     reg_path  = Path(args.registry).resolve()   if args.registry else repo / DEFAULT_REGISTRY
 
+    # Sanity-check: the main paper tex must exist at repo root.  If it doesn't,
+    # the caller is likely running from the wrong directory (e.g. notebooks/
+    # instead of the repo root), which causes FileNotFoundError deep inside
+    # notebook cells that open the file by bare name.  Fail fast with a clear
+    # message rather than a cryptic traceback.
+    PAPER_TEX = repo / "jmlr-hypatiax-paper-final.tex"
+    if not PAPER_TEX.exists():
+        print(f"\n[ERROR] jmlr-hypatiax-paper-final.tex not found under --repo {repo}")
+        print(f"        Expected: {PAPER_TEX}")
+        print(f"        Run hypatia_inspector.py from the repository root, or pass")
+        print(f"        --repo /path/to/repo pointing at the directory that contains")
+        print(f"        jmlr-hypatiax-paper-final.tex.")
+        sys.exit(1)
+
     sev_filter = {s.strip().lower() for s in args.severity.split(",")} if args.severity else None
 
     print(BOLD(f"\n{'='*62}"))
