@@ -1884,6 +1884,10 @@ def parse_args() -> argparse.Namespace:
                     help="Directory for outputs (legacy; use --result-dir).")
     ap.add_argument("--result-dir",  required=False, default=None,
                     help="Canonical RESULT_DIR from CI env; outputs written here.")
+    ap.add_argument("--output-stem", required=False, default="_analysis",
+                    help="Stem for output files (default: _analysis).  "
+                         "Pass e.g. _analysis_pca_4060 for PCA corrected runs "
+                         "so the output never collides with the legacy _analysis.json.")
     return ap.parse_args()
 
 
@@ -1971,6 +1975,9 @@ def main() -> None:
               "--shard-manifest required).", file=sys.stderr)
         sys.exit(1)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _stem           = getattr(args, "output_stem", None) or "_analysis"
+    _analysis_name  = f"{_stem}.json"
+    _report_name    = f"{_stem.lstrip("_")}_report.md" if _stem != "_analysis" else "_report.md"
 
     # ── Resolve input path (for non-manifest modes) ───────────────────────────
     # --input-json and --merged-json are treated identically after this point.
@@ -1994,16 +2001,16 @@ def main() -> None:
                 "statistical method analysis was skipped."
             ],
         }
-        (output_dir / "_analysis.json").write_text(
+        (output_dir / _analysis_name).write_text(
             json.dumps(stub, indent=2), encoding="utf-8"
         )
-        (output_dir / "_report.md").write_text(
+        (output_dir / _report_name).write_text(
             "# HypatiaX Analysis Report — `instability`\n\n"
             "Instability experiment: method comparison analysis not applicable.\n"
             "See `figures/instability_analysis.csv` and accompanying figures for results.\n",
             encoding="utf-8",
         )
-        print("✅ Stub _analysis.json and _report.md written.")
+        print(f"✅ Stub {_analysis_name} and {_report_name} written.")
         sys.exit(0)
 
     # ── Load records ──────────────────────────────────────────────────────────
@@ -2143,13 +2150,13 @@ def main() -> None:
         print("Running ablation analysis …")
         analysis = analyse_ablation(records, experiment=args.experiment,
                                     pysr_fit_params=pysr_fit_params)
-        analysis_path = output_dir / "_analysis.json"
-        report_path   = output_dir / "_report.md"
+        analysis_path = output_dir / _analysis_name
+        report_path   = output_dir / _report_name
         with open(analysis_path, "w", encoding="utf-8") as f:
             json.dump(analysis, f, indent=2, default=str)
-        print(f"✅ _analysis.json → {analysis_path}")
+        print(f"✅ {_analysis_name} → {analysis_path}")
         write_report_ablation(analysis, report_path)
-        print(f"✅ _report.md     → {report_path}")
+        print(f"✅ {_report_name}     → {report_path}")
         all_conds  = analysis.get("fatal_conditions", [])
         hard_fatal = [c for c in all_conds if not (c.startswith("INFO_") or c.startswith("WARN_"))]
         soft_conds = [c for c in all_conds if c.startswith("INFO_") or c.startswith("WARN_")]
@@ -2169,15 +2176,15 @@ def main() -> None:
     analysis = analyse(records, experiment=args.experiment,
                        pysr_fit_params=pysr_fit_params)
 
-    analysis_path = output_dir / "_analysis.json"
-    report_path   = output_dir / "_report.md"
+    analysis_path = output_dir / _analysis_name
+    report_path   = output_dir / _report_name
 
     with open(analysis_path, "w", encoding="utf-8") as f:
         json.dump(analysis, f, indent=2, default=str)
-    print(f"✅ _analysis.json → {analysis_path}")
+    print(f"✅ {_analysis_name} → {analysis_path}")
 
     write_report(analysis, report_path)
-    print(f"✅ _report.md     → {report_path}")
+    print(f"✅ {_report_name}     → {report_path}")
 
     all_conds  = analysis.get("fatal_conditions", [])
     hard_fatal = [c for c in all_conds if not (c.startswith("INFO_") or c.startswith("WARN_"))]
