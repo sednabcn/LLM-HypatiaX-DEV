@@ -3060,9 +3060,8 @@ jobs:
               legacy_names    = {f.name for f in legacy_jsons}
               corrected_names = {f.name for f in corrected_jsons}
               overlap = legacy_names & corrected_names
-              # Safety net: strip any meta/checkpoint/disclosure names that slipped
-              # through either filter (e.g. _analysis.json present in both dirs by
-              # design — these are generated summaries, not raw result files).
+              # Safety net: _analysis.json and similar meta files are written to both
+              # dirs by design and must never trigger a false collision failure.
               overlap = {
                   name for name in overlap
                   if not name.startswith("_")
