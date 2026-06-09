@@ -459,6 +459,37 @@ jobs:
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
             --source      auto
 
+
+      # ── A15: exp1_pca — DeFi all-74 PCA 40/60 ───────────────────────────────
+      - name: "Figures: exp1_pca — DeFi noiseless PCA 40/60"
+        if: github.event.inputs.experiment == 'exp1_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_BASE}/${SUB}/figures"
+          python scripts/generate_figures.py \
+            --experiment  exp1_pca \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
+      # ── A16: exp1b_pca — DeFi portfolio seed sweep PCA 40/60 ────────────────
+      - name: "Figures: exp1b_pca — DeFi portfolio seed sweep PCA 40/60"
+        if: github.event.inputs.experiment == 'exp1b_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_BASE}/${SUB}/figures"
+          python scripts/generate_figures.py \
+            --experiment  exp1b_pca \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto
+
       # ════════════════════════════════════════════════════════════════════════
       #  SECTION B: TABLES — one step per experiment family
       #
@@ -839,6 +870,51 @@ jobs:
           # Produces: extrap_ood_table.tex (Tab 9 OOD columns)
           python scripts/generate_tables.py \
             --experiment  extrap \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
+          if [[ $N_TABS -eq 0 ]]; then
+            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
+            exit 1
+          fi
+          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
+
+
+      # ── B15: exp1_pca — DeFi noiseless PCA 40/60 ────────────────────────────
+      - name: "Tables: exp1_pca — DeFi noiseless PCA 40/60"
+        if: github.event.inputs.experiment == 'exp1_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_BASE}/${SUB}/tables"
+          # Source: hypatiax_defi_benchmark_pca_results.json + exp1_pca_summary.json
+          # Produces: pca_defi_comparison.tex (DeFi PCA 40/60 vs random 80/20)
+          python scripts/generate_tables.py \
+            --experiment  exp1_pca \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
+          if [[ $N_TABS -eq 0 ]]; then
+            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
+            exit 1
+          fi
+          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
+
+      # ── B16: exp1b_pca — DeFi portfolio seed sweep PCA 40/60 ────────────────
+      - name: "Tables: exp1b_pca — DeFi portfolio seed sweep PCA 40/60"
+        if: github.event.inputs.experiment == 'exp1b_pca'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_BASE}/${SUB}/tables"
+          # Source: hypatiax_defi_benchmark_pca_results.json in 15_pca/
+          # Produces: pca_portfolio_sweep.tex (seed sweep with PCA split)
+          python scripts/generate_tables.py \
+            --experiment  exp1b_pca \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
