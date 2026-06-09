@@ -2926,7 +2926,9 @@ jobs:
           # ── Check 2: if legacy results exist, capture baseline ────────────
           legacy_jsons = [
               f for f in (sorted(LEGACY_DIR.glob("*.json")) if LEGACY_DIR.exists() else [])
-              if not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
+              if "checkpoint" not in f.name
+              and "disclosure" not in f.name
+              and not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
           ]
 
           if legacy_jsons:
@@ -3058,6 +3060,15 @@ jobs:
               legacy_names    = {f.name for f in legacy_jsons}
               corrected_names = {f.name for f in corrected_jsons}
               overlap = legacy_names & corrected_names
+              # Safety net: strip any meta/checkpoint/disclosure names that slipped
+              # through either filter (e.g. _analysis.json present in both dirs by
+              # design — these are generated summaries, not raw result files).
+              overlap = {
+                  name for name in overlap
+                  if not name.startswith("_")
+                  and "checkpoint" not in name
+                  and "disclosure" not in name
+              }
               if overlap:
                   failures.append(
                       f"Filename collision between legacy and corrected dirs: {overlap} — "
