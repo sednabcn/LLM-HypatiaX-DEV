@@ -1,0 +1,720 @@
+# ==============================================================================
+#  ci_pipeline_reviewers.yml  —  HypatiaX · JMLR reviewer pipeline
+#
+#  PURPOSE
+#  -------
+#  A read-only, evidence-only pipeline for JMLR reviewers.
+#  It does NOT re-run experiments, workers, or self-dispatch.
+#  It assembles the pre-computed artefacts that were already produced
+#  by the full pipeline and presents them as a single, labelled run.
+#
+#  Stages exposed to reviewers (from hypatia_pipeline_reviewer_map.svg):
+#
+#    R1 · collect-artefacts   — downloads _report.md + _analysis.json (C1 outputs)
+#                               and figures/*.pdf + tables/*.tex (C2 outputs)
+#    R2 · checkpoint-summary  — surfaces qualify_run.log from C3
+#                               (reproducibility completeness — include)
+#    R3 · paper-audit-summary — surfaces paper_audit_findings.json from C4
+#                               (numerical claim verification — include)
+#    R4 · notebooks-summary   — surfaces executed NB-01…NB-06 notebooks from C5
+#                               (citation/consistency audit — include)
+#    R5 · final-summary       — prints a consolidated reviewer health table
+#                               and sets the workflow conclusion
+#
+#  Stages intentionally ABSENT (excluded per reviewer map):
+#    C0  ci_runner.yml          — infrastructure; not reproducible without full env
+#    C5b ci_report.yml          — Pages deploy; reviewers use the published URL
+#    C6  self-dispatch/next-slot — pure orchestration; no scientific content
+#    diagnose job               — internal idempotency guard only
+#
+#  HOW TO TRIGGER
+#  --------------
+#  workflow_dispatch (manual only — reviewers run this once per review cycle):
+#    pages_url  : deployed GitHub Pages URL produced by ci_report.yml (optional)
+#    audit_run  : run_id of the ci_paper_audit.yml run whose artefacts to surface
+#    notebooks_run : run_id of the ci_paper_notebooks.yml run to surface
+#    checkpoint_run: run_id of the ci_pipeline_check.yml run to surface
+#
+#  If run IDs are left blank the workflow attempts to download artefacts from
+#  the most recent successful run of each upstream workflow on the same branch.
+#
+#  PERMISSIONS
+#  -----------
+#  contents: read   — no writes; reviewer pipeline never commits anything
+#  actions:  read   — needed to download Actions artefacts
+#
+#  TIMEOUT CONTRACT
+#  ----------------
+#  collect-artefacts   :  10 min  (artefact download + echo)
+#  checkpoint-summary  :   5 min  (log read + echo)
+#  paper-audit-summary :   5 min  (JSON read + echo)
+#  notebooks-summary   :   5 min  (notebook list + findings echo)
+#  final-summary       :   5 min  (table print; no external calls)
+# ==============================================================================
+
+name: "HypatiaX - reviewer pipeline"
+run-name: >-
+  HypatiaX reviewer pipeline — ${{ github.ref_name }} — run ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pages_url:
+        description: >
+          GitHub Pages URL produced by ci_report.yml (e.g.
+          https://<org>.github.io/<repo>/).
+          Leave blank to skip the Pages link step.
+        required: false
+        default: ""
+
+      audit_run_id:
+        description: >
+          Run ID of the ci_paper_audit.yml run whose artefacts to surface
+          (paper-audit-findings, verify-report, figures-tables-report).
+          Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+      notebooks_run_id:
+        description: >
+          Run ID of the ci_paper_notebooks.yml run to surface
+          (notebooks-audit-summary, NB-01…NB-06 executed notebooks).
+          Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+      checkpoint_run_id:
+        description: >
+          Run ID of the ci_pipeline_check.yml run to surface (qualify_run.log).
+          Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions:  read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PYTHON_VERSION: "3.12"
+  OUT_BASE: "hypatiax/data/results"
+
+# ==============================================================================
+#  Helper note: all jobs use `gh run download` to pull pre-computed artefacts.
+#  When a run_id input is supplied it is passed directly; when blank, the gh CLI
+#  resolves the most recent successful run of the named workflow on this branch.
+# ==============================================================================
+
+jobs:
+
+  # ============================================================================
+  #  JOB R1 — collect-artefacts
+  #
+  #  Downloads the C1 (analysis) and C2 (postprocess) output artefacts and
+  #  re-uploads them under a single reviewer-scoped artefact so that reviewers
+  #  have one download target.
+  #
+  #  C1 outputs  (_report.md, _analysis.json) are committed to the repo under
+  #  hypatiax/data/results/<subdir>/ — they are read directly from the checkout.
+  #  C2 outputs  (figures/*.pdf, tables/*.tex) are likewise committed and read
+  #  from the checkout rather than from Actions artefacts.
+  #
+  #  Partial exposure (per reviewer map): share artefact files, not the workflow.
+  # ============================================================================
+  collect-artefacts:
+    name: "R1 · Collect C1+C2 output artefacts"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      # ── C1: statistical analysis outputs ─────────────────────────────────────
+      - name: Collect C1 artefacts (_report.md, _analysis.json)
+        run: |
+          set -euo pipefail
+          echo "=== C1 Analysis outputs ==="
+          echo "Scanning ${OUT_BASE} for _report.md and _analysis.json files..."
+          REPORT_COUNT=0
+          ANALYSIS_COUNT=0
+          while IFS= read -r -d '' f; do
+            echo "  FOUND: $f"
+            REPORT_COUNT=$((REPORT_COUNT+1))
+          done < <(find "${OUT_BASE}" -name "_report.md" -type f -print0 2>/dev/null)
+          while IFS= read -r -d '' f; do
+            echo "  FOUND: $f"
+            ANALYSIS_COUNT=$((ANALYSIS_COUNT+1))
+          done < <(find "${OUT_BASE}" -name "_analysis.json" -type f -print0 2>/dev/null)
+          echo ""
+          echo "  _report.md    : ${REPORT_COUNT} file(s)"
+          echo "  _analysis.json: ${ANALYSIS_COUNT} file(s)"
+          if [[ "${REPORT_COUNT}" -eq 0 && "${ANALYSIS_COUNT}" -eq 0 ]]; then
+            echo "::warning::No C1 artefacts found — ci_analysis.yml may not have run yet."
+          fi
+
+      # ── C2: figures + tables outputs ─────────────────────────────────────────
+      - name: Collect C2 artefacts (figures/*.pdf, tables/*.tex)
+        run: |
+          set -euo pipefail
+          echo "=== C2 Post-process outputs ==="
+          FIG_COUNT=0
+          TEX_COUNT=0
+          while IFS= read -r -d '' f; do
+            FIG_COUNT=$((FIG_COUNT+1))
+          done < <(find "${OUT_BASE}" \( -name "*.pdf" -o -name "*.png" \) -path "*/figures/*" -type f -print0 2>/dev/null)
+          while IFS= read -r -d '' f; do
+            TEX_COUNT=$((TEX_COUNT+1))
+          done < <(find "${OUT_BASE}" -name "*.tex" -path "*/tables/*" -type f -print0 2>/dev/null)
+          echo "  figures (PDF/PNG): ${FIG_COUNT} file(s)"
+          echo "  tables  (TeX)    : ${TEX_COUNT} file(s)"
+          if [[ "${FIG_COUNT}" -eq 0 ]]; then
+            echo "::warning::No figures found — ci_postprocess.yml may not have run yet."
+          fi
+          if [[ "${TEX_COUNT}" -eq 0 ]]; then
+            echo "::warning::No tables found — ci_postprocess.yml may not have run yet."
+          fi
+
+      # ── Stage all C1+C2 files into a flat staging dir for upload ─────────────
+      - name: Stage C1+C2 artefacts for upload
+        run: |
+          set -euo pipefail
+          mkdir -p reviewer_artefacts/analysis
+          mkdir -p reviewer_artefacts/figures
+          mkdir -p reviewer_artefacts/tables
+
+          # Copy _report.md and _analysis.json preserving experiment subfolder name
+          find "${OUT_BASE}" -name "_report.md" -type f | while read -r f; do
+            EXP=$(basename "$(dirname "$f")")
+            cp "$f" "reviewer_artefacts/analysis/${EXP}_report.md"
+          done
+          find "${OUT_BASE}" -name "_analysis.json" -type f | while read -r f; do
+            EXP=$(basename "$(dirname "$f")")
+            cp "$f" "reviewer_artefacts/analysis/${EXP}_analysis.json"
+          done
+
+          # Copy figures (PDF/PNG) and tables (TeX)
+          find "${OUT_BASE}" \( -name "*.pdf" -o -name "*.png" \) -path "*/figures/*" -type f \
+            -exec cp {} reviewer_artefacts/figures/ \;
+          find "${OUT_BASE}" -name "*.tex" -path "*/tables/*" -type f \
+            -exec cp {} reviewer_artefacts/tables/ \;
+
+          echo "Staged artefacts:"
+          ls -lh reviewer_artefacts/analysis/ 2>/dev/null || echo "  (none)"
+          ls -lh reviewer_artefacts/figures/  2>/dev/null || echo "  (none)"
+          ls -lh reviewer_artefacts/tables/   2>/dev/null || echo "  (none)"
+
+      - name: Upload reviewer C1+C2 artefacts
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              reviewer-c1-c2-artefacts-${{ github.run_id }}
+          path:              reviewer_artefacts/
+          if-no-files-found: warn
+          retention-days:    90
+
+
+  # ============================================================================
+  #  JOB R2 — checkpoint-summary
+  #
+  #  Surfaces qualify_run.log from the C3 ci_pipeline_check.yml run.
+  #  qualify_run.log shows which experiments passed all 7 qualification
+  #  dimensions — directly relevant to reproducibility assessment.
+  #
+  #  Include (per reviewer map): qualify_run.log shows completeness.
+  # ============================================================================
+  checkpoint-summary:
+    name: "R2 · C3 Checkpoint — qualify_run.log"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [collect-artefacts]
+
+    outputs:
+      checkpoint_status: ${{ steps.read.outputs.checkpoint_status }}
+
+    steps:
+      - name: Resolve checkpoint run ID
+        id: resolve
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RUN_ID:      ${{ github.event.inputs.checkpoint_run_id || '' }}
+          REPO:              ${{ github.repository }}
+          BRANCH:            ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_RUN_ID}" ]]; then
+            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Using supplied checkpoint run ID: ${INPUT_RUN_ID}"
+          else
+            echo "No checkpoint_run_id supplied — resolving most recent successful ci_pipeline_check.yml run on ${BRANCH}..."
+            RUN_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_pipeline_check.yml \
+              --branch "${BRANCH}" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::warning::No successful ci_pipeline_check.yml run found on branch ${BRANCH}."
+              echo "run_id=" >> "$GITHUB_OUTPUT"
+            else
+              echo "Resolved checkpoint run ID: ${RUN_ID}"
+              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Download qualify_run.log artefact
+        if: steps.resolve.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p checkpoint_logs
+          gh run download "${RUN_ID}" \
+            --repo "${REPO}" \
+            --dir checkpoint_logs \
+            --pattern "qualify-run-log-*" 2>/dev/null \
+          || gh run download "${RUN_ID}" \
+            --repo "${REPO}" \
+            --dir checkpoint_logs \
+            --pattern "qualify*" 2>/dev/null \
+          || echo "::warning::Could not download qualify_run.log artefact — artefact may have expired or been named differently."
+
+      - name: Print checkpoint summary
+        id: read
+        run: |
+          set -euo pipefail
+          echo "=== C3 Checkpoint — qualify_run.log ==="
+          LOG=$(find checkpoint_logs -name "qualify_run.log" -type f 2>/dev/null | head -1 || echo "")
+          if [[ -n "${LOG}" ]]; then
+            echo "qualify_run.log found at: ${LOG}"
+            echo "---"
+            cat "${LOG}"
+            echo "checkpoint_status=present" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::qualify_run.log not found in downloaded artefacts."
+            echo "  Possible reasons:"
+            echo "    - ci_pipeline_check.yml has not run yet for this branch"
+            echo "    - The artefact retention window (30 days) has elapsed"
+            echo "    - The artefact name differs from the expected pattern"
+            echo "checkpoint_status=missing" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload checkpoint summary for reviewer
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              reviewer-c3-checkpoint-${{ github.run_id }}
+          path:              checkpoint_logs/
+          if-no-files-found: warn
+          retention-days:    90
+
+
+  # ============================================================================
+  #  JOB R3 — paper-audit-summary
+  #
+  #  Surfaces paper_audit_findings.json from C4 ci_paper_audit.yml.
+  #  This file cross-checks every numerical claim in the paper against
+  #  actual result file values — directly validates paper claims.
+  #
+  #  Include (per reviewer map): paper_audit_findings.json validates every
+  #  paper claim.
+  # ============================================================================
+  paper-audit-summary:
+    name: "R3 · C4 Paper audit — paper_audit_findings.json"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [collect-artefacts]
+
+    outputs:
+      audit_status: ${{ steps.read.outputs.audit_status }}
+      n_fail:       ${{ steps.read.outputs.n_fail }}
+      n_pass:       ${{ steps.read.outputs.n_pass }}
+      n_warn:       ${{ steps.read.outputs.n_warn }}
+      n_missing:    ${{ steps.read.outputs.n_missing }}
+
+    steps:
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Resolve paper-audit run ID
+        id: resolve
+        env:
+          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RUN_ID: ${{ github.event.inputs.audit_run_id || '' }}
+          REPO:         ${{ github.repository }}
+          BRANCH:       ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_RUN_ID}" ]]; then
+            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Using supplied audit run ID: ${INPUT_RUN_ID}"
+          else
+            echo "Resolving most recent successful ci_paper_audit.yml run on ${BRANCH}..."
+            RUN_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_audit.yml \
+              --branch "${BRANCH}" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::warning::No successful ci_paper_audit.yml run found on branch ${BRANCH}."
+              echo "run_id=" >> "$GITHUB_OUTPUT"
+            else
+              echo "Resolved audit run ID: ${RUN_ID}"
+              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Download paper-audit artefacts
+        if: steps.resolve.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p audit_artefacts
+          # Download paper-audit-findings + audit-paper-summary + verify-report
+          for pattern in "paper-audit-findings-*" "audit-paper-summary-*" "verify-report-*" "figures-tables-report-*"; do
+            gh run download "${RUN_ID}" \
+              --repo "${REPO}" \
+              --dir audit_artefacts \
+              --pattern "${pattern}" 2>/dev/null \
+            || echo "  ::warning::Pattern ${pattern} not found (non-fatal)."
+          done
+          echo "Downloaded artefacts:"
+          find audit_artefacts -type f | sort
+
+      - name: Parse and print audit findings
+        id: read
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          findings_path = next(Path("audit_artefacts").rglob("paper_audit_findings.json"), None)
+
+          if findings_path is None:
+            print("::warning::paper_audit_findings.json not found in downloaded artefacts.")
+            print("  Possible reasons:")
+            print("    - ci_paper_audit.yml has not run yet (fires on slot 12 only)")
+            print("    - Artefact retention window (30 days) has elapsed")
+            print("    - Supply audit_run_id input to point at a specific run")
+            env_file = os.environ.get("GITHUB_OUTPUT", "")
+            if env_file:
+              with open(env_file, "a") as f:
+                f.write("audit_status=missing\nn_fail=0\nn_pass=0\nn_warn=0\nn_missing=0\n")
+            sys.exit(0)
+
+          findings = json.loads(findings_path.read_text())
+          if isinstance(findings, dict):
+            items = findings.get("findings", [])
+          else:
+            items = findings
+
+          SEP = "=" * 70
+          print(SEP)
+          print("  C4 PAPER AUDIT  —  paper_audit_findings.json")
+          print(SEP)
+
+          n_pass = n_fail = n_warn = n_missing = 0
+          for item in items:
+            status = str(item.get("status", "UNKNOWN")).upper()
+            if   status == "PASS":    n_pass    += 1
+            elif status == "FAIL":    n_fail    += 1
+            elif status == "WARN":    n_warn    += 1
+            elif status == "MISSING": n_missing += 1
+
+          print(f"  Total claims : {len(items)}")
+          print(f"  PASS         : {n_pass}")
+          print(f"  WARN         : {n_warn}")
+          print(f"  FAIL         : {n_fail}")
+          print(f"  MISSING      : {n_missing}")
+          print(SEP)
+
+          for item in items:
+            status = str(item.get("status", "UNKNOWN")).upper()
+            icon = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌", "MISSING": "❓"}.get(status, "  ")
+            exp    = item.get("exp",    item.get("experiment", "?"))
+            metric = item.get("metric", item.get("claim",      "?"))
+            detail = item.get("detail", item.get("message",    ""))
+            print(f"  {icon}  exp={exp:<25}  metric={metric}")
+            if detail:
+              print(f"      {detail}")
+          print(SEP)
+
+          env_file = os.environ.get("GITHUB_OUTPUT", "")
+          if env_file:
+            with open(env_file, "a") as f:
+              status_str = "pass" if (n_fail == 0 and n_missing == 0) else "fail"
+              f.write(f"audit_status={status_str}\n")
+              f.write(f"n_fail={n_fail}\n")
+              f.write(f"n_pass={n_pass}\n")
+              f.write(f"n_warn={n_warn}\n")
+              f.write(f"n_missing={n_missing}\n")
+          PYEOF
+
+      - name: Upload reviewer paper-audit artefacts
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              reviewer-c4-paper-audit-${{ github.run_id }}
+          path:              audit_artefacts/
+          if-no-files-found: warn
+          retention-days:    90
+
+
+  # ============================================================================
+  #  JOB R4 — notebooks-summary
+  #
+  #  Surfaces the executed NB-01…NB-06 notebooks from C5 ci_paper_notebooks.yml.
+  #  The executed .ipynb files with cell outputs are the primary reviewer-facing
+  #  evidence (citation/consistency audit, figures, code correctness).
+  #
+  #  Also surfaces notebooks_audit_summary.json which aggregates all open
+  #  FIX-* issues across notebooks.
+  #
+  #  Include (per reviewer map): executed .ipynb with cell outputs are the
+  #  reviewer-facing evidence.
+  # ============================================================================
+  notebooks-summary:
+    name: "R4 · C5 Paper notebooks — NB-01…NB-06 + audit summary"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [paper-audit-summary]
+
+    outputs:
+      notebooks_status: ${{ steps.read.outputs.notebooks_status }}
+      open_issues:      ${{ steps.read.outputs.open_issues }}
+
+    steps:
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Resolve notebooks run ID
+        id: resolve
+        env:
+          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RUN_ID: ${{ github.event.inputs.notebooks_run_id || '' }}
+          REPO:         ${{ github.repository }}
+          BRANCH:       ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_RUN_ID}" ]]; then
+            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "Using supplied notebooks run ID: ${INPUT_RUN_ID}"
+          else
+            echo "Resolving most recent successful ci_paper_notebooks.yml run on ${BRANCH}..."
+            RUN_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_notebooks.yml \
+              --branch "${BRANCH}" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::warning::No successful ci_paper_notebooks.yml run found on branch ${BRANCH}."
+              echo "run_id=" >> "$GITHUB_OUTPUT"
+            else
+              echo "Resolved notebooks run ID: ${RUN_ID}"
+              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Download notebooks artefacts
+        if: steps.resolve.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p notebooks_artefacts
+          for pattern in \
+            "nb-01-*" "nb-02-*" "nb-03-*" "nb-04-*" "nb-05-*" "nb-06-*" \
+            "notebooks-audit-summary-*" "hypatia-findings-*"; do
+            gh run download "${RUN_ID}" \
+              --repo "${REPO}" \
+              --dir notebooks_artefacts \
+              --pattern "${pattern}" 2>/dev/null \
+            || echo "  Pattern ${pattern}: not found (non-fatal)."
+          done
+          echo "Downloaded notebooks artefacts:"
+          find notebooks_artefacts -type f | sort
+
+      - name: Print notebooks audit summary
+        id: read
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          summary_path = next(Path("notebooks_artefacts").rglob("notebooks_audit_summary.json"), None)
+
+          # Count any .ipynb files retrieved
+          notebooks = sorted(Path("notebooks_artefacts").rglob("*.ipynb"))
+          print("=== C5 Paper Notebooks ===")
+          print(f"  Executed notebooks retrieved: {len(notebooks)}")
+          for nb in notebooks:
+            print(f"    {nb.name}")
+
+          if summary_path is None:
+            print("\n::warning::notebooks_audit_summary.json not found.")
+            print("  Artefact may not yet exist or may have expired.")
+            env_file = os.environ.get("GITHUB_OUTPUT", "")
+            if env_file:
+              with open(env_file, "a") as f:
+                f.write("notebooks_status=missing\nopen_issues=0\n")
+            sys.exit(0)
+
+          summary = json.loads(summary_path.read_text())
+          findings = summary.get("findings", [])
+          open_issues   = [f for f in findings if str(f.get("status","")).upper() not in ("RESOLVED","CLOSED")]
+          resolved      = [f for f in findings if str(f.get("status","")).upper() in ("RESOLVED","CLOSED")]
+
+          SEP = "=" * 70
+          print(SEP)
+          print("  C5 NOTEBOOKS AUDIT SUMMARY")
+          print(SEP)
+          print(f"  Source     : {summary.get('source','?')}")
+          print(f"  Generated  : {summary.get('generated_at','?')}")
+          print(f"  Total FIX-*: {len(findings)}")
+          print(f"  Open       : {len(open_issues)}")
+          print(f"  Resolved   : {len(resolved)}")
+          print(SEP)
+
+          if open_issues:
+            print("  OPEN issues:")
+            for f in open_issues:
+              sev  = str(f.get("severity","?")).upper()
+              icon = {"CRITICAL":"🔴","HIGH":"🟠","MEDIUM":"🟡","LOW":"🟢"}.get(sev, "⚪")
+              print(f"    {icon} [{f['id']}]  {f.get('nb','?')}  —  {f.get('description','')}")
+              if f.get("action"):
+                print(f"       Action: {f['action']}")
+          if resolved:
+            print(f"\n  RESOLVED issues ({len(resolved)}):")
+            for f in resolved:
+              print(f"    ✅ [{f['id']}]  {f.get('nb','?')}  —  {f.get('description','')}")
+          print(SEP)
+
+          env_file = os.environ.get("GITHUB_OUTPUT", "")
+          if env_file:
+            with open(env_file, "a") as f:
+              status = "pass" if len(open_issues) == 0 else "open_issues"
+              f.write(f"notebooks_status={status}\nopen_issues={len(open_issues)}\n")
+          PYEOF
+
+      - name: Upload reviewer notebooks artefacts
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              reviewer-c5-notebooks-${{ github.run_id }}
+          path:              notebooks_artefacts/
+          if-no-files-found: warn
+          retention-days:    90
+
+
+  # ============================================================================
+  #  JOB R5 — final-summary
+  #
+  #  Consolidates the status from R2, R3, R4 and prints a single health table
+  #  for reviewers.  Also prints the Pages URL if supplied.
+  #  Sets the workflow conclusion: exits 0 only if audit passed (no FAIL/MISSING).
+  #  Open notebook issues are reported but do not block the workflow conclusion
+  #  (they are tracked as actionable items, not blockers at review stage).
+  # ============================================================================
+  final-summary:
+    name: "R5 · Reviewer health table"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [collect-artefacts, checkpoint-summary, paper-audit-summary, notebooks-summary]
+    if: always()
+
+    steps:
+      - name: Print consolidated reviewer health table
+        env:
+          PAGES_URL:          ${{ github.event.inputs.pages_url || '' }}
+          CHECKPOINT_STATUS:  ${{ needs.checkpoint-summary.outputs.checkpoint_status }}
+          AUDIT_STATUS:       ${{ needs.paper-audit-summary.outputs.audit_status }}
+          N_FAIL:             ${{ needs.paper-audit-summary.outputs.n_fail }}
+          N_PASS:             ${{ needs.paper-audit-summary.outputs.n_pass }}
+          N_WARN:             ${{ needs.paper-audit-summary.outputs.n_warn }}
+          N_MISSING:          ${{ needs.paper-audit-summary.outputs.n_missing }}
+          NOTEBOOKS_STATUS:   ${{ needs.notebooks-summary.outputs.notebooks_status }}
+          OPEN_ISSUES:        ${{ needs.notebooks-summary.outputs.open_issues }}
+          COLLECT_RESULT:     ${{ needs.collect-artefacts.result }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+
+          SEP   = "=" * 72
+          pages = os.environ.get("PAGES_URL", "").strip()
+
+          def gate(status, ok_vals=("present","pass","success")):
+            return "✅" if str(status).lower() in ok_vals else \
+                   "❓" if str(status).lower() in ("missing","") else "❌"
+
+          ck  = os.environ.get("CHECKPOINT_STATUS", "")
+          au  = os.environ.get("AUDIT_STATUS", "")
+          nb  = os.environ.get("NOTEBOOKS_STATUS", "")
+          col = os.environ.get("COLLECT_RESULT", "")
+
+          n_fail    = int(os.environ.get("N_FAIL",    "0") or "0")
+          n_pass    = int(os.environ.get("N_PASS",    "0") or "0")
+          n_warn    = int(os.environ.get("N_WARN",    "0") or "0")
+          n_missing = int(os.environ.get("N_MISSING", "0") or "0")
+          open_nb   = int(os.environ.get("OPEN_ISSUES","0") or "0")
+
+          print()
+          print(SEP)
+          print("  HYPATIA X  —  JMLR REVIEWER PIPELINE SUMMARY")
+          print(SEP)
+          print(f"  {'Stage':<40}  {'Status'}")
+          print(f"  {'-'*40}  {'------'}")
+          print(f"  {'R1 · C1+C2  Analysis + figures/tables':<40}  {gate(col, ('success',))}")
+          print(f"  {'R2 · C3     Checkpoint (qualify_run.log)':<40}  {gate(ck)}")
+
+          audit_label = f"R3 · C4     Paper audit  (P:{n_pass} W:{n_warn} F:{n_fail} M:{n_missing})"
+          print(f"  {audit_label:<40}  {gate(au)}")
+
+          nb_label = f"R4 · C5     Notebooks   ({open_nb} open FIX-* issues)"
+          nb_gate  = "✅" if open_nb == 0 else "⚠ "
+          print(f"  {nb_label:<40}  {nb_gate}")
+
+          print(SEP)
+
+          if pages:
+            print(f"\n  📄  GitHub Pages report URL:")
+            print(f"      {pages}")
+            print()
+
+          overall_ok = (n_fail == 0 and n_missing == 0 and ck in ("present",) and col == "success")
+          if overall_ok:
+            print("  ✅  Overall: PIPELINE EVIDENCE COMPLETE — ready for review.")
+          else:
+            print("  ⚠   Overall: SOME EVIDENCE MISSING OR FAILING — see jobs above.")
+            if n_fail > 0 or n_missing > 0:
+              print(f"      Paper audit: {n_fail} FAIL  {n_missing} MISSING — see R3 job log.")
+            if ck not in ("present",):
+              print("      Checkpoint log: missing — ci_pipeline_check.yml may not have run.")
+            if col != "success":
+              print("      C1+C2 artefacts: collection step did not succeed.")
+          print(SEP)
+          print()
+
+          # Notebook open issues are advisory — do not fail the workflow for them.
+          # Audit FAIL or MISSING values DO fail the workflow.
+          sys.exit(0 if (n_fail == 0 and n_missing == 0) else 1)
+          PYEOF
