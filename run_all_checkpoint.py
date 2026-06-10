@@ -3,6 +3,7 @@
 run_all_checkpoint.py  —  HypatiaX · Full reproducibility pipeline (Python)
 Paper: "HypatiaX: A Hybrid Symbolic-Neural Framework for
         Extrapolation-Reliable Analytical Discovery"  (JMLR v3.0, Apr 2026)
+Version: v8.2 (2026-06-09)
 
 Usage:
     python3 run_all_checkpoint.py                      # full pipeline
@@ -48,6 +49,46 @@ Notes:
     verify (Phase 3) cross-checks numerical results — equivalent to run_all.sh validate.
     qualify (Phase 5) checks ALL experiments passed every stage; blocks audit-paper.
     audit-paper (Phase 5) cross-checks every number in the paper against results/.
+
+Changelog v8.2 (2026-06-09):
+    SYNC-run_all.sh — imported three fix groups from run_all.sh that postdate v8.1:
+
+    FIX-MERGE-QUOTING (2026-06-07):
+      exp2_feynman_extrap merge block: extracted from bash -c "" into a standalone
+      subshell block. The original triple-backslash+quote patterns inside the
+      double-quoted outer string produced literal backslashes in paths after bash
+      parsing and suppressed command substitution. Rewritten as plain bash with no
+      nesting, matching the exp2_feynman_pca_comparison_table and
+      exp3_symbolic_equivalence inlined blocks.
+      Final summary: corrected phantom log reference qualify_verify_run.log →
+      qualify_run.log (qualify step only ever writes qualify_run.log).
+
+    FIX-SYNC-CI (2026-06-05):
+      exp2_feynman_pca_comparison_table logic inlined after exp2_feynman_pca_4060.
+      Calls scripts/patches/generate_exp2_pca_comparison_table.py to produce
+      exp2_pca_comparison.{tex,csv,md} — mirrors ci_analysis.yml and ci_postprocess.yml.
+      NOT a separate registered step; runs as plain shell after exp2_feynman_pca_4060.
+      exp3_symbolic_equivalence logic inlined after exp3b.
+      Calls scripts/check_symbolic_equivalence.py against all exp3_nguyen12_seed*.json
+      files — mirrors ci_analysis.yml Check symbolic equivalence step.
+      Output: symbolic_equivalence_report.csv + _summary.txt.
+      NOT a separate registered step; runs as plain shell after exp3b.
+      merge_extrap_into_benchmark.py now called inside exp2_feynman_extrap step
+      (replacing the NOTE that deferred it to ci_analysis.yml). Produces
+      ablation_paired.json in exp2_extrap/ so qualify and audit_paper can run
+      locally without requiring ci_analysis.yml to run first. Skips gracefully
+      when the script or benchmark_results_extrap*.json is absent.
+      tables step now also calls generate_exp2_pca_comparison_table.py and
+      generate_nguyen12_symequiv_table.py — mirrors ci_postprocess.yml steps.
+      Both skipped gracefully when prerequisite files are absent.
+      _STEP_ORDER kept at 35 entries; two new sub-steps are not registered so
+      --step / --from targeting is unaffected.
+
+    FIX-C3-ESCAPE (2026-06-04):
+      exp1_pca and exp1b_pca: removed erroneous backslash-escaping on REPO_ROOT,
+      EXPERIMENTS_DIR, and RESULTS_DIR inside the outer bash -c string. The
+      backslashes caused those variables to be treated as literal strings rather
+      than shell variable expansions, producing ENOENT on all output paths.
 
 Changelog v8.1 (2026-05-17):
     FIX-BUG1-SUBDIR: EXP_RESULT_SUBDIR had three wrong paths (CRITICAL):
