@@ -1,5 +1,5 @@
 %% ============================================================
-%%  jmlr-hypatiax-paper-extended.tex
+%%  jmlr-hypatiax-paper-final.tex
 %%  HypatiaX: Hybrid Symbolic-Neural Framework for
 %%  Extrapolation-Reliable Analytical Discovery
 %%  MAIN PAPER — JMLR submission (extended, v3.0 benchmark)
@@ -255,9 +255,9 @@ This paper makes the following contributions:
 
 Symbolic regression aims to discover explicit functional forms from data without
 assuming a fixed parametric model.  Classical methods rely on genetic programming
-\citep{koza1992gp} and evolutionary search; the SRBench benchmark \citep{la_cava_2021_srbench}
+\citep{koza1992genetic} and evolutionary search; the SRBench benchmark \citep{la2021contemporary}
 provides a standardised multi-dataset evaluation suite.  The AI Feynman
-system \citep{udrescu2020ai} demonstrated that dimensional analysis and neural
+system \citep{udrescu2020aifeynman} demonstrated that dimensional analysis and neural
 pre-screening can guide symbolic search toward physically meaningful equations.
 
 A critical limitation of the symbolic regression literature is the evaluation
@@ -269,7 +269,7 @@ Index directly address this gap.
 
 \subsection{LLMs for Mathematical and Scientific Reasoning}
 
-Chain-of-thought prompting \citep{wei2022chain} and Minerva \citep{lewkowycz2022solving}
+Chain-of-thought prompting \citep{wei2022chain} and Minerva \citep{lewkowycz2022minerva}
 demonstrate that LLMs can solve complex mathematical problems.  Codex \citep{chen2021evaluating}
 showed strong code and formula generation capability.  More recent work has explored
 LLMs as symbolic regression engines, generating formulas from natural-language
@@ -302,8 +302,8 @@ acceptance.
 
 The idea of combining symbolic structure with neural learning has a rich history.
 \citet{cranmer2020lagrangian} use neural networks to discover Lagrangians, then
-fit symbolic expressions to the learned dynamics.  \citet{udrescu2020ai} alternate
-between neural pre-screening and symbolic search.  PySR \citep{cranmer2023pysr}
+fit symbolic expressions to the learned dynamics.  \citet{udrescu2020aifeynman} alternate
+between neural pre-screening and symbolic search.  PySR \citep{cranmer2023interpretable}
 provides an efficient evolutionary-symbolic regression framework that can be
 combined with neural features.
 
@@ -369,7 +369,7 @@ Even when the LLM achieves near-perfect interpolation ($\Rsq \approx 1$), extrap
 \subsection{Formal Definitions}
 
 \begin{definition}[Analytical Expression Discovery]
-Let $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^n$ where $x_i \in \mathbb{R}^d$, $y_i \in \mathbb{R}$~\citep{udrescu2020ai}. An analytical expression discovery system produces $E: \mathbb{R}^d \to \mathbb{R}$ satisfying:
+Let $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^n$ where $x_i \in \mathbb{R}^d$, $y_i \in \mathbb{R}$~\citep{udrescu2020aifeynman}. An analytical expression discovery system produces $E: \mathbb{R}^d \to \mathbb{R}$ satisfying:
 \begin{enumerate}
   \item \textit{Symbolic form}: $E$ is expressible using operators $\mathcal{O}$ in closed form
   \item \textit{Physical consistency}: $E$ satisfies domain constraints $\mathcal{C}$
@@ -827,7 +827,7 @@ $\Rsq$ values depending on the evaluation backend.
 
 \begin{enumerate}
 \item \textbf{Symbolic methods for discovery:} Evolutionary search with domain
-  constraints finds mathematically valid expressions \citep{cranmer2023pysr}.
+  constraints finds mathematically valid expressions \citep{cranmer2023interpretable}.
 \item \textbf{Multi-layer validation:} Dimensional analysis, domain constraints,
   numerical stability, and extrapolation testing.
 \item \textbf{LLMs as interfaces:} Natural language interpretation and optional
@@ -860,7 +860,7 @@ Layer~3 (optional): LLM proposes candidate expressions; on the v3.0 DeFi
 benchmark, 68 of 74 tasks are routed to this path, delivering a $1.73\times$
 median speedup over the neural baseline on those cases
 (Section~\ref{sec:timing}).
-Layer~4: PySR evolutionary search \citep{cranmer2023pysr}.
+Layer~4: PySR evolutionary search \citep{cranmer2023interpretable}.
 Layer~5: four-stage validation cascade (Section~\ref{sec:validation_detail})
 producing the accepted expression with natural-language interpretation.
 
@@ -914,7 +914,7 @@ temperature) are identical to Hybrid~v40.
 
 \subsection{Symbolic Discovery Core}
 
-We employ PySR \citep{cranmer2023pysr} for multi-objective evolutionary search:
+We employ PySR \citep{cranmer2023interpretable} for multi-objective evolutionary search:
 \begin{align}
 \text{Minimize:} \quad
 & \mathcal{L}(E,\mathcal{D})
@@ -1793,7 +1793,7 @@ Based on our findings across 74 DeFi tasks and 30 Feynman equations, we propose 
 
 \subsection{Comparison with Related Work}
 
-HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020ai} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Our approach differs by targeting financial and biochemical domains where such symmetries are absent, and by adding LLM-guided initialisation. DSR~\citep{landajuela2022unified} uses reinforcement learning to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX achieves 9/30 successes (30.0\%) under our aggressive PCA-directed extrapolation protocol, comparable to AI Feynman 2.0 under similar conditions. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
+HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020aifeynman} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Our approach differs by targeting financial and biochemical domains where such symmetries are absent, and by adding LLM-guided initialisation. DSR~\citep{landajuela2022unified} uses reinforcement learning to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX achieves 9/30 successes (30.0\%) under our aggressive PCA-directed extrapolation protocol, comparable to AI Feynman 2.0 under similar conditions. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
 
 \subsection{Ethical Considerations}
 
@@ -1900,12 +1900,7 @@ Chen, M., Tworek, J., Jun, H., et al.\ (2021).
 Evaluating large language models trained on code.
 \emph{arXiv preprint arXiv:2107.03374}.
 
-\bibitem[Cranmer(2023)]{cranmer2023pysr}
-Cranmer, M.\ (2023).
-Interpretable machine learning for science with PySR and SymbolicRegression.jl.
-\emph{arXiv preprint arXiv:2305.01582}.
-
-\bibitem[Cranmer(2023)]{cranmer2023pysr}
+\bibitem[Cranmer(2023)]{cranmer2023interpretable}
 Cranmer, M.\ (2023).
 Interpretable machine learning for science with PySR and SymbolicRegression.jl.
 \emph{arXiv preprint arXiv:2305.01582}.
@@ -1935,12 +1930,17 @@ Karniadakis, G.~E., Kevrekidis, I.~G., Lu, L., et al.\ (2021).
 Physics-informed machine learning.
 \emph{Nature Reviews Physics}, 3(6):422--440.
 
-\bibitem[Koza(1992)]{koza1992gp}
+\bibitem[Koza(1992)]{koza1992genetic}
 Koza, J.~R.\ (1992).
 \emph{Genetic Programming}.
 MIT Press.
 
-\bibitem[La Cava et al.(2021)]{la_cava_2021_srbench}
+\bibitem[Koza(1994)]{koza1994genetic}
+Koza, J.~R.\ (1994).
+\emph{Genetic Programming II: Automatic Discovery of Reusable Programs}.
+MIT Press.
+
+\bibitem[La Cava et al.(2021)]{la2021contemporary}
 La Cava, W., Orzechowski, P., Burlacu, B., et al.\ (2021).
 Contemporary symbolic regression methods and their relative performance.
 In \emph{Proceedings of the NeurIPS Track on Datasets and Benchmarks}.
@@ -1950,7 +1950,7 @@ Landajuela, M., Lee, C.~S., Yang, J., et al.\ (2022).
 A unified framework for deep symbolic regression.
 \emph{NeurIPS 2022}.
 
-\bibitem[Lewkowycz et al.(2022)]{lewkowycz2022solving}
+\bibitem[Lewkowycz et al.(2022)]{lewkowycz2022minerva}
 Lewkowycz, A., Andreassen, A., Dohan, D., et al.\ (2022).
 Solving quantitative reasoning problems with language models.
 \emph{Advances in Neural Information Processing Systems}, 35.
@@ -1991,12 +1991,7 @@ Sun, F., Liu, Y., Wang, J.-X., and Sun, H.\ (2022).
 Symbolic physics learner: Discovering governing equations via Monte Carlo tree search.
 \emph{ICLR 2023}.
 
-\bibitem[Udrescu \& Tegmark(2020)]{udrescu2020ai}
-Udrescu, S.-M.\ and Tegmark, M.\ (2020).
-AI Feynman: A physics-inspired method for symbolic regression.
-\emph{Science Advances}, 6(16):eaay2631.
-
-\bibitem[Udrescu \& Tegmark(2020)]{udrescu2020ai}
+\bibitem[Udrescu \& Tegmark(2020)]{udrescu2020aifeynman}
 Udrescu, S.-M.\ and Tegmark, M.\ (2020).
 AI Feynman: A physics-inspired method for symbolic regression.
 \emph{Science Advances}, 6(16):eaay2631.
@@ -2150,9 +2145,10 @@ v3.0 & 74 & Three hard cases added; trust gate raised to $\Rsq > 0.5$; data leak
 
 \section{Corrected Runtime Claim: Detailed Analysis}
 \label{app:timing}
+\label{sec:timing}
 
-The following table shows the full timing computation supporting the analysis
-in Section~\ref{sec:timing}.
+The following table supports the analysis in the runtime note on p.\,1 and the
+Contributions list (item iii).
 
 \begin{table}[h]
 \centering
