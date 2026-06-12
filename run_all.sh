@@ -338,7 +338,7 @@ DRY_RUN=false
 # FIX CRITICAL 1: instability → hybrid_all_domains
 # FIX CRITICAL 2: suppB_sc added after suppB
 # SPLIT STEP 4: hybrid_all_domains (one-shot run) + instability (K-run II analysis)
-_STEP_ORDER="env_check exp1 exp1b exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
+_STEP_ORDER="env_check exp1 exp1b exp1_ablation exp1_pca exp1b_pca extrap hybrid_all_domains instability exp2_feynman exp2_feynman_pca_4060 exp2_feynman_extrap exp2 exp3 exp3b suppA suppB suppB_sc tables figures validate qualify audit_paper audit_setup audit_nb01 audit_nb02 audit_nb03 audit_nb04 audit_nb05 audit_nb06_fixc3_disclosure audit_nb06_fixc3_rerun audit_guard audit_print_verify audit_print_findings audit_figures_tables audit_final_gate"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -666,6 +666,55 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
 "
 
 
+
+# ── STEP 2a: exp1_ablation ────────────────────────────────────────────────────
+# Runs exp1_ablation.py (§10.6 Core-15 ablation: PySR-only vs HypatiaX).
+# Produces:
+#   exp1_ablation_results.json          ← primary; required by ci_postprocess figures/tables
+#   exp1_ablation_table.tex
+#   exp1_rf01_mannwhitney.json
+#   exp1_rf01_significant.tex
+#   exp1_rf01_subdomain.tex
+#   exp1_instability_stats.json
+#   instability_extrapolation_v2.csv
+#   provenance_map_exp1.json
+#
+# Output directory: ${RESULTS_DIR}/ablation/exp1_ablation/
+# (matches ci_experiment.yml RESULT_SUBDIR = ablation/exp1_ablation)
+#
+# CLI example (run standalone):
+#   bash run_all.sh --step exp1_ablation
+# ─────────────────────────────────────────────────────────────────────────────
+run exp1_ablation "Core-15 LLM ablation: PySR-only vs HypatiaX (Tab 5, §10.6)" bash -c "
+  cd '${REPO_ROOT}'
+  _ABL_DIR='${RESULTS_DIR}/ablation/exp1_ablation'
+  mkdir -p \"\${_ABL_DIR}\"
+
+  RESULTS_DIR=\"\${_ABL_DIR}\" \
+  PYSR_POPULATIONS='${PYSR_POPULATIONS}' \
+  PYSR_SEED='${PYSR_SEED}' \
+  METHOD_TIMEOUT='${METHOD_TIMEOUT}' \
+  PYSR_TIMEOUT='${FEYNMAN_TIMEOUT}' \
+  JOB_DEADLINE='${JOB_DEADLINE}' \
+    python3 '${EXPERIMENTS_DIR}/exp1_ablation.py' \
+    2>&1 | tee \"\${_ABL_DIR}/exp1_ablation_run.log\" \
+  || echo 'WARNING: exp1_ablation.py exited non-zero — check exp1_ablation_run.log'
+
+  echo '=== exp1_ablation verification ==='
+  find \"\${_ABL_DIR}\" -maxdepth 1 \( -name '*.json' -o -name '*.tex' -o -name '*.csv' \) 2>/dev/null | sort
+  _NRESULT=\$(find \"\${_ABL_DIR}\" -maxdepth 1 -name 'exp1_ablation_results*.json' 2>/dev/null | wc -l)
+  _NRF01=\$(find \"\${_ABL_DIR}\" -maxdepth 1 -name 'exp1_rf01_mannwhitney*.json' 2>/dev/null | wc -l)
+  if [[ \"\${_NRESULT}\" -eq 0 ]]; then
+    echo 'WARNING: exp1_ablation_results.json not produced — ci_postprocess figures/tables will fail'
+    echo '         Ensure ANTHROPIC_API_KEY is set and HybridDiscoverySystem v5.1 is importable'
+  else
+    echo \"OK: \${_NRESULT} exp1_ablation_results*.json produced\"
+  fi
+  if [[ \"\${_NRF01}\" -eq 0 ]]; then
+    echo 'WARNING: exp1_rf01_mannwhitney.json not produced — Mann-Whitney stats will be missing'
+  fi
+  echo '=== end exp1_ablation ==='
+"
 
 # ── STEP 2b: exp1_pca ─────────────────────────────────────────────────────────
 # FIX-C3 DeFi variant: reruns all 74 DeFi cases via hypatiax_defi_benchmark_pca.py

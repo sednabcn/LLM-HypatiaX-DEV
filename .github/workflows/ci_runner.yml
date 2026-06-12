@@ -78,6 +78,7 @@ on:
         options:
           - exp1
           - exp1b
+          - exp1_ablation
           - exp1_pca
           - exp1b_pca
           - exp2_feynman_pca
@@ -269,6 +270,21 @@ jobs:
               NEEDS_JULIA=false
               RESULT_SUBDIR="comparison_results/noise-noiseless/15"
               DEFAULT_SEEDS="${SEEDS_IN:-42,99,123,777,2024}"
+              ;;
+
+            # -- STEP 2a: Core-15 ablation (§10.6) ------------------------------------
+            # exp1_ablation.py benchmarks PySR-only vs HypatiaX on the Core-15 suite.
+            # Primary output: exp1_ablation_results.json (required by ci_postprocess).
+            # Also writes: exp1_ablation_table.tex, exp1_rf01_mannwhitney.json,
+            #              exp1_rf01_significant.tex, exp1_rf01_subdomain.tex,
+            #              exp1_instability_stats.json, instability_extrapolation_v2.csv,
+            #              provenance_map_exp1.json
+            # RESULT_SUBDIR mirrors the path RESULTS_DIR is set to inside run_all.sh.
+            exp1_ablation)
+              SCRIPT="hypatiax/experiments/benchmarks/exp1_ablation.py"
+              NEEDS_JULIA=false
+              RESULT_SUBDIR="ablation/exp1_ablation"
+              DEFAULT_SEEDS="42"
               ;;
 
             exp2_feynman)

@@ -271,7 +271,7 @@ jobs:
               'exp1b':               'comparison_results/noise-noiseless/15',
               'exp1_pca':            'comparison_results/noise-noiseless/noiseless/defi_pca',
               'exp1b_pca':           'comparison_results/noise-noiseless/15_pca',
-              'exp1_ablation':       'comparison_results/feynman-tests/exp1_ablation',
+              'exp1_ablation':       'ablation/exp1_ablation',
               'exp2_feynman':        'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
               'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
@@ -406,7 +406,8 @@ jobs:
             --experiment  exp1 \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp1 figure generation failed — exp1 — source data may not yet exist. Run ci_runner.yml + ci_analysis.yml for exp1 first."
 
       # ── A2: exp1b ───────────────────────────────────────────────────────────
       - name: "Figures: exp1b — noise-robust DeFi (multi-seed)"
@@ -420,7 +421,8 @@ jobs:
             --experiment  exp1b \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp1b figure generation failed — exp1b — _merged.json may be absent. Run ci_analysis.yml for exp1b first."
 
       # ── A3: exp2_feynman ────────────────────────────────────────────────────
       - name: "Figures: exp2_feynman — Feynman benchmark"
@@ -434,7 +436,8 @@ jobs:
             --experiment  exp2_feynman \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp2_feynman figure generation failed — exp2_feynman — source data may not yet exist. Run ci_runner.yml + ci_analysis.yml for exp2_feynman first."
 
       # ── A4: exp2_feynman_extrap ──────────────────────────────────────────────
       - name: "Figures: exp2_feynman_extrap — extrapolation comparison"
@@ -448,7 +451,8 @@ jobs:
             --experiment  exp2_feynman_extrap \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp2_feynman_extrap figure generation failed — exp2_feynman_extrap — ablation_paired.json may be absent. Run ci_analysis.yml for exp2_feynman_extrap first."
 
       # ── A5: exp2_feynman_pca ─────────────────────────────────────────────────
       - name: "Figures: exp2_feynman_pca — PCA 40/60 vs random 80/20"
@@ -462,7 +466,8 @@ jobs:
             --experiment  exp2_feynman_pca \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp2_feynman_pca figure generation failed — exp2_feynman_pca — source data may not yet exist."
 
       # ── A6: exp2 ─────────────────────────────────────────────────────────────
       - name: "Figures: exp2 — all-30 multi-domain"
@@ -476,7 +481,8 @@ jobs:
             --experiment  exp2 \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp2 figure generation failed — exp2 — source data may not yet exist. Run ci_runner.yml + ci_analysis.yml for exp2 first."
 
       # ── A7: exp3 ─────────────────────────────────────────────────────────────
       - name: "Figures: exp3 — Nguyen-12 symbolic equivalence"
@@ -490,7 +496,8 @@ jobs:
             --experiment  exp3 \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp3 figure generation failed — exp3 — symbolic_equivalence_report.csv may be absent. Run ci_analysis.yml for exp3 first."
 
       # ── A8: exp3b ────────────────────────────────────────────────────────────
       - name: "Figures: exp3b — multi-seed Nguyen-12"
@@ -504,7 +511,8 @@ jobs:
             --experiment  exp3b \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp3b figure generation failed — exp3b — source data may not yet exist. Run ci_analysis.yml for exp3b first."
 
       # ── A9: suppA ────────────────────────────────────────────────────────────
       - name: "Figures: suppA — hybrid PySR + DeFi"
@@ -518,7 +526,8 @@ jobs:
             --experiment  suppA \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::suppA figure generation failed — suppA — source data may not yet exist. Run ci_runner.yml for suppA first."
 
       # ── A10: suppB — noise-sweep figures (canonical source) ──────────────────
       # CRITICAL: reads from and writes to the CANONICAL suppB subdirectory.
@@ -531,7 +540,8 @@ jobs:
             --experiment  suppB \
             --results-dir "${OUT_BASE}/${SUPPB_SUBDIR}" \
             --figures-dir "${OUT_BASE}/${SUPPB_SUBDIR}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::suppB figure generation failed — suppB — noise_sweep_*.json may be absent. Run ci_runner.yml for suppB first."
 
       # ── A11: suppB_sc — sample-complexity figures (canonical source) ──────────
       - name: "Figures: suppB_sc — sample-complexity (canonical source)"
@@ -543,7 +553,8 @@ jobs:
             --experiment  suppB_sc \
             --results-dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}" \
             --figures-dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::suppB_sc figure generation failed — suppB_sc — sample-complexity JSONs may be absent. Run ci_runner.yml for suppB_sc first."
 
       # ── A12: hybrid_all_domains ───────────────────────────────────────────────
       - name: "Figures: hybrid_all_domains — LLM+NN all-domain"
@@ -557,7 +568,8 @@ jobs:
             --experiment  hybrid_all_domains \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::hybrid_all_domains figure generation failed — hybrid_all_domains — source data may not yet exist."
 
       # ── A13: instability ─────────────────────────────────────────────────────
       - name: "Figures: instability — Instability Index S10.9"
@@ -571,7 +583,8 @@ jobs:
             --experiment  instability \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::instability figure generation failed — instability — variance JSON may be absent. Run ci_runner.yml for instability first."
 
       # ── A14: extrap ───────────────────────────────────────────────────────────
       - name: "Figures: extrap — OOD extrapolation"
@@ -585,7 +598,8 @@ jobs:
             --experiment  extrap \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::extrap figure generation failed — extrap — source data may not yet exist. Run ci_runner.yml for extrap first."
 
 
       # ── A15: exp1_pca — DeFi all-74 PCA 40/60 ───────────────────────────────
@@ -601,7 +615,8 @@ jobs:
             --experiment  exp1_pca \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp1_pca figure generation failed — exp1_pca — source data may not yet exist."
 
       # ── A16: exp1b_pca — DeFi portfolio seed sweep PCA 40/60 ────────────────
       - name: "Figures: exp1b_pca — DeFi portfolio seed sweep PCA 40/60"
@@ -616,7 +631,8 @@ jobs:
             --experiment  exp1b_pca \
             --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
+            --source      auto \
+            || echo "::warning::exp1b_pca figure generation failed — exp1b_pca — source data may not yet exist."
 
       # ── A17: figures_deploy — regenerate + deploy non-runner-canonical figures ─
       #
