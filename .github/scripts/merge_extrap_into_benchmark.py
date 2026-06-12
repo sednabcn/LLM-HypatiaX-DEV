@@ -382,7 +382,7 @@ Examples
         """,
     )
     ap.add_argument(
-        "--benchmark-dir", required=True,
+        "--benchmark-dir", required=True, dest="benchmark_dir",
         help="Directory containing benchmark_results.json (train r2 / method metadata)",
     )
     ap.add_argument(

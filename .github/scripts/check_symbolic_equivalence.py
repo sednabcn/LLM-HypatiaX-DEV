@@ -409,11 +409,11 @@ def build_arg_parser():
              "exp3_nguyen12_seed*.json under --results-dir."
     )
     ap.add_argument(
-        '--results-dir', default='.',
+        '--results-dir', dest='results_dir', default='.',
         help="Directory to glob for exp3_nguyen12_seed*.json (default: .)"
     )
     ap.add_argument(
-        '--output-dir', default=None,
+        '--output-dir', dest='output_dir', default=None,
         help="Directory for CSV and TXT outputs (default: same as --results-dir)"
     )
     ap.add_argument(
