@@ -100,7 +100,7 @@ on:
 
 permissions:
   contents: write
-  actions:  read
+  actions:  write   # needed to dispatch ci_postprocess.yml's figures_deploy (see FIX 8 job below)
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -142,7 +142,13 @@ jobs:
           ALL = [
               # FIX 1: exp2_feynman_extrap was missing — caused it to be silently
               # skipped on every "all" run.  Order matches canonical QUEUE in ci_pipeline.yml.
-              "exp1", "exp1b", "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca", "exp2",
+              # FIX 5 (cross-ref ci_postprocess.yml): exp1_pca and exp1b_pca are
+              # valid workflow_dispatch options in ci_postprocess.yml but were
+              # missing from this pipeline's ALL/SUBDIR/RESULT_GLOBS/REGISTRY —
+              # "experiment: all" silently skipped both. Added here, immediately
+              # after their non-PCA counterparts.
+              "exp1", "exp1_pca", "exp1b", "exp1b_pca",
+              "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca", "exp2",
               "exp3", "exp3b", "suppA", "suppB", "suppB_sc",
               "hybrid_all_domains", "instability", "extrap",
           ]
@@ -235,7 +241,9 @@ jobs:
           import os
           mapping = {
               'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1_pca':           'comparison_results/noise-noiseless/noiseless/defi_pca',
               'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp1b_pca':          'comparison_results/noise-noiseless/15_pca',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
               'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
@@ -477,7 +485,9 @@ jobs:
           import os
           mapping = {
               'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1_pca':           'comparison_results/noise-noiseless/noiseless/defi_pca',
               'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp1b_pca':          'comparison_results/noise-noiseless/15_pca',
               'exp2_feynman':       'comparison_results/feynman-tests/exp2',
               # FIX 3: exp2_feynman_extrap was missing from postprocess mapping —
               # it would fall back to the bare experiment name as subdir (wrong path).
@@ -530,9 +540,16 @@ jobs:
         run: |
           # --experiment scopes generate_figures.py to only produce plots relevant
           # to this experiment, preventing cross-experiment data contamination.
+          #
+          # NOTE (cross-ref ci_postprocess.yml BUG-E): generate_figures.py ignores
+          # --repo-root entirely. The correct flag — used by ci_postprocess.yml's
+          # per-experiment Figures steps and figures_deploy — is --results-dir.
+          # Using --repo-root here (as in earlier revisions of this file)
+          # reproduces BUG-E: the experiment's figures/ dir is left empty and
+          # the Commit step silently skips it (stage_if_nonempty warns + no-ops).
           python scripts/generate_figures.py \
             --experiment  "${EXP}" \
-            --repo-root   "${OUT_BASE}/${SUB}" \
+            --results-dir "${OUT_BASE}/${SUB}" \
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
             --source      auto
 
@@ -860,7 +877,9 @@ jobs:
 
           SUBDIR = {
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1_pca":           "comparison_results/noise-noiseless/noiseless/defi_pca",
               "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
               # FIX 4: exp2_feynman_extrap missing from check SUBDIR — caused
               # the check job to report it as MISSING even when results were present.
@@ -879,7 +898,9 @@ jobs:
 
           RESULT_GLOBS = {
               "exp1":               ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
+              "exp1_pca":           ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
+              "exp1b_pca":          ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
               # FIX 4 (continued): exp2_feynman_extrap missing from RESULT_GLOBS.
               "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json", "protocol_core_*.json"],
@@ -1007,9 +1028,39 @@ jobs:
               "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
               "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
           ]
+
+          # FIX 7: RESULT_GLOBS was referenced by _done_set_from_files() below
+          # (`globs_for_exp = RESULT_GLOBS.get(exp_id, [])`, evaluated
+          # unconditionally for every experiment) but was never defined in this
+          # job's script — `check`'s RESULT_GLOBS is local to that job and does
+          # not carry over. This raised NameError on the FIRST experiment
+          # processed, crashing "Compute completion gaps" on every run.
+          # Mirrors the `check` job's RESULT_GLOBS (kept in sync; also includes
+          # exp1_pca/exp1b_pca, see FIX 5).
+          RESULT_GLOBS = {
+              "exp1":               ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
+              "exp1_pca":           ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
+              "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
+              "exp1b_pca":          ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
+              "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json", "protocol_core_*.json"],
+              "exp2_feynman_pca":   ["protocol_core_*.json", "benchmark_results.json", "exp2_pca_comparison.tex"],
+              "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
+              "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "exp3b":              ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json", "extrapolation_73cases*.json", "*73cases*.json"],
+              "suppB":              ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              "suppB_sc":           ["sample_complexity_*.json", "sample_complexity_*.csv"],
+              "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
+              "instability":        ["instability_analysis.csv", "*.pdf", "*.png"],
+              "extrap":             ["all_domains_extrap_v4_*.json", "protocol_core_*.json"],
+          }
+
           REGISTRY = {
               "exp1":               ["hypatiax_defi_benchmark_v3_results"],
+              "exp1_pca":           ["hypatiax_defi_benchmark_v3_results"],
               "exp1b":              ["hypatiax_defi_benchmark_v3_results"],
+              "exp1b_pca":          ["hypatiax_defi_benchmark_v3_results"],
               "exp2_feynman":       FEYNMAN_DOMAINS,
               "exp2_feynman_extrap": FEYNMAN_DOMAINS,
               "exp2":               EXP2_DOMAINS,
@@ -1027,6 +1078,47 @@ jobs:
               done  = set()
               files = [f.name for f in result_dir.glob("*")
                        if f.is_file() and not f.name.startswith("_")]
+
+              # ── suppB / suppB_sc: content-based check (FIX 6) ──────────────
+              # REGISTRY task IDs encode specific sweep points (sig0000 = noise
+              # level 0.0, n0050 = sample size 50, etc.). The generic glob
+              # fallback below ("any RESULT_GLOBS file present → all tasks
+              # done") is a FALSE POSITIVE here: ci_runner commits one
+              # noise_sweep_*.json / sample_complexity_*.json shard per
+              # noise-level / sample-size (filenames are timestamp-based, e.g.
+              # noise_sweep_20260524_081308.json, NOT sig-named), so a single
+              # shard covering only noise_levels=[0.5] would otherwise be
+              # reported as "5/5 done" for suppB. Instead, read each shard's
+              # noise_levels / sample_sizes and mark only the corresponding
+              # sig*/n* task IDs done. ci_postprocess.yml figures_deploy
+              # performs the equivalent check before regenerating sweep
+              # figures and emits ::warning:: for the same gap.
+              if exp_id in ("suppB", "suppB_sc"):
+                  import glob as _g, json as _j
+                  if exp_id == "suppB":
+                      shard_files = _g.glob(str(result_dir / "noise_sweep_*.json"))
+                      for sf in shard_files:
+                          try:
+                              d = _j.loads(open(sf).read())
+                          except Exception:
+                              continue
+                          for level in d.get("noise_levels", []):
+                              tid = f"sig{int(round(float(level) * 100)):04d}"
+                              if tid in all_ids:
+                                  done.add(tid)
+                  else:  # suppB_sc
+                      shard_files = (_g.glob(str(result_dir / "sc_n*.json")) +
+                                      _g.glob(str(result_dir / "*sample_complexity*.json")))
+                      for sf in shard_files:
+                          try:
+                              d = _j.loads(open(sf).read())
+                          except Exception:
+                              continue
+                          for n in d.get("sample_sizes", []):
+                              tid = f"n{int(n):04d}"
+                              if tid in all_ids:
+                                  done.add(tid)
+                  return done
 
               # Fallback globs: when the REGISTRY task-id substring does not match
               # any filename (e.g. exp1 produces protocol_core_noiseless_*.json but
@@ -1146,7 +1238,9 @@ jobs:
 
           SUBDIR = {
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1_pca":           "comparison_results/noise-noiseless/noiseless/defi_pca",
               "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
@@ -1590,3 +1684,45 @@ jobs:
 
           sys.exit(0 if overall_ok else 1)
           PYEOF
+
+# ==============================================================================
+#  FIX 8 — figures_deploy bridge (cross-ref ci_postprocess.yml)
+#  -----------------------------------------------------------------------
+#  This pipeline runs analysis + postprocess for every experiment, but never
+#  populates the NB-05 FIGURES_INVENTORY / LaTeX `figures/` directory:
+#    - the 2 hand-crafted figures (FIX-F1/F2: hypatiaX_three_systems,
+#      hypatiaX_algorithm1_routing_cascade_v2)
+#    - the 3 exp1-derived cosmetic figures (FIX-F3/F4/F5: fig09/fig18/
+#      fig1_seed_sweep, generated via scripts/generate_figures.py
+#      --experiment exp1)
+#    - the 13 Group-B suppB/suppB_sc sweep figures, consolidated into the
+#      flat Figures/ -> figures/ layout
+#  are ALL handled by ci_postprocess.yml's `figures_deploy` experiment
+#  (NB-05 Step 6 equivalent), which is NOT in this pipeline's experiment list
+#  (by design — it must run AFTER every other experiment's postprocess has
+#  committed its canonical figures/ output).
+#
+#  When `experiment: all` is selected, dispatch ci_postprocess.yml with
+#  experiment=figures_deploy once postprocess for every experiment has
+#  finished, so the LaTeX build target (figures/) is always refreshed at the
+#  end of a full pipeline run.
+# ==============================================================================
+  figures_deploy:
+    name: "Trigger ci_postprocess: figures_deploy"
+    needs: [setup, postprocess, summary]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      always() &&
+      (github.event.inputs.experiment == 'all' || github.event.inputs.experiment == '')
+    steps:
+      - name: Dispatch ci_postprocess.yml (experiment=figures_deploy)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci_postprocess.yml \
+            --repo "${{ github.repository }}" \
+            --ref  "${{ github.ref_name }}" \
+            -f experiment=figures_deploy \
+            || echo "::warning::Could not dispatch ci_postprocess.yml figures_deploy — trigger it manually via workflow_dispatch (experiment=figures_deploy) to refresh figures/ for the LaTeX build."

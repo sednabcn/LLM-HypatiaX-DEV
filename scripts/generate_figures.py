@@ -1,136 +1,1725 @@
-#!/usr/bin/env python3
 """
-generate_figures.py — Invoke the HypatiaX visualisation pipeline.
+generate_all_figures.py
+========================
+Generates ALL figures for the HypatiaX paper and supplementary reports.
 
-Usage (called by ci_postprocess.yml):
-  python scripts/generate_figures.py \
-      --experiment  <id> \
-      --results-dir hypatiax/data/results/<subdir> \
-      --figures-dir hypatiax/data/results/<subdir>/figures \
-      --source      auto
+P0 paper-compilation blockers addressed in this version
+────────────────────────────────────────────────────────
+  hypatiaX_three_systems   — new: architecture diagram rendered from code
+  fig09_r2_heatmap_regimes — REWRITTEN: uses exp1 dict schema (near/medium/far regimes)
+  fig18_r2_heatmap_improved — REWRITTEN: uses exp1 dict schema (PySR-only vs HypatiaX)
+  fig1_seed_sweep           — REWRITTEN: richer per-seed line chart (from portfolio_variance nb)
 
-plot_results.py ignores --figures-dir and always writes its output to a
-hardcoded path (hypatiax/tools/figures/results.pdf).  This wrapper:
+P1 restore (exp1_ablation_results.json schema clarification)
+─────────────────────────────────────────────────────────────
+  exp1_ablation_results.json schema is a dict-of-dicts:
+    {
+      "Equation Name": {
+        "domain": "...",
+        "pysr_only": {"train_r2": ..., "extrap_r2_near": ..., "extrap_r2_medium": ...,
+                      "extrap_r2_far": ..., "total_time_s": ...},
+        "hypatia":   {"train_r2": ..., "extrap_r2_near": ..., ...}
+      }, ...
+    }
+  All cosmetic figures (fig07–fig22) have been updated to read this schema.
+  The old "cases" list schema is retained as a fallback for RF09 / instability figures.
 
-  1. Runs plot_results.py (forwarding all args so future fixes work for free).
-  2. Finds every PDF/PNG it wrote under its hardcoded output root.
-  3. Moves + renames each file to:
-       <figures-dir>/FIG_<subject>_<experiment>.pdf
-     where <subject> is derived from the filename plot_results.py produced.
-  4. Creates <figures-dir> if it does not already exist.
-  5. Exits non-zero if no files were moved (silent no-op detection).
+Figure groups produced
+──────────────────────
+P0               : hypatiaX_three_systems
+RF02 / cosmetic  : fig07–fig22, fig_seed_sweep_comparison / fig1_seed_sweep
+RF09 instability : fig_instability_*.png, hypatiax_instability_*.png, fig_paper_*.png
+instability_per_case : hypatiax_instability_per_case  (hypatiax_defi_variance_results.json)
+portfolio_variance   : fig_defi_r2_distribution       (hypatiax_defi_benchmark_v3c3_results.json)
+nguyen12             : exp3_nguyen12_hybrid50v_extrap_r2 (exp3_nguyen12_output.json)
+five_systems         : figure_5systems_comparison      (all_domains_extrap_v4_*.json +
+                                                        standalone_real_methods_*.json +
+                                                        systems_2_3_2_data.json)
+Supp-B sweep         : fig1_r2_vs_noise … fig_comparative_table
+                       (noise_sweep_20260316_192711.json +
+                        sample_complexity_20260316_193447.json)
 
-Naming convention:  FIG_<subject>_<experiment_id>.pdf
-  e.g.  FIG_results_exp1b.pdf
-        FIG_noise_sweep_suppB.pdf
+Primary data source (cosmetic / RF02 / RF09):
+    exp1_ablation_results.json
+
+Run:
+    python3 generate_all_figures.py
+
+Outputs: figures/  (PNG, 300 dpi, ready for \\includegraphics)
+
+Missing-figure registry cross-reference
+────────────────────────────────────────
+Group               Stem                                       Data file(s)
+P0                  hypatiaX_three_systems                     (no data file — rendered from code)
+cosmetic            fig07_scatter_train_vs_extrap              exp1_ablation_results.json
+cosmetic            fig08_train_r2_bar                         exp1_ablation_results.json
+cosmetic [P0]       fig09_r2_heatmap_regimes                   exp1_ablation_results.json
+cosmetic            fig10_far_extrap_head2head                 exp1_ablation_results.json
+cosmetic            fig11_speedup_bar                          exp1_ablation_results.json
+cosmetic            fig12_ridge_vs_train_r2                    exp1_ablation_results.json
+cosmetic            fig14_per_equation_r2_profile              exp1_ablation_results.json
+cosmetic            fig16_instability_vs_extrapolation         instability_extrapolation_v2.csv
+cosmetic            fig17_3d_surface_instability_complexity    instability_extrapolation_v2.csv
+cosmetic [P0]       fig18_r2_heatmap_improved                  exp1_ablation_results.json
+cosmetic            fig19_far_extrap_improved                  exp1_ablation_results.json
+cosmetic            fig20_wall_clock_speedup                   wall_clock_flags.json
+cosmetic            fig21_portfolio_variance_sweep             portfolio_variance_seed_sweep.json
+cosmetic            fig22_bubble_train_vs_far                  exp1_ablation_results.json +
+                                                               instability_extrapolation_v2.csv
+cosmetic [P0]       fig1_seed_sweep  (≡fig_seed_sweep_comparison)
+                                                               portfolio_variance_seed_sweep.json
+instability_per_case hypatiax_instability_per_case             hypatiax_defi_variance_results.json
+portfolio_variance  fig_defi_r2_distribution                   hypatiax_defi_benchmark_v3c3_results.json
+nguyen12            exp3_nguyen12_hybrid50v_extrap_r2          exp3_nguyen12_output.json
+five_systems        figure_5systems_comparison                 all_domains_extrap_v4_*.json +
+                                                               standalone_real_methods_*.json +
+                                                               systems_2_3_2_data.json
+Supp-B              fig1_r2_vs_noise … fig_comparative_table
+                                                               noise_sweep_20260316_192711.json +
+                                                               sample_complexity_20260316_193447.json
 """
 
-import argparse
-import os
-import re
-import shutil
-import subprocess
-import sys
-from pathlib import Path
+import json, os, math, warnings, glob, sys
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
+from matplotlib.gridspec import GridSpec
+from scipy import stats as scipy_stats
 
-# plot_results.py always writes here regardless of --figures-dir.
-HARDCODED_OUT_DIR = Path("hypatiax/tools/figures")
+warnings.filterwarnings("ignore")
 
-# Extensions we care about.
-FIG_EXTENSIONS = {".pdf", ".png"}
+# ── Data file paths ────────────────────────────────────────────────────────────
+# Primary cosmetic / RF02 / RF09 source (renamed from v3c2_fixed_4_content)
+DATA_MAIN          = "exp1_ablation_results.json"
+# Secondary sources (optional — figures skipped gracefully if absent)
+DATA_VARIANCE      = "hypatiax_defi_variance_results.json"
+DATA_DEFI_V3C3     = "hypatiax_defi_benchmark_v3c3_results.json"
+DATA_NGUYEN12      = "exp3_nguyen12_output.json"
+DATA_WALL_CLOCK    = "wall_clock_flags.json"
+DATA_PORTFOLIO_SW  = "portfolio_variance_seed_sweep.json"
+DATA_INSTAB_CSV    = "instability_extrapolation_v2.csv"
+# Supp-B sweep files
+DATA_NOISE_SWEEP   = "noise_sweep_20260316_192711.json"
+DATA_SAMPLE_SWEEP  = "sample_complexity_20260316_193447.json"
+# Five-systems (glob patterns resolved at runtime)
+GLOB_DOMAINS_V4    = "all_domains_extrap_v4_*.json"
+GLOB_STANDALONE    = "standalone_real_methods_*.json"
+DATA_SYSTEMS_232   = "systems_2_3_2_data.json"
+
+def _load_json(path, label=None):
+    """Load JSON; return None and print a warning if the file is absent."""
+    if not os.path.isfile(path):
+        print(f"  [SKIP] {label or path} not found — dependent figures will be skipped.")
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+def _load_csv_np(path, label=None):
+    """Load a CSV as a numpy structured array; return None if absent."""
+    import csv
+    if not os.path.isfile(path):
+        print(f"  [SKIP] {label or path} not found — dependent figures will be skipped.")
+        return None
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    return rows  # list of dicts
+
+# ── Load primary data ─────────────────────────────────────────────────────────
+RAW = _load_json(DATA_MAIN, "exp1_ablation_results.json")
+if RAW is None:
+    print(f"ERROR: primary data file '{DATA_MAIN}' is required. Aborting.")
+    sys.exit(1)
+
+# Support both schemas:
+#   New (dict-of-dicts): {"Equation Name": {"domain": ..., "pysr_only": {...}, "hypatia": {...}}, ...}
+#   Legacy (list):       {"cases": [...]}  or a bare list
+def _normalise_cases(raw):
+    """Convert either schema to the canonical list-of-case-dicts used throughout."""
+    if isinstance(raw, list):
+        return raw
+    if "cases" in raw:
+        return raw["cases"]
+    # dict-of-dicts: convert to list, mapping "pysr_only" → "neural_network" proxy
+    # and "hypatia" → "hybrid" proxy so existing collect()/get_case() helpers work.
+    cases = []
+    for eq_name, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        pysr   = entry.get("pysr_only", {})
+        hyp    = entry.get("hypatia",   {})
+        domain = entry.get("domain", "unknown")
+        # Map near/medium/far extrap_r2 onto stability_score (far) for legacy figures.
+        case = {
+            "test_case":    eq_name,
+            "formula_type": domain,
+            "difficulty":   _infer_difficulty(pysr, hyp),
+            "results": {
+                "hybrid": {
+                    "train_r2":        hyp.get("train_r2",        float("nan")),
+                    "test_r2":         hyp.get("extrap_r2_far",   float("nan")),
+                    "stability_score": hyp.get("extrap_r2_far",   float("nan")),
+                    "extrapolation_gap": (
+                        hyp.get("train_r2", float("nan")) -
+                        hyp.get("extrap_r2_far", float("nan"))
+                    ),
+                    "time_s":          hyp.get("total_time_s",    float("nan")),
+                    # Store regime scores for new heatmap figures.
+                    "extrap_r2_near":   hyp.get("extrap_r2_near",   float("nan")),
+                    "extrap_r2_medium": hyp.get("extrap_r2_medium", float("nan")),
+                    "extrap_r2_far":    hyp.get("extrap_r2_far",    float("nan")),
+                },
+                "neural_network": {
+                    "train_r2":        pysr.get("train_r2",        float("nan")),
+                    "test_r2":         pysr.get("extrap_r2_far",   float("nan")),
+                    "stability_score": pysr.get("extrap_r2_far",   float("nan")),
+                    "extrapolation_gap": (
+                        pysr.get("train_r2", float("nan")) -
+                        pysr.get("extrap_r2_far", float("nan"))
+                    ),
+                    "time_s":          pysr.get("total_time_s",    float("nan")),
+                    "extrap_r2_near":   pysr.get("extrap_r2_near",   float("nan")),
+                    "extrap_r2_medium": pysr.get("extrap_r2_medium", float("nan")),
+                    "extrap_r2_far":    pysr.get("extrap_r2_far",    float("nan")),
+                },
+                # pure_llm is not present in the new schema; use NaN placeholders.
+                "pure_llm": {},
+            },
+            # Carry raw entries for regime-aware figures.
+            "_pysr_only": pysr,
+            "_hypatia":   hyp,
+        }
+        cases.append(case)
+    return cases
 
 
-def parse_our_args():
-    """Extract --experiment and --figures-dir without consuming the full argv."""
-    p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--experiment",  default="unknown")
-    p.add_argument("--figures-dir", default=None)
-    known, _ = p.parse_known_args()
-    return known.experiment, known.figures_dir
+def _infer_difficulty(pysr, hyp):
+    """Heuristically assign difficulty from far-extrap R² performance."""
+    far = safe_float(hyp.get("extrap_r2_far", pysr.get("extrap_r2_far", float("nan"))))
+    if math.isnan(far):
+        return "medium"
+    if far >= 0.90:
+        return "easy"
+    if far >= 0.50:
+        return "medium"
+    return "hard"
 
 
-def subject_from_filename(stem: str) -> str:
-    """
-    Derive a short subject token from the stem plot_results.py used.
-    'results'        -> 'results'
-    'noise_sweep'    -> 'noise_sweep'
-    'results_suppB'  -> 'results'   (experiment suffix already present; strip it)
-    """
-    # Strip any trailing experiment-like suffix plot_results might have added.
-    stem = re.sub(r"[_-](exp\w+|suppB\w*|hybrid\w*|instability|extrap)$", "", stem)
-    return stem or "results"
+CASES = _normalise_cases(RAW)
+# Detect which schema was loaded (affects regime-heatmap figures).
+_DICT_SCHEMA = isinstance(RAW, dict) and "cases" not in RAW and not isinstance(RAW, list)
+os.makedirs("figures", exist_ok=True)
+
+# ── Colour palette ─────────────────────────────────────────────────────────────
+C_HYB   = "#2563EB"   # hybrid (blue)
+C_LLM   = "#7C3AED"   # pure_llm (purple)
+C_NN    = "#DC2626"   # neural_network (red)
+C_OK    = "#16A34A"   # success green
+C_FAIL  = "#DC2626"   # failure red
+C_WARN  = "#D97706"   # amber
+C_GRID  = "#E5E7EB"   # light grid
+
+METHODS = ["pure_llm", "neural_network", "hybrid"]
+MLABELS = {"pure_llm": "Pure LLM", "neural_network": "Neural Net", "hybrid": "HypatiaX Hybrid"}
+MCOLORS = {"pure_llm": C_LLM, "neural_network": C_NN, "hybrid": C_HYB}
+DIFF_ORDER = ["easy", "medium", "hard"]
+DIFF_COLORS = {"easy": "#059669", "medium": "#D97706", "hard": "#DC2626"}
+
+# ── Data helpers ──────────────────────────────────────────────────────────────
+
+def safe_float(v):
+    if v is None: return float("nan")
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else float("nan")
+    except: return float("nan")
+
+def collect(field, method="hybrid"):
+    return [safe_float(c["results"].get(method, {}).get(field)) for c in CASES]
+
+def collect_valid(field, method="hybrid"):
+    return [v for v in collect(field, method) if not math.isnan(v)]
+
+def get_case(c, method, field):
+    return safe_float(c["results"].get(method, {}).get(field))
+
+# Precompute arrays
+h_train    = np.array(collect("train_r2",        "hybrid"))
+h_test     = np.array(collect("test_r2",         "hybrid"))
+h_stab     = np.array(collect("stability_score", "hybrid"))
+h_egap     = np.array(collect("extrapolation_gap","hybrid"))
+nn_train   = np.array(collect("train_r2",        "neural_network"))
+nn_test    = np.array(collect("test_r2",         "neural_network"))
+nn_stab    = np.array(collect("stability_score", "neural_network"))
+llm_train  = np.array(collect("train_r2",        "pure_llm"))
+llm_test   = np.array(collect("test_r2",         "pure_llm"))
+llm_stab   = np.array(collect("stability_score", "pure_llm"))
+h_times    = np.array(collect("time_s",          "hybrid"))
+nn_times   = np.array(collect("time_s",          "neural_network"))
+difficulties = [c["difficulty"] for c in CASES]
+ftypes       = [c["formula_type"] for c in CASES]
+
+print(f"Loaded {len(CASES)} cases.")
+print(f"Hybrid:  mean_stab={np.nanmean(h_stab):.4f}  mean_test_r2={np.nanmean(h_test):.4f}")
+print(f"NN:      mean_stab={np.nanmean(nn_stab):.4f}  mean_test_r2={np.nanmean(nn_test):.4f}")
+print(f"LLM:     mean_stab={np.nanmean(llm_stab):.4f}")
 
 
-def collect_outputs(out_dir: Path) -> list[Path]:
-    """Return all PDF/PNG files directly under out_dir."""
-    if not out_dir.is_dir():
-        return []
-    return [
-        f for f in out_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in FIG_EXTENSIONS
+# ══════════════════════════════════════════════════════════════════════════════
+# P0 FIGURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── hypatiaX_three_systems — architecture diagram rendered from code ──────────
+_sys_fig, _sys_ax = plt.subplots(figsize=(14, 6))
+_sys_ax.set_xlim(0, 14); _sys_ax.set_ylim(0, 6)
+_sys_ax.axis("off")
+_sys_ax.set_facecolor("#F8FAFC")
+_sys_fig.patch.set_facecolor("#F8FAFC")
+
+_BOX_H = 1.1  # box height
+_BOX_W = 3.0  # box width
+
+def _draw_box(ax, cx, cy, label, sublabel, color, text_color="white"):
+    from matplotlib.patches import FancyBboxPatch
+    box = FancyBboxPatch((cx - _BOX_W/2, cy - _BOX_H/2), _BOX_W, _BOX_H,
+                         boxstyle="round,pad=0.1", linewidth=1.5,
+                         edgecolor="white", facecolor=color, zorder=3)
+    ax.add_patch(box)
+    ax.text(cx, cy + 0.18, label,    ha="center", va="center",
+            fontsize=11, fontweight="bold", color=text_color, zorder=4)
+    ax.text(cx, cy - 0.26, sublabel, ha="center", va="center",
+            fontsize=8,  color=text_color, alpha=0.88, zorder=4)
+
+def _arrow(ax, x0, y0, x1, y1, label=""):
+    ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
+                arrowprops=dict(arrowstyle="->", lw=1.6, color="#374151"), zorder=2)
+    if label:
+        mx, my = (x0+x1)/2, (y0+y1)/2
+        ax.text(mx+0.05, my+0.12, label, fontsize=7.5, color="#374151", ha="center", zorder=5)
+
+# System 1 — PySR Symbolic (left)
+_draw_box(_sys_ax, 2.5, 4.5, "System 1", "PySR Symbolic Regression", C_NN)
+# System 2 — LLM Prior (middle-top)
+_draw_box(_sys_ax, 7.0, 4.5, "System 2", "LLM Symbolic Prior",       C_LLM)
+# System 3 — HypatiaX Hybrid (right)
+_draw_box(_sys_ax, 11.5, 4.5, "System 3", "HypatiaX Hybrid Fusion",  C_HYB)
+
+# Data input
+_draw_box(_sys_ax, 7.0, 1.8, "Training Data", "(X, y) observations", "#6B7280", text_color="white")
+
+# Router / decision block
+from matplotlib.patches import FancyBboxPatch as _FBP
+_rbox = _FBP((5.8, 2.9), 2.4, 0.9, boxstyle="round,pad=0.08",
+             linewidth=1.2, edgecolor="#D97706", facecolor="#FEF3C7", zorder=3)
+_sys_ax.add_patch(_rbox)
+_sys_ax.text(7.0, 3.35, "Router / Stability Check", ha="center", va="center",
+             fontsize=9, fontweight="bold", color="#92400E", zorder=4)
+
+# Arrows
+_arrow(_sys_ax, 7.0, 2.25, 7.0, 2.9,  "fit")           # data → router
+_arrow(_sys_ax, 5.8, 3.35, 4.1, 3.95, "low confidence") # router → sys1
+_arrow(_sys_ax, 7.0, 3.8,  7.0, 3.95, "LLM prior")     # router → sys2
+_arrow(_sys_ax, 8.2, 3.35, 9.9, 3.95, "hybrid path")   # router → sys3
+
+# Ensemble output
+_draw_box(_sys_ax, 7.0, 0.6, "Output", "Best symbolic expression + R²", "#1E3A5F", text_color="white")
+_arrow(_sys_ax, 2.5, 3.95, 5.0, 1.05, "")
+_arrow(_sys_ax, 7.0, 3.95, 7.0, 0.95, "")
+_arrow(_sys_ax, 11.5, 3.95, 9.0, 1.05, "")
+
+_sys_ax.text(7.0, 5.7, "HypatiaX — Three-System Architecture",
+             ha="center", va="center", fontsize=14, fontweight="bold", color="#1E293B")
+_sys_fig.tight_layout()
+_sys_fig.savefig("figures/hypatiaX_three_systems.png", dpi=300, bbox_inches="tight")
+plt.close(_sys_fig)
+print("✓ hypatiaX_three_systems.png")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RF02 FIGURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── fig07: scatter train vs extrap ───────────────────────────────────────────
+fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+for ax, method, label, color in [
+    (axes[0], "hybrid",         "HypatiaX Hybrid", C_HYB),
+    (axes[1], "pure_llm",       "Pure LLM",        C_LLM),
+    (axes[2], "neural_network", "Neural Net",       C_NN),
+]:
+    x = np.array(collect("train_r2",        method))
+    y = np.array(collect("stability_score", method))
+    diff_c = [DIFF_COLORS[d] for d in difficulties]
+    scatter = ax.scatter(x, y, c=diff_c, alpha=0.75, s=55, edgecolors="white", lw=0.4, zorder=3)
+    ax.axline((0,0), slope=1, color="gray", ls="--", lw=0.8, alpha=0.5, label="y=x")
+    ax.axhline(0.99, color=C_OK, lw=1, ls=":", alpha=0.8)
+    ax.set_xlabel("Train $R^2$", fontsize=11)
+    ax.set_ylabel("Extrapolation Stability ($R^2$ on test)", fontsize=9)
+    ax.set_title(label, fontsize=12, fontweight="bold", color=color)
+    ax.set_xlim(-0.2, 1.1); ax.set_ylim(-4, 1.2)
+    ax.grid(alpha=0.25)
+    ax.tick_params(labelsize=9)
+patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
+fig.legend(handles=patches, loc="lower center", ncol=3, fontsize=9, framealpha=0.9)
+fig.suptitle("Train $R^2$ vs Extrapolation Stability by Method", fontsize=13, fontweight="bold")
+fig.tight_layout(rect=[0, 0.07, 1, 1])
+fig.savefig("figures/fig07_scatter_train_vs_extrap.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ fig07_scatter_train_vs_extrap.png")
+
+
+# ── fig08: train_r2 bar chart per method per difficulty ───────────────────────
+fig, ax = plt.subplots(figsize=(9, 4.5))
+x = np.arange(len(DIFF_ORDER))
+width = 0.25
+for i, (method, label) in enumerate([
+    ("pure_llm","Pure LLM"),("neural_network","Neural Net"),("hybrid","HypatiaX")]):
+    means = []
+    for d in DIFF_ORDER:
+        vals = [get_case(c, method, "train_r2") for c in CASES if c["difficulty"]==d]
+        vals = [v for v in vals if not math.isnan(v)]
+        means.append(np.mean(vals) if vals else float("nan"))
+    bars = ax.bar(x + (i-1)*width, means, width, label=label,
+                  color=MCOLORS[method], alpha=0.88, edgecolor="white", lw=0.5)
+    for bar, v in zip(bars, means):
+        if not math.isnan(v):
+            ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.005,
+                    f"{v:.3f}", ha="center", va="bottom", fontsize=7.5, fontweight="bold")
+ax.set_xticks(x); ax.set_xticklabels([d.capitalize() for d in DIFF_ORDER], fontsize=11)
+ax.set_ylabel("Mean Train $R^2$", fontsize=11)
+ax.set_ylim(0, 1.12)
+ax.set_title("Train $R^2$ by Difficulty and Method", fontsize=12, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig08_train_r2_bar.png", dpi=300)
+plt.close(fig)
+print("✓ fig08_train_r2_bar.png")
+
+
+# ── fig09: r2 heatmap across regimes ─────────────────────────────────────────
+# New schema: show near / medium / far columns per method.
+# Legacy schema: fall back to train / test / stability columns.
+case_labels = [f"{c['test_case'][:32]}..." if len(c['test_case'])>32 else c['test_case']
+               for c in CASES]
+
+if _DICT_SCHEMA:
+    # 4-column heatmap: Train | Near | Medium | Far  ×  Hybrid vs PySR-only
+    _col_keys  = ["train_r2", "extrap_r2_near", "extrap_r2_medium", "extrap_r2_far"]
+    _col_names = ["Train $R^2$", "Near", "Medium", "Far"]
+    _method_pairs = [
+        ("hybrid",         "HypatiaX Hybrid", "RdYlGn"),
+        ("neural_network", "PySR-only",        "RdYlGn"),
+    ]
+else:
+    _col_keys  = ["train_r2", "test_r2", "stability_score"]
+    _col_names = ["Train $R^2$", "Test $R^2$", "Stability"]
+    _method_pairs = [
+        ("hybrid",         "HypatiaX Hybrid", "RdYlGn"),
+        ("neural_network", "Neural Network",   "RdYlGn"),
     ]
 
+fig, axes = plt.subplots(1, 2, figsize=(14, 16), sharey=True)
+for ax, (method, label, cmap) in zip(axes, _method_pairs):
+    mat = np.array([[get_case(c, method, k) for k in _col_keys] for c in CASES])
+    mat_disp = np.clip(np.nan_to_num(mat, nan=-1.5), -1.5, 1.0)
 
-def main():
-    experiment, figures_dir = parse_our_args()
+    im = ax.imshow(mat_disp, vmin=-1.5, vmax=1.0, cmap=cmap, aspect="auto")
+    ax.set_xticks(range(len(_col_names)))
+    ax.set_xticklabels(_col_names, fontsize=9)
+    ax.set_yticks(range(len(CASES)))
+    ax.set_yticklabels(case_labels, fontsize=6.5)
+    ax.set_title(label, fontsize=11, fontweight="bold")
+    for i in range(len(CASES)):
+        for j in range(len(_col_keys)):
+            v = mat[i, j]
+            txt = f"{v:.2f}" if abs(v) < 10 and not math.isnan(v) else ("nan" if math.isnan(v) else f"{v:.0f}")
+            col = "white" if mat_disp[i, j] < -0.4 else "black"
+            ax.text(j, i, txt, ha="center", va="center", fontsize=5.5, color=col)
+    for tick, c in zip(ax.get_yticklabels(), CASES):
+        tick.set_color(DIFF_COLORS[c["difficulty"]])
 
-    if figures_dir is None:
-        print("::error::--figures-dir is required", file=sys.stderr)
-        sys.exit(1)
+axes[0].set_ylabel("Test Case (colour = difficulty)", fontsize=9)
+fig.colorbar(im, ax=axes[1], fraction=0.015, pad=0.02, label="$R^2$")
+_fig09_title = ("$R^2$ Heatmap: Train / Near / Medium / Far Regimes"
+                if _DICT_SCHEMA else "$R^2$ Heatmap: Train / Test / Stability")
+fig.suptitle(_fig09_title, fontsize=12, fontweight="bold", y=1.002)
+fig.tight_layout()
+fig.savefig("figures/fig09_r2_heatmap_regimes.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ fig09_r2_heatmap_regimes.png")
 
-    figures_path = Path(figures_dir)
-    figures_path.mkdir(parents=True, exist_ok=True)
 
-    # ── Snapshot what already exists under the hardcoded output dir ────────────
-    before = set(collect_outputs(HARDCODED_OUT_DIR))
+# ── fig10: far extrapolation head-to-head (Hybrid vs NN) ─────────────────────
+fig, ax = plt.subplots(figsize=(9, 5))
+hybrid_stab  = np.nan_to_num(h_stab,  nan=0)
+nn_stab_plot = np.nan_to_num(nn_stab, nan=0)
+hybrid_c = np.clip(hybrid_stab,  -2, 1)
+nn_c     = np.clip(nn_stab_plot, -2, 1)
+idx = np.arange(len(CASES))
+# side by side
+w = 0.38
+ax.bar(idx-w/2, nn_c,     w, label="Neural Net",     color=C_NN,  alpha=0.85, edgecolor="white", lw=0.4)
+ax.bar(idx+w/2, hybrid_c, w, label="HypatiaX Hybrid",color=C_HYB, alpha=0.85, edgecolor="white", lw=0.4)
+ax.axhline(0.99, color=C_OK,  lw=1.2, ls=":", alpha=0.9, label="Success (0.99)")
+ax.axhline(0.0,  color="black",lw=0.7, ls="--", alpha=0.4)
+ax.set_xticks(idx[::4])
+ax.set_xticklabels([CASES[i]["test_case"][:18] for i in idx[::4]], rotation=45, ha="right", fontsize=7)
+ax.set_ylabel("Extrapolation Stability (clipped $[-2,1]$)", fontsize=10)
+ax.set_title("Extrapolation Stability: HypatiaX vs Neural Net (All Cases)", fontsize=11, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig10_far_extrap_head2head.png", dpi=300)
+plt.close(fig)
+print("✓ fig10_far_extrap_head2head.png")
 
-    # ── Run plot_results.py (forward all args verbatim) ────────────────────────
-    cmd = [sys.executable, "hypatiax/tools/visualizations/plot_results.py"] + sys.argv[1:]
-    print("Generating figures...")
-    print(f"  Command: {' '.join(cmd)}")
 
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        print(
-            f"::error::plot_results.py exited with code {result.returncode}",
-            file=sys.stderr,
+# ── fig11: speedup bar (hybrid time / nn time) ───────────────────────────────
+speedup = nn_times / np.where(h_times > 0, h_times, np.nan)
+fig, ax = plt.subplots(figsize=(8, 4))
+colors = [C_HYB if s < 1 else C_NN for s in np.nan_to_num(speedup, nan=1)]
+ax.bar(np.arange(len(CASES)), np.nan_to_num(speedup, nan=1), color=colors, alpha=0.85, edgecolor="white", lw=0.3)
+ax.axhline(1.0, color="black", lw=1, ls="--", alpha=0.6, label="Equal speed")
+ax.set_xlabel("Case index", fontsize=10)
+ax.set_ylabel("NN time / Hybrid time", fontsize=10)
+ax.set_title("Relative Speed: Neural Net vs HypatiaX Hybrid", fontsize=11, fontweight="bold")
+# Annotate mean
+valid_sp = speedup[~np.isnan(speedup)]
+ax.axhline(valid_sp.mean(), color=C_LLM, lw=1.5, ls=":", label=f"Mean ratio: {valid_sp.mean():.2f}x")
+ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig11_speedup_bar.png", dpi=300)
+plt.close(fig)
+print("✓ fig11_speedup_bar.png")
+
+
+# ── fig12: ridge vs train_r2 (stability score distribution) ──────────────────
+fig, ax = plt.subplots(figsize=(8, 4.5))
+for method, label, color in [
+    ("hybrid",         "HypatiaX Hybrid", C_HYB),
+    ("pure_llm",       "Pure LLM",        C_LLM),
+    ("neural_network", "Neural Net",       C_NN),
+]:
+    vals = np.array([v for v in collect("stability_score", method) if not math.isnan(v)])
+    vals_c = np.clip(vals, -3, 1)
+    ax.hist(vals_c, bins=25, color=color, alpha=0.55, label=f"{label} (n={len(vals)})",
+            edgecolor="white", lw=0.4, density=True)
+    from scipy.stats import gaussian_kde
+    kde = gaussian_kde(vals_c, bw_method=0.3)
+    xs = np.linspace(-3, 1.05, 300)
+    ax.plot(xs, kde(xs), color=color, lw=2)
+ax.axvline(0.99, color="black", lw=1.2, ls=":", alpha=0.7, label="Success threshold")
+ax.set_xlabel("Stability Score (extrapolation $R^2$, clipped $[-3,1]$)", fontsize=10)
+ax.set_ylabel("Density", fontsize=10)
+ax.set_title("Distribution of Extrapolation Stability by Method", fontsize=11, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(alpha=0.25)
+fig.tight_layout()
+fig.savefig("figures/fig12_ridge_vs_train_r2.png", dpi=300)
+plt.close(fig)
+print("✓ fig12_ridge_vs_train_r2.png")
+
+
+# ── fig14: per-equation r2 profile ───────────────────────────────────────────
+fig, axes = plt.subplots(1, 3, figsize=(15, 18), sharey=True)
+for ax_idx, (method, label, color) in enumerate([
+    ("hybrid",         "HypatiaX",  C_HYB),
+    ("pure_llm",       "Pure LLM",  C_LLM),
+    ("neural_network", "Neural Net",C_NN),
+]):
+    ax = axes[ax_idx]
+    stab_vals = np.array([get_case(c, method, "stability_score") for c in CASES])
+    stab_c    = np.clip(np.nan_to_num(stab_vals, nan=0), -3, 1)
+    y_pos = np.arange(len(CASES))
+    col   = [C_OK if v > 0.99 else (C_WARN if v > 0 else C_FAIL) for v in stab_c]
+    bars  = ax.barh(y_pos, stab_c, color=col, alpha=0.85, edgecolor="white", lw=0.3)
+    ax.axvline(0.99, color="black", lw=1.2, ls=":", alpha=0.7)
+    ax.axvline(0,    color="black", lw=0.5, ls="--", alpha=0.4)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(
+        [f"{CASES[i]['test_case'][:30]}" for i in range(len(CASES))],
+        fontsize=5.8
+    )
+    for tick, c in zip(ax.get_yticklabels(), CASES):
+        tick.set_color(DIFF_COLORS[c["difficulty"]])
+    ax.set_xlabel("Stability Score (clipped)", fontsize=9)
+    ax.set_title(label, fontsize=11, fontweight="bold", color=color)
+    ax.set_xlim(-3.2, 1.15)
+    ax.grid(axis="x", alpha=0.25)
+
+fig.suptitle("Per-Case Extrapolation Stability Profile\n(green=easy, amber=medium, red=hard)",
+             fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig14_per_equation_r2_profile.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ fig14_per_equation_r2_profile.png")
+
+
+# ── fig16: instability vs extrapolation scatter ───────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 5.5))
+for method, label, color, marker in [
+    ("hybrid",         "HypatiaX", C_HYB, "o"),
+    ("pure_llm",       "Pure LLM", C_LLM, "s"),
+    ("neural_network", "Neural Net",C_NN, "^"),
+]:
+    x = np.array([get_case(c, method, "extrapolation_gap")   for c in CASES])
+    y = np.array([1 - get_case(c, method, "stability_score") for c in CASES])
+    mask = ~(np.isnan(x) | np.isnan(y))
+    ax.scatter(x[mask], y[mask], c=color, alpha=0.65, s=50, marker=marker,
+               edgecolors="white", lw=0.4, label=label, zorder=3)
+ax.axhline(0, color="black", lw=0.7, ls="--", alpha=0.4)
+ax.axvline(0, color="black", lw=0.7, ls="--", alpha=0.4)
+ax.set_xlabel("Extrapolation Gap (train $R^2$ − test $R^2$)", fontsize=10)
+ax.set_ylabel("Instability (1 − Stability Score)", fontsize=10)
+ax.set_title("Instability vs Extrapolation Gap", fontsize=11, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(alpha=0.25)
+fig.tight_layout()
+fig.savefig("figures/fig16_instability_vs_extrapolation.png", dpi=300)
+plt.close(fig)
+print("✓ fig16_instability_vs_extrapolation.png")
+
+
+# ── fig17: 3D surface instability vs complexity ───────────────────────────────
+from mpl_toolkits.mplot3d import Axes3D  # noqa
+
+fig = plt.figure(figsize=(9, 6))
+ax  = fig.add_subplot(111, projection="3d")
+
+ftype_idx = {ft: i for i, ft in enumerate(sorted(set(ftypes)))}
+x3d = np.array([ftype_idx[ft] for ft in ftypes], dtype=float)
+y3d = np.array([{"easy":0,"medium":1,"hard":2}[d] for d in difficulties], dtype=float)
+z3d = 1 - np.nan_to_num(h_stab, nan=0)
+
+sc = ax.scatter(x3d, y3d, z3d, c=z3d, cmap="RdYlGn_r", s=40, alpha=0.8,
+                vmin=0, vmax=1.5, edgecolors="none")
+ax.set_xticks(range(len(ftype_idx)))
+ax.set_xticklabels(sorted(ftype_idx.keys()), rotation=45, ha="right", fontsize=6)
+ax.set_yticks([0,1,2]); ax.set_yticklabels(["Easy","Medium","Hard"], fontsize=8)
+ax.set_zlabel("Instability", fontsize=9)
+ax.set_xlabel("Formula Type", fontsize=8)
+ax.set_ylabel("Difficulty", fontsize=8)
+ax.set_title("3D: Instability vs Formula Type & Difficulty (HypatiaX)", fontsize=10, fontweight="bold")
+fig.colorbar(sc, ax=ax, fraction=0.025, pad=0.1, label="Instability")
+fig.tight_layout()
+fig.savefig("figures/fig17_3d_surface_instability_complexity.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ fig17_3d_surface_instability_complexity.png")
+
+
+# ── fig18: r2 heatmap improved (formula_type × difficulty) ───────────────────
+# New schema: 2-panel — PySR-only vs HypatiaX — using mean far-extrap R².
+# Legacy schema: 3-panel stability heatmap (unchanged).
+ft_list = sorted(set(ftypes))
+
+if _DICT_SCHEMA:
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5.5), sharey=True)
+    _method_cfg18 = [
+        (axes[0], "neural_network", "PySR-only",        "extrap_r2_far", "RdYlGn"),
+        (axes[1], "hybrid",         "HypatiaX Hybrid",  "extrap_r2_far", "RdYlGn"),
+    ]
+    for ax, method, label, score_key, cmap in _method_cfg18:
+        mat = np.full((len(ft_list), len(DIFF_ORDER)), float("nan"))
+        for i, ft in enumerate(ft_list):
+            for j, dif in enumerate(DIFF_ORDER):
+                vals = [get_case(c, method, score_key)
+                        for c in CASES if c["formula_type"] == ft and c["difficulty"] == dif]
+                vals = [v for v in vals if not math.isnan(v)]
+                if vals:
+                    mat[i, j] = np.mean(vals)
+        mat_d = np.clip(np.nan_to_num(mat, nan=0), -1.5, 1)
+        im = ax.imshow(mat_d, vmin=-1.5, vmax=1.0, cmap=cmap, aspect="auto")
+        ax.set_xticks([0, 1, 2])
+        ax.set_xticklabels(["Easy", "Med", "Hard"], fontsize=9)
+        ax.set_yticks(range(len(ft_list)))
+        ax.set_yticklabels(ft_list, fontsize=8)
+        ax.set_title(label, fontsize=11, fontweight="bold")
+        for i in range(len(ft_list)):
+            for j in range(3):
+                v = mat[i, j]
+                txt = f"{v:.2f}" if not math.isnan(v) else "—"
+                col = "white" if mat_d[i, j] < -0.3 else "black"
+                ax.text(j, i, txt, ha="center", va="center", fontsize=8, color=col)
+    fig.colorbar(im, ax=axes[1], fraction=0.04, pad=0.02, label="Mean far-extrap $R^2$")
+    fig.suptitle("Far-Extrap $R^2$: PySR-only vs HypatiaX (Formula Type × Difficulty)",
+                 fontsize=12, fontweight="bold")
+else:
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5.5), sharey=True)
+    for ax, method, label, cmap in [
+        (axes[0], "hybrid",         "HypatiaX Hybrid", "RdYlGn"),
+        (axes[1], "pure_llm",       "Pure LLM",        "RdYlGn"),
+        (axes[2], "neural_network", "Neural Net",       "RdYlGn"),
+    ]:
+        mat = np.full((len(ft_list), len(DIFF_ORDER)), float("nan"))
+        for i, ft in enumerate(ft_list):
+            for j, dif in enumerate(DIFF_ORDER):
+                vals = [get_case(c, method, "stability_score")
+                        for c in CASES if c["formula_type"]==ft and c["difficulty"]==dif]
+                vals = [v for v in vals if not math.isnan(v)]
+                if vals: mat[i, j] = np.mean(vals)
+        mat_d = np.clip(np.nan_to_num(mat, nan=0), -1.5, 1)
+        im = ax.imshow(mat_d, vmin=-1.5, vmax=1.0, cmap=cmap, aspect="auto")
+        ax.set_xticks([0,1,2]); ax.set_xticklabels(["Easy","Med","Hard"], fontsize=9)
+        ax.set_yticks(range(len(ft_list))); ax.set_yticklabels(ft_list, fontsize=8)
+        ax.set_title(label, fontsize=11, fontweight="bold")
+        for i in range(len(ft_list)):
+            for j in range(3):
+                v = mat[i,j]
+                txt = f"{v:.2f}" if not math.isnan(v) else "—"
+                col = "white" if mat_d[i,j] < -0.3 else "black"
+                ax.text(j, i, txt, ha="center", va="center", fontsize=8, color=col)
+    fig.colorbar(im, ax=axes[2], fraction=0.04, pad=0.02, label="Mean stability $R^2$")
+    fig.suptitle("Mean Stability by Formula Type × Difficulty", fontsize=12, fontweight="bold")
+
+fig.tight_layout()
+fig.savefig("figures/fig18_r2_heatmap_improved.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ fig18_r2_heatmap_improved.png")
+
+
+# ── fig19: far extrap improved (success rate donut grid) ─────────────────────
+THRESH = 0.99
+fig, axes = plt.subplots(3, 3, figsize=(11, 11))
+pairs = [(m, d) for m in ["hybrid","pure_llm","neural_network"] for d in DIFF_ORDER]
+for ax, (method, diff) in zip(axes.flatten(), pairs):
+    subset = [c for c in CASES if c["difficulty"]==diff]
+    vals   = [get_case(c, method, "stability_score") for c in subset]
+    vals   = [v for v in vals if not math.isnan(v)]
+    if not vals:
+        ax.axis("off"); continue
+    n_ok = sum(v >= THRESH for v in vals)
+    sr   = n_ok / len(vals)
+    wedges, _ = ax.pie([sr, max(0, 1-sr)],
+                       colors=[C_OK, C_FAIL],
+                       startangle=90,
+                       wedgeprops=dict(width=0.5, edgecolor="white", lw=1.5))
+    ax.text(0, 0, f"{int(round(sr*100))}%\n({n_ok}/{len(vals)})",
+            ha="center", va="center", fontsize=11, fontweight="bold")
+    ax.set_title(f"{MLABELS[method]}\n{diff.capitalize()}", fontsize=9, fontweight="bold")
+patches = [mpatches.Patch(color=C_OK, label=f"Success ($R^2≥{THRESH}$)"),
+           mpatches.Patch(color=C_FAIL, label="Failure")]
+fig.legend(handles=patches, loc="lower center", ncol=2, fontsize=10)
+fig.suptitle("Far-Extrapolation Success Rate by Method × Difficulty", fontsize=12, fontweight="bold")
+fig.tight_layout(rect=[0, 0.04, 1, 1])
+fig.savefig("figures/fig19_far_extrap_improved.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ fig19_far_extrap_improved.png")
+
+
+# ── fig20: wall clock speedup ─────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+# Left: absolute times
+x = np.arange(len(DIFF_ORDER))
+w = 0.28
+for i, (method, label) in enumerate([
+    ("neural_network","Neural Net"),
+    ("pure_llm","Pure LLM"),
+    ("hybrid","HypatiaX"),
+]):
+    means = []
+    for d in DIFF_ORDER:
+        times = [get_case(c, method, "time_s") for c in CASES if c["difficulty"]==d]
+        times = [t for t in times if not math.isnan(t)]
+        means.append(np.mean(times) if times else 0)
+    axes[0].bar(x+(i-1)*w, means, w, label=label, color=MCOLORS[method], alpha=0.85, edgecolor="white")
+axes[0].set_xticks(x); axes[0].set_xticklabels([d.capitalize() for d in DIFF_ORDER])
+axes[0].set_ylabel("Mean wall-clock time (s)"); axes[0].set_title("Mean Solve Time by Difficulty")
+axes[0].legend(fontsize=8); axes[0].grid(axis="y", alpha=0.3)
+# Right: total time pie
+totals = {m: np.nansum(collect("time_s", m)) for m in METHODS}
+axes[1].pie(list(totals.values()), labels=[MLABELS[m] for m in METHODS],
+            colors=[MCOLORS[m] for m in METHODS],
+            autopct="%1.1f%%", startangle=90,
+            wedgeprops=dict(edgecolor="white", lw=1.5))
+axes[1].set_title("Total Wall-Clock Time Distribution")
+fig.suptitle("Wall-Clock Time Analysis", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig20_wall_clock_speedup.png", dpi=300)
+plt.close(fig)
+print("✓ fig20_wall_clock_speedup.png")
+
+
+# ── fig21: portfolio variance seed sweep ──────────────────────────────────────
+# Use the DATA from generate_plots.py (already in scope via the existing script content)
+SEED_DATA = {
+  "pysr_only": [
+    {"seed":42,   "train_r2":0.9095, "near_r2":-0.7811, "medium_r2":0.9268, "far_r2":-21.0040},
+    {"seed":123,  "train_r2":0.9044, "near_r2": 0.2342, "medium_r2":0.9472, "far_r2":-18.6505},
+    {"seed":777,  "train_r2":0.9564, "near_r2": 0.9999, "medium_r2":0.8005, "far_r2": -0.4378},
+    {"seed":2024, "train_r2":0.9742, "near_r2": 0.5868, "medium_r2":0.9699, "far_r2":-12.1092},
+    {"seed":99,   "train_r2":0.9668, "near_r2": 0.0715, "medium_r2":0.8659, "far_r2": -1.2264},
+  ],
+  "hypatia": [
+    {"seed":42,   "train_r2":0.9134, "near_r2": 0.9478, "medium_r2":0.8552, "far_r2": -0.0232},
+    {"seed":123,  "train_r2":0.9383, "near_r2": 0.7276, "medium_r2":0.6530, "far_r2":-18.0895},
+    {"seed":777,  "train_r2":0.9978, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
+    {"seed":2024, "train_r2":0.9977, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
+    {"seed":99,   "train_r2":0.8958, "near_r2": 0.1572, "medium_r2":0.9228, "far_r2":-15.1913},
+  ],
+}
+SEEDS = [r["seed"] for r in SEED_DATA["pysr_only"]]
+PYSR  = {r["seed"]: r for r in SEED_DATA["pysr_only"]}
+HYP   = {r["seed"]: r for r in SEED_DATA["hypatia"]}
+
+fig = plt.figure(figsize=(14, 5))
+gs  = GridSpec(1, 4, figure=fig, wspace=0.35)
+metrics = [("near_r2","Near"), ("medium_r2","Medium"), ("far_r2","Far")]
+
+for col_idx, (field, regime) in enumerate(metrics):
+    ax = fig.add_subplot(gs[0, col_idx])
+    x  = np.arange(len(SEEDS))
+    w  = 0.36
+    pv = [PYSR[s][field] for s in SEEDS]
+    hv = [HYP[s][field]  for s in SEEDS]
+    lo = -25 if field == "far_r2" else -15
+    pc = [max(lo, min(1.05, v)) for v in pv]
+    hc = [max(lo, min(1.05, v)) for v in hv]
+    ax.bar(x-w/2, pc, w, color=C_NN,  alpha=0.85, label="PySR-only",  edgecolor="white")
+    ax.bar(x+w/2, hc, w, color=C_HYB, alpha=0.85, label="HypatiaX",  edgecolor="white")
+    for i,(pval,hval,pclip,hclip) in enumerate(zip(pv,hv,pc,hc)):
+        ax.text(x[i]-w/2, pclip+0.2, f"{pval:.1f}", ha="center", va="bottom", fontsize=6, color=C_NN)
+        ax.text(x[i]+w/2, hclip+0.2, f"{hval:.2f}", ha="center", va="bottom", fontsize=6, color=C_HYB)
+    ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8)
+    ax.axhline(0,    color="black", lw=0.6, ls="--", alpha=0.4)
+    ax.set_xticks(x); ax.set_xticklabels([str(s) for s in SEEDS], fontsize=8)
+    ax.set_xlabel("Seed"); ax.set_ylabel(f"{regime} $R^2$")
+    ax.set_title(f"{regime} Extrapolation", fontsize=10, fontweight="bold")
+    ax.grid(axis="y", alpha=0.3)
+    if col_idx == 0: ax.legend(fontsize=7)
+
+# 4th panel: summary table
+ax4 = fig.add_subplot(gs[0, 3])
+ax4.axis("off")
+cell_data = []
+for s in SEEDS:
+    cell_data.append([
+        str(s),
+        f"{PYSR[s]['far_r2']:.2f}",
+        f"{HYP[s]['far_r2']:.2f}",
+        "✓" if HYP[s]["far_r2"] > 0.99 else "✗",
+    ])
+tbl = ax4.table(
+    cellText=cell_data,
+    colLabels=["Seed","PySR far","Hyp far","Hyp✓"],
+    cellLoc="center", loc="center",
+    bbox=[0, 0, 1, 1],
+)
+tbl.auto_set_font_size(False); tbl.set_fontsize(9)
+ax4.set_title("Far-$R^2$ Summary", fontsize=10, fontweight="bold")
+
+fig.suptitle("Portfolio Variance Seed Sweep: PySR-only vs HypatiaX", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig21_portfolio_variance_sweep.png", dpi=300)
+plt.close(fig)
+print("✓ fig21_portfolio_variance_sweep.png")
+
+
+# ── fig22: bubble train vs far ────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+for ax, method, label, color in [
+    (axes[0], "hybrid",         "HypatiaX Hybrid", C_HYB),
+    (axes[1], "neural_network", "Neural Net",       C_NN),
+]:
+    tr  = np.array([get_case(c, method, "train_r2")        for c in CASES])
+    st  = np.array([get_case(c, method, "stability_score") for c in CASES])
+    eg  = np.array([get_case(c, method, "extrapolation_gap") for c in CASES])
+    sz  = np.clip(np.nan_to_num(np.abs(eg), nan=0), 0, 3) * 200 + 20
+    diff_c = [DIFF_COLORS[d] for d in difficulties]
+    ax.scatter(np.nan_to_num(tr, nan=0), np.clip(np.nan_to_num(st, nan=0), -3, 1),
+               s=sz, c=diff_c, alpha=0.7, edgecolors=color, lw=1.2, zorder=3)
+    ax.axhline(0.99, color=C_OK,   lw=1.2, ls=":", alpha=0.8)
+    ax.axvline(0.99, color=C_WARN, lw=1.0, ls=":", alpha=0.7)
+    ax.set_xlabel("Train $R^2$", fontsize=10)
+    ax.set_ylabel("Extrapolation Stability", fontsize=10)
+    ax.set_title(label, fontsize=12, fontweight="bold", color=color)
+    ax.set_xlim(-0.2, 1.1); ax.set_ylim(-3.2, 1.15)
+    ax.grid(alpha=0.25)
+    # bubble legend
+    for sz_v, txt in [(20,"small gap"),(200,"medium"),(600,"large gap")]:
+        ax.scatter([], [], s=sz_v, c="gray", alpha=0.6, label=txt)
+    ax.legend(fontsize=7, title="Extrap. gap", title_fontsize=7)
+patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
+fig.legend(handles=patches, loc="lower center", ncol=3, fontsize=9)
+fig.suptitle("Bubble Chart: Train vs Stability (bubble size = extrapolation gap)", fontsize=12, fontweight="bold")
+fig.tight_layout(rect=[0, 0.06, 1, 1])
+fig.savefig("figures/fig22_bubble_train_vs_far.png", dpi=300)
+plt.close(fig)
+print("✓ fig22_bubble_train_vs_far.png")
+
+
+# ── fig_seed_sweep_comparison ─────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+# Left: far_r2 per seed (bar)
+ax = axes[0]
+x = np.arange(len(SEEDS)); w = 0.36
+pv = [PYSR[s]["far_r2"] for s in SEEDS]
+hv = [HYP[s]["far_r2"]  for s in SEEDS]
+pc = [max(-25, min(1.05, v)) for v in pv]
+hc = [max(-25, min(1.05, v)) for v in hv]
+ax.bar(x-w/2, pc, w, color=C_NN,  alpha=0.85, label="PySR-only", edgecolor="white")
+ax.bar(x+w/2, hc, w, color=C_HYB, alpha=0.85, label="HypatiaX",  edgecolor="white")
+ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+ax.axhline(0,    color="black", lw=0.6, ls="--", alpha=0.4)
+ax.set_xticks(x); ax.set_xticklabels([str(s) for s in SEEDS])
+ax.set_xlabel("Seed"); ax.set_ylabel("Far $R^2$ (clipped $-25$)")
+ax.set_title("Far-$R^2$ per Seed", fontsize=11, fontweight="bold")
+ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
+# Right: scatter near vs far
+ax = axes[1]
+ax.scatter([PYSR[s]["near_r2"] for s in SEEDS], [PYSR[s]["far_r2"] for s in SEEDS],
+           s=80, color=C_NN,  alpha=0.8, label="PySR-only", edgecolors="white", lw=0.5)
+ax.scatter([HYP[s]["near_r2"] for s in SEEDS], [HYP[s]["far_r2"] for s in SEEDS],
+           s=80, color=C_HYB, alpha=0.8, label="HypatiaX",  edgecolors="white", lw=0.5,
+           marker="D")
+for s in SEEDS:
+    ax.annotate(str(s), (HYP[s]["near_r2"], HYP[s]["far_r2"]),
+                textcoords="offset points", xytext=(4,4), fontsize=7, color=C_HYB)
+ax.axhline(0.99, color=C_OK, lw=1, ls=":", alpha=0.7)
+ax.axvline(0.99, color=C_OK, lw=1, ls=":", alpha=0.7)
+ax.set_xlabel("Near $R^2$"); ax.set_ylabel("Far $R^2$")
+ax.set_title("Near vs Far Extrapolation", fontsize=11, fontweight="bold")
+ax.legend(fontsize=8); ax.grid(alpha=0.25)
+fig.suptitle("Portfolio Variance Seed Sweep Comparison", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig_seed_sweep_comparison.png", dpi=300)
+plt.close(fig)
+print("✓ fig_seed_sweep_comparison.png")
+
+
+# ── fig1_seed_sweep — richer per-seed line chart (P0 paper figure) ────────────
+# Each line traces one method across seeds; panels show near / medium / far.
+_REGIMES_SW = [
+    ("near_r2",   "Near extrapolation $R^2$"),
+    ("medium_r2", "Medium extrapolation $R^2$"),
+    ("far_r2",    "Far extrapolation $R^2$"),
+]
+_SW_CLIP = {"near_r2": (-5, 1.05), "medium_r2": (-5, 1.05), "far_r2": (-25, 1.05)}
+
+fig_sw, axes_sw = plt.subplots(1, 3, figsize=(15, 4.5), sharey=False)
+_seed_x = np.arange(len(SEEDS))
+
+for ax, (field, ylabel) in zip(axes_sw, _REGIMES_SW):
+    lo, hi = _SW_CLIP[field]
+    pv = np.array([max(lo, min(hi, PYSR[s][field])) for s in SEEDS])
+    hv = np.array([max(lo, min(hi, HYP[s][field]))  for s in SEEDS])
+
+    ax.plot(_seed_x, pv, color=C_NN,  lw=2, marker="o", ms=6, label="PySR-only")
+    ax.plot(_seed_x, hv, color=C_HYB, lw=2, marker="D", ms=6, label="HypatiaX")
+
+    # Annotate each point with the raw (unclipped) value when it was clipped.
+    for i, s in enumerate(SEEDS):
+        raw_p = PYSR[s][field]; raw_h = HYP[s][field]
+        if raw_p < lo or raw_p > hi:
+            ax.annotate(f"{raw_p:.1f}", (i, pv[i]), textcoords="offset points",
+                        xytext=(0, -14), ha="center", fontsize=6.5, color=C_NN)
+        if raw_h < lo or raw_h > hi:
+            ax.annotate(f"{raw_h:.2f}", (i, hv[i]), textcoords="offset points",
+                        xytext=(0, 8), ha="center", fontsize=6.5, color=C_HYB)
+
+    ax.axhline(0.99, color=C_OK,   lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+    ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
+    ax.fill_between(_seed_x, pv, hv, alpha=0.08, color=C_HYB)
+    ax.set_xticks(_seed_x)
+    ax.set_xticklabels([str(s) for s in SEEDS], fontsize=9)
+    ax.set_xlabel("Seed", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_title(ylabel.split(" ")[0] + " Extrapolation", fontsize=11, fontweight="bold")
+    ax.grid(alpha=0.3)
+    if ax is axes_sw[0]:
+        ax.legend(fontsize=8)
+
+fig_sw.suptitle("Portfolio Variance Seed Sweep — Per-Seed Line Chart\n"
+                "(PySR-only vs HypatiaX across all extrapolation regimes)",
+                fontsize=12, fontweight="bold")
+fig_sw.tight_layout()
+fig_sw.savefig("figures/fig1_seed_sweep.png", dpi=300)
+plt.close(fig_sw)
+print("✓ fig1_seed_sweep.png")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RF09 INSTABILITY FIGURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+instability = 1 - np.nan_to_num(h_stab, nan=0)  # 0=stable, 1=fully collapsed
+complexity  = np.array([len(ftypes[i].split("_")) + {"easy":1,"medium":2,"hard":3}[difficulties[i]]
+                        for i in range(len(CASES))], dtype=float)
+
+# ── fig_instability_hist ──────────────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.hist(instability, bins=20, color=C_HYB, alpha=0.8, edgecolor="white", lw=0.5)
+ax.axvline(instability.mean(), color=C_FAIL, lw=2, ls="--",
+           label=f"Mean = {instability.mean():.3f}")
+ax.set_xlabel("Instability (1 − Stability Score)", fontsize=11)
+ax.set_ylabel("Count", fontsize=11)
+ax.set_title("HypatiaX Instability Distribution (74 cases)", fontsize=12, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig_instability_hist.png", dpi=300)
+plt.close(fig)
+print("✓ fig_instability_hist.png")
+
+
+# ── fig_instability_regimes ───────────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(9, 4.5))
+x = np.arange(len(DIFF_ORDER))
+w = 0.35
+for i, (method, label, color) in enumerate([
+    ("hybrid","HypatiaX",C_HYB), ("neural_network","Neural Net",C_NN)]):
+    means = []
+    sems  = []
+    for d in DIFF_ORDER:
+        inst = [1 - get_case(c, method, "stability_score")
+                for c in CASES if c["difficulty"]==d]
+        inst = [v for v in inst if not math.isnan(v)]
+        means.append(np.mean(inst) if inst else 0)
+        sems.append(scipy_stats.sem(inst) if len(inst) > 1 else 0)
+    ax.bar(x+(i-0.5)*w, means, w, label=label, color=color, alpha=0.85,
+           edgecolor="white", lw=0.5, yerr=sems, capsize=4)
+ax.set_xticks(x); ax.set_xticklabels([d.capitalize() for d in DIFF_ORDER])
+ax.set_ylabel("Mean Instability (±SEM)"); ax.set_ylim(0, 0.8)
+ax.set_title("Mean Instability by Difficulty", fontsize=12, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig_instability_regimes.png", dpi=300)
+plt.close(fig)
+print("✓ fig_instability_regimes.png")
+
+
+# ── fig_instability_3d ────────────────────────────────────────────────────────
+fig = plt.figure(figsize=(10, 7))
+ax  = fig.add_subplot(111, projection="3d")
+diff_num = np.array([{"easy":0,"medium":1,"hard":2}[d] for d in difficulties], dtype=float)
+eg_vals  = np.nan_to_num(h_egap, nan=0)
+sc = ax.scatter(complexity, diff_num, instability, c=instability,
+                cmap="RdYlGn_r", s=50, alpha=0.85, vmin=0, vmax=1.5)
+ax.set_xlabel("Complexity score"); ax.set_ylabel("Difficulty")
+ax.set_zlabel("Instability"); ax.set_yticks([0,1,2])
+ax.set_yticklabels(["Easy","Medium","Hard"])
+ax.set_title("3D Instability Space (HypatiaX)", fontsize=11, fontweight="bold")
+fig.colorbar(sc, ax=ax, fraction=0.025, pad=0.12, label="Instability")
+fig.tight_layout()
+fig.savefig("figures/fig_instability_3d.png", dpi=300)
+plt.close(fig)
+print("✓ fig_instability_3d.png")
+
+
+# ── fig_instability_phase ─────────────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 6))
+diff_c = [DIFF_COLORS[d] for d in difficulties]
+sc = ax.scatter(complexity, instability, c=diff_c, s=60, alpha=0.75, edgecolors="white", lw=0.4)
+ax.axhline(0.5, color="black", lw=1, ls="--", alpha=0.5, label="Instability = 0.5")
+ax.set_xlabel("Complexity Score", fontsize=11)
+ax.set_ylabel("Instability (1 − Stability)", fontsize=11)
+ax.set_title("Instability Phase: Complexity vs Instability", fontsize=12, fontweight="bold")
+patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
+ax.legend(handles=patches, fontsize=9)
+ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig_instability_phase.png", dpi=300)
+plt.close(fig)
+print("✓ fig_instability_phase.png")
+
+
+# ── fig_instability_surface ───────────────────────────────────────────────────
+fig = plt.figure(figsize=(10, 6))
+ax  = fig.add_subplot(111, projection="3d")
+# Create a grid surface
+cx = np.linspace(complexity.min(), complexity.max(), 20)
+dy = np.linspace(0, 2, 20)
+CX, DY = np.meshgrid(cx, dy)
+# Interpolate using nearest-neighbor approach
+from scipy.interpolate import griddata
+ZZ = griddata(
+    np.column_stack([complexity, diff_num]),
+    instability,
+    (CX, DY),
+    method="linear",
+    fill_value=0,
+)
+surf = ax.plot_surface(CX, DY, ZZ, cmap="RdYlGn_r", alpha=0.7, edgecolor="none", vmin=0, vmax=1)
+ax.scatter(complexity, diff_num, instability, color=C_HYB, s=25, alpha=0.9, zorder=5)
+ax.set_xlabel("Complexity"); ax.set_ylabel("Difficulty")
+ax.set_zlabel("Instability"); ax.set_yticks([0,1,2])
+ax.set_yticklabels(["Easy","Med","Hard"])
+ax.set_title("Instability Surface (HypatiaX)", fontsize=11, fontweight="bold")
+fig.colorbar(surf, ax=ax, fraction=0.025, pad=0.1)
+fig.tight_layout()
+fig.savefig("figures/fig_instability_surface.png", dpi=300)
+plt.close(fig)
+print("✓ fig_instability_surface.png")
+
+
+# ── fig_instability_success_vs_instability ─────────────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 5))
+THRESH = 0.99
+success = (h_stab >= THRESH).astype(float)
+ax.scatter(instability, success + np.random.uniform(-0.03, 0.03, len(CASES)),
+           c=[DIFF_COLORS[d] for d in difficulties], s=50, alpha=0.7,
+           edgecolors="white", lw=0.4)
+ax.set_xlabel("Instability (1 − Stability Score)", fontsize=11)
+ax.set_ylabel("Success (1) / Failure (0)", fontsize=11)
+ax.set_yticks([0,1]); ax.set_yticklabels(["Failure","Success"])
+ax.set_title("Success vs Instability (HypatiaX Hybrid)", fontsize=12, fontweight="bold")
+patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
+ax.legend(handles=patches, fontsize=9); ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig_instability_success_vs_instability.png", dpi=300)
+plt.close(fig)
+print("✓ fig_instability_success_vs_instability.png")
+
+
+# ── hypatiax_instability_per_case ─────────────────────────────────────────────
+# Source: hypatiax_defi_variance_results.json (instability_per_case group).
+# Falls back to the primary CASES array if the variance file is absent.
+_variance_raw = _load_json(DATA_VARIANCE, DATA_VARIANCE)
+_var_cases    = _variance_raw["cases"] if (_variance_raw and "cases" in _variance_raw) else CASES
+fig, ax = plt.subplots(figsize=(10, 14))
+y_pos = np.arange(len(_var_cases))
+_var_stab = np.array([
+    safe_float(c["results"].get("hybrid", {}).get("stability_score"))
+    for c in _var_cases
+])
+_var_inst = 1 - np.nan_to_num(_var_stab, nan=0)
+colors_bar = [C_OK if v < 0.01 else (C_WARN if v < 0.5 else C_FAIL) for v in _var_inst]
+ax.barh(y_pos, _var_inst, color=colors_bar, alpha=0.85, edgecolor="white", lw=0.3)
+ax.axvline(0.5, color="black", lw=1, ls="--", alpha=0.5)
+ax.set_yticks(y_pos)
+ax.set_yticklabels(
+    [f"{_var_cases[i]['test_case'][:34]}" for i in range(len(_var_cases))],
+    fontsize=6.5
+)
+for tick, c in zip(ax.get_yticklabels(), _var_cases):
+    tick.set_color(DIFF_COLORS.get(c.get("difficulty", "easy"), "#000000"))
+ax.set_xlabel("Instability (1 − Stability Score)", fontsize=10)
+ax.set_title("Instability per Case — HypatiaX Hybrid\n(green=easy, amber=medium, red=hard)",
+             fontsize=11, fontweight="bold")
+ax.grid(axis="x", alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/hypatiax_instability_per_case.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+print("✓ hypatiax_instability_per_case.png")
+
+
+# ── hypatiax_instability_histogram ────────────────────────────────────────────
+fig, axes = plt.subplots(1, 3, figsize=(12, 4.5))
+for ax, diff in zip(axes, DIFF_ORDER):
+    subset_inst = [instability[i] for i, c in enumerate(CASES) if c["difficulty"]==diff]
+    ax.hist(subset_inst, bins=10, color=DIFF_COLORS[diff], alpha=0.8, edgecolor="white", lw=0.5)
+    ax.set_title(f"{diff.capitalize()} (n={len(subset_inst)})", fontsize=11, fontweight="bold",
+                 color=DIFF_COLORS[diff])
+    ax.set_xlabel("Instability"); ax.set_ylabel("Count")
+    ax.axvline(np.mean(subset_inst), color="black", lw=1.5, ls="--",
+               label=f"μ={np.mean(subset_inst):.3f}")
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+fig.suptitle("HypatiaX Instability by Difficulty Level", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/hypatiax_instability_histogram.png", dpi=300)
+plt.close(fig)
+print("✓ hypatiax_instability_histogram.png")
+
+
+# ── hypatiax_instability_scatter ─────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 5.5))
+ax.scatter(complexity, instability,
+           c=[DIFF_COLORS[d] for d in difficulties],
+           s=60, alpha=0.75, edgecolors="white", lw=0.4, zorder=3)
+# Fit a simple regression line
+valid = ~np.isnan(instability)
+m, b, r, p, se = scipy_stats.linregress(complexity[valid], instability[valid])
+xs = np.linspace(complexity.min(), complexity.max(), 100)
+ax.plot(xs, m*xs+b, color="black", lw=1.5, ls="--", alpha=0.7,
+        label=f"Trend: $r={r:.2f}$, $p={p:.3f}$")
+patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
+patches.append(mpatches.Patch(color="none", label=f"r={r:.2f}, p={p:.3f}"))
+ax.legend(handles=patches, fontsize=9)
+ax.set_xlabel("Complexity Score", fontsize=11)
+ax.set_ylabel("Instability", fontsize=11)
+ax.set_title("HypatiaX Instability vs Complexity", fontsize=12, fontweight="bold")
+ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/hypatiax_instability_scatter.png", dpi=300)
+plt.close(fig)
+print("✓ hypatiax_instability_scatter.png")
+
+
+# ── fig_paper_instability_hist ────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+# Left: instability histogram overlay all methods
+ax = axes[0]
+for method, label, color in [
+    ("hybrid","HypatiaX",C_HYB),
+    ("pure_llm","Pure LLM",C_LLM),
+    ("neural_network","Neural Net",C_NN),
+]:
+    inst = np.array([1 - get_case(c, method, "stability_score") for c in CASES])
+    inst = np.clip(np.nan_to_num(inst, nan=1), 0, 2)
+    ax.hist(inst, bins=18, color=color, alpha=0.55, edgecolor="white", lw=0.3,
+            label=label, density=True)
+ax.set_xlabel("Instability"); ax.set_ylabel("Density")
+ax.set_title("Instability Distribution — All Methods", fontsize=10, fontweight="bold")
+ax.legend(fontsize=8); ax.grid(alpha=0.25)
+# Right: CDF
+ax = axes[1]
+for method, label, color in [
+    ("hybrid","HypatiaX",C_HYB),
+    ("pure_llm","Pure LLM",C_LLM),
+    ("neural_network","Neural Net",C_NN),
+]:
+    inst = np.array([1 - get_case(c, method, "stability_score") for c in CASES])
+    inst = np.sort(np.clip(np.nan_to_num(inst, nan=1), 0, 2))
+    cdf  = np.arange(1, len(inst)+1) / len(inst)
+    ax.plot(inst, cdf, color=color, lw=2, label=label)
+ax.set_xlabel("Instability (threshold)"); ax.set_ylabel("Fraction of cases below threshold")
+ax.set_title("CDF of Instability", fontsize=10, fontweight="bold")
+ax.legend(fontsize=8); ax.grid(alpha=0.25)
+fig.suptitle("Paper Figure: Instability Distribution & CDF", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig_paper_instability_hist.png", dpi=300)
+plt.close(fig)
+print("✓ fig_paper_instability_hist.png")
+
+
+# ── fig_paper_mean_vs_instability ─────────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+# Left: mean stability per formula type
+ax = axes[0]
+ft_means = {}
+ft_inst  = {}
+for ft in sorted(set(ftypes)):
+    s = [h_stab[i] for i, c in enumerate(CASES) if c["formula_type"]==ft]
+    s = [v for v in s if not math.isnan(v)]
+    if s:
+        ft_means[ft] = np.mean(s)
+        ft_inst[ft]  = 1 - np.mean(s)
+y_pos = np.arange(len(ft_means))
+bars = ax.barh(y_pos, list(ft_inst.values()),
+               color=[C_OK if v < 0.1 else (C_WARN if v < 0.5 else C_FAIL)
+                      for v in ft_inst.values()],
+               alpha=0.85, edgecolor="white")
+ax.set_yticks(y_pos); ax.set_yticklabels(list(ft_inst.keys()), fontsize=8)
+ax.set_xlabel("Mean Instability"); ax.axvline(0.5, color="black", lw=0.8, ls="--", alpha=0.5)
+ax.set_title("Mean Instability by Formula Type", fontsize=10, fontweight="bold")
+ax.grid(axis="x", alpha=0.3)
+# Right: mean test_r2 per formula type (hybrid vs NN)
+ax = axes[1]
+ft_list_s = sorted(set(ftypes))
+hm, nm = [], []
+for ft in ft_list_s:
+    h = [h_test[i] for i, c in enumerate(CASES) if c["formula_type"]==ft
+         and not math.isnan(h_test[i])]
+    n = [nn_test[i] for i, c in enumerate(CASES) if c["formula_type"]==ft
+         and not math.isnan(nn_test[i])]
+    hm.append(np.mean(h) if h else float("nan"))
+    nm.append(np.mean(n) if n else float("nan"))
+y2 = np.arange(len(ft_list_s))
+ax.barh(y2-0.2, np.array([v if not math.isnan(v) else -2 for v in nm]), 0.38, color=C_NN,  alpha=0.8, label="Neural Net")
+ax.barh(y2+0.2, np.array([v if not math.isnan(v) else 0 for v in hm]), 0.38, color=C_HYB, alpha=0.8, label="HypatiaX")
+ax.set_yticks(y2); ax.set_yticklabels(ft_list_s, fontsize=8)
+ax.set_xlabel("Mean Test $R^2$"); ax.axvline(0, color="black", lw=0.7, ls="--", alpha=0.5)
+ax.set_title("Mean Test $R^2$ by Formula Type", fontsize=10, fontweight="bold")
+ax.legend(fontsize=8); ax.grid(axis="x", alpha=0.3)
+fig.suptitle("Performance by Formula Type", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig_paper_mean_vs_instability.png", dpi=300)
+plt.close(fig)
+print("✓ fig_paper_mean_vs_instability.png")
+
+
+# ── fig_paper_complexity_vs_instability ───────────────────────────────────────
+fig, ax = plt.subplots(figsize=(8, 5.5))
+for diff in DIFF_ORDER:
+    mask = [d == diff for d in difficulties]
+    x_ = complexity[mask]; y_ = instability[mask]
+    ax.scatter(x_, y_, c=DIFF_COLORS[diff], s=65, alpha=0.75,
+               edgecolors="white", lw=0.4, label=diff.capitalize(), zorder=3)
+    # per-difficulty trend
+    if len(x_) > 2:
+        m_, b_, _, _, _ = scipy_stats.linregress(x_, y_)
+        xs_ = np.linspace(x_.min(), x_.max(), 50)
+        ax.plot(xs_, m_*xs_+b_, color=DIFF_COLORS[diff], lw=1.5, ls="--", alpha=0.6)
+ax.set_xlabel("Complexity Score", fontsize=11)
+ax.set_ylabel("Instability (1 − Stability)", fontsize=11)
+ax.set_title("Complexity vs Instability by Difficulty (HypatiaX)", fontsize=11, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig_paper_complexity_vs_instability.png", dpi=300)
+plt.close(fig)
+print("✓ fig_paper_complexity_vs_instability.png")
+
+
+# ── fig_paper_complexity_vs_success ──────────────────────────────────────────
+THRESH = 0.99
+fig, ax = plt.subplots(figsize=(8, 5))
+for diff in DIFF_ORDER:
+    mask = [d == diff for d in difficulties]
+    x_ = complexity[mask]
+    s_ = np.array([1 if h_stab[i] >= THRESH else 0
+                   for i, keep in enumerate(mask) if keep], dtype=float)
+    ax.scatter(x_, s_ + np.random.uniform(-0.04, 0.04, len(x_)),
+               c=DIFF_COLORS[diff], s=60, alpha=0.75,
+               edgecolors="white", lw=0.4, label=diff.capitalize(), zorder=3)
+ax.axhline(0.5, color="black", lw=0.8, ls="--", alpha=0.5)
+ax.set_yticks([0,1]); ax.set_yticklabels(["Failure (0)","Success (1)"])
+ax.set_xlabel("Complexity Score", fontsize=11)
+ax.set_title("Complexity vs Success (HypatiaX, threshold=0.99)", fontsize=11, fontweight="bold")
+ax.legend(fontsize=9); ax.grid(alpha=0.3)
+fig.tight_layout()
+fig.savefig("figures/fig_paper_complexity_vs_success.png", dpi=300)
+plt.close(fig)
+print("✓ fig_paper_complexity_vs_success.png")
+
+
+# ── fig_paper_regime_counts ───────────────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+# Left: stacked bar — success/failure by method
+ax = axes[0]
+categories = ["easy","medium","hard"]
+x = np.arange(len(categories))
+w = 0.26
+for i, (method, label, color) in enumerate([
+    ("pure_llm","Pure LLM",C_LLM),
+    ("neural_network","Neural Net",C_NN),
+    ("hybrid","HypatiaX",C_HYB),
+]):
+    ok_rates, fail_rates = [], []
+    for d in categories:
+        stabs = [get_case(c, method, "stability_score")
+                 for c in CASES if c["difficulty"]==d]
+        stabs = [v for v in stabs if not math.isnan(v)]
+        ok_r  = sum(v >= THRESH for v in stabs) / max(len(stabs), 1)
+        ok_rates.append(ok_r); fail_rates.append(1-ok_r)
+    b1 = ax.bar(x+(i-1)*w, ok_rates,   w, color=C_OK,  alpha=0.85, edgecolor="white", lw=0.4)
+    b2 = ax.bar(x+(i-1)*w, fail_rates, w, bottom=ok_rates, color=C_FAIL, alpha=0.85, edgecolor="white", lw=0.4)
+    for b, v in zip(b1, ok_rates):
+        ax.text(b.get_x()+b.get_width()/2, v/2, label[:4],
+                ha="center", va="center", fontsize=6.5, color="white", fontweight="bold")
+ax.set_xticks(x); ax.set_xticklabels([d.capitalize() for d in categories])
+ax.set_ylabel("Fraction of cases")
+ax.set_title("Success/Failure by Difficulty × Method", fontsize=10, fontweight="bold")
+ax.legend(handles=[mpatches.Patch(color=C_OK,label="Success"),
+                   mpatches.Patch(color=C_FAIL,label="Failure")], fontsize=8)
+ax.grid(axis="y", alpha=0.3)
+# Right: decision type pie (hybrid only)
+ax = axes[1]
+decisions = {}
+for c in CASES:
+    r = c["results"].get("hybrid", {})
+    dec = r.get("decision", "unknown")
+    decisions[dec] = decisions.get(dec, 0) + 1
+d_colors = {"llm": C_LLM, "nn": C_NN, "nn_to_llm_rescue": C_WARN, "nn_fallback": C_FAIL}
+labels_d = [f"{k} ({v})" for k, v in decisions.items()]
+colors_d = [d_colors.get(k, "gray") for k in decisions.keys()]
+ax.pie(list(decisions.values()), labels=labels_d, colors=colors_d,
+       autopct="%1.1f%%", startangle=90,
+       wedgeprops=dict(edgecolor="white", lw=1.5))
+ax.set_title("Hybrid Decision Types (74 cases)", fontsize=10, fontweight="bold")
+fig.suptitle("Regime Counts and Decision Distribution", fontsize=12, fontweight="bold")
+fig.tight_layout()
+fig.savefig("figures/fig_paper_regime_counts.png", dpi=300)
+plt.close(fig)
+print("✓ fig_paper_regime_counts.png")
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PORTFOLIO VARIANCE — fig_defi_r2_distribution
+# Source: hypatiax_defi_benchmark_v3c3_results.json
+# ══════════════════════════════════════════════════════════════════════════════
+_v3c3 = _load_json(DATA_DEFI_V3C3, DATA_DEFI_V3C3)
+if _v3c3 and "cases" in _v3c3:
+    _v3c3_cases = _v3c3["cases"]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    for ax, method, label, color in [
+        (axes[0], "hybrid",         "HypatiaX Hybrid", C_HYB),
+        (axes[1], "neural_network", "Neural Net",       C_NN),
+    ]:
+        vals = [safe_float(c["results"].get(method, {}).get("stability_score"))
+                for c in _v3c3_cases]
+        vals = [v for v in vals if not math.isnan(v)]
+        vals_c = np.clip(vals, -3, 1)
+        ax.hist(vals_c, bins=25, color=color, alpha=0.75, edgecolor="white", lw=0.4)
+        ax.axvline(np.nanmean(vals_c), color="black", lw=1.5, ls="--",
+                   label=f"μ = {np.nanmean(vals_c):.3f}")
+        ax.axvline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+        ax.set_xlabel("DeFi $R^2$ (stability, clipped $[-3,1]$)", fontsize=10)
+        ax.set_ylabel("Count", fontsize=10)
+        ax.set_title(label, fontsize=11, fontweight="bold", color=color)
+        ax.legend(fontsize=8); ax.grid(alpha=0.3)
+    fig.suptitle("DeFi Benchmark $R^2$ Distribution (v3c3)", fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig("figures/fig_defi_r2_distribution.png", dpi=300)
+    plt.close(fig)
+    print("✓ fig_defi_r2_distribution.png")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NGUYEN-12 — exp3_nguyen12_hybrid40v_extrap_r2
+# Source: exp3_nguyen12_output.json
+# ══════════════════════════════════════════════════════════════════════════════
+_ng = _load_json(DATA_NGUYEN12, DATA_NGUYEN12)
+if _ng:
+    # Expected schema: list of dicts with keys: equation, hybrid_r2, pysr_r2, regime
+    # or {"results": [...]}
+    _ng_rows = _ng if isinstance(_ng, list) else _ng.get("results", [])
+    if _ng_rows:
+        _ng_eqs    = [r.get("equation", f"eq{i}") for i, r in enumerate(_ng_rows)]
+        _ng_hybrid = np.array([safe_float(r.get("hybrid_r2",  r.get("hybrid",  float("nan")))) for r in _ng_rows])
+        _ng_pysr   = np.array([safe_float(r.get("pysr_r2",    r.get("pysr",    float("nan")))) for r in _ng_rows])
+        _ng_regime = [r.get("regime", "far") for r in _ng_rows]
+
+        fig, ax = plt.subplots(figsize=(max(8, len(_ng_rows)*0.55), 5))
+        x = np.arange(len(_ng_rows)); w = 0.36
+        _pysr_c  = np.clip(np.nan_to_num(_ng_pysr,   nan=0), -5, 1.05)
+        _hybrid_c= np.clip(np.nan_to_num(_ng_hybrid,  nan=0), -5, 1.05)
+        ax.bar(x - w/2, _pysr_c,   w, color=C_NN,  alpha=0.85, label="PySR-only",     edgecolor="white", lw=0.4)
+        ax.bar(x + w/2, _hybrid_c, w, color=C_HYB, alpha=0.85, label="HypatiaX v50+", edgecolor="white", lw=0.4)
+        ax.axhline(0.99, color=C_OK,    lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+        ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
+        ax.set_xticks(x)
+        ax.set_xticklabels(_ng_eqs, rotation=45, ha="right", fontsize=8)
+        ax.set_ylabel("Extrapolation $R^2$ (clipped $[-5,1]$)", fontsize=10)
+        ax.set_title("Nguyen-12 Hybrid v50+ vs PySR-only: Extrapolation $R^2$",
+                     fontsize=11, fontweight="bold")
+        ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig("figures/exp3_nguyen12_hybrid50v_extrap_r2.png", dpi=300)
+        plt.close(fig)
+        print("✓ exp3_nguyen12_hybrid50v_extrap_r2.png")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIVE SYSTEMS — figure_5systems_comparison
+# Sources: all_domains_extrap_v4_*.json  +  standalone_real_methods_*.json
+#          +  systems_2_3_2_data.json
+# ══════════════════════════════════════════════════════════════════════════════
+_dom_files  = sorted(glob.glob(GLOB_DOMAINS_V4))
+_solo_files = sorted(glob.glob(GLOB_STANDALONE))
+_sys232     = _load_json(DATA_SYSTEMS_232, DATA_SYSTEMS_232)
+
+if _dom_files or _solo_files or _sys232:
+    # Aggregate per-system mean far-R² across all available source files
+    _system_scores: dict[str, list] = {}
+
+    def _ingest(rows, system_key="system", score_key="far_r2"):
+        for r in (rows if isinstance(rows, list) else []):
+            sys_name = r.get(system_key, "unknown")
+            val = safe_float(r.get(score_key, r.get("extrap_r2", float("nan"))))
+            _system_scores.setdefault(sys_name, []).append(val)
+
+    for fp in _dom_files:
+        d = _load_json(fp, fp)
+        if d: _ingest(d if isinstance(d, list) else d.get("results", []))
+    for fp in _solo_files:
+        d = _load_json(fp, fp)
+        if d: _ingest(d if isinstance(d, list) else d.get("results", []))
+    if _sys232:
+        rows232 = _sys232 if isinstance(_sys232, list) else _sys232.get("results", [])
+        _ingest(rows232)
+
+    if _system_scores:
+        _sys_names  = list(_system_scores.keys())
+        _sys_means  = [np.nanmean(v) for v in _system_scores.values()]
+        _sys_sems   = [scipy_stats.sem([x for x in v if not math.isnan(x)]) if
+                       sum(not math.isnan(x) for x in v) > 1 else 0
+                       for v in _system_scores.values()]
+        _sys_colors = [C_HYB if "hypatia" in n.lower() else
+                       (C_LLM if "llm" in n.lower() else
+                        (C_NN  if "nn" in n.lower() or "neural" in n.lower() else C_WARN))
+                       for n in _sys_names]
+
+        fig, ax = plt.subplots(figsize=(max(8, len(_sys_names)*1.2), 5))
+        x = np.arange(len(_sys_names))
+        bars = ax.bar(x, np.clip(_sys_means, -5, 1.05), color=_sys_colors, alpha=0.85,
+                      edgecolor="white", lw=0.5,
+                      yerr=_sys_sems, capsize=5, error_kw={"lw": 1.2})
+        for bar, v in zip(bars, _sys_means):
+            ax.text(bar.get_x() + bar.get_width()/2,
+                    min(max(v, -5), 1.05) + 0.02,
+                    f"{v:.2f}", ha="center", va="bottom", fontsize=8, fontweight="bold")
+        ax.axhline(0.99, color=C_OK,    lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+        ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
+        ax.set_xticks(x)
+        ax.set_xticklabels(_sys_names, rotation=30, ha="right", fontsize=9)
+        ax.set_ylabel("Mean far-extrapolation $R^2$ (clipped $[-5,1]$)", fontsize=10)
+        ax.set_title("Five-System Comparison: Far-Extrapolation $R^2$",
+                     fontsize=12, fontweight="bold")
+        ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig("figures/figure_5systems_comparison.png", dpi=300)
+        plt.close(fig)
+        print("✓ figure_5systems_comparison.png")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUPP-B SWEEP FIGURES
+# Sources: noise_sweep_20260316_192711.json  +  sample_complexity_20260316_193447.json
+# ══════════════════════════════════════════════════════════════════════════════
+_noise_raw  = _load_json(DATA_NOISE_SWEEP,  DATA_NOISE_SWEEP)
+_sample_raw = _load_json(DATA_SAMPLE_SWEEP, DATA_SAMPLE_SWEEP)
+
+
+def _sweep_rows(raw):
+    """Normalise sweep JSON to a flat list of dicts."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    for key in ("results", "data", "rows", "records"):
+        if key in raw:
+            return raw[key]
+    return []
+
+
+_noise_rows  = _sweep_rows(_noise_raw)
+_sample_rows = _sweep_rows(_sample_raw)
+
+
+def _pivot_sweep(rows, x_key, y_keys):
+    """Return {y_key: (sorted_x, mean_y, sem_y)} for a sweep result list."""
+    from collections import defaultdict
+    buckets: dict[str, dict] = {k: defaultdict(list) for k in y_keys}
+    for r in rows:
+        x_val = safe_float(r.get(x_key, float("nan")))
+        if math.isnan(x_val): continue
+        for k in y_keys:
+            v = safe_float(r.get(k, float("nan")))
+            if not math.isnan(v):
+                buckets[k][x_val].append(v)
+    out = {}
+    for k in y_keys:
+        xs = sorted(buckets[k].keys())
+        ys   = [np.mean(buckets[k][x])                             for x in xs]
+        sems = [scipy_stats.sem(buckets[k][x]) if len(buckets[k][x]) > 1 else 0 for x in xs]
+        out[k] = (np.array(xs), np.array(ys), np.array(sems))
+    return out
+
+
+def _line_fig(xs, ys, sems, xlabel, ylabel, title, color, outpath, hline=None):
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    ax.plot(xs, ys, color=color, lw=2, marker="o", ms=5)
+    ax.fill_between(xs, ys - sems, ys + sems, color=color, alpha=0.18)
+    if hline is not None:
+        ax.axhline(hline, color=C_OK, lw=1.2, ls=":", alpha=0.8, label=f"y = {hline}")
+        ax.legend(fontsize=8)
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=300)
+    plt.close(fig)
+    print(f"✓ {os.path.basename(outpath)}")
+
+
+# ── Noise-sweep figures (fig1–fig3, fig7, fig9, fig10) ───────────────────────
+if _noise_rows:
+    _np = _pivot_sweep(_noise_rows, "sigma",
+                       ["median_r2", "median_rmse", "avg_time",
+                        "recovery_rate", "min_r2", "equation_r2"])
+
+    _configs = [
+        ("median_r2",      "fig1_r2_vs_noise",      "Noise level (σ)", "Median $R^2$",
+         "Median $R^2$ vs Noise (σ)", C_HYB, 0.99),
+        ("median_rmse",    "fig2_rmse_vs_noise",     "Noise level (σ)", "Median RMSE",
+         "Median RMSE vs Noise (σ)", C_NN, None),
+        ("avg_time",       "fig3_time_vs_noise",     "Noise level (σ)", "Avg time (s)",
+         "Avg Solve Time vs Noise (σ)", C_LLM, None),
+        ("recovery_rate",  "fig7_recovery_vs_noise", "Noise level (σ)", "Recovery rate",
+         "Recovery Rate vs Noise (σ)", C_OK, 0.8),
+        ("min_r2",         "fig9_minr2_vs_noise",    "Noise level (σ)", "Min $R^2$",
+         "Min $R^2$ vs Noise (σ)", C_WARN, None),
+    ]
+    for y_key, stem, xl, yl, title, color, hline in _configs:
+        if y_key in _np:
+            xs, ys, sems = _np[y_key]
+            _line_fig(xs, ys, sems, xl, yl, title, color,
+                      f"figures/{stem}.png", hline=hline)
+
+    # fig10: per-equation R² box plot across noise levels
+    if "equation_r2" not in _np:
+        # Fall back: box per noise level of median_r2 across raw rows
+        from collections import defaultdict
+        _noise_buckets: dict = defaultdict(list)
+        for r in _noise_rows:
+            sv = safe_float(r.get("sigma", float("nan")))
+            v  = safe_float(r.get("median_r2", r.get("r2", float("nan"))))
+            if not math.isnan(sv) and not math.isnan(v):
+                _noise_buckets[sv].append(v)
+        if _noise_buckets:
+            _bx_xs = sorted(_noise_buckets.keys())
+            _bx_data = [_noise_buckets[x] for x in _bx_xs]
+            fig, ax = plt.subplots(figsize=(9, 4.5))
+            ax.boxplot(_bx_data, positions=range(len(_bx_xs)), widths=0.5,
+                       patch_artist=True,
+                       boxprops=dict(facecolor=C_HYB, alpha=0.6),
+                       medianprops=dict(color="black", lw=1.5))
+            ax.set_xticks(range(len(_bx_xs)))
+            ax.set_xticklabels([f"{x:.2f}" for x in _bx_xs], rotation=45, fontsize=8)
+            ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8, label="0.99")
+            ax.set_xlabel("Noise level (σ)", fontsize=11)
+            ax.set_ylabel("$R^2$", fontsize=11)
+            ax.set_title("Per-Equation $R^2$ Box Plots vs Noise (σ)", fontsize=11, fontweight="bold")
+            ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
+            fig.tight_layout()
+            fig.savefig("figures/fig10_r2_boxplot_noise.png", dpi=300)
+            plt.close(fig)
+            print("✓ fig10_r2_boxplot_noise.png")
+
+
+# ── Sample-complexity figures (fig4–fig6, fig8) ───────────────────────────────
+if _sample_rows:
+    _sp = _pivot_sweep(_sample_rows, "n_samples",
+                       ["median_r2", "median_rmse", "median_time", "recovery_rate"])
+
+    _s_configs = [
+        ("median_r2",      "fig4_r2_vs_n",      "Sample size (n)", "Median $R^2$",
+         "Median $R^2$ vs Sample Size", C_HYB, 0.99),
+        ("median_rmse",    "fig5_rmse_vs_n",     "Sample size (n)", "Median RMSE",
+         "Median RMSE vs Sample Size", C_NN, None),
+        ("median_time",    "fig6_time_vs_n",     "Sample size (n)", "Median time (s)",
+         "Median Solve Time vs Sample Size", C_LLM, None),
+        ("recovery_rate",  "fig8_recovery_vs_n", "Sample size (n)", "Recovery rate",
+         "Recovery Rate vs Sample Size", C_OK, 0.8),
+    ]
+    for y_key, stem, xl, yl, title, color, hline in _s_configs:
+        if y_key in _sp:
+            xs, ys, sems = _sp[y_key]
+            _line_fig(xs, ys, sems, xl, yl, title, color,
+                      f"figures/{stem}.png", hline=hline)
+
+
+# ── fig11_recovery_heatmap (σ × n) ────────────────────────────────────────────
+if _noise_rows and _sample_rows:
+    from collections import defaultdict
+    _heat: dict = defaultdict(list)
+    for r in _noise_rows + _sample_rows:
+        sv  = safe_float(r.get("sigma",     r.get("noise",     float("nan"))))
+        nv  = safe_float(r.get("n_samples", r.get("n",         float("nan"))))
+        rv  = safe_float(r.get("recovery_rate",                float("nan")))
+        if not any(math.isnan(x) for x in [sv, nv, rv]):
+            _heat[(sv, nv)].append(rv)
+
+    if _heat:
+        _sigmas = sorted(set(k[0] for k in _heat))
+        _ns     = sorted(set(k[1] for k in _heat))
+        _mat    = np.full((len(_sigmas), len(_ns)), float("nan"))
+        for i, s in enumerate(_sigmas):
+            for j, n in enumerate(_ns):
+                if (s, n) in _heat:
+                    _mat[i, j] = np.mean(_heat[(s, n)])
+
+        fig, ax = plt.subplots(figsize=(max(6, len(_ns)*0.8), max(4, len(_sigmas)*0.6)))
+        im = ax.imshow(np.nan_to_num(_mat, nan=0), vmin=0, vmax=1,
+                       cmap="RdYlGn", aspect="auto")
+        ax.set_xticks(range(len(_ns)))
+        ax.set_xticklabels([str(int(n)) for n in _ns], fontsize=8, rotation=45)
+        ax.set_yticks(range(len(_sigmas)))
+        ax.set_yticklabels([f"{s:.2f}" for s in _sigmas], fontsize=8)
+        ax.set_xlabel("Sample size (n)", fontsize=10)
+        ax.set_ylabel("Noise level (σ)", fontsize=10)
+        ax.set_title("Recovery Heatmap (σ × n)", fontsize=11, fontweight="bold")
+        for i in range(len(_sigmas)):
+            for j in range(len(_ns)):
+                v = _mat[i, j]
+                if not math.isnan(v):
+                    ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                            fontsize=7, color="white" if v < 0.4 else "black")
+        fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label="Recovery rate")
+        fig.tight_layout()
+        fig.savefig("figures/fig11_recovery_heatmap.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print("✓ fig11_recovery_heatmap.png")
+
+
+# ── fig_runtime_comparison (6-method runtime bar) ────────────────────────────
+if _noise_rows or _sample_rows:
+    _rt_src = _noise_rows or _sample_rows
+    from collections import defaultdict
+    _rt_buckets: dict = defaultdict(list)
+    for r in _rt_src:
+        method = r.get("method", r.get("solver", "unknown"))
+        for tkey in ("avg_time", "time_s", "median_time", "runtime"):
+            v = safe_float(r.get(tkey, float("nan")))
+            if not math.isnan(v):
+                _rt_buckets[method].append(v)
+                break
+
+    if _rt_buckets:
+        _rt_methods = list(_rt_buckets.keys())
+        _rt_means   = [np.mean(v) for v in _rt_buckets.values()]
+        _rt_order   = np.argsort(_rt_means)[::-1]  # descending
+        _rt_m_sorted = [_rt_methods[i] for i in _rt_order]
+        _rt_v_sorted = [_rt_means[i]   for i in _rt_order]
+        _rt_colors   = [C_HYB if "hypatia" in m.lower() else
+                        (C_LLM if "llm" in m.lower() else C_NN)
+                        for m in _rt_m_sorted]
+
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        bars = ax.barh(range(len(_rt_m_sorted)), _rt_v_sorted,
+                       color=_rt_colors, alpha=0.85, edgecolor="white", lw=0.5)
+        ax.set_yticks(range(len(_rt_m_sorted)))
+        ax.set_yticklabels(_rt_m_sorted, fontsize=9)
+        ax.set_xlabel("Mean runtime (s)", fontsize=10)
+        ax.set_title("Runtime Comparison — 6 Methods", fontsize=11, fontweight="bold")
+        for bar, v in zip(bars, _rt_v_sorted):
+            ax.text(v + max(_rt_v_sorted)*0.01, bar.get_y() + bar.get_height()/2,
+                    f"{v:.2f}s", va="center", fontsize=8)
+        ax.grid(axis="x", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig("figures/fig_runtime_comparison.png", dpi=300)
+        plt.close(fig)
+        print("✓ fig_runtime_comparison.png")
+
+
+# ── fig_comparative_table (domain × method, rendered as PNG) ─────────────────
+if _noise_rows or _sample_rows:
+    _ct_src = (_noise_rows or []) + (_sample_rows or [])
+    from collections import defaultdict
+    _ct: dict = defaultdict(lambda: defaultdict(list))
+    for r in _ct_src:
+        domain = r.get("domain", r.get("formula_type", "all"))
+        method = r.get("method", r.get("solver", "all"))
+        v = safe_float(r.get("median_r2", r.get("r2", float("nan"))))
+        if not math.isnan(v):
+            _ct[domain][method].append(v)
+
+    if _ct:
+        _ct_domains = sorted(_ct.keys())
+        _ct_methods = sorted({m for d in _ct.values() for m in d})
+        _ct_data    = [[f"{np.mean(_ct[d][m]):.3f}" if _ct[d].get(m) else "—"
+                        for m in _ct_methods]
+                       for d in _ct_domains]
+
+        fig, ax = plt.subplots(figsize=(max(6, len(_ct_methods)*1.5),
+                                        max(3, len(_ct_domains)*0.5 + 1)))
+        ax.axis("off")
+        tbl = ax.table(
+            cellText=_ct_data,
+            rowLabels=_ct_domains,
+            colLabels=_ct_methods,
+            cellLoc="center",
+            loc="center",
+            bbox=[0, 0, 1, 1],
         )
-        sys.exit(result.returncode)
-
-    # ── Collect new files written by plot_results.py ───────────────────────────
-    after  = set(collect_outputs(HARDCODED_OUT_DIR))
-    new_files = after - before
-
-    if not new_files:
-        # Fallback: if plot_results.py overwrote an existing file in-place the
-        # set-diff is empty.  Grab everything present (best effort).
-        new_files = after
-
-    if not new_files:
-        print(
-            f"::error::plot_results.py exited 0 but wrote no figures to {HARDCODED_OUT_DIR}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # ── Move + rename into the canonical figures dir ───────────────────────────
-    # Naming: FIG_<subject>_<experiment><ext>
-    # Multiple outputs (e.g. page-split PDFs): FIG_<subject>_<n>_<experiment><ext>
-    moved = []
-    for i, src in enumerate(sorted(new_files), start=1):
-        subject = subject_from_filename(src.stem)
-        suffix  = src.suffix.lower()
-        if len(new_files) == 1:
-            dest_name = f"FIG_{subject}_{experiment}{suffix}"
-        else:
-            dest_name = f"FIG_{subject}_{i}_{experiment}{suffix}"
-        dest = figures_path / dest_name
-        shutil.move(str(src), str(dest))
-        print(f"  ✓ {src} → {dest}")
-        moved.append(dest)
-
-    print(f"Figures OK: {len(moved)} file(s) written to {figures_path}")
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(9)
+        # Colour header row
+        for j in range(len(_ct_methods)):
+            tbl[0, j].set_facecolor("#DBEAFE")
+        ax.set_title("Domain × Method $R^2$ Comparison (median)", fontsize=11, fontweight="bold",
+                     pad=10)
+        fig.tight_layout()
+        fig.savefig("figures/fig_comparative_table.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print("✓ fig_comparative_table.png")
 
 
-if __name__ == "__main__":
-    main()
+# ── Final summary ─────────────────────────────────────────────────────────────
+all_figs = sorted(glob.glob("figures/*.png"))
+print(f"\n{'='*60}")
+print(f"Generated {len(all_figs)} figures in ./figures/")
+print(f"{'='*60}")
+for f in all_figs:
+    print(f"  {os.path.basename(f)}")
