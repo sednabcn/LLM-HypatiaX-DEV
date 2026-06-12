@@ -719,21 +719,7 @@ jobs:
           # shard files are committed in SUPPB_SUBDIR are exactly what
           # generate_figures.py --source auto will see. A single shard /
           # single noise level produces a degenerate (1-point) sweep.
-          read N_NOISE_FILES N_NOISE_LEVELS N_METHODS_NOISE <<< "$(python3 - <<'PYEOF'
-import glob, json
-files = glob.glob("${OUT_BASE}/${SUPPB_SUBDIR}/noise_sweep_*.json")
-levels = set()
-methods = set()
-for f in files:
-    try:
-        d = json.load(open(f))
-    except Exception:
-        continue
-    levels.update(d.get("noise_levels", []))
-    methods.update(d.get("methods", []))
-print(len(files), len(levels), len(methods))
-PYEOF
-)"
+          read N_NOISE_FILES N_NOISE_LEVELS N_METHODS_NOISE <<< "$(python3 .github/scripts/check_sweep_coverage.py --dir "${OUT_BASE}/${SUPPB_SUBDIR}" --mode noise)"
           echo "  Found ${N_NOISE_FILES} noise_sweep_*.json shard(s), ${N_NOISE_LEVELS} distinct noise level(s), ${N_METHODS_NOISE} method(s)."
           if [[ "${N_NOISE_FILES}" -eq 0 ]]; then
             echo "::warning::No noise_sweep_*.json found in ${OUT_BASE}/${SUPPB_SUBDIR} — fig1..fig11 (noise variants) cannot be generated."
@@ -755,23 +741,7 @@ PYEOF
           echo "=== Regenerate: suppB_sc (Group B sample-complexity figures) ==="
           mkdir -p "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures"
 
-          read N_SC_FILES N_SC_SIZES N_METHODS_SC <<< "$(python3 - <<'PYEOF'
-import glob, json
-files = glob.glob("${OUT_BASE}/${SUPPB_SC_SUBDIR}/sc_n*.json") + \
-        glob.glob("${OUT_BASE}/${SUPPB_SC_SUBDIR}/*sample_complexity*.json")
-files = sorted(set(files))
-sizes = set()
-methods = set()
-for f in files:
-    try:
-        d = json.load(open(f))
-    except Exception:
-        continue
-    sizes.update(d.get("sample_sizes", []))
-    methods.update(d.get("methods", []))
-print(len(files), len(sizes), len(methods))
-PYEOF
-)"
+          read N_SC_FILES N_SC_SIZES N_METHODS_SC <<< "$(python3 .github/scripts/check_sweep_coverage.py --dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}" --mode sample_complexity)"
           echo "  Found ${N_SC_FILES} sample-complexity shard(s), ${N_SC_SIZES} distinct sample size(s), ${N_METHODS_SC} method(s)."
           if [[ "${N_SC_FILES}" -eq 0 ]]; then
             echo "::warning::No sc_n*.json / *sample_complexity*.json found in ${OUT_BASE}/${SUPPB_SC_SUBDIR} — fig4..fig8/fig11 (n variants) cannot be generated."

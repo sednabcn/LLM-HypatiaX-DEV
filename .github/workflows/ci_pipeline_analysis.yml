@@ -294,6 +294,60 @@ jobs:
           fi
           python3 .github/scripts/validate_analysis_input.py
 
+      # ── Merge shards (MERGE_REQUIRED_EXPERIMENTS only — exp1b, exp3b) ────────
+      # Mirrors ci_analysis.yml's "Merge shards" step. locate_analysis_input.sh
+      # may already have produced _merged.json via its own fallback (in which
+      # case INPUT_MODE is already "merged" and this is a no-op); otherwise
+      # call merge_shards.py inline so exp1b/exp3b analyze the full merged
+      # shard set rather than whatever locate happened to find on its own.
+      - name: Merge shards
+        if: matrix.experiment != 'instability'
+        id: merge
+        env:
+          EXP:            ${{ matrix.experiment }}
+          SUB:            ${{ steps.meta.outputs.result_subdir }}
+          INPUT_MODE:     ${{ steps.locate.outputs.INPUT_MODE }}
+        run: |
+          set -euo pipefail
+          RESULT_DIR="${OUT_BASE}/${SUB}"
+
+          NEEDS_MERGE=$(python3 -c "
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+          print('true' if '${EXP}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
+          ")
+
+          if [[ "$NEEDS_MERGE" != "true" ]]; then
+            echo "Experiment '${EXP}' not in MERGE_REQUIRED_EXPERIMENTS — skipping."
+            exit 0
+          fi
+
+          MERGED_JSON="${RESULT_DIR}/_merged.json"
+          if [[ -f "$MERGED_JSON" && "${INPUT_MODE:-}" == "merged" ]]; then
+            echo "  _merged.json already produced by locate step — skipping re-merge."
+            echo "INPUT_MODE=merged"          >> "$GITHUB_OUTPUT"
+            echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python3 .github/scripts/merge_shards.py \
+            --experiment    "${EXP}" \
+            --input-root    "${RESULT_DIR}" \
+            --output-dir    "${RESULT_DIR}" \
+            --result-subdir "${SUB}"
+
+          if [[ ! -f "$MERGED_JSON" ]]; then
+            echo "::error::merge_shards.py did not produce ${MERGED_JSON}"
+            exit 1
+          fi
+
+          N_MERGED=$(python3 -c "import json; d=json.load(open('${MERGED_JSON}')); print(len(d))")
+          echo "  _merged.json: ${N_MERGED} unique task record(s)"
+
+          echo "INPUT_MODE=merged"          >> "$GITHUB_OUTPUT"
+          echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_OUTPUT"
+
       - name: Run statistical analysis
         if: matrix.experiment != 'instability'
         # continue-on-error: run_analysis.py writes _analysis.json even on fatal
@@ -304,8 +358,8 @@ jobs:
         env:
           EXP:            ${{ matrix.experiment }}
           SUB:            ${{ steps.meta.outputs.result_subdir }}
-          INPUT_MODE:     ${{ steps.locate.outputs.INPUT_MODE }}
-          INPUT_JSON:     ${{ steps.locate.outputs.INPUT_JSON }}
+          INPUT_MODE:     ${{ steps.merge.outputs.INPUT_MODE || steps.locate.outputs.INPUT_MODE }}
+          INPUT_JSON:     ${{ steps.merge.outputs.INPUT_JSON || steps.locate.outputs.INPUT_JSON }}
           SHARD_MANIFEST: ${{ steps.locate.outputs.SHARD_MANIFEST }}
           PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
           PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
@@ -326,6 +380,52 @@ jobs:
               --result-dir      "${OUT_DIR}"         \
               --shard-manifest  "${SHARD_MANIFEST}"
           fi
+
+      # ── Symbolic equivalence check (exp3 / exp3b only) ───────────────────────
+      # Mirrors ci_analysis.yml: produces symbolic_equivalence_report.csv +
+      # symbolic_equivalence_summary.txt in RESULT_DIR. Required by postprocess's
+      # generate_nguyen12_symequiv_table.py — without this step, exp3/exp3b
+      # postprocess fails (or silently uses a stale committed CSV).
+      - name: Install symbolic-equivalence dependencies (exp3 / exp3b)
+        if: matrix.experiment == 'exp3' || matrix.experiment == 'exp3b'
+        run: |
+          pip install "sympy>=1.12"
+
+      - name: Run symbolic equivalence check (exp3 / exp3b)
+        if: matrix.experiment == 'exp3' || matrix.experiment == 'exp3b'
+        continue-on-error: true
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          RESULT_DIR="${OUT_BASE}/${SUB}"
+          cd "${RESULT_DIR}"
+
+          # Glob expanded after cd so paths are relative to RESULT_DIR — matches
+          # the working directory check_symbolic_equivalence.py uses for I/O.
+          SEED_FILES=( exp3_nguyen12_seed*.json )
+
+          if [[ ${#SEED_FILES[@]} -eq 0 || ! -f "${SEED_FILES[0]}" ]]; then
+            echo "::error::No exp3_nguyen12_seed*.json files found in ${RESULT_DIR}"
+            exit 1
+          fi
+
+          echo "Found ${#SEED_FILES[@]} seed file(s): ${SEED_FILES[*]}"
+
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/check_symbolic_equivalence.py" \
+            "${SEED_FILES[@]}"
+
+          [[ -f symbolic_equivalence_report.csv ]] || {
+            echo "::error::check_symbolic_equivalence.py did not produce symbolic_equivalence_report.csv"
+            exit 1
+          }
+          [[ -f symbolic_equivalence_summary.txt ]] || {
+            echo "::error::check_symbolic_equivalence.py did not produce symbolic_equivalence_summary.txt"
+            exit 1
+          }
+
+          echo "Symbolic equivalence outputs:"
+          ls -lh symbolic_equivalence_report.csv symbolic_equivalence_summary.txt
 
       - name: Verify analysis outputs
         if: matrix.experiment != 'instability'
@@ -368,6 +468,27 @@ jobs:
           git pull --rebase --autostash origin "${{ github.ref_name }}"
           git add "${OUT_BASE}/${SUB}/_report.md" \
                   "${OUT_BASE}/${SUB}/_analysis.json" 2>/dev/null || true
+
+          # exp1b/exp3b: commit _merged.json so ci_postprocess.yml can read it
+          # without re-running the merge.
+          NEEDS_MERGE=$(python3 -c "
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+          print('true' if '${EXP}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
+          ")
+          if [[ "$NEEDS_MERGE" == "true" && -f "${OUT_BASE}/${SUB}/_merged.json" ]]; then
+            git add -f "${OUT_BASE}/${SUB}/_merged.json"
+          fi
+
+          # exp3/exp3b: commit symbolic-equivalence outputs for postprocess's
+          # generate_nguyen12_symequiv_table.py.
+          if [[ "${EXP}" == "exp3" || "${EXP}" == "exp3b" ]]; then
+            for f in symbolic_equivalence_report.csv symbolic_equivalence_summary.txt; do
+              [[ -f "${OUT_BASE}/${SUB}/${f}" ]] && git add -f "${OUT_BASE}/${SUB}/${f}"
+            done
+          fi
+
           if git diff --cached --quiet; then
             echo "No changes — outputs unchanged."
           else
@@ -443,6 +564,12 @@ jobs:
 #  Runs after all analysis jobs complete (any outcome).
 #  instability is intentionally included — its figures/ dir may already exist
 #  from the worker; postprocess regenerates/extends it.
+#
+#  SIMPLIFICATION: this job no longer duplicates ci_postprocess.yml's
+#  figures/tables/guard/commit logic inline. It dispatches ci_postprocess.yml
+#  (workflow_dispatch, -f experiment=<exp>) for each experiment and waits for
+#  that run to finish before moving on, so the single source of truth for
+#  per-experiment figures/tables stays in ci_postprocess.yml.
 # ==============================================================================
 
   postprocess:
@@ -458,375 +585,44 @@ jobs:
         experiment: ${{ fromJson(needs.setup.outputs.experiments) }}
 
     steps:
-      - name: Checkout master
-        uses: actions/checkout@v4.2.2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 1
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn \
-            "sympy>=1.12" "tabulate>=0.9"
-
-      - name: Resolve result_subdir
-        id: meta
+      # ── Delegate to ci_postprocess.yml ────────────────────────────────────────
+      # All figures + tables logic (per-experiment generation, suppB/suppB_sc
+      # guard checks, and committing outputs) lives in ci_postprocess.yml.
+      # Dispatch it for this experiment and block until it completes so the
+      # downstream check/complete/qualify/audit gates see committed outputs.
+      - name: Dispatch ci_postprocess.yml and wait for completion
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXP: ${{ matrix.experiment }}
         run: |
           set -euo pipefail
-          SUB=$(EXP_ID="${EXP}" python3 -c "
-          import os
-          mapping = {
-              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
-              'exp1_pca':           'comparison_results/noise-noiseless/noiseless/defi_pca',
-              'exp1b':              'comparison_results/noise-noiseless/15',
-              'exp1b_pca':          'comparison_results/noise-noiseless/15_pca',
-              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
-              # FIX 3: exp2_feynman_extrap was missing from postprocess mapping —
-              # it would fall back to the bare experiment name as subdir (wrong path).
-              'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
-              'exp2_feynman_pca':   'comparison_results/feynman-tests/exp2_pca_4060',
-              'exp2':               'comparison_results/feynman-tests/exp2_multi',
-              'exp3':               'extrapolation',
-              'exp3b':              'extrapolation/multi_seed',
-              'suppA':              'hybrid_pysr/defi',
-              'suppB':              'comparison_results/feynman-tests/noise-sweep/noise-sweep',
-              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
-              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
-              'instability':        'figures',
-              'extrap':             'comparison_results/extrapolation',
-          }
-          print(mapping.get(os.environ['EXP_ID'], os.environ['EXP_ID']))
-          ")
-          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
 
-      # ── Pre-create output directories ─────────────────────────────────────────
-      - name: Create output directories
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          mkdir -p "${OUT_BASE}/${SUB}/figures" "${OUT_BASE}/${SUB}/tables"
+          BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-      # ── Guard: snapshot suppB table dirs before any non-suppB run ─────────────
-      # Records the current state of suppB canonical dirs so the Commit step can
-      # verify they were not modified.  Mirrors ci_postprocess.yml guard logic.
-      - name: "Guard: snapshot suppB table dirs (non-suppB runs)"
-        if: |
-          matrix.experiment != 'suppB' &&
-          matrix.experiment != 'suppB_sc'
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/postprocess_audit
-          for DIR in \
-            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables" \
-            "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"; do
-            SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
-            find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$SNAP" || touch "$SNAP"
-            echo "Guard snapshot: $(wc -l < "$SNAP") .tex file(s) in ${DIR}"
+          gh workflow run ci_postprocess.yml \
+            --repo "${{ github.repository }}" \
+            --ref  "${{ github.ref_name }}" \
+            -f experiment="${EXP}"
+
+          echo "Dispatched ci_postprocess.yml (experiment=${EXP}); waiting for run to appear..."
+          RUN_ID=""
+          for i in $(seq 1 30); do
+            RUN_ID=$(gh run list --repo "${{ github.repository }}" \
+              --workflow ci_postprocess.yml \
+              --json databaseId,createdAt,event \
+              --jq "[.[] | select(.createdAt >= \"${BEFORE}\" and .event == \"workflow_dispatch\")] | sort_by(.createdAt) | last | .databaseId")
+            [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]] && break
+            sleep 5
           done
 
-      # ── SECTION A: Figures (--experiment scoped) ──────────────────────────────
-      - name: Generate figures
-        env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          # --experiment scopes generate_figures.py to only produce plots relevant
-          # to this experiment, preventing cross-experiment data contamination.
-          #
-          # NOTE (cross-ref ci_postprocess.yml BUG-E): generate_figures.py ignores
-          # --repo-root entirely. The correct flag — used by ci_postprocess.yml's
-          # per-experiment Figures steps and figures_deploy — is --results-dir.
-          # Using --repo-root here (as in earlier revisions of this file)
-          # reproduces BUG-E: the experiment's figures/ dir is left empty and
-          # the Commit step silently skips it (stage_if_nonempty warns + no-ops).
-          python scripts/generate_figures.py \
-            --experiment  "${EXP}" \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --figures-dir "${OUT_BASE}/${SUB}/figures" \
-            --source      auto
-
-      # ── SECTION B: Tables — one step per experiment family ────────────────────
-      # Each step is gated with if: so only the matching experiment runs it.
-      # suppB/suppB_sc steps point --results-dir at their canonical source dirs.
-      # All other steps point at their own SUB directory.
-
-      - name: "Tables: exp1 — noiseless DeFi"
-        if: matrix.experiment == 'exp1'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python scripts/generate_tables.py \
-            --experiment  exp1 \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: exp1b — noise-robust DeFi (multi-seed)"
-        if: matrix.experiment == 'exp1b'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          MERGED="${OUT_BASE}/${SUB}/_merged.json"
-          if [[ ! -f "$MERGED" ]]; then
-            echo "::error::${MERGED} not found. Run ci_analysis for exp1b first."
+          if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
+            echo "::error::Could not find dispatched ci_postprocess.yml run for ${EXP} (timed out after 150s)."
             exit 1
           fi
-          python scripts/generate_tables.py \
-            --experiment  exp1b \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
 
-      - name: "Tables: exp2_feynman — Feynman benchmark"
-        if: matrix.experiment == 'exp2_feynman'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python scripts/generate_tables.py \
-            --experiment  exp2_feynman \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: exp2_feynman_extrap — extrapolation comparison"
-        if: matrix.experiment == 'exp2_feynman_extrap'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          PAIRED="${OUT_BASE}/${SUB}/ablation_paired.json"
-          if [[ ! -f "$PAIRED" ]]; then
-            echo "::error::${PAIRED} not found."
-            echo "  Run ci_analysis for exp2_feynman_extrap first (generates ablation_paired.json)."
-            exit 1
-          fi
-          python scripts/generate_tables.py \
-            --experiment  exp2_feynman_extrap \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: exp2_feynman_pca — PCA 40/60 vs random 80/20"
-        if: matrix.experiment == 'exp2_feynman_pca'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          # Reads BOTH exp2/ AND exp2_pca_4060/; output goes to the pca canonical dir.
-          python scripts/patches/generate_exp2_pca_comparison_table.py \
-            --results-dir "${OUT_BASE}" \
-            --output-dir  "${OUT_BASE}/${SUB}" \
-            --formats     "tex,csv,md"
-          # Per-experiment tables for the pca subdir itself.
-          python scripts/generate_tables.py \
-            --experiment  exp2_feynman_pca \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: exp2 — all-30 multi-domain"
-        if: matrix.experiment == 'exp2'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python scripts/generate_tables.py \
-            --experiment  exp2 \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: exp3 — Nguyen-12 symbolic equivalence"
-        if: matrix.experiment == 'exp3'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
-          if [[ ! -f "$CSV" ]]; then
-            echo "::error::${CSV} not found. Run ci_analysis for exp3 first."
-            exit 1
-          fi
-          python scripts/patches/generate_nguyen12_symequiv_table.py \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-          python scripts/generate_tables.py \
-            --experiment  exp3 \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: exp3b — multi-seed Nguyen-12"
-        if: matrix.experiment == 'exp3b'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          CSV="${OUT_BASE}/${SUB}/symbolic_equivalence_report.csv"
-          if [[ ! -f "$CSV" ]]; then
-            echo "::error::${CSV} not found. Run ci_analysis for exp3b first."
-            exit 1
-          fi
-          python scripts/patches/generate_nguyen12_symequiv_table.py \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-          python scripts/generate_tables.py \
-            --experiment  exp3b \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: suppA — hybrid PySR + DeFi"
-        if: matrix.experiment == 'suppA'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python scripts/generate_tables.py \
-            --experiment  suppA \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: suppB — noise-sweep (canonical source)"
-        if: matrix.experiment == 'suppB'
-        run: |
-          NOISE_DATA=$(find "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
-            -maxdepth 2 -name "noise_sweep_*.json" -o -name "noise*.json" 2>/dev/null | head -1 || true)
-          if [[ -z "$NOISE_DATA" ]]; then
-            echo "::error::No noise_sweep_*.json found. Run ci_runner for suppB first."
-            exit 1
-          fi
-          python scripts/generate_tables.py \
-            --experiment  suppB \
-            --results-dir "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
-            --output-dir  "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables"
-
-      - name: "Tables: suppB_sc — sample-complexity (canonical source)"
-        if: matrix.experiment == 'suppB_sc'
-        run: |
-          SC_DATA=$(find "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
-            -maxdepth 2 -name "sc_n*.json" -o -name "*sample_complexity*.json" 2>/dev/null | head -1 || true)
-          if [[ -z "$SC_DATA" ]]; then
-            echo "::error::No sample-complexity JSONs found. Run ci_runner for suppB_sc first."
-            exit 1
-          fi
-          python scripts/generate_tables.py \
-            --experiment  suppB_sc \
-            --results-dir "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
-            --output-dir  "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"
-
-      - name: "Tables: hybrid_all_domains — LLM+NN all-domain"
-        if: matrix.experiment == 'hybrid_all_domains'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python scripts/generate_tables.py \
-            --experiment  hybrid_all_domains \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: instability — Instability Index"
-        if: matrix.experiment == 'instability'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          VARIANCE_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 2 \
-            -name "hypatiax_defi_variance_results.json" \
-            -o -name "*instability*.json" \
-            -o -name "*variance*.json" 2>/dev/null | head -1 || true)
-          if [[ -z "$VARIANCE_JSON" ]]; then
-            echo "::error::No instability/variance JSON found in ${OUT_BASE}/${SUB}"
-            echo "  Run ci_runner for instability first."
-            exit 1
-          fi
-          python scripts/generate_tables.py \
-            --experiment  instability \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      - name: "Tables: extrap — OOD extrapolation"
-        if: matrix.experiment == 'extrap'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          python scripts/generate_tables.py \
-            --experiment  extrap \
-            --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-
-      # ── Post-run guard: verify suppB tables not modified by non-suppB runs ────
-      - name: "Guard: verify suppB tables unchanged (non-suppB runs)"
-        if: |
-          matrix.experiment != 'suppB' &&
-          matrix.experiment != 'suppB_sc'
-        env:
-          EXP: ${{ matrix.experiment }}
-        run: |
-          set -euo pipefail
-          GUARD_OK=true
-          for DIR in \
-            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables" \
-            "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"; do
-            SNAP="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_snap.txt"
-            CURR="/tmp/postprocess_audit/$(echo "$DIR" | tr '/' '_')_curr.txt"
-            find "$DIR" -maxdepth 1 -type f -name "*.tex" 2>/dev/null | sort > "$CURR" || touch "$CURR"
-            if [[ -f "$SNAP" ]] && ! diff -q "$SNAP" "$CURR" > /dev/null 2>&1; then
-              echo "::error::GUARD VIOLATION — suppB tables in '${DIR}' were modified by ${EXP} run!"
-              GUARD_OK=false
-            else
-              echo "Guard OK: suppB tables in '${DIR}' unchanged."
-            fi
-          done
-          [[ "$GUARD_OK" == "true" ]] || exit 1
-
-      # ── Commit postprocess outputs ─────────────────────────────────────────────
-      - name: Commit postprocess outputs
-        env:
-          EXP: ${{ matrix.experiment }}
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git reset HEAD 2>/dev/null || true
-          git pull --rebase --autostash origin "${{ github.ref_name }}"
-
-          FIGS="${OUT_BASE}/${SUB}/figures"
-          TABS="${OUT_BASE}/${SUB}/tables"
-
-          stage_if_nonempty() {
-            local dir="$1"
-            if [[ -d "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
-              git add -f "$dir/" 2>/dev/null || true
-            else
-              echo "::warning::directory empty or missing — skipping git add: ${dir}"
-            fi
-          }
-
-          stage_if_nonempty "$FIGS"
-          stage_if_nonempty "$TABS"
-
-          # exp2_feynman_pca: also stage the cross-experiment comparison table.
-          if [[ "${EXP}" == "exp2_feynman_pca" ]]; then
-            PCA_DIR="${OUT_BASE}/comparison_results/feynman-tests/exp2_pca_4060"
-            for f in \
-              "${PCA_DIR}/exp2_pca_comparison.tex" \
-              "${PCA_DIR}/exp2_pca_comparison.csv" \
-              "${PCA_DIR}/exp2_pca_comparison.md"; do
-              [[ -f "$f" ]] && git add -f "$f" 2>/dev/null || true
-            done
-          fi
-
-          # suppB: stage canonical noise-sweep tables directory.
-          if [[ "${EXP}" == "suppB" ]]; then
-            stage_if_nonempty "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep/tables"
-          fi
-
-          # suppB_sc: stage canonical sample-complexity tables directory.
-          if [[ "${EXP}" == "suppB_sc" ]]; then
-            stage_if_nonempty "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity/tables"
-          fi
-
-          if git diff --cached --quiet; then
-            echo "No changes — outputs unchanged."
-          else
-            git commit -m "ci: ${EXP} figures+tables — pipeline run ${{ github.run_id }}"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed figures+tables for ${EXP}."
-          fi
+          echo "ci_postprocess.yml run ${RUN_ID} dispatched for ${EXP} — watching to completion..."
+          gh run watch "$RUN_ID" --repo "${{ github.repository }}" --exit-status
 
 
 # ==============================================================================
