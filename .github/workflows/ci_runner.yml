@@ -436,6 +436,7 @@ jobs:
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              4,
+              "exp1_ablation":      1,
               "exp2_feynman":        1,
               "exp2_feynman_extrap": 1,
               "exp2":               1,
@@ -545,6 +546,11 @@ jobs:
           registry = {
               "exp1":              DEFI_TASKS,
               "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
+              # exp1_ablation: single-shot Core-15 LLM ablation (PySR-only vs HypatiaX).
+              # exp1_ablation.py is invoked with no per-task args, so this list is
+              # only used for plan/checkpoint bookkeeping (1 shard). Mirrors exp1's
+              # Core DeFi suite — same as "instability" below.
+              "exp1_ablation":     DEFI_TASKS,
               # exp2_feynman: shard by feynman domain keys (BenchmarkProtocol, benchmark=feynman)
               "exp2_feynman":       FEYNMAN_DOMAINS,
               # exp2_feynman_extrap: same 11-domain split, generates extrap_r2_far for Mann-Whitney
