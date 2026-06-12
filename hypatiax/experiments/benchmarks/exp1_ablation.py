@@ -66,16 +66,11 @@ random.seed(_GLOBAL_SEED)
 np.random.seed(_GLOBAL_SEED)
 os.environ["PYTHONHASHSEED"] = str(_GLOBAL_SEED)
 
-# API key: Kaggle Secrets → environment variable (no hardcoded keys)
-try:
-    from kaggle_secrets import UserSecretsClient
-    _secrets = UserSecretsClient()
-    os.environ["ANTHROPIC_API_KEY"] = _secrets.get_secret("ANTHROPIC_API_KEY")
-    print("✅ API key loaded from Kaggle Secrets")
-except Exception:
-    if os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-"):
+# API key: GITHUB Secrets → environment variable (no hardcoded keys)
+
+if os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-"):
         print("✅ API key found in environment")
-    else:
+else:
         print("⚠️  ANTHROPIC_API_KEY not set — LLM proposal step will be skipped")
 
 # =============================================================================
@@ -153,8 +148,6 @@ print("✅ Parameters ready")
 _V50_CANDIDATES = [
     _pl.Path("hybrid_system_v50_2.py"),
     _pl.Path(__file__).resolve().parents[2] / "tools/symbolic/hybrid_system_v50_2.py",
-    _pl.Path("/kaggle/working/hybrid_system_v50_2.py"),
-    _pl.Path("/kaggle/input/hybrid-system/hybrid_system_v50_2.py"),
 ]
 _V50_PATH = next((p for p in _V50_CANDIDATES if p.exists()), None)
 if _V50_PATH is None:

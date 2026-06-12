@@ -1622,7 +1622,7 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
 # Output: exp2_extrap/ablation_paired.json  (same path ci_analysis.yml writes).
 (
   set -euo pipefail
-  _SCRIPT_MERGE="${REPO_ROOT}/scripts/merge_extrap_into_benchmark.py"
+  _SCRIPT_MERGE="${REPO_ROOT}/.github/scripts/merge_extrap_into_benchmark.py"
   _EXTRAP_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap"
   _BENCHMARK_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2"
   _PAIRED="${_EXTRAP_DIR}/ablation_paired.json"
@@ -1792,7 +1792,7 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
 # Mirrors the "Check symbolic equivalence (exp3/exp3b)" step in ci_analysis.yml.
 (
   set -euo pipefail
-  _SCRIPT="${REPO_ROOT}/scripts/check_symbolic_equivalence.py"
+  _SCRIPT="${REPO_ROOT}/.github/scripts/check_symbolic_equivalence.py"
   _SEED_DIR="${RESULTS_DIR}/extrapolation/multi_seed"
   _REPORT="${_SEED_DIR}/symbolic_equivalence_report.csv"
   _SUMMARY="${_SEED_DIR}/symbolic_equivalence_summary.txt"
