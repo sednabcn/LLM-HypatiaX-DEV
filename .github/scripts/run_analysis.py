@@ -144,7 +144,7 @@ EXPERIMENT_MODE: dict[str, str] = {
     # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
     # complexity distributions, threshold sweep, and LOO all run under this mode.
     "exp1_ablation":          "ablation",
-    "exp2_feynman":           "standard",
+    "exp2_feynman":           "ablation",
     # exp2_feynman_extrap: OOD extrap step — produces ablation_paired.json;
     # run_analysis.py reads it in ablation mode (extrap_r2_far present).
     "exp2_feynman_extrap":    "ablation",
@@ -157,15 +157,18 @@ EXPERIMENT_MODE: dict[str, str] = {
 RESULT_SUBDIR: dict[str, str] = {
     "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
     "exp1b":              "comparison_results/noise-noiseless/15",
+    "exp1_pca":           "comparison_results/noise-noiseless/noiseless/defi_pca",
+    "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
     "exp2_feynman":           "comparison_results/feynman-tests/exp2",
     # exp2_feynman_extrap: NSHARDS=1, DIRECT mode. ablation_paired.json written here
     # after merge_extrap_into_benchmark.py. Mirrors ci_analysis.yml MAPPING.
     "exp2_feynman_extrap":    "comparison_results/feynman-tests/exp2_extrap",
+    "exp2_feynman_pca":       "comparison_results/feynman-tests/exp2_pca_4060",
     "exp2":               "comparison_results/feynman-tests/exp2_multi",
     "exp3":               "extrapolation",
     "exp3b":              "extrapolation/multi_seed",
     "suppA":              "hybrid_pysr/defi",
-    "suppB":              "comparison_results/feynman-tests/noise-sweep",
+    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
     "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
     "hybrid_all_domains": "hybrid_llm_nn/all_domains",
     "instability":        "figures",
@@ -267,7 +270,7 @@ def _mann_whitney_paired_ablation(pairs: list[tuple[float, float]]) -> dict:
     """
     if not _SCIPY_OK:
         return {"available": False, "reason": "scipy not installed"}
-    if len(pairs) < 2:
+    if len(pairs) < MIN_RECORDS_FOR_STATS:
         return {"available": False, "reason": "insufficient pairs after filtering"}
     p_vals = [p for p, _ in pairs]
     h_vals = [h for _, h in pairs]
@@ -921,8 +924,11 @@ def analyse_ablation(records: list[dict], experiment: str,
 
     if len(mw_pairs_all) < MIN_RECORDS_FOR_STATS:
         fatal.append(
-            f"TOO_FEW_MW_PAIRS: only {len(mw_pairs_all)} finite paired far-R² values "
-            f"(need ≥ {MIN_RECORDS_FOR_STATS}) for Mann-Whitney test."
+            f"WARN_TOO_FEW_MW_PAIRS: only {len(mw_pairs_all)} finite paired far-R² values "
+            f"(need ≥ {MIN_RECORDS_FOR_STATS}) for Mann-Whitney test; test skipped. "
+            f"Likely cause: extrap_r2_far absent from records — confirm workers ran the "
+            f"extrapolation evaluation step and that merge_extrap_into_benchmark.py was "
+            f"called before this analysis. Workflow continues."
         )
 
     if failures:

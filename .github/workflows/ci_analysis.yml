@@ -203,6 +203,7 @@ jobs:
               'exp1b':               'comparison_results/noise-noiseless/15',
               'exp1_pca':            'comparison_results/noise-noiseless/noiseless/defi_pca',
               'exp1b_pca':           'comparison_results/noise-noiseless/15_pca',
+              'exp1_ablation':       'comparison_results/feynman-tests/exp1_ablation',
               'exp2_feynman':        'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
               'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
@@ -259,6 +260,12 @@ jobs:
             github.event.inputs.experiment == 'exp1b' ||
             github.event.inputs.experiment == 'exp3b'
           )
+        # NOTE: the explicit list above mirrors MERGE_REQUIRED_EXPERIMENTS in
+        # merge_shards.py. If a new multi-shard experiment is added to that set,
+        # add it here too. The condition is intentionally kept as a literal list
+        # (rather than a shell script call) because GitHub Actions evaluates `if:`
+        # expressions before any run: steps execute — a script-based check is not
+        # possible at this point in the job lifecycle.
         continue-on-error: true
         uses: actions/download-artifact@v4.1.8
         with:
