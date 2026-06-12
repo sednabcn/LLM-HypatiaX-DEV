@@ -1,16 +1,12 @@
 
 # HypatiaX Analysis Report — `exp2_feynman_extrap` (RF09 Feynman n=30)
 
-Experiment mode: **ablation** | N equations: 30
-Tier-1 (all-N) pairs: 13 | Tier-2 (excl-train-fail) pairs: 13 | Tier-3 (extrap R²≥0.99) pairs: 13 | Skipped: 17
+Experiment mode: **ablation** | N equations: 870
+Tier-1 (all-N) pairs: 0 | Tier-2 (excl-train-fail) pairs: 0 | Tier-3 (extrap R²≥0.99) pairs: 0 | Skipped: 870
 
-## ✅ No Fatal Conditions
+## ⚠️ Fatal Conditions
 
-
-## ℹ️ Informational / Warnings
-
-- INFO_MW_ALL_NOT_SIGNIFICANT: Tier-1 (all-N) Mann-Whitney one-sided p=0.0735 (two-sided p=0.1470, r=-0.3373, n=13) — directional but not significant. Expected: 21 discovery failures add noise. Report Tier-3 success-subset as primary claim. Workflow continues.
-- WARN_MW_SUCCESS_NOT_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney one-sided p=0.0735 (n=13) — not significant at α=0.05. Primary paper claim (§10.7) may be weaker than expected. Investigate.
+- **TOO_FEW_MW_PAIRS: only 0 finite paired far-R² values (need ≥ 3) for Mann-Whitney test.**
 
 ## A. Primary Result — Three-Tier MW Framing (§10.7)
 
@@ -20,18 +16,18 @@ Tier-1 (all-N) pairs: 13 | Tier-2 (excl-train-fail) pairs: 13 | Tier-3 (extrap R
 
 **Tier 3 (success-subset, R²≥0.99):** The paper's primary claim (§10.7). Restricts to equations where HypatiaX achieved symbolic recovery. This is the publishable result — it answers whether symbolic recovery produces a qualitatively different extrapolation regime, not whether HypatiaX always wins.
 
-  Tier 1 — All-N: U=113.0, p_one=0.0735, p_two=0.1470, n=13, r=-0.3373
-  Tier 2 — Excl-train-fail (train R²≥0): U=113.0, p_one=0.0735, p_two=0.1470, n=13, r=-0.3373
-  Tier 3 — Success-subset (extrap R²≥0.99) ★: U=113.0, p_one=0.0735, p_two=0.1470, n=13, r=-0.3373
+  Tier 1 — All-N: N/A (insufficient pairs after filtering)
+  Tier 2 — Excl-train-fail (train R²≥0): N/A (insufficient pairs after filtering)
+  Tier 3 — Success-subset (extrap R²≥0.99) ★: N/A (insufficient pairs after filtering)
 _** = p_one < 0.05  |  ★ = primary paper claim_
 
 ### Win / Loss by Tier
 
 | Split | HypatiaX wins | PySR wins | Tied | N pairs |
 |-------|---------------|-----------|------|---------|
-| Tier 1 — All-N | 5 | 0 | 8 | 13 |
-| Tier 2 — Excl-train-fail | 5 | 0 | 8 | 13 |
-| Tier 3 — Success-subset ★ | 5 | 0 | 8 | 13 |
+| Tier 1 — All-N | 0 | 0 | 0 | 0 |
+| Tier 2 — Excl-train-fail | 0 | 0 | 0 | 0 |
+| Tier 3 — Success-subset ★ | 0 | 0 | 0 | 0 |
 
 ## B. Failure Analysis (0 equations — degenerate PySR, train R² < 0)
 
@@ -41,17 +37,17 @@ _None — all equations have hypatia train R² ≥ 0._
 
 | Domain | N | Hypatia Wins | Win Rate | Failures | Fail Rate |
 |--------|---|-------------|----------|----------|-----------|
-| feynman_biology | 3 | 2 | 0.6667 | 0 | 0.0 |
-| feynman_chemistry | 2 | 0 | 0.0 | 0 | 0.0 |
-| feynman_electrochemistry | 1 | 0 | N/A | 0 | 0.0 |
-| feynman_electromagnetism | 5 | 0 | 0.0 | 0 | 0.0 |
-| feynman_electrostatics | 2 | 0 | N/A | 0 | 0.0 |
-| feynman_magnetism | 1 | 0 | N/A | 0 | 0.0 |
-| feynman_mechanics | 4 | 1 | 0.5 | 0 | 0.0 |
-| feynman_optics | 2 | 0 | 0.0 | 0 | 0.0 |
-| feynman_probability | 1 | 1 | 1.0 | 0 | 0.0 |
-| feynman_quantum | 5 | 0 | 0.0 | 0 | 0.0 |
-| feynman_thermodynamics | 4 | 1 | 0.5 | 0 | 0.0 |
+| feynman_biology | 87 | 0 | N/A | 0 | 0.0 |
+| feynman_chemistry | 58 | 0 | N/A | 0 | 0.0 |
+| feynman_electrochemistry | 29 | 0 | N/A | 0 | 0.0 |
+| feynman_electromagnetism | 145 | 0 | N/A | 0 | 0.0 |
+| feynman_electrostatics | 58 | 0 | N/A | 0 | 0.0 |
+| feynman_magnetism | 29 | 0 | N/A | 0 | 0.0 |
+| feynman_mechanics | 116 | 0 | N/A | 0 | 0.0 |
+| feynman_optics | 58 | 0 | N/A | 0 | 0.0 |
+| feynman_probability | 29 | 0 | N/A | 0 | 0.0 |
+| feynman_quantum | 145 | 0 | N/A | 0 | 0.0 |
+| feynman_thermodynamics | 116 | 0 | N/A | 0 | 0.0 |
 
 ### Fisher's Exact Test — Failure Cluster Non-Randomness
 
@@ -81,74 +77,1767 @@ _** = p < 0.05_
 MW p_one at each train-R² inclusion threshold. A robust result stays significant across a range near 0.
 | Threshold | N included | U | p_one | p_two | Significant? |
 |-----------|------------|---|-------|-------|--------------|
-| -0.50 | 13 | 113.0 | 0.0735 | 0.1470 | — |
-| -0.25 | 13 | 113.0 | 0.0735 | 0.1470 | — |
-| +0.00 | 13 | 113.0 | 0.0735 | 0.1470 | — |
-| +0.10 | 13 | 113.0 | 0.0735 | 0.1470 | — |
-| +0.25 | 13 | 113.0 | 0.0735 | 0.1470 | — |
-| +0.50 | 13 | 113.0 | 0.0735 | 0.1470 | — |
+| -0.50 | 0 | N/A | N/A | N/A | — |
+| -0.25 | 0 | N/A | N/A | N/A | — |
+| +0.00 | 0 | N/A | N/A | N/A | — |
+| +0.10 | 0 | N/A | N/A | N/A | — |
+| +0.25 | 0 | N/A | N/A | N/A | — |
+| +0.50 | 0 | N/A | N/A | N/A | — |
 
 ## G. Leave-One-Out Sensitivity — Failure Equations
 
 All-N MW re-run with each failure equation removed. Shows how much each discovery failure masks the signal.
 _No LOO data (no failure equations or scipy unavailable)._
 
-## Skipped from MW (17 equations)
+## Skipped from MW (870 equations)
 
 | Equation | Domain | Reason |
 |----------|--------|--------|
-| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | feynman_chemistry | pysr_only.extrap_r2_far=nan is non-finite |
-| Nernst equation for electrode potential — cross-benchmark consistency check | feynman_electrochemistry | hypatia.extrap_r2_far is None |
-| Dielectric polarisation: P = n * alpha * E (dilute limit) | feynman_electromagnetism | hypatia.extrap_r2_far is None |
-| Lorentz force on moving charge in magnetic field: F = qvB | feynman_electromagnetism | hypatia.extrap_r2_far is None |
-| Energy stored in a capacitor: E = 0.5 * C * V^2 | feynman_electromagnetism | pysr_only.extrap_r2_far=nan is non-finite |
+| Michaelis-Menten enzyme kinetics | feynman_biology | hypatia.extrap_r2_far is None |
+| Logistic growth rate | feynman_biology | hypatia.extrap_r2_far is None |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | hypatia.extrap_r2_far is None |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Nernst equation for electrode potential | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| Clausius-Mossotti | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Dielectric polarisation | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Ohm's law | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Energy stored in a capacitor | feynman_electromagnetism | hypatia.extrap_r2_far is None |
 | Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | hypatia.extrap_r2_far is None |
-| Coulomb's law: electric force between charges | feynman_electrostatics | pysr_only.extrap_r2_far=nan is non-finite |
-| Curie's law for magnetic susceptibility: chi = C/T | feynman_magnetism | hypatia.extrap_r2_far is None |
-| Kinetic energy (classical): KE = 0.5 * m * v² | feynman_mechanics | pysr_only.extrap_r2_far=nan is non-finite |
-| Total mechanical energy: spring potential + kinetic | feynman_mechanics | pysr_only.extrap_r2_far=nan is non-finite |
-| Snell's law: refracted angle from incident angle and refractive indices | feynman_optics | hypatia.extrap_r2_far is None |
-| Photon energy: E = h * f (Planck relation) | feynman_quantum | hypatia.extrap_r2_far is None |
+| Coulomb's law | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Curie's law for magnetic susceptibility | feynman_magnetism | hypatia.extrap_r2_far is None |
+| Newton's gravitational force between two masses | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Kinetic energy (classical) | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Reduced mass of a two-body system | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Total mechanical energy | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Snell's law | feynman_optics | hypatia.extrap_r2_far is None |
+| Double-slit wave interference intensity | feynman_optics | hypatia.extrap_r2_far is None |
+| Gaussian/normal distribution probability density | feynman_probability | hypatia.extrap_r2_far is None |
+| Photon energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Zeeman energy | feynman_quantum | hypatia.extrap_r2_far is None |
 | Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
-| Fermi-Dirac occupation number for fermions | feynman_quantum | pysr_only.extrap_r2_far=nan is non-finite |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | hypatia.extrap_r2_far is None |
 | Rabi frequency of two-level atom in magnetic field | feynman_quantum | hypatia.extrap_r2_far is None |
-| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | feynman_thermodynamics | pysr_only.extrap_r2_far=nan is non-finite |
-| Stefan-Boltzmann law: blackbody radiated power | feynman_thermodynamics | pysr_only.extrap_r2_far=nan is non-finite |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Fourier's law of heat conduction | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Stefan-Boltzmann law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Ideal gas law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Michaelis-Menten enzyme kinetics | feynman_biology | hypatia.extrap_r2_far is None |
+| Logistic growth rate | feynman_biology | hypatia.extrap_r2_far is None |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | hypatia.extrap_r2_far is None |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Nernst equation for electrode potential | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| Clausius-Mossotti | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Dielectric polarisation | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Ohm's law | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Energy stored in a capacitor | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Coulomb's law | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Curie's law for magnetic susceptibility | feynman_magnetism | hypatia.extrap_r2_far is None |
+| Newton's gravitational force between two masses | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Kinetic energy (classical) | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Reduced mass of a two-body system | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Total mechanical energy | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Snell's law | feynman_optics | hypatia.extrap_r2_far is None |
+| Double-slit wave interference intensity | feynman_optics | hypatia.extrap_r2_far is None |
+| Gaussian/normal distribution probability density | feynman_probability | hypatia.extrap_r2_far is None |
+| Photon energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Zeeman energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | hypatia.extrap_r2_far is None |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | hypatia.extrap_r2_far is None |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Fourier's law of heat conduction | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Stefan-Boltzmann law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Ideal gas law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Michaelis-Menten enzyme kinetics | feynman_biology | hypatia.extrap_r2_far is None |
+| Logistic growth rate | feynman_biology | hypatia.extrap_r2_far is None |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | hypatia.extrap_r2_far is None |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Nernst equation for electrode potential | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| Clausius-Mossotti | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Dielectric polarisation | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Ohm's law | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Energy stored in a capacitor | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Coulomb's law | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Curie's law for magnetic susceptibility | feynman_magnetism | hypatia.extrap_r2_far is None |
+| Newton's gravitational force between two masses | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Kinetic energy (classical) | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Reduced mass of a two-body system | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Total mechanical energy | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Snell's law | feynman_optics | hypatia.extrap_r2_far is None |
+| Double-slit wave interference intensity | feynman_optics | hypatia.extrap_r2_far is None |
+| Gaussian/normal distribution probability density | feynman_probability | hypatia.extrap_r2_far is None |
+| Photon energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Zeeman energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | hypatia.extrap_r2_far is None |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | hypatia.extrap_r2_far is None |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Fourier's law of heat conduction | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Stefan-Boltzmann law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Ideal gas law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Michaelis-Menten enzyme kinetics | feynman_biology | hypatia.extrap_r2_far is None |
+| Logistic growth rate | feynman_biology | hypatia.extrap_r2_far is None |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | hypatia.extrap_r2_far is None |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Nernst equation for electrode potential | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| Clausius-Mossotti | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Dielectric polarisation | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Ohm's law | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Energy stored in a capacitor | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Coulomb's law | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Curie's law for magnetic susceptibility | feynman_magnetism | hypatia.extrap_r2_far is None |
+| Newton's gravitational force between two masses | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Kinetic energy (classical) | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Reduced mass of a two-body system | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Total mechanical energy | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Snell's law | feynman_optics | hypatia.extrap_r2_far is None |
+| Double-slit wave interference intensity | feynman_optics | hypatia.extrap_r2_far is None |
+| Gaussian/normal distribution probability density | feynman_probability | hypatia.extrap_r2_far is None |
+| Photon energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Zeeman energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | hypatia.extrap_r2_far is None |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | hypatia.extrap_r2_far is None |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Fourier's law of heat conduction | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Stefan-Boltzmann law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Ideal gas law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Michaelis-Menten enzyme kinetics | feynman_biology | hypatia.extrap_r2_far is None |
+| Logistic growth rate | feynman_biology | hypatia.extrap_r2_far is None |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | hypatia.extrap_r2_far is None |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | hypatia.extrap_r2_far is None |
+| Nernst equation for electrode potential | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| Clausius-Mossotti | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Dielectric polarisation | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Ohm's law | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Energy stored in a capacitor | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Coulomb's law | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| Curie's law for magnetic susceptibility | feynman_magnetism | hypatia.extrap_r2_far is None |
+| Newton's gravitational force between two masses | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Kinetic energy (classical) | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Reduced mass of a two-body system | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Total mechanical energy | feynman_mechanics | hypatia.extrap_r2_far is None |
+| Snell's law | feynman_optics | hypatia.extrap_r2_far is None |
+| Double-slit wave interference intensity | feynman_optics | hypatia.extrap_r2_far is None |
+| Gaussian/normal distribution probability density | feynman_probability | hypatia.extrap_r2_far is None |
+| Photon energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Zeeman energy | feynman_quantum | hypatia.extrap_r2_far is None |
+| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | hypatia.extrap_r2_far is None |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | hypatia.extrap_r2_far is None |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Fourier's law of heat conduction | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Stefan-Boltzmann law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| Ideal gas law | feynman_thermodynamics | hypatia.extrap_r2_far is None |
 
 ## Instability Index (1 − extrap_r2_far; None→0.0; unclamped)
 
 | Equation | Domain | Near R² | Far R² | Instability | Skipped? |
 |----------|--------|---------|--------|-------------|----------|
-| Michaelis-Menten enzyme kinetics — cross-benchmark consistency check | feynman_biology | 0.0000 | 1.0000 | 0.0000 | no |
-| Logistic growth rate — cross-benchmark consistency check | feynman_biology | 0.0000 | 1.0000 | 0.0000 | no |
-| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 1.0000 | 0.0000 | no |
-| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | feynman_chemistry | 0.0000 | 1.0000 | 0.0000 | no |
-| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 1.0000 | 0.0000 | no |
-| Nernst equation for electrode potential — cross-benchmark consistency check | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
-| Clausius-Mossotti: effective field in dielectric | feynman_electromagnetism | 0.0000 | 1.0000 | 0.0000 | no |
-| Dielectric polarisation: P = n * alpha * E (dilute limit) | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
-| Lorentz force on moving charge in magnetic field: F = qvB | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
-| Ohm's law: voltage as product of current and resistance | feynman_electromagnetism | 0.0000 | 1.0000 | 0.0000 | no |
-| Energy stored in a capacitor: E = 0.5 * C * V^2 | feynman_electromagnetism | 0.0000 | 1.0000 | 0.0000 | no |
+| Michaelis-Menten enzyme kinetics | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Logistic growth rate | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Nernst equation for electrode potential | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Clausius-Mossotti | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Dielectric polarisation | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ohm's law | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Energy stored in a capacitor | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
 | Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
-| Coulomb's law: electric force between charges | feynman_electrostatics | 0.0000 | 1.0000 | 0.0000 | no |
-| Curie's law for magnetic susceptibility: chi = C/T | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
-| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Kinetic energy (classical): KE = 0.5 * m * v² | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Total mechanical energy: spring potential + kinetic | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Snell's law: refracted angle from incident angle and refractive indices | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
-| Double-slit wave interference intensity | feynman_optics | 0.0000 | 1.0000 | 0.0000 | no |
-| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 1.0000 | 0.0000 | no |
-| Photon energy: E = h * f (Planck relation) | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
-| Zeeman energy: electron spin in magnetic field | feynman_quantum | 0.0000 | 1.0000 | 0.0000 | no |
+| Coulomb's law | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Curie's law for magnetic susceptibility | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Kinetic energy (classical) | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Total mechanical energy | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Snell's law | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Double-slit wave interference intensity | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| Photon energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Zeeman energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
 | Bose-Einstein occupation number for bosons | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
-| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | 0.8388 | 0.1612 | no |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
 | Rabi frequency of two-level atom in magnetic field | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
-| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
-| Fourier's law of heat conduction: heat flux across material | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
-| Stefan-Boltzmann law: blackbody radiated power | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
-| Ideal gas law: pressure from moles, temperature, volume | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fourier's law of heat conduction | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Stefan-Boltzmann law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ideal gas law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Michaelis-Menten enzyme kinetics | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Logistic growth rate | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Nernst equation for electrode potential | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Clausius-Mossotti | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Dielectric polarisation | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ohm's law | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Energy stored in a capacitor | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb's law | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Curie's law for magnetic susceptibility | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Kinetic energy (classical) | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Total mechanical energy | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Snell's law | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Double-slit wave interference intensity | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| Photon energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Zeeman energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Bose-Einstein occupation number for bosons | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fourier's law of heat conduction | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Stefan-Boltzmann law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ideal gas law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Michaelis-Menten enzyme kinetics | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Logistic growth rate | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Nernst equation for electrode potential | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Clausius-Mossotti | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Dielectric polarisation | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ohm's law | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Energy stored in a capacitor | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb's law | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Curie's law for magnetic susceptibility | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Kinetic energy (classical) | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Total mechanical energy | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Snell's law | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Double-slit wave interference intensity | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| Photon energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Zeeman energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Bose-Einstein occupation number for bosons | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fourier's law of heat conduction | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Stefan-Boltzmann law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ideal gas law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Michaelis-Menten enzyme kinetics | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Logistic growth rate | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Nernst equation for electrode potential | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Clausius-Mossotti | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Dielectric polarisation | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ohm's law | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Energy stored in a capacitor | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb's law | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Curie's law for magnetic susceptibility | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Kinetic energy (classical) | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Total mechanical energy | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Snell's law | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Double-slit wave interference intensity | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| Photon energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Zeeman energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Bose-Einstein occupation number for bosons | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fourier's law of heat conduction | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Stefan-Boltzmann law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ideal gas law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Michaelis-Menten enzyme kinetics | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Logistic growth rate | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| Arrhenius rate constant (Feynman variant) | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Nernst equation for electrode potential | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| Clausius-Mossotti | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Dielectric polarisation | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Lorentz force on moving charge in magnetic field | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ohm's law | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Energy stored in a capacitor | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Coulomb's law | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Curie's law for magnetic susceptibility | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Kinetic energy (classical) | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Total mechanical energy | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Snell's law | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Double-slit wave interference intensity | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| Photon energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Zeeman energy | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Bose-Einstein occupation number for bosons | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| Planck blackbody spectral radiance (dimensionless | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Fourier's law of heat conduction | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Stefan-Boltzmann law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Ideal gas law | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
 
 ## Wall-clock Timing
 
