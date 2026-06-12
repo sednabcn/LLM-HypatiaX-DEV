@@ -198,6 +198,31 @@ _STEP_CATALOGUE: list[dict] = [
         deps=["env_check"],
     ),
 
+    # ── 2a: exp1_ablation ─────────────────────────────────────────────────────
+    dict(
+        name="exp1_ablation",
+        description="Core-15 LLM ablation: PySR-only vs HypatiaX (Tab 5, §10.6)",
+        scripts=[
+            ("EXPERIMENTS_DIR", "exp1_ablation.py"),
+        ],
+        cwd_vars=["EXPERIMENTS_DIR"],
+        outputs=[
+            # Output directory: ${RESULTS_DIR}/ablation/exp1_ablation/
+            # (matches ci_experiment.yml RESULT_SUBDIR = ablation/exp1_ablation)
+            "ablation/exp1_ablation/exp1_ablation_results.json",
+            "ablation/exp1_ablation/exp1_ablation_table.tex",
+            "ablation/exp1_ablation/exp1_rf01_mannwhitney.json",
+            "ablation/exp1_ablation/exp1_rf01_significant.tex",
+            "ablation/exp1_ablation/exp1_rf01_subdomain.tex",
+            "ablation/exp1_ablation/exp1_instability_stats.json",
+            "ablation/exp1_ablation/instability_extrapolation_v2.csv",
+            "ablation/exp1_ablation/provenance_map_exp1.json",
+            "ablation/exp1_ablation/exp1_ablation_run.log",
+        ],
+        inputs=[],
+        deps=["env_check", "exp1b"],  # follows exp1b in _STEP_ORDER; independent results dir
+    ),
+
     # ── 3: exp1_pca ───────────────────────────────────────────────────────────
     dict(
         name="exp1_pca",
@@ -780,7 +805,7 @@ _STEP_CATALOGUE: list[dict] = [
 
 # Declared step order from run_all.sh _STEP_ORDER variable
 _DECLARED_ORDER = [
-    "env_check", "exp1", "exp1b", "exp1_pca", "exp1b_pca", "extrap", "hybrid_all_domains",
+    "env_check", "exp1", "exp1b", "exp1_ablation", "exp1_pca", "exp1b_pca", "extrap", "hybrid_all_domains",
     "instability", "exp2_feynman", "exp2_feynman_pca_4060", "exp2_feynman_extrap",
     "exp2", "exp3", "exp3b",
     "suppA", "suppB", "suppB_sc", "tables", "figures", "validate",
