@@ -37,16 +37,16 @@
 #    - On a workflow_run trigger the resolved experiment_id is echoed in the job
 #      summary so the trace can be filtered to just that step.
 #
-#  Full 35-step pipeline (run_all.sh _STEP_ORDER):
-#    Phase 1 – Core experiments (steps 00–16):
-#      env_check, exp1, exp1b, exp1_pca, exp1b_pca, extrap, hybrid_all_domains, instability,
-#      exp2_feynman, exp2_feynman_pca_4060, exp2_feynman_extrap, exp2, exp3, exp3b,
+#  Full 36-step pipeline (run_all.sh _STEP_ORDER):
+#    Phase 1 – Core experiments (steps 00–17):
+#      env_check, exp1, exp1b, exp1_ablation, exp1_pca, exp1b_pca, extrap, hybrid_all_domains,
+#      instability, exp2_feynman, exp2_feynman_pca_4060, exp2_feynman_extrap, exp2, exp3, exp3b,
 #      suppA, suppB, suppB_sc
 #    Note: exp2_feynman_pca_comparison_table and exp3_symbolic_equivalence are
 #      NOT registered steps — they run as inline shell after their parent steps.
-#    Phase 2 – Outputs (steps 16–18):
+#    Phase 2 – Outputs (steps 18–20):
 #      tables, figures, validate
-#    Phase 3 – Qualification & paper audit (steps 19–26):
+#    Phase 3 – Qualification & paper audit (steps 21–31):
 #      qualify        scripts/patches/verify_results.py + run_all_checkpoint.py --only qualify
 #      audit_paper    run_all_checkpoint.py --only audit-paper → logs/paper_audit_findings.json
 #      audit_setup    inline bash — copies .tex files into notebooks/
@@ -57,7 +57,7 @@
 #      audit_nb05     notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb
 #      audit_nb06_fixc3_disclosure  disclose Feynman random-80/20 vs DeFi PCA-40/60 split mismatch
 #      audit_nb06_fixc3_rerun       rerun Feynman benchmark with PCA 40/60 split (FIX-C3)
-#    Phase 4 – CI gate steps for ci_paper_audit.yml (steps 31–35):
+#    Phase 4 – CI gate steps for ci_paper_audit.yml (steps 32–36):
 #      audit_guard          evaluate workflow_run trigger (slot=12, run_full, success)
 #      audit_print_verify   print summary of logs/verify_report.json
 #      audit_print_findings print summary of logs/paper_audit_findings.json
@@ -67,13 +67,24 @@
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STATUS (updated 2026-06-06):
+#  STATUS (updated 2026-06-12):
 #
-#  RESOLVED (run 27062156233):
+#  RESOLVED (run_all.sh sync):
+#    • exp1_ablation step added to _STEP_ORDER (now 36 steps).
+#      ci_runner.yml already carries exp1_ablation in its experiment options
+#      and worker branch — no runner changes required.
+#    • figures step (STEP 12) expanded to Groups A/B/C:
+#      Group A — per-experiment figures via generate_figures.py --experiment <id>
+#      Group B — suppB/suppB_sc sweep figures copied from canonical subdirs
+#      Group C — hand-crafted main-paper figures copied from ${REPO_ROOT}/Figures/
+#      This resolves the root cause of suppB/instability figure files being absent
+#      from ${RESULTS_DIR}/figures/ (FIX FIGURES-A/B/C).
+#
+#  PREVIOUSLY RESOLVED (run 27062156233):
 #    • step_order ERROR fixed: exp2_feynman_pca_comparison_table and
 #      exp3_symbolic_equivalence removed from run_all.sh _STEP_ORDER and
 #      inlined as plain shell after their parent steps (exp2_feynman_pca_4060
-#      and exp3b). _STEP_ORDER now matches tracer _DECLARED_ORDER at 35 steps.
+#      and exp3b). _STEP_ORDER now matches tracer _DECLARED_ORDER at 36 steps.
 #    • validate_analysis_input.py: experiment_summary_dict extractor added so
 #      exp2_pca_4060_summary.json is recognised (returns [] records) instead
 #      of raising "no extractor matched".
@@ -199,7 +210,7 @@ jobs:
   trace:
     name: "Static pipeline trace"
     runs-on: ubuntu-latest
-    timeout-minutes: 15   # the tracer runs in < 30 s against 35 registered steps; 15 min is generous
+    timeout-minutes: 15   # the tracer runs in < 30 s against 36 registered steps; 15 min is generous
 
     steps:
       # ── 0. Checkout ──────────────────────────────────────────────────────────
