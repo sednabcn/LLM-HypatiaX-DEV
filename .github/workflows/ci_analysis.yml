@@ -835,6 +835,26 @@ jobs:
       # Non-zero exit here fails the workflow, which can block PR merges via
       # branch protection rules.  This step runs AFTER the commit so the
       # report is always available even when the run is aborted.
+      #
+      # SOFT-CONDITION CONTRACT (WARN_ / INFO_ prefixes):
+      #   Conditions prefixed with WARN_ or INFO_ are treated as soft warnings —
+      #   they are logged but do NOT cause a non-zero exit.  Hard conditions
+      #   (any other prefix) fail the workflow.
+      #
+      #   Example — TOO_FEW_MW_PAIRS as a warning instead of a hard fatal:
+      #   In run_analysis.py, use the WARN_ prefix so the test is skipped
+      #   gracefully rather than blocking the pipeline:
+      #
+      #     if paired_far_r2_count < 3:
+      #         fatal_conditions.append(
+      #             f"WARN_TOO_FEW_MW_PAIRS: only {paired_far_r2_count} finite "
+      #             f"paired far-R² values (need ≥ 3 for Mann-Whitney test); "
+      #             f"test skipped."
+      #         )
+      #     # NOT: fatal_conditions.append("TOO_FEW_MW_PAIRS: ...")
+      #
+      #   Any condition string that does NOT start with WARN_ or INFO_ is
+      #   treated as a hard fatal and will exit 1 here.
       # -----------------------------------------------------------------------
 
       - name: Abort on fatal conditions

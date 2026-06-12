@@ -607,17 +607,26 @@ jobs:
 
           echo "Dispatched ci_postprocess.yml (experiment=${EXP}); waiting for run to appear..."
           RUN_ID=""
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do   # 300 seconds total (60 × 5s) — increased from 150s (FIX: Options 1+2)
+            echo "Attempt ${i}/60: querying for ci_postprocess.yml runs dispatched after ${BEFORE}..."
             RUN_ID=$(gh run list --repo "${{ github.repository }}" \
               --workflow ci_postprocess.yml \
               --json databaseId,createdAt,event \
               --jq "[.[] | select(.createdAt >= \"${BEFORE}\" and .event == \"workflow_dispatch\")] | sort_by(.createdAt) | last | .databaseId")
-            [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]] && break
+            if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
+              echo "✓ Found RUN_ID: ${RUN_ID}"
+              break
+            fi
+            echo "  No run found yet, retrying in 5s..."
             sleep 5
           done
 
           if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
-            echo "::error::Could not find dispatched ci_postprocess.yml run for ${EXP} (timed out after 150s)."
+            echo "::error::Could not find dispatched ci_postprocess.yml run for ${EXP} (timed out after 300s)."
+            echo "::error::Possible causes: (1) GitHub Actions queue delay — try increasing the retry loop further;"
+            echo "::error::  (2) actions:write permission not granted to GITHUB_TOKEN — verify repo/org settings;"
+            echo "::error::  (3) ci_postprocess.yml workflow is disabled or does not exist on ref ${{ github.ref_name }};"
+            echo "::error::  (4) GH_TOKEN secret lacks sufficient scopes (needs workflow scope for cross-workflow dispatch)."
             exit 1
           fi
 
