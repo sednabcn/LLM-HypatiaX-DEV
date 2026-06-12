@@ -71,6 +71,8 @@ METADATA_EXCLUSIONS=(
   'symbolic_equivalence*.json'
   'symbolic_equivalence*.csv'
   'symbolic_equivalence*.txt'
+  'benchmark_results*.json'   # benchmark_results.json + _extrap + _legacy + _shard* variants
+  '*_checkpoint_*.json'       # domain checkpoint files (pca4060_checkpoint_*, feynman_exp2_checkpoint_*, etc.)
 )
 
 # ── Helper: write a key=value to the correct GitHub output channel ────────────
@@ -218,15 +220,15 @@ FIND_ARGS=(
   -type f
   -name '*.json'
   '!' -name '_*.json'
-  '!' -name 'benchmark_results.json'
 )
+# Add every METADATA_EXCLUSIONS pattern as a find ! -name predicate.
+# The outer find is already restricted to *.json, so non-json patterns
+# (*.csv, *.md, *.txt) are harmless to include — they simply never match.
+# Previously a case filter skipped non-json patterns, which accidentally
+# omitted 'benchmark_results*.json' and '*_checkpoint_*.json' from the
+# exclusion list when they were added as plain *.json patterns above.
 for pat in "${METADATA_EXCLUSIONS[@]}"; do
-  # only add JSON-shaped exclusions to the JSON find (csv/txt patterns are
-  # for the merged-mode find above and won't match *.json anyway, but we
-  # skip them explicitly to keep the output clean)
-  case "$pat" in
-    *.json|'*'*.json) FIND_ARGS+=( '!' '-name' "$pat" ) ;;
-  esac
+  FIND_ARGS+=( '!' '-name' "$pat" )
 done
 
 # Collect non-meta JSON shard files
@@ -237,7 +239,7 @@ mapfile -t SHARD_FILES < <(
 if [[ ${#SHARD_FILES[@]} -eq 0 ]]; then
   echo "::error::No shard JSON files found in ${RESULT_DIR}."
   echo "  Searched:  ${RESULT_DIR}/**/*.json (maxdepth 2)"
-  echo "  Excluded:  _*.json  benchmark_results.json  ${METADATA_EXCLUSIONS[*]}"
+  echo "  Excluded:  _*.json  ${METADATA_EXCLUSIONS[*]}"
   exit 1
 fi
 
