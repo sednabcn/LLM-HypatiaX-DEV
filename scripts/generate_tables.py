@@ -1679,6 +1679,7 @@ def main() -> None:
         "exp1b":               [_main_paper_section()],
         "exp1_pca":            [_main_paper_section()],
         "exp1b_pca":           [_main_paper_section()],
+        "exp1_ablation":       [_main_paper_section()],
         "exp2_feynman":        [_main_paper_section()],
         "exp2_feynman_extrap": [_main_paper_section()],
         # exp2_feynman_pca: --results-dir is set to the repo root in ci_postprocess.yml
