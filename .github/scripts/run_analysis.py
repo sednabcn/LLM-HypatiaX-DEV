@@ -1549,15 +1549,39 @@ def analyse(records: list[dict], experiment: str,
     # a partially-mapped 4-method schema (multi_method) where 0% on canonical
     # keys is expected rather than indicative of a bug.
     if mode == "standard" or mode == "ood":
-        all_zero_success = all(
-            method_summary.get(m, {}).get("success_rate_flag", 0.0) == 0.0
-            for m in METHODS
+        # Only fire TOTAL_FAILURE when at least one method actually has records.
+        # If n_records == 0 for *all* methods (e.g. wrong method-key schema),
+        # all() over an empty generator returns True (vacuous truth), which
+        # incorrectly fires the fatal even though there is no real 0% success —
+        # just a schema mismatch.  Guard with `any_method_has_records` so the
+        # fatal only fires when methods genuinely returned results and ALL of
+        # them scored 0%.
+        methods_with_records = [
+            m for m in METHODS
             if method_summary.get(m, {}).get("n_records", 0) > 0
+        ]
+        any_method_has_records = len(methods_with_records) > 0
+        all_zero_success = any_method_has_records and all(
+            method_summary.get(m, {}).get("success_rate_flag", 0.0) == 0.0
+            for m in methods_with_records
         )
         if all_zero_success and n_standard > 0:
             fatal.append(
                 "TOTAL_FAILURE: all methods report 0% success across all standard equations. "
                 "Check experiment scripts for systematic errors."
+            )
+        elif not any_method_has_records and n_standard > 0:
+            # Records were loaded but none matched the canonical method keys
+            # (pure_llm / neural_network / hybrid).  This is a schema-mismatch,
+            # not a genuine 0% result — warn rather than hard-failing.
+            fatal.append(
+                "WARN_NO_METHOD_RECORDS: records were loaded but none contained results "
+                "under canonical keys (pure_llm, neural_network, hybrid). "
+                "This usually means the JSON uses non-standard method names that were "
+                "not translated by merge_shards.py, or the experiment should be mapped "
+                "to 'multi_method' mode in EXPERIMENT_MODE. "
+                "Verify _normalise_protocol_record() output or add an EXPERIMENT_MODE entry. "
+                "Workflow continues."
             )
 
     # HYBRID_NEVER_BEATS_NN — mode-dependent.
@@ -1935,8 +1959,79 @@ def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
     # a "results" dict with method sub-dicts (r2 / success).
     # This is the shape produced by the single NSHARDS=1 worker for exp1 and
     # assembled in-memory by ci_analysis.yml for other single-shard experiments.
-    from merge_shards import _is_protocol_file, _normalise_protocol_record  # type: ignore
-    _ABLATION_EXPERIMENTS = {"exp1_ablation"}
+    #
+    # Import merge_shards helpers with a graceful fallback so this script does
+    # not crash when merge_shards.py is absent (e.g. standalone invocations or
+    # environments that only deploy run_analysis.py).  The fallback
+    # _is_protocol_file / _normalise_protocol_record reproduce the minimal
+    # behaviour needed: Shape P detection and canonical-key remapping.
+    try:
+        from merge_shards import _is_protocol_file, _normalise_protocol_record  # type: ignore
+    except ImportError:
+        print(
+            "WARNING: merge_shards.py not found on sys.path — "
+            "using built-in Shape-P detection and normalisation fallback. "
+            "Protocol wrapper files (Shape P) will be detected by the presence "
+            "of a non-empty 'tests' list; method keys will be remapped via the "
+            "inline METHOD_KEY_MAP.",
+            file=sys.stderr,
+        )
+
+        # Minimal inline reimplementation ----------------------------------------
+        # Maps the long-form method names used in protocol_core_*.json to the
+        # canonical short keys expected by run_analysis.py.  Mirrors the mapping
+        # in merge_shards.py — keep in sync if merge_shards.py is updated.
+        _METHOD_KEY_MAP: dict[str, str] = {
+            # Standard experiments (exp1, exp1b, suppA, suppB, suppB_sc)
+            "PureLLM Baseline":             "pure_llm",
+            "PureLLM Baseline (core)":      "pure_llm",
+            "ImprovedNN":                   "neural_network",
+            "ImprovedNN (core)":            "neural_network",
+            "EnhancedHybridSystemDeFi":     "hybrid",
+            "EnhancedHybridSystemDeFi (core)": "hybrid",
+            # Also accept already-canonical keys (idempotent)
+            "pure_llm":                     "pure_llm",
+            "neural_network":               "neural_network",
+            "hybrid":                       "hybrid",
+        }
+
+        def _is_protocol_file(data: dict) -> bool:  # type: ignore[misc]
+            """Return True if data looks like a protocol_core_*.json wrapper."""
+            tests = data.get("tests")
+            if not isinstance(tests, list) or not tests:
+                return False
+            first = tests[0] if tests else {}
+            return isinstance(first, dict) and isinstance(first.get("results"), dict)
+
+        def _normalise_protocol_record(test: dict) -> dict:  # type: ignore[misc]
+            """
+            Convert a Shape-P test entry to the standard run_analysis record shape:
+              {"equation_id": ..., "difficulty": ..., "formula_type": ...,
+               "extrapolation_intractable": ...,
+               "results": {"pure_llm": {...}, "neural_network": {...}, "hybrid": {...}}}
+            """
+            raw_results: dict = test.get("results", {}) or {}
+            normalised_results: dict = {}
+            for raw_key, data in raw_results.items():
+                canonical = _METHOD_KEY_MAP.get(raw_key)
+                if canonical:
+                    normalised_results[canonical] = data
+                # Unknown keys are silently dropped (multi_method 4th key, etc.)
+            return {
+                "equation_id":               test.get("description", test.get("equation_id", "?")),
+                "difficulty":                test.get("difficulty"),
+                "formula_type":              test.get("formula_type"),
+                "extrapolation_intractable": bool(test.get("extrapolation_intractable", False)),
+                "results":                   normalised_results,
+            }
+        # -------------------------------------------------------------------------
+
+    # Keep in sync with EXPERIMENT_MODE entries that map to "ablation".
+    # Ablation records use the paired hypatia/pysr_only schema and must NOT
+    # be normalised through _normalise_protocol_record().
+    _ABLATION_EXPERIMENTS = {
+        k for k, v in EXPERIMENT_MODE.items() if v == "ablation"
+    } | {"exp1_ablation"}   # always include the canonical name
     is_ablation = experiment in _ABLATION_EXPERIMENTS
 
     if isinstance(raw, dict) and _is_protocol_file(raw):
