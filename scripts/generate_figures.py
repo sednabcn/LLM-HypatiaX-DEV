@@ -157,6 +157,19 @@ def _rpath(filename):
 # ── Data file paths (all resolved relative to --results-dir) ─────────────────
 # Primary cosmetic / RF02 / RF09 source (renamed from v3c2_fixed_4_content)
 DATA_MAIN          = _rpath("exp1_ablation_results.json")
+# exp1_ablation: each of the 4 shard workers writes its own
+# exp1_ablation_results.json containing only its shard's equations, and only
+# one (the last-committed) survives in the repo — so this file alone is not a
+# reliable full-dataset source for a 4-shard run.  merge_shards.py instead
+# consolidates all shard checkpoints into _merged.json (same dict-of-dicts
+# schema: {"Equation Name": {"domain":..., "pysr_only":{...}, "hypatia":{...}}}),
+# which _normalise_cases() already supports.  Fall back to _merged.json when
+# exp1_ablation_results.json is absent.
+if _EXPERIMENT == "exp1_ablation" and not os.path.isfile(DATA_MAIN):
+    _merged_fallback = _rpath("_merged.json")
+    if os.path.isfile(_merged_fallback):
+        print(f"  [INFO] {DATA_MAIN} not found — falling back to {_merged_fallback}")
+        DATA_MAIN = _merged_fallback
 # exp2_feynman_extrap-specific required files
 DATA_ABLATION_PAIRED  = _rpath("ablation_paired.json")
 DATA_EXTRAP_BENCHMARK = _rpath("benchmark_results_extrap.json")
@@ -335,6 +348,14 @@ def _normalise_cases(raw):
     return cases
 
 
+def safe_float(v):
+    if v is None: return float("nan")
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else float("nan")
+    except: return float("nan")
+
+
 def _infer_difficulty(pysr, hyp):
     """Heuristically assign difficulty from far-extrap R² performance."""
     far = safe_float(hyp.get("extrap_r2_far", pysr.get("extrap_r2_far", float("nan"))))
@@ -370,13 +391,6 @@ DIFF_ORDER = ["easy", "medium", "hard"]
 DIFF_COLORS = {"easy": "#059669", "medium": "#D97706", "hard": "#DC2626"}
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
-
-def safe_float(v):
-    if v is None: return float("nan")
-    try:
-        f = float(v)
-        return f if math.isfinite(f) else float("nan")
-    except: return float("nan")
 
 def collect(field, method="hybrid"):
     return [safe_float(c["results"].get(method, {}).get(field)) for c in CASES]
@@ -647,10 +661,11 @@ if RAW is not None:
         vals_c = np.clip(vals, -3, 1)
         ax.hist(vals_c, bins=25, color=color, alpha=0.55, label=f"{label} (n={len(vals)})",
                 edgecolor="white", lw=0.4, density=True)
-        from scipy.stats import gaussian_kde
-        kde = gaussian_kde(vals_c, bw_method=0.3)
-        xs = np.linspace(-3, 1.05, 300)
-        ax.plot(xs, kde(xs), color=color, lw=2)
+        if len(vals_c) >= 2 and np.ptp(vals_c) > 0:
+            from scipy.stats import gaussian_kde
+            kde = gaussian_kde(vals_c, bw_method=0.3)
+            xs = np.linspace(-3, 1.05, 300)
+            ax.plot(xs, kde(xs), color=color, lw=2)
     ax.axvline(0.99, color="black", lw=1.2, ls=":", alpha=0.7, label="Success threshold")
     ax.set_xlabel("Stability Score (extrapolation $R^2$, clipped $[-3,1]$)", fontsize=10)
     ax.set_ylabel("Density", fontsize=10)
@@ -1163,32 +1178,36 @@ if RAW is not None:
 
 
     # ── fig_instability_surface ───────────────────────────────────────────────────
-    fig = plt.figure(figsize=(10, 6))
-    ax  = fig.add_subplot(111, projection="3d")
-    # Create a grid surface
-    cx = np.linspace(complexity.min(), complexity.max(), 20)
-    dy = np.linspace(0, 2, 20)
-    CX, DY = np.meshgrid(cx, dy)
-    # Interpolate using nearest-neighbor approach
-    from scipy.interpolate import griddata
-    ZZ = griddata(
-        np.column_stack([complexity, diff_num]),
-        instability,
-        (CX, DY),
-        method="linear",
-        fill_value=0,
-    )
-    surf = ax.plot_surface(CX, DY, ZZ, cmap="RdYlGn_r", alpha=0.7, edgecolor="none", vmin=0, vmax=1)
-    ax.scatter(complexity, diff_num, instability, color=C_HYB, s=25, alpha=0.9, zorder=5)
-    ax.set_xlabel("Complexity"); ax.set_ylabel("Difficulty")
-    ax.set_zlabel("Instability"); ax.set_yticks([0,1,2])
-    ax.set_yticklabels(["Easy","Med","Hard"])
-    ax.set_title("Instability Surface (HypatiaX)", fontsize=11, fontweight="bold")
-    fig.colorbar(surf, ax=ax, fraction=0.025, pad=0.1)
-    fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_surface.png"), dpi=300)
-    plt.close(fig)
-    print("✓ fig_instability_surface.png")
+    if len(complexity) >= 4:
+        fig = plt.figure(figsize=(10, 6))
+        ax  = fig.add_subplot(111, projection="3d")
+        # Create a grid surface
+        cx = np.linspace(complexity.min(), complexity.max(), 20)
+        dy = np.linspace(0, 2, 20)
+        CX, DY = np.meshgrid(cx, dy)
+        # Interpolate using nearest-neighbor approach
+        from scipy.interpolate import griddata
+        ZZ = griddata(
+            np.column_stack([complexity, diff_num]),
+            instability,
+            (CX, DY),
+            method="linear",
+            fill_value=0,
+        )
+        surf = ax.plot_surface(CX, DY, ZZ, cmap="RdYlGn_r", alpha=0.7, edgecolor="none", vmin=0, vmax=1)
+        ax.scatter(complexity, diff_num, instability, color=C_HYB, s=25, alpha=0.9, zorder=5)
+        ax.set_xlabel("Complexity"); ax.set_ylabel("Difficulty")
+        ax.set_zlabel("Instability"); ax.set_yticks([0,1,2])
+        ax.set_yticklabels(["Easy","Med","Hard"])
+        ax.set_title("Instability Surface (HypatiaX)", fontsize=11, fontweight="bold")
+        fig.colorbar(surf, ax=ax, fraction=0.025, pad=0.1)
+        fig.tight_layout()
+        fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_surface.png"), dpi=300)
+        plt.close(fig)
+        print("✓ fig_instability_surface.png")
+    else:
+        print(f"  [SKIP] fig_instability_surface.png — need >=4 points for surface "
+              f"interpolation, got {len(complexity)}.")
 
 
     # ── fig_instability_success_vs_instability ─────────────────────────────────────
@@ -1267,12 +1286,16 @@ if RAW is not None:
                s=60, alpha=0.75, edgecolors="white", lw=0.4, zorder=3)
     # Fit a simple regression line
     valid = ~np.isnan(instability)
-    m, b, r, p, se = scipy_stats.linregress(complexity[valid], instability[valid])
-    xs = np.linspace(complexity.min(), complexity.max(), 100)
-    ax.plot(xs, m*xs+b, color="black", lw=1.5, ls="--", alpha=0.7,
-            label=f"Trend: $r={r:.2f}$, $p={p:.3f}$")
-    patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
-    patches.append(mpatches.Patch(color="none", label=f"r={r:.2f}, p={p:.3f}"))
+    _x, _y = complexity[valid], instability[valid]
+    if len(_x) >= 2 and np.ptp(_x) > 0:
+        m, b, r, p, se = scipy_stats.linregress(_x, _y)
+        xs = np.linspace(complexity.min(), complexity.max(), 100)
+        ax.plot(xs, m*xs+b, color="black", lw=1.5, ls="--", alpha=0.7,
+                label=f"Trend: $r={r:.2f}$, $p={p:.3f}$")
+        patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
+        patches.append(mpatches.Patch(color="none", label=f"r={r:.2f}, p={p:.3f}"))
+    else:
+        patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
     ax.legend(handles=patches, fontsize=9)
     ax.set_xlabel("Complexity Score", fontsize=11)
     ax.set_ylabel("Instability", fontsize=11)
