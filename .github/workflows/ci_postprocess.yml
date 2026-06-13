@@ -1354,7 +1354,11 @@ jobs:
           VARIANCE_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 2 \
             -name "hypatiax_defi_variance_results.json" \
             -o -name "*instability*.json" \
-            -o -name "*variance*.json" 2>/dev/null | head -1 || true)
+            -o -name "*variance*.json" \
+            -o -name "_analysis.json" \
+            -o -name "instability_analysis.csv" \
+            -o -name "*instability*.csv" \
+            2>/dev/null | head -1 || true)
           if [[ -z "$VARIANCE_JSON" ]]; then
             echo "::error::No instability/variance JSON found in ${OUT_BASE}/${SUB}"
             echo "  Run ci_runner.yml for instability first."
