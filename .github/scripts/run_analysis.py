@@ -137,6 +137,19 @@ EXPERIMENT_MODE: dict[str, str] = {
     "instability":        "instability",
     "exp2":               "multi_method",
     "hybrid_all_domains": "multi_method",
+    # exp2_feynman_pca: protocol_core_noiseless_pca_*.json uses the IDENTICAL
+    # 6 long-form method keys as exp2 ("PureLLM Baseline (core)", "ImprovedNN
+    # (core)", "EnhancedHybridSystemDeFi (core)", "HybridSystemLLMNN
+    # all-domains (core)", "SymbolicEngineWithLLM (tools)", "HybridDiscoverySystem
+    # v50_2 (tools)") — none of which map to pure_llm/neural_network/hybrid via
+    # _normalise_protocol_record(). Without an EXPERIMENT_MODE entry this defaulted
+    # to "standard", where method_summary[m]["n_records"]==0 for all m in METHODS
+    # makes `all(... for m in METHODS if n_records>0)` vacuously True, firing the
+    # hard TOTAL_FAILURE fatal and aborting the job — even though n_total=30 records
+    # were loaded correctly. "multi_method" demotes this expected 0-on-canonical-keys
+    # situation to the existing soft WARN_MULTI_METHOD, exactly as for exp2.
+    "exp2_feynman_pca":   "multi_method",
+    "exp2_feyman_pca":    "multi_method",  # typo alias (missing 'n'), see RESULT_SUBDIR
     # exp1_ablation / exp2_feynman: paired pysr_only vs hypatia comparison using
     # extrap_r2_far. Uses dedicated helpers; standard method schema
     # (pure_llm/neural_network/hybrid) is absent — method-comparison sections suppressed.
