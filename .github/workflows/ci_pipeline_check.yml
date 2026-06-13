@@ -283,7 +283,13 @@ jobs:
                                     "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "suppA":             ["consolidated_hybrid_*.json", "hybrid_system*.json",
                                     "extrapolation_73cases*.json", "*73cases*.json"],
-              "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              # suppB: the canonical dir has one top-level file plus a noise_sweep_saved/
+              # subdir holding all per-sigma shards (noise_sweep_sig0000_checkpoint.json etc.).
+              # Include sig-format checkpoint filenames so presence detection works even
+              # when only the saved/ subdir has committed data.
+              "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv",
+                                    "noise_sweep_saved/noise_sweep_*.json",
+                                    "noise_sweep_saved/noise_sweep_sig*.json"],
               "suppB_sc":          ["sample_complexity_*.json", "sample_complexity_*.csv"],
               "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
               "instability":       ["instability_analysis.csv", "instability_extrapolation.csv",
@@ -465,6 +471,10 @@ jobs:
               # exp1 committed a single hypatiax_defi_benchmark_v3_results.json
               # (not per-task files). Use filename-stem sentinel — same pattern as exp1b.
               "exp1":              ["hypatiax_defi_benchmark_v3_results"],
+              # exp1_pca / exp1b_pca committed hypatiax_defi_benchmark_pca_results.json
+              # (PCA split variant — filename uses "_pca_results" not "_v3_results").
+              "exp1_pca":          ["hypatiax_defi_benchmark_pca_results"],
+              "exp1b_pca":         ["hypatiax_defi_benchmark_pca_results"],
               # exp1b task IDs in the runner are [f"portfolio_seed{s}" for s in SEEDS].
               # The committed filenames are comparison_FIXED_*_shard{N}_run{ID}.json —
               # they contain a timestamp+shard suffix, not the seed ID.  The file-scan
@@ -486,11 +496,13 @@ jobs:
               # suppA committed extrapolation_73cases_enhanced.json (all domains combined).
               "suppA":             ["73cases_enhanced"],
               # suppB: result files are noise_sweep_*.json / noise_sweep_*.csv.
-              # The filenames encode noise level as a float string (e.g. noise_sweep_0.0.csv).
-              # Use the noise-level float strings as sentinels — these are substrings of
-              # both the result filenames and the checkpoint filenames.
-              # Format: zero-remove trailing zeros to match "0.0", "0.5", "1.0", "5.0", "10.0".
-              "suppB":             [str(float(l)) for l in NOISE_LEVELS],
+              # The filenames encode noise level as a 4-digit integer sigma string
+              # (e.g. noise_sweep_sig0000_checkpoint.json for σ=0.0,
+              #        noise_sweep_sig0050 for σ=0.5, sig0100 for σ=1.0,
+              #        sig0500 for σ=5.0, sig1000 for σ=10.0).
+              # Use these sig-format substrings as sentinels — they match the actual
+              # committed checkpoint filenames regardless of which subdir they are in.
+              "suppB":             ["sig0000", "sig0050", "sig0100", "sig0500", "sig1000"],
               # suppB_sc done-set: result files are sample_complexity_n{N}.json / *.csv.
               # Use the sample-count strings as sentinels.
               "suppB_sc":          list(SUPPB_SC_COUNTS),
@@ -517,8 +529,16 @@ jobs:
               """Return set of task IDs whose output file is present in result_dir."""
               import glob as _g
               done = set()
+              # Scan top-level files
               files = [f.name for f in result_dir.glob("*")
                        if f.is_file() and not f.name.startswith("_")]
+              # Also scan one level of subdirectories (catches noise_sweep_saved/ for
+              # suppB, where the runner commits sig-named checkpoint files into a saved/
+              # subdir rather than the canonical top-level dir).
+              for subdir in result_dir.iterdir() if result_dir.exists() else []:
+                  if subdir.is_dir() and not subdir.name.startswith("."):
+                      files += [f.name for f in subdir.glob("*")
+                                if f.is_file() and not f.name.startswith("_")]
               for tid in all_ids:
                   safe = tid.replace("/", "_").replace(".", "_")
                   if any(safe in fname for fname in files):
@@ -713,6 +733,9 @@ jobs:
               "exp1b":             ["comparison_FIXED_*.json", "defi_v3_*.json",
                                     "*portfolio*variance*.json",
                                     "hypatiax_defi_benchmark_v3*results*.json"],
+              # exp1_pca / exp1b_pca use _pca_results filename pattern
+              "exp1_pca":          ["hypatiax_defi_benchmark_pca_results*.json"],
+              "exp1b_pca":         ["hypatiax_defi_benchmark_pca_results*.json"],
               "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
               "exp2_feynman_extrap": ["merged_extrap_*.json", "protocol_core_extrap_*.json",
                                       "ablation_paired.json"],
@@ -725,7 +748,11 @@ jobs:
                                     "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "suppA":             ["consolidated_hybrid_*.json", "hybrid_system*.json",
                                     "extrapolation_73cases*.json", "*73cases*.json"],
-              "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              # suppB: top-level dir has one file; saved/ subdir holds all sigma shards.
+              # Include saved/ glob so qualify dim2 detects presence correctly.
+              "suppB":             ["noise_sweep_*.json", "noise_sweep_*.csv",
+                                    "noise_sweep_saved/noise_sweep_*.json",
+                                    "noise_sweep_saved/noise_sweep_sig*.json"],
               "suppB_sc":          ["sample_complexity_*.json", "sample_complexity_*.csv"],
               "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
               "instability":       ["instability_analysis.csv", "instability_extrapolation.csv",
@@ -1374,6 +1401,14 @@ jobs:
               _cdebug = ""
               if has_compute:
                   raw, _cdebug = compute_metric(data, claim)
+              elif not jkey:
+                  # Empty json_key with no compute field — this claim is misconfigured.
+                  # Report it as MISSING with a clear message so paper_targets.json is fixed.
+                  detail = f"json_key is empty and no compute field set in {metric} — fix paper_targets.json"
+                  findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                                   "paper_value": pv, "actual": None, "detail": detail})
+                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {detail}")
+                  continue
               else:
                   raw = resolve_key(data, jkey)
                   if raw is None and isinstance(data, dict):
