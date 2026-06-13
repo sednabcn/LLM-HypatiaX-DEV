@@ -1,13 +1,18 @@
 
-# HypatiaX Analysis Report — `exp2_feynman_pca`
+# HypatiaX Analysis Report — `exp2_feyman_pca`
 
-Experiment mode: **standard**
+Experiment mode: **multi_method**
 N total: 30 | N standard: 30 | N intractable: 0
 R² success threshold: 0.8
 
-## ⚠️ Fatal Conditions
+> **Multi-method experiment**: a 4th method key (`HybridSystemLLMNN all-domains`) is present in the raw output but is not in `METHODS` and is excluded from comparisons. Verify `merge_shards.py` translates method names correctly.
 
-- **TOTAL_FAILURE: all methods report 0% success across all standard equations. Check experiment scripts for systematic errors.**
+## ✅ No Fatal Conditions
+
+
+## ℹ️ Informational / Warnings
+
+- WARN_MULTI_METHOD: this experiment produces a 4th method key (HybridSystemLLMNN all-domains) not in METHODS. It is excluded from all method-comparison statistics. Confirm merge_shards.py translates method names before analysis.
 
 ## Method Summary (standard equations only)
 
