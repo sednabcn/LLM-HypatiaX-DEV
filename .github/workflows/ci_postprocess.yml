@@ -70,6 +70,8 @@ on:
     paths:
       # exp1 / exp1b / exp1_pca / exp1b_pca
       - "hypatiax/data/results/comparison_results/noise-noiseless/**/*.json"
+      # exp1_ablation
+      - "hypatiax/data/results/ablation/exp1_ablation/**/*.json"
       # exp2_feynman / exp2_feynman_extrap / exp2_feynman_pca / exp2
       - "hypatiax/data/results/comparison_results/feynman-tests/**/*.json"
       # exp3 / exp3b
@@ -99,6 +101,7 @@ on:
           - exp1b
           - exp1_pca
           - exp1b_pca
+          - exp1_ablation
           - exp2_feynman
           - exp2_feynman_extrap
           - exp2_feynman_pca
@@ -216,6 +219,7 @@ jobs:
                 *noise-noiseless/noiseless/*)       echo exp1;        return ;;
                 *noise-noiseless/15_pca/*)          echo exp1b_pca;   return ;;
                 *noise-noiseless/15/*)              echo exp1b;       return ;;
+                *ablation/exp1_ablation/*)          echo exp1_ablation; return ;;
                 *extrapolation/multi_seed/*)        echo exp3b;       return ;;
                 *extrapolation/*)                   echo exp3;        return ;;
                 *comparison_results/extrapolation/*) echo extrap;     return ;;
@@ -425,6 +429,21 @@ jobs:
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
             --source      auto \
             || echo "::warning::exp1b figure generation failed — exp1b — _merged.json may be absent. Run ci_analysis.yml for exp1b first."
+
+      # ── A2b: exp1_ablation ──────────────────────────────────────────────────
+      - name: "Figures: exp1_ablation — Core-15 ablation (PySR-only vs HypatiaX)"
+        if: env.EFFECTIVE_EXPERIMENT == 'exp1_ablation'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_figures.py \
+            --experiment  exp1_ablation \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source      auto \
+            || echo "::warning::exp1_ablation figure generation failed — exp1_ablation — _merged.json may be absent. Run ci_analysis.yml for exp1_ablation first."
 
       # ── A3: exp2_feynman ────────────────────────────────────────────────────
       - name: "Figures: exp2_feynman — Feynman benchmark"
@@ -1008,6 +1027,32 @@ jobs:
           # Produces: noise_robust_comparison.tex, seed_variance_table.tex
           python scripts/generate_tables.py \
             --experiment  exp1b \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
+          if [[ $N_TABS -eq 0 ]]; then
+            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
+            exit 1
+          fi
+          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
+
+      # ── B2b: exp1_ablation — Core-15 ablation (PySR-only vs HypatiaX) ──────
+      - name: "Tables: exp1_ablation — Core-15 ablation"
+        if: env.EFFECTIVE_EXPERIMENT == 'exp1_ablation'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source: _merged.json (merged by ci_analysis before postprocess).
+          # Guard: if _merged.json is absent, ci_analysis must run first.
+          MERGED="${OUT_BASE}/${SUB}/_merged.json"
+          if [[ ! -f "$MERGED" ]]; then
+            echo "::error::${MERGED} not found. Run ci_analysis.yml for exp1_ablation first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  exp1_ablation \
             --results-dir "${OUT_BASE}/${SUB}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
