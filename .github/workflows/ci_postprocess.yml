@@ -339,7 +339,11 @@ jobs:
           snapshot_dir "Figures" "$FIGS" "*.png" /tmp/postprocess_audit/figs_png_before.txt
           snapshot_dir "Tables"  "$TABS" "*.tex" /tmp/postprocess_audit/tabs_before.txt
 
-          N_FIGS=$(wc -l < /tmp/postprocess_audit/figs_before.txt)
+          # Count both .pdf and .png — generate_figures.py writes only .png,
+          # so figs_before.txt (*.pdf) would always be 0 on its own.
+          N_FIGS=$(cat /tmp/postprocess_audit/figs_before.txt \
+                       /tmp/postprocess_audit/figs_png_before.txt \
+                   | sort -u | wc -l)
           N_TABS=$(wc -l < /tmp/postprocess_audit/tabs_before.txt)
           echo "n_existing_figs=${N_FIGS}" >> "$GITHUB_OUTPUT"
           echo "n_existing_tabs=${N_TABS}" >> "$GITHUB_OUTPUT"
@@ -1458,11 +1462,25 @@ jobs:
           TABS="${OUT_BASE}/${SUB}/tables"
 
           diff_dir() {
-            local label="$1" before="$2" dir="$3" ext="$4"
+            local label="$1" before="$2" dir="$3"
+            # Remaining args ($4 onward) are glob patterns — support one or many.
+            shift 3
             local after="/tmp/postprocess_audit/${label}_after.txt"
             # Snapshot the current state (may be identical to before if the
-            # generation step failed and wrote nothing).
-            find "$dir" -maxdepth 1 -type f -name "$ext" 2>/dev/null | sort > "$after" || touch "$after"
+            # generation step failed and wrote nothing).  Build a find expression
+            # that matches all supplied extensions (-name p1 -o -name p2 …).
+            local find_args=()
+            local first=true
+            for pat in "$@"; do
+              if [[ "$first" == true ]]; then
+                find_args+=( -name "$pat" )
+                first=false
+              else
+                find_args+=( -o -name "$pat" )
+              fi
+            done
+            find "$dir" -maxdepth 1 -type f \( "${find_args[@]}" \) \
+              2>/dev/null | sort > "$after" || touch "$after"
             local n_after n_over n_new n_del
             n_after=$(wc -l < "$after")
             n_over=$(comm -12 "$before" "$after" | wc -l)
@@ -1492,10 +1510,17 @@ jobs:
           mkdir -p /tmp/postprocess_audit
           touch \
             /tmp/postprocess_audit/figs_before.txt \
+            /tmp/postprocess_audit/figs_png_before.txt \
             /tmp/postprocess_audit/tabs_before.txt \
             2>/dev/null || true
 
-          eval "$(diff_dir "figs" /tmp/postprocess_audit/figs_before.txt "$FIGS" "*.pdf")"
+          # Figures: merge the pre-run pdf+png snapshots into one baseline so
+          # diff_dir compares against the full set of figure files.
+          sort -u \
+            /tmp/postprocess_audit/figs_before.txt \
+            /tmp/postprocess_audit/figs_png_before.txt \
+            > /tmp/postprocess_audit/figs_before_merged.txt
+          eval "$(diff_dir "figs" /tmp/postprocess_audit/figs_before_merged.txt "$FIGS" "*.pdf" "*.png")"
           eval "$(diff_dir "tabs" /tmp/postprocess_audit/tabs_before.txt "$TABS" "*.tex")"
 
           # ── Verify suppB tables were NOT touched by non-suppB runs ──────────
