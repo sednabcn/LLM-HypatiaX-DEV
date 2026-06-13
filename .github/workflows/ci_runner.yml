@@ -547,11 +547,16 @@ jobs:
           registry = {
               "exp1":              DEFI_TASKS,
               "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
-              # exp1_ablation: single-shot Core-15 LLM ablation (PySR-only vs HypatiaX).
-              # exp1_ablation.py is invoked with no per-task args, so this list is
-              # only used for plan/checkpoint bookkeeping (1 shard). Mirrors exp1's
-              # Core DeFi suite — same as "instability" below.
-              "exp1_ablation":     DEFI_TASKS,
+              # exp1_ablation: Core-15 LLM ablation (PySR-only vs HypatiaX, §10.6).
+              # 5 domain slugs split 2/1/1/1 across 4 shards (block-partition):
+              #   shard 0: chemistry + defi_risk  → 6 equations  (~2.5 h)
+              #   shard 1: biology               → 3 equations  (~1.25 h)
+              #   shard 2: physics               → 3 equations  (~1.25 h)
+              #   shard 3: defi_amm              → 3 equations  (~1.25 h)
+              # exp1_ablation.py reads DOMAIN_FILTER to select its subset.
+              # Slug→equation mapping is defined in _SLUG_TO_EQ_KEYWORDS inside
+              # exp1_ablation.py.
+              "exp1_ablation":     ["chemistry", "defi_risk", "biology", "physics", "defi_amm"],
               # exp2_feynman: shard by feynman domain keys (BenchmarkProtocol, benchmark=feynman)
               "exp2_feynman":       FEYNMAN_DOMAINS,
               # exp2_feynman_extrap: same 11-domain split, generates extrap_r2_far for Mann-Whitney

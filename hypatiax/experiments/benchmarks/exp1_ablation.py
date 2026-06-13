@@ -908,6 +908,108 @@ def run_experiment():
     if _n_run < len(CORE_15):
         print(f"⚠  Smoke-test: running {_n_run}/{len(CORE_15)} equations")
 
+    # ---------------------------------------------------------------------------
+    # Shard partitioning
+    # ---------------------------------------------------------------------------
+    # Primary mechanism: SHARD_INDEX + N_SHARDS environment variables.
+    # The CI sets these for every worker; index-based round-robin guarantees
+    # every equation is covered by exactly one shard, regardless of slug names.
+    #
+    # Legacy / override mechanism: DOMAIN_FILTER (or PENDING_IDS) accepts
+    # a JSON array or space/comma string of slugs.  When the slugs match Core-15
+    # domain or name strings they override the index-based split.
+    #
+    # NOTE on the current CI: the Plan script assigns DEFI_TASKS slugs
+    # (amm, risk_var, liquidity, expected_shortfall, liquidation, risk, lending,
+    # staking, trading, derivatives) to exp1_ablation shards.  These slugs were
+    # copied from exp1 (DeFi benchmark) and do NOT cover the 9 Chemistry/Biology/
+    # Physics equations in Core-15.  Index-based sharding is therefore the
+    # correct default; the slug map below handles the DEFI_TASKS slugs so that
+    # if the Plan is not updated the DeFi equations are still correctly partitioned.
+    #
+    # Environment variables:
+    #   SHARD_INDEX  – 0-based shard number  (default: 0)
+    #   N_SHARDS     – total number of shards (default: 1)
+    #   DOMAIN_FILTER / PENDING_IDS – optional slug override (see above)
+
+    _shard_index = int(os.environ.get("SHARD_INDEX", os.environ.get("SHARD", 0)))
+    _n_shards    = int(os.environ.get("N_SHARDS", 1))
+
+    # Check for a slug-based override first.
+    _domain_filter_raw = (
+        os.environ.get("DOMAIN_FILTER", "").strip()
+        or os.environ.get("PENDING_IDS", "").strip()
+    )
+    _shard_slugs: list[str] = []
+    if _domain_filter_raw:
+        _stripped = _domain_filter_raw.strip()
+        if _stripped.startswith("["):
+            try:
+                import json as _json
+                _shard_slugs = [s.lower() for s in _json.loads(_stripped)]
+            except Exception:
+                _shard_slugs = [s.lower() for s in _stripped.strip("[]").replace(",", " ").split()]
+        else:
+            _shard_slugs = [s.lower().strip(",") for s in _stripped.replace(",", " ").split()]
+        _shard_slugs = [s for s in _shard_slugs if s]
+
+    # Map domain slugs (from Plan script) to Core-15 equation name keywords.
+    # Slugs not in this map fall back to substring matching on domain+name.
+    _SLUG_TO_EQ_KEYWORDS: dict[str, list[str]] = {
+        # ── Canonical slugs (ci_runner.yml registry, current) ─────────────────
+        "chemistry":          ["arrhenius", "henderson-hasselbalch", "rate law"],
+        "biology":            ["allometric scaling", "michaelis-menten", "logistic growth"],
+        "physics":            ["kinetic energy", "gravitational force", "ideal gas law"],
+        "defi_amm":           ["impermanent loss", "price impact", "constant product"],
+        "defi_risk":          ["value at risk", "liquidation price", "portfolio std dev"],
+        # ── Legacy DEFI_TASKS slugs (ci_runner.yml registry, old) ─────────────
+        # Kept for backwards-compatibility in case the Plan script is not yet updated.
+        "amm":                ["impermanent loss", "price impact", "constant product"],
+        "liquidity":          ["impermanent loss", "price impact", "constant product"],
+        "risk_var":           ["value at risk"],
+        "expected_shortfall": ["value at risk"],
+        "liquidation":        ["liquidation price"],
+        "risk":               ["portfolio std dev"],
+        "lending":            [],   # no Core-15 equation
+        "staking":            [],
+        "trading":            [],
+        "derivatives":        [],
+    }
+
+    if _shard_slugs:
+        # Resolve slugs to equation name keywords, then filter _CORE_15_RUN
+        _target_keywords: set[str] = set()
+        _fallback_slugs:  list[str] = []
+        for _slug in _shard_slugs:
+            if _slug in _SLUG_TO_EQ_KEYWORDS:
+                _target_keywords.update(_SLUG_TO_EQ_KEYWORDS[_slug])
+            else:
+                _fallback_slugs.append(_slug)
+
+        def _eq_matches_slugs(eq: dict) -> bool:
+            name_lower   = eq.get("name",   "").lower()
+            domain_lower = eq.get("domain", "").lower()
+            if any(kw == name_lower for kw in _target_keywords):
+                return True
+            haystack = domain_lower + " " + name_lower
+            return any(fs in haystack for fs in _fallback_slugs)
+
+        _CORE_15_RUN = [eq for eq in _CORE_15_RUN if _eq_matches_slugs(eq)]
+        print(f"🔀 Shard filter (slug mode, slugs={_shard_slugs!r}): "
+              f"{len(_CORE_15_RUN)}/{len(CORE_15)} equations selected"
+              + (f" → {[eq['name'] for eq in _CORE_15_RUN]}"
+                 if _CORE_15_RUN else " (none — shard idle)"))
+
+    elif _n_shards > 1:
+        # Index-based round-robin: shard i runs equations i, i+n, i+2n, …
+        _CORE_15_RUN = [
+            eq for j, eq in enumerate(_CORE_15_RUN)
+            if j % _n_shards == _shard_index
+        ]
+        print(f"🔀 Shard filter (index mode, shard {_shard_index}/{_n_shards}): "
+              f"{len(_CORE_15_RUN)}/{len(CORE_15)} equations selected"
+              f" → {[eq['name'] for eq in _CORE_15_RUN]}")
+
     print("=" * 65)
     print("EXPERIMENT 1: LLM ABLATION  (§10.6 Core-15)")
     print(f"Engine      : hybrid_system_v50_2 (v5.1)")
@@ -1614,7 +1716,14 @@ if __name__ == "__main__":
                         help="Run Portfolio Std Dev 5-seed sweep (C4)")
     parser.add_argument("--check",           action="store_true",
                         help="Print submission readiness checklist and exit")
+    parser.add_argument("--task-ids",        default="",
+                        help="Comma- or space-separated shard slug filter "
+                             "(e.g. 'amm risk_var'); overrides DOMAIN_FILTER env var")
     args = parser.parse_args()
+
+    # --task-ids CLI flag takes priority over the environment variable
+    if args.task_ids.strip():
+        os.environ["DOMAIN_FILTER"] = args.task_ids.strip()
 
     if args.fast:
         NITERATIONS       = 300
