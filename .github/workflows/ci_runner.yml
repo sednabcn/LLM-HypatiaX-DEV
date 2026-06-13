@@ -97,7 +97,7 @@ on:
 
       # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards (1-4). exp1b and exp3b default to 4; all other experiments default to 1."
+        description: "Number of parallel worker shards (1-4). exp1b, exp1_ablation, and exp3b default to 4; all other experiments default to 1."
         required: false
         default: "1"
 
@@ -436,7 +436,7 @@ jobs:
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              4,
-              "exp1_ablation":      1,
+              "exp1_ablation":      4,
               "exp2_feynman":        1,
               "exp2_feynman_extrap": 1,
               "exp2":               1,
@@ -451,7 +451,8 @@ jobs:
           }
           N_SHARDS_DEFAULT = EXP_SHARD_TABLE.get(EXP, 1)
           # Most experiments use exactly 1 shard to avoid concurrent-push races
-          # and checkpoint collisions.  exp1b and exp3b use 4 shards (multi-seed runs).
+          # and checkpoint collisions.  exp1b, exp1_ablation, and exp3b use 4 shards
+          # (multi-task runs over DEFI_TASKS / multi-seed runs respectively).
           # Any dispatch input is ignored for single-shard experiments.
           if N_SHARDS_DEFAULT == 1:
               N_SHARDS = 1

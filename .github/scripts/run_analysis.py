@@ -37,14 +37,13 @@ Each experiment ID maps to a mode that controls which fatals fire:
   "standard"     — exp1, exp1b, suppA, suppB, suppB_sc
                    Full analysis; all fatals active.
 
-  "ablation"     — exp2_feynman
+  "ablation"     — exp1_ablation, exp2_feynman
                    Paired pysr_only vs hypatia comparison on extrap_r2_far.
                    Three-tier MW (all-N / excl-train-fail / success-subset),
                    Fisher, Spearman, complexity distributions, threshold sweep,
                    and LOO sensitivity.  Routes to analyse_ablation().
-                   NOTE: exp1_ablation is NOT dispatched by ci_experiment.yml
-                   or ci_schedule_all.yml — it has no worker or result_subdir.
-                   It is kept in EXPERIMENT_MODE for manual standalone use only.
+                   exp1_ablation runs with NSHARDS=4; merged to _merged.json
+                   by ci_analysis.yml before this script is called.
 
   "ood"          — extrap
                    OOD/out-of-distribution run. Hybrid legitimately loses NN.
@@ -143,6 +142,8 @@ EXPERIMENT_MODE: dict[str, str] = {
     # (pure_llm/neural_network/hybrid) is absent — method-comparison sections suppressed.
     # Three-tier MW (all-N / excl-train-fail / success-subset), Fisher, Spearman,
     # complexity distributions, threshold sweep, and LOO all run under this mode.
+    # exp1_ablation runs with NSHARDS=4; shards are merged to _merged.json by
+    # ci_analysis.yml before this script is called (INPUT_MODE=merged).
     "exp1_ablation":          "ablation",
     "exp2_feynman":           "ablation",
     # exp2_feynman_extrap: OOD extrap step — produces ablation_paired.json;
@@ -174,9 +175,9 @@ RESULT_SUBDIR: dict[str, str] = {
     "hybrid_all_domains": "hybrid_llm_nn/all_domains",
     "instability":        "figures",
     "extrap":             "comparison_results/extrapolation",
-    # exp1_ablation: manual-only; no CI worker. Subdir mirrors merge_shards.py EXP_CONFIG.
-    # If promoted to CI, add entries in ci_experiment.yml and ci_analysis.yml too.
-    "exp1_ablation":      "comparison_results/feynman-tests/exp1_ablation",
+    # exp1_ablation: now CI-dispatched with NSHARDS=4; result_subdir mirrors
+    # ci_runner.yml plan meta step and ci_analysis.yml MAPPING exactly.
+    "exp1_ablation":      "ablation/exp1_ablation",
 }
 
 

@@ -24,6 +24,7 @@
 #      Fallback   — run merge_shards.py on committed shard/CSV files → INPUT_MODE=merged
 #                   instability: CSV→_merged.json via _merge_instability_csvs()
 #                   exp1b/exp3b: JSON shards → _merged.json via standard path
+#                   exp1_ablation: JSON shards → _merged.json via standard path (NSHARDS=4)
 #    All others (REQUIRE_MERGE=false):
 #      DIRECT     — exactly 1 shard file → INPUT_MODE=direct
 #      SHARDS     — N>1 shard files      → INPUT_MODE=shards + manifest
@@ -124,14 +125,14 @@ try:
     print('true' if '$EXPERIMENT' in MERGE_REQUIRED_EXPERIMENTS else 'false')
 except Exception as e:
     # Fallback: known merge experiments hard-coded as a safety net
-    print('true' if '$EXPERIMENT' in ('exp1b', 'exp3b', 'instability') else 'false',
+    print('true' if '$EXPERIMENT' in ('exp1b', 'exp1_ablation', 'exp3b', 'instability') else 'false',
           file=sys.stdout)
     print(f'::warning::Could not import MERGE_REQUIRED_EXPERIMENTS: {e}', file=sys.stderr)
 ")
 echo "REQUIRE_MERGE=$REQUIRE_MERGE"
 
 # ==============================================================================
-#  MERGED MODE (exp1b / exp3b only)
+#  MERGED MODE (exp1b / exp1_ablation / exp3b / instability)
 # ==============================================================================
 
 if [[ "$REQUIRE_MERGE" == "true" ]]; then
