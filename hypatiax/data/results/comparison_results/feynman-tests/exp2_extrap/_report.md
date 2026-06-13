@@ -1,76 +1,350 @@
 
-# HypatiaX Analysis Report — `exp2_feyman_extrap`
+# HypatiaX Analysis Report — `exp2_feynman_extrap` (RF09 Feynman n=30)
 
-Experiment mode: **standard**
-N total: 120 | N standard: 120 | N intractable: 0
-R² success threshold: 0.8
+Experiment mode: **ablation** | N equations: 120
+Tier-1 (all-N) pairs: 0 | Tier-2 (excl-train-fail) pairs: 0 | Tier-3 (extrap R²≥0.99) pairs: 0 | Skipped: 120
 
 ## ✅ No Fatal Conditions
 
 
-## Method Summary (standard equations only)
+## ℹ️ Informational / Warnings
 
-| Method | N | Success% (flag) | R²≥0.80% | Median test R² | Mean test R² |
-|--------|---|-----------------|----------|----------------|--------------|
-| Pure LLM | 120 | 100.0% | 100.0% | 1.0000 | 1.0000 |
-| Neural Net | 120 | 100.0% | 100.0% | 1.0000 | 0.9996 |
-| Hybrid | 120 | 100.0% | 100.0% | 1.0000 | 1.0000 |
+- WARN_TOO_FEW_MW_PAIRS: only 0 finite paired far-R² values (need ≥ 3) for Mann-Whitney test; test skipped. Likely cause: extrap_r2_far absent from records — confirm workers ran the extrapolation evaluation step and that merge_extrap_into_benchmark.py was called before this analysis. Workflow continues.
 
-## Mann-Whitney U Tests (two-sided, clipped R², standard equations)
+## A. Primary Result — Three-Tier MW Framing (§10.7)
 
+**Tier 1 (all-N):** Expected non-significant — 21 discovery failures add variance. Report with explicit framing: 'not significant; expected given 21 failures.' 
 
-### Hybrid vs Pure LLM
+**Tier 2 (excl-train-fail):** Excludes equations where HypatiaX train R²<0. Intermediate result; shows signal strengthens once degenerate outputs removed. 
 
-  U=352.0,  p=0.0000**,  direction=b_greater,  n=(120, 120)
+**Tier 3 (success-subset, R²≥0.99):** The paper's primary claim (§10.7). Restricts to equations where HypatiaX achieved symbolic recovery. This is the publishable result — it answers whether symbolic recovery produces a qualitatively different extrapolation regime, not whether HypatiaX always wins.
 
-### Hybrid vs Neural Net
+  Tier 1 — All-N: N/A (insufficient pairs after filtering)
+  Tier 2 — Excl-train-fail (train R²≥0): N/A (insufficient pairs after filtering)
+  Tier 3 — Success-subset (extrap R²≥0.99) ★: N/A (insufficient pairs after filtering)
+_** = p_one < 0.05  |  ★ = primary paper claim_
 
-  U=13792.0,  p=0.0000**,  direction=a_greater,  n=(120, 120)
+### Win / Loss by Tier
 
-### Neural Net vs Pure LLM
+| Split | HypatiaX wins | PySR wins | Tied | N pairs |
+|-------|---------------|-----------|------|---------|
+| Tier 1 — All-N | 0 | 0 | 0 | 0 |
+| Tier 2 — Excl-train-fail | 0 | 0 | 0 | 0 |
+| Tier 3 — Success-subset ★ | 0 | 0 | 0 | 0 |
 
-  U=0.0,  p=0.0000**,  direction=b_greater,  n=(120, 120)
+## B. Failure Analysis (0 equations — degenerate PySR, train R² < 0)
+
+_None — all equations have hypatia train R² ≥ 0._
+
+### Domain Stratification
+
+| Domain | N | Hypatia Wins | Win Rate | Failures | Fail Rate |
+|--------|---|-------------|----------|----------|-----------|
+| feynman_biology | 12 | 0 | N/A | 0 | 0.0 |
+| feynman_chemistry | 8 | 0 | N/A | 0 | 0.0 |
+| feynman_electrochemistry | 4 | 0 | N/A | 0 | 0.0 |
+| feynman_electromagnetism | 20 | 0 | N/A | 0 | 0.0 |
+| feynman_electrostatics | 8 | 0 | N/A | 0 | 0.0 |
+| feynman_magnetism | 4 | 0 | N/A | 0 | 0.0 |
+| feynman_mechanics | 16 | 0 | N/A | 0 | 0.0 |
+| feynman_optics | 8 | 0 | N/A | 0 | 0.0 |
+| feynman_probability | 4 | 0 | N/A | 0 | 0.0 |
+| feynman_quantum | 20 | 0 | N/A | 0 | 0.0 |
+| feynman_thermodynamics | 16 | 0 | N/A | 0 | 0.0 |
+
+### Fisher's Exact Test — Failure Cluster Non-Randomness
+
+p=1.0000, OR=None, Not significant
+Tests whether the failure cluster in physics-with-small-constants domains is larger than expected by chance.
+
+## C. Scale / Magnitude Sensitivity
+
+Spearman correlation between `scale_log` (log₁₀ of smallest constant magnitude) and HypatiaX performance. Positive ρ means larger-scale constants → better results.
+  scale_log vs train R²: N/A (insufficient data or scipy missing)
+  scale_log vs far R²: N/A (insufficient data or scipy missing)
+scale_log available for 0 equations.
+_** = p < 0.05. N/A if scale_log field absent from records._
+
+## D. Expression Complexity — Success vs Failure
+
+| Group | N | Min | Max | Mean | Median | IQR |
+|-------|---|-----|-----|------|--------|-----|
+| HypatiaX successes | 0 | N/A | N/A | N/A | N/A | N/A |
+| HypatiaX failures | 0 | N/A | N/A | N/A | N/A | N/A |
+| HypatiaX all | 0 | N/A | N/A | N/A | N/A | N/A |
+| PySR-only all | 0 | N/A | N/A | N/A | N/A | N/A |
 _** = p < 0.05_
 
-## Hybrid vs Neural Net (head-to-head, equation level)
+## F. Train-R² Threshold Sweep — Robustness of Inclusion Cutoff
 
-Equations with both finite R²: 120
-Hybrid wins:  112  (93.3%)
-NN wins:      8
-Tied:         0
+MW p_one at each train-R² inclusion threshold. A robust result stays significant across a range near 0.
+| Threshold | N included | U | p_one | p_two | Significant? |
+|-----------|------------|---|-------|-------|--------------|
+| -0.50 | 0 | N/A | N/A | N/A | — |
+| -0.25 | 0 | N/A | N/A | N/A | — |
+| +0.00 | 0 | N/A | N/A | N/A | — |
+| +0.10 | 0 | N/A | N/A | N/A | — |
+| +0.25 | 0 | N/A | N/A | N/A | — |
+| +0.50 | 0 | N/A | N/A | N/A | — |
 
-## Coverage Gaps (0 equations with best R² < 0.8)
+## G. Leave-One-Out Sensitivity — Failure Equations
 
-_None — all standard equations have at least one method achieving R² ≥ threshold._
+All-N MW re-run with each failure equation removed. Shows how much each discovery failure masks the signal.
+_No LOO data (no failure equations or scipy unavailable)._
 
-## R²≥0.80 Rate by Difficulty
+## Skipped from MW (120 equations)
 
-| Difficulty | N | LLM R²≥0.80 | NN R²≥0.80 | Hybrid R²≥0.80 |
-|------------|---|-------------|------------|----------------|
-| unknown | 120 | 100.0% | 100.0% | 100.0% |
+| Equation | Domain | Reason |
+|----------|--------|--------|
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_biology | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_chemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electrochemistry | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electromagnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_electrostatics | hypatia.extrap_r2_far is None |
+| ? | feynman_magnetism | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_mechanics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_optics | hypatia.extrap_r2_far is None |
+| ? | feynman_probability | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_quantum | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
+| ? | feynman_thermodynamics | hypatia.extrap_r2_far is None |
 
-## Median Test R² by Formula Type
+## Instability Index (1 − extrap_r2_far; None→0.0; unclamped)
 
-| Formula Type | N | LLM median R² | NN median R² | Hybrid median R² |
-|--------------|---|---------------|--------------|------------------|
-| unknown | 120 | 1.0000 | 1.0000 | 1.0000 |
+| Equation | Domain | Near R² | Far R² | Instability | Skipped? |
+|----------|--------|---------|--------|-------------|----------|
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_biology | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_chemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_mechanics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_probability | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| ? | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
 
-## Extrapolation Gap (train R² − test R²)
+## Wall-clock Timing
 
-| Method | Mean gap | Median gap | N |
+| Method | Mean (s) | Median (s) | N |
 |--------|----------|------------|---|
-| Pure LLM | N/A | N/A | 0 |
-| Neural Net | N/A | N/A | 0 |
-| Hybrid | N/A | N/A | 0 |
-
-## Wall-clock Timing (standard equations)
-
-| Method | Mean (s) | Median (s) | Total (s) | N |
-|--------|----------|------------|-----------|---|
-| Pure LLM | 5.7733 | 7.7223 | 692.79 | 120 |
-| Neural Net | 1.0439 | 1.0369 | 125.27 | 120 |
-| Hybrid | 5.2541 | 6.5252 | 630.5 | 120 |
-
-## Hybrid Routing Decisions
-
-_No hybrid decision data available._
+| HypatiaX | N/A | N/A | 0 |
+| PySR-only | N/A | N/A | 0 |
