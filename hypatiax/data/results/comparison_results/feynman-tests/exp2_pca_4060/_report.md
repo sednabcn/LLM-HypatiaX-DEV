@@ -1,5 +1,5 @@
 
-# HypatiaX Analysis Report — `exp2_feyman_pca`
+# HypatiaX Analysis Report — `exp2_feynman_pca`
 
 Experiment mode: **multi_method**
 N total: 30 | N standard: 30 | N intractable: 0
