@@ -269,6 +269,88 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
 
 
 # ============================================================
+# PROTOCOL-SHAPE HELPERS (Shape P)
+# ============================================================
+#
+# Shape P is the benchmark-wrapper format produced by NSHARDS=1 runs and by
+# the "Locate analysis input" step's _merged_benchmark.json / protocol_core_*.json:
+#
+#   {"tests": [
+#       {"description": ..., "domain": ..., "equation_id": ...,
+#        "results": {"pure_llm": {"r2": ..., "success": ...},
+#                     "neural_network": {"r2": ..., "success": ...}, ...}}
+#   ]}
+#
+# _is_protocol_file() detects this wrapper; _normalise_protocol_record()
+# converts one "tests" entry into the canonical task schema used elsewhere
+# in this module (task_id / name / domain / hypatia / nn, with "test_r2"
+# inside each model sub-dict).
+
+def _is_protocol_file(raw: Any) -> bool:
+    """Return True if `raw` is a Shape P benchmark wrapper.
+
+    Detected by the presence of a non-empty "tests" list whose entries are
+    dicts containing a "results" dict (mapping method name -> metrics dict).
+    """
+    if not isinstance(raw, dict):
+        return False
+    tests = raw.get("tests")
+    if not isinstance(tests, list) or not tests:
+        return False
+    for test in tests:
+        if isinstance(test, dict) and isinstance(test.get("results"), dict):
+            return True
+    return False
+
+
+def _normalise_protocol_record(test: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalise one Shape-P "tests" entry into the canonical task schema.
+
+    Renames method keys (pure_llm -> hypatia, neural_network -> nn) and,
+    within each model sub-dict, renames "r2" -> "test_r2" (via
+    normalise_model_dict, which also handles the test_r2 -> extrap_r2 alias)
+    so downstream code that reads r["results"][method]["test_r2"] works
+    uniformly across Shape P and the merged-shard shapes.
+    """
+    if not isinstance(test, dict):
+        return {}
+
+    row = dict(test)
+
+    inner = dict(row.get("results") or {})
+    if "pure_llm" in inner and "hypatia" not in inner:
+        inner["hypatia"] = inner.pop("pure_llm")
+    if "neural_network" in inner and "nn" not in inner:
+        inner["nn"] = inner.pop("neural_network")
+
+    normalised_results: Dict[str, Any] = {}
+    for method, metrics in inner.items():
+        if not isinstance(metrics, dict):
+            normalised_results[method] = metrics
+            continue
+        m = dict(metrics)
+        # r2 -> test_r2 (normalise_model_dict then maps test_r2 -> extrap_r2)
+        if "r2" in m and "test_r2" not in m:
+            m["test_r2"] = m["r2"]
+        normalised_results[method] = normalise_model_dict(m)
+
+    task_id = canonical_task_id(row)
+    if not task_id:
+        task_id = row.get("domain") or row.get("equation_id") or row.get("name")
+
+    out = {k: v for k, v in row.items() if k not in META_KEYS}
+    out.update({
+        "task_id": task_id,
+        "name":    row.get("name") or row.get("equation_id") or task_id,
+        "domain":  row.get("domain") or task_id,
+        "results": normalised_results,
+        "hypatia": normalised_results.get("hypatia", {}),
+        "nn":      normalised_results.get("nn", {}),
+    })
+    return out
+
+
+# ============================================================
 # EXTRACTION
 # ============================================================
 
