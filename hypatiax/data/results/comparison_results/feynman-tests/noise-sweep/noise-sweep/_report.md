@@ -5,9 +5,12 @@ Experiment mode: **standard**
 N total: 194 | N standard: 194 | N intractable: 0
 R² success threshold: 0.8
 
-## ⚠️ Fatal Conditions
+## ✅ No Fatal Conditions
 
-- **TOTAL_FAILURE: all methods report 0% success across all standard equations. Check experiment scripts for systematic errors.**
+
+## ℹ️ Informational / Warnings
+
+- WARN_NO_METHOD_RECORDS: records were loaded but none contained results under canonical keys (pure_llm, neural_network, hybrid). This usually means the JSON uses non-standard method names that were not translated by merge_shards.py, or the experiment should be mapped to 'multi_method' mode in EXPERIMENT_MODE. Verify _normalise_protocol_record() output or add an EXPERIMENT_MODE entry. Workflow continues.
 
 ## Method Summary (standard equations only)
 
