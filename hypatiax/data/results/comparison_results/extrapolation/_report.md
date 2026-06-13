@@ -7,9 +7,12 @@ R² success threshold: 0.8
 
 > **OOD experiment**: hybrid losing to neural_network is the expected scientific result; `HYBRID_NEVER_BEATS_NN` is demoted to informational and does not block the workflow.
 
-## ⚠️ Fatal Conditions
+## ✅ No Fatal Conditions
 
-- **TOTAL_FAILURE: all methods report 0% success across all standard equations. Check experiment scripts for systematic errors.**
+
+## ℹ️ Informational / Warnings
+
+- WARN_NO_METHOD_RECORDS: records were loaded but none contained results under canonical keys (pure_llm, neural_network, hybrid). This usually means the JSON uses non-standard method names that were not translated by merge_shards.py, or the experiment should be mapped to 'multi_method' mode in EXPERIMENT_MODE. Verify _normalise_protocol_record() output or add an EXPERIMENT_MODE entry. Workflow continues.
 
 ## Method Summary (standard equations only)
 
