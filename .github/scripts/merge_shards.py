@@ -242,7 +242,19 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
     hyp = normalise_model_dict(row.get("hypatia") or {})
     nn  = normalise_model_dict(row.get("nn") or {})
 
-    task_id = canonical_task_id(row)
+    # ABLATION SHAPE FIX (exp1_ablation): records from exp1_ablation.py's
+    # checkpoint are flat {eq_key: {"name":..., "domain":..., "pysr_only":{...},
+    # "hypatia":{...}}} — i.e. no "results"/"pure_llm"/"neural_network" nesting
+    # and no "nn" sub-dict, but a "pysr_only" sub-dict instead.  canonical_task_id()
+    # falls back to "domain" (e.g. "Chemistry", "DeFi Risk"), which is shared by
+    # multiple Core-15 equations, so merge_rows() would silently collapse all
+    # same-domain equations down to a single record.  Detect this shape and use
+    # "name" (unique per equation, e.g. "Arrhenius", "Rate Law") as task_id instead.
+    is_ablation_row = "pysr_only" in row and "nn" not in row and "results" not in row
+    if is_ablation_row and row.get("name"):
+        task_id = row["name"]
+    else:
+        task_id = canonical_task_id(row)
     # BUG 3 FIX: hybrid rows have domain="hybrid" but no equation_id /
     # protocol that maps through EQ_ID_TO_DEFI, so canonical_task_id
     # returned None and the row was discarded.  Fall back to domain so
