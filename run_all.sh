@@ -2259,7 +2259,7 @@ run figures "Generate + deploy all paper figures (Groups A/B/C) -> \${RESULTS_DI
   for _stem in \${_REQUIRED}; do
     _found=false
     for _ext in pdf png jpg eps svg; do
-      if [ -f '${RESULTS_DIR}/figures/'\"\\${_stem}.\\${_ext}\" ]; then
+      if [ -f '${RESULTS_DIR}/figures/'\"\${_stem}.\${_ext}\" ]; then
         _found=true; break
       fi
     done
