@@ -41,7 +41,7 @@
 #  PERMISSIONS
 #  -----------
 #  contents: write  — ci_analysis and ci_postprocess commit outputs to master.
-#  actions:  read   — ci_check reads artifact store.
+#  actions:  write  — postprocess and figures_deploy jobs dispatch ci_postprocess.yml.
 # ==============================================================================
 
 name: "HypatiaX - pipeline - analysis - postprocess - check"
@@ -868,11 +868,8 @@ jobs:
               "exp1b_pca":          ["hypatiax_defi_benchmark_v3_results"],
               "exp2_feynman":       FEYNMAN_DOMAINS,
               "exp2_feynman_extrap": FEYNMAN_DOMAINS,
-              # FIX 3 (cross-ref FIX 2/4/5): exp2_feynman_pca was missing from
-              # REGISTRY. REGISTRY.get(exp_id, []) silently returned [], giving
-              # total=0/done=0/missing=[] — exp2_feynman_pca was reported as a
-              # trivially "✓ complete (0/0)" experiment regardless of its real
-              # state, masking genuine gaps in this gate's completion table.
+              # FIX: exp2_feynman_pca missing — REGISTRY lookup returned []
+              # so completion always showed 0/0 for this experiment.
               "exp2_feynman_pca":   FEYNMAN_DOMAINS,
               "exp2":               EXP2_DOMAINS,
               "exp3":               ["nguyen12_seed42"],
@@ -1054,14 +1051,8 @@ jobs:
               "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
-              # FIX 2 (cross-ref FIX 4/5): exp2_feynman_pca was missing from this
-              # job's SUBDIR. Since `for exp_id in SUBDIR` (below) drives which
-              # experiments get qualified, this caused exp2_feynman_pca to be
-              # silently skipped from the qualify gate entirely — it never
-              # appeared in qualify_report/qualified_exps, so audit claims for
-              # it were always SKIP ("not qualified") regardless of its actual
-              # state. Also, SUBDIR.get(exp_id, "") would have resolved to
-              # OUT_BASE itself (empty subdir), checking the wrong directory.
+              # FIX: exp2_feynman_pca was missing — qualify iterated only over
+              # SUBDIR keys so it was silently skipped on every run.
               "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
               "exp3":               "extrapolation",
@@ -1532,9 +1523,13 @@ jobs:
     needs: [setup, postprocess, summary]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: |
+    # always() ensures this job runs even when summary exits non-zero (unhealthy
+    # pipeline).  Without it GitHub skips dependent jobs on upstream failure,
+    # which would leave figures/ stale after a partial pipeline run.
+    if: >-
       always() &&
-      (github.event.inputs.experiment == 'all' || github.event.inputs.experiment == '')
+      (github.event.inputs.experiment == 'all' ||
+       github.event.inputs.experiment == '')
     steps:
       - name: Dispatch ci_postprocess.yml (experiment=figures_deploy)
         env:
