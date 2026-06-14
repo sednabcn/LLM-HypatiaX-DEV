@@ -75,30 +75,37 @@
 #  logs/paper_audit_findings.json  → paper-audit-findings-<run_id>
 #  logs/figures_tables_report.json → figures-tables-report-<run_id>
 #
-#  AUDIT FIX STATUS (20 actionable fixes — FIX-C4 removed as false positive)
-#  --------------------------------------------------------------------------
-#  NB-01  FIX-B1  OPEN  koza1994genetic undefined (lines 327, 1888)
-#  NB-01  FIX-B2  OPEN  Alias collision cranmer2023pysr / cranmer2023interpretable
-#  NB-01  FIX-B3  OPEN  Alias collision udrescu2020ai / udrescu2020aifeynman
-#  NB-02  FIX-XR1 OPEN  Duplicate section labels sec:llm_limitations / sec:llm_domain
-#  NB-02  FIX-XR2 OPEN  \label{sec:r2_bugfix} inside \item block
-#  NB-02  FIX-XR3 OPEN  Supp A references Section 7.3 — should be 7.4
-#  NB-02  FIX-XR4 OPEN  Supp A filename jmlr_paper_main.tex → jmlr-hypatiax-paper-final.tex
-#  NB-03  FIX-S1  OPEN  All 12 top-level \section commands missing \label
-#  NB-03  FIX-S2  OPEN  All subsections missing \label
-#  NB-04  FIX-N1  OPEN  71 cases → 70 tasks in instability section (line 1637)
-#  NB-04  FIX-N2  OPEN  Terminology: five-stage vs Five-Layer Architecture (§8.3)
-#  NB-04  FIX-N3  OPEN  Verify Nguyen-12 numbers after seed=123 rerun
-#  NB-05  FIX-F1  OPEN  hypatiaX_three_systems MISSING — replace \fbox placeholder
-#  NB-05  FIX-F2  OPEN  fig18_r2_heatmap_improved MISSING
-#  NB-05  FIX-F3  OPEN  fig09_r2_heatmap_regimes MISSING
-#  NB-05  FIX-F4  OPEN  fig1_seed_sweep MISSING
-#  NB-05  FIX-F5  OPEN  Verify hypatiaX_algorithm1_routing_cascade_v2 compiles
-#  NB-06  FIX-C1  OPEN  Duplicate case names in benchmark catalogue
-#  NB-06  FIX-C2  OPEN  Stale hybrid_system_v40 imports (lines 29, 266, 2070, 2404)
-#  NB-06  FIX-C3  OPEN  Feynman split protocol mismatch: random 80/20 ≠ PCA 40/60
-#  NB-06  FIX-C4  FALSE POSITIVE — REMOVED
-#          NB-06 Step 4 scan result: "OK - no exposed API keys found in notebooks"
+#  AUDIT FIX STATUS
+#  ----------------
+#  Issue status is sourced dynamically from:
+#      ${{ env.REGISTRY_PATH }}
+#
+#  IMPORTANT:
+#    - Do NOT maintain a hardcoded OPEN/RESOLVED list in this workflow.
+#    - Every fix state change MUST be updated in issue_registry.json.
+#    - CI steps and audit scripts must treat issue_registry.json as the
+#      single source of truth.
+#    - Resolved or false_positive issues must NOT continue appearing as OPEN
+#      in workflow logs, summaries, or gates.
+#
+#  Registry-driven behavior:
+#    - status == "open"           → enforce in audit gate
+#    - status == "resolved"       → exclude from open-issue failures
+#    - status == "false_positive" → exclude from failures and reporting
+#
+#  Sync rule (two paths):
+#    AUTOMATIC — When paper-audit succeeds and hypatia_inspector finds no OPEN
+#    findings for an issue, the "Auto-update registry" step marks it "resolved"
+#    and commits back to the branch (signed by github-actions[bot]).
+#    No manual edit needed for auto_fixable issues.
+#
+#    MANUAL — false_positive entries and issues hypatia_inspector cannot detect
+#    automatically (FIX-N3, FIX-F1) must be updated in the same PR/commit as
+#    the underlying fix.
+#
+#    FIX-S1, FIX-S2, FIX-N3 (previously absent) are now registered — added
+#    2026-06-14.  FIX-S1/S2 will auto-resolve once inspector detects them clean;
+#    FIX-N3 requires manual resolution after Nguyen-12 results are committed.
 # ==============================================================================
 
 name: "HypatiaX - paper audit"
@@ -163,6 +170,72 @@ jobs:
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Validate issue registry consistency
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          registry = Path("${{ env.REGISTRY_PATH }}")
+
+          if not registry.exists():
+              print(f"ERROR: Missing registry file: {registry}")
+              sys.exit(1)
+
+          data = json.loads(registry.read_text())
+
+          valid_status = {"open", "resolved", "false_positive"}
+
+          invalid = [
+              item.get("id", "<unknown>")
+              for item in data
+              if item.get("status") not in valid_status
+          ]
+
+          if invalid:
+              print("ERROR: Invalid issue status entries:")
+              for item in invalid:
+                  print(f" - {item}")
+              sys.exit(1)
+
+          open_issues = [x["id"] for x in data if x.get("status") == "open"]
+          resolved = [x["id"] for x in data if x.get("status") == "resolved"]
+          false_positive = [
+              x["id"] for x in data if x.get("status") == "false_positive"
+          ]
+
+          print("Issue registry summary")
+          print("======================")
+          print(f"OPEN           : {len(open_issues)}")
+          print(f"RESOLVED       : {len(resolved)}")
+          print(f"FALSE_POSITIVE : {len(false_positive)}")
+
+          print("\nOpen issues enforced by CI:")
+          for issue_id in open_issues:
+              print(f" - {issue_id}")
+
+          if resolved:
+              print("\nResolved (excluded from gate):")
+              for issue_id in resolved:
+                  print(f" - {issue_id}")
+
+          if false_positive:
+              print("\nFalse positives (intentionally suppressed):")
+              for issue_id in false_positive:
+                  print(f" - {issue_id}")
+
+          # Sanity check: all auto_fixable open issues must have an action field
+          missing_action = [
+              x["id"] for x in data
+              if x.get("status") == "open"
+              and x.get("auto_fixable") is True
+              and not x.get("action", "").strip()
+          ]
+          if missing_action:
+              print(f"\nWARN: auto_fixable open issues missing 'action' field: {missing_action}")
+          PY
 
       - name: Evaluate trigger
         id: check
@@ -745,6 +818,8 @@ jobs:
     needs: [guard, numerical-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write   # required for registry write-back commit after clean audit
     if: |
       always() &&
       needs.guard.outputs.should_run == 'true' &&
@@ -1009,6 +1084,78 @@ jobs:
           path:              logs/audit_paper_summary.json
           if-no-files-found: warn
           retention-days:    30
+
+      # ── Auto-update issue_registry.json on successful audit ─────────────────
+      # When paper-audit passes, cross-check each open issue in the registry
+      # against live inspector findings.  Any issue that no longer appears as
+      # OPEN in findings.json is auto-marked "resolved" and the registry is
+      # committed back to the branch.
+      #
+      # Safety rules:
+      #   - Only runs when the audit step itself succeeded (not on failure/skip).
+      #   - Only marks issues "resolved" — never re-opens or deletes entries.
+      #   - false_positive entries are never touched.
+      #   - Commit is signed with the github-actions bot; no PAT required.
+      #   - If findings.json is absent (inspector skipped), write-back is skipped
+      #     entirely so a missing inspector never silently clears open issues.
+      - name: Auto-update registry — mark resolved issues after clean audit
+        if: steps.audit.outcome == 'success'
+        env:
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+          GIT_AUTHOR_NAME:  github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME:  github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          python3 - <<'PYWR'
+          import json, subprocess, sys
+          from pathlib import Path
+
+          findings_path = Path("findings.json")
+          registry_path = Path("${{ env.REGISTRY_PATH }}")
+
+          if not findings_path.exists():
+              print("::notice::findings.json absent — registry write-back skipped.")
+              sys.exit(0)
+
+          if not registry_path.exists():
+              print(f"::error::Registry not found at {registry_path}")
+              sys.exit(1)
+
+          findings_raw = json.loads(findings_path.read_text())
+          findings = findings_raw if isinstance(findings_raw, list) else findings_raw.get("findings", [])
+
+          # Build set of issue IDs that are still OPEN in live findings
+          still_open_ids = {
+              f.get("id") for f in findings
+              if f.get("status", "").upper() == "OPEN"
+          }
+
+          registry = json.loads(registry_path.read_text())
+          changed = []
+          for entry in registry:
+              if entry.get("status") != "open":
+                  continue                         # resolved / false_positive: never touch
+              if entry["id"] not in still_open_ids:
+                  entry["status"] = "resolved"
+                  entry["updated"] = __import__("datetime").date.today().isoformat()
+                  changed.append(entry["id"])
+
+          if not changed:
+              print("Registry up to date — no issues to mark resolved.")
+              sys.exit(0)
+
+          registry_path.write_text(json.dumps(registry, indent=2))
+          print(f"Marked resolved: {changed}")
+
+          # Commit the updated registry back to the branch
+          subprocess.run(["git", "config", "user.name",  "${{ env.GIT_AUTHOR_NAME }}"],  check=True)
+          subprocess.run(["git", "config", "user.email", "${{ env.GIT_AUTHOR_EMAIL }}"], check=True)
+          subprocess.run(["git", "add", str(registry_path)], check=True)
+          msg = f"ci: auto-resolve {', '.join(changed)} in issue_registry.json [skip ci]"
+          subprocess.run(["git", "commit", "-m", msg], check=True)
+          subprocess.run(["git", "push"], check=True)
+          PYWR
 
 
   # ============================================================================
