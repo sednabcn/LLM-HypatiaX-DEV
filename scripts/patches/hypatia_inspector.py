@@ -410,13 +410,17 @@ class Inspector:
                     [str(p)], auto_fixable=False))
 
         # FIX-C2: stale v40 imports
+        # Only flag non-comment lines so that audit allowlists, patch-script
+        # comments, and historical docstrings don't generate false positives.
         OLD, NEW = "hybrid_system_v40", "hybrid_system_v50_2"
+        _import_re = re.compile(r"^(?!\s*#).*\b" + re.escape(OLD) + r"\b")
         for p in pyf:
-            if OLD in read(p):
-                hits = [i for i,ln in enumerate(read(p).splitlines(),1) if OLD in ln]
+            hits = [i for i, ln in enumerate(read(p).splitlines(), 1)
+                    if _import_re.search(ln)]
+            if hits:
                 self._add(Finding("FIX-C2","medium",
                     f"Stale import '{OLD}' in {p.name} at lines {hits}",
-                    f"Replace with '{NEW}' throughout.",
+                    f"Replace with '{NEW}' throughout (non-comment lines only).",
                     [str(p)], auto_fixable=True))
 
     # ── NB-06: Split-protocol (FIX-C3) ───────────────────────────────────────
@@ -870,10 +874,33 @@ class Fixer:
             if n: self.applied.append(f"FIX-N2 — {p.name}")
 
     def apply_FIX_C2(self):
+        """Replace hybrid_system_v40 → hybrid_system_v50_2 on non-comment lines only.
+
+        A bare _patch_re over the whole file would also rewrite audit allowlists,
+        patch-script comments and historical docstrings that intentionally keep the
+        old name as a reference.  We rewrite line-by-line, skipping any line whose
+        first non-whitespace character is '#'.
+        """
+        OLD = "hybrid_system_v40"
+        NEW = "hybrid_system_v50_2"
+        _import_re = re.compile(r"\b" + re.escape(OLD) + r"\b")
+
         for p in self._py_files():
-            n = self._patch_re(p, r"\bhybrid_system_v40\b", "hybrid_system_v50_2",
-                               "FIX-C2 v40→v50_2")
-            if n: self.applied.append(f"FIX-C2 — {p.name}")
+            src   = read(p)
+            lines = src.splitlines(keepends=True)
+            out   = []
+            total = 0
+            for line in lines:
+                if line.lstrip().startswith("#"):
+                    out.append(line)          # preserve comment lines unchanged
+                else:
+                    new_line, n = _import_re.subn(NEW, line)
+                    out.append(new_line)
+                    total += n
+            if total:
+                print(DIM(f"              FIX-C2: {total} replacement(s) in {p.name}"))
+                write(p, "".join(out), self.dry_run)
+                self.applied.append(f"FIX-C2 — {p.name}")
 
     def apply_FIX_F2(self, fname="fig18_r2_heatmap_improved.pdf",
                      src_sub="Figures/figures-cosmetic-last/"):
