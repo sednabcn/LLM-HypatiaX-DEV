@@ -266,18 +266,16 @@ jobs:
         uses: actions/cache@v4.2.0
         with:
           path: ~/.cache/pip
-          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements.txt') }}
+          key: pip-${{ env.PYTHON_VERSION }}-numpy-sympy
           restore-keys: pip-${{ env.PYTHON_VERSION }}-
 
       - name: Install dependencies
         if: steps.asset-cache.outputs.cache-hit != 'true'
         run: |
           python3 -m pip install --upgrade pip
-          if [[ -f requirements.txt ]]; then
-            pip install --no-cache-dir -r requirements.txt
-          else
-            pip install --no-cache-dir numpy scipy matplotlib sympy
-          fi
+          # hypatia_inspector.py and audit_paper are pure stdlib (json/pathlib/re/argparse).
+          # Only exp3_sym symbolic-equivalence check needs numpy+sympy; install just those.
+          pip install --no-cache-dir numpy sympy
 
       - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
         if: steps.asset-cache.outputs.cache-hit != 'true'
@@ -607,22 +605,14 @@ jobs:
         uses: actions/cache@v4.2.0
         with:
           path: ~/.cache/pip
-          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements.txt') }}
+          key: pip-${{ env.PYTHON_VERSION }}-numpy-sympy
           restore-keys: pip-${{ env.PYTHON_VERSION }}-
 
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
-          if [[ -f requirements.txt ]]; then
-            pip install --no-cache-dir -r requirements.txt
-          else
-            pip install --no-cache-dir numpy scipy sympy
-          fi
-
-      - name: Create logs directory
-        run: mkdir -p logs
-
-      - name: Run qualify step
+          # qualify step is pure stdlib; numpy+sympy only for exp3_sym.
+          pip install --no-cache-dir numpy sympy
         id: verify
         env:
           RESULTS_DIR:        ${{ env.OUT_BASE }}
@@ -708,17 +698,15 @@ jobs:
         uses: actions/cache@v4.2.0
         with:
           path: ~/.cache/pip
-          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements.txt') }}
+          key: pip-${{ env.PYTHON_VERSION }}-numpy-sympy
           restore-keys: pip-${{ env.PYTHON_VERSION }}-
 
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
-          if [[ -f requirements.txt ]]; then
-            pip install --no-cache-dir -r requirements.txt
-          else
-            pip install --no-cache-dir numpy scipy sympy pyyaml
-          fi
+          # audit_paper (paper_targets.json resolution) is pure stdlib.
+          # numpy+sympy retained for exp3_sym symbolic-equivalence check only.
+          pip install --no-cache-dir numpy sympy
 
       - name: Create logs directory
         run: mkdir -p logs
