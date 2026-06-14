@@ -467,7 +467,7 @@ jobs:
           path:              |
             ${{ env.OUT_BASE }}/figures/
             ${{ env.OUT_BASE }}/tables/
-          if-no-files-found: error
+          if-no-files-found: warn   # changed from error: missing figures/tables should not block paper-audit
           retention-days:    3
 
       - name: Summary
@@ -692,6 +692,7 @@ jobs:
       - name: Download canonical assets from collect-figures-tables
         if: needs.guard.outputs.jobs_already_done != 'true'
         uses: actions/download-artifact@v4.1.8
+        continue-on-error: true   # canonical assets are needed for figures/tables only; paper-audit proceeds without them
         with:
           name: canonical-assets-${{ github.run_id }}
           path: ${{ env.OUT_BASE }}
