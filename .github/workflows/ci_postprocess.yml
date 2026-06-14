@@ -1470,6 +1470,77 @@ jobs:
           echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
 
       # ════════════════════════════════════════════════════════════════════════
+      #  SECTION C-PRE: Copy figures → repo_root/figures, tables → repo_root/tables
+      #
+      #  After all per-experiment figure/table generation steps complete, copy
+      #  every produced file from its canonical experiment location into the
+      #  two repo-root flat directories:
+      #    figures/   — LaTeX \graphicspath target (same as NB05_DEST_DIR)
+      #    tables/    — flat tables directory for paper-audit consumption
+      #
+      #  suppB / suppB_sc canonical subdirs are always included so their
+      #  outputs are visible to the audit even on non-figures_deploy runs.
+      # ════════════════════════════════════════════════════════════════════════
+
+      - name: "Copy figures & tables → repo_root/figures and repo_root/tables"
+        if: env.EFFECTIVE_EXPERIMENT != 'SKIP' && env.EFFECTIVE_EXPERIMENT != ''
+        env:
+          SUB:        ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT: ${{ env.EFFECTIVE_EXPERIMENT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO_FIGURES="figures"
+          REPO_TABLES="tables"
+          mkdir -p "${REPO_FIGURES}" "${REPO_TABLES}"
+
+          # ── Helper: copy files matching a glob from src_dir to dest_dir ──
+          copy_assets() {
+            local src_dir="$1" dest_dir="$2" glob="$3" label="$4"
+            if [[ ! -d "$src_dir" ]]; then
+              echo "  [SKIP] ${label} — source dir does not exist: ${src_dir}"
+              return 0
+            fi
+            local n=0
+            while IFS= read -r -d '' f; do
+              cp -v "$f" "${dest_dir}/$(basename "$f")"
+              (( n++ )) || true
+            done < <(find "$src_dir" -maxdepth 1 -type f -name "$glob" -print0 2>/dev/null)
+            echo "  [${label}] copied ${n} file(s) from ${src_dir} → ${dest_dir}/"
+          }
+
+          echo "=== Copy experiment outputs → repo_root/figures and repo_root/tables ==="
+          echo "Experiment : ${EXPERIMENT}"
+          echo ""
+
+          # ── Experiment's own figures and tables ───────────────────────────
+          EXP_FIGS="${OUT_BASE}/${SUB}/figures"
+          EXP_TABS="${OUT_BASE}/${SUB}/tables"
+          copy_assets "${EXP_FIGS}" "${REPO_FIGURES}" "*.pdf" "figures(pdf)  ${SUB}"
+          copy_assets "${EXP_FIGS}" "${REPO_FIGURES}" "*.png" "figures(png)  ${SUB}"
+          copy_assets "${EXP_TABS}" "${REPO_TABLES}"  "*.tex" "tables        ${SUB}"
+
+          # ── suppB canonical dirs (always include so audit sees them) ──────
+          if [[ "${EXPERIMENT}" != "suppB" ]]; then
+            copy_assets "${OUT_BASE}/${SUPPB_SUBDIR}/figures" "${REPO_FIGURES}" "*.pdf" "suppB figures(pdf)"
+            copy_assets "${OUT_BASE}/${SUPPB_SUBDIR}/figures" "${REPO_FIGURES}" "*.png" "suppB figures(png)"
+            copy_assets "${OUT_BASE}/${SUPPB_SUBDIR}/tables"  "${REPO_TABLES}"  "*.tex" "suppB tables"
+          fi
+          if [[ "${EXPERIMENT}" != "suppB_sc" ]]; then
+            copy_assets "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" "${REPO_FIGURES}" "*.pdf" "suppB_sc figures(pdf)"
+            copy_assets "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" "${REPO_FIGURES}" "*.png" "suppB_sc figures(png)"
+            copy_assets "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"  "${REPO_TABLES}"  "*.tex" "suppB_sc tables"
+          fi
+
+          # ── figures_deploy also wrote to NB05_DEST_DIR (figures/) directly ─
+          # Already handled above since REPO_FIGURES == NB05_DEST_DIR == "figures"
+
+          echo ""
+          echo "repo_root/figures : $(ls "${REPO_FIGURES}" | wc -l) file(s)"
+          echo "repo_root/tables  : $(ls "${REPO_TABLES}"  | wc -l) file(s)"
+
+      # ════════════════════════════════════════════════════════════════════════
       #  SECTION C: Post-run overwrite summary
       # ════════════════════════════════════════════════════════════════════════
 

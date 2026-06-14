@@ -334,8 +334,108 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Cache pip packages
+      # ── Pre-audit: verify figures/ and tables/ exist at repo root ──────────
+      # Checks that repo_root/figures/ and repo_root/tables/ are non-empty.
+      # If either is absent or empty, attempts to re-populate by running the
+      # same copy logic that ci_postprocess's "Copy figures & tables" step
+      # performs.  This is a safety net for cases where ci_postprocess ran
+      # but did not commit/upload the repo-root dirs (e.g. workflow skipped,
+      # cache miss on a fresh runner).
+      #
+      # If re-population still leaves a dir empty, the step exits non-zero
+      # so the pipeline stops with a clear message rather than silently
+      # producing an empty audit.
+      - name: "Pre-audit: verify (and re-populate) repo_root/figures and repo_root/tables"
         if: steps.asset-cache.outputs.cache-hit != 'true'
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+
+          REPO_FIGURES="figures"
+          REPO_TABLES="tables"
+
+          check_dir() {
+            local dir="$1"
+            [[ -d "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]
+          }
+
+          repopulate() {
+            echo "  Scanning ${OUT_BASE} for figures and tables to copy…"
+            mkdir -p "${REPO_FIGURES}" "${REPO_TABLES}"
+
+            # Copy all pdf/png from any experiment figures/ subdir
+            find "${OUT_BASE}" \
+              -path "${OUT_BASE}/figures" -prune -o \
+              -path "${OUT_BASE}/tables"  -prune -o \
+              \( -name "*.pdf" -o -name "*.png" \) \
+              -print 2>/dev/null \
+            | while IFS= read -r f; do
+                dest="${REPO_FIGURES}/$(basename "$f")"
+                [[ -e "$dest" ]] || cp "$f" "$dest"
+              done
+
+            # Copy all .tex from any experiment tables/ subdir
+            find "${OUT_BASE}" \
+              -path "${OUT_BASE}/tables" -prune -o \
+              -name "*.tex" -print \
+              2>/dev/null \
+            | while IFS= read -r f; do
+                # Prefix with experiment dir to avoid collisions
+                exp_dir="$(basename "$(dirname "$(dirname "$f")")")"
+                stem="$(basename "$f" .tex)"
+                dest="${REPO_TABLES}/${exp_dir}__${stem}.tex"
+                [[ -e "$dest" ]] || cp "$f" "$dest"
+              done
+
+            echo "  After re-population:"
+            echo "    figures/ : $(ls "${REPO_FIGURES}" 2>/dev/null | wc -l) file(s)"
+            echo "    tables/  : $(ls "${REPO_TABLES}"  2>/dev/null | wc -l) file(s)"
+          }
+
+          FIGS_OK=false
+          TABS_OK=false
+
+          if check_dir "${REPO_FIGURES}"; then
+            echo "✅  repo_root/figures/  : $(ls "${REPO_FIGURES}" | wc -l) file(s) — OK"
+            FIGS_OK=true
+          else
+            echo "⚠️   repo_root/figures/ is absent or empty — attempting re-population"
+          fi
+
+          if check_dir "${REPO_TABLES}"; then
+            echo "✅  repo_root/tables/   : $(ls "${REPO_TABLES}" | wc -l) file(s) — OK"
+            TABS_OK=true
+          else
+            echo "⚠️   repo_root/tables/ is absent or empty — attempting re-population"
+          fi
+
+          if [[ "$FIGS_OK" == "false" || "$TABS_OK" == "false" ]]; then
+            repopulate
+          fi
+
+          # Final assertion
+          FAIL=false
+          if ! check_dir "${REPO_FIGURES}"; then
+            echo "::error::repo_root/figures/ is still empty after re-population."
+            echo "         Run ci_postprocess.yml for any experiment to generate and"
+            echo "         copy figures, or commit figure files to figures/ directly."
+            FAIL=true
+          fi
+          if ! check_dir "${REPO_TABLES}"; then
+            echo "::error::repo_root/tables/ is still empty after re-population."
+            echo "         Run ci_postprocess.yml for any experiment to generate and"
+            echo "         copy tables, or commit .tex files to tables/ directly."
+            FAIL=true
+          fi
+          [[ "$FAIL" == "false" ]] || exit 1
+
+          echo ""
+          echo "Pre-audit check PASSED."
+          echo "  repo_root/figures/ : $(ls "${REPO_FIGURES}" | wc -l) file(s)"
+          echo "  repo_root/tables/  : $(ls "${REPO_TABLES}"  | wc -l) file(s)"
+
+
         uses: actions/cache@v4.2.0
         with:
           path: ~/.cache/pip
