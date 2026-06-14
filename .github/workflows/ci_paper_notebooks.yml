@@ -97,22 +97,52 @@ jobs:
           set -euo pipefail
           mkdir -p figures
 
+          # deploy_fig: copy src to figures/; if .pdf missing, try .png sibling.
+          # Also checks hypatiax/data/results/figures/ (runner .png output) as fallback.
           deploy_fig() {
             local src="$1"
-            if [[ -f "$src" ]]; then cp -v "$src" "figures/$(basename "$src")"; fi
+            local png="${src%.pdf}.png"
+            if [[ -f "$src" ]]; then
+              cp -v "$src" "figures/$(basename "$src")"
+            elif [[ "$src" == *.pdf && -f "$png" ]]; then
+              cp -v "$png" "figures/$(basename "$png")"
+            fi
           }
 
-          deploy_fig "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf"
-          deploy_fig "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf"
-          if [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" ]]; then
-            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf"
-          elif [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.png" ]]; then
-            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.png"
-          fi
-          for ext in pdf png jpg eps svg; do
-            candidate="Figures/architecture_figures/hypatiaX_three_systems.${ext}"
-            [[ -f "$candidate" ]] && deploy_fig "$candidate" && break
-          done
+          # Runner figures dir — contains .png for most stems even before
+          # generate_figures.py has run (written by instability/exp1 runners).
+          RUNNER_FIGS="hypatiax/data/results/figures"
+
+          deploy_fig_with_runner_fallback() {
+            local stem="$1"; shift
+            for src in "$@"; do
+              local png="${src%.pdf}.png"
+              if [[ -f "$src" ]]; then cp -v "$src" "figures/$(basename "$src")"; return; fi
+              if [[ "$src" == *.pdf && -f "$png" ]]; then cp -v "$png" "figures/$(basename "$png")"; return; fi
+            done
+            # Runner fallback
+            for ext in pdf png jpg eps svg; do
+              if [[ -f "${RUNNER_FIGS}/${stem}.${ext}" ]]; then
+                cp -v "${RUNNER_FIGS}/${stem}.${ext}" "figures/${stem}.${ext}"; return
+              fi
+            done
+            echo "::warning::${stem} not found in any candidate path — figures/ will be missing it"
+          }
+
+          deploy_fig_with_runner_fallback "fig18_r2_heatmap_improved" \
+            "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf"
+          deploy_fig_with_runner_fallback "fig09_r2_heatmap_regimes" \
+            "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf"
+          deploy_fig_with_runner_fallback "fig1_seed_sweep" \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.png"
+          deploy_fig_with_runner_fallback "hypatiaX_three_systems" \
+            "Figures/architecture_figures/hypatiaX_three_systems.pdf" \
+            "Figures/architecture_figures/hypatiaX_three_systems.png" \
+            "${RUNNER_FIGS}/hypatiaX_three_systems.png"
+          deploy_fig_with_runner_fallback "hypatiaX_algorithm1_routing_cascade_v2" \
+            "Figures/hypatiaX_algorithm1_routing_cascade_v2.pdf" \
+            "Figures/hypatiaX_algorithm1_routing_cascade_v2.png"
 
           echo "--- figures/ ---"; ls -lh figures/ 2>/dev/null || echo "(empty)"
 
@@ -621,6 +651,14 @@ jobs:
           else
             echo "::warning::figures/ not present in notebooks-workspace artifact"
           fi
+          # Also pull from runner figures dir (.png outputs from instability/exp1)
+          # so NB-05 finds them even if figures_deploy has not run yet.
+          RUNNER_FIGS="hypatiax/data/results/figures"
+          if [[ -d "${RUNNER_FIGS}" ]]; then
+            find "${RUNNER_FIGS}" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) \
+              -exec cp -n {} figures/ \;
+            echo "Merged runner figures from ${RUNNER_FIGS}/ ($(ls figures/ | wc -l) total)"
+          fi
           if [[ -d notebooks/tables ]]; then
             cp -r notebooks/tables/. tables/
             echo "Restored $(ls tables/ | wc -l) file(s) to tables/"
@@ -868,9 +906,9 @@ jobs:
               {"id":"FIX-F4", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
                "description":"fig1_seed_sweep.pdf missing from figures/.",
                "action":"Copy from Figures/figures-portfolio-variance/ → figures/."},
-              {"id":"FIX-C1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-06",
-               "description":"Three duplicate case names in hypatiax_defi_benchmark_v3c.py.",
-               "action":"Rename duplicates (e.g. add (basic)/(extended) suffixes) and rerun checkpoint."},
+              {"id":"FIX-C1", "severity":"MEDIUM",  "status":"RESOLVED",    "nb":"NB-06",
+               "description":"Three duplicate case names in hypatiax_defi_benchmark_v3c.py — NB-06 live scan reports 0 duplicates; silently resolved.",
+               "action":"Verify hypatia_findings FIX-C1 entry in CI confirms live status propagates. Registry updated OPEN→RESOLVED."},
               {"id":"FIX-C2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-06",
                "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py.",
                "action":"Replace with hybrid_system_v50_2 throughout."},

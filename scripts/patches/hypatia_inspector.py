@@ -419,6 +419,101 @@ class Inspector:
                     f"Replace with '{NEW}' throughout.",
                     [str(p)], auto_fixable=True))
 
+    # ── NB-06: Split-protocol (FIX-C3) ───────────────────────────────────────
+
+    def detect_split(self):
+        """
+        FIX-C3: verify that run_comparative_suite_benchmark_pca.py imports and
+        calls pca_directed_split, and that the paper's §10.7 does not contain
+        the old (incorrect) protocol note claiming the 9/30 table uses PCA 40/60.
+        """
+        import ast
+
+        # ── Gate A/B/C: AST check on the PCA runner ──────────────────────────
+        pca_runner = None
+        for p in py_files(self.py_root):
+            if "benchmark_pca" in p.name:
+                pca_runner = p
+                break
+
+        if pca_runner is None:
+            self._add(Finding("FIX-C3", "high",
+                "run_comparative_suite_benchmark_pca.py not found in py_root",
+                "Ensure the file exists and py_root is set correctly.",
+                auto_fixable=False))
+            return
+
+        try:
+            tree = ast.parse(read(pca_runner), filename=str(pca_runner))
+        except SyntaxError as e:
+            self._add(Finding("FIX-C3", "medium",
+                f"Could not parse {pca_runner.name}: {e}",
+                "Fix syntax error before split-protocol gate can run.",
+                [str(pca_runner)], auto_fixable=False))
+            return
+
+        # Gate A: pca_directed_split imported
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    imported.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported.add(alias.asname or alias.name)
+
+        if "pca_directed_split" not in imported:
+            self._add(Finding("FIX-C3", "high",
+                f"Gate A FAIL: pca_directed_split not imported in {pca_runner.name}",
+                "Add: from hypatiax.utils.pca_split_utils import pca_directed_split",
+                [str(pca_runner)], auto_fixable=False))
+
+        # Gate B/C: check inside ImprovedNN.run()
+        run_method = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "ImprovedNN":
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef) and item.name == "run":
+                        run_method = item
+                        break
+
+        if run_method is None:
+            self._add(Finding("FIX-C3", "medium",
+                f"ImprovedNN.run() not found in {pca_runner.name} — Gates B/C skipped",
+                "Ensure the class and method exist for AST gate verification.",
+                [str(pca_runner)], auto_fixable=False))
+        else:
+            def _calls(subtree, name):
+                return [n for n in ast.walk(subtree)
+                        if isinstance(n, ast.Call) and (
+                            (isinstance(n.func, ast.Name) and n.func.id == name) or
+                            (isinstance(n.func, ast.Attribute) and n.func.attr == name)
+                        )]
+
+            if not _calls(run_method, "pca_directed_split"):
+                self._add(Finding("FIX-C3", "high",
+                    f"Gate B FAIL: pca_directed_split not called inside ImprovedNN.run() in {pca_runner.name}",
+                    "Replace train_test_split(...) call with pca_directed_split(X, y, test_size=0.6).",
+                    [str(pca_runner)], auto_fixable=False))
+
+            direct_tts = _calls(run_method, "train_test_split")
+            if direct_tts:
+                self._add(Finding("FIX-C3", "high",
+                    f"Gate C FAIL: train_test_split called directly inside ImprovedNN.run() "
+                    f"({len(direct_tts)} call(s)) in {pca_runner.name}",
+                    "Remove direct train_test_split call; use pca_directed_split instead. "
+                    "An aliased import for _tts_internal is acceptable.",
+                    [str(pca_runner)], auto_fixable=False))
+
+        # ── Paper text check: old Protocol note must not claim 9/30 uses PCA 40/60 ──
+        BAD_PHRASE = "uses the \\emph{same} 40\\,\\%/60\\,\\% PCA-directed extrapolation split as the DeFi"
+        for p in tex_files(self.tex_root):
+            if BAD_PHRASE in read(p):
+                self._add(Finding("FIX-C3", "high",
+                    f"Old §10.7 Protocol note (claiming 9/30 uses PCA 40/60) still present in {p.name}",
+                    "Replace with FIX-C3 split-protocol disclosure paragraph (see hypatia_review.md §1).",
+                    [str(p)], auto_fixable=False))
+
     # ── Run all ───────────────────────────────────────────────────────────────
 
     def run_all(self) -> list[Finding]:
@@ -430,6 +525,7 @@ class Inspector:
             ("NB-04  Numerical      ", self.detect_numerical),
             ("NB-05  Figures        ", self.detect_figures),
             ("NB-06  Code quality   ", self.detect_code_quality),
+            ("NB-06  Split protocol ", self.detect_split),
         ]:
             before = len(self.findings)
             fn()

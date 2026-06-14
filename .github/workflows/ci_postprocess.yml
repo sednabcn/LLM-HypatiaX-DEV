@@ -727,10 +727,13 @@ jobs:
           # ── Destinations ────────────────────────────────────────────────
           # SRC : flat NB-05 inventory directory (hand-crafted + fallback source)
           # DEST: LaTeX \graphicspath target — must match NB-05 Step 0 DEST_DIR
+          # RUNNER_FIGS: instability/exp1 runner output — has .png for most stems
           SRC="${OUT_BASE}/${NB05_FIGURES_DIR}"
           DEST="${OUT_BASE}/${NB05_DEST_DIR}"
-          mkdir -p "${SRC}" "${DEST}"
+          RUNNER_FIGS="${OUT_BASE}/figures"
+          mkdir -p "${SRC}" "${DEST}" "${RUNNER_FIGS}"
           echo "Inventory source : ${SRC}"
+          echo "Runner figures   : ${RUNNER_FIGS}"
           echo "Destination      : ${DEST}"
           echo ""
 
@@ -828,10 +831,14 @@ jobs:
           echo ""
 
           # ── Helper: copy the first candidate path that exists, else warn ──
-          # Also accepts a .png in place of a .pdf (NB-05 fig1_seed_sweep fallback).
+          # Priority: explicit candidates (pdf preferred) → RUNNER_FIGS .png → warn.
+          # RUNNER_FIGS (hypatiax/data/results/figures/) holds .png outputs from
+          # the instability/exp1 runner — a reliable .png fallback for all five
+          # embedded stems even before generate_figures.py runs.
           copy_fig() {
             local stem="$1" label="$2"; shift 2
             local src src_png
+            # 1. Try all explicit candidates (pdf then .png sibling)
             for src in "$@"; do
               src_png="${src%.pdf}.png"
               if [[ -f "$src" ]]; then
@@ -840,12 +847,22 @@ jobs:
                 return 0
               elif [[ "$src" == *.pdf && -f "$src_png" ]]; then
                 cp -v "$src_png" "${DEST}/$(basename "$src_png")"
-                echo "  [OK] ${label}: $(basename "$src_png")  (.png fallback)  ← $(dirname "$src_png" | sed "s|${OUT_BASE}/||")/"
+                echo "  [OK] ${label}: $(basename "$src_png")  (.png sibling)  ← $(dirname "$src_png" | sed "s|${OUT_BASE}/||")/"
+                return 0
+              fi
+            done
+            # 2. Fallback: check RUNNER_FIGS (instability runner .png output)
+            for ext in pdf png jpg eps svg; do
+              local runner_src="${RUNNER_FIGS}/${stem}.${ext}"
+              if [[ -f "$runner_src" ]]; then
+                cp -v "$runner_src" "${DEST}/${stem}.${ext}"
+                echo "  [OK] ${label}: ${stem}.${ext}  (runner fallback)  ← figures/"
                 return 0
               fi
             done
             echo "  [MISSING] ${label}"
             echo "            Checked: $*"
+            echo "            Also checked: ${RUNNER_FIGS}/${stem}.{pdf,png,...}"
             echo "            Place file at ${SRC}/${stem}.pdf (or .png), then re-run figures_deploy"
             return 0
           }
@@ -856,7 +873,9 @@ jobs:
           # FIX-F1 — §7.1 fig:architecture
           copy_fig "hypatiaX_three_systems" \
                    "FIX-F1  hypatiaX_three_systems (§7.1 fig:architecture)" \
-                   "${SRC}/hypatiaX_three_systems.pdf" || true
+                   "${SRC}/hypatiaX_three_systems.pdf" \
+                   "${RUNNER_FIGS}/hypatiaX_three_systems.pdf" \
+                   "${RUNNER_FIGS}/hypatiaX_three_systems.png" || true
 
           # FIX-F2 — §7.4 fig:routing_cascade
           copy_fig "hypatiaX_algorithm1_routing_cascade_v2" \
@@ -871,18 +890,24 @@ jobs:
           copy_fig "fig18_r2_heatmap_improved" \
                    "FIX-F3  fig18_r2_heatmap_improved (§10.2 fig:r2_heatmap_clipped)" \
                    "${OUT_BASE}/${EXP1_SUBDIR}/figures/fig18_r2_heatmap_improved.pdf" \
+                   "${RUNNER_FIGS}/fig18_r2_heatmap_improved.pdf" \
+                   "${RUNNER_FIGS}/fig18_r2_heatmap_improved.png" \
                    "${SRC}/fig18_r2_heatmap_improved.pdf" || true
 
           # FIX-F4 — §10.2 fig:r2_heatmap_raw
           copy_fig "fig09_r2_heatmap_regimes" \
                    "FIX-F4  fig09_r2_heatmap_regimes (§10.2 fig:r2_heatmap_raw)" \
                    "${OUT_BASE}/${EXP1_SUBDIR}/figures/fig09_r2_heatmap_regimes.pdf" \
+                   "${RUNNER_FIGS}/fig09_r2_heatmap_regimes.pdf" \
+                   "${RUNNER_FIGS}/fig09_r2_heatmap_regimes.png" \
                    "${SRC}/fig09_r2_heatmap_regimes.pdf" || true
 
           # FIX-F5 — §10.5 fig:portfolio_seed_sweep  (.pdf preferred, .png fallback)
           copy_fig "fig1_seed_sweep" \
                    "FIX-F5  fig1_seed_sweep (§10.5 fig:portfolio_seed_sweep)" \
                    "${OUT_BASE}/${EXP1_SUBDIR}/figures/fig1_seed_sweep.pdf" \
+                   "${RUNNER_FIGS}/fig1_seed_sweep.pdf" \
+                   "${RUNNER_FIGS}/fig1_seed_sweep.png" \
                    "${SRC}/fig1_seed_sweep.pdf" || true
 
           echo ""
