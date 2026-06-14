@@ -435,7 +435,9 @@ jobs:
           echo "  repo_root/figures/ : $(ls "${REPO_FIGURES}" | wc -l) file(s)"
           echo "  repo_root/tables/  : $(ls "${REPO_TABLES}"  | wc -l) file(s)"
 
-
+      - name: Restore pip cache
+        id: pip-cache
+        if: steps.asset-cache.outputs.cache-hit != 'true'
         uses: actions/cache@v4.2.0
         with:
           path: ~/.cache/pip
@@ -443,7 +445,7 @@ jobs:
           restore-keys: pip-${{ env.PYTHON_VERSION }}-
 
       - name: Install dependencies
-        if: steps.asset-cache.outputs.cache-hit != 'true'
+        if: steps.pip-cache.outputs.cache-hit != 'true'
         run: |
           python3 -m pip install --upgrade pip
           # hypatia_inspector.py and audit_paper are pure stdlib (json/pathlib/re/argparse).
