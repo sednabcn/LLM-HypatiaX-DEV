@@ -66,7 +66,7 @@ jobs:
       # --json-out        : emit findings.json for artifact upload
       - name: Run hypatia_inspector.py (apply + update-registry)
         run: |
-          python hypatia_inspector.py \
+          python scripts/patches/hypatia_inspector.py \
             --repo . \
             --registry "${{ env.REGISTRY_PATH }}" \
             --apply \
@@ -290,15 +290,15 @@ jobs:
       #   FIX-F2, FIX-F3, FIX-F4  (when source files are present)
       - name: Apply non-numerical paper fixes (hypatia_inspector)
         run: |
-          if [ -f hypatia_inspector.py ]; then
-            python hypatia_inspector.py \
+          if [ -f scripts/patches/hypatia_inspector.py ]; then
+            python scripts/patches/hypatia_inspector.py \
               --repo . \
               --registry "${{ env.REGISTRY_PATH }}" \
               --apply \
               --update-registry \
               --json-out findings.json
           else
-            echo "::warning::hypatia_inspector.py not found — skipping auto-fix step"
+            echo "::warning::scripts/patches/hypatia_inspector.py not found — skipping auto-fix step"
           fi
         # continue-on-error so open issues don't block notebook execution
         continue-on-error: true
