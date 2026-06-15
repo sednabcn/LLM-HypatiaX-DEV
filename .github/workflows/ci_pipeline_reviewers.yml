@@ -165,21 +165,36 @@ jobs:
           # (repo_root dirs are populated by ci_postprocess 'Copy figures & tables' step)
           FIG_COUNT=0
           TEX_COUNT=0
-          while IFS= read -r -d '' f; do
-            FIG_COUNT=$((FIG_COUNT+1))
-          done < <(find "${OUT_BASE}" figures \
-            \( -name "*.pdf" -o -name "*.png" \) \
-            -path "*/figures/*" -type f -print0 2>/dev/null)
-          while IFS= read -r -d '' f; do
-            TEX_COUNT=$((TEX_COUNT+1))
-          done < <(find "${OUT_BASE}" tables \
-            -name "*.tex" \
-            -path "*/tables/*" -type f -print0 2>/dev/null)
+          # Guard each path: only pass it to find if it exists (avoids exit code 1
+          # under set -euo pipefail when figures/ or tables/ haven't been generated yet)
+          FIG_SEARCH_PATHS=()
+          [[ -d "${OUT_BASE}" ]] && FIG_SEARCH_PATHS+=("${OUT_BASE}")
+          [[ -d "figures"     ]] && FIG_SEARCH_PATHS+=("figures")
+          TAB_SEARCH_PATHS=()
+          [[ -d "${OUT_BASE}" ]] && TAB_SEARCH_PATHS+=("${OUT_BASE}")
+          [[ -d "tables"      ]] && TAB_SEARCH_PATHS+=("tables")
+
+          if [[ ${#FIG_SEARCH_PATHS[@]} -gt 0 ]]; then
+            while IFS= read -r -d '' f; do
+              FIG_COUNT=$((FIG_COUNT+1))
+            done < <(find "${FIG_SEARCH_PATHS[@]}" \
+              \( -name "*.pdf" -o -name "*.png" \) \
+              -path "*/figures/*" -type f -print0 2>/dev/null)
+          fi
+          if [[ ${#TAB_SEARCH_PATHS[@]} -gt 0 ]]; then
+            while IFS= read -r -d '' f; do
+              TEX_COUNT=$((TEX_COUNT+1))
+            done < <(find "${TAB_SEARCH_PATHS[@]}" \
+              -name "*.tex" \
+              -path "*/tables/*" -type f -print0 2>/dev/null)
+          fi
 
           # Also count files directly in repo_root/figures and repo_root/tables
           # (flat dirs — not under a */figures/* path pattern)
-          REPO_FIG_COUNT=$(find figures -maxdepth 1 \( -name "*.pdf" -o -name "*.png" \) -type f 2>/dev/null | wc -l | tr -d ' ')
-          REPO_TAB_COUNT=$(find tables  -maxdepth 1 -name "*.tex" -type f 2>/dev/null | wc -l | tr -d ' ')
+          REPO_FIG_COUNT=0
+          REPO_TAB_COUNT=0
+          [[ -d "figures" ]] && REPO_FIG_COUNT=$(find figures -maxdepth 1 \( -name "*.pdf" -o -name "*.png" \) -type f 2>/dev/null | wc -l | tr -d ' ')
+          [[ -d "tables"  ]] && REPO_TAB_COUNT=$(find tables  -maxdepth 1 -name "*.tex" -type f 2>/dev/null | wc -l | tr -d ' ')
 
           echo "  figures (PDF/PNG) in OUT_BASE  : ${FIG_COUNT} file(s)"
           echo "  tables  (TeX) in OUT_BASE       : ${TEX_COUNT} file(s)"
@@ -237,13 +252,19 @@ jobs:
             fi
           }
           # Pass 1: PDFs from OUT_BASE experiment subdirs and repo_root/figures
-          while IFS= read -r f; do
-            copy_figure "$f"
-          done < <(find "${OUT_BASE}" figures -maxdepth 4 -name "*.pdf" -type f 2>/dev/null | sort)
-          # Pass 2: PNGs (skipped for stems already deployed as PDF)
-          while IFS= read -r f; do
-            copy_figure "$f"
-          done < <(find "${OUT_BASE}" figures -maxdepth 4 -name "*.png" -type f 2>/dev/null | sort)
+          # Guard paths so find doesn't exit 1 on missing dirs under set -euo pipefail
+          FIG_STAGE_PATHS=()
+          [[ -d "${OUT_BASE}" ]] && FIG_STAGE_PATHS+=("${OUT_BASE}")
+          [[ -d "figures"     ]] && FIG_STAGE_PATHS+=("figures")
+          if [[ ${#FIG_STAGE_PATHS[@]} -gt 0 ]]; then
+            while IFS= read -r f; do
+              copy_figure "$f"
+            done < <(find "${FIG_STAGE_PATHS[@]}" -maxdepth 4 -name "*.pdf" -type f 2>/dev/null | sort)
+            # Pass 2: PNGs (skipped for stems already deployed as PDF)
+            while IFS= read -r f; do
+              copy_figure "$f"
+            done < <(find "${FIG_STAGE_PATHS[@]}" -maxdepth 4 -name "*.png" -type f 2>/dev/null | sort)
+          fi
 
           # ── Copy tables (TeX) with experiment-dir prefix to prevent collisions ──
           # Strategy: prefix every file with <experiment_dir>__ so feynman.tex from
@@ -251,14 +272,14 @@ jobs:
           # Consistent with ci_paper_audit Job 0b naming convention.
           # For repo_root/tables/ files (already prefixed by ci_postprocess/ci_paper_audit),
           # copy as-is (they already carry the experiment prefix).
-          find "${OUT_BASE}" -name "*.tex" -path "*/tables/*" -type f | while read -r f; do
+          [[ -d "${OUT_BASE}" ]] && find "${OUT_BASE}" -name "*.tex" -path "*/tables/*" -type f | while read -r f; do
             EXP="$(basename "$(dirname "$(dirname "$f")")")"
             STEM="$(basename "$f" .tex)"
             DEST="reviewer_artefacts/tables/${EXP}__${STEM}.tex"
             [[ -e "$DEST" ]] || cp "$f" "$DEST"
           done
           # repo_root/tables/ files are already prefixed — copy directly
-          find tables -maxdepth 1 -name "*.tex" -type f 2>/dev/null | while read -r f; do
+          [[ -d "tables" ]] && find tables -maxdepth 1 -name "*.tex" -type f 2>/dev/null | while read -r f; do
             DEST="reviewer_artefacts/tables/$(basename "$f")"
             [[ -e "$DEST" ]] || cp "$f" "$DEST"
           done
