@@ -33,7 +33,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PYTHON_VERSION: "3.12"
-  REGISTRY_PATH: "scripts/patches/issue_registry.json"
+  REGISTRY_PATH: "_repo/scripts/patches/issue_registry.json"
 
 # Only one Pages deployment at a time; cancel any in-progress run.
 concurrency:
@@ -359,12 +359,13 @@ jobs:
 
 
       - name: Checkout (for live issue_registry.json)
-        # We need the registry on disk so the conclusions renderer can read
-        # statuses (false_positive / resolved / open) directly from the repo
-        # rather than relying on a stale artifact or a hardcoded static list.
+        # Checked out into _repo/ subdirectory so actions/checkout does NOT
+        # wipe the working directory and destroy site/index.html that was
+        # just built by the previous step.
         uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 1
+          path: _repo
 
       - name: Download audit summary artifact
         # Pull the notebooks_audit_summary.json produced by ci_paper_notebooks.
@@ -439,7 +440,7 @@ jobs:
           no_notebooks = os.environ.get("NO_NOTEBOOKS", "false").lower() == "true"
           upstream_run = os.environ.get("UPSTREAM_RUN", "—")
           report_run   = os.environ.get("REPORT_RUN",   "—")
-          registry_path = Path(os.environ.get("REGISTRY_PATH", "scripts/patches/issue_registry.json"))
+          registry_path = Path(os.environ.get("REGISTRY_PATH", "_repo/scripts/patches/issue_registry.json"))
 
           # ── 1. Load issue_registry.json (primary source of truth) ────────────
           registry_entries = []
@@ -804,6 +805,7 @@ jobs:
             </div><!-- #conclusions -->
           """
 
+          Path("site").mkdir(exist_ok=True)
           with open("site/index.html", "a", encoding="utf-8") as fh:
               fh.write(section)
 

@@ -511,11 +511,14 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
+        # NB-02 uses stdlib only (re, collections, pathlib).
+        # requirements.txt / notebooks/requirements.txt are intentionally
+        # skipped — installing them costs 30+ min and nothing in NB-02
+        # needs them. Only nbconvert + ipykernel are needed to execute
+        # the notebook via jupyter nbconvert.
         run: |
           pip install --upgrade pip
           pip install jupyter nbconvert ipykernel
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f notebooks/requirements.txt ]; then pip install -r notebooks/requirements.txt; fi
           python -m ipykernel install --user --name python3
 
       - name: Download notebooks workspace
