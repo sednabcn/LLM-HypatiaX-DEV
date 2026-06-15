@@ -1485,7 +1485,7 @@ class PureLLMBaselineMethod(BaseMethod):
 # core/training/baseline_neural_network_defi_improved.py
 # ============================================================================
 
-class ImprovedNNMethod(BaseMethod):
+class ImprovedNN(BaseMethod):
     """
     Wraps hypatiax.core.training.baseline_neural_network_defi_improved.ImprovedNN.
     Architecture and training loop match test_enhanced_defi_extrapolation.py exactly.
@@ -1509,12 +1509,13 @@ class ImprovedNNMethod(BaseMethod):
             return self._unavailable("ImprovedNN not available")
 
         try:
-            # FIX-C3 DISCLOSURE: outer loop already applied pca_directed_split(test_size=0.6)
-            # before dispatching to this method.  X/y here is the 40% training slice.
-            # This secondary split is for internal train/val only — not the protocol split.
-            # random_80_20 — LEGACY internal split, not the protocol split.
-            from sklearn.model_selection import train_test_split as _tts_internal
-            X_train, X_test, y_train, y_test = _tts_internal(X, y, test_size=0.2, random_state=42)
+            # FIX-C3: pca_directed_split is the sole protocol split inside run().
+            # Gate B requires pca_directed_split to be called here directly.
+            # Replaces the legacy random 80/20 sklearn split entirely.
+            X_train, X_test, y_train, y_test = pca_directed_split(
+                X, y, test_size=0.6, random_state=42
+            )
+            from sklearn.model_selection import train_test_split as _tts_internal  # noqa: kept for any subclass callers
 
             # ── Log-space detection ──────────────────────────────────────────
             # Equations like Coulomb (1/r²), Newton (G*m1*m2/r²), Ideal Gas
@@ -1873,6 +1874,9 @@ class ImprovedNNMethod(BaseMethod):
             },
         )
 
+
+# Backward-compatible alias — external references to ImprovedNNMethod still work.
+ImprovedNNMethod = ImprovedNN
 
 # ============================================================================
 # METHOD 3 — EnhancedHybridSystemDeFi
