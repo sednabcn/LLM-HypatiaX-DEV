@@ -137,7 +137,7 @@ on:
         default: "false"
 
 permissions:
-  contents: read
+  contents: write   # required for issue_registry.json commits by github-actions[bot]
   actions:  read
 
 env:
@@ -236,6 +236,64 @@ jobs:
           if missing_action:
               print(f"\nWARN: auto_fixable open issues missing 'action' field: {missing_action}")
           PY
+
+      # ── Stamp confirmed false-positive issues in the registry ──────────────
+      # These six issues were verified as never-existing problems (see audit
+      # summary).  Writing them here — in the guard job that always runs —
+      # ensures they are suppressed in every downstream job immediately,
+      # without waiting for a clean audit pass.
+      # Add new confirmed FPs to FALSE_POSITIVE_IDS; do NOT add open issues.
+      - name: Stamp confirmed false-positives in issue_registry.json
+        env:
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+          GIT_AUTHOR_NAME:  github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME:  github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          python3 - <<'PYFP'
+          import json, subprocess, sys, datetime
+          from pathlib import Path
+
+          # Confirmed false-positives — issues that do not exist in the paper.
+          # See audit report section "False Positives in the Audit Report".
+          FALSE_POSITIVE_IDS = {
+              "FIX-B1",   # koza1994genetic bibitem exists; only citation is in a comment
+              "FIX-XR1",  # sec:llm_domain label never defined; no duplicate exists
+              "FIX-XR2",  # label is after \subsection, not inside \item
+              "FIX-XR3",  # Supp A already says §7.4, not §7.3
+              "FIX-N1",   # "71 cases" text does not appear in the paper
+              "FIX-N2",   # §8.3 heading already says "Five-Stage", not "Five-Layer"
+          }
+
+          registry_path = Path("${{ env.REGISTRY_PATH }}")
+          if not registry_path.exists():
+              print(f"::notice::Registry not found at {registry_path} — skipping FP stamp.")
+              sys.exit(0)
+
+          registry = json.loads(registry_path.read_text())
+          changed = []
+          for entry in registry:
+              if entry.get("id") in FALSE_POSITIVE_IDS and entry.get("status") != "false_positive":
+                  entry["status"] = "false_positive"
+                  entry["updated"] = datetime.date.today().isoformat()
+                  entry.setdefault("note", "Confirmed false positive — issue does not exist in source files.")
+                  changed.append(entry["id"])
+
+          if not changed:
+              print("No false-positive status changes needed — registry already up to date.")
+              sys.exit(0)
+
+          registry_path.write_text(json.dumps(registry, indent=2))
+          print(f"Stamped false_positive: {changed}")
+
+          subprocess.run(["git", "config", "user.name",  "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+          subprocess.run(["git", "add", str(registry_path)], check=True)
+          msg = f"ci: mark false_positive {', '.join(changed)} in issue_registry.json [skip ci]"
+          subprocess.run(["git", "commit", "-m", msg], check=True)
+          subprocess.run(["git", "push"], check=True)
+          PYFP
 
       - name: Evaluate trigger
         id: check
@@ -346,7 +404,6 @@ jobs:
       # so the pipeline stops with a clear message rather than silently
       # producing an empty audit.
       - name: "Pre-audit: verify (and re-populate) repo_root/figures and repo_root/tables"
-        if: steps.asset-cache.outputs.cache-hit != 'true'
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -361,13 +418,16 @@ jobs:
           }
 
           repopulate() {
-            echo "  Scanning ${OUT_BASE} for figures and tables to copy…"
+            echo "  Scanning workspace for figures and tables to copy…"
             mkdir -p "${REPO_FIGURES}" "${REPO_TABLES}"
 
-            # Copy all pdf/png from any experiment figures/ subdir
-            find "${OUT_BASE}" \
-              -path "${OUT_BASE}/figures" -prune -o \
-              -path "${OUT_BASE}/tables"  -prune -o \
+            # Scan the full workspace (not just $OUT_BASE) so files written by
+            # generate_figures.py outside $OUT_BASE (e.g. hypatiax/tools/figures/)
+            # are also captured.  Exclude .git and the canonical OUT_BASE dirs.
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${OUT_BASE}/figures" -prune -o \
+              -path "./${OUT_BASE}/tables"  -prune -o \
               \( -name "*.pdf" -o -name "*.png" \) \
               -print 2>/dev/null \
             | while IFS= read -r f; do
@@ -375,13 +435,13 @@ jobs:
                 [[ -e "$dest" ]] || cp "$f" "$dest"
               done
 
-            # Copy all .tex from any experiment tables/ subdir
-            find "${OUT_BASE}" \
-              -path "${OUT_BASE}/tables" -prune -o \
+            # Copy all .tex from any tables/ subdir in the full workspace
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${OUT_BASE}/tables" -prune -o \
               -name "*.tex" -print \
               2>/dev/null \
             | while IFS= read -r f; do
-                # Prefix with experiment dir to avoid collisions
                 exp_dir="$(basename "$(dirname "$(dirname "$f")")")"
                 stem="$(basename "$f" .tex)"
                 dest="${REPO_TABLES}/${exp_dir}__${stem}.tex"
@@ -1187,76 +1247,203 @@ jobs:
           if-no-files-found: warn
           retention-days:    30
 
-      # ── Auto-update issue_registry.json on successful audit ─────────────────
-      # When paper-audit passes, cross-check each open issue in the registry
-      # against live inspector findings.  Any issue that no longer appears as
-      # OPEN in findings.json is auto-marked "resolved" and the registry is
-      # committed back to the branch.
+      # ── Update issue_registry.json — dual-source reconciliation ────────────
       #
-      # Safety rules:
-      #   - Only runs when the audit step itself succeeded (not on failure/skip).
-      #   - Only marks issues "resolved" — never re-opens or deletes entries.
-      #   - false_positive entries are never touched.
-      #   - Commit is signed with the github-actions bot; no PAT required.
-      #   - If findings.json is absent (inspector skipped), write-back is skipped
-      #     entirely so a missing inspector never silently clears open issues.
-      - name: Auto-update registry — mark resolved issues after clean audit
-        if: steps.audit.outcome == 'success'
+      #  Runs after every paper-audit attempt (if: always()) so the registry
+      #  stays accurate even when the audit gate fails on some issues while
+      #  others have been fixed.
+      #
+      #  Source priority (most-authoritative first):
+      #    1. logs/paper_audit_findings.json  — the audit gate's canonical output.
+      #       An issue absent from this file (or present with status != OPEN)
+      #       is treated as no longer failing the gate.
+      #    2. findings.json                   — hypatia_inspector dry-run output.
+      #       Used to pick up false_positive / skipped verdicts that the gate
+      #       itself does not emit.
+      #    3. Registry's own current status   — fall-through: if an issue does
+      #       not appear in either source it is left as-is (no silent clearing).
+      #
+      #  Safety rules (unchanged from previous step):
+      #    - false_positive entries are NEVER touched regardless of findings.
+      #    - Issues are only promoted (open → resolved / false_positive).
+      #      They are never re-opened or deleted.
+      #    - If BOTH source files are absent the step prints a notice and exits 0
+      #      so a missing inspector cannot silently clear the registry.
+      #    - Commit is signed by github-actions[bot]; no PAT required.
+      #    - A clear diff table is printed before the commit so the log shows
+      #      exactly what changed and why.
+      #
+      #  Diff table columns:
+      #    ID | old status | new status | source (gate | inspector | no-change)
+      - name: Update issue_registry.json — dual-source reconciliation
+        if: always()
         env:
           REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
           GIT_AUTHOR_NAME:  github-actions[bot]
           GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME:  github-actions[bot]
           GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+          AUDIT_STEP_OUTCOME: ${{ steps.audit.outcome }}
         run: |
           python3 - <<'PYWR'
-          import json, subprocess, sys
+          import json, subprocess, sys, datetime
           from pathlib import Path
 
-          findings_path = Path("findings.json")
-          registry_path = Path("${{ env.REGISTRY_PATH }}")
+          registry_path    = Path("${{ env.REGISTRY_PATH }}")
+          gate_path        = Path("logs/paper_audit_findings.json")
+          inspector_path   = Path("findings.json")
+          audit_outcome    = "${{ env.AUDIT_STEP_OUTCOME }}"   # success | failure | skipped
 
-          if not findings_path.exists():
-              print("::notice::findings.json absent — registry write-back skipped.")
-              sys.exit(0)
-
+          # ── Guard: registry must exist ──────────────────────────────────────
           if not registry_path.exists():
-              print(f"::error::Registry not found at {registry_path}")
+              print(f"::error::Registry not found at {registry_path} — skipping update.")
               sys.exit(1)
 
-          findings_raw = json.loads(findings_path.read_text())
-          findings = findings_raw if isinstance(findings_raw, list) else findings_raw.get("findings", [])
-
-          # Build set of issue IDs that are still OPEN in live findings
-          still_open_ids = {
-              f.get("id") for f in findings
-              if f.get("status", "").upper() == "OPEN"
-          }
-
-          registry = json.loads(registry_path.read_text())
-          changed = []
-          for entry in registry:
-              if entry.get("status") != "open":
-                  continue                         # resolved / false_positive: never touch
-              if entry["id"] not in still_open_ids:
-                  entry["status"] = "resolved"
-                  entry["updated"] = __import__("datetime").date.today().isoformat()
-                  changed.append(entry["id"])
-
-          if not changed:
-              print("Registry up to date — no issues to mark resolved.")
+          # ── Guard: at least one source must exist ───────────────────────────
+          if not gate_path.exists() and not inspector_path.exists():
+              print("::notice::Both paper_audit_findings.json and findings.json are absent "
+                    "— registry update skipped (no source of truth available).")
               sys.exit(0)
 
-          registry_path.write_text(json.dumps(registry, indent=2))
-          print(f"Marked resolved: {changed}")
+          today = datetime.date.today().isoformat()
 
-          # Commit the updated registry back to the branch
-          subprocess.run(["git", "config", "user.name",  "${{ env.GIT_AUTHOR_NAME }}"],  check=True)
-          subprocess.run(["git", "config", "user.email", "${{ env.GIT_AUTHOR_EMAIL }}"], check=True)
+          # ── Load gate findings (source 1) ────────────────────────────────────
+          gate_open_ids:        set[str] = set()
+          gate_resolved_ids:    set[str] = set()   # present but NOT open
+          if gate_path.exists():
+              try:
+                  raw = json.loads(gate_path.read_text())
+                  items = raw if isinstance(raw, list) else raw.get("findings", [])
+                  for item in items:
+                      eid = item.get("id") or item.get("fix_id") or ""
+                      if not eid:
+                          continue
+                      if item.get("status", "OPEN").upper() == "OPEN":
+                          gate_open_ids.add(eid)
+                      else:
+                          gate_resolved_ids.add(eid)
+                  print(f"Gate findings loaded: {len(gate_open_ids)} OPEN, "
+                        f"{len(gate_resolved_ids)} non-OPEN from {gate_path}")
+              except Exception as exc:
+                  print(f"::warning::Could not parse {gate_path}: {exc} — source 1 skipped.")
+
+          # ── Load inspector findings (source 2) ───────────────────────────────
+          inspector_fp_ids:    set[str] = set()
+          inspector_open_ids:  set[str] = set()
+          if inspector_path.exists():
+              try:
+                  raw = json.loads(inspector_path.read_text())
+                  items = raw if isinstance(raw, list) else raw.get("findings", [])
+                  for item in items:
+                      eid = item.get("id") or ""
+                      if not eid:
+                          continue
+                      st = item.get("status", "").upper()
+                      if st in ("FALSE_POSITIVE", "SKIPPED"):
+                          inspector_fp_ids.add(eid)
+                      elif st == "OPEN":
+                          inspector_open_ids.add(eid)
+                  print(f"Inspector findings loaded: {len(inspector_open_ids)} OPEN, "
+                        f"{len(inspector_fp_ids)} FP/skipped from {inspector_path}")
+              except Exception as exc:
+                  print(f"::warning::Could not parse {inspector_path}: {exc} — source 2 skipped.")
+
+          # ── Reconcile registry ───────────────────────────────────────────────
+          registry = json.loads(registry_path.read_text())
+
+          diff_rows = []   # (id, old_status, new_status, source)
+
+          for entry in registry:
+              eid      = entry["id"]
+              old_st   = entry.get("status", "open")
+
+              # false_positive entries are never modified
+              if old_st == "false_positive":
+                  diff_rows.append((eid, old_st, old_st, "protected"))
+                  continue
+
+              # Already resolved — leave alone (never re-open)
+              if old_st == "resolved":
+                  diff_rows.append((eid, old_st, old_st, "already-resolved"))
+                  continue
+
+              # --- old_st == "open" from here ---
+
+              # Priority 1: inspector explicitly marks as false_positive
+              if eid in inspector_fp_ids:
+                  entry["status"]  = "false_positive"
+                  entry["updated"] = today
+                  entry.setdefault("note", "Inspector verdict: false_positive")
+                  diff_rows.append((eid, old_st, "false_positive", "inspector"))
+                  continue
+
+              # Priority 2: gate output says this issue is NOT open
+              #   (issue appeared in gate file with non-OPEN status, OR
+              #    issue was absent from gate file entirely while gate succeeded)
+              gate_cleared = (eid in gate_resolved_ids) or (
+                  audit_outcome == "success"
+                  and gate_path.exists()
+                  and eid not in gate_open_ids
+                  and eid not in inspector_open_ids
+              )
+              if gate_cleared:
+                  entry["status"]  = "resolved"
+                  entry["updated"] = today
+                  diff_rows.append((eid, old_st, "resolved", "gate"))
+                  continue
+
+              # Priority 3: issue absent from gate (gate skipped/failed on others)
+              # but inspector also doesn't list it as open → resolve cautiously
+              # only when audit succeeded (avoiding silent clearing on gate failure)
+              if (audit_outcome == "success"
+                      and not gate_path.exists()
+                      and eid not in inspector_open_ids
+                      and inspector_path.exists()):
+                  entry["status"]  = "resolved"
+                  entry["updated"] = today
+                  diff_rows.append((eid, old_st, "resolved", "inspector-only"))
+                  continue
+
+              # Default: still open
+              diff_rows.append((eid, old_st, old_st, "still-open"))
+
+          # ── Print diff table ─────────────────────────────────────────────────
+          changed = [(eid, o, n, src) for eid, o, n, src in diff_rows if o != n]
+          unchanged_open = [(eid, o, n, src) for eid, o, n, src in diff_rows
+                            if o == "open" and n == "open"]
+
+          col = "{:<14} {:<18} {:<18} {}"
+          print("")
+          print("=== issue_registry.json reconciliation diff ===")
+          print(col.format("ID", "OLD STATUS", "NEW STATUS", "SOURCE"))
+          print("-" * 66)
+          for row in diff_rows:
+              marker = "  →" if row[1] != row[2] else "   "
+              print(f"{marker} " + col.format(*row))
+          print("")
+
+          if not changed:
+              print("Registry already up to date — no changes needed.")
+              sys.exit(0)
+
+          print(f"Changes: {[f'{e}: {o}→{n}' for e,o,n,_ in changed]}")
+          if unchanged_open:
+              print(f"Still open (not cleared by either source): "
+                    f"{[e for e,*_ in unchanged_open]}")
+
+          # ── Write registry and commit ────────────────────────────────────────
+          registry_path.write_text(json.dumps(registry, indent=2))
+
+          subprocess.run(["git", "config", "user.name",  "github-actions[bot]"],                        check=True)
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
           subprocess.run(["git", "add", str(registry_path)], check=True)
-          msg = f"ci: auto-resolve {', '.join(changed)} in issue_registry.json [skip ci]"
+
+          summary_parts = [f"{e}:{o}→{n}" for e, o, n, _ in changed]
+          msg = (f"ci: update issue_registry.json — "
+                 f"{', '.join(summary_parts)} [skip ci]")
           subprocess.run(["git", "commit", "-m", msg], check=True)
-          subprocess.run(["git", "push"], check=True)
+          subprocess.run(["git", "push"],              check=True)
+          print(f"Committed registry update: {msg}")
           PYWR
 
 

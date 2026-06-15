@@ -358,6 +358,14 @@ jobs:
           done
 
 
+      - name: Checkout (for live issue_registry.json)
+        # We need the registry on disk so the conclusions renderer can read
+        # statuses (false_positive / resolved / open) directly from the repo
+        # rather than relying on a stale artifact or a hardcoded static list.
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
       - name: Download audit summary artifact
         # Pull the notebooks_audit_summary.json produced by ci_paper_notebooks.
         # On manual dispatch with no_notebooks=true, uses summary_run_id input.
@@ -403,15 +411,26 @@ jobs:
           ls -la /tmp/hypatia_findings/ 2>/dev/null || echo "No hypatia findings artifacts downloaded"
 
       - name: Render dynamic conclusions section
-        # Reads notebooks_audit_summary.json (from downloaded artifact or the
-        # static fallback list) and writes a live conclusions section to
-        # site/index.html.  Status badges reflect actual fix state — RESOLVED
-        # for fixes applied by fix_paper_issues.py, OPEN otherwise.
-        # Also handles the no_notebooks=true path with an informational banner.
+        # SOURCE OF TRUTH ORDER (highest → lowest priority):
+        #   1. issue_registry.json  (checked out from repo — always present)
+        #   2. hypatia_inspector findings.json artifact (live detector output)
+        #   3. notebooks_audit_summary.json artifact  (NB descriptions/actions)
+        #   4. STATIC_FIXES list below                (descriptions only, no statuses)
+        #
+        # STATUSES are taken from the registry first, then the inspector.
+        # The inspector can only promote a status *within* what the registry allows:
+        #   - registry says false_positive → always FALSE_POSITIVE (cannot be overridden)
+        #   - registry says resolved        → always RESOLVED
+        #   - registry says open            → inspector can mark RESOLVED if it found a fix,
+        #                                     or leave as OPEN
+        #
+        # FALSE_POSITIVE entries are shown in a separate muted table section,
+        # never counted as OPEN or CRITICAL in banners or gates.
         env:
           NO_NOTEBOOKS: ${{ github.event.inputs.no_notebooks || 'false' }}
           UPSTREAM_RUN: ${{ steps.resolve-run.outputs.notebooks_run_id }}
           REPORT_RUN:   ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
         run: |
           python3 - <<'PYEOF'
           import json, os, html, datetime
@@ -420,22 +439,25 @@ jobs:
           no_notebooks = os.environ.get("NO_NOTEBOOKS", "false").lower() == "true"
           upstream_run = os.environ.get("UPSTREAM_RUN", "—")
           report_run   = os.environ.get("REPORT_RUN",   "—")
+          registry_path = Path(os.environ.get("REGISTRY_PATH", "scripts/patches/issue_registry.json"))
 
-          # ── Load summary ──────────────────────────────────────────────────────
-          summary = None
-          for candidate in [
-              "/tmp/audit_summary/notebooks_audit_summary.json",
-              "/tmp/audit_summary/paper-audit-notebooks/notebooks_audit_summary.json",
-          ]:
+          # ── 1. Load issue_registry.json (primary source of truth) ────────────
+          registry_entries = []
+          if registry_path.exists():
               try:
-                  summary = json.loads(Path(candidate).read_text())
-                  print(f"Loaded audit summary from {candidate}")
-                  break
-              except Exception:
-                  pass
+                  registry_entries = json.loads(registry_path.read_text())
+                  print(f"Loaded {len(registry_entries)} entries from {registry_path}")
+              except Exception as exc:
+                  print(f"WARNING: could not parse {registry_path}: {exc}")
+          else:
+              print(f"WARNING: {registry_path} not found — will fall back to static list")
 
-          # ── Load hypatia_inspector findings (override statuses) ───────────────
-          hypatia_statuses = {}
+          # Build a dict: id → registry entry (authoritative status)
+          reg_by_id = {e["id"]: e for e in registry_entries}
+
+          # ── 2. Load hypatia_inspector findings.json (detector output) ─────────
+          # Maps fix_id → inspector-detected status string
+          inspector_status: dict[str, str] = {}
           for candidate in [
               "/tmp/hypatia_findings/findings.json",
           ]:
@@ -443,185 +465,316 @@ jobs:
                   raw = json.loads(Path(candidate).read_text())
                   for f in raw:
                       fid = f.get("fix_id") or f.get("id", "")
-                      if fid:
-                          st = f.get("status", "")
-                          if st == "fixed":
-                              hypatia_statuses[fid] = "RESOLVED"
-                          elif st in ("detected", "manual"):
-                              hypatia_statuses[fid] = "OPEN"
-                          elif st == "skipped":
-                              # skipped = false_positive or already resolved
-                              hypatia_statuses[fid] = "RESOLVED"
-                  print(f"Loaded {len(hypatia_statuses)} statuses from hypatia_inspector")
+                      if not fid:
+                          continue
+                      st = f.get("status", "")
+                      # Inspector statuses:
+                      #   "fixed"    → auto-fixer ran and succeeded
+                      #   "skipped"  → registry said false_positive or resolved → do NOT promote to RESOLVED
+                      #   "manual"   → detected but needs human action
+                      #   "detected" → detected, auto-fixable but not yet applied
+                      if st == "fixed":
+                          inspector_status[fid] = "RESOLVED"
+                      elif st == "detected":
+                          inspector_status[fid] = "OPEN"
+                      elif st == "manual":
+                          inspector_status[fid] = "OPEN"
+                      # "skipped" → trust the registry; don't map to anything here
+                  print(f"Loaded {len(inspector_status)} live statuses from hypatia_inspector")
                   break
               except Exception as exc:
                   print(f"Could not load hypatia findings: {exc}")
 
-          # Static fallback (same list as in ci_paper_notebooks.yml) used when
-          # no artifact was downloaded and when no_notebooks=true.
-          AUTO_RESOLVED = {
-              "FIX-B1","FIX-B2","FIX-B3",
-              "FIX-XR1","FIX-XR2","FIX-XR3","FIX-XR4",
-              "FIX-N1","FIX-N2","FIX-C2",
+          # ── 3. Load notebooks audit summary (descriptions / NB labels) ────────
+          nb_summary: dict[str, dict] = {}  # fix_id → {description, action, nb, severity}
+          for candidate in [
+              "/tmp/audit_summary/notebooks_audit_summary.json",
+              "/tmp/audit_summary/paper-audit-notebooks/notebooks_audit_summary.json",
+          ]:
+              try:
+                  summary = json.loads(Path(candidate).read_text())
+                  items = summary if isinstance(summary, list) else summary.get("findings", [])
+                  for item in items:
+                      fid = item.get("id") or item.get("fix_id", "")
+                      if fid:
+                          nb_summary[fid] = item
+                  print(f"Loaded NB summary descriptions for {len(nb_summary)} items")
+                  break
+              except Exception:
+                  pass
+
+          # ── 4. Static descriptions fallback (used when registry has no entry) ─
+          # ONLY descriptions/actions/nb/severity — statuses come from the registry
+          STATIC_META = {
+              "FIX-B1":  {"severity":"CRITICAL","nb":"NB-01",
+                           "description":"koza1994genetic cited but has no \\\\bibitem — would produce [?] in compiled PDF.",
+                           "action":"Add \\\\bibitem{koza1994genetic} or redirect \\\\cite calls to koza1992gp."},
+              "FIX-B2":  {"severity":"HIGH",    "nb":"NB-01",
+                           "description":"cranmer2023pysr and cranmer2023interpretable alias the same arXiv paper (2305.01582).",
+                           "action":"Remove cranmer2023interpretable bibitem; redirect all \\\\cite to cranmer2023pysr."},
+              "FIX-B3":  {"severity":"HIGH",    "nb":"NB-01",
+                           "description":"udrescu2020ai and udrescu2020aifeynman alias the same paper.",
+                           "action":"Remove udrescu2020aifeynman; redirect all uses to udrescu2020ai."},
+              "FIX-XR1": {"severity":"MEDIUM",  "nb":"NB-02",
+                           "description":"sec:llm_limitations and sec:llm_domain reportedly both defined on Section 3.",
+                           "action":"Remove \\\\label{sec:llm_domain}; update \\\\ref call sites."},
+              "FIX-XR2": {"severity":"MEDIUM",  "nb":"NB-02",
+                           "description":"\\\\label{sec:r2_bugfix} reportedly inside \\\\item block — garbled \\\\ref output.",
+                           "action":"Move label to \\\\subsection heading."},
+              "FIX-XR3": {"severity":"MEDIUM",  "nb":"NB-02",
+                           "description":"Supp A reportedly references Section 7.3 for Proposition 1; correct is §7.4.",
+                           "action":"Change 7.3 → 7.4 in supp_routing_improvements.tex."},
+              "FIX-XR4": {"severity":"MEDIUM",  "nb":"NB-02",
+                           "description":"Supp A references filename jmlr_paper_main.tex; actual file is jmlr-hypatiax-paper-final.tex.",
+                           "action":"Update all filename strings in Supp A."},
+              "FIX-N1":  {"severity":"MEDIUM",  "nb":"NB-04",
+                           "description":"Spearman footnote reportedly says '71 cases'; table caption correctly says '70 tasks'.",
+                           "action":"Change '71 cases' → '70 tasks' in instability section body."},
+              "FIX-N2":  {"severity":"MEDIUM",  "nb":"NB-04",
+                           "description":"§8.3 heading reportedly reads 'Five-Layer Architecture Overview'.",
+                           "action":"Rename §8.3 to 'Five-Stage Routing Architecture Overview'."},
+              "FIX-N3":  {"severity":"MEDIUM",  "nb":"NB-04",
+                           "description":"Nguyen-12 seed=123 rerun results not committed — dual-threshold claim unverified.",
+                           "action":"Run exp_nguyen12_seed123 and commit _merged.json; add claim to paper_targets.json."},
+              "FIX-F1":  {"severity":"MEDIUM",  "nb":"NB-05",
+                           "description":"hypatiaX_three_systems: \\\\fbox{} placeholder in §7.1 — final figure not committed.",
+                           "action":"Replace \\\\fbox placeholder with final PDF/PNG from Figures/architecture_figures/."},
+              "FIX-F2":  {"severity":"MEDIUM",  "nb":"NB-05",
+                           "description":"fig18_r2_heatmap_improved.pdf missing from figures/.",
+                           "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
+              "FIX-F3":  {"severity":"MEDIUM",  "nb":"NB-05",
+                           "description":"fig09_r2_heatmap_regimes.pdf missing from figures/.",
+                           "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
+              "FIX-F4":  {"severity":"MEDIUM",  "nb":"NB-05",
+                           "description":"fig1_seed_sweep.pdf missing from figures/.",
+                           "action":"Copy from Figures/figures-portfolio-variance/ → figures/."},
+              "FIX-C1":  {"severity":"MEDIUM",  "nb":"NB-06",
+                           "description":"NB-06 flagged duplicate case names in hypatiax_defi_benchmark_v3c.py.",
+                           "action":"Rename duplicates (exact-equality check found zero; confirmed false positive)."},
+              "FIX-C2":  {"severity":"MEDIUM",  "nb":"NB-06",
+                           "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py.",
+                           "action":"Replace with hybrid_system_v50_2 throughout."},
+              "FIX-C3":  {"severity":"CRITICAL","nb":"NB-06",
+                           "description":"Feynman benchmark used random 80/20 split instead of PCA-directed 40/60.",
+                           "action":"Results in exp2_pca_4060/; Gates A/B/C passed. Update §10.7 or disclose baseline."},
+              "FIX-C4":  {"severity":"CRITICAL","nb":"NB-06",
+                           "description":"NB-06 Step 4 scan reported exposed API keys.",
+                           "action":"Confirmed false positive — no real keys present."},
+              "FIX-S1":  {"severity":"LOW",     "nb":"NB-03",
+                           "description":"Missing \\\\label on top-level \\\\section commands.",
+                           "action":"Add \\\\label{sec:<slug>} after each \\\\section{} heading."},
+              "FIX-S2":  {"severity":"LOW",     "nb":"NB-03",
+                           "description":"Missing \\\\label on \\\\subsection commands.",
+                           "action":"Add \\\\label{subsec:<slug>} after each \\\\subsection{} heading."},
           }
-          STATIC_FIXES = [
-              {"id":"FIX-B1",  "severity":"CRITICAL","nb":"NB-01",
-               "description":"koza1994genetic cited but no \\bibitem — will produce [?] in PDF.",
-               "action":"Add \\bibitem{koza1994genetic} or redirect \\cite calls to koza1992gp."},
-              {"id":"FIX-B2",  "severity":"HIGH",    "nb":"NB-01",
-               "description":"cranmer2023pysr and cranmer2023interpretable are the same arXiv paper (2305.01582).",
-               "action":"Remove cranmer2023interpretable; replace all \\cite calls with cranmer2023pysr."},
-              {"id":"FIX-B3",  "severity":"HIGH",    "nb":"NB-01",
-               "description":"udrescu2020ai and udrescu2020aifeynman are the same paper.",
-               "action":"Remove udrescu2020aifeynman; replace all uses with udrescu2020ai."},
-              {"id":"FIX-XR1","severity":"MEDIUM",  "nb":"NB-02",
-               "description":"sec:llm_limitations and sec:llm_domain both defined on Section 3 — duplicate labels.",
-               "action":"Remove \\label{sec:llm_domain}; update \\ref call sites."},
-              {"id":"FIX-XR2","severity":"MEDIUM",  "nb":"NB-02",
-               "description":"\\label{sec:r2_bugfix} sits inside \\item block — garbled \\ref output.",
-               "action":"Move label to \\subsection heading."},
-              {"id":"FIX-XR3","severity":"MEDIUM",  "nb":"NB-02",
-               "description":"Supp A references Section 7.3 for Proposition 1; main paper places Component 3 in §7.4.",
-               "action":"Change 7.3 → 7.4 in supp_routing_improvements.tex."},
-              {"id":"FIX-XR4","severity":"MEDIUM",  "nb":"NB-02",
-               "description":"Supp A references filename jmlr_paper_main.tex; actual file is jmlr-hypatiax-paper-final.tex.",
-               "action":"Update all filename strings in Supp A."},
-              {"id":"FIX-N1", "severity":"MEDIUM",  "nb":"NB-04",
-               "description":"Spearman footnote says '71 cases'; table caption correctly says '70 tasks'.",
-               "action":"Change '71 cases' → '70 tasks' in instability section body (line 1637)."},
-              {"id":"FIX-N2", "severity":"MEDIUM",  "nb":"NB-04",
-               "description":"§8.3 heading reads 'Five-Layer Architecture Overview'; rest of paper uses 'five-stage routing'.",
-               "action":"Rename §8.3 to 'Five-Stage Routing Architecture Overview'."},
-              {"id":"FIX-N3", "severity":"MEDIUM",  "nb":"NB-04",
-               "description":"Nguyen-12 numbers need verification after seed=123 rerun.",
-               "action":"Rerun Nguyen-12 with seed=123 and update paper figures."},
-              {"id":"FIX-F1", "severity":"MEDIUM",  "nb":"NB-05",
-               "description":"hypatiaX_three_systems MISSING — \\fbox placeholder in §7.1.",
-               "action":"Replace \\fbox placeholder with final PDF/PNG from Figures/architecture_figures/."},
-              {"id":"FIX-F2", "severity":"MEDIUM",  "nb":"NB-05",
-               "description":"fig18_r2_heatmap_improved.pdf missing from figures/.",
-               "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
-              {"id":"FIX-F3", "severity":"MEDIUM",  "nb":"NB-05",
-               "description":"fig09_r2_heatmap_regimes.pdf missing from figures/.",
-               "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
-              {"id":"FIX-F4", "severity":"MEDIUM",  "nb":"NB-05",
-               "description":"fig1_seed_sweep.pdf missing from figures/.",
-               "action":"Copy from Figures/figures-portfolio-variance/ → figures/."},
-              {"id":"FIX-C1", "severity":"MEDIUM",  "nb":"NB-06",
-               "description":"Three duplicate case names in hypatiax_defi_benchmark_v3c.py.",
-               "action":"Rename duplicates (e.g. add (basic)/(extended) suffixes) and rerun checkpoint."},
-              {"id":"FIX-C2", "severity":"MEDIUM",  "nb":"NB-06",
-               "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py.",
-               "action":"Replace with hybrid_system_v50_2 throughout."},
-              {"id":"FIX-C3", "severity":"MEDIUM",  "nb":"NB-06 / ci_runner_disclosure",
-               "description":"Feynman split-protocol corrected: PCA 40/60 run in exp2_pca_4060/; Gates A/B/C passed.",
-               "action":"Report corrected result from exp2_pca_4060/ in §10.7 or disclose random 80/20 baseline.",
-               "status":"RESOLVED"},
-          ]
 
-          if summary:
-              findings = summary.get("findings", [])
-              no_notebooks = no_notebooks or summary.get("no_notebooks", False)
-          else:
-              print("No audit summary found — using static fallback with fix-script statuses")
-              findings = []
-              for f in STATIC_FIXES:
-                  status = f.get("status", "RESOLVED" if f["id"] in AUTO_RESOLVED else "OPEN")
-                  findings.append({**f, "status": status})
+          # ── Build the canonical findings list from the registry ───────────────
+          # The registry is the authoritative list of ALL known issues.
+          # Descriptions come from: nb_summary > STATIC_META > registry entry itself.
+          findings = []
+          for entry in registry_entries:
+              fid      = entry["id"]
+              reg_st   = entry.get("status", "open").lower()  # open/resolved/false_positive
 
-          # Apply hypatia_inspector status overrides (most up-to-date source of truth)
-          if hypatia_statuses:
-              for f in findings:
-                  if f.get("id") in hypatia_statuses:
-                      f["status"] = hypatia_statuses[f["id"]]
-              print(f"Applied {len(hypatia_statuses)} hypatia_inspector status override(s)")
+              # Determine the display status:
+              #   registry false_positive → always FALSE_POSITIVE (never overridable)
+              #   registry resolved       → always RESOLVED
+              #   registry open           → use inspector if available, else OPEN
+              if reg_st == "false_positive":
+                  display_status = "FALSE_POSITIVE"
+              elif reg_st == "resolved":
+                  display_status = "RESOLVED"
+              else:  # open
+                  # Inspector can say RESOLVED (it applied the fix) or OPEN (still detected)
+                  display_status = inspector_status.get(fid, "OPEN")
+
+              # Pick description/action/severity/nb from best available source
+              meta = nb_summary.get(fid) or STATIC_META.get(fid) or {}
+              desc   = meta.get("description") or entry.get("description", "")
+              action = meta.get("action")       or entry.get("action", "")
+              sev    = (meta.get("severity")    or entry.get("severity", "medium")).upper()
+              nb     = meta.get("nb")           or entry.get("nb_source", "")
+
+              # For false positives: show the false_positive_reason as the action
+              if reg_st == "false_positive":
+                  fp_reason = entry.get("false_positive_reason", "")
+                  if fp_reason:
+                      action = f"No action needed. Reason: {fp_reason[:200]}"
+                  else:
+                      action = "No action needed — confirmed false positive."
+
+              findings.append({
+                  "id":          fid,
+                  "severity":    sev,
+                  "status":      display_status,
+                  "description": desc,
+                  "action":      action,
+                  "nb":          nb,
+              })
+
+          # If registry was empty, fall back to static list (all OPEN — safest assumption)
+          if not findings:
+              print("WARNING: registry empty — using static list with OPEN status for all items")
+              for fid, meta in STATIC_META.items():
+                  findings.append({
+                      "id": fid, "severity": meta["severity"], "status": "OPEN",
+                      "description": meta["description"], "action": meta["action"],
+                      "nb": meta["nb"],
+                  })
 
           # ── Helpers ───────────────────────────────────────────────────────────
+          SEV_ORDER = {"CRITICAL":0,"HIGH":1,"MEDIUM":2,"LOW":3}
+          findings.sort(key=lambda f: (SEV_ORDER.get(f["severity"],9), f["id"]))
+
           SEV_STYLE = {
               "CRITICAL": ("background:#fff0f0;", "🔴 CRITICAL"),
               "HIGH":     ("background:#fff5ec;", "🟠 HIGH"),
               "MEDIUM":   ("",                    "🟡 MEDIUM"),
               "LOW":      ("background:#f6fff6;",  "🟢 LOW"),
-              "INFO":     ("background:#f6fff6;",  "ℹ️ INFO"),
           }
           STATUS_BADGE = {
-              "RESOLVED": '<span style="color:#1a6b3a;font-weight:bold;">✅ RESOLVED</span>',
-              "OPEN":     '<span style="color:#b35c00;font-weight:bold;">🔴 OPEN</span>',
+              "RESOLVED":       '<span style="color:#1a6b3a;font-weight:bold;background:#eafaf1;padding:2px 7px;border-radius:10px;">✅ RESOLVED</span>',
+              "OPEN":           '<span style="color:#b35c00;font-weight:bold;background:#fff3e0;padding:2px 7px;border-radius:10px;">🔴 OPEN</span>',
+              "FALSE_POSITIVE": '<span style="color:#555;font-weight:bold;background:#f0f0f0;padding:2px 7px;border-radius:10px;">🔵 FALSE POSITIVE</span>',
           }
 
           def e(s): return html.escape(str(s))
 
-          # ── Banner ────────────────────────────────────────────────────────────
-          resolved = [f for f in findings if f.get("status","OPEN").upper() == "RESOLVED"]
-          open_    = [f for f in findings if f.get("status","OPEN").upper() == "OPEN"]
-          critical = [f for f in open_ if f.get("severity","").upper() == "CRITICAL"]
+          # ── Partition findings ────────────────────────────────────────────────
+          open_findings  = [f for f in findings if f["status"] == "OPEN"]
+          resolved       = [f for f in findings if f["status"] == "RESOLVED"]
+          false_positives= [f for f in findings if f["status"] == "FALSE_POSITIVE"]
+          critical_open  = [f for f in open_findings if f["severity"] == "CRITICAL"]
 
+          print(f"Findings: {len(open_findings)} OPEN, {len(resolved)} RESOLVED, "
+                f"{len(false_positives)} FALSE_POSITIVE, {len(critical_open)} CRITICAL-OPEN")
+
+          # ── Build table rows ──────────────────────────────────────────────────
+          def make_rows(items, fp=False):
+              rows = []
+              for f in items:
+                  sev = f["severity"]
+                  style, sev_label = SEV_STYLE.get(sev, ("", sev))
+                  if fp:
+                      style = "background:#f8f8f8;color:#777;"
+                  badge  = STATUS_BADGE.get(f["status"], STATUS_BADGE["OPEN"])
+                  desc   = e(f["description"])
+                  action = e(f["action"])
+                  rows.append(f"""
+                    <tr style="{style}">
+                      <td><strong>{e(f['id'])}</strong><br><small>{badge}</small></td>
+                      <td style="font-size:0.85em;">{sev_label}</td>
+                      <td>{desc}<br><small style="color:#666;"><em>Action:</em> {action}</small></td>
+                      <td style="font-size:0.85em;">{e(f['nb'])}</td>
+                    </tr>""")
+              return rows
+
+          open_rows     = make_rows(open_findings)
+          resolved_rows = make_rows(resolved)
+          fp_rows       = make_rows(false_positives, fp=True)
+
+          # ── Pipeline status banner ────────────────────────────────────────────
+          src_note = (f"Registry: <code>{e(str(registry_path))}</code> "
+                      f"({len(registry_entries)} entries checked-out from repo).")
           if no_notebooks:
               pipeline_html = f"""
-              <div style="background:#fff8e1;border-left:4px solid #f0a000;padding:12px 16px;margin-bottom:16px;border-radius:4px;">
+              <div style="background:#fff8e1;border-left:4px solid #f0a000;padding:12px 16px;margin-bottom:12px;border-radius:4px;">
                 <strong>ℹ️ Fix-only run</strong> — notebooks were not re-executed in this pipeline run.
-                <code>fix_paper_issues.py</code> was applied directly to the source files and
-                all automatable fixes (FIX-B1–B3, FIX-XR1–XR4, FIX-N1–N2, FIX-C2) have been
-                applied. Run the full <code>ci_paper_notebooks.yml</code> pipeline
+                <code>fix_paper_issues.py</code> / <code>hypatia_inspector.py</code> applied fixes directly
+                to the source files. Run <code>ci_paper_notebooks.yml</code>
                 (with <code>apply_fixes_only=false</code>) to regenerate live notebook output.
               </div>"""
           else:
+              crit_html = (f"&nbsp;· <strong style='color:#c00;'>{len(critical_open)} CRITICAL open</strong>"
+                           if critical_open else "")
               pipeline_html = f"""
               <p>
-                The CI pipeline is <strong>fully operational</strong>.
-                Notebook run&nbsp;<code>{e(upstream_run)}</code>,
-                report run&nbsp;<code>{e(report_run)}</code>.
-                {len(resolved)} of {len(findings)} issue(s) resolved;
-                {len(open_)} remaining
-                {f"(<strong>{len(critical)} CRITICAL</strong>)" if critical else ""}.
+                Report run&nbsp;<code>{e(report_run)}</code>
+                · Notebook run&nbsp;<code>{e(upstream_run)}</code>{crit_html}<br>
+                <small style="color:#666;">{src_note}</small>
               </p>"""
 
-          # ── Issue table rows ──────────────────────────────────────────────────
-          rows = []
-          for f in findings:
-              sev   = f.get("severity","MEDIUM").upper()
-              style, sev_label = SEV_STYLE.get(sev, ("",""))
-              status = f.get("status","OPEN").upper()
-              badge  = STATUS_BADGE.get(status, STATUS_BADGE["OPEN"])
-              desc   = e(f.get("description",""))
-              action = e(f.get("action",""))
-              rows.append(f"""
-                <tr style="{style}">
-                  <td><strong>{e(f.get("id",""))}</strong><br>{badge}</td>
-                  <td>{sev_label}</td>
-                  <td>{desc}<br><em>Action:</em> {action}</td>
-                  <td>{e(f.get("nb",""))}</td>
-                </tr>""")
-
-          # ── Priority list ─────────────────────────────────────────────────────
+          # ── Priority action list ──────────────────────────────────────────────
+          open_ids = {f["id"] for f in open_findings}
           priority_items = [
-              ("FIX-B1",         False, "Add or redirect the missing <code>koza1994genetic</code> bibitem (compilation blocker)."),
-              ("FIX-C3",         True,  "Feynman split-protocol corrected via <code>pca_directed_split</code>; Gates A/B/C passed. Update §10.7 or add explicit disclosure."),
-              ("FIX-B2 / FIX-B3",False, "Deduplicate the two bibitem alias pairs."),
-              ("FIX-F1–F4",      False, "Copy figure files and replace the <code>\\fbox</code> placeholder."),
-              ("FIX-XR1–XR4",    False, "Clean up cross-reference and label issues."),
-              ("FIX-N1 / FIX-N2",False, "Unify the 70/71 count and the five-stage/five-layer terminology."),
-              ("FIX-C1 / FIX-C2",False, "Rename duplicate benchmark cases and update stale imports."),
-              ("NB-03 / NB-04 LOW items", False, "Add missing section/subsection labels and tidy unused equation labels."),
+              # (id_string_for_display, [constituent_ids_to_check], action_text)
+              ("FIX-B2 / FIX-B3",  ["FIX-B2","FIX-B3"],
+               "Deduplicate the two bibitem alias pairs."),
+              ("FIX-XR4",          ["FIX-XR4"],
+               "Update Supp A filename string from <code>jmlr_paper_main.tex</code> → <code>jmlr-hypatiax-paper-final.tex</code>."),
+              ("FIX-F1",           ["FIX-F1"],
+               "Replace <code>\\fbox</code> placeholder with final architecture PDF/PNG."),
+              ("FIX-F2, FIX-F3, FIX-F4", ["FIX-F2","FIX-F3","FIX-F4"],
+               "Copy three missing figure files to <code>figures/</code>."),
+              ("FIX-N3",           ["FIX-N3"],
+               "Commit Nguyen-12 seed=123 rerun results; add dual-threshold claim to <code>paper_targets.json</code>."),
+              ("FIX-S1 / FIX-S2",  ["FIX-S1","FIX-S2"],
+               "Add <code>\\label</code> to all unlabelled \\section and \\subsection headings."),
           ]
-          # Mark priority items resolved if all their constituent fixes are resolved
-          fix_status = {f.get("id",""):f.get("status","OPEN").upper() for f in findings}
           pri_rows = []
-          for ids, force_resolved, text in priority_items:
-              parts = [p.strip() for p in ids.replace("–","-").split("/")]
-              all_resolved = force_resolved or all(
-                  fix_status.get(p,"OPEN") == "RESOLVED" for p in parts if p in fix_status
-              )
-              label = f"<s><strong>{e(ids)}</strong></s>" if all_resolved else f"<strong>{e(ids)}</strong>"
-              check = "✅ " if all_resolved else ""
-              pri_rows.append(f"<li>{check}{label} — {text}</li>")
+          for label, ids, text in priority_items:
+              still_open = any(i in open_ids for i in ids)
+              if still_open:
+                  pri_rows.append(f"<li><strong>{e(label)}</strong> — {text}</li>")
+              else:
+                  pri_rows.append(f"<li><s style='color:#888;'><strong>{e(label)}</strong></s> <span style='color:#1a6b3a;'>✅</span> — {text}</li>")
+
+          # ── Assemble the conclusions section ──────────────────────────────────
+          open_table_html = f"""
+            <table style="font-size:0.87em;width:100%;border-collapse:collapse;">
+              <thead><tr>
+                <th style="width:115px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">ID / Status</th>
+                <th style="width:95px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Severity</th>
+                <th style="padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Issue &amp; Action</th>
+                <th style="width:80px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">NB</th>
+              </tr></thead>
+              <tbody>{"".join(open_rows) if open_rows else "<tr><td colspan='4' style='padding:12px;color:#1a6b3a;text-align:center;'>✅ No open issues</td></tr>"}</tbody>
+            </table>"""
+
+          resolved_table_html = "" if not resolved_rows else f"""
+            <details style="margin-top:16px;">
+              <summary style="cursor:pointer;font-weight:600;color:#1a6b3a;">
+                ✅ {len(resolved)} Resolved issues (click to expand)
+              </summary>
+              <table style="font-size:0.85em;width:100%;border-collapse:collapse;margin-top:8px;">
+                <thead><tr>
+                  <th style="width:115px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">ID / Status</th>
+                  <th style="width:95px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Severity</th>
+                  <th style="padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Issue &amp; Action</th>
+                  <th style="width:80px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">NB</th>
+                </tr></thead>
+                <tbody>{"".join(resolved_rows)}</tbody>
+              </table>
+            </details>"""
+
+          fp_table_html = "" if not fp_rows else f"""
+            <details style="margin-top:8px;">
+              <summary style="cursor:pointer;font-weight:600;color:#555;">
+                🔵 {len(false_positives)} Confirmed false positives — suppressed from all gates (click to expand)
+              </summary>
+              <p style="font-size:0.85em;color:#666;margin:8px 0 4px;">
+                These findings were produced by audit notebooks scanning stale cached outputs.
+                Verification against the current paper source files confirms none of them exist.
+                They are excluded from CI gates, fix scripts, and the priority action list.
+              </p>
+              <table style="font-size:0.85em;width:100%;border-collapse:collapse;">
+                <thead><tr>
+                  <th style="width:115px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">ID / Status</th>
+                  <th style="width:95px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Severity</th>
+                  <th style="padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Original finding &amp; Why it's a false positive</th>
+                  <th style="width:80px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">NB</th>
+                </tr></thead>
+                <tbody>{"".join(fp_rows)}</tbody>
+              </table>
+            </details>"""
 
           section = f"""
             <div class="nb-section" id="conclusions">
               <div class="nb-header" style="background:linear-gradient(90deg,#1a1a2e,#7b2d8b);">
-                <h2>✅ Audit Conclusions &amp; Action Plan</h2>
+                <h2>Audit Conclusions &amp; Action Plan</h2>
               </div>
               <div class="nb-body">
+
                 <h3 style="margin-top:24px;">Pipeline Status</h3>
                 {pipeline_html}
 
@@ -631,35 +784,31 @@ jobs:
                   The core numerical story — 89.2&nbsp;% near-perfect success rate, +27&nbsp;pp gain over the LLM baseline,
                   1.73×&nbsp;speedup, Nguyen 11/12, Feynman 9/30 (random 80/20 baseline, locked in
                   <code>fixc3_baseline.json</code>) — is internally consistent throughout the paper.
-                  The FIX-C3 split-protocol correction has been applied.
+                  The FIX-C3 split-protocol correction has been applied; Gates A/B/C pass.
                 </p>
 
-                <h3>Actionable Discrepancies — Full List</h3>
-                <table style="font-size:0.88em;">
-                  <thead>
-                    <tr>
-                      <th style="width:110px;">ID / Status</th>
-                      <th style="width:90px;">Severity</th>
-                      <th>Issue &amp; Action</th>
-                      <th style="width:80px;">Source NB</th>
-                    </tr>
-                  </thead>
-                  <tbody>{"".join(rows)}</tbody>
-                </table>
+                <h3>Open Issues ({len(open_findings)}
+                  {"— <span style='color:green;'>none ✅</span>" if not open_findings else
+                   "— <span style='color:#c00;'>action required</span>"})
+                </h3>
+                {open_table_html}
+
+                {resolved_table_html}
+                {fp_table_html}
 
                 <h3 style="margin-top:32px;">Recommended Fix Order Before Submission</h3>
-                <ol style="line-height:2;">{"".join(pri_rows)}</ol>
+                {"<p style='color:#1a6b3a;'>✅ All tracked action items are resolved or suppressed.</p>" if not pri_rows or not any("</s>" not in r for r in pri_rows) else ""}
+                <ol style="line-height:2.2;">{"".join(pri_rows)}</ol>
+
               </div>
             </div><!-- #conclusions -->
           """
 
-          with open("site/index.html", "a", encoding="utf-8") as f:
-              f.write(section)
+          with open("site/index.html", "a", encoding="utf-8") as fh:
+              fh.write(section)
 
-          total   = len(findings)
-          print(f"Conclusions section written — {total} findings, "
-                f"{len(resolved)} RESOLVED, {len(open_)} OPEN"
-                f"{f', {len(critical)} CRITICAL' if critical else ''}.")
+          print(f"Conclusions written — {len(open_findings)} OPEN, "
+                f"{len(resolved)} RESOLVED, {len(false_positives)} FALSE_POSITIVE.")
           PYEOF
 
 
