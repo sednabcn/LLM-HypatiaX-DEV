@@ -1,0 +1,729 @@
+# =============================================================================
+#  ci_create_pdf.yml
+#  GitHub Actions Workflow — HypatiaX JMLR Paper PDF Compilation
+#
+#  Triggers: push / PR to main or dev branches, or manual dispatch
+#  Jobs:
+#    1. validate       — source file & cross-reference checks
+#    2. compile-main   — main paper (4-pass pdflatex + bibtex)
+#    3. compile-supp-a — Supplementary A
+#    4. compile-supp-b — Supplementary B
+#    5. merge-pdf      — combine all three PDFs into one
+#    6. commit-pdfs    — download all PDFs & commit them to repo root
+#    7. report         — upload artefacts & post summary
+# =============================================================================
+
+name: Build HypatiaX PDF
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "**.tex"
+      - "**.bib"
+      - "figures/**"
+      - ".github/workflows/ci_create_pdf.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.tex"
+      - "**.bib"
+  workflow_dispatch:
+    inputs:
+      clean_build:
+        description: "Force clean build (ignore cache)"
+        required: false
+        default: "false"
+        type: boolean
+      target:
+        description: "What to compile"
+        required: false
+        default: "all"
+        type: choice
+        options: [all, main-only, supp-only]
+
+# Cancel superseded runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAIN_TEX:    jmlr_paper_main.tex
+  SUPP_A_TEX:  supp_routing_improvements.tex
+  SUPP_B_TEX:  supp_benchmark_report.tex
+  BIB_FILE:    references.bib
+  BUILD_DIR:   build
+  OUTPUT_DIR:  output
+
+# =============================================================================
+# JOB 1 — Validate source files & cross-references (no LaTeX needed)
+# =============================================================================
+jobs:
+  validate:
+    name: "Step 1–3 · Validate Sources & Cross-References"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Check required files exist ──────────────────────────────────────
+      - name: Check required source files
+        run: |
+          echo "::group::Source file check"
+          missing=0
+          for f in "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX" "$BIB_FILE"; do
+            if [[ -f "$f" ]]; then
+              echo "✔  $f  ($(wc -c < "$f") bytes)"
+            else
+              echo "::error file=$f::Required file missing: $f"
+              missing=$((missing + 1))
+            fi
+          done
+          echo "::endgroup::"
+          [[ $missing -eq 0 ]] || exit 3
+
+      # ── Document structure check ────────────────────────────────────────
+      - name: Check document environments
+        run: |
+          echo "::group::Document structure"
+          fail=0
+          for tex in "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX"; do
+            begins=$(grep -c '\\begin{document}' "$tex" || true)
+            ends=$(grep -c   '\\end{document}'   "$tex" || true)
+            if [[ "$begins" -eq 1 && "$ends" -eq 1 ]]; then
+              echo "✔  $tex — \\begin/\\end{document} balanced"
+            else
+              echo "::warning file=$tex::Unbalanced document environment (begin=$begins end=$ends)"
+              fail=$((fail + 1))
+            fi
+          done
+          echo "::endgroup::"
+          # Warn only — don't abort; LaTeX will catch real errors
+          exit 0
+
+      # ── Static cross-reference analysis ────────────────────────────────
+      - name: Cross-reference static analysis
+        id: xref
+        run: |
+          echo "::group::Label / ref / cite analysis"
+
+          # Collect all \label definitions
+          declare -A label_src
+          while IFS='|' read -r label src; do
+            label_src["$label"]="$src"
+          done < <(
+            for tex in "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX"; do
+              grep -oP '(?<=\\label\{)[^}]+' "$tex" 2>/dev/null \
+                | sed "s|$|$tex|" | tr -d ' ' | awk -F"${tex}" '{print $1"|'"$tex"'"}'
+            done 2>/dev/null || true
+          )
+          echo "Labels found: ${#label_src[@]}"
+
+          # Collect \ref targets from main paper
+          mapfile -t refs < <(
+            grep -oP '(?<=\\ref\{)[^}]+|(?<=\\eqref\{)[^}]+|(?<=\\autoref\{)[^}]+' \
+              "$MAIN_TEX" 2>/dev/null | sort -u || true
+          )
+          echo "\\ref targets in main paper: ${#refs[@]}"
+
+          # Collect citation keys from main paper
+          mapfile -t cites < <(
+            grep -oP '(?<=\\cite[pt]?\{)[^}]+' "$MAIN_TEX" 2>/dev/null \
+              | tr ',' '\n' | tr -d ' ' | sort -u || true
+          )
+          echo "\\cite keys in main paper: ${#cites[@]}"
+
+          # Collect .bib keys
+          mapfile -t bib_keys < <(
+            grep -oP '(?<=@\w{2,20}\{)[^,]+' "$BIB_FILE" 2>/dev/null \
+              | tr -d ' ' | sort -u || true
+          )
+          echo ".bib entries: ${#bib_keys[@]}"
+
+          # Check for undefined refs
+          undef_refs=()
+          for ref in "${refs[@]}"; do
+            [[ -v label_src["$ref"] ]] || undef_refs+=("$ref")
+          done
+
+          # Check for undefined cites
+          declare -A bib_set
+          for k in "${bib_keys[@]}"; do bib_set["$k"]=1; done
+          undef_cites=()
+          for cite in "${cites[@]}"; do
+            [[ -v bib_set["$cite"] ]] || undef_cites+=("$cite")
+          done
+
+          # Report
+          if [[ ${#undef_refs[@]} -gt 0 ]]; then
+            for r in "${undef_refs[@]}"; do
+              echo "::warning::Undefined \\ref target: $r"
+            done
+          else
+            echo "✔  All \\ref targets have matching \\label definitions"
+          fi
+
+          if [[ ${#undef_cites[@]} -gt 0 ]]; then
+            for c in "${undef_cites[@]}"; do
+              echo "::warning::Citation key not in .bib: $c"
+            done
+          else
+            echo "✔  All \\cite keys found in $BIB_FILE"
+          fi
+
+          echo "undef_refs=${#undef_refs[@]}"  >> "$GITHUB_OUTPUT"
+          echo "undef_cites=${#undef_cites[@]}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Annotate PR with cross-reference summary
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "### Cross-Reference Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Undefined \\\\ref targets | ${{ steps.xref.outputs.undef_refs }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Undefined \\\\cite keys   | ${{ steps.xref.outputs.undef_cites }} |" >> "$GITHUB_STEP_SUMMARY"
+
+# =============================================================================
+# JOB 2 — Compile Main Paper
+# =============================================================================
+  compile-main:
+    name: "Steps 4–5 · Compile Main Paper"
+    runs-on: ubuntu-latest
+    needs: validate
+    if: >
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == 'main-only' ||
+      github.event.inputs.target == ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Install TeX Live (selective for speed) ──────────────────────────
+      - name: Install LaTeX (TeX Live)
+        uses: xu-cheng/latex-action@v3
+        with:
+          pre_compile: "echo 'LaTeX environment ready'"
+          post_compile: "echo 'Post-compile hook'"
+          root_file: ${{ env.MAIN_TEX }}
+          latexmk_use_xelatex: false
+          latexmk_shell_escape: false
+          work_in_root_file_dir: false
+          extra_packages: >-
+            jmlr
+            algorithms
+            algorithmicx
+            booktabs
+            caption
+            subcaption
+            multirow
+            threeparttable
+            longtable
+            tabularx
+            colortbl
+            silence
+            makecell
+            enumitem
+            microtype
+        continue-on-error: true  # fall back to manual steps below
+
+      # ── Manual 4-pass compile (fallback / primary) ──────────────────────
+      - name: Install TeX Live (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-extra \
+            texlive-science \
+            texlive-fonts-recommended \
+            texlive-bibtex-extra \
+            texlive-publishers \
+            bibtex \
+            qpdf \
+            latexmk
+
+      - name: Prepare build directories
+        run: mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+
+      - name: "Pass 1 — pdflatex (initial)"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$MAIN_TEX" | tee build/main_pass1.log
+          echo "Exit: $?"
+
+      - name: "BibTeX — resolve bibliography"
+        run: |
+          bibtex "$BUILD_DIR/jmlr_paper_main" | tee build/main_bibtex.log || true
+
+      - name: "Pass 2 — pdflatex (resolve citations)"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$MAIN_TEX" | tee build/main_pass2.log
+
+      - name: "Pass 3 — pdflatex (stabilise cross-refs)"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$MAIN_TEX" | tee build/main_pass3.log
+
+      - name: "Pass 4 — pdflatex (if Rerun detected)"
+        run: |
+          if grep -q 'Rerun' "$BUILD_DIR/jmlr_paper_main.log" 2>/dev/null; then
+            echo "Rerun detected — running Pass 4"
+            pdflatex -interaction=nonstopmode -halt-on-error \
+              -file-line-error -output-directory="$BUILD_DIR" \
+              "$MAIN_TEX" | tee build/main_pass4.log
+          else
+            echo "No Rerun needed — Pass 4 skipped"
+          fi
+
+      - name: Scan log for undefined refs / citations
+        run: |
+          logfile="$BUILD_DIR/jmlr_paper_main.log"
+          undef=$(grep -c 'undefined' "$logfile" || true)
+          citewarns=$(grep -c 'Citation.*undefined' "$logfile" || true)
+          echo "Undefined refs in log: $undef"
+          echo "Undefined citations:   $citewarns"
+          if [[ $undef -gt 0 ]]; then
+            echo "::warning::Main paper has $undef undefined reference(s)"
+            grep 'undefined' "$logfile" | head -20 || true
+          fi
+
+      - name: Copy PDF to output
+        run: |
+          cp "$BUILD_DIR/jmlr_paper_main.pdf" "$OUTPUT_DIR/jmlr_paper_main.pdf"
+          echo "✔ PDF size: $(du -h $OUTPUT_DIR/jmlr_paper_main.pdf | cut -f1)"
+
+      # ── Verify & inspect generated PDF ─────────────────────────────────
+      - name: Verify main paper PDF
+        run: |
+          echo "::group::PDF integrity & metadata — jmlr_paper_main.pdf"
+          pdf="$OUTPUT_DIR/jmlr_paper_main.pdf"
+
+          # Structural check
+          if qpdf --check "$pdf"; then
+            echo "✔  qpdf: PDF structure is valid"
+          else
+            echo "::error::qpdf reported structural errors in jmlr_paper_main.pdf"
+            exit 1
+          fi
+
+          # Metadata / page count
+          if command -v pdfinfo &>/dev/null; then
+            pdfinfo "$pdf"
+            pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
+            echo "✔  Page count: $pages"
+            [[ "$pages" -gt 0 ]] || { echo "::error::PDF has 0 pages"; exit 1; }
+          fi
+
+          # File-size sanity (must be > 10 KB)
+          size=$(stat -c%s "$pdf")
+          echo "File size: $size bytes"
+          [[ "$size" -gt 10240 ]] || { echo "::error::PDF suspiciously small ($size bytes)"; exit 1; }
+
+          echo "::endgroup::"
+
+      - name: Upload main paper PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-paper-pdf
+          path: ${{ env.OUTPUT_DIR }}/jmlr_paper_main.pdf
+          retention-days: 30
+
+      - name: Upload compile logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-paper-logs
+          path: build/main_*.log
+          retention-days: 7
+
+# =============================================================================
+# JOB 3 — Compile Supplementary A
+# =============================================================================
+  compile-supp-a:
+    name: "Steps 4–6 · Compile Supplementary A"
+    runs-on: ubuntu-latest
+    needs: validate
+    if: >
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == 'supp-only' ||
+      github.event.inputs.target == ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install TeX Live (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-extra texlive-science \
+            texlive-fonts-recommended texlive-bibtex-extra \
+            bibtex qpdf
+
+      - name: Prepare build directories
+        run: mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+
+      - name: "Pass 1 — pdflatex"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$SUPP_A_TEX" | tee build/suppa_pass1.log
+
+      - name: "BibTeX"
+        run: bibtex "$BUILD_DIR/supp_routing_improvements" | tee build/suppa_bibtex.log || true
+
+      - name: "Pass 2 — pdflatex"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$SUPP_A_TEX" | tee build/suppa_pass2.log
+
+      - name: "Pass 3 — pdflatex"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$SUPP_A_TEX" | tee build/suppa_pass3.log
+
+      - name: "Pass 4 — pdflatex (if Rerun detected)"
+        run: |
+          if grep -q 'Rerun' "$BUILD_DIR/supp_routing_improvements.log" 2>/dev/null; then
+            pdflatex -interaction=nonstopmode -halt-on-error \
+              -file-line-error -output-directory="$BUILD_DIR" \
+              "$SUPP_A_TEX" | tee build/suppa_pass4.log
+          else
+            echo "Pass 4 skipped"
+          fi
+
+      - name: Copy PDF to output
+        run: cp "$BUILD_DIR/supp_routing_improvements.pdf" "$OUTPUT_DIR/supp_routing_improvements.pdf"
+
+      # ── Verify & inspect generated PDF ─────────────────────────────────
+      - name: Verify Supplementary A PDF
+        run: |
+          echo "::group::PDF integrity & metadata — supp_routing_improvements.pdf"
+          pdf="$OUTPUT_DIR/supp_routing_improvements.pdf"
+
+          # Structural check
+          if qpdf --check "$pdf"; then
+            echo "✔  qpdf: PDF structure is valid"
+          else
+            echo "::error::qpdf reported structural errors in supp_routing_improvements.pdf"
+            exit 1
+          fi
+
+          # Metadata / page count
+          if command -v pdfinfo &>/dev/null; then
+            pdfinfo "$pdf"
+            pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
+            echo "✔  Page count: $pages"
+            [[ "$pages" -gt 0 ]] || { echo "::error::PDF has 0 pages"; exit 1; }
+          fi
+
+          # File-size sanity (must be > 10 KB)
+          size=$(stat -c%s "$pdf")
+          echo "File size: $size bytes"
+          [[ "$size" -gt 10240 ]] || { echo "::error::PDF suspiciously small ($size bytes)"; exit 1; }
+
+          echo "::endgroup::"
+
+      - name: Upload Supplementary A PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: supp-a-pdf
+          path: ${{ env.OUTPUT_DIR }}/supp_routing_improvements.pdf
+          retention-days: 30
+
+      - name: Upload compile logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supp-a-logs
+          path: build/suppa_*.log
+          retention-days: 7
+
+# =============================================================================
+# JOB 4 — Compile Supplementary B
+# =============================================================================
+  compile-supp-b:
+    name: "Steps 4–7 · Compile Supplementary B"
+    runs-on: ubuntu-latest
+    needs: validate
+    if: >
+      github.event.inputs.target == 'all' ||
+      github.event.inputs.target == 'supp-only' ||
+      github.event.inputs.target == ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install TeX Live (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-extra texlive-science \
+            texlive-fonts-recommended texlive-bibtex-extra \
+            bibtex qpdf
+
+      - name: Prepare build directories
+        run: mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+
+      - name: "Pass 1 — pdflatex"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$SUPP_B_TEX" | tee build/suppb_pass1.log
+
+      - name: "BibTeX"
+        run: bibtex "$BUILD_DIR/supp_benchmark_report" | tee build/suppb_bibtex.log || true
+
+      - name: "Pass 2 — pdflatex"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$SUPP_B_TEX" | tee build/suppb_pass2.log
+
+      - name: "Pass 3 — pdflatex"
+        run: |
+          pdflatex -interaction=nonstopmode -halt-on-error \
+            -file-line-error -output-directory="$BUILD_DIR" \
+            "$SUPP_B_TEX" | tee build/suppb_pass3.log
+
+      - name: "Pass 4 — pdflatex (if Rerun detected)"
+        run: |
+          if grep -q 'Rerun' "$BUILD_DIR/supp_benchmark_report.log" 2>/dev/null; then
+            pdflatex -interaction=nonstopmode -halt-on-error \
+              -file-line-error -output-directory="$BUILD_DIR" \
+              "$SUPP_B_TEX" | tee build/suppb_pass4.log
+          else
+            echo "Pass 4 skipped"
+          fi
+
+      - name: Copy PDF to output
+        run: cp "$BUILD_DIR/supp_benchmark_report.pdf" "$OUTPUT_DIR/supp_benchmark_report.pdf"
+
+      # ── Verify & inspect generated PDF ─────────────────────────────────
+      - name: Verify Supplementary B PDF
+        run: |
+          echo "::group::PDF integrity & metadata — supp_benchmark_report.pdf"
+          pdf="$OUTPUT_DIR/supp_benchmark_report.pdf"
+
+          # Structural check
+          if qpdf --check "$pdf"; then
+            echo "✔  qpdf: PDF structure is valid"
+          else
+            echo "::error::qpdf reported structural errors in supp_benchmark_report.pdf"
+            exit 1
+          fi
+
+          # Metadata / page count
+          if command -v pdfinfo &>/dev/null; then
+            pdfinfo "$pdf"
+            pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
+            echo "✔  Page count: $pages"
+            [[ "$pages" -gt 0 ]] || { echo "::error::PDF has 0 pages"; exit 1; }
+          fi
+
+          # File-size sanity (must be > 10 KB)
+          size=$(stat -c%s "$pdf")
+          echo "File size: $size bytes"
+          [[ "$size" -gt 10240 ]] || { echo "::error::PDF suspiciously small ($size bytes)"; exit 1; }
+
+          echo "::endgroup::"
+
+      - name: Upload Supplementary B PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: supp-b-pdf
+          path: ${{ env.OUTPUT_DIR }}/supp_benchmark_report.pdf
+          retention-days: 30
+
+      - name: Upload compile logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supp-b-logs
+          path: build/suppb_*.log
+          retention-days: 7
+
+# =============================================================================
+# JOB 5 — Merge all PDFs into one combined output
+# =============================================================================
+  merge-pdf:
+    name: "Step 8 · Merge PDFs → HypatiaX_JMLR_complete.pdf"
+    runs-on: ubuntu-latest
+    needs: [compile-main, compile-supp-a, compile-supp-b]
+    if: >
+      always() &&
+      needs.compile-main.result == 'success' &&
+      needs.compile-supp-a.result == 'success' &&
+      needs.compile-supp-b.result == 'success' &&
+      (github.event.inputs.target == 'all' || github.event.inputs.target == '')
+
+    steps:
+      - name: Install qpdf
+        run: sudo apt-get install -y --no-install-recommends qpdf
+
+      - name: Download main paper PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: main-paper-pdf
+          path: pdfs/
+
+      - name: Download Supplementary A PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: supp-a-pdf
+          path: pdfs/
+
+      - name: Download Supplementary B PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: supp-b-pdf
+          path: pdfs/
+
+      - name: Merge PDFs with qpdf
+        run: |
+          mkdir -p output
+          qpdf --empty --pages \
+            pdfs/jmlr_paper_main.pdf \
+            pdfs/supp_routing_improvements.pdf \
+            pdfs/supp_benchmark_report.pdf \
+            -- output/HypatiaX_JMLR_complete.pdf
+          echo "✔ Combined PDF: $(du -h output/HypatiaX_JMLR_complete.pdf | cut -f1)"
+
+      - name: Upload combined PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: HypatiaX-JMLR-complete
+          path: output/HypatiaX_JMLR_complete.pdf
+          retention-days: 90
+
+# =============================================================================
+# JOB 6 — Download all PDFs and commit them to the repository root
+# =============================================================================
+  commit-pdfs:
+    name: "Step 9 · Commit PDFs to Repo Root"
+    runs-on: ubuntu-latest
+    needs: [compile-main, compile-supp-a, compile-supp-b, merge-pdf]
+    if: >
+      always() &&
+      needs.compile-main.result == 'success' &&
+      needs.compile-supp-a.result == 'success' &&
+      needs.compile-supp-b.result == 'success' &&
+      github.event_name != 'pull_request'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Use a PAT or the default GITHUB_TOKEN with write permission
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # ── Download all three individual PDFs ─────────────────────────────
+      - name: Download main paper PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: main-paper-pdf
+          path: downloaded-pdfs/
+
+      - name: Download Supplementary A PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: supp-a-pdf
+          path: downloaded-pdfs/
+
+      - name: Download Supplementary B PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: supp-b-pdf
+          path: downloaded-pdfs/
+
+      # ── Download combined PDF (only available when target == all) ───────
+      - name: Download combined PDF
+        if: needs.merge-pdf.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: HypatiaX-JMLR-complete
+          path: downloaded-pdfs/
+        continue-on-error: true  # not produced for partial builds
+
+      # ── Copy PDFs to repo root & commit ────────────────────────────────
+      - name: Copy PDFs to repo root
+        run: |
+          echo "::group::Files downloaded"
+          ls -lh downloaded-pdfs/
+          echo "::endgroup::"
+
+          cp downloaded-pdfs/*.pdf .
+
+          echo "::group::PDFs staged for commit"
+          ls -lh *.pdf
+          echo "::endgroup::"
+
+      - name: Commit and push PDFs
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add *.pdf
+
+          # Only commit if there is something new / changed
+          if git diff --cached --quiet; then
+            echo "No PDF changes detected — nothing to commit."
+          else
+            SHORT_SHA="${{ github.sha }}"
+            SHORT_SHA="${SHORT_SHA:0:7}"
+            git commit -m "ci: update compiled PDFs [${SHORT_SHA}]
+
+  Built from commit ${{ github.sha }}
+  Triggered by: ${{ github.event_name }} on ${{ github.ref_name }}
+  Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+            git push origin HEAD:${{ github.ref_name }}
+            echo "✔ PDFs committed and pushed to ${{ github.ref_name }}"
+          fi
+
+# =============================================================================
+# JOB 7 — Final report & job summary
+# =============================================================================
+  report:
+    name: "Step 10–11 · Pipeline Summary"
+    runs-on: ubuntu-latest
+    needs: [validate, compile-main, compile-supp-a, compile-supp-b, merge-pdf, commit-pdfs]
+    if: always()
+
+    steps:
+      - name: Write job summary
+        run: |
+          echo "## HypatiaX JMLR — CI Pipeline Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Job | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Validate sources & cross-refs | ${{ needs.validate.result }} |"       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Compile main paper            | ${{ needs.compile-main.result }} |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Compile Supplementary A       | ${{ needs.compile-supp-a.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Compile Supplementary B       | ${{ needs.compile-supp-b.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Merge PDFs                    | ${{ needs.merge-pdf.result }} |"      >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit PDFs to repo           | ${{ needs.commit-pdfs.result }} |"    >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Triggered by:** \`${{ github.event_name }}\` on \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail pipeline if any compile job failed
+        if: >
+          needs.compile-main.result == 'failure' ||
+          needs.compile-supp-a.result == 'failure' ||
+          needs.compile-supp-b.result == 'failure'
+        run: |
+          echo "One or more compile jobs failed."
+          exit 1
