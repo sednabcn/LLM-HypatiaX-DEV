@@ -683,11 +683,8 @@ jobs:
           else
             SHORT_SHA="${{ github.sha }}"
             SHORT_SHA="${SHORT_SHA:0:7}"
-            git commit -m "ci: update compiled PDFs [${SHORT_SHA}]
-
-  Built from commit ${{ github.sha }}
-  Triggered by: ${{ github.event_name }} on ${{ github.ref_name }}
-  Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            COMMIT_MSG="ci: update compiled PDFs [${SHORT_SHA}]\n\nBuilt from commit ${{ github.sha }}\nTriggered by: ${{ github.event_name }} on ${{ github.ref_name }}\nWorkflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            git commit -m "$(printf '%b' "$COMMIT_MSG")"
 
             git push origin HEAD:${{ github.ref_name }}
             echo "✔ PDFs committed and pushed to ${{ github.ref_name }}"
