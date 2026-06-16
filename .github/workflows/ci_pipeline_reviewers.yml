@@ -12,7 +12,11 @@
 #
 #    R1 · collect-artefacts   — downloads _report.md + _analysis.json (C1 outputs)
 #                               and figures/*.pdf + tables/*.tex (C2 outputs)
-#    R2 · checkpoint-summary  — surfaces qualify_run.log from C3
+#    R2 · checkpoint-summary  — reconstructs qualify_run.log from C3's
+#                               "Qualify all experiments" job log via the
+#                               Actions API (that job never writes/uploads a
+#                               qualify_run.log file itself — see FIX comment
+#                               on the checkpoint-summary job below)
 #                               (reproducibility completeness — include)
 #    R3 · paper-audit-summary — surfaces paper_audit_findings.json from C4
 #                               (numerical claim verification — include)
@@ -41,7 +45,8 @@
 #  PERMISSIONS
 #  -----------
 #  contents: read   — no writes; reviewer pipeline never commits anything
-#  actions:  read   — needed to download Actions artefacts
+#  actions:  read   — needed to download Actions artefacts and to read job
+#                     status/logs via `gh run view` (used by checkpoint-summary)
 #
 #  TIMEOUT CONTRACT
 #  ----------------
@@ -352,8 +357,24 @@ jobs:
             fi
           fi
 
-      - name: Download qualify_run.log artefact
+      # ── FIX: qualify_run.log was never downloadable ─────────────────────────
+      # ci_pipeline_check.yml's check/complete/qualify/summary jobs only ever
+      # write their reports to $GITHUB_OUTPUT (job outputs, e.g. qualify_report,
+      # all_qualified) — none of them write a qualify_run.log file or upload
+      # any artefact for it. The ONLY artefact that workflow ever uploads at
+      # all is paper_audit_findings.json, from its "audit" job. So
+      # `gh run download --pattern "qualify*"` below was guaranteed to fail on
+      # every single run, regardless of whether ci_pipeline_check.yml ran or
+      # succeeded — that was the real cause of the persistent ❓ in the
+      # reviewer summary, not a workflow that "may not have run".
+      #
+      # Fix: pull the live, per-experiment qualification table straight from
+      # the "Qualify all experiments" job's own log via the Actions API
+      # (gh run view --log --job), and reconstruct checkpoint_logs/qualify_run.log
+      # from that instead of trying to download a file that is never produced.
+      - name: Fetch qualify job log from the checkpoint run
         if: steps.resolve.outputs.run_id != ''
+        id: fetch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO:     ${{ github.repository }}
@@ -361,33 +382,47 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p checkpoint_logs
-          gh run download "${RUN_ID}" \
-            --repo "${REPO}" \
-            --dir checkpoint_logs \
-            --pattern "qualify-run-log-*" 2>/dev/null \
-          || gh run download "${RUN_ID}" \
-            --repo "${REPO}" \
-            --dir checkpoint_logs \
-            --pattern "qualify*" 2>/dev/null \
-          || echo "::warning::Could not download qualify_run.log artefact — artefact may have expired or been named differently."
+
+          JOBS_JSON=$(gh run view "${RUN_ID}" --repo "${REPO}" --json jobs 2>/dev/null || echo '{"jobs":[]}')
+          QUALIFY_JOB_ID=$(echo "${JOBS_JSON}" | jq -r '.jobs[] | select(.name=="Qualify all experiments") | .databaseId' | head -1)
+          QUALIFY_CONCLUSION=$(echo "${JOBS_JSON}" | jq -r '.jobs[] | select(.name=="Qualify all experiments") | .conclusion // "unknown"' | head -1)
+          echo "qualify_conclusion=${QUALIFY_CONCLUSION:-unknown}" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "${QUALIFY_JOB_ID}" || "${QUALIFY_JOB_ID}" == "null" ]]; then
+            echo "::warning::Run ${RUN_ID} has no 'Qualify all experiments' job (it may have been skipped on that run) — cannot reconstruct qualify_run.log."
+            exit 0
+          fi
+
+          echo "Fetching full log for 'Qualify all experiments' job (id ${QUALIFY_JOB_ID})..."
+          if gh run view "${RUN_ID}" --repo "${REPO}" --log --job "${QUALIFY_JOB_ID}" > checkpoint_logs/qualify_run.log 2>/dev/null \
+             && [[ -s checkpoint_logs/qualify_run.log ]]; then
+            echo "Wrote $(wc -l < checkpoint_logs/qualify_run.log) line(s) to checkpoint_logs/qualify_run.log"
+          else
+            echo "::warning::gh run view --log returned no data for job ${QUALIFY_JOB_ID} — the run's logs may have expired (Actions log retention), or this gh CLI version has a known --log/--job quirk (cli/cli#11109)."
+            rm -f checkpoint_logs/qualify_run.log
+          fi
 
       - name: Print checkpoint summary
         id: read
         run: |
           set -euo pipefail
           echo "=== C3 Checkpoint — qualify_run.log ==="
-          LOG=$(find checkpoint_logs -name "qualify_run.log" -type f 2>/dev/null | head -1 || echo "")
-          if [[ -n "${LOG}" ]]; then
-            echo "qualify_run.log found at: ${LOG}"
+          LOG="checkpoint_logs/qualify_run.log"
+          if [[ -s "${LOG}" ]]; then
+            echo "qualify_run.log reconstructed from ci_pipeline_check.yml run ${{ steps.resolve.outputs.run_id }}"
+            echo "Qualify job conclusion: ${{ steps.fetch.outputs.qualify_conclusion }}"
             echo "---"
-            cat "${LOG}"
+            # Surface just the per-experiment qualification table inline; the
+            # full raw job log (incl. checkout/setup steps) is still uploaded
+            # in full as the artefact below for anyone who wants to dig in.
+            grep -E "Qualification:|Experiment|✅|❌|FAILED" "${LOG}" || cat "${LOG}"
             echo "checkpoint_status=present" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::qualify_run.log not found in downloaded artefacts."
+            echo "::warning::Could not reconstruct qualify_run.log."
             echo "  Possible reasons:"
             echo "    - ci_pipeline_check.yml has not run yet for this branch"
-            echo "    - The artefact retention window (30 days) has elapsed"
-            echo "    - The artefact name differs from the expected pattern"
+            echo "    - The run's logs have expired (Actions log retention window elapsed)"
+            echo "    - The 'qualify' job was skipped, renamed, or removed upstream"
             echo "checkpoint_status=missing" >> "$GITHUB_OUTPUT"
           fi
 

@@ -590,6 +590,61 @@ jobs:
           sudo apt-get clean
           df -h
 
+      # ── Copy hypatiax/data/results/figures/*.* into repo-root figures/ ─────
+      # $OUT_BASE/figures already holds analysis/report figures (fig_paper_*,
+      # fig_instability_*, hypatiax_*, fig09_*, fig18_*, fig1_seed_sweep, etc.
+      # — see hypatiax/data/results/figures listing). Copy every file directly
+      # inside it into repo-root figures/, which is what LaTeX resolves via
+      # \includegraphics and what the P2 figures gate (figures-tables-validate)
+      # checks against. Glob *.* only matches names containing a dot, so the
+      # nested tables/ subdir under hypatiax/data/results/figures is skipped
+      # automatically.
+      - name: "Copy hypatiax/data/results/figures/*.* into repo-root figures/"
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p figures
+          SRC="${OUT_BASE}/figures"
+          if [[ -d "${SRC}" ]]; then
+            shopt -s nullglob
+            FILES=("${SRC}"/*.*)
+            shopt -u nullglob
+            if [[ ${#FILES[@]} -gt 0 ]]; then
+              cp -v "${FILES[@]}" figures/
+              echo "Copied ${#FILES[@]} file(s) from ${SRC}/ into figures/"
+            else
+              echo "::warning::${SRC} exists but has no files matching *.* — nothing copied"
+            fi
+          else
+            echo "::warning::${SRC} not found — skipping copy into figures/"
+          fi
+
+      # ── Commit copied figures back to the branch ────────────────────────────
+      # The copy step above only changes the runner's local checkout — without
+      # this, repo-root figures/ would revert next run. Commits + pushes any
+      # new/changed files under figures/ so they persist in the repo.
+      # [skip ci] avoids re-triggering ci_pipeline.yml off this commit.
+      # If push fails (e.g. a concurrent run already pushed), this step does
+      # NOT fail the job — downstream jobs in *this* run still get the files
+      # via the canonical-assets artifact upload further down.
+      - name: "Commit copied figures to repo-root figures/"
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f figures/
+          if git diff --cached --quiet; then
+            echo "No new/changed figures — nothing to commit."
+          else
+            git commit -m "ci: copy hypatiax/data/results/figures/*.* into repo-root figures/ [skip ci]"
+            if ! git push origin HEAD:${{ github.ref_name }}; then
+              echo "::warning::git push failed (likely a concurrent commit) — figures committed locally on the runner only. Re-run this job if repo-root figures/ must be updated on the branch."
+            fi
+          fi
+
       # ── Pre-audit: verify figures/ and tables/ exist at repo root ──────────
       # Checks that repo_root/figures/ and repo_root/tables/ are non-empty.
       # If either is absent or empty, attempts to re-populate by running the
