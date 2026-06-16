@@ -428,7 +428,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PYXREF'
-          import re, shutil
+          import os, re, shutil
           from pathlib import Path
 
           def read(f):
@@ -491,37 +491,46 @@ jobs:
               write("supp_benchmark_report.tex", suppb, orig)
 
           # ── 4. Fix bib alias collisions ───────────────────────────────────────
-          bib = read("references.bib")
-          if bib:
-              orig = bib
-              # Remove duplicate keys — keep lowercase/canonical versions
-              # MemorizationAudit2024 is alias of memorization2024audit
-              # la2021contemporary is alias of lacava2021contemporary
-              to_remove = ["MemorizationAudit2024", "la2021contemporary",
-                           "ContaminationCheck2023"]
-              for key in to_remove:
-                  # Match full @TYPE{key, ... } block
-                  pat = re.compile(
-                      r'@\w+\{' + re.escape(key) + r',.*?(?=\n@|\Z)',
-                      re.DOTALL
+          # la2021contemporary is an alias of lacava2021contemporary
+          bibfile = "references.bib"
+          if os.path.exists(bibfile):
+              with open(bibfile, "r", encoding="utf-8") as fh:
+                  bib = fh.read()
+              duplicates = [
+                  "MemorizationAudit2024",
+                  "la2021contemporary",
+                  "ContaminationCheck2023",
+              ]
+              for key in duplicates:
+                  pattern = re.compile(
+                      r'@\w+\{' + re.escape(key) + r',.*?(?=\n@\w+\{|\Z)',
+                      re.DOTALL,
                   )
-                  bib, n = pat.subn("", bib)
-                  if n:
+                  bib, removed = pattern.subn("", bib)
+                  if removed:
                       print(f"  FIX-BIB: removed duplicate entry '{key}'")
-              # Fix cite keys in main paper and supps
-              for f in ["jmlr-hypatiax-paper-final.tex",
-                        "jmlr_paper_main.tex",
-                        "supp_routing_improvements.tex",
-                        "supp_benchmark_report.tex"]:
-                  src = read(f)
-                  if src:
-                      orig2 = src
-                      src = src.replace("{MemorizationAudit2024}", "{memorization2024audit}")
-                      src = src.replace("{la2021contemporary}", "{lacava2021contemporary}")
-                      src = src.replace("{ContaminationCheck2023}", "{contamination2023check}")
-                      write(f, src, orig2)
               bib = re.sub(r'\n{3,}', '\n\n', bib)
-              write("references.bib", bib, orig)
+              with open(bibfile, "w", encoding="utf-8") as fh:
+                  fh.write(bib)
+          # Update citation keys in TeX files
+          citation_fixes = {
+              "MemorizationAudit2024": "memorization2024audit",
+              "la2021contemporary":    "lacava2021contemporary",
+              "ContaminationCheck2023":"contamination2023check",
+          }
+          tex_files = [
+              "jmlr-hypatiax-paper-final.tex",
+              "jmlr_paper_main.tex",
+              "supp_routing_improvements.tex",
+              "supp_benchmark_report.tex",
+          ]
+          for texfile in tex_files:
+              src = read(texfile)
+              if src:
+                  orig2 = src
+                  for old_key, new_key in citation_fixes.items():
+                      src = src.replace("{" + old_key + "}", "{" + new_key + "}")
+                  write(texfile, src, orig2)
 
           # ── 5. Replace hard-coded section numbers with \ref{} ────────────────
           suppb = read("supp_benchmark_report.tex")
@@ -546,11 +555,16 @@ jobs:
           # Commit cross-ref fixes
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add supp_benchmark_report.tex supp_routing_improvements.tex references.bib                   jmlr-hypatiax-paper-final.tex jmlr_paper_main.tex 2>/dev/null || true
+          git add supp_benchmark_report.tex supp_routing_improvements.tex \
+            references.bib jmlr-hypatiax-paper-final.tex jmlr_paper_main.tex \
+            2>/dev/null || true
           if ! git diff --cached --quiet; then
             git pull --rebase --autostash origin ${{ github.ref_name }} 2>/dev/null || true
-            git checkout --ours supp_benchmark_report.tex supp_routing_improvements.tex                                 references.bib 2>/dev/null || true
-            git add supp_benchmark_report.tex supp_routing_improvements.tex references.bib                     jmlr-hypatiax-paper-final.tex jmlr_paper_main.tex 2>/dev/null || true
+            git checkout --ours supp_benchmark_report.tex supp_routing_improvements.tex \
+              references.bib 2>/dev/null || true
+            git add supp_benchmark_report.tex supp_routing_improvements.tex \
+              references.bib jmlr-hypatiax-paper-final.tex jmlr_paper_main.tex \
+              2>/dev/null || true
             git commit -m "ci: auto-fix cross-refs, dup labels, bib aliases [skip ci]"
             git push origin HEAD:${{ github.ref_name }}
           else
