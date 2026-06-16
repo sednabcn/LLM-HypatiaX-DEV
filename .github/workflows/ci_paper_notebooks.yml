@@ -288,6 +288,137 @@ jobs:
       #   FIX-XR1, FIX-XR2, FIX-XR3, FIX-XR4,
       #   FIX-N1, FIX-N2, FIX-C2,
       #   FIX-F2, FIX-F3, FIX-F4  (when source files are present)
+      - name: "Auto-fix LaTeX issues before notebooks run"
+        # Applies all scriptable fixes directly to the .tex files so every
+        # notebook sees a clean state.  Covers:
+        #   FIX-B1  koza1994genetic → koza1992gp (missing bibitem)
+        #   FIX-N1  '71 cases' → '70 tasks' in instability body text
+        #   FIX-N2  'Five-Layer Architecture' → 'Five-Stage Architecture' in §8.3
+        #   FIX-S1  Add \label{sec:<slug>} after every top-level \section{}
+        #   FIX-S2  Add \label{subsec:<slug>} after every \subsection{}
+        run: |
+          set -euo pipefail
+          TEX="jmlr-hypatiax-paper-final.tex"
+          SUPP="supp_routing_improvements.tex"
+          [[ ! -f "$TEX" ]] && { echo "::warning::$TEX not found — skipping LaTeX auto-fixes"; exit 0; }
+
+          python3 - <<'PYFIX'
+          import re, shutil
+          from pathlib import Path
+
+          def patch(path, transforms):
+              p = Path(path)
+              if not p.exists():
+                  print(f"  [SKIP] {path} not found")
+                  return
+              original = p.read_text(encoding="utf-8")
+              result = original
+              for desc, old, new in transforms:
+                  count = result.count(old)
+                  result = result.replace(old, new)
+                  print(f"  [{count} hit(s)] {desc}")
+              if result != original:
+                  shutil.copy(path, path + ".bak")
+                  p.write_text(result, encoding="utf-8")
+                  print(f"  Written: {path}")
+              else:
+                  print(f"  No changes: {path}")
+
+          # ── FIX-B1: redirect koza1994genetic → koza1992gp ──────────────────
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-B1: koza1994genetic → koza1992gp",
+               r"\cite{koza1994genetic}", r"\cite{koza1992gp}"),
+              ("FIX-B1: citep variant",
+               r"\citep{koza1994genetic}", r"\citep{koza1992gp}"),
+              ("FIX-B1: citet variant",
+               r"\citet{koza1994genetic}", r"\citet{koza1992gp}"),
+          ])
+
+          # ── FIX-N1: 71 cases → 70 tasks (instability footnote only) ────────
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-N1: 71 cases → 70 tasks in Spearman footnote",
+               "71 cases, with A-Symbolic cases",
+               "70 tasks, with A-Symbolic cases"),
+          ])
+
+          # ── FIX-N2: Five-Layer → Five-Stage in §8.3 heading ─────────────────
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-N2: §8.3 Five-Layer → Five-Stage",
+               r"\subsection{Five-Layer Architecture Overview}",
+               r"\subsection{Five-Stage Architecture Overview}"),
+              ("FIX-N2: §8.3 body five layers → five stages",
+               "Integrates all five layers.",
+               "Integrates all five stages."),
+          ])
+
+          # ── FIX-S1: add \label after top-level \section{} ─────────────────
+          SECTION_LABELS = {
+              "Introduction":                       "sec:intro",
+              "Related Work":                       "sec:related",
+              "Empirical Evidence":                 "sec:llm_limitations",
+              "Theoretical Framework":              "sec:theory",
+              "Problem Formulation":                "sec:problem",
+              "Benchmark Design":                   "sec:benchmark",
+              "Methodology":                        "sec:method",
+              "HypatiaX Architecture":              "sec:architecture",
+              "Experimental Setup":                 "sec:setup",
+              "Results":                            "sec:results",
+              "Discussion":                         "sec:discussion",
+              "Conclusion":                         "sec:conclusion",
+              "Reproducibility Statement":          "sec:reproducibility",
+              "Full Benchmark Case Definitions":    "sec:benchmark_cases",
+              "Benchmark Version History":          "sec:version_history",
+              "Corrected Runtime Claim":            "sec:runtime_correction",
+          }
+
+          p = Path("jmlr-hypatiax-paper-final.tex")
+          src = p.read_text(encoding="utf-8")
+          changed = False
+          for title, label in SECTION_LABELS.items():
+              # Match \section{<title>} not already followed by \label on same/next line
+              pattern = re.compile(
+                  r'(\section\{' + re.escape(title) + r'[^}]*\})'
+                  r'(?!\s*\label\{' + re.escape(label) + r'\})',
+                  re.MULTILINE
+              )
+              def add_label(m):
+                  return m.group(1) + r'\label{' + label + r'}'
+              new_src, n = pattern.subn(add_label, src)
+              if n:
+                  src = new_src
+                  changed = True
+                  print(f"  [FIX-S1] \label{{{label}}} added after \section{{{title}}}")
+          if changed:
+              shutil.copy("jmlr-hypatiax-paper-final.tex", "jmlr-hypatiax-paper-final.tex.bak")
+              p.write_text(src, encoding="utf-8")
+
+          # ── FIX-S2: add \label after \subsection{} (slug from title) ──────
+          p = Path("jmlr-hypatiax-paper-final.tex")
+          src = p.read_text(encoding="utf-8")
+
+          def make_slug(title):
+              slug = title.lower()
+              slug = re.sub(r'[^a-z0-9 ]', '', slug)
+              slug = re.sub(r'\s+', '-', slug.strip())
+              slug = slug.replace(' ', '-')
+              return 'subsec:' + slug[:40]
+
+          # Find all \subsection{...} not followed by \label
+          pattern = re.compile(r'(\subsection\{([^}]+)\})(?!\s*\label\{subsec:)', re.MULTILINE)
+          changed = False
+          def add_sublabel(m):
+              global changed
+              changed = True
+              slug = make_slug(m.group(2))
+              print(f"  [FIX-S2] \label{{{slug}}} added")
+              return m.group(1) + r'\label{' + slug + r'}'
+          new_src = pattern.sub(add_sublabel, src)
+          if changed:
+              shutil.copy("jmlr-hypatiax-paper-final.tex", "jmlr-hypatiax-paper-final.tex.bak")
+              p.write_text(new_src, encoding="utf-8")
+              print("  Written: jmlr-hypatiax-paper-final.tex (FIX-S2)")
+          PYFIX
+
       - name: Apply non-numerical paper fixes (hypatia_inspector)
         run: |
           if [ -f scripts/patches/hypatia_inspector.py ]; then
@@ -337,18 +468,34 @@ jobs:
             fi
           }
 
-          # FIX-F2: R² heatmap clipped
-          deploy_fig "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf"
+          # FIX-F2: R² heatmap clipped — check Figures/ inventory first, then ablation results
+          for src in \
+              "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf" \
+              "Figures/fig18_r2_heatmap_improved.pdf" \
+              "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.png" \
+              "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.pdf"; do
+            [[ -f "$src" ]] && { deploy_fig "$src"; break; }
+          done || echo "::warning::FIX-F2: fig18_r2_heatmap_improved not found in any search path"
+
           # FIX-F3: R² heatmap raw
-          deploy_fig "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf"
-          # FIX-F4: Portfolio Variance seed sweep (prefer PDF, fall back to PNG)
-          if [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" ]]; then
-            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf"
-          elif [[ -f "Figures/figures-portfolio-variance/fig1_seed_sweep.png" ]]; then
-            deploy_fig "Figures/figures-portfolio-variance/fig1_seed_sweep.png"
-          else
-            echo "::warning::FIX-F4: neither fig1_seed_sweep.pdf nor .png found"
-          fi
+          for src in \
+              "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf" \
+              "Figures/fig09_r2_heatmap_regimes.pdf" \
+              "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.png" \
+              "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.pdf"; do
+            [[ -f "$src" ]] && { deploy_fig "$src"; break; }
+          done || echo "::warning::FIX-F3: fig09_r2_heatmap_regimes not found in any search path"
+
+          # FIX-F4/F5: Portfolio Variance seed sweep
+          for src in \
+              "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
+              "Figures/figures-portfolio-variance/fig1_seed_sweep.png" \
+              "Figures/fig1_seed_sweep.pdf" \
+              "Figures/fig1_seed_sweep.png" \
+              "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.png" \
+              "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.pdf"; do
+            [[ -f "$src" ]] && { deploy_fig "$src"; break; }
+          done || echo "::warning::FIX-F4: fig1_seed_sweep not found in any search path" 
 
           # FIX-F1 guard: check for the architecture figure; warn if still missing
           ARCH_FOUND=false

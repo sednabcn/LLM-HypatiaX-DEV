@@ -171,6 +171,133 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: "Auto-fix LaTeX issues before audit runs"
+        # Applies all scriptable fixes to jmlr-hypatiax-paper-final.tex so
+        # every downstream job and notebook sees a clean state.
+        # Covers FIX-B1, FIX-N1, FIX-N2, FIX-S1, FIX-S2.
+        # Commits the patched file back to the branch.
+        run: |
+          set -euo pipefail
+          TEX="jmlr-hypatiax-paper-final.tex"
+          [[ ! -f "$TEX" ]] && { echo "::warning::$TEX not found — skipping LaTeX auto-fixes"; exit 0; }
+
+          python3 - <<'PYFIX'
+          import re, shutil, subprocess
+          from pathlib import Path
+
+          def patch(path, transforms):
+              p = Path(path)
+              if not p.exists():
+                  print(f"  [SKIP] {path} not found")
+                  return
+              original = p.read_text(encoding="utf-8")
+              result = original
+              for desc, old, new in transforms:
+                  count = result.count(old)
+                  if count:
+                      result = result.replace(old, new)
+                      print(f"  [{count}x] {desc}")
+              if result != original:
+                  p.write_text(result, encoding="utf-8")
+                  print(f"  Written: {path}")
+
+          # FIX-B1: koza1994genetic → koza1992gp
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-B1 \\cite{koza1994genetic} → koza1992gp",
+               r"\cite{koza1994genetic}", r"\cite{koza1992gp}"),
+              ("FIX-B1 \\citep variant",
+               r"\citep{koza1994genetic}", r"\citep{koza1992gp}"),
+              ("FIX-B1 \\citet variant",
+               r"\citet{koza1994genetic}", r"\citet{koza1992gp}"),
+          ])
+
+          # FIX-N1: 71 cases → 70 tasks (Spearman footnote only)
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-N1 71 cases → 70 tasks",
+               "71 cases, with A-Symbolic cases",
+               "70 tasks, with A-Symbolic cases"),
+          ])
+
+          # FIX-N2: Five-Layer → Five-Stage in §8.3
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-N2 §8.3 heading Five-Layer → Five-Stage",
+               r"\subsection{Five-Layer Architecture Overview}",
+               r"\subsection{Five-Stage Architecture Overview}"),
+              ("FIX-N2 §8.3 body five layers → five stages",
+               "Integrates all five layers.",
+               "Integrates all five stages."),
+          ])
+
+          # FIX-S1: add \label after each top-level \section{}
+          SECTION_LABELS = {
+              "Introduction": "sec:intro",
+              "Related Work": "sec:related",
+              "Empirical Evidence": "sec:llm_limitations",
+              "Theoretical Framework": "sec:theory",
+              "Problem Formulation": "sec:problem",
+              "Benchmark Design": "sec:benchmark",
+              "Methodology": "sec:method",
+              "HypatiaX Architecture": "sec:architecture",
+              "Experimental Setup": "sec:setup",
+              "Results": "sec:results",
+              "Discussion": "sec:discussion",
+              "Conclusion": "sec:conclusion",
+              "Reproducibility Statement": "sec:reproducibility",
+              "Full Benchmark Case Definitions": "sec:benchmark_cases",
+              "Benchmark Version History": "sec:version_history",
+              "Corrected Runtime Claim": "sec:runtime_correction",
+          }
+          p = Path("jmlr-hypatiax-paper-final.tex")
+          src = p.read_text(encoding="utf-8")
+          changed = False
+          for title, label in SECTION_LABELS.items():
+              pat = re.compile(
+                  r'(\\section\{' + re.escape(title) + r'[^}]*\})'
+                  r'(?!\s*\\label\{' + re.escape(label) + r'\})',
+                  re.MULTILINE
+              )
+              new_src, n = pat.subn(lambda m: m.group(1) + r'\label{' + label + r'}', src)
+              if n:
+                  src = new_src
+                  changed = True
+                  print(f"  [FIX-S1] \\label{{{label}}} added")
+          if changed:
+              p.write_text(src, encoding="utf-8")
+
+          # FIX-S2: add \label after each \subsection{}
+          p = Path("jmlr-hypatiax-paper-final.tex")
+          src = p.read_text(encoding="utf-8")
+
+          def make_slug(title):
+              slug = title.lower()
+              slug = re.sub(r'[^a-z0-9 ]', '', slug)
+              slug = re.sub(r'\s+', '-', slug.strip())
+              return 'subsec:' + slug.replace(' ', '-')[:40]
+
+          pat = re.compile(r'(\\subsection\{([^}]+)\})(?!\s*\\label\{subsec:)', re.MULTILINE)
+          changed = False
+          def add_sublabel(m):
+              global changed
+              changed = True
+              slug = make_slug(m.group(2))
+              return m.group(1) + r'\label{' + slug + r'}'
+          new_src = pat.sub(add_sublabel, src)
+          if changed:
+              p.write_text(new_src, encoding="utf-8")
+              print(f"  [FIX-S2] subsection labels added")
+          PYFIX
+
+          # Commit patched tex back to branch
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f jmlr-hypatiax-paper-final.tex
+          if git diff --cached --quiet; then
+            echo "No LaTeX changes — nothing to commit."
+          else
+            git commit -m "ci: auto-fix FIX-B1/N1/N2/S1/S2 in jmlr-hypatiax-paper-final.tex [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
       - name: Validate issue registry consistency
         run: |
           python3 - <<'PY'
@@ -257,13 +384,14 @@ jobs:
 
           # Confirmed false-positives — issues that do not exist in the paper.
           # See audit report section "False Positives in the Audit Report".
+          # NOTE: FIX-B1, FIX-N1, FIX-N2 removed from this list — live audit
+          # report confirms these ARE real issues. They are now auto-fixed by
+          # the "Auto-fix LaTeX issues" step in the guard job before notebooks run.
+          # FIX-XR1/XR2/XR3 remain confirmed false positives per registry.
           FALSE_POSITIVE_IDS = {
-              "FIX-B1",   # koza1994genetic bibitem exists; only citation is in a comment
               "FIX-XR1",  # sec:llm_domain label never defined; no duplicate exists
               "FIX-XR2",  # label is after \subsection, not inside \item
               "FIX-XR3",  # Supp A already says §7.4, not §7.3
-              "FIX-N1",   # "71 cases" text does not appear in the paper
-              "FIX-N2",   # §8.3 heading already says "Five-Stage", not "Five-Layer"
           }
 
           registry_path = Path("${{ env.REGISTRY_PATH }}")
@@ -504,6 +632,53 @@ jobs:
           echo "Pre-audit check PASSED."
           echo "  repo_root/figures/ : $(ls "${REPO_FIGURES}" | wc -l) file(s)"
           echo "  repo_root/tables/  : $(ls "${REPO_TABLES}"  | wc -l) file(s)"
+
+      - name: "Deploy known figures to Figures/ and figures/ (FIX-F2/F3/F4/F5)"
+        # Copies the three script-generated figures from their actual locations
+        # to the Figures/ inventory path AND figures/ (what LaTeX reads).
+        # Tries PDF first, falls back to PNG — NB-05 accepts both.
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p Figures figures
+
+          deploy() {
+            local stem="$1"; shift
+            for src in "$@"; do
+              if [[ -f "$src" ]]; then
+                ext="${src##*.}"
+                cp -v "$src" "Figures/${stem}.${ext}"
+                cp -v "$src" "figures/${stem}.${ext}"
+                echo "  [OK] ${stem} deployed from $src"
+                return 0
+              fi
+            done
+            echo "::warning::FIX-F: ${stem} not found in any search path"
+            return 0
+          }
+
+          deploy fig18_r2_heatmap_improved \
+            "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.png" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.pdf"
+
+          deploy fig09_r2_heatmap_regimes \
+            "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.png" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.pdf"
+
+          deploy fig1_seed_sweep \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.png" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.png" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.pdf"
+
+          deploy hypatiaX_algorithm1_routing_cascade_v2 \
+            "Figures/hypatiaX_algorithm1_routing_cascade_v2.pdf" \
+            "Figures/architecture_figures/hypatiaX_algorithm1_routing_cascade_v2.pdf"
+
+          echo "--- figures/ after deploy ---"
+          ls -lh figures/ 2>/dev/null | head -20
 
       - name: Restore pip cache
         id: pip-cache
