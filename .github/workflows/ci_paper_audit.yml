@@ -578,7 +578,7 @@ jobs:
           path: |
             ${{ env.OUT_BASE }}/figures
             ${{ env.OUT_BASE }}/tables
-          key: canonical-assets-${{ hashFiles('**/*.tex', '**/*.pdf', '**/*.png') }}
+          key: canonical-assets-${{ hashFiles('hypatiax/data/results/figures/**/*', 'hypatiax/data/results/tables/**/*') }}
           restore-keys: |
             canonical-assets-
 
@@ -599,8 +599,10 @@ jobs:
       # checks against. Glob *.* only matches names containing a dot, so the
       # nested tables/ subdir under hypatiax/data/results/figures is skipped
       # automatically.
-      - name: "Copy hypatiax/data/results/figures/*.* into repo-root figures/"
-        if: steps.asset-cache.outputs.cache-hit != 'true'
+      - name: "Sync hypatiax/data/results/figures/ into repo-root figures/"
+        # Unconditional: always reflects the current source tree regardless of cache state.
+        # rsync --delete removes files in figures/ that no longer exist in the source,
+        # preventing stale assets from earlier runs from silently passing validation.
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -608,17 +610,10 @@ jobs:
           mkdir -p figures
           SRC="${OUT_BASE}/figures"
           if [[ -d "${SRC}" ]]; then
-            shopt -s nullglob
-            FILES=("${SRC}"/*.*)
-            shopt -u nullglob
-            if [[ ${#FILES[@]} -gt 0 ]]; then
-              cp -v "${FILES[@]}" figures/
-              echo "Copied ${#FILES[@]} file(s) from ${SRC}/ into figures/"
-            else
-              echo "::warning::${SRC} exists but has no files matching *.* — nothing copied"
-            fi
+            rsync -av --delete --exclude='tables/' "${SRC}/" figures/
+            echo "Synced figures/ — $(ls figures/ | wc -l) file(s) now present"
           else
-            echo "::warning::${SRC} not found — skipping copy into figures/"
+            echo "::warning::${SRC} not found — skipping sync into figures/"
           fi
 
       # ── Commit copied figures back to the branch ────────────────────────────
@@ -629,8 +624,7 @@ jobs:
       # If push fails (e.g. a concurrent run already pushed), this step does
       # NOT fail the job — downstream jobs in *this* run still get the files
       # via the canonical-assets artifact upload further down.
-      - name: "Commit copied figures to repo-root figures/"
-        if: steps.asset-cache.outputs.cache-hit != 'true'
+      - name: "Commit synced figures to repo-root figures/"
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -639,7 +633,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No new/changed figures — nothing to commit."
           else
-            git commit -m "ci: copy hypatiax/data/results/figures/*.* into repo-root figures/ [skip ci]"
+            git commit -m "ci: sync hypatiax/data/results/figures/ into repo-root figures/ [skip ci]"
             if ! git push origin HEAD:${{ github.ref_name }}; then
               echo "::warning::git push failed (likely a concurrent commit) — figures committed locally on the runner only. Re-run this job if repo-root figures/ must be updated on the branch."
             fi
@@ -760,7 +754,6 @@ jobs:
         #   FIX-F4: fig09_r2_heatmap_regimes  (generate_figures.py --experiment exp1)
         #   FIX-F5: fig1_seed_sweep            (generate_figures.py --experiment exp1)
         #   Supp-B: 13 sweep figures           (generate_figures.py --experiment suppB/suppB_sc)
-        if: steps.asset-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p Figures figures
@@ -866,7 +859,6 @@ jobs:
           pip install --no-cache-dir numpy sympy
 
       - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
-        if: steps.asset-cache.outputs.cache-hit != 'true'
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -942,7 +934,6 @@ jobs:
           echo "Figures directory now contains $(ls "${FIGURES_DIR}" | wc -l) file(s)."
 
       - name: Collect tables (TeX) into $OUT_BASE/tables/
-        if: steps.asset-cache.outputs.cache-hit != 'true'
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |

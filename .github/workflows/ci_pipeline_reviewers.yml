@@ -45,12 +45,13 @@
 #  PERMISSIONS
 #  -----------
 #  contents: read   — no writes; reviewer pipeline never commits anything
-#  actions:  read   — needed to download Actions artefacts and to read job
-#                     status/logs via `gh run view` (used by checkpoint-summary)
+#  actions:  write  — needed to dispatch ci_pipeline_check.yml (dispatch-checkpoint job)
+#                     and to download Actions artefacts / read job logs via `gh run view`
 #
 #  TIMEOUT CONTRACT
 #  ----------------
 #  collect-artefacts   :  10 min  (artefact download + echo)
+#  dispatch-checkpoint :   5 min  (gh workflow run + poll until run appears)
 #  checkpoint-summary  :   5 min  (log read + echo)
 #  paper-audit-summary :   5 min  (JSON read + echo)
 #  notebooks-summary   :   5 min  (notebook list + findings echo)
@@ -97,7 +98,7 @@ on:
 
 permissions:
   contents: read
-  actions:  read
+  actions:  write   # write required for gh workflow run (dispatch-checkpoint job)
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -308,6 +309,81 @@ jobs:
 
 
   # ============================================================================
+  #  JOB dispatch-checkpoint
+  #
+  #  Triggers ci_pipeline_check.yml on the same branch so that R2 always has
+  #  a fresh, successful run to consume — eliminating the ❓ state that arose
+  #  when no prior checkpoint run existed on the branch.
+  #
+  #  Skipped when the caller already supplied a checkpoint_run_id: in that
+  #  case R2 will use the caller-specified run directly and no dispatch is needed.
+  #
+  #  The job only dispatches and waits for the run to *appear* (not complete).
+  #  R2 resolves the run ID independently via gh run list --status success,
+  #  so ci_pipeline_check.yml just needs to finish before R2's resolve step
+  #  runs.  gh run watch in the "Wait for checkpoint run to complete" step
+  #  provides that guarantee.
+  # ============================================================================
+  dispatch-checkpoint:
+    name: "Dispatch ci_pipeline_check.yml"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [collect-artefacts]
+    # Skip if the caller already pinned a checkpoint run — no dispatch needed.
+    if: github.event.inputs.checkpoint_run_id == ''
+
+    permissions:
+      actions:  write   # gh workflow run requires write on actions
+      contents: read
+
+    steps:
+      - name: Trigger ci_pipeline_check.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci_pipeline_check.yml \
+            --repo "${{ github.repository }}" \
+            --ref  "${{ github.ref_name }}"
+
+      - name: Wait for checkpoint run to appear and complete
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO:     ${{ github.repository }}
+          BRANCH:   ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Poll until the newly dispatched run is visible in the API.
+          # gh workflow run returns before the run object exists, so we
+          # must wait a few seconds before it shows up in gh run list.
+          RUN_ID=""
+          for i in {1..30}; do
+            RUN_ID=$(gh run list \
+              --repo   "${REPO}" \
+              --workflow ci_pipeline_check.yml \
+              --branch "${BRANCH}" \
+              --limit  1 \
+              --json   databaseId \
+              --jq     '.[0].databaseId // empty' 2>/dev/null || true)
+            if [[ -n "${RUN_ID}" && "${RUN_ID}" != "null" ]]; then
+              echo "Checkpoint run ${RUN_ID} found — waiting for it to complete..."
+              break
+            fi
+            echo "  Attempt ${i}/30: run not visible yet — retrying in 10 s"
+            sleep 10
+          done
+
+          if [[ -z "${RUN_ID}" || "${RUN_ID}" == "null" ]]; then
+            echo "::error::ci_pipeline_check.yml was not dispatched or did not appear within 300 s."
+            exit 1
+          fi
+
+          # Block until the run finishes so R2's resolve step finds a
+          # completed (success) run when it queries gh run list --status success.
+          gh run watch "${RUN_ID}" --repo "${REPO}" --exit-status
+
+
+  # ============================================================================
   #  JOB R2 — checkpoint-summary
   #
   #  Surfaces qualify_run.log from the C3 ci_pipeline_check.yml run.
@@ -320,7 +396,9 @@ jobs:
     name: "R2 · C3 Checkpoint — qualify_run.log"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [collect-artefacts]
+    needs: [collect-artefacts, dispatch-checkpoint]
+    # Run even when dispatch-checkpoint was skipped (caller supplied checkpoint_run_id).
+    if: always() && needs.collect-artefacts.result == 'success'
 
     outputs:
       checkpoint_status: ${{ steps.read.outputs.checkpoint_status }}
@@ -763,7 +841,7 @@ jobs:
     name: "R5 · Reviewer health table"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [collect-artefacts, checkpoint-summary, paper-audit-summary, notebooks-summary]
+    needs: [collect-artefacts, dispatch-checkpoint, checkpoint-summary, paper-audit-summary, notebooks-summary]
     if: always()
 
     steps:

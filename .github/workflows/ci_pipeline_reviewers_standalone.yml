@@ -1,0 +1,632 @@
+# ==============================================================================
+#  ci_pipeline_reviewers_standalone.yml  —  HypatiaX · Standalone reviewer pipeline
+#
+#  PURPOSE
+#  -------
+#  A fully isolated, read-only reviewer pipeline that can run in ANY GitHub
+#  repository — including a public fork or a completely separate repo — with
+#  NO secrets and NO access to the original private repository.
+#
+#  Unlike ci_pipeline_reviewers.yml (which calls the Actions API and requires
+#  GITHUB_TOKEN access to the private repo), this workflow:
+#    • downloads a single self-contained bundle zip produced by
+#      ci_export_reviewer_bundle.yml in the private pipeline
+#    • reads all evidence from that bundle (no gh CLI, no API calls)
+#    • produces the same consolidated health table as the original pipeline
+#
+#  PREREQUISITES
+#  -------------
+#  1. Run ci_export_reviewer_bundle.yml in the private repo after all 14
+#     experiment slots complete.  That workflow produces:
+#       a) A plain Actions artefact (download from the private repo's Actions tab)
+#       b) A GitHub Release asset (if tag_name was supplied) — accessible via
+#          a direct HTTPS URL without authentication if the release is public.
+#
+#  2. Give the reviewer either:
+#       • The direct HTTPS URL to the release asset zip  ← recommended
+#       • The zip file itself (they upload it as a workflow artefact manually)
+#
+#  HOW TO TRIGGER
+#  --------------
+#  workflow_dispatch — reviewers run this once per review cycle:
+#    bundle_url   : HTTPS URL to the reviewer bundle zip.
+#                   Must be publicly accessible (GitHub Release asset on a
+#                   public repo, or a presigned S3/GCS URL).
+#                   Exactly one of bundle_url or bundle_artifact_name must be set.
+#    bundle_artifact_name : Name of an Actions artefact already uploaded to
+#                   THIS (reviewer's) repository, if the reviewer downloaded the
+#                   zip and re-uploaded it.  Leave blank when using bundle_url.
+#    pages_url    : Optional GitHub Pages URL for the full audit report.
+#
+#  SECRETS REQUIRED
+#  ----------------
+#  NONE.  The built-in GITHUB_TOKEN is sufficient:
+#    • It is used only for actions/download-artifact (to fetch bundle_artifact_name
+#      from THIS repo if that path is chosen).
+#    • The bundle_url path uses plain curl — no token needed.
+#
+#  PERMISSIONS
+#  -----------
+#  contents: read   — no writes ever
+#  actions:  read   — only needed for download-artifact (bundle_artifact_name path)
+#
+#  TIMEOUT CONTRACT
+#  ----------------
+#  download-bundle  : 10 min  (curl download + unzip)
+#  checkpoint-summary:  5 min  (file read + echo)
+#  paper-audit-summary: 5 min  (JSON parse + echo)
+#  notebooks-summary:   5 min  (notebook list + findings echo)
+#  final-summary:       5 min  (health table; no external calls)
+#
+#  BUNDLE LAYOUT (produced by ci_export_reviewer_bundle.yml)
+#  ----------------------------------------------------------
+#  bundle/
+#    manifest.json
+#    c1_c2/
+#      analysis/<exp>_report.md
+#      analysis/<exp>_analysis.json
+#      figures/<name>.pdf|png
+#      tables/<exp>__<name>.tex
+#    c3_checkpoint/
+#      qualify_run.log
+#    c4_audit/
+#      paper-audit-findings-*/paper_audit_findings.json
+#      (additional audit sub-artefacts)
+#    c5_notebooks/
+#      nb-0N-*/<name>.ipynb
+#      notebooks-audit-summary-*/notebooks_audit_summary.json
+# ==============================================================================
+
+name: "HypatiaX - reviewer pipeline (standalone)"
+run-name: >-
+  HypatiaX standalone reviewer — ${{ github.ref_name }} — run ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_url:
+        description: >
+          Direct HTTPS URL to the hypatia-reviewer-bundle-*.zip file produced by
+          ci_export_reviewer_bundle.yml (e.g. a GitHub Release asset URL or a
+          presigned cloud storage URL).
+          Leave blank if using bundle_artifact_name instead.
+        required: false
+        default: ""
+
+      bundle_artifact_name:
+        description: >
+          Name of an Actions artefact already uploaded to THIS repository
+          (the reviewer re-uploaded the zip after downloading it from the
+          private repo). Leave blank when using bundle_url.
+          Example: "hypatia-reviewer-bundle-12345678"
+        required: false
+        default: ""
+
+      pages_url:
+        description: >
+          GitHub Pages URL produced by ci_report.yml (optional).
+          E.g. https://<org>.github.io/<repo>/
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions:  read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PYTHON_VERSION: "3.12"
+  BUNDLE_ROOT: "bundle"    # where the zip is unpacked
+
+jobs:
+
+  # ============================================================================
+  #  JOB R0 — download-bundle
+  #
+  #  Fetches the reviewer bundle zip (via URL or from a local artefact) and
+  #  unpacks it.  Uploads the unpacked tree as a single workflow artefact so
+  #  all downstream jobs can download it without re-fetching.
+  #
+  #  NO SECRETS USED — plain curl for URL path; built-in token for artefact path.
+  # ============================================================================
+  download-bundle:
+    name: "R0 · Download + unpack reviewer bundle"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      bundle_ok: ${{ steps.verify.outputs.bundle_ok }}
+
+    steps:
+      - name: Validate inputs
+        run: |
+          URL="${{ github.event.inputs.bundle_url }}"
+          ART="${{ github.event.inputs.bundle_artifact_name }}"
+          if [[ -z "${URL}" && -z "${ART}" ]]; then
+            echo "::error::Exactly one of bundle_url or bundle_artifact_name must be provided."
+            exit 1
+          fi
+          if [[ -n "${URL}" && -n "${ART}" ]]; then
+            echo "::error::Only one of bundle_url or bundle_artifact_name may be set (not both)."
+            exit 1
+          fi
+
+      # Path A: download from a URL (GitHub Release asset or presigned URL)
+      - name: Download bundle from URL
+        if: github.event.inputs.bundle_url != ''
+        run: |
+          set -euo pipefail
+          URL="${{ github.event.inputs.bundle_url }}"
+          echo "Downloading bundle from: ${URL}"
+          curl -fL --retry 3 --retry-delay 5 -o reviewer_bundle.zip "${URL}"
+          echo "Downloaded: $(du -sh reviewer_bundle.zip | cut -f1)"
+
+      # Path B: download from an artefact already in this repo
+      - name: Download bundle from Actions artefact
+        if: github.event.inputs.bundle_artifact_name != ''
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: ${{ github.event.inputs.bundle_artifact_name }}
+          path: artefact_download/
+
+      - name: Locate zip from artefact download
+        if: github.event.inputs.bundle_artifact_name != ''
+        run: |
+          set -euo pipefail
+          ZIPFILE=$(find artefact_download -name "*.zip" | head -1)
+          if [[ -z "${ZIPFILE}" ]]; then
+            echo "::error::No zip file found in artefact '${ART}'. Ensure the artefact contains the bundle zip."
+            exit 1
+          fi
+          cp "${ZIPFILE}" reviewer_bundle.zip
+          echo "Located zip: ${ZIPFILE} ($(du -sh reviewer_bundle.zip | cut -f1))"
+
+      - name: Unpack bundle
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_ROOT}"
+          unzip -q reviewer_bundle.zip -d "${BUNDLE_ROOT}"
+          echo "Bundle unpacked. Top-level contents:"
+          ls -1 "${BUNDLE_ROOT}/"
+
+      - name: Verify bundle structure and print manifest
+        id: verify
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          root = Path(os.environ["BUNDLE_ROOT"])
+          manifest_path = root / "manifest.json"
+
+          SEP = "=" * 70
+          print(SEP)
+          print("  HYPATIA X  —  REVIEWER BUNDLE MANIFEST")
+          print(SEP)
+
+          if not manifest_path.exists():
+            print("::warning::manifest.json not found — bundle may be malformed.")
+            manifest = {}
+          else:
+            manifest = json.loads(manifest_path.read_text())
+            for k, v in manifest.items():
+              if isinstance(v, dict):
+                print(f"  {k}:")
+                for kk, vv in v.items():
+                  print(f"    {kk}: {vv}")
+              else:
+                print(f"  {k}: {v}")
+
+          print(SEP)
+
+          # Check expected subdirectories
+          required = ["c1_c2", "c3_checkpoint", "c4_audit", "c5_notebooks"]
+          ok = True
+          for sub in required:
+            d = root / sub
+            count = len(list(d.rglob("*"))) if d.exists() else 0
+            status = "✅" if count > 0 else "⚠ "
+            print(f"  {status}  {sub:<20}  {count} file(s)")
+            if count == 0:
+              ok = False
+
+          print(SEP)
+
+          env_file = os.environ.get("GITHUB_OUTPUT", "")
+          if env_file:
+            with open(env_file, "a") as f:
+              f.write(f"bundle_ok={'true' if ok else 'false'}\n")
+          PYEOF
+        env:
+          BUNDLE_ROOT: ${{ env.BUNDLE_ROOT }}
+
+      - name: Re-upload unpacked bundle for downstream jobs
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              unpacked-bundle-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_ROOT }}/
+          if-no-files-found: error
+          retention-days:    1    # only needed for this workflow run
+
+
+  # ============================================================================
+  #  JOB R1 — collect-artefacts
+  #
+  #  Reads C1+C2 outputs from the bundle (no checkout, no repo access).
+  # ============================================================================
+  collect-artefacts:
+    name: "R1 · C1+C2 analysis, figures, tables"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [download-bundle]
+
+    steps:
+      - name: Download unpacked bundle
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: unpacked-bundle-${{ github.run_id }}
+          path: ${{ env.BUNDLE_ROOT }}
+
+      - name: Report C1+C2 contents
+        run: |
+          set -euo pipefail
+          echo "=== C1 Analysis outputs ==="
+          REPORT_COUNT=$(find "${BUNDLE_ROOT}/c1_c2/analysis" -name "*_report.md"   2>/dev/null | wc -l | tr -d ' ')
+          ANALYSIS_COUNT=$(find "${BUNDLE_ROOT}/c1_c2/analysis" -name "*_analysis.json" 2>/dev/null | wc -l | tr -d ' ')
+          echo "  _report.md     : ${REPORT_COUNT} file(s)"
+          echo "  _analysis.json : ${ANALYSIS_COUNT} file(s)"
+          [[ "${REPORT_COUNT}" -gt 0 ]] && find "${BUNDLE_ROOT}/c1_c2/analysis" -name "*_report.md" | sort | while read -r f; do echo "    $(basename "$f")"; done
+
+          echo ""
+          echo "=== C2 Post-process outputs ==="
+          FIG_COUNT=$(find "${BUNDLE_ROOT}/c1_c2/figures" \( -name "*.pdf" -o -name "*.png" \) 2>/dev/null | wc -l | tr -d ' ')
+          TEX_COUNT=$(find "${BUNDLE_ROOT}/c1_c2/tables"  -name "*.tex" 2>/dev/null | wc -l | tr -d ' ')
+          echo "  figures (PDF/PNG) : ${FIG_COUNT} file(s)"
+          echo "  tables  (TeX)     : ${TEX_COUNT} file(s)"
+
+          [[ "${REPORT_COUNT}" -eq 0 && "${ANALYSIS_COUNT}" -eq 0 ]] \
+            && echo "::warning::No C1 artefacts in bundle — ci_analysis.yml may not have run before export."
+          [[ "${FIG_COUNT}" -eq 0 ]] \
+            && echo "::warning::No figures in bundle — ci_postprocess.yml may not have run before export."
+
+
+  # ============================================================================
+  #  JOB R2 — checkpoint-summary
+  #
+  #  Reads qualify_run.log directly from the bundle (no Actions API, no gh CLI).
+  # ============================================================================
+  checkpoint-summary:
+    name: "R2 · C3 Checkpoint — qualify_run.log"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [download-bundle, collect-artefacts]
+
+    outputs:
+      checkpoint_status: ${{ steps.read.outputs.checkpoint_status }}
+
+    steps:
+      - name: Download unpacked bundle
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: unpacked-bundle-${{ github.run_id }}
+          path: ${{ env.BUNDLE_ROOT }}
+
+      - name: Print checkpoint summary
+        id: read
+        run: |
+          set -euo pipefail
+          LOG="${BUNDLE_ROOT}/c3_checkpoint/qualify_run.log"
+          echo "=== C3 Checkpoint — qualify_run.log ==="
+          if [[ -s "${LOG}" ]]; then
+            echo "qualify_run.log present ($(wc -l < "${LOG}") lines)"
+            echo "---"
+            grep -E "Qualification:|Experiment|✅|❌|FAILED" "${LOG}" 2>/dev/null || cat "${LOG}"
+            echo "checkpoint_status=present" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::qualify_run.log is absent or empty in this bundle."
+            echo "  Possible reasons:"
+            echo "    - ci_pipeline_check.yml had not run when the bundle was exported"
+            echo "    - The job log had already expired (Actions log retention)"
+            echo "checkpoint_status=missing" >> "$GITHUB_OUTPUT"
+          fi
+
+
+  # ============================================================================
+  #  JOB R3 — paper-audit-summary
+  #
+  #  Reads paper_audit_findings.json from the bundle (no API calls).
+  # ============================================================================
+  paper-audit-summary:
+    name: "R3 · C4 Paper audit — paper_audit_findings.json"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [download-bundle, collect-artefacts]
+
+    outputs:
+      audit_status: ${{ steps.read.outputs.audit_status }}
+      n_fail:       ${{ steps.read.outputs.n_fail }}
+      n_pass:       ${{ steps.read.outputs.n_pass }}
+      n_warn:       ${{ steps.read.outputs.n_warn }}
+      n_missing:    ${{ steps.read.outputs.n_missing }}
+
+    steps:
+      - name: Download unpacked bundle
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: unpacked-bundle-${{ github.run_id }}
+          path: ${{ env.BUNDLE_ROOT }}
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Parse and print audit findings
+        id: read
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          root = Path(os.environ["BUNDLE_ROOT"])
+          findings_path = next(root.rglob("paper_audit_findings.json"), None)
+
+          if findings_path is None:
+            print("::warning::paper_audit_findings.json not found in bundle.")
+            print("  Possible reasons:")
+            print("    - ci_paper_audit.yml had not run when the bundle was exported")
+            print("    - The artefact retention window had elapsed before export")
+            env_file = os.environ.get("GITHUB_OUTPUT", "")
+            if env_file:
+              with open(env_file, "a") as f:
+                f.write("audit_status=missing\nn_fail=0\nn_pass=0\nn_warn=0\nn_missing=0\n")
+            sys.exit(0)
+
+          findings = json.loads(findings_path.read_text())
+          items = findings.get("findings", []) if isinstance(findings, dict) else findings
+
+          SEP = "=" * 70
+          print(SEP)
+          print("  C4 PAPER AUDIT  —  paper_audit_findings.json")
+          print(f"  Source: {findings_path}")
+          print(SEP)
+
+          n_pass = n_fail = n_warn = n_missing = 0
+          for item in items:
+            status = str(item.get("status", "UNKNOWN")).upper()
+            if   status == "PASS":    n_pass    += 1
+            elif status == "FAIL":    n_fail    += 1
+            elif status == "WARN":    n_warn    += 1
+            elif status == "MISSING": n_missing += 1
+
+          print(f"  Total claims : {len(items)}")
+          print(f"  PASS         : {n_pass}")
+          print(f"  WARN         : {n_warn}")
+          print(f"  FAIL         : {n_fail}")
+          print(f"  MISSING      : {n_missing}")
+          print(SEP)
+
+          for item in items:
+            status = str(item.get("status", "UNKNOWN")).upper()
+            icon   = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌", "MISSING": "❓"}.get(status, "  ")
+            exp    = item.get("exp",    item.get("experiment", "?"))
+            metric = item.get("metric", item.get("claim",      "?"))
+            detail = item.get("detail", item.get("message",    ""))
+            print(f"  {icon}  exp={exp:<25}  metric={metric}")
+            if detail:
+              print(f"      {detail}")
+          print(SEP)
+
+          env_file = os.environ.get("GITHUB_OUTPUT", "")
+          if env_file:
+            with open(env_file, "a") as f:
+              status_str = "pass" if (n_fail == 0 and n_missing == 0) else "fail"
+              f.write(f"audit_status={status_str}\n")
+              f.write(f"n_fail={n_fail}\n")
+              f.write(f"n_pass={n_pass}\n")
+              f.write(f"n_warn={n_warn}\n")
+              f.write(f"n_missing={n_missing}\n")
+          PYEOF
+        env:
+          BUNDLE_ROOT: ${{ env.BUNDLE_ROOT }}
+
+
+  # ============================================================================
+  #  JOB R4 — notebooks-summary
+  #
+  #  Reads executed notebooks and notebooks_audit_summary.json from the bundle.
+  # ============================================================================
+  notebooks-summary:
+    name: "R4 · C5 Paper notebooks — NB-01…NB-06 + audit summary"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [download-bundle, collect-artefacts, checkpoint-summary, paper-audit-summary]
+
+    outputs:
+      notebooks_status: ${{ steps.read.outputs.notebooks_status }}
+      open_issues:      ${{ steps.read.outputs.open_issues }}
+
+    steps:
+      - name: Download unpacked bundle
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: unpacked-bundle-${{ github.run_id }}
+          path: ${{ env.BUNDLE_ROOT }}
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Print notebooks audit summary
+        id: read
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          root         = Path(os.environ["BUNDLE_ROOT"])
+          nb_root      = root / "c5_notebooks"
+          summary_path = next(nb_root.rglob("notebooks_audit_summary.json"), None)
+          notebooks    = sorted(nb_root.rglob("*.ipynb"))
+
+          SEP = "=" * 70
+          print(SEP)
+          print("  C5 PAPER NOTEBOOKS")
+          print(SEP)
+          print(f"  Executed notebooks in bundle: {len(notebooks)}")
+          for nb in notebooks:
+            print(f"    {nb.name}")
+
+          if summary_path is None:
+            print("\n::warning::notebooks_audit_summary.json not found in bundle.")
+            print("  Possible reasons:")
+            print("    - ci_paper_notebooks.yml had not run when the bundle was exported")
+            print("    - Artefact retention had elapsed before export")
+            env_file = os.environ.get("GITHUB_OUTPUT", "")
+            if env_file:
+              with open(env_file, "a") as f:
+                f.write("notebooks_status=missing\nopen_issues=0\n")
+            sys.exit(0)
+
+          summary  = json.loads(summary_path.read_text())
+          findings = summary.get("findings", [])
+          open_issues = [f for f in findings if str(f.get("status","")).upper() not in ("RESOLVED","CLOSED")]
+          resolved    = [f for f in findings if str(f.get("status","")).upper() in ("RESOLVED","CLOSED")]
+
+          print(SEP)
+          print("  C5 NOTEBOOKS AUDIT SUMMARY")
+          print(SEP)
+          print(f"  Source     : {summary_path}")
+          print(f"  Generated  : {summary.get('generated_at','?')}")
+          print(f"  Total FIX-*: {len(findings)}")
+          print(f"  Open       : {len(open_issues)}")
+          print(f"  Resolved   : {len(resolved)}")
+          print(SEP)
+
+          if open_issues:
+            print("  OPEN issues:")
+            for f in open_issues:
+              sev  = str(f.get("severity","?")).upper()
+              icon = {"CRITICAL":"🔴","HIGH":"🟠","MEDIUM":"🟡","LOW":"🟢"}.get(sev, "⚪")
+              print(f"    {icon} [{f['id']}]  {f.get('nb','?')}  —  {f.get('description','')}")
+              if f.get("action"):
+                print(f"       Action: {f['action']}")
+          if resolved:
+            print(f"\n  RESOLVED issues ({len(resolved)}):")
+            for f in resolved:
+              print(f"    ✅ [{f['id']}]  {f.get('nb','?')}  —  {f.get('description','')}")
+          print(SEP)
+
+          env_file = os.environ.get("GITHUB_OUTPUT", "")
+          if env_file:
+            with open(env_file, "a") as f:
+              status = "pass" if len(open_issues) == 0 else "open_issues"
+              f.write(f"notebooks_status={status}\nopen_issues={len(open_issues)}\n")
+          PYEOF
+        env:
+          BUNDLE_ROOT: ${{ env.BUNDLE_ROOT }}
+
+
+  # ============================================================================
+  #  JOB R5 — final-summary
+  #
+  #  Consolidated reviewer health table — identical logic to the original
+  #  ci_pipeline_reviewers.yml final-summary, no external calls.
+  # ============================================================================
+  final-summary:
+    name: "R5 · Reviewer health table"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [collect-artefacts, checkpoint-summary, paper-audit-summary, notebooks-summary]
+    if: always()
+
+    steps:
+      - name: Print consolidated reviewer health table
+        env:
+          PAGES_URL:         ${{ github.event.inputs.pages_url || '' }}
+          CHECKPOINT_STATUS: ${{ needs.checkpoint-summary.outputs.checkpoint_status }}
+          AUDIT_STATUS:      ${{ needs.paper-audit-summary.outputs.audit_status }}
+          N_FAIL:            ${{ needs.paper-audit-summary.outputs.n_fail }}
+          N_PASS:            ${{ needs.paper-audit-summary.outputs.n_pass }}
+          N_WARN:            ${{ needs.paper-audit-summary.outputs.n_warn }}
+          N_MISSING:         ${{ needs.paper-audit-summary.outputs.n_missing }}
+          NOTEBOOKS_STATUS:  ${{ needs.notebooks-summary.outputs.notebooks_status }}
+          OPEN_ISSUES:       ${{ needs.notebooks-summary.outputs.open_issues }}
+          COLLECT_RESULT:    ${{ needs.collect-artefacts.result }}
+          DOWNLOAD_RESULT:   ${{ needs.download-bundle.result }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys
+
+          SEP   = "=" * 72
+          pages = os.environ.get("PAGES_URL", "").strip()
+
+          def gate(status, ok_vals=("present","pass","success")):
+            return "✅" if str(status).lower() in ok_vals else \
+                   "❓" if str(status).lower() in ("missing", "") else "❌"
+
+          ck  = os.environ.get("CHECKPOINT_STATUS", "")
+          au  = os.environ.get("AUDIT_STATUS", "")
+          nb  = os.environ.get("NOTEBOOKS_STATUS", "")
+          col = os.environ.get("COLLECT_RESULT", "")
+          dl  = os.environ.get("DOWNLOAD_RESULT", "")
+
+          n_fail    = int(os.environ.get("N_FAIL",    "0") or "0")
+          n_pass    = int(os.environ.get("N_PASS",    "0") or "0")
+          n_warn    = int(os.environ.get("N_WARN",    "0") or "0")
+          n_missing = int(os.environ.get("N_MISSING", "0") or "0")
+          open_nb   = int(os.environ.get("OPEN_ISSUES","0") or "0")
+
+          print()
+          print(SEP)
+          print("  HYPATIA X  —  JMLR REVIEWER PIPELINE SUMMARY  (standalone)")
+          print(SEP)
+          print(f"  {'Stage':<42}  {'Status'}")
+          print(f"  {'-'*42}  {'------'}")
+          print(f"  {'R0 · Bundle download + verification':<42}  {gate(dl, ('success',))}")
+          print(f"  {'R1 · C1+C2  Analysis + figures/tables':<42}  {gate(col, ('success',))}")
+          print(f"  {'R2 · C3     Checkpoint (qualify_run.log)':<42}  {gate(ck)}")
+
+          audit_label = f"R3 · C4     Paper audit  (P:{n_pass} W:{n_warn} F:{n_fail} M:{n_missing})"
+          print(f"  {audit_label:<42}  {gate(au)}")
+
+          nb_label = f"R4 · C5     Notebooks   ({open_nb} open FIX-* issues)"
+          nb_gate  = "✅" if open_nb == 0 else "⚠ "
+          print(f"  {nb_label:<42}  {nb_gate}")
+
+          print(SEP)
+
+          if pages:
+            print(f"\n  📄  GitHub Pages report URL:")
+            print(f"      {pages}")
+            print()
+
+          overall_ok = (
+            n_fail == 0 and n_missing == 0
+            and ck in ("present",)
+            and col == "success"
+            and dl == "success"
+          )
+
+          if overall_ok:
+            print("  ✅  Overall: PIPELINE EVIDENCE COMPLETE — ready for review.")
+          else:
+            print("  ⚠   Overall: SOME EVIDENCE MISSING OR FAILING — see jobs above.")
+            if n_fail > 0 or n_missing > 0:
+              print(f"      Paper audit: {n_fail} FAIL  {n_missing} MISSING — see R3 job log.")
+            if ck not in ("present",):
+              print("      Checkpoint log: missing — may not have been captured before bundle export.")
+            if col != "success":
+              print("      C1+C2 artefacts: not found in bundle — check bundle contents.")
+            if dl != "success":
+              print("      Bundle download failed — check the bundle_url or artefact name.")
+
+          print(SEP)
+          print()
+
+          # Notebook open issues are advisory — do not fail the workflow for them.
+          # Audit FAIL or MISSING DO fail the workflow.
+          sys.exit(0 if (n_fail == 0 and n_missing == 0) else 1)
+          PYEOF

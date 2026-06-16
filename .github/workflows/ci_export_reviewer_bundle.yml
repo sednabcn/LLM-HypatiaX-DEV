@@ -1,0 +1,519 @@
+# ==============================================================================
+#  ci_export_reviewer_bundle.yml  —  HypatiaX · Reviewer bundle exporter
+#
+#  PURPOSE
+#  -------
+#  Runs inside the PRIVATE repository after the full pipeline completes.
+#  Collects every piece of reviewer evidence into a single self-contained
+#  zip archive and uploads it as a GitHub Release asset (or a plain Actions
+#  artefact as fallback), so that ci_pipeline_reviewers_standalone.yml can
+#  consume it from ANY repository with zero secrets and no Actions API access.
+#
+#  WHAT IS BUNDLED
+#  ---------------
+#  bundle/
+#    manifest.json                    ← provenance: repo, sha, branch, timestamps
+#    c1_c2/
+#      analysis/<exp>_report.md       ← C1 statistical analysis reports
+#      analysis/<exp>_analysis.json   ← C1 structured analysis outputs
+#      figures/<name>.pdf|png         ← C2 figures (PDF preferred over PNG)
+#      tables/<exp>__<name>.tex       ← C2 LaTeX tables
+#    c3_checkpoint/
+#      qualify_run.log                ← reconstructed from ci_pipeline_check.yml
+#                                        job log via Actions API
+#    c4_audit/
+#      paper_audit_findings.json      ← per-claim PASS/WARN/FAIL/MISSING table
+#      audit-paper-summary/           ← additional audit artefacts if present
+#      verify-report/
+#      figures-tables-report/
+#    c5_notebooks/
+#      NB-01-*.ipynb … NB-06-*.ipynb ← executed notebooks with cell outputs
+#      notebooks_audit_summary.json   ← aggregated FIX-* issue table
+#
+#  HOW TO TRIGGER
+#  --------------
+#  workflow_dispatch (run this manually once all 14 experiment slots complete):
+#    tag_name          : Git tag / release name to attach the bundle to
+#                        (e.g. "reviewer-bundle-v1").  Leave blank to upload
+#                        as a plain Actions artefact instead of a Release asset.
+#    audit_run_id      : run ID of ci_paper_audit.yml     (blank = most recent)
+#    notebooks_run_id  : run ID of ci_paper_notebooks.yml (blank = most recent)
+#    checkpoint_run_id : run ID of ci_pipeline_check.yml  (blank = most recent)
+#
+#  SECRETS REQUIRED (private repo only — reviewers never need these)
+#  ──────────────────────────────────────────────────────────────────
+#  PAT_TOKEN  — GitHub PAT with repo + workflow scopes.
+#               Needed to:
+#                 • gh run download  (Actions artefacts from upstream runs)
+#                 • gh run view --log (job log reconstruction for qualify_run.log)
+#                 • gh release upload (attach bundle to a Release asset)
+#               The built-in GITHUB_TOKEN is sufficient for the checkout and
+#               for upload-artifact; the PAT is only needed for cross-run API
+#               calls and release uploads.
+#
+#  TIMEOUT CONTRACT
+#  ----------------
+#  collect-c1-c2    : 10 min  (checkout + file staging)
+#  collect-c3       :  5 min  (Actions API log fetch)
+#  collect-c4       :  5 min  (gh run download)
+#  collect-c5       :  5 min  (gh run download)
+#  package-and-upload: 10 min (zip + release upload or actions upload)
+# ==============================================================================
+
+name: "HypatiaX - export reviewer bundle"
+run-name: >-
+  HypatiaX reviewer bundle export — ${{ github.ref_name }} — ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: >
+          Git tag / GitHub Release name to attach the bundle zip to
+          (e.g. "reviewer-bundle-v1").
+          Leave blank to upload as a plain Actions artefact (90-day retention).
+        required: false
+        default: ""
+
+      audit_run_id:
+        description: >
+          Run ID of ci_paper_audit.yml to pull artefacts from.
+          Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+      notebooks_run_id:
+        description: >
+          Run ID of ci_paper_notebooks.yml to pull artefacts from.
+          Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+      checkpoint_run_id:
+        description: >
+          Run ID of ci_pipeline_check.yml to pull the qualify log from.
+          Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # needed for gh release upload
+  actions:  read    # needed for gh run download + gh run view --log
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PYTHON_VERSION: "3.12"
+  OUT_BASE: "hypatiax/data/results"
+  BUNDLE_DIR: "reviewer_bundle"
+
+jobs:
+
+  # ============================================================================
+  #  JOB 1 — collect-c1-c2
+  #  Checks out the repo and stages C1+C2 committed outputs into bundle/c1_c2/.
+  # ============================================================================
+  collect-c1-c2:
+    name: "Bundle · C1+C2 analysis, figures, tables"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Stage C1+C2 artefacts
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}/c1_c2/analysis"
+          mkdir -p "${BUNDLE_DIR}/c1_c2/figures"
+          mkdir -p "${BUNDLE_DIR}/c1_c2/tables"
+
+          # ── C1: _report.md and _analysis.json ───────────────────────────────
+          find "${OUT_BASE}" -name "_report.md" -type f 2>/dev/null | while read -r f; do
+            EXP=$(basename "$(dirname "$f")")
+            cp "$f" "${BUNDLE_DIR}/c1_c2/analysis/${EXP}_report.md"
+            echo "  C1 report   : ${EXP}_report.md"
+          done
+          find "${OUT_BASE}" -name "_analysis.json" -type f 2>/dev/null | while read -r f; do
+            EXP=$(basename "$(dirname "$f")")
+            cp "$f" "${BUNDLE_DIR}/c1_c2/analysis/${EXP}_analysis.json"
+            echo "  C1 analysis : ${EXP}_analysis.json"
+          done
+
+          # ── C2: figures (PDF preferred, then PNG) ────────────────────────────
+          declare -A COPIED_STEMS
+          copy_figure() {
+            local f="$1"
+            local stem ext dest parent
+            stem="$(basename "${f%.*}")"
+            ext="${f##*.}"
+            dest="${BUNDLE_DIR}/c1_c2/figures/$(basename "$f")"
+            if [[ -n "${COPIED_STEMS[${stem}]+_}" ]]; then return 0; fi
+            if [[ ! -e "$dest" ]]; then
+              cp "$f" "$dest"
+              COPIED_STEMS["$stem"]="$ext"
+              echo "  C2 figure   : $(basename "$f")"
+            else
+              parent="$(basename "$(dirname "$f")")"
+              cp "$f" "${BUNDLE_DIR}/c1_c2/figures/${parent}__$(basename "$f")"
+              COPIED_STEMS["$stem"]="$ext"
+            fi
+          }
+          FIG_PATHS=()
+          [[ -d "${OUT_BASE}" ]] && FIG_PATHS+=("${OUT_BASE}")
+          [[ -d "figures"     ]] && FIG_PATHS+=("figures")
+          if [[ ${#FIG_PATHS[@]} -gt 0 ]]; then
+            while IFS= read -r f; do copy_figure "$f"; done \
+              < <(find "${FIG_PATHS[@]}" -maxdepth 4 -name "*.pdf" -type f 2>/dev/null | sort)
+            while IFS= read -r f; do copy_figure "$f"; done \
+              < <(find "${FIG_PATHS[@]}" -maxdepth 4 -name "*.png" -type f 2>/dev/null | sort)
+          fi
+
+          # ── C2: tables (TeX) ─────────────────────────────────────────────────
+          [[ -d "${OUT_BASE}" ]] && find "${OUT_BASE}" -name "*.tex" -path "*/tables/*" -type f 2>/dev/null | while read -r f; do
+            EXP="$(basename "$(dirname "$(dirname "$f")")")"
+            STEM="$(basename "$f" .tex)"
+            DEST="${BUNDLE_DIR}/c1_c2/tables/${EXP}__${STEM}.tex"
+            [[ -e "$DEST" ]] || { cp "$f" "$DEST"; echo "  C2 table    : ${EXP}__${STEM}.tex"; }
+          done
+          [[ -d "tables" ]] && find tables -maxdepth 1 -name "*.tex" -type f 2>/dev/null | while read -r f; do
+            DEST="${BUNDLE_DIR}/c1_c2/tables/$(basename "$f")"
+            [[ -e "$DEST" ]] || { cp "$f" "$DEST"; echo "  C2 table    : $(basename "$f")"; }
+          done
+
+          echo ""
+          echo "=== C1+C2 staging summary ==="
+          echo "  analysis : $(ls ${BUNDLE_DIR}/c1_c2/analysis/ 2>/dev/null | wc -l) file(s)"
+          echo "  figures  : $(ls ${BUNDLE_DIR}/c1_c2/figures/  2>/dev/null | wc -l) file(s)"
+          echo "  tables   : $(ls ${BUNDLE_DIR}/c1_c2/tables/   2>/dev/null | wc -l) file(s)"
+
+      - name: Upload C1+C2 staging artefact
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              bundle-c1-c2-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/c1_c2/
+          if-no-files-found: warn
+          retention-days:    1    # intermediate only; package job re-bundles
+
+
+  # ============================================================================
+  #  JOB 2 — collect-c3
+  #  Reconstructs qualify_run.log from the ci_pipeline_check.yml job log.
+  # ============================================================================
+  collect-c3:
+    name: "Bundle · C3 checkpoint qualify log"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Resolve checkpoint run ID
+        id: resolve
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          INPUT_RUN_ID: ${{ github.event.inputs.checkpoint_run_id || '' }}
+          REPO:         ${{ github.repository }}
+          BRANCH:       ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_RUN_ID}" ]]; then
+            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(gh run list \
+              --repo "${REPO}" --workflow ci_pipeline_check.yml \
+              --branch "${BRANCH}" --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            [[ -z "${RUN_ID}" ]] && echo "::warning::No successful ci_pipeline_check.yml run found."
+          fi
+
+      - name: Reconstruct qualify_run.log from job log
+        if: steps.resolve.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}/c3_checkpoint"
+
+          JOBS_JSON=$(gh run view "${RUN_ID}" --repo "${REPO}" --json jobs 2>/dev/null || echo '{"jobs":[]}')
+          QUALIFY_JOB_ID=$(echo "${JOBS_JSON}" | jq -r '.jobs[] | select(.name=="Qualify all experiments") | .databaseId' | head -1)
+
+          if [[ -z "${QUALIFY_JOB_ID}" || "${QUALIFY_JOB_ID}" == "null" ]]; then
+            echo "::warning::No 'Qualify all experiments' job found in run ${RUN_ID}."
+            echo "qualify_run.log not available — job may have been skipped or renamed." \
+              > "${BUNDLE_DIR}/c3_checkpoint/qualify_run.log"
+          else
+            echo "Fetching log for qualify job (id ${QUALIFY_JOB_ID})..."
+            gh run view "${RUN_ID}" --repo "${REPO}" --log --job "${QUALIFY_JOB_ID}" \
+              > "${BUNDLE_DIR}/c3_checkpoint/qualify_run.log" 2>/dev/null || true
+            if [[ ! -s "${BUNDLE_DIR}/c3_checkpoint/qualify_run.log" ]]; then
+              echo "::warning::Log fetch returned empty — may have expired."
+              echo "qualify_run.log: log expired or unavailable for run ${RUN_ID}." \
+                > "${BUNDLE_DIR}/c3_checkpoint/qualify_run.log"
+            else
+              echo "qualify_run.log: $(wc -l < "${BUNDLE_DIR}/c3_checkpoint/qualify_run.log") lines"
+            fi
+          fi
+
+      - name: Upload C3 staging artefact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              bundle-c3-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/c3_checkpoint/
+          if-no-files-found: warn
+          retention-days:    1
+
+
+  # ============================================================================
+  #  JOB 3 — collect-c4
+  #  Downloads paper_audit_findings.json and related artefacts from C4.
+  # ============================================================================
+  collect-c4:
+    name: "Bundle · C4 paper audit findings"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Resolve audit run ID
+        id: resolve
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          INPUT_RUN_ID: ${{ github.event.inputs.audit_run_id || '' }}
+          REPO:         ${{ github.repository }}
+          BRANCH:       ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_RUN_ID}" ]]; then
+            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(gh run list \
+              --repo "${REPO}" --workflow ci_paper_audit.yml \
+              --branch "${BRANCH}" --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            [[ -z "${RUN_ID}" ]] && echo "::warning::No successful ci_paper_audit.yml run found."
+          fi
+
+      - name: Download C4 artefacts
+        if: steps.resolve.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}/c4_audit"
+          for pattern in \
+            "paper-audit-findings-*" \
+            "audit-paper-summary-*" \
+            "verify-report-*" \
+            "figures-tables-report-*"; do
+            gh run download "${RUN_ID}" \
+              --repo "${REPO}" \
+              --dir "${BUNDLE_DIR}/c4_audit" \
+              --pattern "${pattern}" 2>/dev/null \
+            || echo "  Pattern ${pattern}: not found (non-fatal)."
+          done
+          echo "C4 artefacts staged:"
+          find "${BUNDLE_DIR}/c4_audit" -type f | sort
+
+      - name: Upload C4 staging artefact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              bundle-c4-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/c4_audit/
+          if-no-files-found: warn
+          retention-days:    1
+
+
+  # ============================================================================
+  #  JOB 4 — collect-c5
+  #  Downloads NB-01…NB-06 executed notebooks and notebooks_audit_summary.json.
+  # ============================================================================
+  collect-c5:
+    name: "Bundle · C5 paper notebooks"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Resolve notebooks run ID
+        id: resolve
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          INPUT_RUN_ID: ${{ github.event.inputs.notebooks_run_id || '' }}
+          REPO:         ${{ github.repository }}
+          BRANCH:       ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_RUN_ID}" ]]; then
+            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(gh run list \
+              --repo "${REPO}" --workflow ci_paper_notebooks.yml \
+              --branch "${BRANCH}" --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            [[ -z "${RUN_ID}" ]] && echo "::warning::No successful ci_paper_notebooks.yml run found."
+          fi
+
+      - name: Download C5 artefacts
+        if: steps.resolve.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}/c5_notebooks"
+          for pattern in \
+            "nb-01-*" "nb-02-*" "nb-03-*" \
+            "nb-04-*" "nb-05-*" "nb-06-*" \
+            "notebooks-audit-summary-*" \
+            "hypatia-findings-*"; do
+            gh run download "${RUN_ID}" \
+              --repo "${REPO}" \
+              --dir "${BUNDLE_DIR}/c5_notebooks" \
+              --pattern "${pattern}" 2>/dev/null \
+            || echo "  Pattern ${pattern}: not found (non-fatal)."
+          done
+          echo "C5 artefacts staged:"
+          find "${BUNDLE_DIR}/c5_notebooks" -type f | sort
+
+      - name: Upload C5 staging artefact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              bundle-c5-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/c5_notebooks/
+          if-no-files-found: warn
+          retention-days:    1
+
+
+  # ============================================================================
+  #  JOB 5 — package-and-upload
+  #  Reassembles all four staging artefacts into one zip and either attaches
+  #  it to a GitHub Release or uploads it as a 90-day Actions artefact.
+  # ============================================================================
+  package-and-upload:
+    name: "Bundle · Package + upload"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [collect-c1-c2, collect-c3, collect-c4, collect-c5]
+    if: always()
+
+    steps:
+      - name: Download all staging artefacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          pattern: bundle-*-${{ github.run_id }}
+          path:    staging/
+          merge-multiple: false
+
+      - name: Assemble bundle directory
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/c1_c2 bundle/c3_checkpoint bundle/c4_audit bundle/c5_notebooks
+
+          # Each download-artifact call creates staging/<artefact-name>/<files>
+          [[ -d staging/bundle-c1-c2-${{ github.run_id }}    ]] && cp -r staging/bundle-c1-c2-${{ github.run_id }}/.    bundle/c1_c2/
+          [[ -d staging/bundle-c3-${{ github.run_id }}        ]] && cp -r staging/bundle-c3-${{ github.run_id }}/.       bundle/c3_checkpoint/
+          [[ -d staging/bundle-c4-${{ github.run_id }}        ]] && cp -r staging/bundle-c4-${{ github.run_id }}/.       bundle/c4_audit/
+          [[ -d staging/bundle-c5-${{ github.run_id }}        ]] && cp -r staging/bundle-c5-${{ github.run_id }}/.       bundle/c5_notebooks/
+
+          echo "Bundle tree:"
+          find bundle -type f | sort
+
+      - name: Write manifest.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, os, subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() \
+                if Path(".git").exists() else "unknown"
+
+          manifest = {
+              "schema":     "hypatia-reviewer-bundle-v1",
+              "repo":       os.environ.get("GITHUB_REPOSITORY", ""),
+              "branch":     os.environ.get("GITHUB_REF_NAME",   ""),
+              "sha":        sha,
+              "run_id":     os.environ.get("GITHUB_RUN_ID",     ""),
+              "exported_at": datetime.now(timezone.utc).isoformat(),
+              "inputs": {
+                  "tag_name":         os.environ.get("INPUT_TAG",       ""),
+                  "audit_run_id":     os.environ.get("INPUT_AUDIT",     ""),
+                  "notebooks_run_id": os.environ.get("INPUT_NOTEBOOKS", ""),
+                  "checkpoint_run_id":os.environ.get("INPUT_CHECKPOINT",""),
+              },
+              "contents": {
+                  "c1_c2":          "Analysis reports, figures, tables (C1+C2)",
+                  "c3_checkpoint":  "qualify_run.log reconstructed from C3 job log",
+                  "c4_audit":       "paper_audit_findings.json and audit reports (C4)",
+                  "c5_notebooks":   "Executed NB-01…NB-06 notebooks + audit summary (C5)",
+              },
+          }
+          counts = {}
+          for sub in ["c1_c2", "c3_checkpoint", "c4_audit", "c5_notebooks"]:
+              d = Path("bundle") / sub
+              counts[sub] = len(list(d.rglob("*"))) if d.exists() else 0
+          manifest["file_counts"] = counts
+
+          Path("bundle/manifest.json").write_text(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2))
+          PYEOF
+        env:
+          INPUT_TAG:        ${{ github.event.inputs.tag_name || '' }}
+          INPUT_AUDIT:      ${{ github.event.inputs.audit_run_id || '' }}
+          INPUT_NOTEBOOKS:  ${{ github.event.inputs.notebooks_run_id || '' }}
+          INPUT_CHECKPOINT: ${{ github.event.inputs.checkpoint_run_id || '' }}
+
+      - name: Zip the bundle
+        run: |
+          set -euo pipefail
+          ZIPNAME="hypatia-reviewer-bundle-${{ github.run_id }}.zip"
+          cd bundle && zip -r "../${ZIPNAME}" . && cd ..
+          echo "ZIPNAME=${ZIPNAME}" >> "$GITHUB_ENV"
+          echo "Bundle size: $(du -sh ${ZIPNAME} | cut -f1)"
+
+      - name: Upload as Actions artefact (always)
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              hypatia-reviewer-bundle-${{ github.run_id }}
+          path:              ${{ env.ZIPNAME }}
+          if-no-files-found: error
+          retention-days:    90
+
+      - name: Attach to GitHub Release (if tag_name provided)
+        if: github.event.inputs.tag_name != ''
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          TAG:      ${{ github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          # Create the release if it doesn't exist yet, then upload the asset.
+          gh release view "${TAG}" --repo "${REPO}" > /dev/null 2>&1 \
+            || gh release create "${TAG}" \
+                 --repo "${REPO}" \
+                 --title "Reviewer bundle ${TAG}" \
+                 --notes "Auto-generated reviewer evidence bundle. Run ci_pipeline_reviewers_standalone.yml with this asset URL." \
+                 --prerelease
+
+          gh release upload "${TAG}" "${ZIPNAME}" \
+            --repo "${REPO}" \
+            --clobber
+
+          ASSET_URL=$(gh release view "${TAG}" --repo "${REPO}" --json assets \
+            --jq ".assets[] | select(.name==\"${ZIPNAME}\") | .url" 2>/dev/null || echo "")
+          echo ""
+          echo "✅ Bundle uploaded to release '${TAG}'."
+          echo "   Asset URL: ${ASSET_URL}"
+          echo "   Share this URL as the bundle_url input for ci_pipeline_reviewers_standalone.yml."
