@@ -264,6 +264,41 @@ jobs:
           if changed:
               p.write_text(src, encoding="utf-8")
 
+          # FIX-XR2: move \label{sec:r2_bugfix} from inside \item to after \subsection
+          p = Path("jmlr-hypatiax-paper-final.tex")
+          if p.exists():
+              src = p.read_text(encoding="utf-8")
+              import re as _re
+              # Remove the label from inside any \item that contains it
+              new_src = _re.sub(
+                  r'(\\item\b[^\n]*?)\\label\{sec:r2_bugfix\}',
+                  r'\1',
+                  src
+              )
+              # Ensure the label appears immediately after the enclosing \subsection{...}
+              # Find the subsection that covers r2 bugfix content and add label if absent
+              new_src = _re.sub(
+                  r'(\\subsection\{[^}]*[Rr]2[^}]*[Bb]ug[Ff]ix[^}]*\})(?!\s*\\label\{sec:r2_bugfix\})',
+                  r'\1' + r'\\label{sec:r2_bugfix}',
+                  new_src
+              )
+              if new_src != src:
+                  p.write_text(new_src, encoding="utf-8")
+                  print("  [FIX-XR2] \\label{sec:r2_bugfix} moved from \\item to \\subsection")
+
+
+          p = Path("jmlr-hypatiax-paper-final.tex")
+          if p.exists():
+              src = p.read_text(encoding="utf-8")
+              label = r'\label{sec:llm_domain}'
+              first = src.find(label)
+              if first != -1 and src.find(label, first + 1) != -1:
+                  # Keep first occurrence, remove all subsequent ones
+                  parts = src.split(label)
+                  new_src = parts[0] + label + ''.join(parts[1:])
+                  p.write_text(new_src, encoding="utf-8")
+                  print(f"  [FIX-XR1] Duplicate \\label{{sec:llm_domain}} removed")
+
           # FIX-S2: add \label after each \subsection{}
           p = Path("jmlr-hypatiax-paper-final.tex")
           src = p.read_text(encoding="utf-8")
@@ -285,6 +320,17 @@ jobs:
           if changed:
               p.write_text(new_src, encoding="utf-8")
               print(f"  [FIX-S2] subsection labels added")
+          # FIX-XR3: Supplement A "Section 7.3" → "Section 7.4"
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-XR3 Supplement A Section 7.3 → 7.4",
+               "Section 7.3", "Section 7.4"),
+          ])
+
+          # FIX-XR4: wrong supplement filename reference → canonical filename
+          patch("jmlr-hypatiax-paper-final.tex", [
+              ("FIX-XR4 supplement filename jmlr_paper_main.tex → jmlr-hypatiax-paper-final.tex",
+               "jmlr_paper_main.tex", "jmlr-hypatiax-paper-final.tex"),
+          ])
           PYFIX
 
           # Commit patched tex back to branch
@@ -294,7 +340,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No LaTeX changes — nothing to commit."
           else
-            git commit -m "ci: auto-fix FIX-B1/N1/N2/S1/S2 in jmlr-hypatiax-paper-final.tex [skip ci]"
+            git commit -m "ci: auto-fix FIX-B1/N1/N2/S1/S2/XR1/XR2/XR3/XR4 in jmlr-hypatiax-paper-final.tex [skip ci]"
             git push origin HEAD:${{ github.ref_name }}
           fi
 
@@ -782,7 +828,7 @@ jobs:
           scan_figures() {
             find . \
               -path "./.git" -prune -o \
-              -path "./${FIGURES_DIR}/*" -prune -o \
+              -path "./${FIGURES_DIR}" -prune -o \
               \( -name "*.pdf" -o -name "*.png" \) -print \
             | sort
           }
@@ -877,7 +923,7 @@ jobs:
           scan_tables() {
             find . \
               -path "./.git" -prune -o \
-              -path "./${TABLES_DIR}/*" -prune -o \
+              -path "./${TABLES_DIR}" -prune -o \
               -name "*.tex" -print \
             | sort
           }
@@ -1763,6 +1809,83 @@ jobs:
 
       - name: Create logs directory
         run: mkdir -p logs
+
+      - name: "P2 gate — verify \\includegraphics refs exist in repo-root/figures/"
+        id: p2-figures
+        run: |
+          set -euo pipefail
+          TEX="jmlr-hypatiax-paper-final.tex"
+          if [[ ! -f "$TEX" ]]; then
+            echo "::warning::$TEX not found — skipping P2 figures gate"
+            exit 0
+          fi
+          python3 - <<'PYCHECK'
+          import re, sys
+          from pathlib import Path
+
+          tex = Path("jmlr-hypatiax-paper-final.tex").read_text(encoding="utf-8")
+          refs = re.findall(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', tex)
+
+          figures_dir = Path("figures")
+          missing = []
+          for ref in refs:
+              stem = Path(ref).stem
+              found = (
+                  (figures_dir / ref).exists()
+                  or any(figures_dir.glob(f"{stem}.*"))
+              )
+              if not found:
+                  missing.append(ref)
+
+          if missing:
+              print(f"::error::P2 figures gate FAIL — {len(missing)} \\includegraphics ref(s) "
+                    f"not resolved under repo-root/figures/:")
+              for m in missing:
+                  print(f"  - {m}")
+              sys.exit(1)
+
+          print(f"P2 figures gate PASS — {len(refs)} \\includegraphics ref(s) all resolved.")
+          PYCHECK
+
+      - name: "P2 gate — verify LaTeX table \\input/\\include refs exist in repo-root/tables/"
+        id: p2-tables
+        run: |
+          set -euo pipefail
+          TEX="jmlr-hypatiax-paper-final.tex"
+          if [[ ! -f "$TEX" ]]; then
+            echo "::warning::$TEX not found — skipping P2 tables gate"
+            exit 0
+          fi
+          python3 - <<'PYCHECK'
+          import re, sys
+          from pathlib import Path
+
+          tex = Path("jmlr-hypatiax-paper-final.tex").read_text(encoding="utf-8")
+          # Match \input{tables/...} and \include{tables/...}
+          refs = re.findall(r'\\(?:input|include)\{(tables/[^}]+)\}', tex)
+
+          if not refs:
+              print("P2 tables gate PASS — no \\input/\\include{tables/...} refs found.")
+              sys.exit(0)
+
+          tables_dir = Path("tables")
+          missing = []
+          for ref in refs:
+              rel = Path(ref)
+              # ref may be "tables/exp__name.tex" or "tables/name" (no extension)
+              candidates = [Path(ref), Path(ref).with_suffix('.tex')]
+              if not any(c.exists() for c in candidates):
+                  missing.append(ref)
+
+          if missing:
+              print(f"::error::P2 tables gate FAIL — {len(missing)} \\input/\\include ref(s) "
+                    f"not resolved under repo-root/tables/:")
+              for m in missing:
+                  print(f"  - {m}")
+              sys.exit(1)
+
+          print(f"P2 tables gate PASS — {len(refs)} table ref(s) all resolved.")
+          PYCHECK
 
       - name: Validate figures and tables
         id: validate
