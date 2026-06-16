@@ -428,7 +428,21 @@ jobs:
               if result.returncode == 0:
                   break
               print(f"  Push attempt {attempt} rejected — rebasing and retrying…")
-              subprocess.run(["git", "pull", "--rebase", "--autostash"], check=True)
+              # Pull with rebase; on conflict always keep OUR version of
+              # issue_registry.json (the gate result is authoritative).
+              pull = subprocess.run(
+                  ["git", "pull", "--rebase", "--autostash"],
+                  capture_output=True, text=True
+              )
+              if pull.returncode != 0:
+                  # Resolve registry conflict by taking ours, then continue rebase
+                  subprocess.run(
+                      ["git", "checkout", "--ours", str(registry_path)], check=True
+                  )
+                  subprocess.run(["git", "add", str(registry_path)], check=True)
+                  subprocess.run(["git", "rebase", "--continue"],
+                      env={**__import__('os').environ, "GIT_EDITOR": "true"},
+                      check=True)
           else:
               raise RuntimeError("git push failed after 3 attempts")
           PYFP
@@ -1635,7 +1649,21 @@ jobs:
               if result.returncode == 0:
                   break
               print(f"  Push attempt {attempt} rejected — rebasing and retrying…")
-              subprocess.run(["git", "pull", "--rebase", "--autostash"], check=True)
+              # Pull with rebase; on conflict always keep OUR version of
+              # issue_registry.json (the gate result is authoritative).
+              pull = subprocess.run(
+                  ["git", "pull", "--rebase", "--autostash"],
+                  capture_output=True, text=True
+              )
+              if pull.returncode != 0:
+                  # Resolve registry conflict by taking ours, then continue rebase
+                  subprocess.run(
+                      ["git", "checkout", "--ours", str(registry_path)], check=True
+                  )
+                  subprocess.run(["git", "add", str(registry_path)], check=True)
+                  subprocess.run(["git", "rebase", "--continue"],
+                      env={**__import__('os').environ, "GIT_EDITOR": "true"},
+                      check=True)
           else:
               raise RuntimeError("git push failed after 3 attempts")
           print(f"Committed registry update: {msg}")
