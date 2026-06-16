@@ -647,10 +647,18 @@ jobs:
           echo "  repo_root/figures/ : $(ls "${REPO_FIGURES}" | wc -l) file(s)"
           echo "  repo_root/tables/  : $(ls "${REPO_TABLES}"  | wc -l) file(s)"
 
-      - name: "Deploy known figures to Figures/ and figures/ (FIX-F2/F3/F4/F5)"
-        # Copies the three script-generated figures from their actual locations
-        # to the Figures/ inventory path AND figures/ (what LaTeX reads).
+      - name: "Deploy known figures to Figures/ and figures/ (FIX-F1/F2/F3/F4/F5 + Supp-B)"
+        # Copies all required figures from their actual locations to:
+        #   Figures/  — NB-05 inventory path
+        #   figures/  — what LaTeX reads via \graphicspath
         # Tries PDF first, falls back to PNG — NB-05 accepts both.
+        # Covers:
+        #   FIX-F1: hypatiaX_three_systems (hand-crafted architecture diagram)
+        #   FIX-F2: hypatiaX_algorithm1_routing_cascade_v2 (hand-crafted routing flow)
+        #   FIX-F3: fig18_r2_heatmap_improved (generate_figures.py --experiment exp1)
+        #   FIX-F4: fig09_r2_heatmap_regimes  (generate_figures.py --experiment exp1)
+        #   FIX-F5: fig1_seed_sweep            (generate_figures.py --experiment exp1)
+        #   Supp-B: 13 sweep figures           (generate_figures.py --experiment suppB/suppB_sc)
         if: steps.asset-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -671,28 +679,73 @@ jobs:
             return 0
           }
 
-          deploy fig18_r2_heatmap_improved \
-            "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf" \
-            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.png" \
-            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.pdf"
+          # ── FIX-F1: Architecture diagram (hand-crafted, no generator) ──────────
+          deploy hypatiaX_three_systems \
+            "Figures/hypatiaX_three_systems.pdf" \
+            "Figures/architecture_figures/hypatiaX_three_systems.pdf"
 
-          deploy fig09_r2_heatmap_regimes \
-            "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf" \
-            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.png" \
-            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.pdf"
-
-          deploy fig1_seed_sweep \
-            "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
-            "Figures/figures-portfolio-variance/fig1_seed_sweep.png" \
-            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.png" \
-            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.pdf"
-
+          # ── FIX-F2: Routing cascade diagram (hand-crafted, no generator) ───────
           deploy hypatiaX_algorithm1_routing_cascade_v2 \
             "Figures/hypatiaX_algorithm1_routing_cascade_v2.pdf" \
             "Figures/architecture_figures/hypatiaX_algorithm1_routing_cascade_v2.pdf"
 
-          echo "--- figures/ after deploy ---"
-          ls -lh figures/ 2>/dev/null | head -20
+          # ── FIX-F3/F4/F5: exp1 cosmetic figures (generate_figures.py --experiment exp1) ──
+          deploy fig18_r2_heatmap_improved \
+            "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.png"
+
+          deploy fig09_r2_heatmap_regimes \
+            "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.png"
+
+          deploy fig1_seed_sweep \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.png" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.png"
+
+          # ── Supp-B sweep figures (generate_figures.py --experiment suppB / suppB_sc) ──
+          SUPPB_DIRS=(
+            "hypatiax/data/results/suppB/figures"
+            "hypatiax/data/results/suppB_sc/figures"
+            "Figures"
+          )
+
+          deploy_suppb() {
+            local stem="$1"
+            for dir in "${SUPPB_DIRS[@]}"; do
+              for ext in pdf png; do
+                local src="${dir}/${stem}.${ext}"
+                if [[ -f "$src" ]]; then
+                  cp -v "$src" "Figures/${stem}.${ext}"
+                  cp -v "$src" "figures/${stem}.${ext}"
+                  echo "  [OK] ${stem} deployed from $src"
+                  return 0
+                fi
+              done
+            done
+            echo "::warning::Supp-B: ${stem} not found — run generate_figures.py --experiment suppB/suppB_sc"
+            return 0
+          }
+
+          deploy_suppb fig1_r2_vs_noise
+          deploy_suppb fig2_rmse_vs_noise
+          deploy_suppb fig3_time_vs_noise
+          deploy_suppb fig4_r2_vs_n
+          deploy_suppb fig5_rmse_vs_n
+          deploy_suppb fig6_time_vs_n
+          deploy_suppb fig7_recovery_vs_noise
+          deploy_suppb fig8_recovery_vs_n
+          deploy_suppb fig9_minr2_vs_noise
+          deploy_suppb fig10_r2_boxplot_noise
+          deploy_suppb fig11_recovery_heatmap
+          deploy_suppb fig_runtime_comparison
+          deploy_suppb fig_comparative_table
+
+          echo "--- figures/ after deploy ($(ls figures/ 2>/dev/null | wc -l) file(s)) ---"
+          ls -lh figures/ 2>/dev/null | head -30
 
       - name: Restore pip cache
         id: pip-cache
