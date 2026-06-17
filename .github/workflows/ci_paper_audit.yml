@@ -599,10 +599,14 @@ jobs:
       # checks against. Glob *.* only matches names containing a dot, so the
       # nested tables/ subdir under hypatiax/data/results/figures is skipped
       # automatically.
-      - name: "Sync hypatiax/data/results/figures/ into repo-root figures/"
-        # Unconditional: always reflects the current source tree regardless of cache state.
-        # rsync --delete removes files in figures/ that no longer exist in the source,
-        # preventing stale assets from earlier runs from silently passing validation.
+      - name: "Copy hypatiax/data/results/figures/*.* into repo-root figures/"
+        # Unconditional: always runs regardless of cache state so repo-root figures/
+        # always reflects the current contents of the canonical source dir.
+        # Uses cp -f (not rsync --delete) so hand-crafted files deployed by the
+        # "Deploy known figures" step above are never removed.
+        # Destination is repo-root figures/ (relative path on the runner = repo root).
+        # The nested tables/ subdir inside hypatiax/data/results/figures/ is skipped
+        # automatically because the glob *.* only matches names containing a dot.
         env:
           OUT_BASE: ${{ env.OUT_BASE }}
         run: |
@@ -610,10 +614,17 @@ jobs:
           mkdir -p figures
           SRC="${OUT_BASE}/figures"
           if [[ -d "${SRC}" ]]; then
-            rsync -av --delete --exclude='tables/' "${SRC}/" figures/
-            echo "Synced figures/ — $(ls figures/ | wc -l) file(s) now present"
+            shopt -s nullglob
+            FILES=("${SRC}"/*.*)
+            shopt -u nullglob
+            if [[ ${#FILES[@]} -gt 0 ]]; then
+              cp -f "${FILES[@]}" figures/
+              echo "Copied ${#FILES[@]} file(s) from ${SRC}/ into repo-root figures/"
+            else
+              echo "::warning::${SRC} exists but has no files matching *.* — nothing copied"
+            fi
           else
-            echo "::warning::${SRC} not found — skipping sync into figures/"
+            echo "::warning::${SRC} not found — skipping copy into repo-root figures/"
           fi
 
       # ── Commit copied figures back to the branch ────────────────────────────
@@ -624,7 +635,7 @@ jobs:
       # If push fails (e.g. a concurrent run already pushed), this step does
       # NOT fail the job — downstream jobs in *this* run still get the files
       # via the canonical-assets artifact upload further down.
-      - name: "Commit synced figures to repo-root figures/"
+      - name: "Commit copied figures to repo-root figures/"
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -633,7 +644,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No new/changed figures — nothing to commit."
           else
-            git commit -m "ci: sync hypatiax/data/results/figures/ into repo-root figures/ [skip ci]"
+            git commit -m "ci: copy hypatiax/data/results/figures/*.* into repo-root figures/ [skip ci]"
             if ! git push origin HEAD:${{ github.ref_name }}; then
               echo "::warning::git push failed (likely a concurrent commit) — figures committed locally on the runner only. Re-run this job if repo-root figures/ must be updated on the branch."
             fi

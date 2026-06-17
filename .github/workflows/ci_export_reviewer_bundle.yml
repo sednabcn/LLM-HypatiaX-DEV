@@ -53,6 +53,7 @@
 #
 #  TIMEOUT CONTRACT
 #  ----------------
+#  dispatch-checkpoint:  5 min  (gh workflow run + poll + gh run watch)
 #  collect-c1-c2    : 10 min  (checkout + file staging)
 #  collect-c3       :  5 min  (Actions API log fetch)
 #  collect-c4       :  5 min  (gh run download)
@@ -98,7 +99,7 @@ on:
 
 permissions:
   contents: write   # needed for gh release upload
-  actions:  read    # needed for gh run download + gh run view --log
+  actions:  write   # write needed to dispatch ci_pipeline_check.yml; also covers gh run download + gh run view --log
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -200,6 +201,73 @@ jobs:
 
 
   # ============================================================================
+  #  JOB dispatch-checkpoint
+  #
+  #  Triggers ci_pipeline_check.yml so that collect-c3 always finds a fresh,
+  #  successful run to pull the qualify log from.  Without this, collect-c3
+  #  writes a placeholder log and the bundle ships a hollow C3 section.
+  #
+  #  Skipped when the caller already supplied a checkpoint_run_id — in that
+  #  case collect-c3 will use the pinned run directly.
+  #
+  #  Runs concurrently with collect-c1-c2 (no dependency between them) to
+  #  avoid adding wall-clock time to the export: by the time collect-c1-c2
+  #  finishes and collect-c3 starts, the checkpoint run is already complete.
+  # ============================================================================
+  dispatch-checkpoint:
+    name: "Bundle · Dispatch ci_pipeline_check.yml"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Skip if the caller already pinned a run — no dispatch needed.
+    if: github.event.inputs.checkpoint_run_id == ''
+
+    steps:
+      - name: Trigger ci_pipeline_check.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          gh workflow run ci_pipeline_check.yml \
+            --repo "${{ github.repository }}" \
+            --ref  "${{ github.ref_name }}"
+
+      - name: Wait for checkpoint run to appear and complete
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+          BRANCH:   ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # gh workflow run returns before the run object is visible in the API;
+          # poll until it appears (up to 30 × 10 s = 5 min).
+          RUN_ID=""
+          for i in {1..30}; do
+            RUN_ID=$(gh run list \
+              --repo    "${REPO}" \
+              --workflow ci_pipeline_check.yml \
+              --branch  "${BRANCH}" \
+              --limit   1 \
+              --json    databaseId \
+              --jq      '.[0].databaseId // empty' 2>/dev/null || true)
+            if [[ -n "${RUN_ID}" && "${RUN_ID}" != "null" ]]; then
+              echo "Checkpoint run ${RUN_ID} found — waiting for completion..."
+              break
+            fi
+            echo "  Attempt ${i}/30: run not visible yet — retrying in 10 s"
+            sleep 10
+          done
+
+          if [[ -z "${RUN_ID}" || "${RUN_ID}" == "null" ]]; then
+            echo "::error::ci_pipeline_check.yml was not dispatched or did not appear within 300 s."
+            exit 1
+          fi
+
+          # Block until the run finishes; --exit-status fails this step if the
+          # checkpoint run itself fails, which is the correct behaviour.
+          gh run watch "${RUN_ID}" --repo "${REPO}" --exit-status
+
+
+  # ============================================================================
   #  JOB 2 — collect-c3
   #  Reconstructs qualify_run.log from the ci_pipeline_check.yml job log.
   # ============================================================================
@@ -207,6 +275,9 @@ jobs:
     name: "Bundle · C3 checkpoint qualify log"
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: [dispatch-checkpoint]
+    # Run even when dispatch-checkpoint was skipped (caller supplied checkpoint_run_id).
+    if: always()
 
     steps:
       - name: Resolve checkpoint run ID
@@ -404,7 +475,7 @@ jobs:
     name: "Bundle · Package + upload"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [collect-c1-c2, collect-c3, collect-c4, collect-c5]
+    needs: [dispatch-checkpoint, collect-c1-c2, collect-c3, collect-c4, collect-c5]
     if: always()
 
     steps:
