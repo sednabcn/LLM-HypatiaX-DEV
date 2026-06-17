@@ -850,7 +850,7 @@ jobs:
           deploy_suppb fig_comparative_table
 
           echo "--- figures/ after deploy ($(ls figures/ 2>/dev/null | wc -l) file(s)) ---"
-          ls -lh figures/ 2>/dev/null | head -30
+          { ls -lh figures/ 2>/dev/null || true; } | head -30
 
       - name: Restore pip cache
         id: pip-cache
@@ -879,6 +879,9 @@ jobs:
 
           # Helper: scan the entire workspace for pdf/png, excluding:
           #   - the canonical destination dir (avoid re-copying)
+          #   - repo-root figures/ and Figures/ — these are deploy destinations,
+          #     not sources; scanning them causes stem collisions that produce
+          #     mangled Figures__*.png names in OUT_BASE/figures/
           #   - .git
           # We scan the full workspace (not just $OUT_BASE) because
           # generate_figures.py writes to hypatiax/tools/figures/, which
@@ -887,6 +890,8 @@ jobs:
             find . \
               -path "./.git" -prune -o \
               -path "./${FIGURES_DIR}" -prune -o \
+              -path "./figures" -prune -o \
+              -path "./Figures" -prune -o \
               \( -name "*.pdf" -o -name "*.png" \) -print \
             | sort
           }
