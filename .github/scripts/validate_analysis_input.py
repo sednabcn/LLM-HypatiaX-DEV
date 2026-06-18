@@ -404,6 +404,7 @@ def main():
 
     mode = os.environ["INPUT_MODE"]
     total = 0
+    summary_only_input = False
 
     if mode in ("merged", "direct"):
         path = os.environ["INPUT_JSON"]
@@ -415,6 +416,22 @@ def main():
         records = load_records(path)
         print(f"Records: {len(records)}")
         total += len(records)
+
+        if len(records) == 0:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if (
+                    isinstance(data, dict)
+                    and {"n_pass", "n_total", "solve_rate"}.issubset(data.keys())
+                    and not isinstance(data.get("results"), (list, dict))
+                    and not isinstance(data.get("tests"), list)
+                    and not isinstance(data.get("per_noise"), dict)
+                    and not isinstance(data.get("per_n"), dict)
+                ):
+                    summary_only_input = True
+            except Exception:
+                pass
 
     elif mode == "shards":
         manifest_path = os.environ.get("SHARD_MANIFEST", "")
@@ -445,7 +462,8 @@ def main():
     # Fail only when there are zero records AND no shard was a recognised
     # summary/metadata file (which legitimately contributes 0 records).
     _n_summary = n_summary_shards if mode == "shards" else 0
-    if total == 0 and _n_summary == 0:
+
+    if total == 0 and _n_summary == 0 and not summary_only_input:
         print()
         print("FATAL: EMPTY DATASET")
         sys.exit(1)
