@@ -387,6 +387,146 @@ jobs:
             "${OUT_BASE}/${SUB}/figures" \
             "${OUT_BASE}/${SUB}/tables"
 
+      # ── 5b. Purge contamination from canonical dirs ──────────────────────────
+      # Each experiment's figures/ and tables/ dirs may contain files committed
+      # by prior runs of the old bare-glob copy_assets step (now deleted).
+      # Those files — instability PDFs, REPO_AUDIT shards, suppB noise-sweep
+      # tables, figures from other experiments — have no business being in this
+      # experiment's canonical subdir and will be re-staged verbatim by the
+      # Commit step unless removed first.
+      #
+      # Strategy: keep ONLY files whose stem appears in the experiment's own
+      # known-good allowlist.  For figures the allowlist is derived from the
+      # --experiment value passed to generate_figures.py (the script owns its
+      # own output stems; we whitelist by prefix/pattern rather than exact
+      # names so new stems added to generate_figures.py are not silently
+      # dropped).  For tables the allowlist uses the exact stems documented in
+      # the "Produces:" comments of each Section B step.
+      #
+      # suppB / suppB_sc: their canonical dirs are ALSO purged here so that
+      # cross-contamination committed by prior runs is cleared before new
+      # legitimate outputs are written into those dirs by steps A10/A11/B10/B11.
+      #
+      # figures_deploy: skipped — its purge is handled inside step A17 (the
+      # existing allowlist-gated purge block that already runs there).
+      #
+      # SAFE: purge uses `git rm --cached` (removes from index only) + `rm -f`
+      # (removes working-tree copy).  Any file that was never tracked is just
+      # rm'd.  A file that IS legitimate and on the allowlist is never touched.
+      - name: "Purge: remove non-allowlist files from canonical figures/ and tables/"
+        if: |
+          env.EFFECTIVE_EXPERIMENT != 'SKIP' &&
+          env.EFFECTIVE_EXPERIMENT != '' &&
+          env.EFFECTIVE_EXPERIMENT != 'figures_deploy'
+        env:
+          SUB:        ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT: ${{ env.EFFECTIVE_EXPERIMENT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # ── Per-experiment figure stem allowlists (prefix/exact match) ────
+          # Each entry is an extended-glob pattern matched against the basename
+          # (without extension).  Use '*' suffix for prefix matches.
+          # generate_figures.py --experiment <id> owns these stems; update here
+          # if the script gains new output stems for a given experiment.
+          declare -A FIG_ALLOWLIST
+          FIG_ALLOWLIST[exp1]="fig1_seed_sweep fig09_r2_heatmap_regimes fig18_r2_heatmap_improved"
+          FIG_ALLOWLIST[exp1b]="fig1_seed_sweep fig_seed_sweep_comparison fig_paper_*"
+          FIG_ALLOWLIST[exp1_ablation]="fig_ablation_*"
+          FIG_ALLOWLIST[exp1_pca]="fig_pca_* fig1_pca_*"
+          FIG_ALLOWLIST[exp1b_pca]="fig_pca_* fig1b_pca_*"
+          FIG_ALLOWLIST[exp2_feynman]="fig_feynman_* fig2_* fig_benchmark_*"
+          FIG_ALLOWLIST[exp2_feynman_extrap]="fig_extrap_* fig_ablation_paired_*"
+          FIG_ALLOWLIST[exp2_feynman_pca]="fig_pca_* fig_exp2_pca_*"
+          FIG_ALLOWLIST[exp2]="fig_all30_* fig_multi_*"
+          FIG_ALLOWLIST[exp3]="fig_nguyen_* fig3_* fig_symequiv_*"
+          FIG_ALLOWLIST[exp3b]="fig_nguyen_* fig3b_* fig_symequiv_*"
+          FIG_ALLOWLIST[suppA]="fig_suppa_* fig_hybrid_pysr_*"
+          FIG_ALLOWLIST[suppB]="fig1_r2_vs_noise fig2_rmse_vs_noise fig3_time_vs_noise fig7_recovery_vs_noise fig9_minr2_vs_noise fig10_r2_boxplot_noise fig11_recovery_heatmap fig_runtime_comparison fig_comparative_table"
+          FIG_ALLOWLIST[suppB_sc]="fig4_r2_vs_n fig5_rmse_vs_n fig6_time_vs_n fig8_recovery_vs_n fig11_recovery_heatmap fig_runtime_comparison fig_comparative_table"
+          FIG_ALLOWLIST[hybrid_all_domains]="fig_hybrid_* fig_all_domains_*"
+          FIG_ALLOWLIST[instability]="fig_instability_* fig_paper_* fig_seed_sweep_comparison"
+          FIG_ALLOWLIST[extrap]="fig_extrap_* fig07_* fig08_* fig09_* fig10_* fig11_* fig12_* fig14_* fig16_* fig17_* fig18_* fig19_* fig20_* fig21_* fig22_*"
+
+          # ── Per-experiment table stem allowlists (exact stems only) ───────
+          declare -A TAB_ALLOWLIST
+          TAB_ALLOWLIST[exp1]="main_comparison_noiseless method_summary"
+          TAB_ALLOWLIST[exp1b]="noise_robust_comparison seed_variance_table"
+          TAB_ALLOWLIST[exp1_ablation]="ablation_comparison"
+          TAB_ALLOWLIST[exp1_pca]="pca_defi_comparison"
+          TAB_ALLOWLIST[exp1b_pca]="pca_portfolio_sweep"
+          TAB_ALLOWLIST[exp2_feynman]="feynman_benchmark_main method_rank_table"
+          TAB_ALLOWLIST[exp2_feynman_extrap]="extrap_comparison"
+          TAB_ALLOWLIST[exp2_feynman_pca]="exp2_pca_comparison feynman_benchmark_main method_rank_table"
+          TAB_ALLOWLIST[exp2]="all30_domain_summary multi_domain_rank_table"
+          TAB_ALLOWLIST[exp3]="nguyen12_symequiv r2_distribution method_rank_table"
+          TAB_ALLOWLIST[exp3b]="nguyen12_symequiv r2_distribution method_rank_table"
+          TAB_ALLOWLIST[suppA]="suppa_hybrid_pysr_defi"
+          TAB_ALLOWLIST[suppB]="suppb_noiseless suppb_noise_sweep suppb_r2_noise suppb_rr_noise suppb_time_noise suppb_winrate"
+          TAB_ALLOWLIST[suppB_sc]="suppb_sc_summary suppb_sc_by_sample suppb_sc_metrics"
+          TAB_ALLOWLIST[hybrid_all_domains]="hybrid_all_domains_summary domain_rank_table"
+          TAB_ALLOWLIST[instability]="instability_index_table group_summary_table"
+          TAB_ALLOWLIST[extrap]="extrap_ood_table"
+
+          # ── Helper: purge files not on the allowlist ───────────────────────
+          purge_dir() {
+            local dir="$1" allowlist="$2" label="$3"
+            if [[ ! -d "$dir" ]]; then
+              echo "  [SKIP] ${label} — dir does not exist yet"
+              return 0
+            fi
+            local n_kept=0 n_purged=0
+            while IFS= read -r -d '' f; do
+              local base ext stem
+              base="$(basename "$f")"
+              ext="${base##*.}"
+              stem="${base%.*}"
+              local allowed=false
+              for pattern in $allowlist; do
+                # shellcheck disable=SC2254
+                case "$stem" in
+                  $pattern) allowed=true; break ;;
+                esac
+              done
+              if [[ "$allowed" == true ]]; then
+                (( n_kept++ )) || true
+              else
+                echo "  [PURGE] ${label}: ${base}"
+                git rm -f --cached "$f" 2>/dev/null || true
+                rm -f "$f"
+                (( n_purged++ )) || true
+              fi
+            done < <(find "$dir" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" -o -name "*.tex" \) -print0 2>/dev/null)
+            echo "  [${label}] kept ${n_kept}, purged ${n_purged} non-allowlist file(s) from ${dir}"
+          }
+
+          EXP="${EXPERIMENT}"
+          FIG_AL="${FIG_ALLOWLIST[$EXP]:-}"
+          TAB_AL="${TAB_ALLOWLIST[$EXP]:-}"
+
+          if [[ -z "$FIG_AL" && -z "$TAB_AL" ]]; then
+            echo "::warning::No allowlist defined for experiment '${EXP}' — skipping purge. Add entries to the FIG_ALLOWLIST / TAB_ALLOWLIST arrays above."
+            exit 0
+          fi
+
+          echo "=== Purge canonical dirs for experiment: ${EXP} ==="
+          echo "Figure allowlist : ${FIG_AL:-<none>}"
+          echo "Table  allowlist : ${TAB_AL:-<none>}"
+          echo ""
+
+          # Experiment's own canonical dirs
+          purge_dir "${OUT_BASE}/${SUB}/figures" "$FIG_AL" "figures/${SUB}"
+          purge_dir "${OUT_BASE}/${SUB}/tables"  "$TAB_AL" "tables/${SUB}"
+
+          # suppB / suppB_sc canonical dirs also need purging on their own runs
+          # (their SUB IS their canonical dir, handled above, but double-check
+          # that non-suppB experiments never write into the other's canonical dir —
+          # the guard step already enforces this, purge is a belt-and-suspenders).
+
+          echo ""
+          echo "Purge complete."
+
       # ════════════════════════════════════════════════════════════════════════
       #  SECTION A: FIGURES  (per-experiment, scoped via --experiment)
       #
