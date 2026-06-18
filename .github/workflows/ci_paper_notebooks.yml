@@ -831,6 +831,114 @@ jobs:
           name: NB-01_Citation_Bibliography_Audit
           path: notebooks/NB-01_Citation_Bibliography_Audit.ipynb
           retention-days: 7
+      - name: Extract & upload registry patch
+        if: always()
+        env:
+          NB_ID: "NB-01"
+          RUN_ID: ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+        run: |
+          python3 - <<'PYREG'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          nb_id   = os.environ["NB_ID"]
+          run_id  = os.environ["RUN_ID"]
+          reg_path = Path(os.environ["REGISTRY_PATH"])
+
+          # Find the executed notebook
+          nb_path = next(Path("notebooks").rglob(f"{nb_id}*.ipynb"), None)
+          if not nb_path:
+              print(f"::warning::Notebook not found for {nb_id} — skipping registry patch")
+              import sys; sys.exit(0)
+
+          try:
+              nb = json.loads(nb_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::warning::Could not read notebook: {exc}")
+              import sys; sys.exit(0)
+
+          patch_entries = []
+
+          # ── Source 1: cells tagged audit_findings ─────────────────────────
+          for cell in nb.get("cells", []):
+              if "audit_findings" not in cell.get("metadata", {}).get("tags", []):
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                  text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                  try:
+                      data = json.loads(text)
+                      for f in (data if isinstance(data, list) else data.get("findings", [])):
+                          fid = f.get("id") or f.get("fix_id", "")
+                          if fid:
+                              patch_entries.append({
+                                  "id":     fid,
+                                  "status": f.get("status", "open").lower(),
+                                  "source": f"{nb_id}/audit_findings",
+                              })
+                  except Exception:
+                      pass
+
+          # ── Source 2: Step 8 write-back output (NB-05 style) ─────────────
+          for cell in nb.get("cells", []):
+              if cell.get("id", "") != "step8_writeback":
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  for line in text.splitlines():
+                      # Lines like:  [UPDATED]  FIX-F2: open → resolved
+                      m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                      if m:
+                          patch_entries.append({
+                              "id":     m.group(1),
+                              "status": m.group(3).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+                      # Lines like:  [NO-CHANGE] FIX-F2 — already resolved
+                      m2 = re.match(r"\s*\[NO-CHANGE\]\s+(FIX-\w+)\s*—\s*already\s+(\w+)", line)
+                      if m2:
+                          patch_entries.append({
+                              "id":     m2.group(1),
+                              "status": m2.group(2).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+
+          if not patch_entries:
+              print(f"No registry patches found in {nb_id} outputs — skipping patch artifact")
+              import sys; sys.exit(0)
+
+          # Deduplicate: last entry per id wins (later cells override earlier)
+          seen = {}
+          for e in patch_entries:
+              seen[e["id"]] = e
+          patch_entries = list(seen.values())
+
+          out_path = Path(f"logs/registry_patch_{nb_id}.json")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps({
+              "nb":           nb_id,
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "patches":      patch_entries,
+          }, indent=2))
+          print(f"Registry patch written: {out_path} ({len(patch_entries)} entry/entries)")
+          for e in patch_entries:
+              print(f"  {e['id']} → {e['status']}  [{e['source']}]")
+          PYREG
+
+      - name: Upload registry patch artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: registry-patch-NB-01-${{ github.run_id }}
+          path: logs/registry_patch_NB-01.json
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   # ──────────────────────────────────────────────
   # Job 3 — nb-02-crossref
@@ -895,6 +1003,114 @@ jobs:
           name: NB-02_CrossReference_Label_Audit
           path: notebooks/NB-02_CrossReference_Label_Audit.ipynb
           retention-days: 7
+      - name: Extract & upload registry patch
+        if: always()
+        env:
+          NB_ID: "NB-02"
+          RUN_ID: ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+        run: |
+          python3 - <<'PYREG'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          nb_id   = os.environ["NB_ID"]
+          run_id  = os.environ["RUN_ID"]
+          reg_path = Path(os.environ["REGISTRY_PATH"])
+
+          # Find the executed notebook
+          nb_path = next(Path("notebooks").rglob(f"{nb_id}*.ipynb"), None)
+          if not nb_path:
+              print(f"::warning::Notebook not found for {nb_id} — skipping registry patch")
+              import sys; sys.exit(0)
+
+          try:
+              nb = json.loads(nb_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::warning::Could not read notebook: {exc}")
+              import sys; sys.exit(0)
+
+          patch_entries = []
+
+          # ── Source 1: cells tagged audit_findings ─────────────────────────
+          for cell in nb.get("cells", []):
+              if "audit_findings" not in cell.get("metadata", {}).get("tags", []):
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                  text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                  try:
+                      data = json.loads(text)
+                      for f in (data if isinstance(data, list) else data.get("findings", [])):
+                          fid = f.get("id") or f.get("fix_id", "")
+                          if fid:
+                              patch_entries.append({
+                                  "id":     fid,
+                                  "status": f.get("status", "open").lower(),
+                                  "source": f"{nb_id}/audit_findings",
+                              })
+                  except Exception:
+                      pass
+
+          # ── Source 2: Step 8 write-back output (NB-05 style) ─────────────
+          for cell in nb.get("cells", []):
+              if cell.get("id", "") != "step8_writeback":
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  for line in text.splitlines():
+                      # Lines like:  [UPDATED]  FIX-F2: open → resolved
+                      m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                      if m:
+                          patch_entries.append({
+                              "id":     m.group(1),
+                              "status": m.group(3).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+                      # Lines like:  [NO-CHANGE] FIX-F2 — already resolved
+                      m2 = re.match(r"\s*\[NO-CHANGE\]\s+(FIX-\w+)\s*—\s*already\s+(\w+)", line)
+                      if m2:
+                          patch_entries.append({
+                              "id":     m2.group(1),
+                              "status": m2.group(2).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+
+          if not patch_entries:
+              print(f"No registry patches found in {nb_id} outputs — skipping patch artifact")
+              import sys; sys.exit(0)
+
+          # Deduplicate: last entry per id wins (later cells override earlier)
+          seen = {}
+          for e in patch_entries:
+              seen[e["id"]] = e
+          patch_entries = list(seen.values())
+
+          out_path = Path(f"logs/registry_patch_{nb_id}.json")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps({
+              "nb":           nb_id,
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "patches":      patch_entries,
+          }, indent=2))
+          print(f"Registry patch written: {out_path} ({len(patch_entries)} entry/entries)")
+          for e in patch_entries:
+              print(f"  {e['id']} → {e['status']}  [{e['source']}]")
+          PYREG
+
+      - name: Upload registry patch artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: registry-patch-NB-02-${{ github.run_id }}
+          path: logs/registry_patch_NB-02.json
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   # ──────────────────────────────────────────────
   # Job 4 — nb-03-structure
@@ -961,6 +1177,114 @@ jobs:
           name: NB-03_Section_Structure_Numbering
           path: notebooks/NB-03_Section_Structure_Numbering.ipynb
           retention-days: 7
+      - name: Extract & upload registry patch
+        if: always()
+        env:
+          NB_ID: "NB-03"
+          RUN_ID: ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+        run: |
+          python3 - <<'PYREG'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          nb_id   = os.environ["NB_ID"]
+          run_id  = os.environ["RUN_ID"]
+          reg_path = Path(os.environ["REGISTRY_PATH"])
+
+          # Find the executed notebook
+          nb_path = next(Path("notebooks").rglob(f"{nb_id}*.ipynb"), None)
+          if not nb_path:
+              print(f"::warning::Notebook not found for {nb_id} — skipping registry patch")
+              import sys; sys.exit(0)
+
+          try:
+              nb = json.loads(nb_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::warning::Could not read notebook: {exc}")
+              import sys; sys.exit(0)
+
+          patch_entries = []
+
+          # ── Source 1: cells tagged audit_findings ─────────────────────────
+          for cell in nb.get("cells", []):
+              if "audit_findings" not in cell.get("metadata", {}).get("tags", []):
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                  text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                  try:
+                      data = json.loads(text)
+                      for f in (data if isinstance(data, list) else data.get("findings", [])):
+                          fid = f.get("id") or f.get("fix_id", "")
+                          if fid:
+                              patch_entries.append({
+                                  "id":     fid,
+                                  "status": f.get("status", "open").lower(),
+                                  "source": f"{nb_id}/audit_findings",
+                              })
+                  except Exception:
+                      pass
+
+          # ── Source 2: Step 8 write-back output (NB-05 style) ─────────────
+          for cell in nb.get("cells", []):
+              if cell.get("id", "") != "step8_writeback":
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  for line in text.splitlines():
+                      # Lines like:  [UPDATED]  FIX-F2: open → resolved
+                      m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                      if m:
+                          patch_entries.append({
+                              "id":     m.group(1),
+                              "status": m.group(3).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+                      # Lines like:  [NO-CHANGE] FIX-F2 — already resolved
+                      m2 = re.match(r"\s*\[NO-CHANGE\]\s+(FIX-\w+)\s*—\s*already\s+(\w+)", line)
+                      if m2:
+                          patch_entries.append({
+                              "id":     m2.group(1),
+                              "status": m2.group(2).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+
+          if not patch_entries:
+              print(f"No registry patches found in {nb_id} outputs — skipping patch artifact")
+              import sys; sys.exit(0)
+
+          # Deduplicate: last entry per id wins (later cells override earlier)
+          seen = {}
+          for e in patch_entries:
+              seen[e["id"]] = e
+          patch_entries = list(seen.values())
+
+          out_path = Path(f"logs/registry_patch_{nb_id}.json")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps({
+              "nb":           nb_id,
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "patches":      patch_entries,
+          }, indent=2))
+          print(f"Registry patch written: {out_path} ({len(patch_entries)} entry/entries)")
+          for e in patch_entries:
+              print(f"  {e['id']} → {e['status']}  [{e['source']}]")
+          PYREG
+
+      - name: Upload registry patch artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: registry-patch-NB-03-${{ github.run_id }}
+          path: logs/registry_patch_NB-03.json
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   # ──────────────────────────────────────────────
   # Job 5 — nb-04-numerical
@@ -1027,6 +1351,114 @@ jobs:
           name: NB-04_Numerical_Consistency_Checker
           path: notebooks/NB-04_Numerical_Consistency_Checker.ipynb
           retention-days: 7
+      - name: Extract & upload registry patch
+        if: always()
+        env:
+          NB_ID: "NB-04"
+          RUN_ID: ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+        run: |
+          python3 - <<'PYREG'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          nb_id   = os.environ["NB_ID"]
+          run_id  = os.environ["RUN_ID"]
+          reg_path = Path(os.environ["REGISTRY_PATH"])
+
+          # Find the executed notebook
+          nb_path = next(Path("notebooks").rglob(f"{nb_id}*.ipynb"), None)
+          if not nb_path:
+              print(f"::warning::Notebook not found for {nb_id} — skipping registry patch")
+              import sys; sys.exit(0)
+
+          try:
+              nb = json.loads(nb_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::warning::Could not read notebook: {exc}")
+              import sys; sys.exit(0)
+
+          patch_entries = []
+
+          # ── Source 1: cells tagged audit_findings ─────────────────────────
+          for cell in nb.get("cells", []):
+              if "audit_findings" not in cell.get("metadata", {}).get("tags", []):
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                  text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                  try:
+                      data = json.loads(text)
+                      for f in (data if isinstance(data, list) else data.get("findings", [])):
+                          fid = f.get("id") or f.get("fix_id", "")
+                          if fid:
+                              patch_entries.append({
+                                  "id":     fid,
+                                  "status": f.get("status", "open").lower(),
+                                  "source": f"{nb_id}/audit_findings",
+                              })
+                  except Exception:
+                      pass
+
+          # ── Source 2: Step 8 write-back output (NB-05 style) ─────────────
+          for cell in nb.get("cells", []):
+              if cell.get("id", "") != "step8_writeback":
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  for line in text.splitlines():
+                      # Lines like:  [UPDATED]  FIX-F2: open → resolved
+                      m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                      if m:
+                          patch_entries.append({
+                              "id":     m.group(1),
+                              "status": m.group(3).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+                      # Lines like:  [NO-CHANGE] FIX-F2 — already resolved
+                      m2 = re.match(r"\s*\[NO-CHANGE\]\s+(FIX-\w+)\s*—\s*already\s+(\w+)", line)
+                      if m2:
+                          patch_entries.append({
+                              "id":     m2.group(1),
+                              "status": m2.group(2).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+
+          if not patch_entries:
+              print(f"No registry patches found in {nb_id} outputs — skipping patch artifact")
+              import sys; sys.exit(0)
+
+          # Deduplicate: last entry per id wins (later cells override earlier)
+          seen = {}
+          for e in patch_entries:
+              seen[e["id"]] = e
+          patch_entries = list(seen.values())
+
+          out_path = Path(f"logs/registry_patch_{nb_id}.json")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps({
+              "nb":           nb_id,
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "patches":      patch_entries,
+          }, indent=2))
+          print(f"Registry patch written: {out_path} ({len(patch_entries)} entry/entries)")
+          for e in patch_entries:
+              print(f"  {e['id']} → {e['status']}  [{e['source']}]")
+          PYREG
+
+      - name: Upload registry patch artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: registry-patch-NB-04-${{ github.run_id }}
+          path: logs/registry_patch_NB-04.json
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   # ──────────────────────────────────────────────
   # Job 6 — nb-05-figures
@@ -1123,6 +1555,114 @@ jobs:
           name: NB-05_Figure_Image_Dependency_Checker
           path: notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb
           retention-days: 7
+      - name: Extract & upload registry patch
+        if: always()
+        env:
+          NB_ID: "NB-05"
+          RUN_ID: ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+        run: |
+          python3 - <<'PYREG'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          nb_id   = os.environ["NB_ID"]
+          run_id  = os.environ["RUN_ID"]
+          reg_path = Path(os.environ["REGISTRY_PATH"])
+
+          # Find the executed notebook
+          nb_path = next(Path("notebooks").rglob(f"{nb_id}*.ipynb"), None)
+          if not nb_path:
+              print(f"::warning::Notebook not found for {nb_id} — skipping registry patch")
+              import sys; sys.exit(0)
+
+          try:
+              nb = json.loads(nb_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::warning::Could not read notebook: {exc}")
+              import sys; sys.exit(0)
+
+          patch_entries = []
+
+          # ── Source 1: cells tagged audit_findings ─────────────────────────
+          for cell in nb.get("cells", []):
+              if "audit_findings" not in cell.get("metadata", {}).get("tags", []):
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                  text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                  try:
+                      data = json.loads(text)
+                      for f in (data if isinstance(data, list) else data.get("findings", [])):
+                          fid = f.get("id") or f.get("fix_id", "")
+                          if fid:
+                              patch_entries.append({
+                                  "id":     fid,
+                                  "status": f.get("status", "open").lower(),
+                                  "source": f"{nb_id}/audit_findings",
+                              })
+                  except Exception:
+                      pass
+
+          # ── Source 2: Step 8 write-back output (NB-05 style) ─────────────
+          for cell in nb.get("cells", []):
+              if cell.get("id", "") != "step8_writeback":
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  for line in text.splitlines():
+                      # Lines like:  [UPDATED]  FIX-F2: open → resolved
+                      m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                      if m:
+                          patch_entries.append({
+                              "id":     m.group(1),
+                              "status": m.group(3).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+                      # Lines like:  [NO-CHANGE] FIX-F2 — already resolved
+                      m2 = re.match(r"\s*\[NO-CHANGE\]\s+(FIX-\w+)\s*—\s*already\s+(\w+)", line)
+                      if m2:
+                          patch_entries.append({
+                              "id":     m2.group(1),
+                              "status": m2.group(2).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+
+          if not patch_entries:
+              print(f"No registry patches found in {nb_id} outputs — skipping patch artifact")
+              import sys; sys.exit(0)
+
+          # Deduplicate: last entry per id wins (later cells override earlier)
+          seen = {}
+          for e in patch_entries:
+              seen[e["id"]] = e
+          patch_entries = list(seen.values())
+
+          out_path = Path(f"logs/registry_patch_{nb_id}.json")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps({
+              "nb":           nb_id,
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "patches":      patch_entries,
+          }, indent=2))
+          print(f"Registry patch written: {out_path} ({len(patch_entries)} entry/entries)")
+          for e in patch_entries:
+              print(f"  {e['id']} → {e['status']}  [{e['source']}]")
+          PYREG
+
+      - name: Upload registry patch artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: registry-patch-NB-05-${{ github.run_id }}
+          path: logs/registry_patch_NB-05.json
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   # ──────────────────────────────────────────────
   # Job 7 — nb-06-integrity
@@ -1189,6 +1729,114 @@ jobs:
           name: NB-06_Code_Quality_Pipeline_Integrity
           path: notebooks/NB-06_Code_Quality_Pipeline_Integrity.ipynb
           retention-days: 7
+      - name: Extract & upload registry patch
+        if: always()
+        env:
+          NB_ID: "NB-06"
+          RUN_ID: ${{ github.run_id }}
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+        run: |
+          python3 - <<'PYREG'
+          import json, os, re, datetime
+          from pathlib import Path
+
+          nb_id   = os.environ["NB_ID"]
+          run_id  = os.environ["RUN_ID"]
+          reg_path = Path(os.environ["REGISTRY_PATH"])
+
+          # Find the executed notebook
+          nb_path = next(Path("notebooks").rglob(f"{nb_id}*.ipynb"), None)
+          if not nb_path:
+              print(f"::warning::Notebook not found for {nb_id} — skipping registry patch")
+              import sys; sys.exit(0)
+
+          try:
+              nb = json.loads(nb_path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"::warning::Could not read notebook: {exc}")
+              import sys; sys.exit(0)
+
+          patch_entries = []
+
+          # ── Source 1: cells tagged audit_findings ─────────────────────────
+          for cell in nb.get("cells", []):
+              if "audit_findings" not in cell.get("metadata", {}).get("tags", []):
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
+                  text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                  try:
+                      data = json.loads(text)
+                      for f in (data if isinstance(data, list) else data.get("findings", [])):
+                          fid = f.get("id") or f.get("fix_id", "")
+                          if fid:
+                              patch_entries.append({
+                                  "id":     fid,
+                                  "status": f.get("status", "open").lower(),
+                                  "source": f"{nb_id}/audit_findings",
+                              })
+                  except Exception:
+                      pass
+
+          # ── Source 2: Step 8 write-back output (NB-05 style) ─────────────
+          for cell in nb.get("cells", []):
+              if cell.get("id", "") != "step8_writeback":
+                  continue
+              for out in cell.get("outputs", []):
+                  raw = out.get("text", "")
+                  text = "".join(raw) if isinstance(raw, list) else str(raw)
+                  for line in text.splitlines():
+                      # Lines like:  [UPDATED]  FIX-F2: open → resolved
+                      m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                      if m:
+                          patch_entries.append({
+                              "id":     m.group(1),
+                              "status": m.group(3).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+                      # Lines like:  [NO-CHANGE] FIX-F2 — already resolved
+                      m2 = re.match(r"\s*\[NO-CHANGE\]\s+(FIX-\w+)\s*—\s*already\s+(\w+)", line)
+                      if m2:
+                          patch_entries.append({
+                              "id":     m2.group(1),
+                              "status": m2.group(2).lower(),
+                              "source": f"{nb_id}/step8",
+                          })
+
+          if not patch_entries:
+              print(f"No registry patches found in {nb_id} outputs — skipping patch artifact")
+              import sys; sys.exit(0)
+
+          # Deduplicate: last entry per id wins (later cells override earlier)
+          seen = {}
+          for e in patch_entries:
+              seen[e["id"]] = e
+          patch_entries = list(seen.values())
+
+          out_path = Path(f"logs/registry_patch_{nb_id}.json")
+          out_path.parent.mkdir(parents=True, exist_ok=True)
+          out_path.write_text(json.dumps({
+              "nb":           nb_id,
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "patches":      patch_entries,
+          }, indent=2))
+          print(f"Registry patch written: {out_path} ({len(patch_entries)} entry/entries)")
+          for e in patch_entries:
+              print(f"  {e['id']} → {e['status']}  [{e['source']}]")
+          PYREG
+
+      - name: Upload registry patch artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: registry-patch-NB-06-${{ github.run_id }}
+          path: logs/registry_patch_NB-06.json
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   bundle-artifacts:
     name: "Bundle Notebook Artifacts"
@@ -1291,7 +1939,141 @@ jobs:
           name: hypatia-findings-setup-${{ github.run_id }}
           path: /tmp/hypatia_findings
 
-      - name: Write notebooks audit summary JSON
+      - name: Download NB registry patch artifacts
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ github.run_id }}
+        run: |
+          mkdir -p /tmp/nb_patches
+          for nb_id in NB-01 NB-02 NB-03 NB-04 NB-05 NB-06; do
+            gh run download "$RUN_ID" \
+              --repo "$REPO" \
+              --name "registry-patch-${nb_id}-${RUN_ID}" \
+              --dir  "/tmp/nb_patches" 2>/dev/null || true
+          done
+          echo "Patch files downloaded:"
+          ls -la /tmp/nb_patches/ 2>/dev/null || echo "  (none)"
+
+      - name: Merge NB registry patches into issue_registry.json and commit
+        if: always()
+        env:
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+          GIT_AUTHOR_NAME:  github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME:  github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          python3 - <<'PYMERGE'
+          import json, subprocess, sys, datetime
+          from pathlib import Path
+
+          registry_path = Path("${{ env.REGISTRY_PATH }}")
+          patches_dir   = Path("/tmp/nb_patches")
+
+          if not registry_path.exists():
+              print(f"::warning::Registry not found at {registry_path} — skipping NB merge")
+              sys.exit(0)
+
+          registry = json.loads(registry_path.read_text(encoding="utf-8"))
+          reg_index = {e["id"]: i for i, e in enumerate(registry)}
+          today = datetime.date.today().isoformat()
+
+          patch_files = sorted(patches_dir.glob("registry_patch_NB-*.json"))
+          if not patch_files:
+              print("No NB registry patches found — registry unchanged")
+              sys.exit(0)
+
+          diff_rows = []
+          for pf in patch_files:
+              try:
+                  patch = json.loads(pf.read_text())
+              except Exception as exc:
+                  print(f"  Could not read {pf}: {exc}")
+                  continue
+              for entry in patch.get("patches", []):
+                  eid      = entry["id"]
+                  new_st   = entry["status"].lower()
+                  source   = entry.get("source", pf.stem)
+
+                  if eid in reg_index:
+                      existing = registry[reg_index[eid]]
+                      old_st   = existing.get("status", "open")
+
+                      if old_st == "false_positive":
+                          continue
+                      if old_st == "resolved" and new_st == "open":
+                          continue
+
+                      if old_st != new_st:
+                          existing["status"]  = new_st
+                          existing["updated"] = today
+                          diff_rows.append((eid, old_st, new_st, source))
+                  else:
+                      registry.append({
+                          "id":       eid,
+                          "status":   new_st,
+                          "severity": entry.get("severity", "medium"),
+                          "nb_source": entry.get("source", source),
+                          "updated":  today,
+                      })
+                      reg_index[eid] = len(registry) - 1
+                      diff_rows.append((eid, "new", new_st, source))
+
+          if not diff_rows:
+              print("Registry already reflects notebook findings — no changes")
+              sys.exit(0)
+
+          col = "{:<14} {:<12} {:<12} {}"
+          print("")
+          print("=== NB registry patch merge ===")
+          print(col.format("ID", "OLD", "NEW", "SOURCE"))
+          print("-" * 56)
+          for row in diff_rows:
+              print("  -> " + col.format(*row))
+
+          registry_path.write_text(
+              json.dumps(registry, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8"
+          )
+
+          subprocess.run(["git", "config", "user.name",  "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+          subprocess.run(["git", "pull",   "--rebase", "--autostash",
+                          "origin", "${{ github.ref_name }}"], capture_output=True)
+          subprocess.run(["git", "add", str(registry_path)], check=True)
+
+          ids_changed = [f"{e}: {o}>{n}" for e, o, n, _ in diff_rows]
+          msg = f"ci: nb-registry-merge {chr(44).join(ids_changed)} [skip ci]"
+          subprocess.run(["git", "commit", "-m", msg], check=True)
+
+          for attempt in range(1, 4):
+              r = subprocess.run(["git", "push"])
+              if r.returncode == 0:
+                  break
+              subprocess.run(["git", "pull", "--rebase", "--autostash"], capture_output=True)
+              subprocess.run(["git", "checkout", "--ours", str(registry_path)], check=True)
+              subprocess.run(["git", "add", str(registry_path)], check=True)
+              subprocess.run(["git", "rebase", "--continue"],
+                  env={**__import__("os").environ, "GIT_EDITOR": "true"}, check=True)
+          else:
+              raise RuntimeError("git push failed after 3 attempts")
+
+          print(f"Registry committed — {len(diff_rows)} update(s): {msg}")
+          PYMERGE
+
+      - name: Upload merged registry artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: issue-registry-merged-${{ github.run_id }}
+          path: ${{ env.REGISTRY_PATH }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Write notebooks audit summary JSON (live — no hardcoded statuses)
         if: always()
         env:
           RUN_ID: ${{ github.run_id }}
@@ -1303,153 +2085,102 @@ jobs:
 
           run_id = os.environ["RUN_ID"]
 
-          # ── Load hypatia_inspector findings.json if available ─────────────────
-          hypatia_findings = {}
-          for candidate in [
-              "/tmp/hypatia_findings/findings.json",
-          ]:
+          # ── Load hypatia_inspector findings (status overrides only) ──────────
+          inspector_status: dict[str, str] = {}
+          for candidate in ["/tmp/hypatia_findings/findings.json"]:
               try:
                   raw = json.loads(Path(candidate).read_text())
-                  for f in raw:
+                  for f in (raw if isinstance(raw, list) else raw.get("findings", [])):
                       fid = f.get("fix_id") or f.get("id", "")
-                      if fid:
-                          hypatia_findings[fid] = {
-                              "id":          fid,
-                              "severity":    f.get("severity", "MEDIUM").upper(),
-                              "status":      ("RESOLVED" if f.get("status") == "fixed"
-                                              else "OPEN"   if f.get("status") in ("detected","manual")
-                                              else f.get("status", "OPEN").upper()),
-                              "description": f.get("summary", ""),
-                              "action":      "",
-                              "nb":          "hypatia_inspector",
-                              "auto_fixable": f.get("auto_fixable", False),
-                          }
-                  print(f"Loaded {len(hypatia_findings)} findings from hypatia_inspector")
+                      st  = f.get("status", "")
+                      if fid and st:
+                          inspector_status[fid] = (
+                              "RESOLVED" if st == "fixed" else
+                              "OPEN"     if st in ("detected", "manual") else
+                              st.upper()
+                          )
+                  print(f"Loaded {len(inspector_status)} inspector statuses")
                   break
               except Exception as exc:
-                  print(f"Could not load hypatia findings: {exc}")
+                  print(f"Inspector findings unavailable: {exc}")
 
-          STATIC_FIXES = [
-              {"id":"FIX-B1",  "severity":"CRITICAL","status":"OPEN",    "nb":"NB-01",
-               "description":"koza1994genetic cited but no \\bibitem — will produce [?] in PDF.",
-               "action":"Add \\bibitem{koza1994genetic} or redirect \\cite calls to koza1992gp."},
-              {"id":"FIX-B2",  "severity":"HIGH",    "status":"OPEN",    "nb":"NB-01",
-               "description":"cranmer2023pysr and cranmer2023interpretable are the same arXiv paper (2305.01582).",
-               "action":"Remove cranmer2023interpretable; replace all \\cite calls with cranmer2023pysr."},
-              {"id":"FIX-B3",  "severity":"HIGH",    "status":"OPEN",    "nb":"NB-01",
-               "description":"udrescu2020ai and udrescu2020aifeynman are the same paper.",
-               "action":"Remove udrescu2020aifeynman; replace all uses with udrescu2020ai."},
-              {"id":"FIX-XR1","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
-               "description":"sec:llm_limitations and sec:llm_domain both defined on Section 3 — duplicate labels.",
-               "action":"Remove \\label{sec:llm_domain}; update \\ref call sites."},
-              {"id":"FIX-XR2","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
-               "description":"\\label{sec:r2_bugfix} sits inside \\item block — garbled \\ref output.",
-               "action":"Move label to \\subsection heading."},
-              {"id":"FIX-XR3","severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-02",
-               "description":"Supp A references Section 7.3 for Proposition 1; main paper places Component 3 in §7.4.",
-               "action":"Change 7.3 → 7.4 in supp_routing_improvements.tex."},
-              {"id":"FIX-XR4","severity":"MEDIUM",  "status":"RESOLVED","nb":"NB-02",
-               "description":"Supp A references filename jmlr_paper_main.tex; confirmed correct — paper is jmlr_paper_main.tex.",
-               "action":"No action needed; filename in CI and Supp A now agree."},
-              {"id":"FIX-N1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
-               "description":"Spearman footnote says '71 cases'; table caption correctly says '70 tasks'.",
-               "action":"Change '71 cases' → '70 tasks' in instability section body (line 1637)."},
-              {"id":"FIX-N2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
-               "description":"§8.3 heading reads 'Five-Layer Architecture Overview'; rest of paper uses 'five-stage routing'.",
-               "action":"Rename §8.3 to 'Five-Stage Routing Architecture Overview'."},
-              {"id":"FIX-N3", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-04",
-               "description":"Nguyen-12 numbers need verification after seed=123 rerun.",
-               "action":"Rerun Nguyen-12 with seed=123 and update paper figures."},
-              {"id":"FIX-F1", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
-               "description":"hypatiaX_three_systems MISSING — \\fbox placeholder in §7.1.",
-               "action":"Replace \\fbox placeholder with final PDF/PNG from Figures/architecture_figures/."},
-              {"id":"FIX-F2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
-               "description":"fig18_r2_heatmap_improved.pdf missing from figures/.",
-               "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
-              {"id":"FIX-F3", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
-               "description":"fig09_r2_heatmap_regimes.pdf missing from figures/.",
-               "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
-              {"id":"FIX-F4", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-05",
-               "description":"fig1_seed_sweep.pdf missing from figures/.",
-               "action":"Copy from Figures/figures-portfolio-variance/ → figures/."},
-              {"id":"FIX-C1", "severity":"MEDIUM",  "status":"RESOLVED",    "nb":"NB-06",
-               "description":"Three duplicate case names in hypatiax_defi_benchmark_v3c.py — NB-06 live scan reports 0 duplicates; silently resolved.",
-               "action":"Verify hypatia_findings FIX-C1 entry in CI confirms live status propagates. Registry updated OPEN→RESOLVED."},
-              {"id":"FIX-C2", "severity":"MEDIUM",  "status":"OPEN",    "nb":"NB-06",
-               "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py.",
-               "action":"Replace with hybrid_system_v50_2 throughout."},
-              {"id":"FIX-C3", "severity":"MEDIUM",  "status":"RESOLVED","nb":"NB-06 / ci_runner_disclosure",
-               "description":"Feynman split-protocol corrected: PCA 40/60 run in exp2_pca_4060/; Gates A/B/C passed.",
-               "action":"Report corrected result from exp2_pca_4060/ in §10.7 or add explicit disclosure of random 80/20 baseline.",
-               "status":"RESOLVED"},
-          ]
-
-          # Merge: hypatia_inspector status takes precedence over static fallback
-          merged = []
-          for f in STATIC_FIXES:
-              live = hypatia_findings.get(f["id"])
-              if live:
-                  merged.append({**f, "status": live["status"]})
-              else:
-                  merged.append(f)
-          static_ids = {f["id"] for f in STATIC_FIXES}
-          for fid, f in hypatia_findings.items():
-              if fid not in static_ids:
-                  merged.append(f)
-
-          # Also scan live notebook outputs for any findings cells
-          nb_findings = {}
+          # ── Load live notebook outputs (ONLY source for findings) ────────────
+          nb_findings: dict[str, dict] = {}
           for nb_path in sorted(Path("notebooks").rglob("*.ipynb")):
               try:
                   nb = json.loads(nb_path.read_text(encoding="utf-8"))
               except Exception:
                   continue
               for cell in nb.get("cells", []):
-                  tags = cell.get("metadata", {}).get("tags", [])
+                  tags    = cell.get("metadata", {}).get("tags", [])
                   outputs = cell.get("outputs", [])
-                  is_findings_cell = "audit_findings" in tags
+                  is_findings = "audit_findings" in tags
                   for out in outputs:
-                      text = ""
-                      if out.get("output_type") in ("stream", "execute_result", "display_data"):
-                          raw = out.get("text", out.get("data", {}).get("text/plain", ""))
-                          text = "".join(raw) if isinstance(raw, list) else str(raw)
+                      raw = out.get("text") or out.get("data", {}).get("text/plain", "")
+                      text = "".join(raw) if isinstance(raw, list) else str(raw)
                       text = re.sub(r"^```json\s*", "", text.strip(), flags=re.MULTILINE)
-                      text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
-                      if is_findings_cell or (text.startswith("{") and '"findings"' in text):
+                      text = re.sub(r"```\s*$",      "", text.strip(), flags=re.MULTILINE)
+                      if is_findings or (text.startswith("{") and '"findings"' in text):
                           try:
                               data = json.loads(text)
-                              for f in data.get("findings", []):
-                                  fid = f.get("id", "")
-                                  if fid:
-                                      nb_findings[fid] = {
-                                          "id":          fid,
-                                          "severity":    f.get("severity", "UNKNOWN").upper(),
-                                          "status":      f.get("status", "OPEN").upper(),
-                                          "description": f.get("description", ""),
-                                          "action":      f.get("action", ""),
-                                          "nb":          f.get("nb", nb_path.stem),
-                                      }
+                              for f in (data if isinstance(data, list) else data.get("findings", [])):
+                                  fid = f.get("id") or f.get("fix_id", "")
+                                  if not fid:
+                                      continue
+                                  # Inspector can promote open→resolved, never resolved→open
+                                  status = f.get("status", "OPEN").upper()
+                                  if status != "RESOLVED" and fid in inspector_status:
+                                      status = inspector_status[fid]
+                                  nb_findings[fid] = {
+                                      "id":          fid,
+                                      "severity":    f.get("severity", "MEDIUM").upper(),
+                                      "status":      status,
+                                      "description": f.get("description", ""),
+                                      "action":      f.get("action", ""),
+                                      "nb":          f.get("nb", nb_path.stem),
+                                  }
                           except Exception:
                               pass
 
-          # Layer live notebook findings on top
-          merged_ids = {f["id"] for f in merged}
-          for fid, f in nb_findings.items():
-              if fid not in merged_ids:
-                  merged.append(f)
+          # ── Also pick up step8 write-back outputs from NB-05 ────────────────
+          for nb_path in sorted(Path("notebooks").rglob("NB-05*.ipynb")):
+              try:
+                  nb = json.loads(nb_path.read_text(encoding="utf-8"))
+              except Exception:
+                  continue
+              for cell in nb.get("cells", []):
+                  if cell.get("id", "") != "step8_writeback":
+                      continue
+                  for out in cell.get("outputs", []):
+                      raw = out.get("text", "")
+                      text = "".join(raw) if isinstance(raw, list) else str(raw)
+                      for line in text.splitlines():
+                          m = re.match(r"\s*\[(?:UPDATED|ADDED)\]\s+(FIX-\w+):\s*(\w+)\s*→\s*(\w+)", line)
+                          if m:
+                              fid, new_st = m.group(1), m.group(3).upper()
+                              if fid in nb_findings:
+                                  nb_findings[fid]["status"] = new_st
+                              else:
+                                  nb_findings[fid] = {
+                                      "id": fid, "severity": "MEDIUM",
+                                      "status": new_st, "description": "",
+                                      "action": "", "nb": "NB-05",
+                                  }
+
+          findings = list(nb_findings.values())
+          print(f"Live findings: {len(findings)} from notebooks "
+                f"({len(inspector_status)} inspector overrides applied)")
 
           summary = {
               "source":       "ci_paper_notebooks",
               "run_id":       run_id,
               "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              "findings":     merged,
+              "findings":     findings,
           }
           out = Path("notebooks/notebooks_audit_summary.json")
           out.parent.mkdir(parents=True, exist_ok=True)
           out.write_text(json.dumps(summary, indent=2))
-          print(f"Wrote {out} — {len(merged)} finding(s) "
-                f"({len(hypatia_findings)} from hypatia_inspector, "
-                f"{len(nb_findings)} from live notebooks)")
+          print(f"Wrote {out} — {len(findings)} live finding(s)")
           PYEOF
 
       - name: Upload notebooks audit summary
@@ -1460,5 +2191,25 @@ jobs:
           path: notebooks/notebooks_audit_summary.json
           if-no-files-found: warn
           retention-days: 30
+
+      # ── Dispatch ci_report.yml to regenerate the Pages report ───────────────
+      # Fires after every bundle-artifacts run (both workflow_run and
+      # workflow_dispatch paths) so the live Pages report always reflects the
+      # latest notebook findings without requiring a manual trigger.
+      - name: Dispatch ci_report (auto-regenerate report)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          RUN_ID:   ${{ github.run_id }}
+          BRANCH:   ${{ github.ref_name }}
+        run: |
+          gh workflow run ci_report.yml \
+            --repo "$REPO" \
+            --ref  "$BRANCH" \
+            --field summary_run_id="$RUN_ID" \
+            --field no_notebooks="false" \
+            2>/dev/null && echo "ci_report.yml dispatched (run $RUN_ID)" \
+            || echo "::warning::Failed to dispatch ci_report.yml — report may be stale"
 
   # Job 8 (report) lives in ci_report.yml.

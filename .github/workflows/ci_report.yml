@@ -3,16 +3,25 @@ run-name: "HypatiaX CI Report — run ${{ github.run_id }}"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Triggers
-#   • Dispatched by ci_pipeline.yml (run-ci-report job, slot 13 only) after
-#     ci_runner_disclosure passes Gates A/B/C.
-#   • Manual dispatch for re-runs / debugging.
-#
-# NOTE: workflow_run trigger removed — ci_pipeline.yml owns orchestration and
-# dispatches ci_report.yml explicitly. A concurrent workflow_run trigger would
-# cause a double-fire on slot 13 (mitigated but not eliminated by the pages
-# concurrency group). Manual dispatch remains for debugging purposes.
+#   • workflow_run on "HypatiaX - paper notebooks" completing (auto, primary).
+#     Fires after every notebook run so the Pages report always reflects the
+#     latest findings.  Double-fire with slot-13 dispatch is harmless because
+#     the `pages` concurrency group cancels the in-progress run on a new push.
+#   • workflow_dispatch: manual re-runs, apply_fixes_only path, and explicit
+#     dispatch from ci_pipeline.yml (slot 13).  Accepts summary_run_id to pin
+#     the exact notebook run whose artifacts to use.
 # ──────────────────────────────────────────────────────────────────────────────
 on:
+  # ── Auto: fires whenever ci_paper_notebooks completes (any conclusion) ───────
+  # This ensures the Pages report regenerates after every notebook run without
+  # requiring a manual trigger or an explicit dispatch from ci_pipeline.yml.
+  # workflow_run only fires when this file is on the default branch.
+  workflow_run:
+    workflows: ["HypatiaX - paper notebooks"]
+    types:
+      - completed
+
+  # ── Manual / dispatched by ci_pipeline.yml or apply-fixes path ───────────────
   workflow_dispatch:
     inputs:
       no_notebooks:
@@ -58,14 +67,19 @@ jobs:
   build-report:
     name: "Build Combined Audit Report"
     runs-on: ubuntu-latest
-    # Run even when the upstream workflow failed — we still want whatever
-    # notebooks completed to appear in the report.
+    # Run for all trigger types — workflow_run (auto), workflow_dispatch (manual/slot-13).
+    # Accept both success and failure upstream: a partially-failed notebook run still
+    # produces useful artifacts and the report should reflect whatever completed.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success' ||
-      github.event.workflow_run.conclusion == 'failure'
+      github.event_name == 'workflow_run'
 
     steps:
+
+      - name: Set run metadata
+        id: set-run-meta
+        run: |
+          echo "run_date=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
 
       # ── Resolve the source run ID ────────────────────────────────────────────
       # When triggered by workflow_run the ID is in the event payload.
@@ -77,18 +91,27 @@ jobs:
       - name: Resolve notebook run ID
         id: resolve-run
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO:     ${{ github.repository }}
-          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-          BRANCH:   ${{ github.ref_name }}
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          REPO:              ${{ github.repository }}
+          EVENT_RUN_ID:      ${{ github.event.workflow_run.id }}
+          DISPATCH_RUN_ID:   ${{ github.event.inputs.summary_run_id }}
+          BRANCH:            ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          if [[ -n "${EVENT_RUN_ID}" ]]; then
+          # Priority 1: explicit run ID passed via workflow_dispatch input
+          if [[ -n "${DISPATCH_RUN_ID}" ]]; then
+            echo "Using caller-supplied summary_run_id: ${DISPATCH_RUN_ID}"
+            echo "notebooks_run_id=${DISPATCH_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+          # Priority 2: triggered by workflow_run — use the triggering run's ID
+          elif [[ -n "${EVENT_RUN_ID}" ]]; then
             echo "Triggered by workflow_run — using event run ID: ${EVENT_RUN_ID}"
             echo "notebooks_run_id=${EVENT_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+          # Priority 3: manual dispatch without summary_run_id — query the API
           else
-            echo "Manual dispatch — querying API for most recent ci_paper_notebooks.yml run on branch ${BRANCH}"
+            echo "Manual dispatch (no run ID supplied) — querying API for most recent ci_paper_notebooks.yml run on branch ${BRANCH}"
             RESOLVED=$(gh run list \
               --repo "${REPO}" \
               --workflow ci_paper_notebooks.yml \
@@ -358,6 +381,28 @@ jobs:
           done
 
 
+
+      # ── Download merged registry from THIS run's bundle-artifacts ───────────
+      - name: Download merged registry artifact (from ci_paper_notebooks)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          NB_RUN:   ${{ steps.resolve-run.outputs.notebooks_run_id }}
+        run: |
+          mkdir -p /tmp/live_registry
+          if [[ -n "$NB_RUN" ]]; then
+            gh run download "$NB_RUN" \
+              --repo "$REPO" \
+              --name "issue-registry-merged-${NB_RUN}" \
+              --dir  "/tmp/live_registry" 2>/dev/null || true
+          fi
+          if [[ -f "/tmp/live_registry/issue_registry.json" ]]; then
+            echo "Live merged registry downloaded ($(wc -c < /tmp/live_registry/issue_registry.json) bytes)"
+          else
+            echo "::notice::Merged registry artifact not found — will use checked-out version"
+          fi
+
       - name: Checkout (for live issue_registry.json)
         # Checked out into _repo/ subdirectory so actions/checkout does NOT
         # wipe the working directory and destroy site/index.html that was
@@ -387,7 +432,7 @@ jobs:
               --dir /tmp/audit_summary 2>/dev/null || true
           fi
           # Also try the generic artifact name (bundle-artifacts uploads this)
-          gh run download "${UPSTREAM_RUN:-$SUM_RUN}" \
+          gh run download "$SUM_RUN" \
             --repo "$REPO" \
             --name "paper-audit-notebooks" \
             --dir /tmp/audit_summary 2>/dev/null || true
@@ -443,15 +488,19 @@ jobs:
           registry_path = Path(os.environ.get("REGISTRY_PATH", "_repo/scripts/patches/issue_registry.json"))
 
           # ── 1. Load issue_registry.json (primary source of truth) ────────────
+          # Priority: live merged artifact from THIS run > checked-out repo copy
+          LIVE_REGISTRY = Path("/tmp/live_registry/issue_registry.json")
+          effective_registry = LIVE_REGISTRY if LIVE_REGISTRY.exists() else registry_path
           registry_entries = []
-          if registry_path.exists():
+          if effective_registry.exists():
               try:
-                  registry_entries = json.loads(registry_path.read_text())
-                  print(f"Loaded {len(registry_entries)} entries from {registry_path}")
+                  registry_entries = json.loads(effective_registry.read_text())
+                  src_label = "LIVE (nb-merged)" if effective_registry == LIVE_REGISTRY else "repo checkout"
+                  print(f"Loaded {len(registry_entries)} entries from {effective_registry} [{src_label}]")
               except Exception as exc:
-                  print(f"WARNING: could not parse {registry_path}: {exc}")
+                  print(f"WARNING: could not parse {effective_registry}: {exc}")
           else:
-              print(f"WARNING: {registry_path} not found — will fall back to static list")
+              print(f"WARNING: no registry found at {registry_path} or {LIVE_REGISTRY} — falling back to static list")
 
           # Build a dict: id → registry entry (authoritative status)
           reg_by_id = {e["id"]: e for e in registry_entries}
@@ -504,69 +553,34 @@ jobs:
               except Exception:
                   pass
 
-          # ── 4. Static descriptions fallback (used when registry has no entry) ─
-          # ONLY descriptions/actions/nb/severity — statuses come from the registry
+          # ── 4. Static descriptions fallback (descriptions/actions/nb only — NO statuses) ─
+          # Statuses are NEVER set here; they come exclusively from the registry.
+          # This dict is only consulted when the registry entry has no description.
           STATIC_META = {
               "FIX-B1":  {"severity":"CRITICAL","nb":"NB-01",
-                           "description":"koza1994genetic cited but has no \\\\bibitem — would produce [?] in compiled PDF.",
-                           "action":"Add \\\\bibitem{koza1994genetic} or redirect \\\\cite calls to koza1992gp."},
+                           "description":"koza1994genetic cited but has no bibitem.",
+                           "action":"Add bibitem or redirect cite to koza1992gp."},
               "FIX-B2":  {"severity":"HIGH",    "nb":"NB-01",
-                           "description":"cranmer2023pysr and cranmer2023interpretable alias the same arXiv paper (2305.01582).",
-                           "action":"Remove cranmer2023interpretable bibitem; redirect all \\\\cite to cranmer2023pysr."},
+                           "description":"cranmer2023pysr and cranmer2023interpretable alias the same paper.",
+                           "action":"Remove cranmer2023interpretable; redirect all cite to cranmer2023pysr."},
               "FIX-B3":  {"severity":"HIGH",    "nb":"NB-01",
                            "description":"udrescu2020ai and udrescu2020aifeynman alias the same paper.",
                            "action":"Remove udrescu2020aifeynman; redirect all uses to udrescu2020ai."},
-              "FIX-XR1": {"severity":"MEDIUM",  "nb":"NB-02",
-                           "description":"sec:llm_limitations and sec:llm_domain reportedly both defined on Section 3.",
-                           "action":"Remove \\\\label{sec:llm_domain}; update \\\\ref call sites."},
-              "FIX-XR2": {"severity":"MEDIUM",  "nb":"NB-02",
-                           "description":"\\\\label{sec:r2_bugfix} reportedly inside \\\\item block — garbled \\\\ref output.",
-                           "action":"Move label to \\\\subsection heading."},
-              "FIX-XR3": {"severity":"MEDIUM",  "nb":"NB-02",
-                           "description":"Supp A reportedly references Section 7.3 for Proposition 1; correct is §7.4.",
-                           "action":"Change 7.3 → 7.4 in supp_routing_improvements.tex."},
-              "FIX-XR4": {"severity":"MEDIUM",  "nb":"NB-02",
-                           "description":"Supp A references filename jmlr_paper_main.tex; actual file is jmlr-hypatiax-paper-final.tex.",
-                           "action":"Update all filename strings in Supp A."},
-              "FIX-N1":  {"severity":"MEDIUM",  "nb":"NB-04",
-                           "description":"Spearman footnote reportedly says '71 cases'; table caption correctly says '70 tasks'.",
-                           "action":"Change '71 cases' → '70 tasks' in instability section body."},
-              "FIX-N2":  {"severity":"MEDIUM",  "nb":"NB-04",
-                           "description":"§8.3 heading reportedly reads 'Five-Layer Architecture Overview'.",
-                           "action":"Rename §8.3 to 'Five-Stage Routing Architecture Overview'."},
-              "FIX-N3":  {"severity":"MEDIUM",  "nb":"NB-04",
-                           "description":"Nguyen-12 seed=123 rerun results not committed — dual-threshold claim unverified.",
-                           "action":"Run exp_nguyen12_seed123 and commit _merged.json; add claim to paper_targets.json."},
               "FIX-F1":  {"severity":"MEDIUM",  "nb":"NB-05",
-                           "description":"hypatiaX_three_systems: \\\\fbox{} placeholder in §7.1 — final figure not committed.",
-                           "action":"Replace \\\\fbox placeholder with final PDF/PNG from Figures/architecture_figures/."},
+                           "description":"hypatiaX_three_systems MISSING — fbox placeholder in §7.1.",
+                           "action":"Replace fbox placeholder with final PDF/PNG."},
               "FIX-F2":  {"severity":"MEDIUM",  "nb":"NB-05",
                            "description":"fig18_r2_heatmap_improved.pdf missing from figures/.",
-                           "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
+                           "action":"Run generate_figures.py --experiment exp1 or ci_postprocess figures_deploy."},
               "FIX-F3":  {"severity":"MEDIUM",  "nb":"NB-05",
                            "description":"fig09_r2_heatmap_regimes.pdf missing from figures/.",
-                           "action":"Copy from Figures/figures-cosmetic-last/ → figures/."},
+                           "action":"Run generate_figures.py --experiment exp1 or ci_postprocess figures_deploy."},
               "FIX-F4":  {"severity":"MEDIUM",  "nb":"NB-05",
                            "description":"fig1_seed_sweep.pdf missing from figures/.",
-                           "action":"Copy from Figures/figures-portfolio-variance/ → figures/."},
-              "FIX-C1":  {"severity":"MEDIUM",  "nb":"NB-06",
-                           "description":"NB-06 flagged duplicate case names in hypatiax_defi_benchmark_v3c.py.",
-                           "action":"Rename duplicates (exact-equality check found zero; confirmed false positive)."},
-              "FIX-C2":  {"severity":"MEDIUM",  "nb":"NB-06",
-                           "description":"Four stale hybrid_system_v40 imports in run_comparative_suite_benchmark_v2.py.",
-                           "action":"Replace with hybrid_system_v50_2 throughout."},
+                           "action":"Run generate_figures.py --experiment exp1 or ci_postprocess figures_deploy."},
               "FIX-C3":  {"severity":"CRITICAL","nb":"NB-06",
-                           "description":"Feynman benchmark used random 80/20 split instead of PCA-directed 40/60.",
-                           "action":"Results in exp2_pca_4060/; Gates A/B/C passed. Update §10.7 or disclose baseline."},
-              "FIX-C4":  {"severity":"CRITICAL","nb":"NB-06",
-                           "description":"NB-06 Step 4 scan reported exposed API keys.",
-                           "action":"Confirmed false positive — no real keys present."},
-              "FIX-S1":  {"severity":"LOW",     "nb":"NB-03",
-                           "description":"Missing \\\\label on top-level \\\\section commands.",
-                           "action":"Add \\\\label{sec:<slug>} after each \\\\section{} heading."},
-              "FIX-S2":  {"severity":"LOW",     "nb":"NB-03",
-                           "description":"Missing \\\\label on \\\\subsection commands.",
-                           "action":"Add \\\\label{subsec:<slug>} after each \\\\subsection{} heading."},
+                           "description":"Feynman benchmark split-protocol mismatch.",
+                           "action":"Results in exp2_pca_4060/; Gates A/B/C passed."},
           }
 
           # ── Build the canonical findings list from the registry ───────────────
@@ -815,6 +829,9 @@ jobs:
 
 
       - name: Finalise report HTML
+        env:
+          RUN_DATE:     ${{ steps.set-run-meta.outputs.run_date }}
+          UPSTREAM_RUN: ${{ steps.resolve-run.outputs.notebooks_run_id }}
         run: |
           # ── Footer + close ───────────────────────────────────────────────────
           cat >> site/index.html << HTML
