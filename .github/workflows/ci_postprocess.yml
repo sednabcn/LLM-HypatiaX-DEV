@@ -1511,7 +1511,7 @@ jobs:
           # Source: noise_sweep_*.json in noise-sweep/noise-sweep (SUPPB_SUBDIR)
           # Verify the source data exists before running.
           NOISE_DATA=$(find "${OUT_BASE}/${SUPPB_SUBDIR}" -maxdepth 2 \
-            -name "noise_sweep_*.json" -o -name "noise*.json" 2>/dev/null | head -1 || true)
+            \( -name "noise_sweep_*.json" -o -name "noise*.json" \) 2>/dev/null | head -1 || true)
           if [[ -z "$NOISE_DATA" ]]; then
             echo "::error::No noise_sweep_*.json found in ${OUT_BASE}/${SUPPB_SUBDIR}"
             echo "  Run ci_runner.yml for suppB first, then re-run postprocess."
@@ -1542,7 +1542,7 @@ jobs:
           set -euo pipefail
           # Source: sc_n*__*.json in sample-complexity (SUPPB_SC_SUBDIR)
           SC_DATA=$(find "${OUT_BASE}/${SUPPB_SC_SUBDIR}" -maxdepth 2 \
-            -name "sc_n*.json" -o -name "*sample_complexity*.json" 2>/dev/null | head -1 || true)
+            \( -name "sc_n*.json" -o -name "*sample_complexity*.json" \) 2>/dev/null | head -1 || true)
           if [[ -z "$SC_DATA" ]]; then
             echo "::error::No sample-complexity JSONs found in ${OUT_BASE}/${SUPPB_SC_SUBDIR}"
             echo "  Run ci_runner.yml for suppB_sc first, then re-run postprocess."
