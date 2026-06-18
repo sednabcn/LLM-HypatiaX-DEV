@@ -36,8 +36,8 @@ five_systems         : figure_5systems_comparison      (all_domains_extrap_v4_*.
                                                         standalone_real_methods_*.json +
                                                         systems_2_3_2_data.json)
 Supp-B sweep         : fig1_r2_vs_noise … fig_comparative_table
-                       (noise_sweep_20260316_192711.json +
-                        sample_complexity_20260316_193447.json)
+                       (noise_sweep_*.json + sample_complexity_*.json
+                        — latest file matched by glob at runtime)
 
 Primary data source (cosmetic / RF02 / RF09):
     exp1_ablation_results.json
@@ -75,8 +75,8 @@ five_systems        figure_5systems_comparison                 all_domains_extra
                                                                standalone_real_methods_*.json +
                                                                systems_2_3_2_data.json
 Supp-B              fig1_r2_vs_noise … fig_comparative_table
-                                                               noise_sweep_20260316_192711.json +
-                                                               sample_complexity_20260316_193447.json
+                                                               noise_sweep_*.json (latest by glob) +
+                                                               sample_complexity_*.json (latest by glob)
 """
 
 import argparse, json, os, math, warnings, glob, sys
@@ -180,9 +180,23 @@ DATA_NGUYEN12      = _rpath("exp3_nguyen12_output.json")
 DATA_WALL_CLOCK    = _rpath("wall_clock_flags.json")
 DATA_PORTFOLIO_SW  = _rpath("portfolio_variance_seed_sweep.json")
 DATA_INSTAB_CSV    = _rpath("instability_extrapolation_v2.csv")
-# Supp-B sweep files
-DATA_NOISE_SWEEP   = _rpath("noise_sweep_20260316_192711.json")
-DATA_SAMPLE_SWEEP  = _rpath("sample_complexity_20260316_193447.json")
+# Supp-B sweep files — use glob to find latest matching file (filename contains
+# a datestamp that changes with each run; never hardcode a specific date).
+def _latest_glob(pattern):
+    """Return the lexicographically last file matching pattern, or None."""
+    matches = sorted(glob.glob(pattern))
+    return matches[-1] if matches else None
+
+_noise_glob  = _latest_glob(os.path.join(_RESULTS_DIR, "noise_sweep_*.json"))
+_sample_glob = _latest_glob(os.path.join(_RESULTS_DIR, "sample_complexity_*.json"))
+
+if _noise_glob is None:
+    print(f"  [SKIP] No noise_sweep_*.json found in {_RESULTS_DIR} — suppB noise figures will be skipped.")
+if _sample_glob is None:
+    print(f"  [SKIP] No sample_complexity_*.json found in {_RESULTS_DIR} — suppB sample figures will be skipped.")
+
+DATA_NOISE_SWEEP   = _noise_glob  or _rpath("noise_sweep_MISSING.json")
+DATA_SAMPLE_SWEEP  = _sample_glob or _rpath("sample_complexity_MISSING.json")
 # Five-systems (glob patterns resolved at runtime under _RESULTS_DIR)
 GLOB_DOMAINS_V4    = os.path.join(_RESULTS_DIR, "all_domains_extrap_v4_*.json")
 GLOB_STANDALONE    = os.path.join(_RESULTS_DIR, "standalone_real_methods_*.json")
@@ -1618,7 +1632,7 @@ if _dom_files or _solo_files or _sys232:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SUPP-B SWEEP FIGURES
-# Sources: noise_sweep_20260316_192711.json  +  sample_complexity_20260316_193447.json
+# Sources: noise_sweep_*.json  +  sample_complexity_*.json  (latest matched by glob)
 # ══════════════════════════════════════════════════════════════════════════════
 _noise_raw  = _load_json(DATA_NOISE_SWEEP,  DATA_NOISE_SWEEP)
 _sample_raw = _load_json(DATA_SAMPLE_SWEEP, DATA_SAMPLE_SWEEP)
