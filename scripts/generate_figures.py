@@ -79,7 +79,7 @@ Supp-B              fig1_r2_vs_noise … fig_comparative_table
                                                                sample_complexity_*.json (latest by glob)
 """
 
-import argparse, json, os, math, warnings, glob, sys
+import argparse, json, os, math, warnings, glob, sys, re
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -1669,20 +1669,86 @@ _noise_raw  = _load_json(DATA_NOISE_SWEEP,  DATA_NOISE_SWEEP)
 _sample_raw = _load_json(DATA_SAMPLE_SWEEP, DATA_SAMPLE_SWEEP)
 
 
-def _sweep_rows(raw):
-    """Normalise sweep JSON to a flat list of dicts."""
+def _sweep_rows(raw, key_field=None):
+    """Normalise sweep JSON to a flat list of row-dicts.
+
+    Tries, in order:
+      1. raw is already a bare list of row-dicts.
+      2. raw is a dict wrapping the list under a common key.
+      3. raw is a dict keyed BY the sweep parameter itself, e.g.
+         {"0.0": {...}, "0.1": {...}} or {"sigma_0.0": {...}}. Each value
+         becomes a row, with the numeric part of its key injected under
+         `key_field` ('sigma' for the noise sweep, 'n_samples' for the
+         sample-complexity sweep) so downstream _pivot_sweep(rows, x_key, ..)
+         still finds an x value per row. Only attempted when key_field is
+         given, since this shape can't be distinguished from an ordinary
+         dict otherwise.
+
+    Returns [] if nothing matches — the caller's [WARN] diagnostic then
+    reports raw's actual shape so a real fix can be added here.
+    """
     if raw is None:
         return []
     if isinstance(raw, list):
         return raw
-    for key in ("results", "data", "rows", "records"):
-        if key in raw:
+    if not isinstance(raw, dict):
+        return []
+
+    for key in ("results", "data", "rows", "records", "sweep_results",
+                "sweep", "noise_sweep", "sample_complexity",
+                "runs", "entries", "samples"):
+        if key in raw and isinstance(raw[key], list):
             return raw[key]
+
+    if key_field and raw and all(isinstance(v, dict) for v in raw.values()):
+        rows = []
+        for k, v in raw.items():
+            m = re.search(r"[-+]?\d*\.?\d+", str(k))
+            if m is None:
+                continue
+            row = dict(v)
+            row.setdefault(key_field, float(m.group()))
+            rows.append(row)
+        if rows:
+            return rows
+
     return []
 
 
-_noise_rows  = _sweep_rows(_noise_raw)
-_sample_rows = _sweep_rows(_sample_raw)
+_noise_rows  = _sweep_rows(_noise_raw,  key_field="sigma")
+_sample_rows = _sweep_rows(_sample_raw, key_field="n_samples")
+
+
+def _sweep_diag(raw, rows, label):
+    """Print a one-line diagnostic for sweep data that loaded but parsed to
+    zero rows. _load_json already reports a missing file; this covers the
+    other failure mode — file found and valid JSON, but _sweep_rows() found
+    none of the recognised shapes (a bare list; a dict wrapped under a
+    common key; or a dict keyed by the sweep parameter itself). Without
+    this, that case is silent: no figures get drawn and nothing in the log
+    says why.
+    """
+    if raw is None:
+        return  # absence already reported by _load_json's [SKIP] line
+    if rows:
+        print(f"  [INFO] {label}: {len(rows)} row(s) parsed.")
+        return
+    if isinstance(raw, dict):
+        shape = f"dict with top-level keys {list(raw.keys())[:10]}"
+    elif isinstance(raw, list):
+        shape = f"list of length {len(raw)}"
+    else:
+        shape = type(raw).__name__
+    print(f"  [WARN] {label}: file loaded but 0 rows parsed — unrecognised "
+          f"schema ({shape}). Tried: bare list; dict wrapped under a common "
+          f"key (results/data/rows/records/sweep_results/sweep/noise_sweep/"
+          f"sample_complexity/runs/entries/samples); dict keyed by the sweep "
+          f"parameter itself. None matched — suppB sweep figures from this "
+          f"source will be skipped.")
+
+
+_sweep_diag(_noise_raw,  _noise_rows,  "noise_sweep")
+_sweep_diag(_sample_raw, _sample_rows, "sample_complexity")
 
 
 def _pivot_sweep(rows, x_key, y_keys):
