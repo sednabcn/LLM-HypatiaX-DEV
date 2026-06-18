@@ -172,13 +172,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: "Auto-fix LaTeX issues before audit runs"
-        # Applies all scriptable fixes to jmlr-hypatiax-paper-final.tex so
+        # Applies all scriptable fixes to jmlrpaper_main.tex so
         # every downstream job and notebook sees a clean state.
         # Covers FIX-B1, FIX-N1, FIX-N2, FIX-S1, FIX-S2.
         # Commits the patched file back to the branch.
         run: |
           set -euo pipefail
-          TEX="jmlr-hypatiax-paper-final.tex"
+          TEX="jmlrpaper_main.tex"
           [[ ! -f "$TEX" ]] && { echo "::warning::$TEX not found — skipping LaTeX auto-fixes"; exit 0; }
 
           python3 - <<'PYFIX'
@@ -202,7 +202,7 @@ jobs:
                   print(f"  Written: {path}")
 
           # FIX-B1: koza1994genetic → koza1992gp
-          patch("jmlr-hypatiax-paper-final.tex", [
+          patch("jmlrpaper_main.tex", [
               ("FIX-B1 \\cite{koza1994genetic} → koza1992gp",
                r"\cite{koza1994genetic}", r"\cite{koza1992gp}"),
               ("FIX-B1 \\citep variant",
@@ -212,14 +212,14 @@ jobs:
           ])
 
           # FIX-N1: 71 cases → 70 tasks (Spearman footnote only)
-          patch("jmlr-hypatiax-paper-final.tex", [
+          patch("jmlrpaper_main.tex", [
               ("FIX-N1 71 cases → 70 tasks",
                "71 cases, with A-Symbolic cases",
                "70 tasks, with A-Symbolic cases"),
           ])
 
           # FIX-N2: Five-Layer → Five-Stage in §8.3
-          patch("jmlr-hypatiax-paper-final.tex", [
+          patch("jmlrpaper_main.tex", [
               ("FIX-N2 §8.3 heading Five-Layer → Five-Stage",
                r"\subsection{Five-Layer Architecture Overview}",
                r"\subsection{Five-Stage Architecture Overview}"),
@@ -247,7 +247,7 @@ jobs:
               "Benchmark Version History": "sec:version_history",
               "Corrected Runtime Claim": "sec:runtime_correction",
           }
-          p = Path("jmlr-hypatiax-paper-final.tex")
+          p = Path("jmlrpaper_main.tex")
           src = p.read_text(encoding="utf-8")
           changed = False
           for title, label in SECTION_LABELS.items():
@@ -265,7 +265,7 @@ jobs:
               p.write_text(src, encoding="utf-8")
 
           # FIX-XR2: move \label{sec:r2_bugfix} from inside \item to after \subsection
-          p = Path("jmlr-hypatiax-paper-final.tex")
+          p = Path("jmlrpaper_main.tex")
           if p.exists():
               src = p.read_text(encoding="utf-8")
               import re as _re
@@ -287,7 +287,7 @@ jobs:
                   print("  [FIX-XR2] \\label{sec:r2_bugfix} moved from \\item to \\subsection")
 
 
-          p = Path("jmlr-hypatiax-paper-final.tex")
+          p = Path("jmlrpaper_main.tex")
           if p.exists():
               src = p.read_text(encoding="utf-8")
               label = r'\label{sec:llm_domain}'
@@ -300,7 +300,7 @@ jobs:
                   print(f"  [FIX-XR1] Duplicate \\label{{sec:llm_domain}} removed")
 
           # FIX-S2: add \label after each \subsection{}
-          p = Path("jmlr-hypatiax-paper-final.tex")
+          p = Path("jmlrpaper_main.tex")
           src = p.read_text(encoding="utf-8")
 
           def make_slug(title):
@@ -321,26 +321,26 @@ jobs:
               p.write_text(new_src, encoding="utf-8")
               print(f"  [FIX-S2] subsection labels added")
           # FIX-XR3: Supplement A "Section 7.3" → "Section 7.4"
-          patch("jmlr-hypatiax-paper-final.tex", [
+          patch("jmlrpaper_main.tex", [
               ("FIX-XR3 Supplement A Section 7.3 → 7.4",
                "Section 7.3", "Section 7.4"),
           ])
 
           # FIX-XR4: wrong supplement filename reference → canonical filename
-          patch("jmlr-hypatiax-paper-final.tex", [
-              ("FIX-XR4 supplement filename jmlr_paper_main.tex → jmlr-hypatiax-paper-final.tex",
-               "jmlr_paper_main.tex", "jmlr-hypatiax-paper-final.tex"),
+          patch("jmlrpaper_main.tex", [
+              ("FIX-XR4 supplement filename jmlr_paper_main.tex → jmlrpaper_main.tex",
+               "jmlr_paper_main.tex", "jmlrpaper_main.tex"),
           ])
           PYFIX
 
           # Commit patched tex back to branch
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f jmlr-hypatiax-paper-final.tex
+          git add -f jmlrpaper_main.tex
           if git diff --cached --quiet; then
             echo "No LaTeX changes — nothing to commit."
           else
-            git commit -m "ci: auto-fix FIX-B1/N1/N2/S1/S2/XR1/XR2/XR3/XR4 in jmlr-hypatiax-paper-final.tex [skip ci]"
+            git commit -m "ci: auto-fix FIX-B1/N1/N2/S1/S2/XR1/XR2/XR3/XR4 in jmlrpaper_main.tex [skip ci]"
             git push origin HEAD:${{ github.ref_name }}
           fi
 
@@ -1876,7 +1876,7 @@ jobs:
         id: p2-figures
         run: |
           set -euo pipefail
-          TEX="jmlr-hypatiax-paper-final.tex"
+          TEX="jmlrpaper_main.tex"
           if [[ ! -f "$TEX" ]]; then
             echo "::warning::$TEX not found — skipping P2 figures gate"
             exit 0
@@ -1885,7 +1885,7 @@ jobs:
           import re, sys
           from pathlib import Path
 
-          tex = Path("jmlr-hypatiax-paper-final.tex").read_text(encoding="utf-8")
+          tex = Path("jmlrpaper_main.tex").read_text(encoding="utf-8")
           refs = re.findall(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', tex)
 
           figures_dir = Path("figures")
@@ -1913,7 +1913,7 @@ jobs:
         id: p2-tables
         run: |
           set -euo pipefail
-          TEX="jmlr-hypatiax-paper-final.tex"
+          TEX="jmlrpaper_main.tex"
           if [[ ! -f "$TEX" ]]; then
             echo "::warning::$TEX not found — skipping P2 tables gate"
             exit 0
@@ -1922,7 +1922,7 @@ jobs:
           import re, sys
           from pathlib import Path
 
-          tex = Path("jmlr-hypatiax-paper-final.tex").read_text(encoding="utf-8")
+          tex = Path("jmlrpaper_main.tex").read_text(encoding="utf-8")
           # Match \input{tables/...} and \include{tables/...}
           refs = re.findall(r'\\(?:input|include)\{(tables/[^}]+)\}', tex)
 
