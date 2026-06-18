@@ -93,6 +93,26 @@ RESULTS    = _ARGS.results_dir  or (_ROOT / "hypatiax" / "data" / "results")
 TABLES_DIR = _ARGS.output_dir   or (_ROOT / "paper" / "tables")
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
 
+# ── Normalise RESULTS against known suppB/suppB_sc canonical subdirs ──────────
+# load_sweep_json() and load_best() always append a hardcoded subdir such as
+# "comparison_results/feynman-tests/sample-complexity" to RESULTS.  When CI
+# passes the already-resolved canonical dir as --results-dir (e.g.
+# hypatiax/data/results/comparison_results/feynman-tests/sample-complexity),
+# RESULTS / subdir produces a self-nested doubled path that does not exist and
+# causes sc_data / noise_data to come back None, silently falling back to
+# placeholder tables.  Strip the suffix when present so the join always lands
+# at the correct location regardless of which --results-dir the caller supplies.
+_CANONICAL_SUFFIXES = (
+    "comparison_results/feynman-tests/sample-complexity",
+    "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "comparison_results/feynman-tests/noise-sweep",
+)
+for _suffix in _CANONICAL_SUFFIXES:
+    _parts = Path(_suffix).parts
+    if RESULTS.parts[-len(_parts):] == _parts:
+        RESULTS = RESULTS.parents[len(_parts) - 1]
+        break
+
 GENERATED = 0
 
 # ── JSON location map (run_all.sh → tables-generator) ────────────────────────
