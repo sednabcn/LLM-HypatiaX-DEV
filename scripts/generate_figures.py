@@ -1727,13 +1727,43 @@ def _sweep_diag(raw, rows, label):
     common key; or a dict keyed by the sweep parameter itself). Without
     this, that case is silent: no figures get drawn and nothing in the log
     says why.
+
+    Also specifically inspects a 'per_noise' / 'per_sample' / 'per_n' /
+    'per_sigma' style nested shape — {param_value: {method_name: {metric:
+    value, ...}, ...}, ...} — which _sweep_rows() deliberately does NOT
+    auto-flatten: picking the wrong method, or averaging across methods,
+    would silently produce a figure mixing different systems' numbers
+    together. Reporting the method and metric names here lets that be wired
+    up correctly instead of guessed.
     """
     if raw is None:
         return  # absence already reported by _load_json's [SKIP] line
     if rows:
         print(f"  [INFO] {label}: {len(rows)} row(s) parsed.")
         return
+
     if isinstance(raw, dict):
+        for nest_key in ("per_noise", "per_sample", "per_n", "per_sigma"):
+            inner = raw.get(nest_key)
+            if isinstance(inner, dict) and inner:
+                sample_param = next(iter(inner))
+                sample_methods = inner[sample_param]
+                if isinstance(sample_methods, dict) and sample_methods:
+                    method_names = list(sample_methods.keys())
+                    sample_method = method_names[0]
+                    sample_metrics = sample_methods[sample_method]
+                    metric_keys = (list(sample_metrics.keys())
+                                   if isinstance(sample_metrics, dict) else None)
+                    print(f"  [WARN] {label}: nested under '{nest_key}' — "
+                          f"{len(inner)} parameter level(s) (e.g. {sample_param!r}), "
+                          f"each with method(s) {method_names}"
+                          + (f"; metric keys for {sample_method!r}: {metric_keys}"
+                             if metric_keys is not None else "")
+                          + ". NOT auto-flattened — picking the wrong method, or "
+                            "averaging across methods, would silently mix different "
+                            "systems' numbers into one curve. Tell me which method "
+                            "name is the primary system to plot and this can be wired up.")
+                    return
         shape = f"dict with top-level keys {list(raw.keys())[:10]}"
     elif isinstance(raw, list):
         shape = f"list of length {len(raw)}"
