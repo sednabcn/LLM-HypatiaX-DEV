@@ -1715,8 +1715,63 @@ def _sweep_rows(raw, key_field=None):
     return []
 
 
-_noise_rows  = _sweep_rows(_noise_raw,  key_field="sigma")
-_sample_rows = _sweep_rows(_sample_raw, key_field="n_samples")
+def _flatten_per_n(raw, key_field):
+    """Flatten the {"per_n": {"<n>": {"method_summary": {method: {metrics}}}}}
+    shape (and its noise-sweep sibling, if ever produced the same way under
+    "per_sigma"/"per_noise") into a flat list of row-dicts, one row per
+    (n, method) pair, with the parameter value injected under key_field and
+    the method name preserved under "method".
+
+    This is the schema actually written by run_sample_complexity_benchmark.py
+    (confirmed 2026-06-18): top-level keys include "per_n", and each per_n[n]
+    is {"method_summary": {method_name: {median_r2, mean_r2, std_r2,
+    recovery_rate, n_success, n_total, threshold_used}}, "per_equation": {...}}.
+
+    _sweep_rows()'s generic per-parameter-dict fallback deliberately does NOT
+    auto-flatten this nested method_summary shape (see _sweep_diag's
+    per_n/per_sigma warning) because collapsing multiple methods into one
+    row would average different systems together. This flattens explicitly
+    instead, preserving "method" so downstream code can plot one line per
+    method rather than one averaged line.
+
+    Returns [] if raw isn't a dict, or has no per_n/per_sigma/per_noise key
+    with the expected nested shape — callers should fall back to the generic
+    _sweep_rows() in that case.
+    """
+    if not isinstance(raw, dict):
+        return []
+    for nest_key in ("per_n", "per_sigma", "per_noise"):
+        inner = raw.get(nest_key)
+        if not isinstance(inner, dict) or not inner:
+            continue
+        rows = []
+        for param_str, level in inner.items():
+            if not isinstance(level, dict):
+                continue
+            method_summary = level.get("method_summary")
+            if not isinstance(method_summary, dict):
+                continue
+            m = re.search(r"[-+]?\d*\.?\d+", str(param_str))
+            if m is None:
+                continue
+            param_val = float(m.group())
+            for method_name, metrics in method_summary.items():
+                if not isinstance(metrics, dict):
+                    continue
+                row = dict(metrics)
+                row[key_field] = param_val
+                row["method"] = method_name
+                rows.append(row)
+        if rows:
+            return rows
+    return []
+
+
+# Try the explicit per_n/method_summary flattening first (preserves method
+# names as separate rows); fall back to the generic _sweep_rows() shapes
+# (bare list / wrapped list / single-value-per-parameter dict) otherwise.
+_noise_rows  = _flatten_per_n(_noise_raw,  key_field="sigma")     or _sweep_rows(_noise_raw,  key_field="sigma")
+_sample_rows = _flatten_per_n(_sample_raw, key_field="n_samples") or _sweep_rows(_sample_raw, key_field="n_samples")
 
 
 def _sweep_diag(raw, rows, label):
@@ -1818,6 +1873,68 @@ def _line_fig(xs, ys, sems, xlabel, ylabel, title, color, outpath, hline=None):
     print(f"✓ {os.path.basename(outpath)}")
 
 
+_METHOD_COLORS = {}  # filled in lazily so any method name gets a stable color
+
+
+def _color_for_method(method, fallback_colors=(C_HYB, C_NN, C_LLM, C_OK)):
+    if method not in _METHOD_COLORS:
+        _METHOD_COLORS[method] = fallback_colors[len(_METHOD_COLORS) % len(fallback_colors)]
+    return _METHOD_COLORS[method]
+
+
+def _multi_method_line_fig(rows, x_key, y_key, xlabel, ylabel, title, outpath, hline=None):
+    """Like _line_fig, but draws one line per distinct 'method' value found
+    in rows, each in its own color with a legend entry. Rows lacking a
+    'method' field are pooled into a single unlabeled 'all' line so this
+    degrades gracefully for non-flattened sources.
+
+    Returns True if at least one line was drawn (and the figure was saved),
+    False if there was no usable data for y_key (so the caller can skip
+    saving an empty/blank figure and report it as such instead).
+    """
+    from collections import defaultdict
+    methods = sorted({r.get("method", "all") for r in rows})
+    any_drawn = False
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for method in methods:
+        buckets = defaultdict(list)
+        for r in rows:
+            if r.get("method", "all") != method:
+                continue
+            x_val = safe_float(r.get(x_key, float("nan")))
+            y_val = safe_float(r.get(y_key, float("nan")))
+            if math.isnan(x_val) or math.isnan(y_val):
+                continue
+            buckets[x_val].append(y_val)
+        if not buckets:
+            continue
+        xs   = np.array(sorted(buckets.keys()))
+        ys   = np.array([np.mean(buckets[x]) for x in xs])
+        sems = np.array([scipy_stats.sem(buckets[x]) if len(buckets[x]) > 1 else 0 for x in xs])
+        color = _color_for_method(method)
+        ax.plot(xs, ys, color=color, lw=2, marker="o", ms=5, label=method)
+        ax.fill_between(xs, ys - sems, ys + sems, color=color, alpha=0.18)
+        any_drawn = True
+
+    if not any_drawn:
+        plt.close(fig)
+        return False
+
+    if hline is not None:
+        ax.axhline(hline, color="gray", lw=1.2, ls=":", alpha=0.8, label=f"y = {hline}")
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=300)
+    plt.close(fig)
+    print(f"✓ {os.path.basename(outpath)}")
+    return True
+
+
 # ── Noise-sweep figures (fig1–fig3, fig7, fig9, fig10) ───────────────────────
 if _noise_rows:
     _np = _pivot_sweep(_noise_rows, "sigma",
@@ -1874,25 +1991,33 @@ if _noise_rows:
 
 
 # ── Sample-complexity figures (fig4–fig6, fig8) ───────────────────────────────
+# FIX SUPPB_SC-METHOD-SPLIT: _sample_rows is now (when sourced from the
+# per_n/method_summary schema) one row per (n, method) pair via
+# _flatten_per_n(), so each figure plots one line per method on shared axes
+# instead of averaging methods together. median_rmse / median_time are not
+# present in the confirmed schema (method_summary keys: median_r2, mean_r2,
+# std_r2, recovery_rate, n_success, n_total, threshold_used) — fig5/fig6 are
+# reported as [SKIP] rather than silently producing blank figures; if
+# RMSE/timing data exists elsewhere (e.g. nested in per_equation), wire that
+# in here once its shape is known.
 if _sample_rows:
-    _sp = _pivot_sweep(_sample_rows, "n_samples",
-                       ["median_r2", "median_rmse", "median_time", "recovery_rate"])
-
     _s_configs = [
         ("median_r2",      "fig4_r2_vs_n",      "Sample size (n)", "Median $R^2$",
-         "Median $R^2$ vs Sample Size", C_HYB, 0.99),
+         "Median $R^2$ vs Sample Size", 0.99),
         ("median_rmse",    "fig5_rmse_vs_n",     "Sample size (n)", "Median RMSE",
-         "Median RMSE vs Sample Size", C_NN, None),
+         "Median RMSE vs Sample Size", None),
         ("median_time",    "fig6_time_vs_n",     "Sample size (n)", "Median time (s)",
-         "Median Solve Time vs Sample Size", C_LLM, None),
+         "Median Solve Time vs Sample Size", None),
         ("recovery_rate",  "fig8_recovery_vs_n", "Sample size (n)", "Recovery rate",
-         "Recovery Rate vs Sample Size", C_OK, 0.8),
+         "Recovery Rate vs Sample Size", 0.8),
     ]
-    for y_key, stem, xl, yl, title, color, hline in _s_configs:
-        if y_key in _sp:
-            xs, ys, sems = _sp[y_key]
-            _line_fig(xs, ys, sems, xl, yl, title, color,
-                      os.path.join(_FIGURES_DIR, f"{stem}.png"), hline=hline)
+    for y_key, stem, xl, yl, title, hline in _s_configs:
+        _drawn = _multi_method_line_fig(
+            _sample_rows, "n_samples", y_key, xl, yl, title,
+            os.path.join(_FIGURES_DIR, f"{stem}.png"), hline=hline)
+        if not _drawn:
+            print(f"  [SKIP] {stem}.png: no rows had a usable '{y_key}' value "
+                  f"(not present in this source's method_summary schema).")
 
 
 # ── fig11_recovery_heatmap (σ × n) ────────────────────────────────────────────
