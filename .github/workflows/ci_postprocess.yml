@@ -554,6 +554,35 @@ jobs:
             --source      auto \
             || echo "::warning::suppA figure generation failed — suppA — source data may not yet exist. Run ci_runner.yml for suppA first."
 
+      # ── A10-debug: diagnose suppB noise-sweep source resolution ───────────────
+      # Temporary diagnostic for the noise_sweep_*.json "MISSING" fallback.
+      # Prints cwd, the resolved --results-dir, its literal contents, and the
+      # exact result of the same glob.glob() call generate_figures.py makes —
+      # so we can see definitively whether the canonical dated file is sitting
+      # flat in SUPPB_SUBDIR or nested one level differently than expected.
+      - name: "Debug: suppB noise-sweep source resolution"
+        if: env.EFFECTIVE_EXPERIMENT == 'suppB'
+        shell: bash
+        run: |
+          set -uo pipefail
+          RESOLVED="${OUT_BASE}/${SUPPB_SUBDIR}"
+          echo "::group::suppB source debug"
+          echo "cwd:               $(pwd)"
+          echo "OUT_BASE:          ${OUT_BASE}"
+          echo "SUPPB_SUBDIR:      ${SUPPB_SUBDIR}"
+          echo "resolved (rel):    ${RESOLVED}"
+          echo "resolved (abs):    $(realpath "${RESOLVED}" 2>/dev/null || echo '<does not exist>')"
+          echo
+          echo "--- flat contents of resolved --results-dir (what a non-recursive glob sees) ---"
+          ls -la "${RESOLVED}" 2>&1 || echo "::warning::directory does not exist: ${RESOLVED}"
+          echo
+          echo "--- exact matches for glob.glob('noise_sweep_*.json'), same call generate_figures.py makes ---"
+          python3 -c "import glob, os; pattern = os.path.join('${RESOLVED}', 'noise_sweep_*.json'); m = sorted(glob.glob(pattern)); print('pattern:', pattern); print('matches:', m if m else '(none)')"
+          echo
+          echo "--- full recursive *.json listing under comparison_results/feynman-tests/noise-sweep ---"
+          find "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep" -type f -name "*.json" 2>&1 | sort
+          echo "::endgroup::"
+
       # ── A10: suppB — noise-sweep figures (canonical source) ──────────────────
       # CRITICAL: reads from and writes to the CANONICAL suppB subdirectory.
       - name: "Figures: suppB — noise-sweep (canonical source)"

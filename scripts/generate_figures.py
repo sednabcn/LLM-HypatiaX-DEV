@@ -182,18 +182,49 @@ DATA_PORTFOLIO_SW  = _rpath("portfolio_variance_seed_sweep.json")
 DATA_INSTAB_CSV    = _rpath("instability_extrapolation_v2.csv")
 # Supp-B sweep files — use glob to find latest matching file (filename contains
 # a datestamp that changes with each run; never hardcode a specific date).
-def _latest_glob(pattern):
-    """Return the lexicographically last file matching pattern, or None."""
-    matches = sorted(glob.glob(pattern))
-    return matches[-1] if matches else None
+#
+# Searched RECURSIVELY under _RESULTS_DIR. The canonical noise-sweep / sample-
+# complexity JSON is not always written flat into _RESULTS_DIR — it has been
+# observed nested under noise_sweep_saved/, and even self-nested under a
+# duplicated comparison_results/... subtree (an earlier relative-path write
+# landed inside _RESULTS_DIR instead of at the repo root). generate_tables.py
+# already searches multiple candidate locations and combines shards; this
+# mirrors that robustness so figures don't silently fall back to MISSING from
+# the same --results-dir that tables succeeds from.
+#
+# Per-sig checkpoint shards (noise_sweep_sig0000_checkpoint.json, etc.) and the
+# MISSING placeholder itself are excluded so they're never picked up as "the"
+# consolidated file.
+_SWEEP_EXCLUDE_SUBSTRINGS = ("checkpoint", "_sig", "MISSING")
 
-_noise_glob  = _latest_glob(os.path.join(_RESULTS_DIR, "noise_sweep_*.json"))
-_sample_glob = _latest_glob(os.path.join(_RESULTS_DIR, "sample_complexity_*.json"))
+def _latest_glob(pattern, exclude_substrings=_SWEEP_EXCLUDE_SUBSTRINGS):
+    """Return the file with the lexicographically last *basename* among all
+    recursive matches of pattern, excluding any whose basename contains one of
+    exclude_substrings, or None if nothing matches.
+
+    Sorting by basename (not full path) keeps "latest by embedded timestamp"
+    correct even when candidate files live in different subdirectories whose
+    names would otherwise dominate a full-path sort.
+    """
+    matches = glob.glob(pattern, recursive=True)
+    if exclude_substrings:
+        matches = [m for m in matches
+                   if not any(s in os.path.basename(m) for s in exclude_substrings)]
+    if not matches:
+        return None
+    return sorted(matches, key=os.path.basename)[-1]
+
+_noise_glob  = _latest_glob(os.path.join(_RESULTS_DIR, "**", "noise_sweep_*.json"))
+_sample_glob = _latest_glob(os.path.join(_RESULTS_DIR, "**", "sample_complexity_*.json"))
 
 if _noise_glob is None:
-    print(f"  [SKIP] No noise_sweep_*.json found in {_RESULTS_DIR} — suppB noise figures will be skipped.")
+    print(f"  [SKIP] No noise_sweep_*.json found under {_RESULTS_DIR} (recursive) — suppB noise figures will be skipped.")
+else:
+    print(f"  [INFO] noise_sweep source: {_noise_glob}")
 if _sample_glob is None:
-    print(f"  [SKIP] No sample_complexity_*.json found in {_RESULTS_DIR} — suppB sample figures will be skipped.")
+    print(f"  [SKIP] No sample_complexity_*.json found under {_RESULTS_DIR} (recursive) — suppB sample figures will be skipped.")
+else:
+    print(f"  [INFO] sample_complexity source: {_sample_glob}")
 
 DATA_NOISE_SWEEP   = _noise_glob  or _rpath("noise_sweep_MISSING.json")
 DATA_SAMPLE_SWEEP  = _sample_glob or _rpath("sample_complexity_MISSING.json")
