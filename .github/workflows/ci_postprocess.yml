@@ -1510,8 +1510,10 @@ jobs:
           set -euo pipefail
           # Source: noise_sweep_*.json in noise-sweep/noise-sweep (SUPPB_SUBDIR)
           # Verify the source data exists before running.
-          NOISE_DATA=$(find "${OUT_BASE}/${SUPPB_SUBDIR}" -maxdepth 2 \
-            \( -name "noise_sweep_*.json" -o -name "noise*.json" \) 2>/dev/null | head -1 || true)
+          NOISE_DATA=$(find "${OUT_BASE}/${SUPPB_SUBDIR}" \
+            \( -name "noise_sweep_*.json" -o -name "noise*.json" \) \
+            ! -name "*checkpoint*" ! -name "*_sig*" ! -name "*MISSING*" \
+            2>/dev/null | sort | tail -1 || true)
           if [[ -z "$NOISE_DATA" ]]; then
             echo "::error::No noise_sweep_*.json found in ${OUT_BASE}/${SUPPB_SUBDIR}"
             echo "  Run ci_runner.yml for suppB first, then re-run postprocess."
@@ -1519,10 +1521,11 @@ jobs:
           fi
           echo "Found noise-sweep source data: ${NOISE_DATA}"
           # Produces: suppb_noiseless.tex, suppb_noise_sweep.tex
-          # --results-dir MUST point at the canonical suppB noise-sweep directory.
+          # --results-dir is OUT_BASE so generate_tables.py appends its own
+          # canonical subdir internally; passing SUPPB_SUBDIR caused a doubled path.
           python scripts/generate_tables.py \
             --experiment  suppB \
-            --results-dir "${OUT_BASE}/${SUPPB_SUBDIR}" \
+            --results-dir "${OUT_BASE}" \
             --output-dir  "${OUT_BASE}/${SUPPB_SUBDIR}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUPPB_SUBDIR}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
           if [[ $N_TABS -eq 0 ]]; then
@@ -1541,8 +1544,10 @@ jobs:
         run: |
           set -euo pipefail
           # Source: sc_n*__*.json in sample-complexity (SUPPB_SC_SUBDIR)
-          SC_DATA=$(find "${OUT_BASE}/${SUPPB_SC_SUBDIR}" -maxdepth 2 \
-            \( -name "sc_n*.json" -o -name "*sample_complexity*.json" \) 2>/dev/null | head -1 || true)
+          SC_DATA=$(find "${OUT_BASE}/${SUPPB_SC_SUBDIR}" \
+            \( -name "sc_n*.json" -o -name "*sample_complexity*.json" \) \
+            ! -name "*checkpoint*" ! -name "*_sig*" ! -name "*MISSING*" \
+            2>/dev/null | sort | tail -1 || true)
           if [[ -z "$SC_DATA" ]]; then
             echo "::error::No sample-complexity JSONs found in ${OUT_BASE}/${SUPPB_SC_SUBDIR}"
             echo "  Run ci_runner.yml for suppB_sc first, then re-run postprocess."
@@ -1550,9 +1555,11 @@ jobs:
           fi
           echo "Found sample-complexity source data: ${SC_DATA}"
           # Produces: suppb_sc_summary.tex, suppb_sc_by_sample.tex, suppb_sc_metrics.tex
+          # --results-dir is OUT_BASE so generate_tables.py appends its own
+          # canonical subdir internally; passing SUPPB_SC_SUBDIR caused a doubled path.
           python scripts/generate_tables.py \
             --experiment  suppB_sc \
-            --results-dir "${OUT_BASE}/${SUPPB_SC_SUBDIR}" \
+            --results-dir "${OUT_BASE}" \
             --output-dir  "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUPPB_SC_SUBDIR}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
           if [[ $N_TABS -eq 0 ]]; then
