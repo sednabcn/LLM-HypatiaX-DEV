@@ -973,6 +973,22 @@ jobs:
           print(f"Domain-list validation OK: {sorted(actual_set)}")
           PYEOF
 
+      # -- suppB_sc: smoke-test that run_sample_complexity_benchmark.py accepts
+      # the flags the runner will pass (--samples, --pysr-timeout, --method-timeout).
+      # This surfaces argparse "unrecognized arguments" errors BEFORE the 5h run
+      # starts, giving a clear failure message rather than "produced NO output files".
+      - name: Smoke-test suppB_sc script flag acceptance
+        if: ${{ needs.plan.outputs.exp_id == 'suppB_sc' }}
+        run: |
+          set -euo pipefail
+          SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
+          echo "=== suppB_sc flag smoke-test ==="
+          echo "  Testing: python3 ${SCRIPT} --help"
+          python3 "${SCRIPT}" --help > /dev/null
+          echo "  Testing: python3 ${SCRIPT} --samples 200 --pysr-timeout 1100 --method-timeout 900 --help"
+          python3 "${SCRIPT}" --samples 200 --pysr-timeout 1100 --method-timeout 900 --help > /dev/null
+          echo "  OK — all suppB_sc CLI flags accepted."
+
       - name: Run experiment tasks
         if: ${{ steps.resolve_ids.outputs.has_work == 'true' }}
         env:

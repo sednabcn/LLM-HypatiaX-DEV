@@ -36,6 +36,9 @@ Usage
     # Custom sample sizes
     python run_sample_complexity_benchmark.py --sample-sizes 50 100 200 500
 
+    # CI runner shorthand (adds 200 as an anchor into the default sweep)
+    python run_sample_complexity_benchmark.py --samples 200
+
     # Only methods 1 and 2 (fastest smoke-test)
     python run_sample_complexity_benchmark.py --methods 1 2
 
@@ -731,6 +734,30 @@ def main() -> None:
         ),
     )
 
+    # ── --samples / --n-samples / --n_samples (single-value shorthand) ────────
+    # The CI runner (run_all.sh suppB_sc step) passes  --samples ${FEYNMAN_SAMPLES}
+    # (a single integer, e.g. 200).  This script sweeps multiple sample sizes,
+    # so --samples is treated as an additional *anchor* n to ensure is included
+    # in the sweep; it does not replace --sample-sizes.
+    # Accepts all common flag variants to be robust to runner spelling differences.
+    # Falls back to the FEYNMAN_SAMPLES env var when the flag is not supplied.
+    _feynman_samples_env = os.environ.get("FEYNMAN_SAMPLES", "").strip()
+    _samples_default: int | None = int(_feynman_samples_env) if _feynman_samples_env.isdigit() else None
+    parser.add_argument(
+        "--samples", "--n-samples", "--n_samples",
+        type=int,
+        default=_samples_default,
+        dest="samples_anchor",
+        metavar="N",
+        help=(
+            "Single sample-count shorthand used by the CI runner "
+            "(e.g. --samples 200).  When supplied, this value is added to "
+            "--sample-sizes if not already present.  "
+            "Env fallback: FEYNMAN_SAMPLES.  "
+            "Does NOT replace --sample-sizes."
+        ),
+    )
+
     # ── Method selection ──────────────────────────────────────────────────────
     # ── Merge pre-existing results (e.g. n=200 already done) ─────────────────
     parser.add_argument(
@@ -835,6 +862,15 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # ── Merge --samples anchor into sample_sizes ──────────────────────────────
+    # When run_all.sh (or the CI runner) passes --samples ${FEYNMAN_SAMPLES}
+    # (e.g. --samples 200) the value is treated as an additional anchor n that
+    # must appear in the sweep.  It is inserted into args.sample_sizes if not
+    # already present, preserving whatever other sizes are configured.
+    if args.samples_anchor is not None and args.samples_anchor not in args.sample_sizes:
+        args.sample_sizes = sorted(set(args.sample_sizes) | {args.samples_anchor})
+        print(f"  [--samples] Added anchor n={args.samples_anchor} to sample_sizes: {args.sample_sizes}")
 
     # ── CI env integration ────────────────────────────────────────────────────
     # The CI suppB_sc dispatch sets three env vars before launching this script:
