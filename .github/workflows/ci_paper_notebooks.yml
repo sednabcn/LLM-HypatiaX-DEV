@@ -1088,9 +1088,9 @@ jobs:
       - name: Restore figures/ and tables/ for NB-05 SEARCH_DIRS
         run: |
           mkdir -p figures tables
-          # The artifact lands everything under notebooks/; lift subdirs to root.
-          if [[ -d notebooks/figures ]]; then
-            cp -r notebooks/figures/. figures/
+          # The artifact uploads figures/ at repo root (not notebooks/figures/).
+          # After download with path:. it lands directly at ./figures/ — just count it.
+          if [[ -d figures && -n "$(ls -A figures 2>/dev/null)" ]]; then
             echo "Restored $(ls figures/ | wc -l) file(s) to figures/"
           else
             echo "::warning::figures/ not present in notebooks-workspace artifact"
@@ -1100,12 +1100,14 @@ jobs:
           RUNNER_FIGS="hypatiax/data/results/figures"
           if [[ -d "${RUNNER_FIGS}" ]]; then
             find "${RUNNER_FIGS}" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) \
-              -exec cp -n {} figures/ \;
+              -exec cp --update=none {} figures/ \;
             echo "Merged runner figures from ${RUNNER_FIGS}/ ($(ls figures/ | wc -l) total)"
           fi
-          if [[ -d notebooks/tables ]]; then
-            cp -r notebooks/tables/. tables/
+          if [[ -d tables && -n "$(ls -A tables 2>/dev/null)" ]]; then
             echo "Restored $(ls tables/ | wc -l) file(s) to tables/"
+          elif [[ -d notebooks/tables ]]; then
+            cp -r notebooks/tables/. tables/
+            echo "Restored $(ls tables/ | wc -l) file(s) to tables/ (from notebooks/tables/)"
           fi
 
       - name: Execute NB-05
