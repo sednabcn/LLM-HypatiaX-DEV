@@ -2168,6 +2168,23 @@ run figures "Generate + deploy all paper figures (Groups A/B/C) -> \${RESULTS_DI
   _SUPPB_SC_RDIR='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
   _SUPPB_SC_FDIR=\"\${_SUPPB_SC_RDIR}/figures\"
 
+  # FIX FIGURES-B2 (suppB_sc cross-contamination): _SUPPB_FDIR / _SUPPB_SC_FDIR
+  # have been observed accumulating unrelated figures from OTHER experiment
+  # steps (instability fig_instability_*, fig_paper_*, hypatiax_instability_*,
+  # cosmetic fig07-fig22, stray REPO_AUDIT.md_shard*.pdf artifacts, and
+  # double-prefixed 'figures__*' duplicates) when --figures-dir was pointed
+  # here incorrectly on a prior run. Because the old sync loop below only
+  # checked '[ ! -f dest ]' before copying, such contamination would
+  # (a) permanently mask whether THIS run's suppB_sc figure generation
+  # actually produced anything (a silent [OK] from _gen_figs means exit-0,
+  # not non-empty output), and (b) leak unrelated files into
+  # \${RESULTS_DIR}/figures/ whenever their stem didn't collide with a
+  # Group A/C stem.
+  #
+  # Fix: wipe both dirs immediately before generating, so every run starts
+  # from a known-empty state and the only files present afterward are ones
+  # THIS run's _gen_figs call actually wrote.
+  rm -rf \"\${_SUPPB_FDIR}\" \"\${_SUPPB_SC_FDIR}\"
   mkdir -p \"\${_SUPPB_FDIR}\" \"\${_SUPPB_SC_FDIR}\"
 
   # B1: suppB noise-sweep figures (Supp B §noise: fig1_r2_vs_noise … fig11_recovery_heatmap)
@@ -2176,19 +2193,44 @@ run figures "Generate + deploy all paper figures (Groups A/B/C) -> \${RESULTS_DI
   # B2: suppB_sc sample-complexity figures (Supp B §sc)
   _gen_figs suppB_sc \"\${_SUPPB_SC_RDIR}\" \"\${_SUPPB_SC_FDIR}\"
 
+  # FIX FIGURES-B3: report what each dir actually contains right after
+  # generation, BEFORE syncing, so an empty/wrong output is visible at the
+  # exact step that produced it rather than discovered later from the
+  # aggregate required-figure count at the end of this step.
+  for _label_dir in \"suppB:\${_SUPPB_FDIR}\" \"suppB_sc:\${_SUPPB_SC_FDIR}\"; do
+    _label=\"\${_label_dir%%:*}\"; _dir=\"\${_label_dir#*:}\"
+    _n=\$(find \"\${_dir}\" -maxdepth 1 \\( -name 'fig*.png' -o -name 'fig*.pdf' \\) 2>/dev/null | wc -l)
+    echo \"  [B-inventory] \${_label}: \${_n} fig*.png/pdf file(s) in \${_dir}\" | tee -a '${RESULTS_DIR}'/figures_run.log
+    if [ \"\${_n}\" -eq 0 ]; then
+      echo \"    [WARN] \${_label} produced ZERO figures. Check the [SKIP]/[INFO] noise_sweep/sample_complexity\" | tee -a '${RESULTS_DIR}'/figures_run.log
+      echo \"           source lines above, and confirm the JSON schema matches what _sweep_rows expects\" | tee -a '${RESULTS_DIR}'/figures_run.log
+      echo \"           (a list of row-dicts with sigma/n_samples keys, not a dict keyed by equation name).\" | tee -a '${RESULTS_DIR}'/figures_run.log
+    fi
+  done
+
   # Sync suppB/suppB_sc figure stems to ${RESULTS_DIR}/figures/ (LaTeX target)
   # Stems needed per supp_benchmark_report.tex Table A.1:
   #   fig1_r2_vs_noise … fig11_recovery_heatmap (PDFs)
   #   fig_runtime_comparison.png  fig_comparative_table.png
-  echo '  [B] Syncing suppB/suppB_sc figures → ${RESULTS_DIR}/figures/'
+  #
+  # FIX FIGURES-B4: restrict the sync to the KNOWN suppB/suppB_sc stem list
+  # (same list used in the final required-figure check below) instead of a
+  # bare 'fig*' glob, so even if either source dir is contaminated again in
+  # the future, only legitimate suppB/suppB_sc stems can be copied into
+  # \${RESULTS_DIR}/figures/ — contamination stays contained to the source
+  # subdir and visible there via [B-inventory] above, instead of silently
+  # leaking into the LaTeX-facing directory.
+  _SUPPB_STEMS=\"fig1_r2_vs_noise fig2_rmse_vs_noise fig3_time_vs_noise fig4_r2_vs_n fig5_rmse_vs_n fig6_time_vs_n fig7_recovery_vs_noise fig8_recovery_vs_n fig9_minr2_vs_noise fig10_r2_boxplot_noise fig11_recovery_heatmap fig_runtime_comparison fig_comparative_table\"
+  echo '  [B] Syncing known suppB/suppB_sc figure stems → ${RESULTS_DIR}/figures/'
   for _src_fdir in \"\${_SUPPB_FDIR}\" \"\${_SUPPB_SC_FDIR}\"; do
     if [ -d \"\${_src_fdir}\" ]; then
-      find \"\${_src_fdir}\" -maxdepth 1 \
-        \\( -name 'fig*.pdf' -o -name 'fig*.png' \\) | while IFS= read -r _f; do
-        _dest='${RESULTS_DIR}/figures/'\"\\$(basename \"\${_f}\")\"
-        if [ ! -f \"\${_dest}\" ]; then
-          cp \"\${_f}\" \"\${_dest}\" && echo \"    copied: \\$(basename \"\${_f}\")\"
-        fi
+      for _stem in \${_SUPPB_STEMS}; do
+        for _ext in png pdf; do
+          _f=\"\${_src_fdir}/\${_stem}.\${_ext}\"
+          if [ -f \"\${_f}\" ]; then
+            cp \"\${_f}\" '${RESULTS_DIR}/figures/'\"\${_stem}.\${_ext}\" && echo \"    copied: \${_stem}.\${_ext}\"
+          fi
+        done
       done
     fi
   done

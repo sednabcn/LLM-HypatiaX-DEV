@@ -766,6 +766,55 @@ jobs:
           echo "Destination      : ${DEST}"
           echo ""
 
+          # ── Step 0: purge contamination from DEST before writing anything ──
+          # The only files that belong in figures/ are the 18 authoritative stems
+          # defined in NB-05 Step 0 FIGURES_INVENTORY.  Any other .pdf/.png that
+          # accumulated from old bare-glob copy_assets calls (fig_instability_*,
+          # figures__*, REPO_AUDIT.md_shard0_run*.pdf, Figures__*, hypatiax_*
+          # duplicates, etc.) is removed here so they can never pollute the LaTeX
+          # build or bloat commits.  git rm is used when the file is tracked; plain
+          # rm covers untracked files (e.g. freshly written but not yet staged).
+          # This runs unconditionally so every figures_deploy is idempotent.
+          ALLOWLIST_STEMS=(
+            "hypatiaX_three_systems"
+            "hypatiaX_algorithm1_routing_cascade_v2"
+            "fig18_r2_heatmap_improved"
+            "fig09_r2_heatmap_regimes"
+            "fig1_seed_sweep"
+            "fig1_r2_vs_noise"
+            "fig2_rmse_vs_noise"
+            "fig3_time_vs_noise"
+            "fig4_r2_vs_n"
+            "fig5_rmse_vs_n"
+            "fig6_time_vs_n"
+            "fig7_recovery_vs_noise"
+            "fig8_recovery_vs_n"
+            "fig9_minr2_vs_noise"
+            "fig10_r2_boxplot_noise"
+            "fig11_recovery_heatmap"
+            "fig_runtime_comparison"
+            "fig_comparative_table"
+          )
+          echo "=== Step 0: purge non-allowlist files from ${DEST}/ ==="
+          n_purged=0
+          while IFS= read -r f; do
+            base="${f%.*}"
+            base="$(basename "$base")"
+            allowed=false
+            for s in "${ALLOWLIST_STEMS[@]}"; do
+              [[ "$base" == "$s" ]] && allowed=true && break
+            done
+            if [[ "$allowed" == "false" ]]; then
+              echo "  [PURGE] $(basename "$f")"
+              # Remove from git index if tracked; fall back to plain rm
+              git rm -f --cached "$f" 2>/dev/null || true
+              rm -f "$f"
+              (( n_purged++ )) || true
+            fi
+          done < <(find "${DEST}" -maxdepth 1 -type f \( -name "*.pdf" -o -name "*.png" \) 2>/dev/null)
+          echo "Purge complete: ${n_purged} non-allowlist file(s) removed."
+          echo ""
+
           # ── Step 1: regenerate everything scripts/generate_figures.py CAN
           #            produce, so figures_deploy is self-contained and never
           #            depends on a stale 'supplementaries/...--v2' command.
