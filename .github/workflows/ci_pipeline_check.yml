@@ -1542,6 +1542,21 @@ jobs:
     if: always()
 
     steps:
+      # P7 FIX: Job 5 previously checked for logs/paper_audit_findings.json on
+      # disk without ever downloading it — the audit job (Job 4) only writes
+      # this file on its own runner and uploads it as a separate artifact
+      # named paper-audit-findings-${{ github.run_id }}. Without this download
+      # step, the "Audit FAIL/MISSING details" section always printed the
+      # "not found — upload artifact to see details" hint, even when the
+      # artifact existed and FAIL/MISSING claims were present.
+      - name: Download audit findings artifact
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true  # don't fail summary if audit job never ran / produced nothing
+        with:
+          name: paper-audit-findings-${{ github.run_id }}
+          path: logs
+
       - name: Print consolidated summary and set exit code
         env:
           ALL_PRESENT:  ${{ needs.check.outputs.all_present }}
@@ -1557,6 +1572,7 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import json, os, sys
+          from pathlib import Path
 
           def b(v): return v == "true" or v is True
 
@@ -1569,6 +1585,24 @@ jobs:
           n_fail   = int(os.environ.get("N_FAIL",    "0") or 0)
           n_miss   = int(os.environ.get("N_MISSING", "0") or 0)
 
+          completion = json.loads(os.environ.get("COMPLETION_REPORT") or "{}")
+          qreport    = json.loads(os.environ.get("QUALIFY_REPORT")    or "{}")
+
+          if audit:
+              gate4_status = "✅ ALL PASS"
+          elif n_fail == 0 and n_miss == 0 and n_pass == 0 and n_warn == 0:
+              gate4_status = "⚠  NO CLAIMS (paper_targets.json missing or empty)"
+          else:
+              gate4_status = f"❌ {n_fail} FAIL  {n_miss} MISSING  {n_warn} WARN"
+
+          # P8 FIX: `complete` (gate 2 — task completion) was computed and
+          # displayed but silently excluded from overall_ok, so a pipeline
+          # with experiments stuck at 0/N done tasks (e.g. suppB_sc) could
+          # still report "PIPELINE HEALTHY" as long as gates 1/3/4 passed.
+          # Gate 2 now participates in the final verdict like the other three.
+          overall_ok = present and complete and qual and (audit or (n_fail == 0 and n_miss == 0 and n_pass == 0))
+
+          # ---- console output -------------------------------------------------
           SEP = "=" * 70
           print(f"\n{SEP}")
           print(f"  HypatiaX Pipeline Health")
@@ -1578,31 +1612,24 @@ jobs:
           print(f"  {'1. Outputs committed':<30}  {'✅ ALL PRESENT' if present  else '❌ SOME MISSING'}")
           print(f"  {'2. Task completion':<30}  {'✅ ALL COMPLETE' if complete else '⚠  GAPS EXIST'}")
           print(f"  {'3. Qualification (7-dim)':<30}  {'✅ ALL QUALIFIED' if qual    else '❌ UNQUALIFIED EXPS'}")
-          if audit:
-              gate4_status = "✅ ALL PASS"
-          elif n_fail == 0 and n_miss == 0 and n_pass == 0 and n_warn == 0:
-              gate4_status = "⚠  NO CLAIMS (paper_targets.json missing or empty)"
-          else:
-              gate4_status = f"❌ {n_fail} FAIL  {n_miss} MISSING  {n_warn} WARN"
           print(f"  {'4. Paper audit':<30}  {gate4_status}")
           print(SEP)
 
           # Summarise incomplete experiments
-          completion = json.loads(os.environ.get("COMPLETION_REPORT") or "{}")
           if not complete:
               print("\n  Experiments with missing tasks:")
               for exp, info in completion.items():
                   if info.get("missing"):
                       n_m = len(info["missing"])
                       tot = info.get("total", "?")
-                      print(f"    {exp:<25} {info.get('done','?')}/{tot} done  "
-                            f"({n_m} task(s) missing)")
+                      done = info.get("done", "?")
+                      print(f"    {exp:<25} {done}/{tot} done  ({n_m} task(s) missing)")
                       shown = info["missing"][:5]
-                      print(f"      First missing: {shown}"
-                            + ("  ..." if n_m > 5 else ""))
+                      remaining = n_m - len(shown)
+                      tail = f"  ... and {remaining} more" if remaining > 0 else ""
+                      print(f"      First missing: {shown}{tail}")
 
           # Summarise unqualified experiments
-          qreport = json.loads(os.environ.get("QUALIFY_REPORT") or "{}")
           if not qual:
               print("\n  Unqualified experiments:")
               for exp, qr in qreport.items():
@@ -1610,9 +1637,9 @@ jobs:
                       fails = [c[0] for c in qr.get("checks", []) if not c[1]]
                       print(f"    {exp:<25} FAILED: {', '.join(fails)}")
 
-          # Print audit FAIL details inline (reads the artifact written by audit job)
-          from pathlib import Path as _P
-          audit_findings_path = _P("logs/paper_audit_findings.json")
+          # Print audit FAIL details inline (reads the artifact downloaded by the
+          # "Download audit findings artifact" step above)
+          audit_findings_path = Path("logs/paper_audit_findings.json")
           if not (n_fail == 0 and n_miss == 0):
               print("\n  Audit FAIL/MISSING details:")
               if audit_findings_path.exists():
@@ -1625,16 +1652,56 @@ jobs:
                   except Exception as e:
                       print(f"    (could not read audit findings: {e})")
               else:
-                  print(f"    (logs/paper_audit_findings.json not found — upload artifact to see details)")
+                  print(f"    (logs/paper_audit_findings.json not found — the audit job may not have run or produced no artifact)")
                   print(f"    Hint: check the 'Audit results against paper claims' step in Job 4 above.")
 
           print()
-          overall_ok = present and qual and (audit or (n_fail == 0 and n_miss == 0 and n_pass == 0))
           if overall_ok:
               print("  ✅  Overall: PIPELINE HEALTHY — ready for submission.")
           else:
               print("  ❌  Overall: PIPELINE NEEDS ATTENTION (see above).")
           print(SEP)
+
+          # ---- GitHub Step Summary (renders in the Actions run UI) ------------
+          step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if step_summary_path:
+              lines = []
+              lines.append("## HypatiaX Pipeline Health\n")
+              lines.append("| Gate | Status |")
+              lines.append("|---|---|")
+              lines.append(f"| 1. Outputs committed | {'✅ ALL PRESENT' if present else '❌ SOME MISSING'} |")
+              lines.append(f"| 2. Task completion | {'✅ ALL COMPLETE' if complete else '⚠️ GAPS EXIST'} |")
+              lines.append(f"| 3. Qualification (7-dim) | {'✅ ALL QUALIFIED' if qual else '❌ UNQUALIFIED EXPS'} |")
+              lines.append(f"| 4. Paper audit | {gate4_status} |")
+              lines.append("")
+              if not complete:
+                  incomplete = {e: i for e, i in completion.items() if i.get("missing")}
+                  if incomplete:
+                      lines.append("### Experiments with missing tasks\n")
+                      lines.append("| Experiment | Done/Total | Missing |")
+                      lines.append("|---|---|---|")
+                      for exp, info in incomplete.items():
+                          tot = info.get("total", "?")
+                          done = info.get("done", "?")
+                          n_m = len(info["missing"])
+                          lines.append(f"| {exp} | {done}/{tot} | {n_m} task(s) |")
+                      lines.append("")
+              if not qual:
+                  unqualified = {e: q for e, q in qreport.items() if not q.get("passed")}
+                  if unqualified:
+                      lines.append("### Unqualified experiments\n")
+                      for exp, qr in unqualified.items():
+                          fails = [c[0] for c in qr.get("checks", []) if not c[1]]
+                          lines.append(f"- **{exp}**: failed `{', '.join(fails)}`")
+                      lines.append("")
+              lines.append("---")
+              lines.append("**✅ PIPELINE HEALTHY — ready for submission.**" if overall_ok
+                            else "**❌ PIPELINE NEEDS ATTENTION — see gates above.**")
+              try:
+                  with open(step_summary_path, "a") as fh:
+                      fh.write("\n".join(lines) + "\n")
+              except Exception as e:
+                  print(f"  (could not write GITHUB_STEP_SUMMARY: {e})")
 
           sys.exit(0 if overall_ok else 1)
           PYEOF
