@@ -450,7 +450,9 @@ jobs:
               --branch "${BRANCH}" --status success --limit 1 \
               --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
             echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-            [[ -z "${RUN_ID}" ]] && echo "::warning::No successful ci_pipeline_check.yml run found."
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::warning::No successful ci_pipeline_check.yml run found."
+            fi
           fi
 
       - name: Reconstruct qualify_run.log from job log
@@ -520,7 +522,9 @@ jobs:
               --branch "${BRANCH}" --status success --limit 1 \
               --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
             echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-            [[ -z "${RUN_ID}" ]] && echo "::warning::No successful ci_paper_audit.yml run found."
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::warning::No successful ci_paper_audit.yml run found."
+            fi
           fi
 
       - name: Download C4 artefacts
@@ -583,7 +587,9 @@ jobs:
               --branch "${BRANCH}" --status success --limit 1 \
               --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
             echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-            [[ -z "${RUN_ID}" ]] && echo "::warning::No successful ci_paper_notebooks.yml run found."
+            if [[ -z "${RUN_ID}" ]]; then
+              echo "::warning::No successful ci_paper_notebooks.yml run found."
+            fi
           fi
 
       - name: Download C5 artefacts
