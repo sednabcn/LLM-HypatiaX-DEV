@@ -1943,6 +1943,28 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
+
+  # FIX-suppB_sc-DOUBLED-PATH: run_sample_complexity_benchmark.py does not
+  # honor OUT_BASE for its output directory — it writes relative to its CWD
+  # using the same 'comparison_results/feynman-tests/sample-complexity' suffix
+  # that OUT_BASE already encodes, producing a doubled path:
+  #   <cwd>/sample-complexity/comparison_results/feynman-tests/sample-complexity/
+  # instead of the canonical:
+  #   \${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity/
+  # Rescue any files found under the doubled location into the canonical one
+  # so CI's check/complete/qualify/commit steps can find them. This mirrors
+  # the suppB per-equation subdir rescue (STEP 10a above).
+  _SC_CANON='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
+  mkdir -p \"\${_SC_CANON}\"
+  _SC_DOUBLED=\$(find '${REPO_ROOT}' '${RESULTS_DIR}' '${EXPERIMENTS_DIR}' -maxdepth 10 -type d \\
+    -path '*/sample-complexity/comparison_results/feynman-tests/sample-complexity' 2>/dev/null | head -1)
+  if [[ -n \"\${_SC_DOUBLED}\" && \"\${_SC_DOUBLED}\" != \"\${_SC_CANON}\" && -d \"\${_SC_DOUBLED}\" ]]; then
+    echo \"  [FIX-suppB_sc-DOUBLED-PATH] rescuing outputs from \${_SC_DOUBLED} -> \${_SC_CANON}\"
+    find \"\${_SC_DOUBLED}\" -maxdepth 1 -type f \\( -name 'sample_complexity_*.json' -o -name 'sample_complexity_*.csv' \\) \\
+      -exec mv -v {} \"\${_SC_CANON}/\" \\; 2>/dev/null || true
+  else
+    echo \"  [suppB_sc] no doubled-path directory found — assuming OUT_BASE was honored correctly.\"
+  fi
 "
 
 # ── STEP 11: tables ──────────────────────────────────────────────────────────

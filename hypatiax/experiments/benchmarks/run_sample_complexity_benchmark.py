@@ -189,6 +189,41 @@ def _load_results(path: Path) -> dict:
 
 
 # ============================================================================
+# SHARD DISAMBIGUATION
+# ============================================================================
+
+def _shard_tag() -> str:
+    """
+    Build a filesystem-safe tag identifying *this* CI shard.
+
+    The suppB_sc matrix dispatches one job per (n, domain-subset) pair —
+    task IDs look like "sc_n200__feynman_biology" — so several shards with
+    the SAME n (different domains) run concurrently.  Without this tag,
+    every one of those shards calls _build_runner_cmd() with the identical
+    "--checkpoint-name sample_complexity_n0200_checkpoint", so they all read
+    and write the *same* checkpoint file on the *same* shared _RESULTS_DIR.
+    Whichever process touches it last truncates/restarts it for everyone
+    else, which is exactly what produces "checkpoint present (1) but 0
+    tasks completed" — the other shards' progress was wiped out mid-run.
+
+    Falls back to TASK_ID/TASK_IDS, then to "shared" when run locally
+    outside CI (no collision risk there since nothing else is racing it).
+    """
+    domain_filter = os.environ.get("DOMAIN_FILTER", "").strip()
+    if domain_filter:
+        tag = "-".join(d.replace("feynman_", "") for d in domain_filter.split())
+    else:
+        tag = (
+            os.environ.get("TASK_ID", "").strip()
+            or os.environ.get("TASK_IDS", "").strip()
+            or "shared"
+        )
+    # Filesystem-safe and length-bounded.
+    tag = "".join(c if c.isalnum() or c in "-_" else "-" for c in tag)
+    return tag[:40] or "shared"
+
+
+# ============================================================================
 # SUBPROCESS BUILDER
 # ============================================================================
 
@@ -240,8 +275,11 @@ def _build_runner_cmd(
     if getattr(args, "no_llm_cache", False):
         cmd.append("--no-llm-cache")
 
-    # ── Give each n its own checkpoint to prevent run collisions ─────────────
-    cmd += ["--checkpoint-name", f"sample_complexity_n{n_samples:04d}_checkpoint"]
+    # ── Give each (n, shard) its own checkpoint to prevent run collisions ────
+    # Tagging by n alone is not enough: the suppB_sc matrix runs several
+    # shards with the SAME n in parallel (split by DOMAIN_FILTER), and they
+    # would otherwise all fight over one checkpoint file. See _shard_tag().
+    cmd += ["--checkpoint-name", f"sample_complexity_n{n_samples:04d}_{_shard_tag()}_checkpoint"]
 
     # Direct the inner runner to write protocol_core_*.json into the same
     # directory that _find_result_written_after() globs — without this the
