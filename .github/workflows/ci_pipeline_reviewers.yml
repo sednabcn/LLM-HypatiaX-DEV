@@ -1,26 +1,31 @@
 # ==============================================================================
-#  ci_pipeline_reviewers.yml  —  HypatiaX · JMLR reviewer pipeline
+#  ci_pipeline_reviewers.yml  —  HypatiaX · JMLR reviewer pipeline (STANDALONE)
 #
 #  PURPOSE
 #  -------
-#  A read-only, evidence-only pipeline for JMLR reviewers.
-#  It does NOT re-run experiments, workers, or self-dispatch.
-#  It assembles the pre-computed artefacts that were already produced
-#  by the full pipeline and presents them as a single, labelled run.
+#  Lives in a PUBLIC repository that reviewers have access to. The actual
+#  experiments, notebooks, and audits run in a separate PRIVATE repository;
+#  reviewers are never given access to that repo, so this workflow has
+#  NO secrets, NO PAT, and NO Actions-API access into it.
+#
+#  Instead, it consumes the single self-contained zip produced by
+#  ci_export_reviewer_bundle.yml (which runs in the private repo and attaches
+#  the zip to a GitHub Release or plain artefact). You give this workflow a
+#  public URL to that zip — that's the only required input.
 #
 #  Stages exposed to reviewers (from hypatia_pipeline_reviewer_map.svg):
 #
-#    R1 · collect-artefacts   — downloads _report.md + _analysis.json (C1 outputs)
-#                               and figures/*.pdf + tables/*.tex (C2 outputs)
-#    R2 · checkpoint-summary  — reconstructs qualify_run.log from C3's
-#                               "Qualify all experiments" job log via the
-#                               Actions API (that job never writes/uploads a
-#                               qualify_run.log file itself — see FIX comment
-#                               on the checkpoint-summary job below)
+#    R1 · collect-artefacts   — unpacks bundle/c1_c2 (_report.md + _analysis.json
+#                               + figures/*.pdf + tables/*.tex) and bundle/scripts
+#                               (the generator scripts themselves, for provenance)
+#    R2 · checkpoint-summary  — reads bundle/c3_checkpoint/qualify_run.log,
+#                               pre-reconstructed at export time by
+#                               ci_export_reviewer_bundle.yml
 #                               (reproducibility completeness — include)
-#    R3 · paper-audit-summary — surfaces paper_audit_findings.json from C4
+#    R3 · paper-audit-summary — reads bundle/c4_audit/paper_audit_findings.json
 #                               (numerical claim verification — include)
-#    R4 · notebooks-summary   — surfaces executed NB-01…NB-06 notebooks from C5
+#    R4 · notebooks-summary   — reads bundle/c5_notebooks (executed NB-01…NB-06
+#                               + notebooks_audit_summary.json)
 #                               (citation/consistency audit — include)
 #    R5 · final-summary       — prints a consolidated reviewer health table
 #                               and sets the workflow conclusion
@@ -30,275 +35,197 @@
 #    C5b ci_report.yml          — Pages deploy; reviewers use the published URL
 #    C6  self-dispatch/next-slot — pure orchestration; no scientific content
 #    diagnose job               — internal idempotency guard only
+#    dispatch-checkpoint        — was needed to trigger ci_pipeline_check.yml
+#                                  live; the bundle already ships a pre-baked
+#                                  qualify_run.log, so reviewers never need to
+#                                  dispatch anything in the private repo
 #
 #  HOW TO TRIGGER
 #  --------------
 #  workflow_dispatch (manual only — reviewers run this once per review cycle):
-#    pages_url  : deployed GitHub Pages URL produced by ci_report.yml (optional)
-#    audit_run  : run_id of the ci_paper_audit.yml run whose artefacts to surface
-#    notebooks_run : run_id of the ci_paper_notebooks.yml run to surface
-#    checkpoint_run: run_id of the ci_pipeline_check.yml run to surface
-#
-#  If run IDs are left blank the workflow attempts to download artefacts from
-#  the most recent successful run of each upstream workflow on the same branch.
+#    bundle_url : REQUIRED. Public, unauthenticated URL to the reviewer bundle
+#                 zip produced by ci_export_reviewer_bundle.yml — typically a
+#                 GitHub Release asset URL, e.g.
+#                 https://github.com/<org>/<private-repo>/releases/download/
+#                 reviewer-bundle-v1/hypatia-reviewer-bundle-<run>.zip
+#                 The asset must be on a PUBLIC release (or any plain HTTPS
+#                 host) — this workflow never authenticates to fetch it.
+#    pages_url  : optional. Deployed GitHub Pages URL produced by ci_report.yml
+#                 in the private repo, printed in the final summary if given.
 #
 #  PERMISSIONS
 #  -----------
-#  contents: read   — no writes; reviewer pipeline never commits anything
-#  actions:  write  — needed to dispatch ci_pipeline_check.yml (dispatch-checkpoint job)
-#                     and to download Actions artefacts / read job logs via `gh run view`
+#  contents: read   — default token permissions; no writes, nothing dispatched.
+#  No `actions:` permission, no PAT, no GITHUB secrets of any kind are used
+#  anywhere in this workflow — it only ever performs a plain HTTPS GET against
+#  bundle_url and reads files out of the resulting zip.
 #
 #  TIMEOUT CONTRACT
 #  ----------------
-#  collect-artefacts   :  10 min  (artefact download + echo)
-#  dispatch-checkpoint :   5 min  (gh workflow run + poll until run appears)
-#  checkpoint-summary  :   5 min  (log read + echo)
-#  paper-audit-summary :   5 min  (JSON read + echo)
-#  notebooks-summary   :   5 min  (notebook list + findings echo)
-#  final-summary       :   5 min  (table print; no external calls)
+#  fetch-bundle         : 10 min  (download + unzip + manifest validation)
+#  collect-artefacts    :  5 min  (re-stage c1_c2 + scripts from the bundle)
+#  checkpoint-summary   :  5 min  (read qualify_run.log)
+#  paper-audit-summary  :  5 min  (JSON read + echo)
+#  notebooks-summary    :  5 min  (notebook list + findings echo)
+#  final-summary        :  5 min  (table print; no external calls)
 # ==============================================================================
 
-name: "HypatiaX - reviewer pipeline"
+name: "HypatiaX - reviewer pipeline (standalone)"
 run-name: >-
-  HypatiaX reviewer pipeline — ${{ github.ref_name }} — run ${{ github.run_id }}
+  HypatiaX reviewer pipeline — standalone — run ${{ github.run_id }}
 
 on:
   workflow_dispatch:
     inputs:
+      bundle_url:
+        description: >
+          REQUIRED. Public URL to the reviewer bundle zip produced by
+          ci_export_reviewer_bundle.yml in the private repo (GitHub Release
+          asset URL, or any other direct HTTPS link). No authentication is
+          ever sent with this request.
+        required: true
+        default: ""
+
       pages_url:
         description: >
-          GitHub Pages URL produced by ci_report.yml (e.g.
-          https://<org>.github.io/<repo>/).
-          Leave blank to skip the Pages link step.
-        required: false
-        default: ""
-
-      audit_run_id:
-        description: >
-          Run ID of the ci_paper_audit.yml run whose artefacts to surface
-          (paper-audit-findings, verify-report, figures-tables-report).
-          Leave blank to use the most recent successful run on this branch.
-        required: false
-        default: ""
-
-      notebooks_run_id:
-        description: >
-          Run ID of the ci_paper_notebooks.yml run to surface
-          (notebooks-audit-summary, NB-01…NB-06 executed notebooks).
-          Leave blank to use the most recent successful run on this branch.
-        required: false
-        default: ""
-
-      checkpoint_run_id:
-        description: >
-          Run ID of the ci_pipeline_check.yml run to surface (qualify_run.log).
-          Leave blank to use the most recent successful run on this branch.
+          GitHub Pages URL produced by ci_report.yml in the private repo
+          (e.g. https://<org>.github.io/<repo>/). Leave blank to skip.
         required: false
         default: ""
 
 permissions:
   contents: read
-  actions:  write   # write required for gh workflow run (dispatch-checkpoint job)
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  PYTHON_VERSION: "3.12"
-  OUT_BASE: "hypatiax/data/results"
-
-# ==============================================================================
-#  Helper note: all jobs use `gh run download` to pull pre-computed artefacts.
-#  When a run_id input is supplied it is passed directly; when blank, the gh CLI
-#  resolves the most recent successful run of the named workflow on this branch.
-# ==============================================================================
+  BUNDLE_DIR: reviewer_bundle
 
 jobs:
 
   # ============================================================================
-  #  JOB R1 — collect-artefacts
+  #  JOB fetch-bundle
   #
-  #  Downloads the C1 (analysis) and C2 (postprocess) output artefacts and
-  #  re-uploads them under a single reviewer-scoped artefact so that reviewers
-  #  have one download target.
-  #
-  #  C1 outputs  (_report.md, _analysis.json) are committed to the repo under
-  #  hypatiax/data/results/<subdir>/ — they are read directly from the checkout.
-  #  C2 outputs  (figures/*.pdf, tables/*.tex) are likewise committed and read
-  #  from the checkout rather than from Actions artefacts.
-  #
-  #  Partial exposure (per reviewer map): share artefact files, not the workflow.
+  #  Downloads bundle_url with a plain, unauthenticated HTTPS GET, unzips it,
+  #  validates manifest.json, and re-uploads the extracted tree as a single
+  #  Actions artefact so every downstream job can pull it without re-fetching.
   # ============================================================================
-  collect-artefacts:
-    name: "R1 · Collect C1+C2 output artefacts"
+  fetch-bundle:
+    name: "Fetch + validate reviewer bundle"
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    outputs:
+      bundle_ok: ${{ steps.validate.outputs.bundle_ok }}
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+      - name: Validate bundle_url was supplied
+        run: |
+          if [[ -z "${{ github.event.inputs.bundle_url }}" ]]; then
+            echo "::error::bundle_url is required. Supply the public Release asset URL produced by ci_export_reviewer_bundle.yml."
+            exit 1
+          fi
+
+      - name: Download bundle (no auth)
+        run: |
+          set -euo pipefail
+          echo "Downloading: ${{ github.event.inputs.bundle_url }}"
+          curl -fsSL --retry 3 --retry-delay 5 \
+            -o bundle.zip \
+            "${{ github.event.inputs.bundle_url }}"
+          echo "Downloaded: $(du -h bundle.zip | cut -f1)"
+
+      - name: Unzip bundle
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}"
+          unzip -q bundle.zip -d "${BUNDLE_DIR}"
+          echo "Extracted tree:"
+          find "${BUNDLE_DIR}" -maxdepth 2 -type d | sort
+
+      - name: Validate manifest.json
+        id: validate
+        run: |
+          set -euo pipefail
+          MANIFEST="${BUNDLE_DIR}/manifest.json"
+          if [[ ! -f "${MANIFEST}" ]]; then
+            echo "::error::manifest.json not found in bundle — this does not look like a hypatia-reviewer-bundle zip."
+            echo "bundle_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          python3 - "${MANIFEST}" <<'PYEOF'
+          import json, sys
+          from pathlib import Path
+          m = json.loads(Path(sys.argv[1]).read_text())
+          print("=== Bundle manifest ===")
+          print(f"  schema   : {m.get('schema','?')}")
+          print(f"  repo     : {m.get('repo','?')}")
+          print(f"  branch   : {m.get('branch','?')}")
+          print(f"  sha      : {m.get('sha','?')}")
+          print(f"  exported : {m.get('exported_at','?')}")
+          print(f"  file counts: {m.get('file_counts', {})}")
+          PYEOF
+          echo "bundle_ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload extracted bundle for downstream jobs
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
         with:
-          fetch-depth: 1
+          name:              bundle-extracted-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/
+          if-no-files-found: error
+          retention-days:    7
 
-      # ── C1: statistical analysis outputs ─────────────────────────────────────
-      - name: Collect C1 artefacts (_report.md, _analysis.json)
+
+  # ============================================================================
+  #  JOB R1 — collect-artefacts
+  #
+  #  Re-stages bundle/c1_c2 (analysis, figures, tables) and bundle/scripts
+  #  (the generator scripts themselves) under a single reviewer-scoped
+  #  artefact so reviewers have one download target, same as before — only
+  #  the source has changed (bundle instead of a live cross-repo API call).
+  # ============================================================================
+  collect-artefacts:
+    name: "R1 · Collect C1+C2 output artefacts + generator scripts"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [fetch-bundle]
+
+    steps:
+      - name: Download extracted bundle
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: bundle-extracted-${{ github.run_id }}
+          path: ${{ env.BUNDLE_DIR }}/
+
+      - name: Stage C1+C2 artefacts + scripts + report for upload
         run: |
           set -euo pipefail
-          echo "=== C1 Analysis outputs ==="
-          echo "Scanning ${OUT_BASE} for _report.md and _analysis.json files..."
-          REPORT_COUNT=0
-          ANALYSIS_COUNT=0
-          while IFS= read -r -d '' f; do
-            echo "  FOUND: $f"
-            REPORT_COUNT=$((REPORT_COUNT+1))
-          done < <(find "${OUT_BASE}" -name "_report.md" -type f -print0 2>/dev/null)
-          while IFS= read -r -d '' f; do
-            echo "  FOUND: $f"
-            ANALYSIS_COUNT=$((ANALYSIS_COUNT+1))
-          done < <(find "${OUT_BASE}" -name "_analysis.json" -type f -print0 2>/dev/null)
-          echo ""
-          echo "  _report.md    : ${REPORT_COUNT} file(s)"
-          echo "  _analysis.json: ${ANALYSIS_COUNT} file(s)"
-          if [[ "${REPORT_COUNT}" -eq 0 && "${ANALYSIS_COUNT}" -eq 0 ]]; then
-            echo "::warning::No C1 artefacts found — ci_analysis.yml may not have run yet."
+          mkdir -p reviewer_artefacts
+          [[ -d "${BUNDLE_DIR}/c1_c2"   ]] && cp -r "${BUNDLE_DIR}/c1_c2"   reviewer_artefacts/analysis_figures_tables
+          [[ -d "${BUNDLE_DIR}/scripts" ]] && cp -r "${BUNDLE_DIR}/scripts" reviewer_artefacts/scripts
+          [[ -d "${BUNDLE_DIR}/report"  ]] && cp -r "${BUNDLE_DIR}/report"  reviewer_artefacts/report
+
+          echo "=== C1+C2 + scripts + report staging summary ==="
+          echo "  analysis : $(find reviewer_artefacts/analysis_figures_tables/analysis -type f 2>/dev/null | wc -l) file(s)"
+          echo "  figures  : $(find reviewer_artefacts/analysis_figures_tables/figures  -type f 2>/dev/null | wc -l) file(s)"
+          echo "  tables   : $(find reviewer_artefacts/analysis_figures_tables/tables   -type f 2>/dev/null | wc -l) file(s)"
+          echo "  scripts  : $(find reviewer_artefacts/scripts -type f 2>/dev/null | wc -l) file(s)"
+          if [[ -f reviewer_artefacts/report/hypatia_clean_report.html ]]; then
+            echo "  report   : hypatia_clean_report.html ($(wc -c < reviewer_artefacts/report/hypatia_clean_report.html) bytes) — open this first."
+          else
+            echo "  report   : not present in this bundle"
           fi
 
-      # ── C2: figures + tables outputs ─────────────────────────────────────────
-      - name: Collect C2 artefacts (figures/*.pdf, tables/*.tex)
-        run: |
-          set -euo pipefail
-          echo "=== C2 Post-process outputs ==="
-
-          # Scan both OUT_BASE experiment subdirs AND repo_root/figures + repo_root/tables
-          # (repo_root dirs are populated by ci_postprocess 'Copy figures & tables' step)
-          FIG_COUNT=0
-          TEX_COUNT=0
-          # Guard each path: only pass it to find if it exists (avoids exit code 1
-          # under set -euo pipefail when figures/ or tables/ haven't been generated yet)
-          FIG_SEARCH_PATHS=()
-          [[ -d "${OUT_BASE}" ]] && FIG_SEARCH_PATHS+=("${OUT_BASE}")
-          [[ -d "figures"     ]] && FIG_SEARCH_PATHS+=("figures")
-          TAB_SEARCH_PATHS=()
-          [[ -d "${OUT_BASE}" ]] && TAB_SEARCH_PATHS+=("${OUT_BASE}")
-          [[ -d "tables"      ]] && TAB_SEARCH_PATHS+=("tables")
-
-          if [[ ${#FIG_SEARCH_PATHS[@]} -gt 0 ]]; then
-            while IFS= read -r -d '' f; do
-              FIG_COUNT=$((FIG_COUNT+1))
-            done < <(find "${FIG_SEARCH_PATHS[@]}" \
-              \( -name "*.pdf" -o -name "*.png" \) \
-              -path "*/figures/*" -type f -print0 2>/dev/null)
+          if [[ ! -d "${BUNDLE_DIR}/c1_c2" ]]; then
+            echo "::warning::No c1_c2/ folder in bundle — C1+C2 artefacts may not have been collected at export time."
           fi
-          if [[ ${#TAB_SEARCH_PATHS[@]} -gt 0 ]]; then
-            while IFS= read -r -d '' f; do
-              TEX_COUNT=$((TEX_COUNT+1))
-            done < <(find "${TAB_SEARCH_PATHS[@]}" \
-              -name "*.tex" \
-              -path "*/tables/*" -type f -print0 2>/dev/null)
+          if [[ ! -d "${BUNDLE_DIR}/scripts" ]]; then
+            echo "::warning::No scripts/ folder in bundle — generator scripts were not included in this export."
+          fi
+          if [[ ! -f "${BUNDLE_DIR}/report/hypatia_clean_report.html" ]]; then
+            echo "::notice::No rendered report in this bundle — the export run's tex/bib paths may need tex_path/bib_path overrides."
           fi
 
-          # Also count files directly in repo_root/figures and repo_root/tables
-          # (flat dirs — not under a */figures/* path pattern)
-          REPO_FIG_COUNT=0
-          REPO_TAB_COUNT=0
-          [[ -d "figures" ]] && REPO_FIG_COUNT=$(find figures -maxdepth 1 \( -name "*.pdf" -o -name "*.png" \) -type f 2>/dev/null | wc -l | tr -d ' ')
-          [[ -d "tables"  ]] && REPO_TAB_COUNT=$(find tables  -maxdepth 1 -name "*.tex" -type f 2>/dev/null | wc -l | tr -d ' ')
-
-          echo "  figures (PDF/PNG) in OUT_BASE  : ${FIG_COUNT} file(s)"
-          echo "  tables  (TeX) in OUT_BASE       : ${TEX_COUNT} file(s)"
-          echo "  figures in repo_root/figures/   : ${REPO_FIG_COUNT} file(s)"
-          echo "  tables  in repo_root/tables/    : ${REPO_TAB_COUNT} file(s)"
-
-          TOTAL_FIGS=$((FIG_COUNT + REPO_FIG_COUNT))
-          TOTAL_TABS=$((TEX_COUNT + REPO_TAB_COUNT))
-          if [[ "${TOTAL_FIGS}" -eq 0 ]]; then
-            echo "::warning::No figures found anywhere — ci_postprocess.yml may not have run yet."
-          fi
-          if [[ "${TOTAL_TABS}" -eq 0 ]]; then
-            echo "::warning::No tables found anywhere — ci_postprocess.yml may not have run yet."
-          fi
-
-      # ── Stage all C1+C2 files into a flat staging dir for upload ─────────────
-      - name: Stage C1+C2 artefacts for upload
-        run: |
-          set -euo pipefail
-          mkdir -p reviewer_artefacts/analysis
-          mkdir -p reviewer_artefacts/figures
-          mkdir -p reviewer_artefacts/tables
-
-          # Copy _report.md and _analysis.json preserving experiment subfolder name
-          find "${OUT_BASE}" -name "_report.md" -type f | while read -r f; do
-            EXP=$(basename "$(dirname "$f")")
-            cp "$f" "reviewer_artefacts/analysis/${EXP}_report.md"
-          done
-          find "${OUT_BASE}" -name "_analysis.json" -type f | while read -r f; do
-            EXP=$(basename "$(dirname "$f")")
-            cp "$f" "reviewer_artefacts/analysis/${EXP}_analysis.json"
-          done
-
-          # ── Copy figures (PDF preferred, then PNG) with stem-level deduplication ──
-          # Two-pass: pdf first so that when both foo.pdf and foo.png exist the .pdf wins.
-          # Collision: if the same basename already exists, prefix with parent dir name.
-          declare -A COPIED_STEMS
-          copy_figure() {
-            local f="$1"
-            local stem ext dest parent
-            stem="$(basename "${f%.*}")"
-            ext="${f##*.}"
-            dest="reviewer_artefacts/figures/$(basename "$f")"
-            # Skip if this stem was already copied (pdf wins over png)
-            if [[ -n "${COPIED_STEMS[${stem}]+_}" ]]; then
-              return 0
-            fi
-            if [[ ! -e "$dest" ]]; then
-              cp "$f" "$dest"
-              COPIED_STEMS["$stem"]="$ext"
-            else
-              parent="$(basename "$(dirname "$f")")"
-              cp "$f" "reviewer_artefacts/figures/${parent}__$(basename "$f")"
-              COPIED_STEMS["$stem"]="$ext"
-            fi
-          }
-          # Pass 1: PDFs from OUT_BASE experiment subdirs and repo_root/figures
-          # Guard paths so find doesn't exit 1 on missing dirs under set -euo pipefail
-          FIG_STAGE_PATHS=()
-          [[ -d "${OUT_BASE}" ]] && FIG_STAGE_PATHS+=("${OUT_BASE}")
-          [[ -d "figures"     ]] && FIG_STAGE_PATHS+=("figures")
-          if [[ ${#FIG_STAGE_PATHS[@]} -gt 0 ]]; then
-            while IFS= read -r f; do
-              copy_figure "$f"
-            done < <(find "${FIG_STAGE_PATHS[@]}" -maxdepth 4 -name "*.pdf" -type f 2>/dev/null | sort)
-            # Pass 2: PNGs (skipped for stems already deployed as PDF)
-            while IFS= read -r f; do
-              copy_figure "$f"
-            done < <(find "${FIG_STAGE_PATHS[@]}" -maxdepth 4 -name "*.png" -type f 2>/dev/null | sort)
-          fi
-
-          # ── Copy tables (TeX) with experiment-dir prefix to prevent collisions ──
-          # Strategy: prefix every file with <experiment_dir>__ so feynman.tex from
-          # two different experiments becomes exp2__feynman.tex and exp3__feynman.tex.
-          # Consistent with ci_paper_audit Job 0b naming convention.
-          # For repo_root/tables/ files (already prefixed by ci_postprocess/ci_paper_audit),
-          # copy as-is (they already carry the experiment prefix).
-          [[ -d "${OUT_BASE}" ]] && find "${OUT_BASE}" -name "*.tex" -path "*/tables/*" -type f | while read -r f; do
-            EXP="$(basename "$(dirname "$(dirname "$f")")")"
-            STEM="$(basename "$f" .tex)"
-            DEST="reviewer_artefacts/tables/${EXP}__${STEM}.tex"
-            [[ -e "$DEST" ]] || cp "$f" "$DEST"
-          done
-          # repo_root/tables/ files are already prefixed — copy directly
-          [[ -d "tables" ]] && find tables -maxdepth 1 -name "*.tex" -type f 2>/dev/null | while read -r f; do
-            DEST="reviewer_artefacts/tables/$(basename "$f")"
-            [[ -e "$DEST" ]] || cp "$f" "$DEST"
-          done
-
-          echo "Staged artefacts:"
-          echo "  analysis : $(ls reviewer_artefacts/analysis/ 2>/dev/null | wc -l) file(s)"
-          echo "  figures  : $(ls reviewer_artefacts/figures/  2>/dev/null | wc -l) file(s)"
-          echo "  tables   : $(ls reviewer_artefacts/tables/   2>/dev/null | wc -l) file(s)"
-          ls -lh reviewer_artefacts/analysis/ 2>/dev/null || true
-          ls -lh reviewer_artefacts/figures/  2>/dev/null || true
-          ls -lh reviewer_artefacts/tables/   2>/dev/null || true
-
-      - name: Upload reviewer C1+C2 artefacts
+      - name: Upload reviewer C1+C2 + scripts + report artefacts
         if: always()
         uses: actions/upload-artifact@v4.3.6
         with:
@@ -309,198 +236,47 @@ jobs:
 
 
   # ============================================================================
-  #  JOB dispatch-checkpoint
-  #
-  #  Triggers ci_pipeline_check.yml on the same branch so that R2 always has
-  #  a fresh, successful run to consume — eliminating the ❓ state that arose
-  #  when no prior checkpoint run existed on the branch.
-  #
-  #  Skipped when the caller already supplied a checkpoint_run_id: in that
-  #  case R2 will use the caller-specified run directly and no dispatch is needed.
-  #
-  #  The job only dispatches and waits for the run to *appear* (not complete).
-  #  R2 resolves the run ID independently via gh run list --status success,
-  #  so ci_pipeline_check.yml just needs to finish before R2's resolve step
-  #  runs.  gh run watch in the "Wait for checkpoint run to complete" step
-  #  provides that guarantee.
-  # ============================================================================
-  dispatch-checkpoint:
-    name: "Dispatch ci_pipeline_check.yml"
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [collect-artefacts]
-    # Skip if the caller already pinned a checkpoint run — no dispatch needed.
-    if: github.event.inputs.checkpoint_run_id == ''
-
-    permissions:
-      actions:  write   # gh workflow run requires write on actions
-      contents: read
-
-    steps:
-      - name: Trigger ci_pipeline_check.yml
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run ci_pipeline_check.yml \
-            --repo "${{ github.repository }}" \
-            --ref  "${{ github.ref_name }}"
-
-      - name: Wait for checkpoint run to appear and complete
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO:     ${{ github.repository }}
-          BRANCH:   ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-
-          # Poll until the newly dispatched run is visible in the API.
-          # gh workflow run returns before the run object exists, so we
-          # must wait a few seconds before it shows up in gh run list.
-          RUN_ID=""
-          for i in {1..30}; do
-            RUN_ID=$(gh run list \
-              --repo   "${REPO}" \
-              --workflow ci_pipeline_check.yml \
-              --branch "${BRANCH}" \
-              --limit  1 \
-              --json   databaseId \
-              --jq     '.[0].databaseId // empty' 2>/dev/null || true)
-            if [[ -n "${RUN_ID}" && "${RUN_ID}" != "null" ]]; then
-              echo "Checkpoint run ${RUN_ID} found — waiting for it to complete..."
-              break
-            fi
-            echo "  Attempt ${i}/30: run not visible yet — retrying in 10 s"
-            sleep 10
-          done
-
-          if [[ -z "${RUN_ID}" || "${RUN_ID}" == "null" ]]; then
-            echo "::error::ci_pipeline_check.yml was not dispatched or did not appear within 300 s."
-            exit 1
-          fi
-
-          # Block until the run finishes so R2's resolve step finds a
-          # completed (success) run when it queries gh run list --status success.
-          gh run watch "${RUN_ID}" --repo "${REPO}" --exit-status
-
-
-  # ============================================================================
   #  JOB R2 — checkpoint-summary
   #
-  #  Surfaces qualify_run.log from the C3 ci_pipeline_check.yml run.
-  #  qualify_run.log shows which experiments passed all 7 qualification
-  #  dimensions — directly relevant to reproducibility assessment.
-  #
-  #  Include (per reviewer map): qualify_run.log shows completeness.
+  #  Reads bundle/c3_checkpoint/qualify_run.log, which ci_export_reviewer_bundle.yml
+  #  already reconstructed from the "Qualify all experiments" job log at export
+  #  time. No live dispatch or Actions API call is needed here — reviewers in
+  #  the public repo couldn't reach the private repo's Actions API anyway.
   # ============================================================================
   checkpoint-summary:
     name: "R2 · C3 Checkpoint — qualify_run.log"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [collect-artefacts, dispatch-checkpoint]
-    # Run even when dispatch-checkpoint was skipped (caller supplied checkpoint_run_id).
-    if: always() && needs.collect-artefacts.result == 'success'
+    needs: [fetch-bundle]
 
     outputs:
       checkpoint_status: ${{ steps.read.outputs.checkpoint_status }}
 
     steps:
-      - name: Resolve checkpoint run ID
-        id: resolve
-        env:
-          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
-          INPUT_RUN_ID:      ${{ github.event.inputs.checkpoint_run_id || '' }}
-          REPO:              ${{ github.repository }}
-          BRANCH:            ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${INPUT_RUN_ID}" ]]; then
-            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
-            echo "Using supplied checkpoint run ID: ${INPUT_RUN_ID}"
-          else
-            echo "No checkpoint_run_id supplied — resolving most recent successful ci_pipeline_check.yml run on ${BRANCH}..."
-            RUN_ID=$(gh run list \
-              --repo "${REPO}" \
-              --workflow ci_pipeline_check.yml \
-              --branch "${BRANCH}" \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
-            if [[ -z "${RUN_ID}" ]]; then
-              echo "::warning::No successful ci_pipeline_check.yml run found on branch ${BRANCH}."
-              echo "run_id=" >> "$GITHUB_OUTPUT"
-            else
-              echo "Resolved checkpoint run ID: ${RUN_ID}"
-              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      # ── FIX: qualify_run.log was never downloadable ─────────────────────────
-      # ci_pipeline_check.yml's check/complete/qualify/summary jobs only ever
-      # write their reports to $GITHUB_OUTPUT (job outputs, e.g. qualify_report,
-      # all_qualified) — none of them write a qualify_run.log file or upload
-      # any artefact for it. The ONLY artefact that workflow ever uploads at
-      # all is paper_audit_findings.json, from its "audit" job. So
-      # `gh run download --pattern "qualify*"` below was guaranteed to fail on
-      # every single run, regardless of whether ci_pipeline_check.yml ran or
-      # succeeded — that was the real cause of the persistent ❓ in the
-      # reviewer summary, not a workflow that "may not have run".
-      #
-      # Fix: pull the live, per-experiment qualification table straight from
-      # the "Qualify all experiments" job's own log via the Actions API
-      # (gh run view --log --job), and reconstruct checkpoint_logs/qualify_run.log
-      # from that instead of trying to download a file that is never produced.
-      - name: Fetch qualify job log from the checkpoint run
-        if: steps.resolve.outputs.run_id != ''
-        id: fetch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO:     ${{ github.repository }}
-          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p checkpoint_logs
-
-          JOBS_JSON=$(gh run view "${RUN_ID}" --repo "${REPO}" --json jobs 2>/dev/null || echo '{"jobs":[]}')
-          QUALIFY_JOB_ID=$(echo "${JOBS_JSON}" | jq -r '.jobs[] | select(.name=="Qualify all experiments") | .databaseId' | head -1)
-          QUALIFY_CONCLUSION=$(echo "${JOBS_JSON}" | jq -r '.jobs[] | select(.name=="Qualify all experiments") | .conclusion // "unknown"' | head -1)
-          echo "qualify_conclusion=${QUALIFY_CONCLUSION:-unknown}" >> "$GITHUB_OUTPUT"
-
-          if [[ -z "${QUALIFY_JOB_ID}" || "${QUALIFY_JOB_ID}" == "null" ]]; then
-            echo "::warning::Run ${RUN_ID} has no 'Qualify all experiments' job (it may have been skipped on that run) — cannot reconstruct qualify_run.log."
-            exit 0
-          fi
-
-          echo "Fetching full log for 'Qualify all experiments' job (id ${QUALIFY_JOB_ID})..."
-          if gh run view "${RUN_ID}" --repo "${REPO}" --log --job "${QUALIFY_JOB_ID}" > checkpoint_logs/qualify_run.log 2>/dev/null \
-             && [[ -s checkpoint_logs/qualify_run.log ]]; then
-            echo "Wrote $(wc -l < checkpoint_logs/qualify_run.log) line(s) to checkpoint_logs/qualify_run.log"
-          else
-            echo "::warning::gh run view --log returned no data for job ${QUALIFY_JOB_ID} — the run's logs may have expired (Actions log retention), or this gh CLI version has a known --log/--job quirk (cli/cli#11109)."
-            rm -f checkpoint_logs/qualify_run.log
-          fi
+      - name: Download extracted bundle
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: bundle-extracted-${{ github.run_id }}
+          path: ${{ env.BUNDLE_DIR }}/
 
       - name: Print checkpoint summary
         id: read
         run: |
           set -euo pipefail
           echo "=== C3 Checkpoint — qualify_run.log ==="
-          LOG="checkpoint_logs/qualify_run.log"
+          LOG="${BUNDLE_DIR}/c3_checkpoint/qualify_run.log"
           if [[ -s "${LOG}" ]]; then
-            echo "qualify_run.log reconstructed from ci_pipeline_check.yml run ${{ steps.resolve.outputs.run_id }}"
-            echo "Qualify job conclusion: ${{ steps.fetch.outputs.qualify_conclusion }}"
+            echo "qualify_run.log present in bundle (reconstructed at export time)."
             echo "---"
             # Surface just the per-experiment qualification table inline; the
-            # full raw job log (incl. checkout/setup steps) is still uploaded
-            # in full as the artefact below for anyone who wants to dig in.
+            # full raw job log is still uploaded in full as the artefact below.
             grep -E "Qualification:|Experiment|✅|❌|FAILED" "${LOG}" || cat "${LOG}"
             echo "checkpoint_status=present" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Could not reconstruct qualify_run.log."
+            echo "::warning::qualify_run.log missing or empty in bundle."
             echo "  Possible reasons:"
-            echo "    - ci_pipeline_check.yml has not run yet for this branch"
-            echo "    - The run's logs have expired (Actions log retention window elapsed)"
-            echo "    - The 'qualify' job was skipped, renamed, or removed upstream"
+            echo "    - ci_pipeline_check.yml had not run yet when the bundle was exported"
+            echo "    - The export run's log fetch failed (Actions log retention window elapsed)"
             echo "checkpoint_status=missing" >> "$GITHUB_OUTPUT"
           fi
 
@@ -509,7 +285,7 @@ jobs:
         uses: actions/upload-artifact@v4.3.6
         with:
           name:              reviewer-c3-checkpoint-${{ github.run_id }}
-          path:              checkpoint_logs/
+          path:              ${{ env.BUNDLE_DIR }}/c3_checkpoint/
           if-no-files-found: warn
           retention-days:    90
 
@@ -517,18 +293,14 @@ jobs:
   # ============================================================================
   #  JOB R3 — paper-audit-summary
   #
-  #  Surfaces paper_audit_findings.json from C4 ci_paper_audit.yml.
-  #  This file cross-checks every numerical claim in the paper against
-  #  actual result file values — directly validates paper claims.
-  #
-  #  Include (per reviewer map): paper_audit_findings.json validates every
-  #  paper claim.
+  #  Reads bundle/c4_audit/paper_audit_findings.json, which cross-checks every
+  #  numerical claim in the paper against actual result file values.
   # ============================================================================
   paper-audit-summary:
     name: "R3 · C4 Paper audit — paper_audit_findings.json"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [collect-artefacts]
+    needs: [fetch-bundle]
 
     outputs:
       audit_status: ${{ steps.read.outputs.audit_status }}
@@ -538,78 +310,29 @@ jobs:
       n_missing:    ${{ steps.read.outputs.n_missing }}
 
     steps:
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5.3.0
+      - name: Download extracted bundle
+        uses: actions/download-artifact@v4.3.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Resolve paper-audit run ID
-        id: resolve
-        env:
-          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
-          INPUT_RUN_ID: ${{ github.event.inputs.audit_run_id || '' }}
-          REPO:         ${{ github.repository }}
-          BRANCH:       ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${INPUT_RUN_ID}" ]]; then
-            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
-            echo "Using supplied audit run ID: ${INPUT_RUN_ID}"
-          else
-            echo "Resolving most recent successful ci_paper_audit.yml run on ${BRANCH}..."
-            RUN_ID=$(gh run list \
-              --repo "${REPO}" \
-              --workflow ci_paper_audit.yml \
-              --branch "${BRANCH}" \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
-            if [[ -z "${RUN_ID}" ]]; then
-              echo "::warning::No successful ci_paper_audit.yml run found on branch ${BRANCH}."
-              echo "run_id=" >> "$GITHUB_OUTPUT"
-            else
-              echo "Resolved audit run ID: ${RUN_ID}"
-              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      - name: Download paper-audit artefacts
-        if: steps.resolve.outputs.run_id != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO:     ${{ github.repository }}
-          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p audit_artefacts
-          # Download paper-audit-findings + audit-paper-summary + verify-report
-          for pattern in "paper-audit-findings-*" "audit-paper-summary-*" "verify-report-*" "figures-tables-report-*"; do
-            gh run download "${RUN_ID}" \
-              --repo "${REPO}" \
-              --dir audit_artefacts \
-              --pattern "${pattern}" 2>/dev/null \
-            || echo "  ::warning::Pattern ${pattern} not found (non-fatal)."
-          done
-          echo "Downloaded artefacts:"
-          find audit_artefacts -type f | sort
+          name: bundle-extracted-${{ github.run_id }}
+          path: ${{ env.BUNDLE_DIR }}/
 
       - name: Parse and print audit findings
         id: read
+        env:
+          BUNDLE_DIR: ${{ env.BUNDLE_DIR }}
         run: |
-          mkdir -p audit_artefacts
           python3 - <<'PYEOF'
           import json, os, sys
           from pathlib import Path
 
-          findings_path = next(Path("audit_artefacts").rglob("paper_audit_findings.json"), None)
+          bundle_dir = Path(os.environ.get("BUNDLE_DIR", "reviewer_bundle"))
+          findings_path = next((bundle_dir / "c4_audit").rglob("paper_audit_findings.json"), None)
 
           if findings_path is None:
-            print("::warning::paper_audit_findings.json not found in downloaded artefacts.")
+            print("::warning::paper_audit_findings.json not found in bundle/c4_audit/.")
             print("  Possible reasons:")
-            print("    - ci_paper_audit.yml has not run yet (fires on slot 12 only)")
-            print("    - Artefact retention window (30 days) has elapsed")
-            print("    - Supply audit_run_id input to point at a specific run")
+            print("    - ci_paper_audit.yml had not run yet when the bundle was exported")
+            print("    - The export run's artefact download for C4 found nothing (non-fatal there too)")
             env_file = os.environ.get("GITHUB_OUTPUT", "")
             if env_file:
               with open(env_file, "a") as f:
@@ -617,10 +340,7 @@ jobs:
             sys.exit(0)
 
           findings = json.loads(findings_path.read_text())
-          if isinstance(findings, dict):
-            items = findings.get("findings", [])
-          else:
-            items = findings
+          items = findings.get("findings", []) if isinstance(findings, dict) else findings
 
           SEP = "=" * 70
           print(SEP)
@@ -669,7 +389,7 @@ jobs:
         uses: actions/upload-artifact@v4.3.6
         with:
           name:              reviewer-c4-paper-audit-${{ github.run_id }}
-          path:              audit_artefacts/
+          path:              ${{ env.BUNDLE_DIR }}/c4_audit/
           if-no-files-found: warn
           retention-days:    90
 
@@ -677,104 +397,47 @@ jobs:
   # ============================================================================
   #  JOB R4 — notebooks-summary
   #
-  #  Surfaces the executed NB-01…NB-06 notebooks from C5 ci_paper_notebooks.yml.
-  #  The executed .ipynb files with cell outputs are the primary reviewer-facing
-  #  evidence (citation/consistency audit, figures, code correctness).
-  #
-  #  Also surfaces notebooks_audit_summary.json which aggregates all open
-  #  FIX-* issues across notebooks.
-  #
-  #  Include (per reviewer map): executed .ipynb with cell outputs are the
-  #  reviewer-facing evidence.
+  #  Reads the executed NB-01…NB-06 notebooks and notebooks_audit_summary.json
+  #  out of bundle/c5_notebooks/.
   # ============================================================================
   notebooks-summary:
     name: "R4 · C5 Paper notebooks — NB-01…NB-06 + audit summary"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [collect-artefacts, checkpoint-summary, paper-audit-summary]
+    needs: [fetch-bundle]
 
     outputs:
       notebooks_status: ${{ steps.read.outputs.notebooks_status }}
       open_issues:      ${{ steps.read.outputs.open_issues }}
 
     steps:
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5.3.0
+      - name: Download extracted bundle
+        uses: actions/download-artifact@v4.3.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Resolve notebooks run ID
-        id: resolve
-        env:
-          GH_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
-          INPUT_RUN_ID: ${{ github.event.inputs.notebooks_run_id || '' }}
-          REPO:         ${{ github.repository }}
-          BRANCH:       ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${INPUT_RUN_ID}" ]]; then
-            echo "run_id=${INPUT_RUN_ID}" >> "$GITHUB_OUTPUT"
-            echo "Using supplied notebooks run ID: ${INPUT_RUN_ID}"
-          else
-            echo "Resolving most recent successful ci_paper_notebooks.yml run on ${BRANCH}..."
-            RUN_ID=$(gh run list \
-              --repo "${REPO}" \
-              --workflow ci_paper_notebooks.yml \
-              --branch "${BRANCH}" \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty' 2>/dev/null || echo "")
-            if [[ -z "${RUN_ID}" ]]; then
-              echo "::warning::No successful ci_paper_notebooks.yml run found on branch ${BRANCH}."
-              echo "run_id=" >> "$GITHUB_OUTPUT"
-            else
-              echo "Resolved notebooks run ID: ${RUN_ID}"
-              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      - name: Download notebooks artefacts
-        if: steps.resolve.outputs.run_id != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO:     ${{ github.repository }}
-          RUN_ID:   ${{ steps.resolve.outputs.run_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p notebooks_artefacts
-          for pattern in \
-            "nb-01-*" "nb-02-*" "nb-03-*" "nb-04-*" "nb-05-*" "nb-06-*" \
-            "notebooks-audit-summary-*" "hypatia-findings-*"; do
-            gh run download "${RUN_ID}" \
-              --repo "${REPO}" \
-              --dir notebooks_artefacts \
-              --pattern "${pattern}" 2>/dev/null \
-            || echo "  Pattern ${pattern}: not found (non-fatal)."
-          done
-          echo "Downloaded notebooks artefacts:"
-          find notebooks_artefacts -type f | sort
+          name: bundle-extracted-${{ github.run_id }}
+          path: ${{ env.BUNDLE_DIR }}/
 
       - name: Print notebooks audit summary
         id: read
+        env:
+          BUNDLE_DIR: ${{ env.BUNDLE_DIR }}
         run: |
-          mkdir -p notebooks_artefacts
           python3 - <<'PYEOF'
           import json, os, sys
           from pathlib import Path
 
-          summary_path = next(Path("notebooks_artefacts").rglob("notebooks_audit_summary.json"), None)
+          bundle_dir = Path(os.environ.get("BUNDLE_DIR", "reviewer_bundle"))
+          nb_dir = bundle_dir / "c5_notebooks"
+          summary_path = next(nb_dir.rglob("notebooks_audit_summary.json"), None)
 
-          # Count any .ipynb files retrieved
-          notebooks = sorted(Path("notebooks_artefacts").rglob("*.ipynb"))
+          notebooks = sorted(nb_dir.rglob("*.ipynb"))
           print("=== C5 Paper Notebooks ===")
           print(f"  Executed notebooks retrieved: {len(notebooks)}")
           for nb in notebooks:
             print(f"    {nb.name}")
 
           if summary_path is None:
-            print("\n::warning::notebooks_audit_summary.json not found.")
-            print("  Artefact may not yet exist or may have expired.")
+            print("\n::warning::notebooks_audit_summary.json not found in bundle/c5_notebooks/.")
             env_file = os.environ.get("GITHUB_OUTPUT", "")
             if env_file:
               with open(env_file, "a") as f:
@@ -783,8 +446,8 @@ jobs:
 
           summary = json.loads(summary_path.read_text())
           findings = summary.get("findings", [])
-          open_issues   = [f for f in findings if str(f.get("status","")).upper() not in ("RESOLVED","CLOSED")]
-          resolved      = [f for f in findings if str(f.get("status","")).upper() in ("RESOLVED","CLOSED")]
+          open_issues = [f for f in findings if str(f.get("status","")).upper() not in ("RESOLVED","CLOSED")]
+          resolved    = [f for f in findings if str(f.get("status","")).upper() in ("RESOLVED","CLOSED")]
 
           SEP = "=" * 70
           print(SEP)
@@ -823,7 +486,7 @@ jobs:
         uses: actions/upload-artifact@v4.3.6
         with:
           name:              reviewer-c5-notebooks-${{ github.run_id }}
-          path:              notebooks_artefacts/
+          path:              ${{ env.BUNDLE_DIR }}/c5_notebooks/
           if-no-files-found: warn
           retention-days:    90
 
@@ -832,22 +495,22 @@ jobs:
   #  JOB R5 — final-summary
   #
   #  Consolidates the status from R2, R3, R4 and prints a single health table
-  #  for reviewers.  Also prints the Pages URL if supplied.
-  #  Sets the workflow conclusion: exits 0 only if audit passed (no FAIL/MISSING).
-  #  Open notebook issues are reported but do not block the workflow conclusion
-  #  (they are tracked as actionable items, not blockers at review stage).
+  #  for reviewers. Sets the workflow conclusion: exits 0 only if the audit
+  #  passed (no FAIL/MISSING). Open notebook issues are reported but do not
+  #  block the workflow conclusion.
   # ============================================================================
   final-summary:
     name: "R5 · Reviewer health table"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [collect-artefacts, dispatch-checkpoint, checkpoint-summary, paper-audit-summary, notebooks-summary]
+    needs: [fetch-bundle, collect-artefacts, checkpoint-summary, paper-audit-summary, notebooks-summary]
     if: always()
 
     steps:
       - name: Print consolidated reviewer health table
         env:
           PAGES_URL:          ${{ github.event.inputs.pages_url || '' }}
+          BUNDLE_URL:         ${{ github.event.inputs.bundle_url }}
           CHECKPOINT_STATUS:  ${{ needs.checkpoint-summary.outputs.checkpoint_status }}
           AUDIT_STATUS:       ${{ needs.paper-audit-summary.outputs.audit_status }}
           N_FAIL:             ${{ needs.paper-audit-summary.outputs.n_fail }}
@@ -862,7 +525,8 @@ jobs:
           import os, sys
 
           SEP   = "=" * 72
-          pages = os.environ.get("PAGES_URL", "").strip()
+          pages  = os.environ.get("PAGES_URL", "").strip()
+          bundle = os.environ.get("BUNDLE_URL", "").strip()
 
           def gate(status, ok_vals=("present","pass","success")):
             return "✅" if str(status).lower() in ok_vals else \
@@ -881,7 +545,9 @@ jobs:
 
           print()
           print(SEP)
-          print("  HYPATIA X  —  JMLR REVIEWER PIPELINE SUMMARY")
+          print("  HYPATIA X  —  JMLR REVIEWER PIPELINE SUMMARY (standalone)")
+          print(SEP)
+          print(f"  Bundle source: {bundle}")
           print(SEP)
           print(f"  {'Stage':<40}  {'Status'}")
           print(f"  {'-'*40}  {'------'}")
@@ -910,7 +576,7 @@ jobs:
             if n_fail > 0 or n_missing > 0:
               print(f"      Paper audit: {n_fail} FAIL  {n_missing} MISSING — see R3 job log.")
             if ck not in ("present",):
-              print("      Checkpoint log: missing — ci_pipeline_check.yml may not have run.")
+              print("      Checkpoint log: missing from bundle — re-export with ci_export_reviewer_bundle.yml.")
             if col != "success":
               print("      C1+C2 artefacts: collection step did not succeed.")
           print(SEP)

@@ -4,24 +4,14 @@ run-name: "HypatiaX CI Report — run ${{ github.run_id }}"
 # ──────────────────────────────────────────────────────────────────────────────
 # Triggers
 #   • workflow_run on "HypatiaX - paper notebooks" completing (auto, primary).
-#     Fires after every notebook run so the Pages report always reflects the
-#     latest findings.  Double-fire with slot-13 dispatch is harmless because
-#     the `pages` concurrency group cancels the in-progress run on a new push.
-#   • workflow_dispatch: manual re-runs, apply_fixes_only path, and explicit
-#     dispatch from ci_pipeline.yml (slot 13).  Accepts summary_run_id to pin
-#     the exact notebook run whose artifacts to use.
+#   • workflow_dispatch: manual re-runs, apply_fixes_only path, slot-13 dispatch.
 # ──────────────────────────────────────────────────────────────────────────────
 on:
-  # ── Auto: fires whenever ci_paper_notebooks completes (any conclusion) ───────
-  # This ensures the Pages report regenerates after every notebook run without
-  # requiring a manual trigger or an explicit dispatch from ci_pipeline.yml.
-  # workflow_run only fires when this file is on the default branch.
   workflow_run:
     workflows: ["HypatiaX - paper notebooks"]
     types:
       - completed
 
-  # ── Manual / dispatched by ci_pipeline.yml or apply-fixes path ───────────────
   workflow_dispatch:
     inputs:
       no_notebooks:
@@ -33,7 +23,6 @@ on:
         required: false
         default: ""
 
-# Pages needs these three permissions; contents:read is enough for checkout.
 permissions:
   contents: read
   pages:    write
@@ -44,7 +33,6 @@ env:
   PYTHON_VERSION: "3.12"
   REGISTRY_PATH: "_repo/scripts/patches/issue_registry.json"
 
-# Only one Pages deployment at a time; cancel any in-progress run.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -53,23 +41,10 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
   # Job: build-report
-  #
-  # Downloads the six already-executed NB artifacts produced by
-  # ci_paper_notebooks.yml, converts each .ipynb → HTML fragment (no kernel
-  # involved — nbconvert --no-input just renders the stored outputs), assembles
-  # the combined audit report, and uploads a Pages artifact.
-  #
-  # No notebook is executed here.  The `download-artifact` action fetches
-  # artifacts from the triggering workflow_run when run_id is provided;
-  # on manual dispatch it falls back to the most-recent successful run of
-  # ci_paper_notebooks.yml via `github-token`.
   # ────────────────────────────────────────────────────────────────────────────
   build-report:
     name: "Build Combined Audit Report"
     runs-on: ubuntu-latest
-    # Run for all trigger types — workflow_run (auto), workflow_dispatch (manual/slot-13).
-    # Accept both success and failure upstream: a partially-failed notebook run still
-    # produces useful artifacts and the report should reflect whatever completed.
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'workflow_run'
@@ -78,77 +53,35 @@ jobs:
 
       - name: Set run metadata
         id: set-run-meta
-        run: |
-          echo "run_date=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+        run: echo "run_date=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
 
-      # ── Resolve the source run ID ────────────────────────────────────────────
-      # When triggered by workflow_run the ID is in the event payload.
-      # When triggered via workflow_dispatch (manual re-run / debugging) that
-      # field is empty, so we query the API for the most recent completed run of
-      # ci_paper_notebooks.yml on the same branch and use its ID instead.
-      # The resolved ID is written to $GITHUB_OUTPUT so every download step can
-      # reference it as ${{ steps.resolve-run.outputs.notebooks_run_id }}.
-      - name: Resolve notebook run ID
-        id: resolve-run
-        env:
-          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
-          REPO:              ${{ github.repository }}
-          EVENT_RUN_ID:      ${{ github.event.workflow_run.id }}
-          DISPATCH_RUN_ID:   ${{ github.event.inputs.summary_run_id }}
-          BRANCH:            ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
+      # ── Checkout scripts (build_report.py lives here) ─────────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+          path: _repo
 
-          # Priority 1: explicit run ID passed via workflow_dispatch input
-          if [[ -n "${DISPATCH_RUN_ID}" ]]; then
-            echo "Using caller-supplied summary_run_id: ${DISPATCH_RUN_ID}"
-            echo "notebooks_run_id=${DISPATCH_RUN_ID}" >> "${GITHUB_OUTPUT}"
-
-          # Priority 2: triggered by workflow_run — use the triggering run's ID
-          elif [[ -n "${EVENT_RUN_ID}" ]]; then
-            echo "Triggered by workflow_run — using event run ID: ${EVENT_RUN_ID}"
-            echo "notebooks_run_id=${EVENT_RUN_ID}" >> "${GITHUB_OUTPUT}"
-
-          # Priority 3: manual dispatch without summary_run_id — query the API
-          else
-            echo "Manual dispatch (no run ID supplied) — querying API for most recent ci_paper_notebooks.yml run on branch ${BRANCH}"
-            RESOLVED=$(gh run list \
-              --repo "${REPO}" \
-              --workflow ci_paper_notebooks.yml \
-              --branch "${BRANCH}" \
-              --status completed \
-              --limit 5 \
-              --json databaseId,conclusion \
-              --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")] | first | .databaseId // empty' \
-              2>/dev/null || echo "")
-
-            if [[ -z "${RESOLVED}" ]]; then
-              echo "::warning::No completed ci_paper_notebooks.yml run found on branch ${BRANCH}."
-              echo "notebooks_run_id=" >> "${GITHUB_OUTPUT}"
-            else
-              echo "Resolved notebook run ID: ${RESOLVED}"
-              echo "notebooks_run_id=${RESOLVED}" >> "${GITHUB_OUTPUT}"
-            fi
-          fi
-
-      # ── Python + nbconvert (no kernel needed — rendering stored outputs only)
+      # ── Python + nbconvert ────────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install nbconvert
-        run: |
-          pip install --upgrade pip
-          pip install jupyter nbconvert
+      - name: Install dependencies
+        run: pip install --upgrade pip jupyter nbconvert
 
-      # ── Download the six executed-notebook artifacts ────────────────────────
-      # Each artifact lands in its own sub-directory so filenames never collide.
-      # `continue-on-error: true` ensures a missing artifact (failed upstream
-      # job) doesn't abort the report — a warning card is shown instead.
-      # run-id comes from the resolved step above so both workflow_run and
-      # workflow_dispatch triggers find the correct artifacts.
+      # ── Step 1: Resolve the notebook run ID ──────────────────────────────
+      # Writes notebooks_run_id to $GITHUB_OUTPUT.
+      - name: Resolve notebook run ID
+        id: resolve-run
+        env:
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          EVENT_RUN_ID:    ${{ github.event.workflow_run.id }}
+          DISPATCH_RUN_ID: ${{ github.event.inputs.summary_run_id }}
+        run: python _repo/scripts/build_report.py resolve-run-id
 
+      # ── Download the six executed-notebook artifacts ──────────────────────
       - name: Download NB-01 artifact
         uses: actions/download-artifact@v4
         with:
@@ -203,187 +136,11 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
-      # ── Diagnostics ─────────────────────────────────────────────────────────
       - name: Show downloaded files
-        run: |
-          echo "=== Downloaded notebook artifacts ==="
-          find notebooks -type f | sort || echo "(none)"
+        run: find notebooks -type f | sort || echo "(none)"
 
-      # ── Write the body-extraction helper (base64-encoded, no quoting risk) ─
-      - name: Write HTML body extractor script
-        run: |
-          python3 -c "import base64; open('/tmp/_extract_body.py','wb').write(base64.b64decode('aW1wb3J0IHN5cywgcmUKaHRtbCA9IG9wZW4oc3lzLmFyZ3ZbMV0sIGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0icmVwbGFjZSIpLnJlYWQoKQptID0gcmUuc2VhcmNoKHIiPGJvZHlbXj5dKj4oLio/KTwvYm9keT4iLCBodG1sLCByZS5ET1RBTEwgfCByZS5JR05PUkVDQVNFKQpwcmludChtLmdyb3VwKDEpIGlmIG0gZWxzZSBodG1sKQo='))"
-
-      # ── Build combined HTML report ──────────────────────────────────────────
-      - name: Build combined audit report
-        run: |
-          set -euo pipefail
-          mkdir -p site
-
-          # ── Metadata ────────────────────────────────────────────────────────
-          RUN_DATE=$(date -u "+%Y-%m-%d %H:%M UTC")
-          UPSTREAM_RUN="${{ steps.resolve-run.outputs.notebooks_run_id }}"
-          UPSTREAM_RUN="${UPSTREAM_RUN:-${{ github.run_id }}}"
-
-          # ── Notebook registry (ordered) ──────────────────────────────────────
-          declare -a NB_PATHS=(
-            "notebooks/NB-01/NB-01_Citation_Bibliography_Audit.ipynb"
-            "notebooks/NB-02/NB-02_CrossReference_Label_Audit.ipynb"
-            "notebooks/NB-03/NB-03_Section_Structure_Numbering.ipynb"
-            "notebooks/NB-04/NB-04_Numerical_Consistency_Checker.ipynb"
-            "notebooks/NB-05/NB-05_Figure_Image_Dependency_Checker.ipynb"
-            "notebooks/NB-06/NB-06_Code_Quality_Pipeline_Integrity.ipynb"
-          )
-          declare -a NB_TITLES=(
-            "NB-01: Citation &amp; Bibliography Audit"
-            "NB-02: Cross-Reference &amp; Label Integrity"
-            "NB-03: Section Structure &amp; Numbering"
-            "NB-04: Numerical Consistency &amp; Abstract Claims"
-            "NB-05: Figure Files &amp; Environment Audit"
-            "NB-06: Code Quality &amp; Pipeline Integrity"
-          )
-          declare -a NB_ANCHORS=(nb01 nb02 nb03 nb04 nb05 nb06)
-
-          # ── HTML header ──────────────────────────────────────────────────────
-          cat > site/index.html << HTML
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>HypatiaX Paper Audit Report</title>
-            <style>
-              *, *::before, *::after { box-sizing: border-box; }
-              body {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                margin: 0; background: #f0f2f5; color: #1a1a2e;
-              }
-              /* ── Cover ── */
-              .cover {
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
-                color: white; padding: 64px 40px 48px; text-align: center;
-              }
-              .cover h1 { margin: 0 0 14px; font-size: 2.4em; letter-spacing: -0.5px; }
-              .cover .meta { opacity: 0.7; font-size: 0.95em; line-height: 1.8; }
-              .badge {
-                display: inline-block; background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.25); border-radius: 20px;
-                padding: 4px 14px; font-size: 0.82em; margin-top: 12px;
-              }
-              /* ── Layout ── */
-              .container { max-width: 900px; margin: 0 auto; padding: 0 20px 60px; }
-              /* ── ToC ── */
-              .toc {
-                background: white; border-radius: 10px; padding: 28px 36px;
-                margin: 32px 0 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-              }
-              .toc h2 { margin: 0 0 16px; font-size: 1.05em; text-transform: uppercase;
-                         letter-spacing: .08em; color: #666; }
-              .toc ol  { margin: 0; padding-left: 22px; line-height: 2.1; }
-              .toc a   { color: #0066cc; text-decoration: none; font-weight: 500; }
-              .toc a:hover { text-decoration: underline; }
-              /* ── Notebook sections ── */
-              .nb-section {
-                background: white; border-radius: 10px; margin-bottom: 24px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.07); overflow: hidden;
-              }
-              .nb-header {
-                background: linear-gradient(90deg, #16213e, #0f3460);
-                color: white; padding: 18px 28px; display: flex;
-                align-items: center; gap: 12px;
-              }
-              .nb-header h2 { margin: 0; font-size: 1.1em; }
-              .nb-body { padding: 8px 28px 28px; overflow-x: auto; }
-              /* ── Missing notebook warning ── */
-              .missing {
-                background: #fff8e1; border-left: 4px solid #f9a825;
-                padding: 16px 20px; margin: 20px 0; border-radius: 4px;
-                font-size: 0.95em;
-              }
-              /* ── nbconvert output normalization ── */
-              .nb-body pre {
-                background: #f8f8f8; padding: 12px 16px; border-radius: 6px;
-                overflow-x: auto; font-size: 0.87em; line-height: 1.5;
-              }
-              .nb-body .output_area pre { background: #f0f0f0; }
-              .nb-body table {
-                border-collapse: collapse; width: 100%; font-size: 0.9em;
-              }
-              .nb-body th, .nb-body td {
-                border: 1px solid #ddd; padding: 8px 12px; text-align: left;
-              }
-              .nb-body th { background: #f5f5f5; font-weight: 600; }
-              /* ── Footer ── */
-              .footer {
-                text-align: center; padding: 40px 20px;
-                color: #999; font-size: 0.82em; line-height: 1.8;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="cover">
-              <h1>📋 HypatiaX Paper Audit Report</h1>
-              <div class="meta">
-                Generated: ${RUN_DATE}<br>
-                Notebook run ID: ${UPSTREAM_RUN} &nbsp;·&nbsp; Report run ID: ${{ github.run_id }}
-              </div>
-              <div class="badge">ci_report.yml — no notebooks re-executed</div>
-            </div>
-
-            <div class="container">
-              <div class="toc">
-                <h2>Contents</h2>
-                <ol>
-                  <li><a href="#nb01">NB-01: Citation &amp; Bibliography Audit</a></li>
-                  <li><a href="#nb02">NB-02: Cross-Reference &amp; Label Integrity</a></li>
-                  <li><a href="#nb03">NB-03: Section Structure &amp; Numbering</a></li>
-                  <li><a href="#nb04">NB-04: Numerical Consistency &amp; Abstract Claims</a></li>
-                  <li><a href="#nb05">NB-05: Figure Files &amp; Environment Audit</a></li>
-                  <li><a href="#nb06">NB-06: Code Quality &amp; Pipeline Integrity</a></li>
-                  <li><a href="#fixc3gates"><strong>FIX-C3 Split-Protocol Gates (A/B/C)</strong></a></li>
-                  <li><a href="#conclusions"><strong>Audit Conclusions &amp; Action Plan</strong></a></li>
-                </ol>
-              </div>
-          HTML
-
-          # ── Per-notebook sections ────────────────────────────────────────────
-          for i in "${!NB_PATHS[@]}"; do
-            NB="${NB_PATHS[$i]}"
-            TITLE="${NB_TITLES[$i]}"
-            ANCHOR="${NB_ANCHORS[$i]}"
-
-            {
-              echo ""
-              echo "      <div class='nb-section' id='${ANCHOR}'>"
-              echo "        <div class='nb-header'><h2>${TITLE}</h2></div>"
-              echo "        <div class='nb-body'>"
-            } >> site/index.html
-
-            if [ -f "${NB}" ]; then
-              # Convert the already-executed notebook to an HTML body fragment.
-              # --no-input hides source cells; only outputs are rendered.
-              # The extractor script is written once before the loop (see above).
-              jupyter nbconvert \
-                --to html \
-                --no-input \
-                --template classic \
-                --output /tmp/_nb_frag \
-                "${NB}" 2>/dev/null
-
-              python3 /tmp/_extract_body.py /tmp/_nb_frag.html >> site/index.html
-
-            else
-              echo "        <div class='missing'>⚠️ Notebook not found — the upstream job may have failed or been skipped.</div>" \
-                >> site/index.html
-            fi
-
-            echo "        </div></div>" >> site/index.html
-          done
-
-
-
-      # ── Download merged registry from THIS run's bundle-artifacts ───────────
-      - name: Download merged registry artifact (from ci_paper_notebooks)
+      # ── Download supporting artifacts ─────────────────────────────────────
+      - name: Download merged registry artifact
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -391,33 +148,21 @@ jobs:
           NB_RUN:   ${{ steps.resolve-run.outputs.notebooks_run_id }}
         run: |
           mkdir -p /tmp/live_registry
-          if [[ -n "$NB_RUN" ]]; then
-            gh run download "$NB_RUN" \
-              --repo "$REPO" \
-              --name "issue-registry-merged-${NB_RUN}" \
-              --dir  "/tmp/live_registry" 2>/dev/null || true
-          fi
-          if [[ -f "/tmp/live_registry/issue_registry.json" ]]; then
-            echo "Live merged registry downloaded ($(wc -c < /tmp/live_registry/issue_registry.json) bytes)"
-          else
-            echo "::notice::Merged registry artifact not found — will use checked-out version"
-          fi
+          [[ -n "$NB_RUN" ]] && gh run download "$NB_RUN" \
+            --repo "$REPO" \
+            --name "issue-registry-merged-${NB_RUN}" \
+            --dir "/tmp/live_registry" 2>/dev/null || true
+          [[ -f "/tmp/live_registry/issue_registry.json" ]] \
+            && echo "Live registry: $(wc -c < /tmp/live_registry/issue_registry.json) bytes" \
+            || echo "::notice::Merged registry not found — will use checked-out version"
 
-      - name: Checkout (for live issue_registry.json)
-        # Checked out into _repo/ subdirectory so actions/checkout does NOT
-        # wipe the working directory and destroy site/index.html that was
-        # just built by the previous step.
+      - name: Checkout (for issue_registry.json)
         uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 1
           path: _repo
 
       - name: Download audit summary artifact
-        # Pull the notebooks_audit_summary.json produced by ci_paper_notebooks.
-        # On manual dispatch with no_notebooks=true, uses summary_run_id input.
-        # On normal notebook run, resolves from the upstream run ID.
-        # continue-on-error so a missing artifact (e.g. very first run) falls
-        # back to the static fallback table rendered by the Python step below.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -425,24 +170,17 @@ jobs:
           SUM_RUN:  ${{ github.event.inputs.summary_run_id || steps.resolve-run.outputs.notebooks_run_id }}
         run: |
           mkdir -p /tmp/audit_summary
-          if [[ -n "$SUM_RUN" ]]; then
-            gh run download "$SUM_RUN" \
-              --repo "$REPO" \
+          [[ -n "$SUM_RUN" ]] && {
+            gh run download "$SUM_RUN" --repo "$REPO" \
               --name "notebooks-audit-summary-${SUM_RUN}" \
               --dir /tmp/audit_summary 2>/dev/null || true
-          fi
-          # Also try the generic artifact name (bundle-artifacts uploads this)
-          gh run download "$SUM_RUN" \
-            --repo "$REPO" \
-            --name "paper-audit-notebooks" \
-            --dir /tmp/audit_summary 2>/dev/null || true
+            gh run download "$SUM_RUN" --repo "$REPO" \
+              --name "paper-audit-notebooks" \
+              --dir /tmp/audit_summary 2>/dev/null || true
+          }
           ls -la /tmp/audit_summary/ 2>/dev/null || echo "No audit summary artifacts downloaded"
 
-
       - name: Download hypatia inspector findings artifact
-        # Tries the artifact uploaded by the audit-setup job in ci_paper_notebooks
-        # and by the paper-audit job in ci_paper_audit.  Used to show real-time
-        # fix statuses (RESOLVED vs OPEN) in the conclusions section.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -450,405 +188,27 @@ jobs:
           SUM_RUN:  ${{ github.event.inputs.summary_run_id || steps.resolve-run.outputs.notebooks_run_id }}
         run: |
           mkdir -p /tmp/hypatia_findings
-          if [[ -n "$SUM_RUN" ]]; then
-            gh run download "$SUM_RUN"               --repo "$REPO"               --name "hypatia-findings-setup-${SUM_RUN}"               --dir /tmp/hypatia_findings 2>/dev/null || true
-            gh run download "$SUM_RUN"               --repo "$REPO"               --name "hypatia-findings-audit-${SUM_RUN}"               --dir /tmp/hypatia_findings 2>/dev/null || true
-          fi
+          [[ -n "$SUM_RUN" ]] && {
+            gh run download "$SUM_RUN" --repo "$REPO" \
+              --name "hypatia-findings-setup-${SUM_RUN}" \
+              --dir /tmp/hypatia_findings 2>/dev/null || true
+            gh run download "$SUM_RUN" --repo "$REPO" \
+              --name "hypatia-findings-audit-${SUM_RUN}" \
+              --dir /tmp/hypatia_findings 2>/dev/null || true
+          }
           ls -la /tmp/hypatia_findings/ 2>/dev/null || echo "No hypatia findings artifacts downloaded"
 
-      - name: Render dynamic conclusions section
-        # SOURCE OF TRUTH ORDER (highest → lowest priority):
-        #   1. issue_registry.json  (checked out from repo — always present)
-        #   2. hypatia_inspector findings.json artifact (live detector output)
-        #   3. notebooks_audit_summary.json artifact  (NB descriptions/actions)
-        #   4. STATIC_FIXES list below                (descriptions only, no statuses)
-        #
-        # STATUSES are taken from the registry first, then the inspector.
-        # The inspector can only promote a status *within* what the registry allows:
-        #   - registry says false_positive → always FALSE_POSITIVE (cannot be overridden)
-        #   - registry says resolved        → always RESOLVED
-        #   - registry says open            → inspector can mark RESOLVED if it found a fix,
-        #                                     or leave as OPEN
-        #
-        # FALSE_POSITIVE entries are shown in a separate muted table section,
-        # never counted as OPEN or CRITICAL in banners or gates.
+      # ── Step 2: Build the full HTML report ───────────────────────────────
+      - name: Build combined audit report
         env:
-          NO_NOTEBOOKS: ${{ github.event.inputs.no_notebooks || 'false' }}
-          UPSTREAM_RUN: ${{ steps.resolve-run.outputs.notebooks_run_id }}
-          REPORT_RUN:   ${{ github.run_id }}
-          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
-        run: |
-          python3 - <<'PYEOF'
-          import json, os, html, datetime
-          from pathlib import Path
+          GITHUB_RUN_ID:  ${{ github.run_id }}
+          UPSTREAM_RUN:   ${{ steps.resolve-run.outputs.notebooks_run_id }}
+          NO_NOTEBOOKS:   ${{ github.event.inputs.no_notebooks || 'false' }}
+          REGISTRY_PATH:  ${{ env.REGISTRY_PATH }}
+          SITE_DIR:       site
+        run: python _repo/scripts/build_report.py build-report
 
-          no_notebooks = os.environ.get("NO_NOTEBOOKS", "false").lower() == "true"
-          upstream_run = os.environ.get("UPSTREAM_RUN", "—")
-          report_run   = os.environ.get("REPORT_RUN",   "—")
-          registry_path = Path(os.environ.get("REGISTRY_PATH", "_repo/scripts/patches/issue_registry.json"))
-
-          # ── 1. Load issue_registry.json (primary source of truth) ────────────
-          # Priority: live merged artifact from THIS run > checked-out repo copy
-          LIVE_REGISTRY = Path("/tmp/live_registry/issue_registry.json")
-          effective_registry = LIVE_REGISTRY if LIVE_REGISTRY.exists() else registry_path
-          registry_entries = []
-          if effective_registry.exists():
-              try:
-                  registry_entries = json.loads(effective_registry.read_text())
-                  src_label = "LIVE (nb-merged)" if effective_registry == LIVE_REGISTRY else "repo checkout"
-                  print(f"Loaded {len(registry_entries)} entries from {effective_registry} [{src_label}]")
-              except Exception as exc:
-                  print(f"WARNING: could not parse {effective_registry}: {exc}")
-          else:
-              print(f"WARNING: no registry found at {registry_path} or {LIVE_REGISTRY} — falling back to static list")
-
-          # Build a dict: id → registry entry (authoritative status)
-          reg_by_id = {e["id"]: e for e in registry_entries}
-
-          # ── 2. Load hypatia_inspector findings.json (detector output) ─────────
-          # Maps fix_id → inspector-detected status string
-          inspector_status: dict[str, str] = {}
-          for candidate in [
-              "/tmp/hypatia_findings/findings.json",
-          ]:
-              try:
-                  raw = json.loads(Path(candidate).read_text())
-                  for f in raw:
-                      fid = f.get("fix_id") or f.get("id", "")
-                      if not fid:
-                          continue
-                      st = f.get("status", "")
-                      # Inspector statuses:
-                      #   "fixed"    → auto-fixer ran and succeeded
-                      #   "skipped"  → registry said false_positive or resolved → do NOT promote to RESOLVED
-                      #   "manual"   → detected but needs human action
-                      #   "detected" → detected, auto-fixable but not yet applied
-                      if st == "fixed":
-                          inspector_status[fid] = "RESOLVED"
-                      elif st == "detected":
-                          inspector_status[fid] = "OPEN"
-                      elif st == "manual":
-                          inspector_status[fid] = "OPEN"
-                      # "skipped" → trust the registry; don't map to anything here
-                  print(f"Loaded {len(inspector_status)} live statuses from hypatia_inspector")
-                  break
-              except Exception as exc:
-                  print(f"Could not load hypatia findings: {exc}")
-
-          # ── 3. Load notebooks audit summary (descriptions / NB labels) ────────
-          nb_summary: dict[str, dict] = {}  # fix_id → {description, action, nb, severity}
-          for candidate in [
-              "/tmp/audit_summary/notebooks_audit_summary.json",
-              "/tmp/audit_summary/paper-audit-notebooks/notebooks_audit_summary.json",
-          ]:
-              try:
-                  summary = json.loads(Path(candidate).read_text())
-                  items = summary if isinstance(summary, list) else summary.get("findings", [])
-                  for item in items:
-                      fid = item.get("id") or item.get("fix_id", "")
-                      if fid:
-                          nb_summary[fid] = item
-                  print(f"Loaded NB summary descriptions for {len(nb_summary)} items")
-                  break
-              except Exception:
-                  pass
-
-          # ── 4. Static descriptions fallback (descriptions/actions/nb only — NO statuses) ─
-          # Statuses are NEVER set here; they come exclusively from the registry.
-          # This dict is only consulted when the registry entry has no description.
-          STATIC_META = {
-              "FIX-B1":  {"severity":"CRITICAL","nb":"NB-01",
-                           "description":"koza1994genetic cited but has no bibitem.",
-                           "action":"Add bibitem or redirect cite to koza1992gp."},
-              "FIX-B2":  {"severity":"HIGH",    "nb":"NB-01",
-                           "description":"cranmer2023pysr and cranmer2023interpretable alias the same paper.",
-                           "action":"Remove cranmer2023interpretable; redirect all cite to cranmer2023pysr."},
-              "FIX-B3":  {"severity":"HIGH",    "nb":"NB-01",
-                           "description":"udrescu2020ai and udrescu2020aifeynman alias the same paper.",
-                           "action":"Remove udrescu2020aifeynman; redirect all uses to udrescu2020ai."},
-              "FIX-F1":  {"severity":"MEDIUM",  "nb":"NB-05",
-                           "description":"hypatiaX_three_systems MISSING — fbox placeholder in §7.1.",
-                           "action":"Replace fbox placeholder with final PDF/PNG."},
-              "FIX-F2":  {"severity":"MEDIUM",  "nb":"NB-05",
-                           "description":"fig18_r2_heatmap_improved.pdf missing from figures/.",
-                           "action":"Run generate_figures.py --experiment exp1 or ci_postprocess figures_deploy."},
-              "FIX-F3":  {"severity":"MEDIUM",  "nb":"NB-05",
-                           "description":"fig09_r2_heatmap_regimes.pdf missing from figures/.",
-                           "action":"Run generate_figures.py --experiment exp1 or ci_postprocess figures_deploy."},
-              "FIX-F4":  {"severity":"MEDIUM",  "nb":"NB-05",
-                           "description":"fig1_seed_sweep.pdf missing from figures/.",
-                           "action":"Run generate_figures.py --experiment exp1 or ci_postprocess figures_deploy."},
-              "FIX-C3":  {"severity":"CRITICAL","nb":"NB-06",
-                           "description":"Feynman benchmark split-protocol mismatch.",
-                           "action":"Results in exp2_pca_4060/; Gates A/B/C passed."},
-          }
-
-          # ── Build the canonical findings list from the registry ───────────────
-          # The registry is the authoritative list of ALL known issues.
-          # Descriptions come from: nb_summary > STATIC_META > registry entry itself.
-          findings = []
-          for entry in registry_entries:
-              fid      = entry["id"]
-              reg_st   = entry.get("status", "open").lower()  # open/resolved/false_positive
-
-              # Determine the display status:
-              #   registry false_positive → always FALSE_POSITIVE (never overridable)
-              #   registry resolved       → always RESOLVED
-              #   registry open           → use inspector if available, else OPEN
-              if reg_st == "false_positive":
-                  display_status = "FALSE_POSITIVE"
-              elif reg_st == "resolved":
-                  display_status = "RESOLVED"
-              else:  # open
-                  # Inspector can say RESOLVED (it applied the fix) or OPEN (still detected)
-                  display_status = inspector_status.get(fid, "OPEN")
-
-              # Pick description/action/severity/nb from best available source
-              meta = nb_summary.get(fid) or STATIC_META.get(fid) or {}
-              desc   = meta.get("description") or entry.get("description", "")
-              action = meta.get("action")       or entry.get("action", "")
-              sev    = (meta.get("severity")    or entry.get("severity", "medium")).upper()
-              nb     = meta.get("nb")           or entry.get("nb_source", "")
-
-              # For false positives: show the false_positive_reason as the action
-              if reg_st == "false_positive":
-                  fp_reason = entry.get("false_positive_reason", "")
-                  if fp_reason:
-                      action = f"No action needed. Reason: {fp_reason[:200]}"
-                  else:
-                      action = "No action needed — confirmed false positive."
-
-              findings.append({
-                  "id":          fid,
-                  "severity":    sev,
-                  "status":      display_status,
-                  "description": desc,
-                  "action":      action,
-                  "nb":          nb,
-              })
-
-          # If registry was empty, fall back to static list (all OPEN — safest assumption)
-          if not findings:
-              print("WARNING: registry empty — using static list with OPEN status for all items")
-              for fid, meta in STATIC_META.items():
-                  findings.append({
-                      "id": fid, "severity": meta["severity"], "status": "OPEN",
-                      "description": meta["description"], "action": meta["action"],
-                      "nb": meta["nb"],
-                  })
-
-          # ── Helpers ───────────────────────────────────────────────────────────
-          SEV_ORDER = {"CRITICAL":0,"HIGH":1,"MEDIUM":2,"LOW":3}
-          findings.sort(key=lambda f: (SEV_ORDER.get(f["severity"],9), f["id"]))
-
-          SEV_STYLE = {
-              "CRITICAL": ("background:#fff0f0;", "🔴 CRITICAL"),
-              "HIGH":     ("background:#fff5ec;", "🟠 HIGH"),
-              "MEDIUM":   ("",                    "🟡 MEDIUM"),
-              "LOW":      ("background:#f6fff6;",  "🟢 LOW"),
-          }
-          STATUS_BADGE = {
-              "RESOLVED":       '<span style="color:#1a6b3a;font-weight:bold;background:#eafaf1;padding:2px 7px;border-radius:10px;">✅ RESOLVED</span>',
-              "OPEN":           '<span style="color:#b35c00;font-weight:bold;background:#fff3e0;padding:2px 7px;border-radius:10px;">🔴 OPEN</span>',
-              "FALSE_POSITIVE": '<span style="color:#555;font-weight:bold;background:#f0f0f0;padding:2px 7px;border-radius:10px;">🔵 FALSE POSITIVE</span>',
-          }
-
-          def e(s): return html.escape(str(s))
-
-          # ── Partition findings ────────────────────────────────────────────────
-          open_findings  = [f for f in findings if f["status"] == "OPEN"]
-          resolved       = [f for f in findings if f["status"] == "RESOLVED"]
-          false_positives= [f for f in findings if f["status"] == "FALSE_POSITIVE"]
-          critical_open  = [f for f in open_findings if f["severity"] == "CRITICAL"]
-
-          print(f"Findings: {len(open_findings)} OPEN, {len(resolved)} RESOLVED, "
-                f"{len(false_positives)} FALSE_POSITIVE, {len(critical_open)} CRITICAL-OPEN")
-
-          # ── Build table rows ──────────────────────────────────────────────────
-          def make_rows(items, fp=False):
-              rows = []
-              for f in items:
-                  sev = f["severity"]
-                  style, sev_label = SEV_STYLE.get(sev, ("", sev))
-                  if fp:
-                      style = "background:#f8f8f8;color:#777;"
-                  badge  = STATUS_BADGE.get(f["status"], STATUS_BADGE["OPEN"])
-                  desc   = e(f["description"])
-                  action = e(f["action"])
-                  rows.append(f"""
-                    <tr style="{style}">
-                      <td><strong>{e(f['id'])}</strong><br><small>{badge}</small></td>
-                      <td style="font-size:0.85em;">{sev_label}</td>
-                      <td>{desc}<br><small style="color:#666;"><em>Action:</em> {action}</small></td>
-                      <td style="font-size:0.85em;">{e(f['nb'])}</td>
-                    </tr>""")
-              return rows
-
-          open_rows     = make_rows(open_findings)
-          resolved_rows = make_rows(resolved)
-          fp_rows       = make_rows(false_positives, fp=True)
-
-          # ── Pipeline status banner ────────────────────────────────────────────
-          src_note = (f"Registry: <code>{e(str(registry_path))}</code> "
-                      f"({len(registry_entries)} entries checked-out from repo).")
-          if no_notebooks:
-              pipeline_html = f"""
-              <div style="background:#fff8e1;border-left:4px solid #f0a000;padding:12px 16px;margin-bottom:12px;border-radius:4px;">
-                <strong>ℹ️ Fix-only run</strong> — notebooks were not re-executed in this pipeline run.
-                <code>fix_paper_issues.py</code> / <code>hypatia_inspector.py</code> applied fixes directly
-                to the source files. Run <code>ci_paper_notebooks.yml</code>
-                (with <code>apply_fixes_only=false</code>) to regenerate live notebook output.
-              </div>"""
-          else:
-              crit_html = (f"&nbsp;· <strong style='color:#c00;'>{len(critical_open)} CRITICAL open</strong>"
-                           if critical_open else "")
-              pipeline_html = f"""
-              <p>
-                Report run&nbsp;<code>{e(report_run)}</code>
-                · Notebook run&nbsp;<code>{e(upstream_run)}</code>{crit_html}<br>
-                <small style="color:#666;">{src_note}</small>
-              </p>"""
-
-          # ── Priority action list ──────────────────────────────────────────────
-          open_ids = {f["id"] for f in open_findings}
-          priority_items = [
-              # (id_string_for_display, [constituent_ids_to_check], action_text)
-              ("FIX-B2 / FIX-B3",  ["FIX-B2","FIX-B3"],
-               "Deduplicate the two bibitem alias pairs."),
-              ("FIX-XR4",          ["FIX-XR4"],
-               "Update Supp A filename string from <code>jmlr_paper_main.tex</code> → <code>jmlrpaper_main.tex</code>."),
-              ("FIX-F1",           ["FIX-F1"],
-               "Replace <code>\\fbox</code> placeholder with final architecture PDF/PNG."),
-              ("FIX-F2, FIX-F3, FIX-F4", ["FIX-F2","FIX-F3","FIX-F4"],
-               "Copy three missing figure files to <code>figures/</code>."),
-              ("FIX-N3",           ["FIX-N3"],
-               "Commit Nguyen-12 seed=123 rerun results; add dual-threshold claim to <code>paper_targets.json</code>."),
-              ("FIX-S1 / FIX-S2",  ["FIX-S1","FIX-S2"],
-               "Add <code>\\label</code> to all unlabelled \\section and \\subsection headings."),
-          ]
-          pri_rows = []
-          for label, ids, text in priority_items:
-              still_open = any(i in open_ids for i in ids)
-              if still_open:
-                  pri_rows.append(f"<li><strong>{e(label)}</strong> — {text}</li>")
-              else:
-                  pri_rows.append(f"<li><s style='color:#888;'><strong>{e(label)}</strong></s> <span style='color:#1a6b3a;'>✅</span> — {text}</li>")
-
-          # ── Assemble the conclusions section ──────────────────────────────────
-          open_table_html = f"""
-            <table style="font-size:0.87em;width:100%;border-collapse:collapse;">
-              <thead><tr>
-                <th style="width:115px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">ID / Status</th>
-                <th style="width:95px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Severity</th>
-                <th style="padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Issue &amp; Action</th>
-                <th style="width:80px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">NB</th>
-              </tr></thead>
-              <tbody>{"".join(open_rows) if open_rows else "<tr><td colspan='4' style='padding:12px;color:#1a6b3a;text-align:center;'>✅ No open issues</td></tr>"}</tbody>
-            </table>"""
-
-          resolved_table_html = "" if not resolved_rows else f"""
-            <details style="margin-top:16px;">
-              <summary style="cursor:pointer;font-weight:600;color:#1a6b3a;">
-                ✅ {len(resolved)} Resolved issues (click to expand)
-              </summary>
-              <table style="font-size:0.85em;width:100%;border-collapse:collapse;margin-top:8px;">
-                <thead><tr>
-                  <th style="width:115px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">ID / Status</th>
-                  <th style="width:95px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Severity</th>
-                  <th style="padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Issue &amp; Action</th>
-                  <th style="width:80px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">NB</th>
-                </tr></thead>
-                <tbody>{"".join(resolved_rows)}</tbody>
-              </table>
-            </details>"""
-
-          fp_table_html = "" if not fp_rows else f"""
-            <details style="margin-top:8px;">
-              <summary style="cursor:pointer;font-weight:600;color:#555;">
-                🔵 {len(false_positives)} Confirmed false positives — suppressed from all gates (click to expand)
-              </summary>
-              <p style="font-size:0.85em;color:#666;margin:8px 0 4px;">
-                These findings were produced by audit notebooks scanning stale cached outputs.
-                Verification against the current paper source files confirms none of them exist.
-                They are excluded from CI gates, fix scripts, and the priority action list.
-              </p>
-              <table style="font-size:0.85em;width:100%;border-collapse:collapse;">
-                <thead><tr>
-                  <th style="width:115px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">ID / Status</th>
-                  <th style="width:95px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Severity</th>
-                  <th style="padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">Original finding &amp; Why it's a false positive</th>
-                  <th style="width:80px;padding:6px 8px;background:#f5f5f5;border:1px solid #ddd;">NB</th>
-                </tr></thead>
-                <tbody>{"".join(fp_rows)}</tbody>
-              </table>
-            </details>"""
-
-          section = f"""
-            <div class="nb-section" id="conclusions">
-              <div class="nb-header" style="background:linear-gradient(90deg,#1a1a2e,#7b2d8b);">
-                <h2>Audit Conclusions &amp; Action Plan</h2>
-              </div>
-              <div class="nb-body">
-
-                <h3 style="margin-top:24px;">Pipeline Status</h3>
-                {pipeline_html}
-
-                <h3>Results Quality</h3>
-                <p>
-                  All nine abstract claims pass verification ([OK] across every check in NB-04 Step&nbsp;2).
-                  The core numerical story — 89.2&nbsp;% near-perfect success rate, +27&nbsp;pp gain over the LLM baseline,
-                  1.73×&nbsp;speedup, Nguyen 11/12, Feynman 9/30 (random 80/20 baseline, locked in
-                  <code>fixc3_baseline.json</code>) — is internally consistent throughout the paper.
-                  The FIX-C3 split-protocol correction has been applied; Gates A/B/C pass.
-                </p>
-
-                <h3>Open Issues ({len(open_findings)}
-                  {"— <span style='color:green;'>none ✅</span>" if not open_findings else
-                   "— <span style='color:#c00;'>action required</span>"})
-                </h3>
-                {open_table_html}
-
-                {resolved_table_html}
-                {fp_table_html}
-
-                <h3 style="margin-top:32px;">Recommended Fix Order Before Submission</h3>
-                {"<p style='color:#1a6b3a;'>✅ All tracked action items are resolved or suppressed.</p>" if not pri_rows or not any("</s>" not in r for r in pri_rows) else ""}
-                <ol style="line-height:2.2;">{"".join(pri_rows)}</ol>
-
-              </div>
-            </div><!-- #conclusions -->
-          """
-
-          Path("site").mkdir(exist_ok=True)
-          with open("site/index.html", "a", encoding="utf-8") as fh:
-              fh.write(section)
-
-          print(f"Conclusions written — {len(open_findings)} OPEN, "
-                f"{len(resolved)} RESOLVED, {len(false_positives)} FALSE_POSITIVE.")
-          PYEOF
-
-
-      - name: Finalise report HTML
-        env:
-          RUN_DATE:     ${{ steps.set-run-meta.outputs.run_date }}
-          UPSTREAM_RUN: ${{ steps.resolve-run.outputs.notebooks_run_id }}
-        run: |
-          # ── Footer + close ───────────────────────────────────────────────────
-          cat >> site/index.html << HTML
-            </div><!-- .container -->
-
-            <div class="footer">
-              HypatiaX Paper Audit &bull; Notebook run ${UPSTREAM_RUN}
-              &bull; Report run ${{ github.run_id }} &bull; ${RUN_DATE}<br>
-              Generated by <code>ci_report.yml</code> — no notebooks were re-executed.
-            </div>
-          </body>
-          </html>
-          HTML
-
-          echo "Report built: $(wc -c < site/index.html) bytes  |  $(wc -l < site/index.html) lines"
-
-      # ── Backup artifact (downloadable even without Pages) ───────────────────
+      # ── Backup + Pages artifacts ──────────────────────────────────────────
       - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -857,7 +217,6 @@ jobs:
           path: site/index.html
           retention-days: 30
 
-      # ── GitHub Pages artifact ────────────────────────────────────────────────
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -865,9 +224,6 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
   # Job: deploy
-  #
-  # Deploys the Pages artifact produced by build-report.
-  # Runs only after build-report succeeds.
   # ────────────────────────────────────────────────────────────────────────────
   deploy:
     name: "Deploy to GitHub Pages"

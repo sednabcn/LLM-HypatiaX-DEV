@@ -6,13 +6,18 @@
 #  Runs inside the PRIVATE repository after the full pipeline completes.
 #  Collects every piece of reviewer evidence into a single self-contained
 #  zip archive and uploads it as a GitHub Release asset (or a plain Actions
-#  artefact as fallback), so that ci_pipeline_reviewers_standalone.yml can
+#  artefact as fallback), so that ci_pipeline_reviewers.yml (public repo) can
 #  consume it from ANY repository with zero secrets and no Actions API access.
 #
 #  WHAT IS BUNDLED
 #  ---------------
 #  bundle/
 #    manifest.json                    ← provenance: repo, sha, branch, timestamps
+#    scripts/
+#      build_report.py                ← Pages report builder (ci_report.yml)
+#      generate_clean_report.py       ← ground-truth re-validation report generator
+#      hypatia_audit_fix.py           ← detect/fix script for live FIX-* issues
+#      ...                            ← anything else committed under scripts/
 #    c1_c2/
 #      analysis/<exp>_report.md       ← C1 statistical analysis reports
 #      analysis/<exp>_analysis.json   ← C1 structured analysis outputs
@@ -29,6 +34,9 @@
 #    c5_notebooks/
 #      NB-01-*.ipynb … NB-06-*.ipynb ← executed notebooks with cell outputs
 #      notebooks_audit_summary.json   ← aggregated FIX-* issue table
+#    report/
+#      hypatia_clean_report.html      ← fresh ground-truth re-validation report
+#                                        (generate-report job; may be absent on failure)
 #
 #  HOW TO TRIGGER
 #  --------------
@@ -58,6 +66,7 @@
 #  collect-c3       :  5 min  (Actions API log fetch)
 #  collect-c4       :  5 min  (gh run download)
 #  collect-c5       :  5 min  (gh run download)
+#  collect-scripts  :  5 min  (checkout + file staging)
 #  package-and-upload: 10 min (zip + release upload or actions upload)
 # ==============================================================================
 
@@ -94,6 +103,30 @@ on:
         description: >
           Run ID of ci_pipeline_check.yml to pull the qualify log from.
           Leave blank to use the most recent successful run on this branch.
+        required: false
+        default: ""
+
+      tex_path:
+        description: >
+          Path (repo-root-relative) to the main .tex file, used by
+          generate_clean_report.py to render bundle/report/hypatia_clean_report.html.
+          Leave blank to use the script default (jmlr_paper_main.tex).
+        required: false
+        default: ""
+
+      bib_path:
+        description: >
+          Path (repo-root-relative) to the .bib file, used by
+          generate_clean_report.py. Leave blank to use the script default
+          (references.bib).
+        required: false
+        default: ""
+
+      figures_dir:
+        description: >
+          Path (repo-root-relative) to the figures directory, used by
+          generate_clean_report.py. Leave blank to use the script default
+          (figures).
         required: false
         default: ""
 
@@ -198,6 +231,126 @@ jobs:
           path:              ${{ env.BUNDLE_DIR }}/c1_c2/
           if-no-files-found: warn
           retention-days:    1    # intermediate only; package job re-bundles
+
+
+  # ============================================================================
+  #  JOB collect-scripts
+  #  Stages every script that was used to GENERATE the artefacts (not just the
+  #  artefacts themselves) into bundle/scripts/, so the exported bundle is
+  #  self-sufficient and reproducible by reviewers without checkout access to
+  #  the private repo. Includes build_report.py (Pages report builder),
+  #  generate_clean_report.py (ground-truth re-validation report), and
+  #  hypatia_audit_fix.py (detect/fix script for the live FIX-* issues),
+  #  plus anything else committed under scripts/.
+  # ============================================================================
+  collect-scripts:
+    name: "Bundle · Generator scripts (provenance)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Stage generator scripts
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}/scripts"
+          if [[ -d "scripts" ]]; then
+            cp -r scripts/. "${BUNDLE_DIR}/scripts/"
+          else
+            echo "::warning::No scripts/ directory found at repo root — bundle will ship without generator scripts."
+          fi
+          echo "Scripts staged:"
+          find "${BUNDLE_DIR}/scripts" -type f 2>/dev/null | sort || echo "  (none)"
+
+      - name: Upload scripts staging artefact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              bundle-scripts-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/scripts/
+          if-no-files-found: warn
+          retention-days:    1
+
+
+  # ============================================================================
+  #  JOB generate-report
+  #
+  #  Runs scripts/generate_clean_report.py against the checked-out tex/bib/
+  #  figures to produce bundle/report/hypatia_clean_report.html — a fresh,
+  #  ground-truth re-validation of every audit finding (not cached notebook
+  #  output). This is the file ci_pipeline_reviewers.yml (public repo) opens
+  #  first; it must be generated here, in the private repo, because reviewers
+  #  never have tex/bib/figures access themselves.
+  #
+  #  Non-fatal on failure (continue-on-error): a missing/renamed tex file
+  #  should not block the rest of the bundle export. R1 in the reviewer
+  #  pipeline already degrades gracefully ("report: not present in this
+  #  bundle") when bundle/report/ is empty.
+  # ============================================================================
+  generate-report:
+    name: "Bundle · Generate clean re-validation report"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Run generate_clean_report.py
+        id: generate
+        continue-on-error: true
+        env:
+          TEX_PATH:    ${{ github.event.inputs.tex_path || '' }}
+          BIB_PATH:    ${{ github.event.inputs.bib_path || '' }}
+          FIGURES_DIR: ${{ github.event.inputs.figures_dir || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${BUNDLE_DIR}/report"
+
+          if [[ ! -f "scripts/generate_clean_report.py" ]]; then
+            echo "::warning::scripts/generate_clean_report.py not found at repo root — skipping report generation."
+            exit 0
+          fi
+
+          ARGS=()
+          [[ -n "${TEX_PATH}"    ]] && ARGS+=(--tex "${TEX_PATH}")
+          [[ -n "${BIB_PATH}"    ]] && ARGS+=(--bib "${BIB_PATH}")
+          [[ -n "${FIGURES_DIR}" ]] && ARGS+=(--figures-dir "${FIGURES_DIR}")
+          ARGS+=(--output "${BUNDLE_DIR}/report/hypatia_clean_report.html")
+
+          python3 scripts/generate_clean_report.py "${ARGS[@]}"
+
+      - name: Report generation outcome
+        if: always()
+        run: |
+          if [[ -s "${BUNDLE_DIR}/report/hypatia_clean_report.html" ]]; then
+            echo "hypatia_clean_report.html generated: $(wc -c < "${BUNDLE_DIR}/report/hypatia_clean_report.html") bytes"
+          else
+            echo "::warning::hypatia_clean_report.html was not generated — bundle/report/ will be empty. Check tex_path/bib_path/figures_dir inputs if the defaults don't match this repo's layout."
+            mkdir -p "${BUNDLE_DIR}/report"
+          fi
+
+      - name: Upload report staging artefact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              bundle-report-${{ github.run_id }}
+          path:              ${{ env.BUNDLE_DIR }}/report/
+          if-no-files-found: warn
+          retention-days:    1
 
 
   # ============================================================================
@@ -475,7 +628,7 @@ jobs:
     name: "Bundle · Package + upload"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [dispatch-checkpoint, collect-c1-c2, collect-c3, collect-c4, collect-c5]
+    needs: [dispatch-checkpoint, collect-c1-c2, collect-c3, collect-c4, collect-c5, collect-scripts, generate-report]
     if: always()
 
     steps:
@@ -489,13 +642,15 @@ jobs:
       - name: Assemble bundle directory
         run: |
           set -euo pipefail
-          mkdir -p bundle/c1_c2 bundle/c3_checkpoint bundle/c4_audit bundle/c5_notebooks
+          mkdir -p bundle/c1_c2 bundle/c3_checkpoint bundle/c4_audit bundle/c5_notebooks bundle/scripts bundle/report
 
           # Each download-artifact call creates staging/<artefact-name>/<files>
           [[ -d staging/bundle-c1-c2-${{ github.run_id }}    ]] && cp -r staging/bundle-c1-c2-${{ github.run_id }}/.    bundle/c1_c2/
           [[ -d staging/bundle-c3-${{ github.run_id }}        ]] && cp -r staging/bundle-c3-${{ github.run_id }}/.       bundle/c3_checkpoint/
           [[ -d staging/bundle-c4-${{ github.run_id }}        ]] && cp -r staging/bundle-c4-${{ github.run_id }}/.       bundle/c4_audit/
           [[ -d staging/bundle-c5-${{ github.run_id }}        ]] && cp -r staging/bundle-c5-${{ github.run_id }}/.       bundle/c5_notebooks/
+          [[ -d staging/bundle-scripts-${{ github.run_id }}   ]] && cp -r staging/bundle-scripts-${{ github.run_id }}/.  bundle/scripts/
+          [[ -d staging/bundle-report-${{ github.run_id }}    ]] && cp -r staging/bundle-report-${{ github.run_id }}/.  bundle/report/
 
           echo "Bundle tree:"
           find bundle -type f | sort
@@ -529,10 +684,14 @@ jobs:
                   "c3_checkpoint":  "qualify_run.log reconstructed from C3 job log",
                   "c4_audit":       "paper_audit_findings.json and audit reports (C4)",
                   "c5_notebooks":   "Executed NB-01…NB-06 notebooks + audit summary (C5)",
+                  "scripts":        "Generator scripts (build_report.py, generate_clean_report.py, "
+                                     "hypatia_audit_fix.py, etc.) — for reproducibility outside this repo",
+                  "report":         "hypatia_clean_report.html — fresh ground-truth re-validation report "
+                                     "(may be absent if generate-report job failed; non-fatal)",
               },
           }
           counts = {}
-          for sub in ["c1_c2", "c3_checkpoint", "c4_audit", "c5_notebooks"]:
+          for sub in ["c1_c2", "c3_checkpoint", "c4_audit", "c5_notebooks", "scripts", "report"]:
               d = Path("bundle") / sub
               counts[sub] = len(list(d.rglob("*"))) if d.exists() else 0
           manifest["file_counts"] = counts
@@ -575,7 +734,7 @@ jobs:
             || gh release create "${TAG}" \
                  --repo "${REPO}" \
                  --title "Reviewer bundle ${TAG}" \
-                 --notes "Auto-generated reviewer evidence bundle. Run ci_pipeline_reviewers_standalone.yml with this asset URL." \
+                 --notes "Auto-generated reviewer evidence bundle. Run ci_pipeline_reviewers.yml (public repo) with this asset URL." \
                  --prerelease
 
           gh release upload "${TAG}" "${ZIPNAME}" \
@@ -587,4 +746,4 @@ jobs:
           echo ""
           echo "✅ Bundle uploaded to release '${TAG}'."
           echo "   Asset URL: ${ASSET_URL}"
-          echo "   Share this URL as the bundle_url input for ci_pipeline_reviewers_standalone.yml."
+          echo "   Share this URL as the bundle_url input for ci_pipeline_reviewers.yml (public repo)."
