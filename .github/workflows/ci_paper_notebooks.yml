@@ -275,7 +275,7 @@ jobs:
           # regardless of whether find's maxdepth captured it or not.
           # FIX: search common subdirectories before failing; the file may live
           # under paper/, src/, tex/, or latex/ rather than at the repo root.
-          TEX_FILE="jmlrpaper_main.tex"
+          TEX_FILE="jmlr_paper_main.tex"
           TEX_SRC=""
           for candidate in \
               "./${TEX_FILE}" \
@@ -324,7 +324,7 @@ jobs:
         #   FIX-S2  Add \label{subsec:<slug>} after every \subsection{}
         run: |
           set -euo pipefail
-          TEX="jmlrpaper_main.tex"
+          TEX="jmlr_paper_main.tex"
           SUPP="supp_routing_improvements.tex"
           [[ ! -f "$TEX" ]] && { echo "::warning::$TEX not found — skipping LaTeX auto-fixes"; exit 0; }
 
@@ -351,7 +351,7 @@ jobs:
                   print(f"  No changes: {path}")
 
           # ── FIX-B1: redirect koza1994genetic → koza1992gp ──────────────────
-          patch("jmlrpaper_main.tex", [
+          patch("jmlr_paper_main.tex", [
               ("FIX-B1: koza1994genetic → koza1992gp",
                r"\cite{koza1994genetic}", r"\cite{koza1992gp}"),
               ("FIX-B1: citep variant",
@@ -361,14 +361,14 @@ jobs:
           ])
 
           # ── FIX-N1: 71 cases → 70 tasks (instability footnote only) ────────
-          patch("jmlrpaper_main.tex", [
+          patch("jmlr_paper_main.tex", [
               ("FIX-N1: 71 cases → 70 tasks in Spearman footnote",
                "71 cases, with A-Symbolic cases",
                "70 tasks, with A-Symbolic cases"),
           ])
 
           # ── FIX-N2: Five-Layer → Five-Stage in §8.3 heading ─────────────────
-          patch("jmlrpaper_main.tex", [
+          patch("jmlr_paper_main.tex", [
               ("FIX-N2: §8.3 Five-Layer → Five-Stage",
                r"\subsection{Five-Layer Architecture Overview}",
                r"\subsection{Five-Stage Architecture Overview}"),
@@ -397,7 +397,7 @@ jobs:
               "Corrected Runtime Claim":            "sec:runtime_correction",
           }
 
-          p = Path("jmlrpaper_main.tex")
+          p = Path("jmlr_paper_main.tex")
           src = p.read_text(encoding="utf-8")
           changed = False
           for title, label in SECTION_LABELS.items():
@@ -415,11 +415,11 @@ jobs:
                   changed = True
                   print(f"  [FIX-S1] \label{{{label}}} added after \section{{{title}}}")
           if changed:
-              shutil.copy("jmlrpaper_main.tex", "jmlrpaper_main.tex.bak")
+              shutil.copy("jmlr_paper_main.tex", "jmlr_paper_main.tex.bak")
               p.write_text(src, encoding="utf-8")
 
           # ── FIX-S2: add \label after \subsection{} (slug from title) ──────
-          p = Path("jmlrpaper_main.tex")
+          p = Path("jmlr_paper_main.tex")
           src = p.read_text(encoding="utf-8")
 
           def make_slug(title):
@@ -440,9 +440,9 @@ jobs:
               return m.group(1) + r'\label{' + slug + r'}'
           new_src = pattern.sub(add_sublabel, src)
           if changed:
-              shutil.copy("jmlrpaper_main.tex", "jmlrpaper_main.tex.bak")
+              shutil.copy("jmlr_paper_main.tex", "jmlr_paper_main.tex.bak")
               p.write_text(new_src, encoding="utf-8")
-              print("  Written: jmlrpaper_main.tex (FIX-S2)")
+              print("  Written: jmlr_paper_main.tex (FIX-S2)")
           PYFIX
 
       - name: "Auto-fix cross-reference issues (supp files)"
@@ -545,7 +545,6 @@ jobs:
               "ContaminationCheck2023":"contamination2023check",
           }
           tex_files = [
-              "jmlrpaper_main.tex",
               "jmlr_paper_main.tex",
               "supp_routing_improvements.tex",
               "supp_benchmark_report.tex",
@@ -581,11 +580,11 @@ jobs:
           # Commit cross-ref fixes
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add supp_benchmark_report.tex supp_routing_improvements.tex references.bib                   jmlrpaper_main.tex jmlr_paper_main.tex 2>/dev/null || true
+          git add supp_benchmark_report.tex supp_routing_improvements.tex references.bib                   jmlr_paper_main.tex 2>/dev/null || true
           if ! git diff --cached --quiet; then
             git pull --rebase --autostash origin ${{ github.ref_name }} 2>/dev/null || true
             git checkout --ours supp_benchmark_report.tex supp_routing_improvements.tex                                 references.bib 2>/dev/null || true
-            git add supp_benchmark_report.tex supp_routing_improvements.tex references.bib                     jmlrpaper_main.tex jmlr_paper_main.tex 2>/dev/null || true
+            git add supp_benchmark_report.tex supp_routing_improvements.tex references.bib                     jmlr_paper_main.tex 2>/dev/null || true
             git commit -m "ci: auto-fix cross-refs, dup labels, bib aliases [skip ci]"
             git push origin HEAD:${{ github.ref_name }}
           else
@@ -749,7 +748,7 @@ jobs:
             notebooks/
             figures/
             tables/
-            jmlrpaper_main.tex
+            jmlr_paper_main.tex
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────────────────────

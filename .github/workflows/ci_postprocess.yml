@@ -59,6 +59,13 @@ name: "HypatiaX - post-process (figures + tables)"
 #    5. The Commit step stages ALL directories that may have been written,
 #       including cross-experiment canonical dirs for exp2_feynman_pca and
 #       the suppB/suppB_sc figures directories when those experiments run.
+#    6. figures_deploy (A17) runs .github/scripts/clean_figures_dir.py against
+#       every figure source dir before copy_fig() reads from them. This is
+#       defense-in-depth against the figures__figures__fig09_... duplicate-
+#       prefix pattern (caused by local artifact-zip merging, not by this
+#       workflow) — it dedupes identical-content copies into a quarantine
+#       subfolder and only logs (never auto-resolves) genuine content
+#       conflicts. See that script's docstring for full behaviour.
 # ==============================================================================
 
 on:
@@ -1046,6 +1053,45 @@ jobs:
             --source      auto \
             || echo "::warning::cross-experiment (6-method) figure regeneration failed/skipped — fig_runtime_comparison / fig_comparative_table will fall back to suppB/suppB_sc (2-method) output or ${SRC}/"
 
+          echo ""
+
+          # ── Sanitize: dedupe <dir>__-prefixed duplicates before copy_fig runs ──
+          # Defense-in-depth for the figures__figures__figures__fig09_..., Figures__
+          # fig09_... duplication pattern (see clean_figures_dir.py header). That
+          # pattern was traced to LOCAL manual merging of downloaded CI artifact
+          # zips, NOT to anything this workflow writes — copy_fig() below only
+          # ever checks exact canonical filenames, so a mangled-prefix duplicate
+          # is never mistakenly selected as a source. This step exists purely so
+          # that if such files are ever hand-committed into one of these source
+          # dirs (e.g. someone pushes a locally-merged figures/ folder), the
+          # workflow cleans them up automatically instead of silently ignoring
+          # them or letting them accumulate.
+          #
+          # Mode: --apply only (no --delete-duplicates). Identical-content
+          # duplicates are quarantined into _duplicates_removed/ under each dir
+          # (not deleted outright); these scratch dirs live on the ephemeral
+          # runner filesystem and are never staged by the Commit step below, so
+          # nothing extra reaches the repo. Groups with genuinely CONFLICTING
+          # content are left untouched and only logged — clean_figures_dir.py
+          # never guesses which variant is correct.
+          echo "=== Sanitize: strip <dir>__-prefixed duplicates from figure source dirs ==="
+          n_sanitize_conflicts=0
+          for D in \
+            "${SRC}" \
+            "${RUNNER_FIGS}" \
+            "${OUT_BASE}/${EXP1_SUBDIR}/figures" \
+            "${OUT_BASE}/${SUPPB_SUBDIR}/figures" \
+            "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures" \
+            "${ALLEXP_FIGDIR}"; do
+            [[ -d "$D" ]] || continue
+            SANITIZE_LOG="$(python3 .github/scripts/clean_figures_dir.py "$D" --apply 2>&1)" || true
+            echo "${SANITIZE_LOG}"
+            if grep -q '^\[CONFLICT\]' <<< "${SANITIZE_LOG}"; then
+              echo "::warning::clean_figures_dir.py found conflicting-content duplicates in ${D} — left untouched, needs manual review."
+              (( n_sanitize_conflicts++ )) || true
+            fi
+          done
+          echo "Sanitize complete (${n_sanitize_conflicts} dir(s) with unresolved conflicts)."
           echo ""
 
           # ── Helper: copy the first candidate path that exists, else warn ──
