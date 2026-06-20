@@ -222,7 +222,7 @@ modes---based on observable diagnostics computed from training data alone---can
 eliminate catastrophic failures while preserving near-perfect accuracy on
 the cases where symbolic recovery is reliable.
 
-\subsection{Contributions}
+\subsection{Contributions}\label{subsec:contributions}
 \label{sec:contributions}
 
 This paper makes the following contributions:
@@ -256,7 +256,7 @@ This paper makes the following contributions:
 \section{Related Work}
 \label{sec:related}
 
-\subsection{Symbolic Regression}
+\subsection{Symbolic Regression}\label{subsec:symbolic-regression}
 \label{sec:related_sr}
 
 Symbolic regression aims to discover explicit functional forms from data without
@@ -273,7 +273,7 @@ show---is the dominant failure mode of LLM-based symbolic regression on complex
 formulas.  Our multi-run protocol (30 independent runs per task) and Instability
 Index directly address this gap.
 
-\subsection{LLMs for Mathematical and Scientific Reasoning}
+\subsection{LLMs for Mathematical and Scientific Reasoning}\label{subsec:llms-for-mathematical-and-scientific-rea}
 \label{sec:related_llm}
 
 Chain-of-thought prompting \citep{wei2022chain} and Minerva \citep{lewkowycz2022minerva}
@@ -287,7 +287,7 @@ do not report variance across runs as a first-class metric.  Our benchmark is th
 first, to our knowledge, to quantify LLM instability systematically across a large
 corpus of financial formulas under repeated stochastic inference.
 
-\subsection{Equation Learners, Differentiable SR, and Uncertainty-Aware Methods}
+\subsection{Equation Learners, Differentiable SR, and Uncertainty-Aware Methods}\label{subsec:equation-learners-differentiable-sr-and-}
 \label{sec:related_eq}
 
 Several strands of recent work are directly relevant to the hybrid design in
@@ -306,7 +306,7 @@ alongside recovery rate, and by combining evolutionary symbolic search with an
 explicit multi-layer validation cascade that filters expressions before
 acceptance.
 
-\subsection{Hybrid Symbolic--Neural Systems}
+\subsection{Hybrid Symbolic--Neural Systems}\label{subsec:hybrid-symbolicneural-systems}
 \label{sec:related_hybrid}
 
 The idea of combining symbolic structure with neural learning has a rich history.
@@ -320,7 +320,7 @@ Our approach differs in motivation: HypatiaX is designed not to improve accuracy
 over either pure method in isolation, but to \emph{eliminate catastrophic failures}
 and achieve reliability across the full difficulty spectrum of DeFi tasks.
 
-\subsection{Extrapolation in Neural Networks}
+\subsection{Extrapolation in Neural Networks}\label{subsec:extrapolation-in-neural-networks}
 \label{sec:related_extrap}
 
 The failure of neural networks to extrapolate is well-documented \citep{xu2021neural}.
@@ -336,17 +336,17 @@ achieves median $\Rsq=-0.47$ under our 40\,\%/60\,\% extrapolation split.
 
 To evaluate whether large language models (LLMs) can perform analytical formula discovery without symbolic constraints or external solvers, we conducted a systematic study of pure LLM-based formula generation \citep{koza1992genetic,kambhampati2024llms}. No symbolic regression, constraint enforcement, or post-generation correction was applied.
 
-\subsection{Experimental Design}
+\subsection{Experimental Design}\label{subsec:experimental-design}
 \label{sec:llm_exp_design}
 
 We evaluated GPT-4 \citep{openai2023gpt4} on 40 interpolation-based formula discovery tasks spanning five domains: classical physics (Kinetic Energy, Gravitational Force, Ideal Gas Law), chemistry (Arrhenius, Henderson-Hasselbalch, Rate Law), biology (Allometric Scaling, Michaelis-Menten, Logistic Growth), and decentralized finance (Impermanent Loss, Price Impact, Portfolio Variance, Value-at-Risk, Liquidation Price). Tasks were presented as structured prompts containing variable names, units, and sample data. Outputs were evaluated by executing the generated formula symbolically and computing $\Rsq$ on a held-out test set within the training range.
 
-\subsection{Baseline Results: Bimodal Performance}
+\subsection{Baseline Results: Bimodal Performance}\label{subsec:baseline-results-bimodal-performance}
 \label{sec:llm_baseline}
 
 Pure LLM performance is strongly bimodal. On well-known physical laws (Kinetic Energy, Ideal Gas Law, Gravitational Force), the LLM achieves $\Rsq = 1.000$ with exact symbolic recovery. On domain-specific and specialized equations---particularly in chemistry (Henderson-Hasselbalch: $\Rsq = -3.2$), biology (Michaelis-Menten: $\Rsq = -68.6$), and DeFi (Portfolio Variance: $\Rsq = -21.0$)---performance collapses catastrophically. LLM success correlates with estimated equation prevalence in web corpora (Spearman $\rho = 0.89$, $p < 0.001$), consistent with the hypothesis that pretraining data distribution influences recovery performance \citep{kambhampati2024llms}.
 
-\subsection{Failure Mode Taxonomy}
+\subsection{Failure Mode Taxonomy}\label{subsec:failure-mode-taxonomy}
 \label{sec:llm_failures}
 
 We identify five failure modes, ordered by severity:
@@ -358,7 +358,7 @@ We identify five failure modes, ordered by severity:
   \item \textbf{Incomplete construction} (Medium): Partial derivations missing key terms.
 \end{enumerate}
 
-\subsection{Case Studies}
+\subsection{Case Studies}\label{subsec:case-studies}
 \label{sec:llm_cases}
 
 \paragraph{Arrhenius equation.}
@@ -367,12 +367,12 @@ The Arrhenius rate constant is $k = A \exp\!(-E_a/RT)$. The LLM correctly identi
 \paragraph{Michaelis-Menten.}
 $v = V_{\max}[S]/(K_m + [S])$. The LLM recovers the functional form on some runs ($\Rsq = 1.000$) but collapses on others ($\Rsq < -68$), producing high run-to-run instability ($\II = 0.31$). This motivates the Instability Index as a diagnostic.
 
-\subsection{Success Pattern Analysis}
+\subsection{Success Pattern Analysis}\label{subsec:success-pattern-analysis}
 \label{sec:llm_success}
 
 LLM guidance succeeds when: (1) the equation is well-represented in web text; (2) the functional form is algebraic rather than transcendental; (3) the domain is classical physics or standard chemistry. It fails systematically on post-2020 DeFi equations, multi-asset risk formulas, and transcendental biology equations---precisely the cases where symbolic regression provides the most value.
 
-\subsection{Extrapolation Testing}
+\subsection{Extrapolation Testing}\label{subsec:extrapolation-testing}
 \label{sec:llm_extrap}
 
 Even when the LLM achieves near-perfect interpolation ($\Rsq \approx 1$), extrapolation performance is unreliable. Across 40 tests, 6 equations suffered catastrophic extrapolation failure ($\Rsq < -10$). This motivates the hybrid architecture: the LLM provides structural guidance while symbolic regression corrects parametric errors and the neural network provides a stable fallback.
@@ -382,7 +382,7 @@ Even when the LLM achieves near-perfect interpolation ($\Rsq \approx 1$), extrap
 \section{Theoretical Framework}
 \label{sec:theory}
 
-\subsection{Formal Definitions}
+\subsection{Formal Definitions}\label{subsec:formal-definitions}
 \label{sec:theory_defs}
 
 \begin{definition}[Analytical Expression Discovery]
@@ -406,7 +406,7 @@ A system exhibits interpolation--extrapolation decoupling if $\exists$ tasks whe
 A generative model $G$ exhibits reproductive behaviour if its output distribution concentrates near its training manifold: $P(G(x) \notin \mathcal{M}_{\text{train}}) < \delta$ for small $\delta$, where $\mathcal{M}_{\text{train}}$ is the training data manifold.
 \end{definition}
 
-\subsection{Main Theoretical Result}
+\subsection{Main Theoretical Result}\label{subsec:main-theoretical-result}
 \label{sec:theory_main}
 
 \begin{finding}[Interpolation--Extrapolation Decoupling]
@@ -427,12 +427,12 @@ Autoregressive LLMs trained by maximum-likelihood exhibit reproductive behaviour
 Maximum-likelihood training minimises $-\mathbb{E}[\log P_\theta(x)]$, concentrating probability mass near training examples. For rare equations (low corpus frequency), the model assigns low probability to the correct expression, increasing the risk of plausible-but-wrong outputs. \qed
 \end{proof}
 
-\subsection{Implications for Discovery}
+\subsection{Implications for Discovery}\label{subsec:implications-for-discovery}
 \label{sec:theory_implications}
 
 Finding~\ref{thm:llm_reproductive} explains the domain-dependence pattern in Section~\ref{sec:llm_limitations}: LLM performance correlates with equation prevalence ($\rho = 0.89$) because reproductive behaviour ties output quality to training exposure. This motivates hybrid architectures that use LLM structural guidance while correcting via symbolic search.
 
-\subsection{Functional Form Recovery and Inductive Bias Alignment}
+\subsection{Functional Form Recovery and Inductive Bias Alignment}\label{subsec:functional-form-recovery-and-inductive-b}
 \label{sec:theory_recovery}
 
 Symbolic regression performs evolutionary exploration of expression space guided by fitness evaluation, without requiring proximity to textual training examples. For problems admitting closed-form representations, restricting search to symbolic structures improves extrapolation reliability by aligning the inductive bias of the model with the structure of the target function. By the No Free Lunch theorem \citep{wolpert1997no}, performance depends on alignment between hypothesis class and problem structure. When the true relationship admits a closed-form representation, this alignment holds for symbolic search and fails for purely neural approaches.
@@ -495,7 +495,7 @@ zero, or radically incorrect symbolic expressions.
 \section{Benchmark Design}
 \label{sec:benchmark}
 
-\subsection{Overview and Scope}
+\subsection{Overview and Scope}\label{subsec:overview-and-scope}
 \label{sec:bench_overview}
 
 The HypatiaX DeFi Benchmark comprises \textbf{74 test cases} spanning the core
@@ -528,7 +528,7 @@ Tasks are drawn from five domain categories:
     staking APY.
 \end{itemize}
 
-\subsection{Difficulty Classification}
+\subsection{Difficulty Classification}\label{subsec:difficulty-classification}
 \label{sec:bench_difficulty}
 
 Tasks are categorised by difficulty into three tiers based on functional structure:
@@ -557,7 +557,7 @@ cases in multi-asset risk: correlated portfolio VaR, component ES, and
 multi-collateral LTV.  All results in this paper refer to the 74-case v3.0 benchmark.
 \end{remark}
 
-\subsection{Data Generation}
+\subsection{Data Generation}\label{subsec:data-generation}
 \label{sec:bench_datagen}
 
 For each task $i$, we generate $N=200$ samples using domain-specific input
@@ -571,7 +571,7 @@ simulators.  Input ranges are chosen to reflect realistic DeFi parameter regimes
 All inputs are sampled uniformly within their respective ranges to provide dense
 coverage of the training domain.
 
-\subsection{Extrapolation Protocol}
+\subsection{Extrapolation Protocol}\label{subsec:extrapolation-protocol}
 \label{sec:split}
 
 To rigorously assess out-of-distribution generalisation, we employ a
@@ -604,7 +604,7 @@ fail due to numerical boundary issues.  This overlap is small ($\sim$5\,\% of
 samples) and does not substantially reduce the extrapolation challenge.
 \end{remark}
 
-\subsection{Pipeline Corrections in v3.0}
+\subsection{Pipeline Corrections in v3.0}\label{subsec:pipeline-corrections-in-v30}
 \label{sec:r2_bugfix}
 \label{sec:corrections}
 
@@ -645,7 +645,7 @@ numbers reported in earlier drafts.
 \section{Methodology}
 \label{sec:method}
 
-\subsection{Architecture Overview}
+\subsection{Architecture Overview}\label{subsec:architecture-overview}
 \label{sec:method_overview}
 
 HypatiaX combines three computational components---an LLM symbolic generator,
@@ -663,7 +663,7 @@ diagnostics only; no test information is used at decision time.}
 \label{fig:architecture}
 \end{figure}
 
-\subsection{Component 1: LLM-Based Symbolic Generation}
+\subsection{Component 1: LLM-Based Symbolic Generation}\label{subsec:component-1-llmbased-symbolic-generation}
 \label{sec:llm_gen}
 
 Given a task description $\mathcal{T}_i$ (a natural-language specification of the
@@ -693,7 +693,7 @@ and the edge fit:
 where $\mathcal{D}^{\mathrm{edge}}_i$ is the upper-20\,\% subset of the training
 data described above.
 
-\subsection{Component 2: Neural Network Estimator}
+\subsection{Component 2: Neural Network Estimator}\label{subsec:component-2-neural-network-estimator}
 \label{sec:nn}
 
 The neural baseline is a \textbf{residual MLP} with the following architecture:
@@ -720,7 +720,7 @@ corrections to an imperfect symbolic formula rather than learning the function
 from scratch, which substantially reduces the extrapolation burden when the LLM
 formula captures the correct functional form but has parameter errors.
 
-\subsection{Component 3: Five-Stage Routing and Ensembling}
+\subsection{Component 3: Five-Stage Routing and Ensembling}\label{subsec:component-3-fivestage-routing-and-ensemb}
 \label{sec:routing}
 
 \begin{figure}[H]
@@ -827,7 +827,7 @@ leaks into the prediction, addressing the data-leakage correction described in
 Section~\ref{sec:corrections}.
 \end{remark}
 
-\subsection{Unified Formula Executor}
+\subsection{Unified Formula Executor}\label{subsec:unified-formula-executor}
 \label{sec:executor}
 
 All symbolic formulas---whether produced by the LLM or specified as ground truth---are
@@ -847,7 +847,7 @@ $\Rsq$ values depending on the evaluation backend.
 \section{HypatiaX Architecture}
 \label{sec:architecture}
 
-\subsection{Design Principles}
+\subsection{Design Principles}\label{subsec:design-principles}
 \label{sec:arch_principles}
 
 \begin{enumerate}
@@ -860,7 +860,7 @@ $\Rsq$ values depending on the evaluation backend.
 \item \textbf{Failure transparency:} Invalid expressions are explicitly rejected.
 \end{enumerate}
 
-\subsection{Assumptions}
+\subsection{Assumptions}\label{subsec:assumptions}
 \label{sec:assumptions}
 
 \begin{enumerate}
@@ -877,7 +877,7 @@ $\Rsq$ values depending on the evaluation backend.
   $\sigma = 0.05 \cdot \mathrm{std}(y)$ in all main experiments.
 \end{enumerate}
 
-\subsection{Five-Stage Routing Architecture Overview}
+\subsection{Five-Stage Routing Architecture Overview}\label{subsec:fivestage-routing-architecture-overview}
 \label{sec:validation_framework}
 
 Stage~1--2: data ingestion and preprocessing.
@@ -889,7 +889,7 @@ Stage~4: PySR evolutionary search \citep{cranmer2023pysr}.
 Stage~5: four-stage validation cascade (Section~\ref{sec:validation_detail})
 producing the accepted expression with natural-language interpretation.
 
-\subsection{System Variants}
+\subsection{System Variants}\label{subsec:system-variants}
 \label{sec:arch_variants}
 
 \textsc{HypatiaX} provides three architectural variants used as ablation
@@ -906,7 +906,7 @@ Symbolic discovery without LLM guidance.
 Achieved $R^2 = 1.000$ on all 30 interpolation tests through automatic
 fallback from low-confidence LLM outputs.
 
-\subsection{Hybrid DeFi Variant: Architectural Specification}
+\subsection{Hybrid DeFi Variant: Architectural Specification}\label{subsec:hybrid-defi-variant-architectural-specif}
 \label{sec:hybrid_defi_spec}
 
 The Hybrid DeFi system is a domain-tuned variant of Hybrid~v40 with the
@@ -938,7 +938,7 @@ following differences:
 All other components (PySR configuration, four-layer validation, LLM model and
 temperature) are identical to Hybrid~v40.
 
-\subsection{Symbolic Discovery Core}
+\subsection{Symbolic Discovery Core}\label{subsec:symbolic-discovery-core}
 \label{sec:arch_discovery}
 
 We employ PySR \citep{cranmer2023pysr} for multi-objective evolutionary search:
@@ -954,7 +954,7 @@ We employ PySR \citep{cranmer2023pysr} for multi-objective evolutionary search:
 The algorithm maintains a Pareto front over prediction error and expression
 complexity.
 
-\subsection{Multi-Layer Validation Framework}
+\subsection{Multi-Layer Validation Framework}\label{subsec:multilayer-validation-framework}
 \label{sec:validation_detail}
 
 The four validation layers target distinct failure modes:
@@ -986,7 +986,7 @@ validation alone.  No incorrect expression passed all four layers.
 \section{Experimental Setup}
 \label{sec:setup}
 
-\subsection{Benchmark Summary}
+\subsection{Benchmark Summary}\label{subsec:benchmark-summary}
 \label{sec:setup_summary}
 
 We evaluate HypatiaX v3.0 on the benchmark described in Section~\ref{sec:benchmark}:
@@ -994,7 +994,7 @@ We evaluate HypatiaX v3.0 on the benchmark described in Section~\ref{sec:benchma
 liquidity modelling.  The fixed denominator for all aggregate statistics is 74;
 NaN and failure outputs count as zero $\Rsq$ toward this denominator.
 
-\subsection{Methods Compared}
+\subsection{Methods Compared}\label{subsec:methods-compared}
 \label{sec:setup_methods}
 
 Three methods are evaluated on each task:
@@ -1020,7 +1020,7 @@ the distance-aware ensemble (Eq.~\ref{eq:ensemble}).  When neural fallback is tr
 the neural network is retrained on the augmented input $(x')$ from scratch; this
 retraining cost is fully included in the reported wall-clock time.
 
-\subsection{Evaluation Metrics}
+\subsection{Evaluation Metrics}\label{subsec:evaluation-metrics}
 \label{sec:setup_metrics}
 
 We report the following metrics for each method:
@@ -1047,7 +1047,7 @@ all three methods.  A task that produces NaN or fails to execute contributes 0 t
 the numerator of success rates.  This ensures that the three methods' rates are
 directly comparable and that avoiding evaluation failures is not rewarded.
 
-\subsection{Runtime Measurement}
+\subsection{Runtime Measurement}\label{subsec:runtime-measurement}
 \label{sec:timing_setup}
 
 Wall-clock time is recorded per task and per method.  For the hybrid system,
@@ -1060,7 +1060,7 @@ hybrid routes to pure LLM or ensemble, without triggering full NN retraining).
 This subset comprises $n=68$ of 74 tasks and represents the cleanest comparison
 for assessing the efficiency of symbolic routing.
 
-\subsection{Implementation Details}
+\subsection{Implementation Details}\label{subsec:implementation-details}
 \label{sec:setup_impl}
 
 All experiments are implemented in Python~3.12 using:
@@ -1082,7 +1082,7 @@ run-to-run variability measured by the Instability Index.
 \section{Results}
 \label{sec:results}
 
-\subsection{Five-System Comparative Analysis (Feynman Core-15)}
+\subsection{Five-System Comparative Analysis (Feynman Core-15)}\label{subsec:fivesystem-comparative-analysis-feynman-}
 \label{sec:five_systems}
 
 Table~\ref{tab:five_systems_full} compares the five system configurations on the
@@ -1130,7 +1130,7 @@ exhibit mean error 1231\% (95\% CI: [1087\%, 1456\%], $n=13$), with no
 distributional overlap: Mann-Whitney $U=0$, $p < 10^{-6}$.
 \end{result}
 
-\subsection{Overall Extrapolation Performance (DeFi v3.0)}
+\subsection{Overall Extrapolation Performance (DeFi v3.0)}\label{subsec:overall-extrapolation-performance-defi-v}
 \label{sec:results_defi}
 
 Table~\ref{tab:main_results} presents the primary results across all 74 benchmark tasks.
@@ -1215,7 +1215,7 @@ picture: significant gains emerge in the Feynman success-subset
 and DeFi instability cases discussed in Sections~\ref{sec:instability_results}
 and~\ref{sec:feynman30}.
 
-\subsection{Performance by Difficulty Level}
+\subsection{Performance by Difficulty Level}\label{subsec:performance-by-difficulty-level}
 \label{sec:difficulty}
 
 Table~\ref{tab:difficulty} breaks down the near-perfect success rate ($\Rsq > 0.99$)
@@ -1265,7 +1265,7 @@ on some runs but fail completely on others.  HypatiaX raises this to 76.2\,\% by
 routing to neural fallback when transcendental token detection flags high-risk
 formulas, providing a stable lower bound on performance even when the LLM fails.
 
-\subsection{Runtime Analysis}
+\subsection{Runtime Analysis}\label{subsec:runtime-analysis}
 \label{sec:timing}
 
 Table~\ref{tab:timing} presents the full wall-clock timing data from the v3.0
@@ -1334,7 +1334,7 @@ setting where task difficulty is known in advance (e.g.\ algebraic AMM formulas
 vs.\ Black--Scholes), the routing decision can be pre-computed, eliminating fallback
 overhead entirely and achieving the $1.73\times$ speedup universally.
 
-\subsection{Portfolio Variance: Seed-Sweep Robustness Analysis}
+\subsection{Portfolio Variance: Seed-Sweep Robustness Analysis}\label{subsec:portfolio-variance-seedsweep-robustness-}
 \label{sec:portfolio_seed_sweep}
 
 Symbolic regression methods based on evolutionary search are inherently stochastic.
@@ -1392,7 +1392,7 @@ and do not appear in the seed-sweep JSON; they must not be cited as DeFi seed-sw
 results.}
 
 % ── RF-01 Option B: PySR-only vs HypatiaX ablation (Core-15) ────────────────
-\subsection{Ablation: PySR-only vs.\ HypatiaX (Core-15)}
+\subsection{Ablation: PySR-only vs.\ HypatiaX (Core-15)}\label{subsec:ablation-pysronly-vs-hypatiax-core15}
 \label{sec:ablation_core15}
 
 Table~\ref{tab:llm_ablation} presents the full per-equation comparison between
@@ -1451,7 +1451,7 @@ $\ddagger$ Failure mode (Arrhenius pattern): HypatiaX train $R^2$ substantially 
 }
 \end{table*}
 
-\subsection{Feynman Extrapolation Benchmark ($n=30$)}
+\subsection{Feynman Extrapolation Benchmark ($n=30$)}\label{subsec:feynman-extrapolation-benchmark-n30}
 \label{sec:feynman30}
 
 To assess generalisation beyond DeFi, we evaluate \textsc{HypatiaX} on 30
@@ -1552,7 +1552,7 @@ $p=0.00043$ result from the Colab run are both strongly significant; the Celeron
 run was not subjected to MW analysis at the time of writing.
 
 % ── RF-04: Nguyen-12 Benchmark ───────────────────────────────────────────────
-\subsection{Nguyen-12 Benchmark (Standard SR Suite)}
+\subsection{Nguyen-12 Benchmark (Standard SR Suite)}\label{subsec:nguyen12-benchmark-standard-sr-suite}
 \label{sec:nguyen12}
 
 The Nguyen-12 suite~\citep{uy2011semantically} is the standard symbolic-regression
@@ -1654,7 +1654,7 @@ extrapolation $\Rsq$ across all 12 equations: $U=113$, $p=0.0097$ (two-sided),
 confirming that symbolic regression significantly outperforms the neural baseline
 on this standard suite under aggressive extrapolation.
 
-\subsection{Stability Under Stochastic Inference}
+\subsection{Stability Under Stochastic Inference}\label{subsec:stability-under-stochastic-inference}
 \label{sec:instability_results}
 
 To assess LLM instability systematically, we run $K=30$ independent stochastic
@@ -1727,7 +1727,7 @@ The three Regime C tasks are:
 \section{Discussion}
 \label{sec:discussion}
 
-\subsection{Three Core Findings}
+\subsection{Three Core Findings}\label{subsec:three-core-findings}
 \label{sec:disc_findings}
 
 Our results establish three core findings.
@@ -1756,7 +1756,7 @@ of the time is \emph{less} useful in production than a system that achieves 80\,
 perfect recovery but fails gracefully on the remainder.  HypatiaX achieves both:
 high peak performance and zero catastrophic failures.
 
-\subsection{Arrhenius and Scale-Incompatibility Failures}
+\subsection{Arrhenius and Scale-Incompatibility Failures}\label{subsec:arrhenius-and-scaleincompatibility-failu}
 \label{sec:arrhenius_failure}
 
 A recurring failure mode arises when the LLM prior is \emph{structurally correct}
@@ -1781,7 +1781,7 @@ explains the Portfolio Variance failures at seeds 42, 99, and 123
 requires symbolic verification rather than held-out $\Rsq$ evaluation, and is
 identified as a key direction for future work (Section~\ref{sec:limitations}).
 
-\subsection{The Stability--Accuracy Distinction}
+\subsection{The Stability--Accuracy Distinction}\label{subsec:the-stabilityaccuracy-distinction}
 \label{sec:disc_stability}
 
 Standard machine learning evaluation collapses the reliability question into a
@@ -1799,7 +1799,7 @@ complexity.  We argue that three dimensions of evaluation are necessary:
 HypatiaX addresses all three dimensions, whereas the pure LLM and neural baselines
 each address at most one.
 
-\subsection{Why Transcendental Formulas Fail}
+\subsection{Why Transcendental Formulas Fail}\label{subsec:why-transcendental-formulas-fail}
 \label{sec:disc_transcendental}
 
 The Gaussian CDF $\Phi$ is the proximate cause of the three Regime C collapses.
@@ -1814,7 +1814,7 @@ This observation suggests a practical mitigation: for formulas containing $\Phi$
 provide the LLM with a canonical implementation in the prompt rather than asking it
 to generate one.  We leave this prompt-engineering intervention for future work.
 
-\subsection{OOD Metric as a Proxy}
+\subsection{OOD Metric as a Proxy}\label{subsec:ood-metric-as-a-proxy}
 \label{sec:ood_proxy}
 
 Throughout this paper, ``out-of-distribution $\Rsq$'' refers to performance on a
@@ -1837,7 +1837,7 @@ formula that happens to score well on the held-out test split (same distribution
 will be reclassified as a failure under true OOD evaluation.  We therefore
 expect the Spearman $\rho=-0.70$ result to \emph{strengthen} under Mode~A.
 
-\subsection{Design Principles for Analytical Discovery}
+\subsection{Design Principles for Analytical Discovery}\label{subsec:design-principles-for-analytical-discove}
 \label{sec:disc_principles}
 
 Based on our findings across 74 DeFi tasks and 30 Feynman equations, we propose five design principles for hybrid symbolic--neural discovery systems:
@@ -1850,22 +1850,22 @@ Based on our findings across 74 DeFi tasks and 30 Feynman equations, we propose 
   \item \textbf{Honest runtime reporting.} Aggregate speedup statistics conflate fast LLM-routed cases with slow neural-fallback cases. Report speedup separately for each routing path.
 \end{enumerate}
 
-\subsection{Comparison with Related Work}
+\subsection{Comparison with Related Work}\label{subsec:comparison-with-related-work}
 \label{sec:disc_related}
 
 HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020ai} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Physics-informed neural networks~\citep{raissi2019physics,karniadakis2021physics} offer an alternative by embedding physical constraints directly into the network architecture; our approach differs by targeting financial and biochemical domains where such constraints are unavailable, and by recovering interpretable closed-form expressions rather than learned surrogates. DSR~\citep{petersen2021deep,landajuela2022unified} uses reinforcement learning and risk-seeking policy gradients to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX achieves 9/30 successes (30.0\%) under our aggressive PCA-directed extrapolation protocol, comparable to AI Feynman 2.0 under similar conditions. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
 
-\subsection{Ethical Considerations}
+\subsection{Ethical Considerations}\label{subsec:ethical-considerations}
 \label{sec:disc_ethics}
 
 Automated formula discovery carries risks in high-stakes domains. A formula with high training $\Rsq$ may fail catastrophically under distribution shift---precisely the scenario our benchmark targets. We make three recommendations: (1) never deploy a discovered formula in production without out-of-distribution validation; (2) report instability alongside accuracy; (3) treat HypatiaX output as a hypothesis to be verified, not a certified result. The DeFi domain carries additional risks: discovered liquidation or VaR formulas used in production could amplify systemic risk if they fail under market stress. Our validation framework catches many errors, but not all---particularly the silent semantic failures (correct structure, wrong constants) that produce $\Rsq \approx 1$ on training data.
 
-\subsection{Broader Applicability}
+\subsection{Broader Applicability}\label{subsec:broader-applicability}
 \label{sec:disc_broader}
 
 The hybrid symbolic--neural architecture generalizes beyond DeFi to any domain where: (1) the underlying relationship admits a closed-form expression; (2) LLM training data includes related equations; and (3) extrapolation beyond the training range is required. Candidate domains include pharmacokinetics (drug absorption/elimination kinetics), materials science (stress-strain relationships, diffusion coefficients), climate science (radiative forcing equations), and epidemiology (compartmental model parameters). The instability analysis framework applies wherever stochastic inference is used---including neural architecture search and reinforcement learning policy optimization.
 
-\subsection{Limitations and Future Work}
+\subsection{Limitations and Future Work}\label{subsec:limitations-and-future-work}
 \label{sec:limitations}
 
 \paragraph{Single LLM.}
@@ -2083,10 +2083,10 @@ How neural networks extrapolate: From feedforward to graph neural networks.
 % =============================================================================
 \appendix
 
-\section{Full Benchmark Case Definitions}
+\section{Full Benchmark Case Definitions}\label{sec:benchmark_cases}
 \label{app:cases}
 
-\subsection{Automated Market Makers}
+\subsection{Automated Market Makers}\label{subsec:automated-market-makers}
 \label{sec:bench_amm}
 
 \begin{itemize}
@@ -2114,7 +2114,7 @@ How neural networks extrapolate: From feedforward to graph neural networks.
   \item \textbf{Capital efficiency}: ratio of effective liquidity to deposited capital.
 \end{itemize}
 
-\subsection{Lending Protocols}
+\subsection{Lending Protocols}\label{subsec:lending-protocols}
 \label{sec:bench_lending}
 
 \begin{itemize}
@@ -2138,7 +2138,7 @@ How neural networks extrapolate: From feedforward to graph neural networks.
     extended formulas accounting for funding rates.
 \end{itemize}
 
-\subsection{Derivatives Pricing}
+\subsection{Derivatives Pricing}\label{subsec:derivatives-pricing}
 \label{sec:bench_derivatives}
 
 \begin{itemize}
@@ -2157,7 +2157,7 @@ How neural networks extrapolate: From feedforward to graph neural networks.
   \item \textbf{Convexity Adjustment}: bond convexity formula.
 \end{itemize}
 
-\subsection{Risk and Portfolio Metrics}
+\subsection{Risk and Portfolio Metrics}\label{subsec:risk-and-portfolio-metrics}
 \label{sec:bench_risk}
 
 \begin{itemize}
@@ -2178,7 +2178,7 @@ How neural networks extrapolate: From feedforward to graph neural networks.
   \item \textbf{Position margin ratio}: margin / position notional.
 \end{itemize}
 
-\subsection{Staking and Protocol Mechanisms}
+\subsection{Staking and Protocol Mechanisms}\label{subsec:staking-and-protocol-mechanisms}
 \label{sec:bench_staking}
 
 \begin{itemize}
@@ -2193,7 +2193,7 @@ How neural networks extrapolate: From feedforward to graph neural networks.
   \item \textbf{APY calculation}: annualised yield from periodic rates.
 \end{itemize}
 
-\section{Benchmark Version History}
+\section{Benchmark Version History}\label{sec:version_history}
 \label{app:versions}
 
 \begin{table}[h]
@@ -2210,7 +2210,7 @@ v3.0 & 74 & Three hard cases added; trust gate raised to $\Rsq > 0.5$; data leak
 \end{tabular}
 \end{table}
 
-\section{Corrected Runtime Claim: Detailed Analysis}
+\section{Corrected Runtime Claim: Detailed Analysis}\label{sec:runtime_correction}
 \label{app:timing}
 
 The following table supports the analysis in the runtime note on p.\,1 and the
