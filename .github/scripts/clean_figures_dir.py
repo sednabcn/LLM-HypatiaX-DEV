@@ -13,9 +13,12 @@ downloads on top of each other, e.g.:
 All three are really the same file under different mangled names. This
 script:
 
-  1. Strips any number of leading "<word>__" prefixes (case-insensitive,
-     so "figures__" and "Figures__" both count) to recover the canonical
-     basename.
+  1. Strips any number of leading literal "figures_" or "figures__"
+     prefixes (case-insensitive, so "figures_", "figures__", "Figures_",
+     "Figures__" all count — but ONLY that exact word "figures"; "fig_",
+     "hypatiax_", "backup__", etc. are left untouched since they are part
+     of real canonical filenames, not a duplication artifact) to recover
+     the canonical basename.
   2. Groups files by canonical basename.
   3. Within each group, compares file content via SHA-256:
        - If all copies are byte-identical: keep exactly one (the file with
@@ -47,7 +50,13 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-PREFIX_RE = re.compile(r'^[A-Za-z0-9_-]+__')
+# Matches a literal "figures" mangling prefix, either the double-underscore
+# directory-flatten artifact ("figures__") or a single-underscore variant
+# ("figures_") seen from a different merge/join step. Requires the FULL word
+# "figures" (7 letters) before the underscore(s), so this can never match
+# "fig_" or "hypatiax_" — those are 4 and 9 characters respectively and do
+# not start with "figures".
+PREFIX_RE = re.compile(r'^figures_{1,2}', re.IGNORECASE)
 
 
 def canonical_name(filename: str) -> tuple[str, int]:

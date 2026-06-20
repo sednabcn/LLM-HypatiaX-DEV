@@ -5,7 +5,7 @@ Generates ALL figures for the HypatiaX paper and supplementary reports.
 
 P0 paper-compilation blockers addressed in this version
 ────────────────────────────────────────────────────────
-  hypatiaX_three_systems   — new: architecture diagram rendered from code
+  hypatiax_three_systems   — new: architecture diagram rendered from code
   fig09_r2_heatmap_regimes — REWRITTEN: uses exp1 dict schema (near/medium/far regimes)
   fig18_r2_heatmap_improved — REWRITTEN: uses exp1 dict schema (PySR-only vs HypatiaX)
   fig1_seed_sweep           — REWRITTEN: richer per-seed line chart (from portfolio_variance nb)
@@ -26,7 +26,7 @@ P1 restore (exp1_ablation_results.json schema clarification)
 
 Figure groups produced
 ──────────────────────
-P0               : hypatiaX_three_systems
+P0               : hypatiax_three_systems
 RF02 / cosmetic  : fig07–fig22, fig_seed_sweep_comparison / fig1_seed_sweep
 RF09 instability : fig_instability_*.png, hypatiax_instability_*.png, fig_paper_*.png
 instability_per_case : hypatiax_instability_per_case  (hypatiax_defi_variance_results.json)
@@ -50,7 +50,7 @@ Outputs: figures/  (PNG, 300 dpi, ready for \\includegraphics)
 Missing-figure registry cross-reference
 ────────────────────────────────────────
 Group               Stem                                       Data file(s)
-P0                  hypatiaX_three_systems                     (no data file — rendered from code)
+P0                  hypatiax_three_systems                     (no data file — rendered from code)
 cosmetic            fig07_scatter_train_vs_extrap              exp1_ablation_results.json
 cosmetic            fig08_train_r2_bar                         exp1_ablation_results.json
 cosmetic [P0]       fig09_r2_heatmap_regimes                   exp1_ablation_results.json
@@ -473,7 +473,7 @@ print(f"LLM:     mean_stab={np.nanmean(llm_stab):.4f}")
 # Skipped entirely when RAW is None (e.g. for instability, exp2_feynman_extrap).
 # ══════════════════════════════════════════════════════════════════════════════
 if RAW is not None:
-    # ── hypatiaX_three_systems — architecture diagram rendered from code ──────────
+    # ── hypatiax_three_systems — architecture diagram rendered from code ──────────
     _sys_fig, _sys_ax = plt.subplots(figsize=(14, 6))
     _sys_ax.set_xlim(0, 14); _sys_ax.set_ylim(0, 6)
     _sys_ax.axis("off")
@@ -534,9 +534,9 @@ if RAW is not None:
     _sys_ax.text(7.0, 5.7, "HypatiaX — Three-System Architecture",
                  ha="center", va="center", fontsize=14, fontweight="bold", color="#1E293B")
     _sys_fig.tight_layout()
-    _sys_fig.savefig(os.path.join(_FIGURES_DIR, "hypatiaX_three_systems.png"), dpi=300, bbox_inches="tight")
+    _sys_fig.savefig(os.path.join(_FIGURES_DIR, "hypatiax_three_systems.png"), dpi=300, bbox_inches="tight")
     plt.close(_sys_fig)
-    print("✓ hypatiaX_three_systems.png")
+    print("✓ hypatiax_three_systems.png")
 
 
     # ══════════════════════════════════════════════════════════════════════════════

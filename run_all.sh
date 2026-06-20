@@ -2309,11 +2309,51 @@ run figures "Generate + deploy all paper figures (Groups A/B/C) -> \${RESULTS_DI
     echo '  [MISSING-C] fig1_seed_sweep: not found at Figures/figures-portfolio-variance/fig1_seed_sweep.{pdf,png}' | tee -a '${RESULTS_DIR}'/figures_run.log
   fi
 
+  # ── Sync ${RESULTS_DIR}/figures/*.* into \${REPO_ROOT}/figures/ (LaTeX target) ─
+  # FIX FIGURES-ROOT-SYNC: run_all.sh previously only ever wrote figures under
+  # \${RESULTS_DIR}/figures/ (hypatiax/data/results/figures by default). The CI
+  # pipeline (ci_paper_audit.yml \"Copy hypatiax/data/results/figures/*.* into
+  # repo-root figures/\") additionally deploys a flat copy to \${REPO_ROOT}/figures/,
+  # which is what \\includegraphics resolves via \\graphicspath{{figures/}{../figures/}}
+  # when pdflatex is invoked from \${REPO_ROOT}. Without this step, a local
+  # `run_all.sh` reproduction would leave \${REPO_ROOT}/figures/ empty/stale even
+  # though \${RESULTS_DIR}/figures/ is fully populated, and a local pdflatex build
+  # would silently diverge from what CI produces.
+  #
+  # Mirrors the CI step's semantics exactly:
+  #   - non-recursive: only files directly inside \${RESULTS_DIR}/figures/ are
+  #     copied (cp, not cp -r), so no nested figures/figures/ can be created
+  #     even if a stray subdirectory (e.g. a leftover tables/) exists there.
+  #   - destination basenames only: cp -f \"\${FILES[@]}\" \"\${REPO_ROOT}/figures/\"
+  #     always lands files flat inside figures/, never inside a path that
+  #     reproduces source subdirectory structure.
+  #   - additive, not mirrored: cp -f (not rsync --delete), so hand-crafted or
+  #     previously-deployed files at \${REPO_ROOT}/figures/ are never removed.
+  echo ''
+  echo '=== STEP 12 figures — sync \${RESULTS_DIR}/figures/*.* -> \${REPO_ROOT}/figures/ ===' | tee -a '${RESULTS_DIR}'/figures_run.log
+  mkdir -p '${REPO_ROOT}/figures'
+  _ROOT_SRC='${RESULTS_DIR}/figures'
+  if [ -d \"\${_ROOT_SRC}\" ]; then
+    shopt -s nullglob
+    _ROOT_FILES=( \"\${_ROOT_SRC}\"/*.* )
+    shopt -u nullglob
+    if [ \"\${#_ROOT_FILES[@]}\" -gt 0 ]; then
+      cp -f \"\${_ROOT_FILES[@]}\" '${REPO_ROOT}/figures/'
+      echo \"  Copied \${#_ROOT_FILES[@]} file(s) from \${_ROOT_SRC}/ into ${REPO_ROOT}/figures/\" | tee -a '${RESULTS_DIR}'/figures_run.log
+    else
+      echo \"  [WARN] \${_ROOT_SRC} exists but has no files matching *.* — nothing synced to repo-root figures/\" | tee -a '${RESULTS_DIR}'/figures_run.log
+    fi
+  else
+    echo \"  [WARN] \${_ROOT_SRC} not found — skipping sync to repo-root figures/\" | tee -a '${RESULTS_DIR}'/figures_run.log
+  fi
+
   # ── Final inventory ──────────────────────────────────────────────────────────
   echo ''
   echo '=== STEP 12 figures — final inventory ===' | tee -a '${RESULTS_DIR}'/figures_run.log
   echo 'Figures written to: ${RESULTS_DIR}/figures/'
   ls '${RESULTS_DIR}/figures/' 2>/dev/null || echo '  (directory empty)'
+  echo 'Figures synced to:  ${REPO_ROOT}/figures/'
+  ls '${REPO_ROOT}/figures/' 2>/dev/null || echo '  (directory empty)'
 
   # Report against the 18-stem required list (5 embedded + 13 inventory)
   echo ''
