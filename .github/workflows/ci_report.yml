@@ -22,6 +22,16 @@ on:
         description: "Run ID of the ci_paper_notebooks run that produced the audit summary artifact"
         required: false
         default: ""
+      use_static_generator:
+        description: >
+          Set to 'true' to build the report with generate_audit_report.py
+          (static, data-driven regeneration — see scripts/generate_audit_report.py)
+          instead of assembling it from live nbconvert/notebook artifacts.
+          Use this when notebook artifacts are unavailable, stale, or you just
+          want a fast, deterministic re-render of the findings table/colors
+          without re-downloading anything.
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -72,9 +82,11 @@ jobs:
         run: pip install --upgrade pip jupyter nbconvert
 
       # ── Step 1: Resolve the notebook run ID ──────────────────────────────
-      # Writes notebooks_run_id to $GITHUB_OUTPUT.
+      # Writes notebooks_run_id to $GITHUB_OUTPUT. Skipped entirely in
+      # static-generator mode since no live notebook run is needed.
       - name: Resolve notebook run ID
         id: resolve-run
+        if: github.event.inputs.use_static_generator != 'true'
         env:
           GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
           EVENT_RUN_ID:    ${{ github.event.workflow_run.id }}
@@ -83,6 +95,7 @@ jobs:
 
       # ── Download the six executed-notebook artifacts ──────────────────────
       - name: Download NB-01 artifact
+        if: github.event.inputs.use_static_generator != 'true'
         uses: actions/download-artifact@v4
         with:
           name: NB-01_Citation_Bibliography_Audit
@@ -92,6 +105,7 @@ jobs:
         continue-on-error: true
 
       - name: Download NB-02 artifact
+        if: github.event.inputs.use_static_generator != 'true'
         uses: actions/download-artifact@v4
         with:
           name: NB-02_CrossReference_Label_Audit
@@ -101,6 +115,7 @@ jobs:
         continue-on-error: true
 
       - name: Download NB-03 artifact
+        if: github.event.inputs.use_static_generator != 'true'
         uses: actions/download-artifact@v4
         with:
           name: NB-03_Section_Structure_Numbering
@@ -110,6 +125,7 @@ jobs:
         continue-on-error: true
 
       - name: Download NB-04 artifact
+        if: github.event.inputs.use_static_generator != 'true'
         uses: actions/download-artifact@v4
         with:
           name: NB-04_Numerical_Consistency_Checker
@@ -119,6 +135,7 @@ jobs:
         continue-on-error: true
 
       - name: Download NB-05 artifact
+        if: github.event.inputs.use_static_generator != 'true'
         uses: actions/download-artifact@v4
         with:
           name: NB-05_Figure_Image_Dependency_Checker
@@ -128,6 +145,7 @@ jobs:
         continue-on-error: true
 
       - name: Download NB-06 artifact
+        if: github.event.inputs.use_static_generator != 'true'
         uses: actions/download-artifact@v4
         with:
           name: NB-06_Code_Quality_Pipeline_Integrity
@@ -137,10 +155,12 @@ jobs:
         continue-on-error: true
 
       - name: Show downloaded files
+        if: github.event.inputs.use_static_generator != 'true'
         run: find notebooks -type f | sort || echo "(none)"
 
       # ── Download supporting artifacts ─────────────────────────────────────
       - name: Download merged registry artifact
+        if: github.event.inputs.use_static_generator != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -163,6 +183,7 @@ jobs:
           path: _repo
 
       - name: Download audit summary artifact
+        if: github.event.inputs.use_static_generator != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -181,6 +202,7 @@ jobs:
           ls -la /tmp/audit_summary/ 2>/dev/null || echo "No audit summary artifacts downloaded"
 
       - name: Download hypatia inspector findings artifact
+        if: github.event.inputs.use_static_generator != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -199,7 +221,23 @@ jobs:
           ls -la /tmp/hypatia_findings/ 2>/dev/null || echo "No hypatia findings artifacts downloaded"
 
       # ── Step 2: Build the full HTML report ───────────────────────────────
-      - name: Build combined audit report
+      # Two mutually exclusive paths:
+      #   (a) static generator — generate_audit_report.py, no live artifacts,
+      #       same color palette/layout as the original hand-built report.
+      #   (b) live build — build_report.py assembles from downloaded NB
+      #       artifacts + registry + findings, as before.
+      - name: Build combined audit report (static generator)
+        if: github.event.inputs.use_static_generator == 'true'
+        env:
+          SITE_DIR: site
+        run: |
+          mkdir -p "${SITE_DIR}"
+          python _repo/scripts/generate_audit_report.py \
+            --out "${SITE_DIR}/index.html"
+          echo "Built site/index.html via generate_audit_report.py (static mode)."
+
+      - name: Build combined audit report (live)
+        if: github.event.inputs.use_static_generator != 'true'
         env:
           GITHUB_RUN_ID:  ${{ github.run_id }}
           UPSTREAM_RUN:   ${{ steps.resolve-run.outputs.notebooks_run_id }}
