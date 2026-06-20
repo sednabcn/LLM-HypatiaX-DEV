@@ -1715,7 +1715,141 @@ def _sweep_rows(raw, key_field=None):
     return []
 
 
-def _flatten_per_n(raw, key_field):
+def _median_from_per_equation(level, method_name, metric):
+    """Median of `metric` across every equation in level["per_equation"] for
+    one method. method_summary never carries median_rmse (confirmed
+    2026-06-18 schema), but per_equation has a per-equation value for every
+    method at every n/sigma — so it can be derived here instead of skipping
+    the figure outright. Returns None if per_equation is absent/empty or no
+    equation has a usable value for this method+metric.
+    """
+    per_eq = level.get("per_equation")
+    if not isinstance(per_eq, dict) or not per_eq:
+        return None
+    vals = []
+    for eq_methods in per_eq.values():
+        if not isinstance(eq_methods, dict):
+            continue
+        entry = eq_methods.get(method_name)
+        if isinstance(entry, dict):
+            v = entry.get(metric)
+            if isinstance(v, (int, float)) and not (isinstance(v, float) and math.isnan(v)):
+                vals.append(float(v))
+    return float(np.median(vals)) if vals else None
+
+
+def _build_protocol_time_lookup(results_dir, sample_raw):
+    """Recover per-(n, method) median solve time for the sample-complexity
+    sweep from raw protocol_core_*.json files.
+
+    sample_complexity_*.json's method_summary / per_equation never carry a
+    "time" field (confirmed 2026-06-18) — timing only exists one stage
+    upstream, in the raw per-test files written by
+    run_protocol_benchmark_core.py, each with a "tests" list of
+    {description, results: {method: {rmse, time, ...}}}.
+
+    Those raw files don't reliably declare which sample size n they belong
+    to — protocol.note is a stale hardcoded string (observed saying
+    "Noisy 200-sample run" on files that were actually for n=500/750/1000),
+    so it can't be trusted as a label. Instead, each candidate file is
+    fingerprinted against every n's per_equation rmse values; a file is only
+    accepted for a given n if EVERY (equation, method) rmse pair it reports
+    matches that n's per_equation exactly (within float tolerance). This is
+    deliberately strict — a partial match would risk mixing one sample
+    size's timings into another's curve.
+
+    Returns {(n_str, method_name): median_time_seconds}, built only from
+    files that achieve a full match; n's with no matching raw file simply
+    get no entry (callers / figure code already handle a missing key as
+    "no data for this point").
+    """
+    if not isinstance(sample_raw, dict):
+        return {}
+    per_n = sample_raw.get("per_n")
+    if not isinstance(per_n, dict) or not per_n:
+        return {}
+
+    candidates = glob.glob(os.path.join(results_dir, "**", "protocol_core_*.json"),
+                            recursive=True)
+    candidates = [c for c in candidates
+                  if not any(s in os.path.basename(c) for s in _SWEEP_EXCLUDE_SUBSTRINGS)]
+    if not candidates:
+        return {}
+
+    lookup = {}
+    matched = []
+    for path in sorted(candidates):
+        try:
+            with open(path) as f:
+                proto = json.load(f)
+        except Exception:
+            continue
+        tests = proto.get("tests")
+        if not isinstance(tests, list) or not tests:
+            continue
+
+        # Fingerprint this file as {(equation_description, method): rmse}.
+        fp = {}
+        for t in tests:
+            desc, results = t.get("description"), t.get("results")
+            if desc is None or not isinstance(results, dict):
+                continue
+            for method_name, res in results.items():
+                rmse = res.get("rmse") if isinstance(res, dict) else None
+                if isinstance(rmse, (int, float)):
+                    fp[(desc, method_name)] = float(rmse)
+        if not fp:
+            continue
+
+        # Find the n whose per_equation rmse values match this fingerprint
+        # most completely, then require a FULL match before trusting it.
+        best_n, best_count = None, 0
+        for n_str, level in per_n.items():
+            per_eq = level.get("per_equation") if isinstance(level, dict) else None
+            if not isinstance(per_eq, dict):
+                continue
+            count = 0
+            for (desc, method_name), rmse in fp.items():
+                entry = per_eq.get(desc)
+                ref = entry.get(method_name, {}).get("rmse") if isinstance(entry, dict) else None
+                if isinstance(ref, (int, float)) and math.isclose(ref, rmse, rel_tol=1e-9, abs_tol=1e-12):
+                    count += 1
+            if count > best_count:
+                best_n, best_count = n_str, count
+
+        if best_n is not None and best_count == len(fp):
+            by_method = {}
+            for t in tests:
+                results = t.get("results")
+                if not isinstance(results, dict):
+                    continue
+                for method_name, res in results.items():
+                    tm = res.get("time") if isinstance(res, dict) else None
+                    if isinstance(tm, (int, float)):
+                        by_method.setdefault(method_name, []).append(float(tm))
+            for method_name, vals in by_method.items():
+                lookup[(best_n, method_name)] = float(np.median(vals))
+            matched.append((os.path.basename(path), best_n))
+        else:
+            print(f"  [WARN] sample_complexity time recovery: {os.path.basename(path)} "
+                  f"did not fully match any n's per_equation rmse fingerprint "
+                  f"(best {best_count}/{len(fp)} pairs) — skipped, no timing "
+                  f"borrowed from it.")
+
+    if matched:
+        for fname, n_str in matched:
+            print(f"  [INFO] sample_complexity time recovery: {fname} → n={n_str} "
+                  f"(full rmse fingerprint match; time injected)")
+        missing_ns = sorted(set(per_n.keys()) - {n for _, n in matched}, key=float)
+        if missing_ns:
+            print(f"  [INFO] sample_complexity time recovery: no matching raw "
+                  f"protocol_core_*.json found for n={missing_ns} — "
+                  f"fig6_time_vs_n / fig_runtime_comparison will be partial "
+                  f"({len(matched)} of {len(per_n)} sample sizes).")
+    return lookup
+
+
+def _flatten_per_n(raw, key_field, time_lookup=None):
     """Flatten the {"per_n": {"<n>": {"method_summary": {method: {metrics}}}}}
     shape (and its noise-sweep sibling, if ever produced the same way under
     "per_sigma"/"per_noise") into a flat list of row-dicts, one row per
@@ -1733,6 +1867,16 @@ def _flatten_per_n(raw, key_field):
     row would average different systems together. This flattens explicitly
     instead, preserving "method" so downstream code can plot one line per
     method rather than one averaged line.
+
+    median_rmse / median_time are not present in method_summary, but:
+      - median_rmse IS derivable from this same file's per_equation (every
+        equation has an rmse per method at every n) — computed here via
+        _median_from_per_equation() rather than skipping fig5_rmse_vs_n.
+      - median_time genuinely doesn't exist anywhere in this file; if the
+        caller passes time_lookup (see _build_protocol_time_lookup), it's
+        used to fill in median_time for whichever n's have a matching raw
+        protocol_core_*.json file. n's without a match simply get no
+        median_time key, same as if the source never had it.
 
     Returns [] if raw isn't a dict, or has no per_n/per_sigma/per_noise key
     with the expected nested shape — callers should fall back to the generic
@@ -1761,17 +1905,33 @@ def _flatten_per_n(raw, key_field):
                 row = dict(metrics)
                 row[key_field] = param_val
                 row["method"] = method_name
+                if row.get("median_rmse") is None:
+                    derived = _median_from_per_equation(level, method_name, "rmse")
+                    if derived is not None:
+                        row["median_rmse"] = derived
+                if time_lookup is not None and row.get("median_time") is None:
+                    t = time_lookup.get((param_str, method_name))
+                    if t is not None:
+                        row["median_time"] = t
                 rows.append(row)
         if rows:
             return rows
     return []
 
 
+# Recover sample-complexity timing from raw protocol_core_*.json files
+# (one directory level upstream of sample_complexity_*.json itself) before
+# flattening, so _flatten_per_n can fill in median_time wherever a matching
+# raw file exists. See _build_protocol_time_lookup's docstring for why this
+# can't just trust a label in the raw files and fingerprints them instead.
+_sample_time_lookup = _build_protocol_time_lookup(_RESULTS_DIR, _sample_raw)
+
 # Try the explicit per_n/method_summary flattening first (preserves method
 # names as separate rows); fall back to the generic _sweep_rows() shapes
 # (bare list / wrapped list / single-value-per-parameter dict) otherwise.
 _noise_rows  = _flatten_per_n(_noise_raw,  key_field="sigma")     or _sweep_rows(_noise_raw,  key_field="sigma")
-_sample_rows = _flatten_per_n(_sample_raw, key_field="n_samples") or _sweep_rows(_sample_raw, key_field="n_samples")
+_sample_rows = (_flatten_per_n(_sample_raw, key_field="n_samples", time_lookup=_sample_time_lookup)
+                or _sweep_rows(_sample_raw, key_field="n_samples"))
 
 
 def _sweep_diag(raw, rows, label):
@@ -1994,12 +2154,19 @@ if _noise_rows:
 # FIX SUPPB_SC-METHOD-SPLIT: _sample_rows is now (when sourced from the
 # per_n/method_summary schema) one row per (n, method) pair via
 # _flatten_per_n(), so each figure plots one line per method on shared axes
-# instead of averaging methods together. median_rmse / median_time are not
-# present in the confirmed schema (method_summary keys: median_r2, mean_r2,
-# std_r2, recovery_rate, n_success, n_total, threshold_used) — fig5/fig6 are
-# reported as [SKIP] rather than silently producing blank figures; if
-# RMSE/timing data exists elsewhere (e.g. nested in per_equation), wire that
-# in here once its shape is known.
+# instead of averaging methods together.
+#
+# median_rmse / median_time are not present in method_summary itself, but
+# _flatten_per_n() now backfills both where possible (see its docstring):
+#   - median_rmse: derived from this same file's per_equation — available
+#     for every n, since per_equation always has full coverage.
+#   - median_time: recovered from raw protocol_core_*.json files one stage
+#     upstream, via fingerprint-matching against per_equation rmse — only
+#     available for n's where a matching raw file was found (see the
+#     [INFO]/[WARN] lines printed by _build_protocol_time_lookup above).
+# fig5_rmse_vs_n should now render fully; fig6_time_vs_n may render with
+# fewer points than fig4/fig5/fig8 if some n's raw protocol files are
+# missing — the [SKIP] below only fires if NO n has usable data at all.
 if _sample_rows:
     _s_configs = [
         ("median_r2",      "fig4_r2_vs_n",      "Sample size (n)", "Median $R^2$",

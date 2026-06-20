@@ -1213,6 +1213,53 @@ def _pick_method(method_summary: dict, frags: tuple[str, ...]) -> dict:
     return {}
 
 
+def _pick_method_key(method_summary: dict, frags: tuple[str, ...]) -> str | None:
+    """Like _pick_method, but returns the matched key itself rather than its
+    metrics dict. Needed to look up the same method's rows in a sibling
+    per_equation dict, which is keyed by the literal method name rather than
+    by metric — _pick_method alone discards that name.
+    """
+    for key in method_summary:
+        kl = key.lower().replace(" ", "").replace("-", "").replace("_", "")
+        if any(f in kl for f in frags):
+            return key
+    return None
+
+
+def _median_rmse_from_per_equation(level: dict, method_key: str | None) -> float | None:
+    """Median rmse for one method across every equation in level["per_equation"].
+
+    method_summary for the sample-complexity sweep never carries
+    median_rmse (confirmed 2026-06-18 schema: median_r2, mean_r2, std_r2,
+    recovery_rate, n_success, n_total, threshold_used only) — but
+    per_equation has a real per-equation rmse for every method at every n,
+    with full 30/30 coverage. This replaces the previous
+    sqrt(1 - median_r2) approximation, which assumes a fixed output scale
+    and is off by an order of magnitude versus the real per-equation rmse
+    (e.g. n=50, M3: approx ≈ 1.8e-4 vs actual median ≈ 4.0e-3) because
+    per-equation y-scales vary by 1-2 orders of magnitude across the
+    benchmark set.
+    """
+    if not method_key or not isinstance(level, dict):
+        return None
+    per_eq = level.get("per_equation")
+    if not isinstance(per_eq, dict) or not per_eq:
+        return None
+    vals = []
+    for eq_methods in per_eq.values():
+        if not isinstance(eq_methods, dict):
+            continue
+        entry = eq_methods.get(method_key)
+        if isinstance(entry, dict):
+            v = entry.get("rmse")
+            if isinstance(v, (int, float)):
+                vals.append(float(v))
+    if not vals:
+        return None
+    import statistics
+    return statistics.median(vals)
+
+
 def gen_suppb_r2_noise(noise_data: dict | None) -> None:
     """tab:r2_noise — Median R², Min R², Std by σ for M3 and M4."""
     if not noise_data:
@@ -1397,23 +1444,23 @@ $n$ & Med $R^2$ & Min $R^2$ & Med RMSE & Med $R^2$ & Min $R^2$ & Med RMSE\\
         ms  = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
         m3  = _pick_method(ms, _M3_FRAG)
         m4  = _pick_method(ms, _M4_FRAG)
+        m3_key = _pick_method_key(ms, _M3_FRAG)
+        m4_key = _pick_method_key(ms, _M4_FRAG)
 
         def _v(d, k):
             v = d.get(k)
             return f"{v:.7f}" if isinstance(v, float) else "---"
 
-        # RMSE ≈ sqrt(1 - median_R²) for near-perfect fits
-        def _rmse(d):
-            v = d.get("median_r2")
-            if isinstance(v, float) and v <= 1.0:
-                import math
-                rmse_approx = math.sqrt(max(0, 1 - v))
-                return f"{rmse_approx:.4f}"
-            return "---"
+        # FIX SUPPB_SC-RMSE: real per-equation median, not the
+        # sqrt(1 - median_r2) placeholder this used to compute (see
+        # _median_rmse_from_per_equation's docstring for why that was wrong).
+        def _rmse(method_key):
+            v = _median_rmse_from_per_equation(pnd, method_key)
+            return f"{v:.4f}" if isinstance(v, (int, float)) else "---"
 
         tex += (
-            f"{n:4d} & {_v(m3,'median_r2')} & --- & {_rmse(m3)}"
-            f" & {_v(m4,'median_r2')} & --- & {_rmse(m4)} \\\\\n"
+            f"{n:4d} & {_v(m3,'median_r2')} & --- & {_rmse(m3_key)}"
+            f" & {_v(m4,'median_r2')} & --- & {_rmse(m4_key)} \\\\\n"
         )
 
     tex += r"""\bottomrule
