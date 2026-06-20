@@ -471,7 +471,7 @@ jobs:
           TAB_ALLOWLIST[exp3b]="nguyen12_symequiv r2_distribution method_rank_table"
           TAB_ALLOWLIST[suppA]="suppa_hybrid_pysr_defi"
           TAB_ALLOWLIST[suppB]="suppb_noiseless suppb_noise_sweep suppb_r2_noise suppb_rr_noise suppb_time_noise suppb_winrate"
-          TAB_ALLOWLIST[suppB_sc]="suppb_sc_summary suppb_sc_by_sample suppb_sc_metrics"
+          TAB_ALLOWLIST[suppB_sc]="suppb_sc_summary suppb_sc_by_sample suppb_sc_metrics suppb_winrate"
           TAB_ALLOWLIST[hybrid_all_domains]="hybrid_all_domains_summary domain_rank_table"
           TAB_ALLOWLIST[instability]="instability_index_table group_summary_table"
           TAB_ALLOWLIST[extrap]="extrap_ood_table"
@@ -1203,7 +1203,16 @@ jobs:
             # prefer the cross-experiment (repo-root) regeneration pass above,
             # which is more likely to have all 6 methods than the 2-method
             # suppB/suppB_sc canonical output.
-            if [[ "${stem}" == "fig_runtime_comparison" || "${stem}" == "fig_comparative_table" ]]; then
+            #
+            # fig11_recovery_heatmap needs BOTH noise_rows AND sample_rows in
+            # the same generate_figures.py invocation (it's gated on
+            # `if _noise_rows and _sample_rows:`). Neither the suppB call
+            # (--results-dir=SUPPB_SUBDIR, noise data only) nor the suppB_sc
+            # call (--results-dir=SUPPB_SC_SUBDIR, sample data only) can ever
+            # satisfy that on its own — only this cross-experiment pass
+            # (--results-dir=${OUT_BASE}, recursive) sees both datasets at
+            # once, so this stem must also source from ALLEXP_FIGDIR first.
+            if [[ "${stem}" == "fig_runtime_comparison" || "${stem}" == "fig_comparative_table" || "${stem}" == "fig11_recovery_heatmap" ]]; then
               for ext in pdf png jpg eps svg; do
                 candidates+=( "${ALLEXP_FIGDIR}/${stem}.${ext}" )
               done
