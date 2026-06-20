@@ -1570,11 +1570,11 @@ def gen_suppb_sc_summary(sc_data: dict | None) -> None:
         rows.append((mname, best_n_rr, max_r2, max_rr, final_rr, note))
 
     def _r(v):
-        return f"{v:.4f}" if isinstance(v, float) and not math.isnan(v) else "---"
+        return f"{v:.4f}" if isinstance(v, float) and v == v else "---"
     def _n(v):
         return str(v) if v is not None else "---"
     def _pct(v):
-        return f"{v*100:.1f}\\%" if isinstance(v, float) and not math.isnan(v) else "---"
+        return f"{v*100:.1f}\\%" if isinstance(v, float) and v == v else "---"
 
     tex = header_comment(src) + r"""
 \begin{table}[H]
