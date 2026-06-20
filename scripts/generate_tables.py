@@ -148,6 +148,35 @@ GENERATED = 0
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# FIX SC-CHECKPOINT-POLLUTION: per-shard checkpoint files (e.g.
+# sample_complexity_n1000_checkpoint.json, written mid-run by
+# run_sample_complexity_benchmark.py and left behind alongside the final
+# consolidated sample_complexity_<timestamp>.json) match the same
+# "*sample_complexity*.json" / glob patterns used below. Neither load_best()
+# nor load_sweep_json() excluded them, and both sort candidates by mtime —
+# so whichever file happens to have the latest mtime wins, which has been
+# the checkpoint shard (confirmed against real CI runs: it silently loaded
+# instead of the canonical file in every run checked, producing a
+# header-only suppb_sc_metrics.tex with 0 data rows every time, including
+# before and after the per_equation rmse fix above). The bash step in
+# ci_postprocess.yml that invokes this script DOES exclude these correctly
+# when computing $SC_DATA for its own log line, but never passes that value
+# through via --sample-complexity-json — so auto-detection here is the only
+# thing actually selecting the file used. Mirrors generate_figures.py's
+# _SWEEP_EXCLUDE_SUBSTRINGS so both scripts agree on what counts as a
+# "real" result file for the same family of inputs.
+_EXCLUDE_SUBSTRINGS = ("checkpoint", "_sig", "MISSING")
+
+
+def _filtered_glob(d: Path, glob_pat: str) -> list[Path]:
+    """d.glob(glob_pat), minus any candidate whose basename contains one of
+    _EXCLUDE_SUBSTRINGS (checkpoint shards, per-sigma shards, MISSING
+    placeholders) — see _EXCLUDE_SUBSTRINGS docstring above for why this
+    can't be skipped."""
+    return [p for p in d.glob(glob_pat)
+            if not any(s in p.name for s in _EXCLUDE_SUBSTRINGS)]
+
+
 def load_best(subdir: str, glob_pat: str,
               extra_subdirs: list[str] | None = None) -> tuple[dict | None, Path | None]:
     """Return (data, path) for the newest matching JSON.
@@ -167,7 +196,7 @@ def load_best(subdir: str, glob_pat: str,
     for d in search_dirs:
         if not d.exists():
             continue
-        candidates = sorted(d.glob(glob_pat), key=os.path.getmtime, reverse=True)
+        candidates = sorted(_filtered_glob(d, glob_pat), key=os.path.getmtime, reverse=True)
         if candidates:
             try:
                 return json.loads(candidates[0].read_text()), candidates[0]
@@ -186,7 +215,7 @@ def load_sweep_json(explicit: Path | None, subdir: str, glob_pat: str) -> dict |
     # auto-detect: newest matching file under noise-sweep subdir
     sweep_dir = RESULTS / subdir
     if sweep_dir.exists():
-        candidates = sorted(sweep_dir.glob(glob_pat), key=os.path.getmtime, reverse=True)
+        candidates = sorted(_filtered_glob(sweep_dir, glob_pat), key=os.path.getmtime, reverse=True)
         for c in candidates:
             try:
                 return json.loads(c.read_text())
@@ -195,13 +224,15 @@ def load_sweep_json(explicit: Path | None, subdir: str, glob_pat: str) -> dict |
     # also try the parent comparison_results level
     alt_dir = RESULTS / "comparison_results" / "feynman-tests" / "noise-sweep"
     if alt_dir.exists():
-        candidates = sorted(alt_dir.glob(glob_pat), key=os.path.getmtime, reverse=True)
+        candidates = sorted(_filtered_glob(alt_dir, glob_pat), key=os.path.getmtime, reverse=True)
         for c in candidates:
             try:
                 return json.loads(c.read_text())
             except Exception:
                 continue
     return None
+
+
 
 
 def write_table(name: str, content: str) -> None:
