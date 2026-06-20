@@ -1501,6 +1501,211 @@ $n$ & Med $R^2$ & Min $R^2$ & Med RMSE & Med $R^2$ & Min $R^2$ & Med RMSE\\
     write_table("suppb_sc_metrics.tex", tex)
 
 
+def gen_suppb_sc_summary(sc_data: dict | None) -> None:
+    """tab:sc_summary — Aggregate summary across all sample sizes for each method.
+
+    Columns: Method | Best n (min n where recovery_rate ≥ threshold) |
+             Max Median R² | Recovery Rate at max n | Data Efficiency Note.
+    This is the cross-n aggregate view that complements the per-n breakdown
+    already produced by gen_suppb_sc_metrics().
+    """
+    if not sc_data:
+        write_table("suppb_sc_summary.tex", "% suppB sample_complexity data not available\n")
+        return
+
+    sample_sizes = sorted(sc_data.get("sample_sizes", []))
+    per_n        = sc_data.get("per_n", {})
+    src          = "sample_complexity_*.json"
+
+    # Collect per-(method, n) metrics so we can aggregate across n.
+    from collections import defaultdict
+    method_records: dict[str, dict] = defaultdict(lambda: {
+        "r2_by_n": {}, "rr_by_n": {}, "n_success_by_n": {}, "n_total_by_n": {}
+    })
+
+    for n in sample_sizes:
+        ns  = str(n)
+        pnd = per_n.get(ns) or {}
+        ms  = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
+        for mname, metrics in ms.items():
+            if not isinstance(metrics, dict):
+                continue
+            rec = method_records[mname]
+            r2  = metrics.get("median_r2")
+            rr  = metrics.get("recovery_rate")
+            ns_ = metrics.get("n_success")
+            nt  = metrics.get("n_total")
+            if isinstance(r2, float):  rec["r2_by_n"][n] = r2
+            if isinstance(rr, float):  rec["rr_by_n"][n] = rr
+            if isinstance(ns_, int):   rec["n_success_by_n"][n] = ns_
+            if isinstance(nt,  int):   rec["n_total_by_n"][n]   = nt
+
+    if not method_records:
+        write_table("suppb_sc_summary.tex", "% suppB sc_data has no method_summary entries\n")
+        return
+
+    # Per-method summary stats
+    threshold = sc_data.get("threshold", 0.8)
+
+    rows = []
+    for mname, rec in sorted(method_records.items()):
+        r2s = rec["r2_by_n"]
+        rrs = rec["rr_by_n"]
+        max_r2  = max(r2s.values()) if r2s else float("nan")
+        max_rr  = max(rrs.values()) if rrs else float("nan")
+        # Best (highest) recovery-rate n
+        best_n_rr = min((n for n, rr in rrs.items() if rr >= threshold),
+                        default=None)
+        # Recovery rate at the largest sample size tested
+        final_n   = max(r2s.keys()) if r2s else None
+        final_rr  = rrs.get(final_n, float("nan")) if final_n else float("nan")
+        note = (
+            f"≥{threshold:.0%} at n={best_n_rr}" if best_n_rr is not None
+            else f"<{threshold:.0%} at all n"
+        )
+        rows.append((mname, best_n_rr, max_r2, max_rr, final_rr, note))
+
+    def _r(v):
+        return f"{v:.4f}" if isinstance(v, float) and not math.isnan(v) else "---"
+    def _n(v):
+        return str(v) if v is not None else "---"
+    def _pct(v):
+        return f"{v*100:.1f}\\%" if isinstance(v, float) and not math.isnan(v) else "---"
+
+    tex = header_comment(src) + r"""
+\begin{table}[H]
+\centering
+\caption{Sample-complexity sweep aggregate summary ($\sigma=5\%$, 30 equations).
+  \textbf{Best n}: smallest $n$ achieving recovery rate $\ge """ + f"{threshold:.0%}" + r"""$.
+  \textbf{Max Med $R^2$}: peak median $R^2$ across all $n$.
+  \textbf{Final RR}: recovery rate at the largest $n$ tested.}
+\label{tab:sc_summary}
+\small
+\begin{tabular}{l r r r r l}
+\toprule
+\textbf{Method} & \textbf{Best $n$} & \textbf{Max Med $R^2$} & \textbf{Max RR} & \textbf{Final RR} & \textbf{Data Efficiency} \\
+\midrule
+"""
+    for (mname, best_n, max_r2, max_rr, final_rr, note) in rows:
+        short = mname[:32]
+        tex += f"{short} & {_n(best_n)} & {_r(max_r2)} & {_pct(max_rr)} & {_pct(final_rr)} & {note} \\\\\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("suppb_sc_summary.tex", tex)
+
+
+def gen_suppb_sc_by_sample(sc_data: dict | None) -> None:
+    """tab:sc_by_sample — Full per-(n, method) breakdown with all available metrics.
+
+    This is a wider version of suppb_sc_metrics.tex: where gen_suppb_sc_metrics
+    shows only M3 and M4 with three columns each, this table shows every method
+    present in the data with all numeric metrics from method_summary so readers
+    can compare the full six-method suite at a glance.
+
+    Columns (per method): Median R² | Mean R² | Std R² | Recovery Rate | n_success/n_total
+    """
+    if not sc_data:
+        write_table("suppb_sc_by_sample.tex", "% suppB sample_complexity data not available\n")
+        return
+
+    sample_sizes = sorted(sc_data.get("sample_sizes", []))
+    per_n        = sc_data.get("per_n", {})
+    src          = "sample_complexity_*.json"
+
+    # Discover all methods across all sample sizes
+    all_methods: list[str] = []
+    seen: set[str] = set()
+    for n in sample_sizes:
+        ns  = str(n)
+        pnd = per_n.get(ns) or {}
+        ms  = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
+        for mname in ms:
+            if mname not in seen:
+                all_methods.append(mname)
+                seen.add(mname)
+
+    if not all_methods:
+        write_table("suppb_sc_by_sample.tex", "% suppB sc_data has no method_summary entries\n")
+        return
+
+    def _v(d: dict, k: str) -> str:
+        v = d.get(k)
+        return f"{v:.5f}" if isinstance(v, float) else "---"
+
+    def _rr(d: dict) -> str:
+        v = d.get("recovery_rate")
+        return f"{v*100:.1f}\\%" if isinstance(v, float) else "---"
+
+    def _succ(d: dict) -> str:
+        ns = d.get("n_success")
+        nt = d.get("n_total")
+        if isinstance(ns, int) and isinstance(nt, int):
+            return f"{ns}/{nt}"
+        return "---"
+
+    # Shorten method names for column headers
+    def _short(name: str) -> str:
+        name = name.replace("EnhancedHybridSystemDeFi", "EHD")
+        name = name.replace("HybridSystemLLMNN all-domains", "HSL")
+        return name[:18]
+
+    n_methods = len(all_methods)
+    col_spec = "r" + " rrrrr" * n_methods
+
+    tex = header_comment(src) + r"""
+\begin{table}[H]
+\centering
+\caption{Full sample-complexity results by sample size and method
+  ($\sigma=5\%$, 30 equations). Each method block: Med $R^2$, Mean $R^2$, Std, RR, Success.}
+\label{tab:sc_by_sample}
+\renewcommand{\arraystretch}{1.1}
+\scriptsize
+\begin{tabular}{""" + col_spec + r"""}
+\toprule
+"""
+    # Header row 1: method names spanning 5 columns each
+    hdr1 = "$n$"
+    for mname in all_methods:
+        hdr1 += f" & \\multicolumn{{5}}{{c}}{{\\textbf{{{_short(mname)}}}}}"
+    tex += hdr1 + " \\\\\n"
+
+    # Sub-header cmidrules
+    cmidrule_parts = []
+    for i, _ in enumerate(all_methods):
+        lo = 2 + i * 5
+        hi = lo + 4
+        cmidrule_parts.append(f"\\cmidrule(lr){{{lo}-{hi}}}")
+    tex += " ".join(cmidrule_parts) + "\n"
+
+    # Header row 2: metric labels
+    hdr2 = ""
+    for _ in all_methods:
+        hdr2 += " & Med $R^2$ & Mean $R^2$ & Std & RR & Succ"
+    tex += hdr2 + " \\\\\n\\midrule\n"
+
+    for n in sample_sizes:
+        ns  = str(n)
+        pnd = per_n.get(ns) or {}
+        ms  = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
+        row = str(n)
+        for mname in all_methods:
+            d = ms.get(mname, {})
+            row += (
+                f" & {_v(d,'median_r2')} & {_v(d,'mean_r2')}"
+                f" & {_v(d,'std_r2')} & {_rr(d)} & {_succ(d)}"
+            )
+        tex += row + " \\\\\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("suppb_sc_by_sample.tex", tex)
+
+
 def gen_suppb_winrate(noise_data: dict | None, sc_data: dict | None) -> None:
     """tab:winrate — Head-to-head win rates M3 vs M4 (noise + SC sweeps)."""
     if not noise_data and not sc_data:
@@ -1762,6 +1967,8 @@ def main() -> None:
     def _suppb_sc_section():
         return ("── Supplement B — sample complexity (suppB STEP 10) ────────", [
             lambda: gen_suppb_sc_metrics(sc_data),
+            lambda: gen_suppb_sc_summary(sc_data),
+            lambda: gen_suppb_sc_by_sample(sc_data),
         ])
 
     def _suppb_winrate_section():
@@ -1817,6 +2024,8 @@ def main() -> None:
     \\input{tables/suppb_rr_noise.tex}
     \\input{tables/suppb_time_noise.tex}
     \\input{tables/suppb_sc_metrics.tex}
+    \\input{tables/suppb_sc_summary.tex}
+    \\input{tables/suppb_sc_by_sample.tex}
     \\input{tables/suppb_winrate.tex}
     \\input{tables/suppb_noiseless.tex}
 

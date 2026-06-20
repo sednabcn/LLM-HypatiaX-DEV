@@ -2188,13 +2188,36 @@ if _sample_rows:
 
 
 # ── fig11_recovery_heatmap (σ × n) ────────────────────────────────────────────
-if _noise_rows and _sample_rows:
+# The heatmap needs both a σ axis and an n axis.
+# Full data:      _noise_rows have sigma but no n;  _sample_rows have n but no sigma.
+# suppB_sc runs:  only _sample_rows are available — no noise_sweep_*.json.
+# suppB runs:     only _noise_rows are available — no sample_complexity_*.json.
+#
+# Strategy: build the heatmap from whichever combination of sources is present.
+#   - Both present  → combined (σ, n) grid, as before.
+#   - Only _sample_rows → collapse sigma (treat as σ=0.05 per suppB_sc protocol),
+#     produce a single-σ-row heatmap with n on the x-axis.  The σ column label
+#     is annotated to make the missing sweep dimension clear.
+#   - Only _noise_rows → collapse n (treat as n=200 per suppB protocol),
+#     produce a single-n-column heatmap with σ on the y-axis.
+#   - Neither → skip.
+if _noise_rows or _sample_rows:
     from collections import defaultdict
     _heat: dict = defaultdict(list)
-    for r in _noise_rows + _sample_rows:
-        sv  = safe_float(r.get("sigma",     r.get("noise",     float("nan"))))
-        nv  = safe_float(r.get("n_samples", r.get("n",         float("nan"))))
-        rv  = safe_float(r.get("recovery_rate",                float("nan")))
+
+    # Populate from noise rows (sigma known, n assumed 200 if absent)
+    for r in (_noise_rows or []):
+        sv  = safe_float(r.get("sigma", r.get("noise", float("nan"))))
+        nv  = safe_float(r.get("n_samples", r.get("n", 200.0)))  # noise sweep uses fixed n=200
+        rv  = safe_float(r.get("recovery_rate", float("nan")))
+        if not any(math.isnan(x) for x in [sv, nv, rv]):
+            _heat[(sv, nv)].append(rv)
+
+    # Populate from sample rows (n known, sigma assumed 0.05 if absent per suppB_sc protocol)
+    for r in (_sample_rows or []):
+        sv  = safe_float(r.get("sigma", r.get("noise", 0.05)))  # SC sweep uses fixed σ=5%
+        nv  = safe_float(r.get("n_samples", r.get("n", float("nan"))))
+        rv  = safe_float(r.get("recovery_rate", float("nan")))
         if not any(math.isnan(x) for x in [sv, nv, rv]):
             _heat[(sv, nv)].append(rv)
 
@@ -2207,16 +2230,34 @@ if _noise_rows and _sample_rows:
                 if (s, n) in _heat:
                     _mat[i, j] = np.mean(_heat[(s, n)])
 
-        fig, ax = plt.subplots(figsize=(max(6, len(_ns)*0.8), max(4, len(_sigmas)*0.6)))
+        # Choose figure height: at least 3in, scale with sigma count
+        _fig_h = max(3.5, len(_sigmas) * 0.7 + 1.5)
+        _fig_w = max(6,   len(_ns)     * 0.8 + 1.5)
+        fig, ax = plt.subplots(figsize=(_fig_w, _fig_h))
         im = ax.imshow(np.nan_to_num(_mat, nan=0), vmin=0, vmax=1,
                        cmap="RdYlGn", aspect="auto")
         ax.set_xticks(range(len(_ns)))
         ax.set_xticklabels([str(int(n)) for n in _ns], fontsize=8, rotation=45)
         ax.set_yticks(range(len(_sigmas)))
-        ax.set_yticklabels([f"{s:.2f}" for s in _sigmas], fontsize=8)
+        # Annotate sigma labels with "(fixed)" when there is only one unique value
+        # — signals to the reader that this axis was not swept in this run.
+        _sigma_labels = [
+            (f"σ={s:.2f}" + (" (fixed, SC protocol)" if len(_sigmas) == 1 else ""))
+            for s in _sigmas
+        ]
+        ax.set_yticklabels(_sigma_labels, fontsize=8)
         ax.set_xlabel("Sample size (n)", fontsize=10)
         ax.set_ylabel("Noise level (σ)", fontsize=10)
-        ax.set_title("Recovery Heatmap (σ × n)", fontsize=11, fontweight="bold")
+        # Title distinguishes partial vs full grid
+        _n_src = bool(_noise_rows)
+        _s_src = bool(_sample_rows)
+        if _n_src and _s_src:
+            _ht_title = "Recovery Heatmap (σ × n) — combined noise + SC sweep"
+        elif _s_src:
+            _ht_title = "Recovery Heatmap (σ fixed at 5% × n) — SC sweep only"
+        else:
+            _ht_title = "Recovery Heatmap (σ × n fixed at 200) — noise sweep only"
+        ax.set_title(_ht_title, fontsize=11, fontweight="bold")
         for i in range(len(_sigmas)):
             for j in range(len(_ns)):
                 v = _mat[i, j]
@@ -2228,6 +2269,8 @@ if _noise_rows and _sample_rows:
         fig.savefig(os.path.join(_FIGURES_DIR, "fig11_recovery_heatmap.png"), dpi=300, bbox_inches="tight")
         plt.close(fig)
         print("✓ fig11_recovery_heatmap.png")
+    else:
+        print("  [SKIP] fig11_recovery_heatmap.png — no (sigma, n, recovery_rate) triples could be built from available sweep data.")
 
 
 # ── fig_runtime_comparison (6-method runtime bar) ────────────────────────────
