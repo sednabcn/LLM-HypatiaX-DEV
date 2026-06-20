@@ -1545,7 +1545,11 @@ def gen_suppb_sc_summary(sc_data: dict | None) -> None:
         return
 
     # Per-method summary stats
-    threshold = sc_data.get("threshold", 0.8)
+    # sc_data["threshold"] is sometimes a per-method dict rather than a scalar
+    # (e.g. {"EnhancedHybridSystemDeFi": 0.999999, ...}).  Fall back to 0.8
+    # whenever the value is not a plain number.
+    _raw_thresh = sc_data.get("threshold", 0.8)
+    threshold = _raw_thresh if isinstance(_raw_thresh, (int, float)) else 0.8
 
     rows = []
     for mname, rec in sorted(method_records.items()):
