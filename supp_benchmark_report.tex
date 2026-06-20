@@ -125,7 +125,7 @@ hybrid systems, reproducibility
 
 %% ============================================================
 \section{Introduction}
-\label{sec:intro}
+\label{suppb:intro}
 
 This document is Supplementary Material~B to the main JMLR submission
 \emph{HypatiaX: A Hybrid Symbolic-Neural Framework for Extrapolation-Reliable
@@ -136,13 +136,13 @@ Analytical Discovery} (\texttt{jmlr-hypatiax-paper-final.tex}).
 The main paper has been updated since this supplementary was written.
 Readers are directed to the following new sections for context:
 \begin{itemize}
-  \item \textbf{Section~10.7 Feynman Extrapolation Benchmark ($n=30$)} --- reports
+  \item \textbf{Section~\ref{sec:feynman_benchmark} Feynman Extrapolation Benchmark ($n=30$)} --- reports
     HypatiaX performance on the same 30-equation Feynman suite under an
     aggressive PCA-directed 40\%/60\% extrapolation split (9/30 successes,
     30.0\%).  This is a different and more stringent evaluation protocol
     than the noiseless recovery results reported in this supplementary
     (EHD: 96.7\%, HDS: 90.0\%); the figures are not directly comparable.
-  \item \textbf{Section~10.8 Nguyen-12 Benchmark} --- new section reporting
+  \item \textbf{Section~\ref{sec:nguyen12} Nguyen-12 Benchmark} --- new section reporting
     HypatiaX (11/12, 91.7\%), PySR-only (10/12, 83.3\%), and Neural MLP
     (0/12) on the standard Nguyen-12 suite under the same extrapolation
     protocol.
@@ -176,7 +176,7 @@ this paper are from the v2 rerun unless explicitly labelled v1.
 
 %% ============================================================
 \section{Related Work}
-\label{sec:related}
+\label{suppb:related}
 
 SR has evolved from genetic programming~\citep{schmidt2009distilling} through
 physics-inspired decomposition~\citep{udrescu2020aifeynman} to transformer-based
@@ -186,7 +186,7 @@ noiseless Feynman benchmark prior to this work is AI~Feynman~2.0 at
 79.3\%~\citep{udrescu2020aifeynman}.
 
 Benchmark integrity has received increasing attention.
-\citet{MemorizationAudit2024} show that LLMs can reproduce iconic equations
+\citet{memorization2024audit} show that LLMs can reproduce iconic equations
 from training data rather than inferring them from observations, inflating
 reported pass rates.  The hardcoding audit applied to \PureLLM{} in
 Section~\ref{sec:integrity} follows this line of work.
@@ -258,7 +258,7 @@ All 30 equations completed with zero timeouts across all 11 conditions.
 \subsection{Integrity Annotation: Hardcoded Results}
 \label{sec:integrity}
 
-Following~\citet{MemorizationAudit2024}, each \PureLLM{} noiseless result
+Following~\citet{memorization2024audit}, each \PureLLM{} noiseless result
 is annotated with \texttt{is\_hardcoded} based on cross-seed consistency.
 11 of 30 \PureLLM{} noiseless passes are flagged (Table~\ref{tab:hardcoded}).
 
@@ -682,7 +682,7 @@ from unity.  The relative threshold fix should be adopted as standard practice.
 
 %% ============================================================
 \section{Discussion}
-\label{sec:discussion}
+\label{suppb:discussion}
 
 \subsection{Hardcoding and LLM Benchmark Integrity}
 
@@ -704,7 +704,7 @@ practical equivalence.
 
 %% ============================================================
 \section{Limitations}
-\label{sec:limitations}
+\label{suppb:limitations}
 
 \begin{enumerate}
   \item \textbf{Benchmark scope.} 30 equations, 2--5 input variables.
@@ -798,12 +798,12 @@ L.~Biggio, T.~Bendinelli, A.~Neitz, A.~Lucchi, and G.~Rätsch.
 \newblock Neural symbolic regression that scales.
 \newblock \textit{Proc.\ ICML}, 2021.
 
-\bibitem[Roberts et~al.(2023)]{ContaminationCheck2023}
+\bibitem[Roberts et~al.(2023)]{contamination2023check}
 M.~Roberts, H.~Thakur, C.~Herlihy, C.~White, and S.~Dooley.
 \newblock Data contamination through the lens of time.
 \newblock \textit{arXiv:2310.10628}, 2023.
 
-\bibitem[Satvaty et~al.(2024)]{MemorizationAudit2024}
+\bibitem[Satvaty et~al.(2024)]{memorization2024audit}
 A.~Satvaty, S.~Verberne, and F.~Turkmen.
 \newblock Undesirable memorization in large language models: A survey.
 \newblock \textit{arXiv:2410.02650}, 2024.
@@ -912,7 +912,7 @@ equations) is 100\%.}
 
 \subsection*{Code, Data, and Protocol}
 
-All experimental results in Section~\ref{sec:public_benchmarks} were produced
+All experimental results in Section~\ref{sec:benchmark} were produced
 using \texttt{experiment\_protocol\_benchmark\_v2.py} (version~2.0,
 2026-03-02), which will be released alongside the final paper.
 The protocol file encodes all data-generation functions, random seeds, noise
@@ -930,7 +930,7 @@ external dataset dependencies for the physics equations.
 
 \subsection*{Exact Reproduction Commands}
 
-\paragraph{Phase~2 (noisy, $R^2>0.995$, Table~\ref{tab:feynman_results}).}
+\paragraph{Phase~2 (noisy, $R^2>0.995$, Table~\ref{tab:feynman30}).}
 \begin{verbatim}
 python run_comparative_suite_benchmark_v2.py \
     --methods 1 --samples 200 --no-llm-cache
@@ -939,8 +939,8 @@ Output: \texttt{protocol\_core\_noisy\_<timestamp>.json}.
 The \texttt{--no-llm-cache} flag forces independent fresh API calls for all
 30 Pure~LLM evaluations; this was verified via cache-clearing.
 
-\paragraph{Phase~3 (noiseless, $R^2>0.9999$, Tables~\ref{tab:feynman_noiseless}
-and~\ref{tab:feynman_noiseless_per_eq}).}
+\paragraph{Phase~3 (noiseless, $R^2>0.9999$, Tables~\ref{tab:feynman30}
+and~\ref{tab:feynman30}).}
 \begin{verbatim}
 python run_comparative_suite_benchmark_v2.py \
     --noiseless --threshold 0.9999       \
@@ -1060,7 +1060,7 @@ Additional fixes in the same commit:
     fixing suppression on wide-range power-law equations.
 \end{itemize}
 
-Table~\ref{tab:v1v2_diff} (Section~\ref{sec:r2_bugfix}) summarises all
+Table~\ref{tab:changes} (Section~\ref{sec:r2_bugfix}) summarises all
 aggregate recovery changes. All results reported in the paper use the
 v2 corrected harness. The v1 JSON output files are retained for audit
 purposes and are available upon request.
@@ -1085,7 +1085,7 @@ for the final submission figures.
 
 \subsection*{PureLLM Disclosure}
 
-Following~\citet{MemorizationAudit2024}, each PureLLM noiseless pass
+Following~\citet{memorization2024audit}, each PureLLM noiseless pass
 was audited for memorisation. \textbf{11 of 30 PureLLM passes are
 flagged \texttt{is\_hardcoded=True}}: Michaelis--Menten, Logistic growth,
 Allometric scaling, Nernst, Clausius--Mossotti, Lorentz force, Gaussian PDF,
@@ -1094,7 +1094,7 @@ equations return the ground-truth formula verbatim with zero cross-seed
 variation, consistent with training-data recall rather than inference.
 The genuine-inference pass rate (19 non-hardcoded equations) is 100\%.
 PureLLM is therefore listed for completeness in all tables but excluded
-from all scientific comparisons (Section~\ref{sec:feynman_benchmark}).
+from all scientific comparisons (Section~\ref{sec:results}).
 
 A controlled re-run with \texttt{--no-llm-cache} confirmed that all
 30 equations issued independent API calls and produced identical scores
@@ -1117,7 +1117,7 @@ The following citation key conflicts have been resolved in \texttt{references.bi
   \item \texttt{meidani2023snip} (arXiv preprint key) replaced by
         \texttt{meidani2024snip} (published ICLR~2024 key) in
         \texttt{references.bib}. \textbf{Resolved.}
-  \item \texttt{la2021contemporary} entry confirmed present in
+  \item \texttt{lacava2021contemporary} entry confirmed present in
         \texttt{references.bib}. \textbf{No action needed.}
 \end{enumerate}
 
@@ -1133,7 +1133,7 @@ The only valid comparison uses the shared median $R^2$ axis:
 HypatiaX Hybrid DeFi achieves median $R^2 = 1.0000$ on our 30-equation
 subset vs.\ SNIP's $0.882$ on the full 119-equation SRBench set
 (different subsets; comparison is indicative only).
-Table~\ref{tab:snip_r2_comparison} provides this comparison.
+Table~\ref{tab:nguyen} provides this comparison.
 
 % ============================================================================
 % APPENDIX: COMPLETE FIGURE INVENTORY
@@ -1574,12 +1574,12 @@ P = n \times (T \times (8.314 / V))
 
 \textbf{Extrapolation}: 0.0\% error across all pressure/temperature/volume ranges tested (up to 5$\times$ training range)
 
-\textbf{Physical interpretation}: On this test case, symbolic regression recovered a constant consistent with the gravitational constant from data alone, without prior knowledge of its value\citep{la2021contemporary}.
+\textbf{Physical interpretation}: On this test case, symbolic regression recovered a constant consistent with the gravitational constant from data alone, without prior knowledge of its value\citep{lacava2021contemporary}.
 \end{example}
 
 \subsection{Near-Perfect Recoveries}
 
-The Michaelis-Menten and Impermanent Loss equations were recovered with constant error $< 10^{-5}$, achieving $R^2 = 1.0000$ and near-zero extrapolation error (see Listing~\ref{lst:discovered}).
+The Michaelis-Menten and Impermanent Loss equations were recovered with constant error $< 10^{-5}$, achieving $R^2 = 1.0000$ and near-zero extrapolation error (see Listing~\ref{sec:results}).
 
 \subsection{Failure Case Analysis}
 
@@ -1590,7 +1590,7 @@ The Michaelis-Menten and Impermanent Loss equations were recovered with constant
 
 \textbf{Neural Network Result}:
 \begin{itemize}
-\item \textbf{Interpolation}: $R^2 = 0.21$ (poor fit; relative error $> 100\%$, meeting the threshold in Definition~\ref{def:catastrophic_extrap})
+\item \textbf{Interpolation}: $R^2 = 0.21$ (poor fit; relative error $> 100\%$, meeting the threshold in Definition~\ref{def:ood_extrap})
 \item \textbf{Extrapolation}: Not attempted due to interpolation failure
 \item \textbf{Issue}: Gradient vanishing due to $10^{-11}$ scale
 \item \textbf{Attempted solution}: Log-transform $\to$ marginal improvement ($R^2 = 0.35$)
@@ -1615,7 +1615,7 @@ The Michaelis-Menten and Impermanent Loss equations were recovered with constant
 \item \textbf{Multi-scale normalization}: Normalize inputs/outputs to [0.1, 10] range before discovery, then rescale
 \end{enumerate}
 
-\textbf{Lesson learned}: Very small constants ($< 10^{-6}$) require special handling in both neural and symbolic methods. This represents 1/15 test cases (6.7\% failure rate) and is a known limitation addressed in Section~\ref{sec:limitations}.
+\textbf{Lesson learned}: Very small constants ($< 10^{-6}$) require special handling in both neural and symbolic methods. This represents 1/15 test cases (6.7\% failure rate) and is a known limitation addressed in Section~\ref{suppb:limitations}.
 \end{example}
 
 \subsubsection{Henderson-Hasselbalch (Pure LLM Failure)}
@@ -1853,7 +1853,7 @@ Recommendation: Future work should increase per-domain sample sizes to n $\geq$ 
 \section{Noise Sensitivity Analysis}
 \label{app:noise_sensitivity}
 
-To assess correspondence with Condition 3 of Empirical Result~\ref{thm:sufficient_conditions} (noise tolerance threshold $\sigma \leq 0.1 \cdot \text{std}(y)$), we conducted systematic experiments varying noise levels.
+To assess correspondence with Condition 3 of Empirical Result~\ref{thm:llm_reproductive} (noise tolerance threshold $\sigma \leq 0.1 \cdot \text{std}(y)$), we conducted systematic experiments varying noise levels.
 
 \subsection{Experimental Protocol}
 
