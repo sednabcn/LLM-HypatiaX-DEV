@@ -176,12 +176,6 @@ jobs:
             && echo "Live registry: $(wc -c < /tmp/live_registry/issue_registry.json) bytes" \
             || echo "::notice::Merged registry not found — will use checked-out version"
 
-      - name: Checkout (for issue_registry.json)
-        uses: actions/checkout@v4.2.2
-        with:
-          fetch-depth: 1
-          path: _repo
-
       - name: Download audit summary artifact
         if: github.event.inputs.use_static_generator != 'true'
         continue-on-error: true
@@ -230,11 +224,13 @@ jobs:
         if: github.event.inputs.use_static_generator == 'true'
         env:
           SITE_DIR: site
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
         run: |
           mkdir -p "${SITE_DIR}"
           python _repo/scripts/generate_audit_report.py \
+            --registry "${REGISTRY_PATH}" \
             --out "${SITE_DIR}/index.html"
-          echo "Built site/index.html via generate_audit_report.py (static mode)."
+          echo "Built site/index.html via generate_audit_report.py (static mode, live registry)."
 
       - name: Build combined audit report (live)
         if: github.event.inputs.use_static_generator != 'true'

@@ -1276,6 +1276,10 @@ jobs:
             echo "::warning::$NB04 not found — skipping TRUTH sync."
             exit 0
           fi
+          if [[ ! -f scripts/patches/update_nb04_truth.py ]]; then
+            echo "::warning::scripts/patches/update_nb04_truth.py not found — skipping TRUTH sync."
+            exit 0
+          fi
           python scripts/patches/update_nb04_truth.py \
             --results-dir "$RESULTS_DIR" \
             --nb-path     "$NB04"
@@ -1287,11 +1291,11 @@ jobs:
         # Exits non-zero only if FIX-C1 is found as OPEN, not merely absent.
         run: |
           set -euo pipefail
-          if [[ ! -f hypatia_inspector.py ]]; then
-            echo "::warning::hypatia_inspector.py not found — skipping FIX-C1 closure check."
+          if [[ ! -f scripts/patches/hypatia_inspector.py ]]; then
+            echo "::warning::scripts/patches/hypatia_inspector.py not found — skipping FIX-C1 closure check."
             exit 0
           fi
-          python hypatia_inspector.py \
+          python scripts/patches/hypatia_inspector.py \
             --repo . \
             --registry scripts/patches/issue_registry.json \
             --json-out logs/fixc1_check_findings.json \
@@ -1410,14 +1414,14 @@ jobs:
       # (apply mode already ran in audit-setup / apply-fixes in ci_paper_notebooks.yml)
       - name: Run hypatia_inspector.py (dry-run report)
         run: |
-          if [ -f hypatia_inspector.py ]; then
-            python hypatia_inspector.py \
+          if [ -f scripts/patches/hypatia_inspector.py ]; then
+            python scripts/patches/hypatia_inspector.py \
               --repo . \
               --registry "${{ env.REGISTRY_PATH }}" \
               --json-out findings.json \
               --severity critical,high,medium
           else
-            echo "::warning::hypatia_inspector.py not found at repo root — skipping inspector step"
+            echo "::warning::scripts/patches/hypatia_inspector.py not found — skipping inspector step"
           fi
         continue-on-error: true
 

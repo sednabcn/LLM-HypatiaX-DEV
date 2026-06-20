@@ -3,21 +3,26 @@
 generate_audit_report.py — HypatiaX Paper Audit Report regenerator
 
 Rebuilds HypatiaX_Paper_Audit_Report.html from structured data instead of
-hand-edited markup. This is a STATIC regenerator: it does not re-run any
-notebooks or re-derive any findings — it re-renders the same audit content
-(notebook summaries + the resolved/false-positive findings table) using the
-original report's exact color palette and layout.
+hand-edited markup. This is a STATIC regenerator in one specific sense only:
+it does not re-run any notebooks (NB-01...NB-06 bodies are preserved as
+already-finalized HTML, see --nb-dir below). The FINDINGS TABLE, however,
+is read live from issue_registry.json via --registry — pass that flag in
+CI or the report WILL silently use a frozen fallback snapshot instead.
 
 Use this when you need to:
-  - tweak copy, add/remove a finding, or fix a typo without hand-editing HTML
+  - regenerate the report after issue_registry.json changes (pass --registry)
+  - tweak colors/layout in one place (PALETTE below) and regenerate consistently
   - refresh the "Generated" timestamp / provenance line
-  - re-skin colors in one place (PALETTE below) and regenerate consistently
 
 USAGE
 -----
+    python3 generate_audit_report.py --registry path/to/issue_registry.json
+    python3 generate_audit_report.py --registry issue_registry.json --out report.html
+    python3 generate_audit_report.py --registry issue_registry.json --no-run-ids
+
+    # Without --registry, falls back to a frozen 2026-06-19 snapshot and
+    # prints a warning — do not rely on this in CI:
     python3 generate_audit_report.py
-    python3 generate_audit_report.py --out HypatiaX_Paper_Audit_Report.html
-    python3 generate_audit_report.py --no-run-ids   # omit internal CI run IDs
 
 The notebook body sections (NB-01...NB-06) are intentionally kept as opaque
 HTML blobs (NB_SECTIONS below) rather than re-parsed from nbconvert output,
@@ -30,6 +35,7 @@ nbconvert <div class="cell">...</div> fragments if you have them on disk
 
 import argparse
 import html
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,12 +99,17 @@ NB_SECTIONS = [
 ]
 
 # ==============================================================================
-# FINDINGS — single source of truth for the conclusions table.
+# FALLBACK FINDINGS — used ONLY if --registry is not supplied or the file
+# can't be read. This is a frozen snapshot taken on 2026-06-19 and WILL go
+# stale the moment issue_registry.json changes. Always prefer --registry
+# pointing at the live file; this exists purely so the script still runs
+# (with a loud warning) if the registry is temporarily unavailable.
+#
 # status: "resolved" | "false_positive"
 # severity: CRITICAL | HIGH | MEDIUM | LOW  (ignored for false_positive rows,
 #           but kept for reference / sorting)
 # ==============================================================================
-FINDINGS = [
+FALLBACK_FINDINGS = [
     {"id": "FIX-B1", "status": "resolved", "severity": "CRITICAL", "nb": "NB-01",
      "issue": "koza1994genetic cited but no \\bibitem — will produce [?] in PDF.",
      "action": "Add \\bibitem{koza1994genetic} or redirect \\cite calls to koza1992gp."},
@@ -184,6 +195,47 @@ The FIX-C3 split-protocol correction has been applied; Gates A/B/C pass.
 """.strip()
 
 
+def normalize_registry_entry(raw: dict) -> dict:
+    """Map issue_registry.json's real schema onto the shape the renderer
+    expects. The live registry uses: severity (lowercase), nb_source,
+    description, action, status in {"resolved","false_positive","open",...}.
+    """
+    severity = str(raw.get("severity", "medium")).upper()
+    status = raw.get("status", "open")
+    description = raw.get("description", "")
+    action = raw.get("action", "")
+    # Surface false_positive_reason / note as part of the action text when
+    # present, since the renderer puts everything under one "Action:" line.
+    extra = raw.get("false_positive_reason") or raw.get("note")
+    if extra and extra not in action:
+        action = f"{action} ({extra})" if action else extra
+    return {
+        "id": raw.get("id", "FIX-UNKNOWN"),
+        "status": status,
+        "severity": severity,
+        "nb": raw.get("nb_source", raw.get("nb", "?")),
+        "issue": html.escape(description, quote=False),
+        "action": html.escape(action, quote=False),
+        "updated": raw.get("updated"),
+    }
+
+
+def load_registry(registry_path: Path | None) -> tuple[list[dict], str]:
+    """Load findings from the live issue_registry.json. Returns (findings,
+    source_label) where source_label describes where the data came from, so
+    the report can honestly disclose it instead of silently going stale.
+    """
+    if registry_path is not None:
+        try:
+            raw = json.loads(registry_path.read_text(encoding="utf-8"))
+            findings = [normalize_registry_entry(r) for r in raw]
+            return findings, f"live registry: {registry_path}"
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"WARNING: could not read --registry {registry_path} ({e}); "
+                  f"falling back to frozen snapshot.")
+    return FALLBACK_FINDINGS, "FALLBACK_FINDINGS (frozen 2026-06-19 snapshot — may be stale)"
+
+
 def render_finding_row(f: dict) -> str:
     status = f["status"]
     sev = f["severity"]
@@ -221,19 +273,20 @@ def render_findings_table(findings: list, *, with_header_row: bool = True) -> st
     return f'<table style="font-size:0.85em;width:100%;border-collapse:collapse;margin-top:8px;">\n{header}      <tbody>\n{rows}</tbody>\n    </table>'
 
 
-def render_conclusions(*, report_run_id: str, notebook_run_id: str, show_run_ids: bool) -> str:
-    resolved = [f for f in FINDINGS if f["status"] == "resolved"]
-    false_positives = [f for f in FINDINGS if f["status"] == "false_positive"]
-    open_issues = [f for f in FINDINGS if f["status"] not in ("resolved", "false_positive")]
+def render_conclusions(*, findings: list, source_label: str, report_run_id: str,
+                        notebook_run_id: str, show_run_ids: bool) -> str:
+    resolved = [f for f in findings if f["status"] == "resolved"]
+    false_positives = [f for f in findings if f["status"] == "false_positive"]
+    open_issues = [f for f in findings if f["status"] not in ("resolved", "false_positive")]
 
     if show_run_ids:
         provenance = (f'Report run&nbsp;<code>{report_run_id}</code>\n'
                       f'      · Notebook run&nbsp;<code>{notebook_run_id}</code><br>\n'
-                      f'      <small style="color:#666;">Registry: <code>_repo/scripts/patches/issue_registry.json</code> '
-                      f'({len(FINDINGS)} entries checked-out from repo).</small>')
+                      f'      <small style="color:#666;">Data source: <code>{html.escape(source_label)}</code> '
+                      f'({len(findings)} entries).</small>')
     else:
-        provenance = (f'<small style="color:#666;">Registry: <code>_repo/scripts/patches/issue_registry.json</code> '
-                      f'({len(FINDINGS)} entries checked-out from repo).</small>')
+        provenance = (f'<small style="color:#666;">Data source: <code>{html.escape(source_label)}</code> '
+                      f'({len(findings)} entries).</small>')
 
     if open_issues:
         open_table = render_findings_table(open_issues)
@@ -414,12 +467,15 @@ def load_nb_body(nb_dir: Path | None, section_id: str) -> str:
             f'</div>')
 
 
-def build_report(*, report_run_id: str, notebook_run_id: str, show_run_ids: bool,
+def build_report(*, findings: list, source_label: str, report_run_id: str,
+                  notebook_run_id: str, show_run_ids: bool,
                   nb_dir: Path | None, generated_at: str) -> str:
     nb_html = "\n\n".join(
         render_nb_section(s, load_nb_body(nb_dir, s["id"])) for s in NB_SECTIONS
     )
     conclusions_html = render_conclusions(
+        findings=findings,
+        source_label=source_label,
         report_run_id=report_run_id,
         notebook_run_id=notebook_run_id,
         show_run_ids=show_run_ids,
@@ -480,6 +536,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default="HypatiaX_Paper_Audit_Report.html",
                          help="Output HTML path (default: %(default)s)")
+    parser.add_argument("--registry", type=Path, default=None,
+                         help="Path to the LIVE issue_registry.json. If omitted or unreadable, "
+                              "falls back to a frozen snapshot and prints a warning. "
+                              "This is what makes the report reflect current data instead of "
+                              "going stale — always pass this in CI.")
     parser.add_argument("--report-run-id", default="27748279742",
                          help="Provenance label for report run (default: %(default)s)")
     parser.add_argument("--notebook-run-id", default="27747615528",
@@ -493,8 +554,11 @@ def main():
     args = parser.parse_args()
 
     generated_at = args.generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    findings, source_label = load_registry(args.registry)
 
     report_html = build_report(
+        findings=findings,
+        source_label=source_label,
         report_run_id=args.report_run_id,
         notebook_run_id=args.notebook_run_id,
         show_run_ids=not args.no_run_ids,
@@ -505,9 +569,11 @@ def main():
     out_path = Path(args.out)
     out_path.write_text(report_html, encoding="utf-8")
     print(f"Wrote {out_path} ({len(report_html):,} bytes)")
-    print(f"  Findings: {len(FINDINGS)} total "
-          f"({sum(1 for f in FINDINGS if f['status']=='resolved')} resolved, "
-          f"{sum(1 for f in FINDINGS if f['status']=='false_positive')} false positive)")
+    print(f"  Data source: {source_label}")
+    print(f"  Findings: {len(findings)} total "
+          f"({sum(1 for f in findings if f['status']=='resolved')} resolved, "
+          f"{sum(1 for f in findings if f['status']=='false_positive')} false positive, "
+          f"{sum(1 for f in findings if f['status'] not in ('resolved','false_positive'))} open)")
     print(f"  Run IDs shown: {not args.no_run_ids}")
 
 
