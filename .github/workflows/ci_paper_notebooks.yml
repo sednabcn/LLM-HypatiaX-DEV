@@ -252,20 +252,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          # CPU-only torch: avoids 2.5 GB CUDA wheels, runners have no GPU
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && break
-            echo "::warning::pip install torch attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir -r requirements.txt && break
-            echo "::warning::pip install requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          # Install CPU-only torch to avoid pulling 2.5 GB CUDA wheels
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
           if [ -f notebooks/requirements.txt ]; then
-            for attempt in 1 2 3; do
-              pip install --no-cache-dir -r notebooks/requirements.txt && break
-              echo "::warning::pip install notebooks/requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-            done
+            pip install --no-cache-dir -r notebooks/requirements.txt
           fi
           python -m ipykernel install --user --name python3
 
@@ -412,18 +403,19 @@ jobs:
           changed = False
           for title, label in SECTION_LABELS.items():
               # Match \section{<title>} not already followed by \label on same/next line
+              # Use r'' strings throughout so \s and \l are regex tokens, not escape seqs
               pattern = re.compile(
-                  r'(\section\{' + re.escape(title) + r'[^}]*\})'
-                  r'(?!\s*\label\{' + re.escape(label) + r'\})',
+                  r'(\\section\{' + re.escape(title) + r'[^}]*\})'
+                  r'(?!\s*\\label\{' + re.escape(label) + r'\})',
                   re.MULTILINE
               )
-              def add_label(m):
-                  return m.group(1) + r'\label{' + label + r'}'
+              def add_label(m, _label=label):
+                  return m.group(1) + r'\label{' + _label + r'}'
               new_src, n = pattern.subn(add_label, src)
               if n:
                   src = new_src
                   changed = True
-                  print(f"  [FIX-S1] \label{{{label}}} added after \section{{{title}}}")
+                  print(f"  [FIX-S1] \\label{{{label}}} added after \\section{{{title}}}")
           if changed:
               shutil.copy("jmlr_paper_main.tex", "jmlr_paper_main.tex.bak")
               p.write_text(src, encoding="utf-8")
@@ -440,13 +432,13 @@ jobs:
               return 'subsec:' + slug[:40]
 
           # Find all \subsection{...} not followed by \label
-          pattern = re.compile(r'(\subsection\{([^}]+)\})(?!\s*\label\{subsec:)', re.MULTILINE)
+          pattern = re.compile(r'(\\subsection\{([^}]+)\})(?!\s*\\label\{subsec:)', re.MULTILINE)
           changed = False
           def add_sublabel(m):
               global changed
               changed = True
               slug = make_slug(m.group(2))
-              print(f"  [FIX-S2] \label{{{slug}}} added")
+              print(f"  [FIX-S2] \\label{{{slug}}} added")
               return m.group(1) + r'\label{' + slug + r'}'
           new_src = pattern.sub(add_sublabel, src)
           if changed:
@@ -834,19 +826,10 @@ jobs:
         run: |
           pip install --upgrade pip
           # CPU-only torch: avoids 2.5 GB CUDA wheels, runners have no GPU
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && break
-            echo "::warning::pip install torch attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir -r requirements.txt && break
-            echo "::warning::pip install requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
           if [ -f notebooks/requirements.txt ]; then
-            for attempt in 1 2 3; do
-              pip install --no-cache-dir -r notebooks/requirements.txt && break
-              echo "::warning::pip install notebooks/requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-            done
+            pip install --no-cache-dir -r notebooks/requirements.txt
           fi
           python -m ipykernel install --user --name python3
 
@@ -1019,10 +1002,7 @@ jobs:
         # skip the heavy requirements.txt to keep this job fast and disk-safe.
         run: |
           pip install --no-cache-dir --upgrade pip
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir jupyter nbconvert ipykernel && break
-            echo "::warning::pip install attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          pip install --no-cache-dir jupyter nbconvert ipykernel
           python -m ipykernel install --user --name python3
 
       - name: Download notebooks workspace
@@ -1192,19 +1172,10 @@ jobs:
         run: |
           pip install --upgrade pip
           # CPU-only torch: avoids 2.5 GB CUDA wheels, runners have no GPU
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && break
-            echo "::warning::pip install torch attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir -r requirements.txt && break
-            echo "::warning::pip install requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
           if [ -f notebooks/requirements.txt ]; then
-            for attempt in 1 2 3; do
-              pip install --no-cache-dir -r notebooks/requirements.txt && break
-              echo "::warning::pip install notebooks/requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-            done
+            pip install --no-cache-dir -r notebooks/requirements.txt
           fi
           python -m ipykernel install --user --name python3
 
@@ -1375,19 +1346,10 @@ jobs:
         run: |
           pip install --upgrade pip
           # CPU-only torch: avoids 2.5 GB CUDA wheels, runners have no GPU
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && break
-            echo "::warning::pip install torch attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir -r requirements.txt && break
-            echo "::warning::pip install requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
           if [ -f notebooks/requirements.txt ]; then
-            for attempt in 1 2 3; do
-              pip install --no-cache-dir -r notebooks/requirements.txt && break
-              echo "::warning::pip install notebooks/requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-            done
+            pip install --no-cache-dir -r notebooks/requirements.txt
           fi
           python -m ipykernel install --user --name python3
 
@@ -1558,19 +1520,10 @@ jobs:
         run: |
           pip install --upgrade pip
           # CPU-only torch: avoids 2.5 GB CUDA wheels, runners have no GPU
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && break
-            echo "::warning::pip install torch attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir -r requirements.txt && break
-            echo "::warning::pip install requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
           if [ -f notebooks/requirements.txt ]; then
-            for attempt in 1 2 3; do
-              pip install --no-cache-dir -r notebooks/requirements.txt && break
-              echo "::warning::pip install notebooks/requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-            done
+            pip install --no-cache-dir -r notebooks/requirements.txt
           fi
           python -m ipykernel install --user --name python3
 
@@ -1771,19 +1724,10 @@ jobs:
         run: |
           pip install --upgrade pip
           # CPU-only torch: avoids 2.5 GB CUDA wheels, runners have no GPU
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && break
-            echo "::warning::pip install torch attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
-          for attempt in 1 2 3; do
-            pip install --no-cache-dir -r requirements.txt && break
-            echo "::warning::pip install requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-          done
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
           if [ -f notebooks/requirements.txt ]; then
-            for attempt in 1 2 3; do
-              pip install --no-cache-dir -r notebooks/requirements.txt && break
-              echo "::warning::pip install notebooks/requirements.txt attempt ${attempt}/3 failed — retrying in 20s…"; sleep 20
-            done
+            pip install --no-cache-dir -r notebooks/requirements.txt
           fi
           python -m ipykernel install --user --name python3
 
