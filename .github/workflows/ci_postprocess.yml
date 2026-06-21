@@ -315,11 +315,26 @@ jobs:
       - name: Overwrite audit (pre-run snapshot)
         id: overwrite_audit
         env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
+          SUB:        ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT: ${{ env.EFFECTIVE_EXPERIMENT }}
         shell: bash
         run: |
           set -euo pipefail
-          FIGS="${OUT_BASE}/${SUB}/figures"
+          # FIX FIGS-DEPLOY-SUBDIR: figures_deploy maps SUB="figures" (see the
+          # MAPPING dict in "Resolve result_subdir"), which is correct for the
+          # purge/guard steps that treat SUB as a label, but WRONG here — it
+          # makes FIGS resolve to "${OUT_BASE}/figures/figures", a doubled path
+          # that never exists, so every figures_deploy snapshot (before AND
+          # after, in the matching "Post-run overwrite summary" step) silently
+          # finds nothing and reports all-zero counts even when A17 actually
+          # wrote/overwrote dozens of files in "${OUT_BASE}/figures". This
+          # branch must stay in sync with the identical branch in "Post-run
+          # overwrite summary" below, or the before/after comparison breaks.
+          if [[ "${EXPERIMENT}" == "figures_deploy" ]]; then
+            FIGS="${OUT_BASE}/figures"
+          else
+            FIGS="${OUT_BASE}/${SUB}/figures"
+          fi
           TABS="${OUT_BASE}/${SUB}/tables"
           mkdir -p /tmp/postprocess_audit
 
@@ -1767,7 +1782,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          FIGS="${OUT_BASE}/${SUB}/figures"
+          # FIX FIGS-DEPLOY-SUBDIR: must mirror the identical branch in
+          # "Overwrite audit (pre-run snapshot)" above — see the comment there
+          # for why figures_deploy needs "${OUT_BASE}/figures" rather than the
+          # doubled "${OUT_BASE}/${SUB}/figures" (SUB="figures" for this
+          # experiment). If these two branches ever diverge, before/after will
+          # be comparing two different directories and the summary table will
+          # be wrong again even though neither side is individually "empty".
+          if [[ "${EXPERIMENT}" == "figures_deploy" ]]; then
+            FIGS="${OUT_BASE}/figures"
+          else
+            FIGS="${OUT_BASE}/${SUB}/figures"
+          fi
           TABS="${OUT_BASE}/${SUB}/tables"
 
           diff_dir() {
@@ -1902,10 +1928,18 @@ jobs:
           git reset HEAD 2>/dev/null || true
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
-          FIGS="${OUT_BASE}/${SUB}/figures"
+          # FIX FIGS-DEPLOY-SUBDIR: same doubled-path issue as the two snapshot
+          # steps above — SUB="figures" for figures_deploy makes the default
+          # branch resolve to "${OUT_BASE}/figures/figures" (nonexistent).
+          # Functionally harmless here (stage_if_nonempty just warns-and-skips,
+          # and the dedicated figures_deploy block below stages the real path),
+          # but fixed for consistency and to avoid a spurious ::warning::.
+          if [[ "${EXPERIMENT}" == "figures_deploy" ]]; then
+            FIGS="${OUT_BASE}/figures"
+          else
+            FIGS="${OUT_BASE}/${SUB}/figures"
+          fi
           TABS="${OUT_BASE}/${SUB}/tables"
-
-          # Always stage the experiment's own figures + tables.
           stage_if_nonempty() {
             local dir="$1"
             if [[ -d "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
