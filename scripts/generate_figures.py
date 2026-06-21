@@ -2120,7 +2120,22 @@ if _noise_rows:
                       os.path.join(_FIGURES_DIR, f"{stem}.png"), hline=hline)
 
     # fig10: per-equation R² box plot across noise levels
-    if "equation_r2" not in _np:
+    # FIX FIG10-DEAD-BRANCH: _pivot_sweep() always populates every key passed
+    # in y_keys (line ~2010-2016), even when zero rows had that field — it
+    # just yields empty arrays. "equation_r2" was passed as a y_key above, so
+    # the key is ALWAYS present in _np, making `if "equation_r2" not in _np`
+    # permanently False and this entire fallback (the only branch that ever
+    # calls savefig() for fig10_r2_boxplot_noise) permanently unreachable.
+    # That's the confirmed root cause of fig10_r2_boxplot_noise never being
+    # produced by any run (see figures_deploy log, run 27899208900: 17/18
+    # NB-05 required stems present, fig10_r2_boxplot_noise the lone MISSING).
+    # Fixed by checking for actual data (non-empty x-array) instead of key
+    # presence. NOTE: this still only implements the fallback path (bucketing
+    # median_r2 by noise level); a true primary path using real per-equation
+    # equation_r2 data, if/when that field is populated upstream, remains
+    # unimplemented — falling back unconditionally is a safe default since
+    # the fallback was always silently dead code in every prior run anyway.
+    if len(_np["equation_r2"][0]) == 0:
         # Fall back: box per noise level of median_r2 across raw rows
         from collections import defaultdict
         _noise_buckets: dict = defaultdict(list)
