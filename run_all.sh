@@ -1920,6 +1920,32 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
+
+  # FIX-suppB-DOUBLED-PATH: run_noise_sweep_benchmark.py does not honor OUT_BASE
+  # for its output directory — it writes relative to its CWD using the same
+  # 'comparison_results/feynman-tests/noise-sweep/noise-sweep' suffix that
+  # OUT_BASE already encodes, producing a doubled path:
+  #   <cwd>/comparison_results/feynman-tests/noise-sweep/noise-sweep/comparison_results/feynman-tests/noise-sweep/
+  # instead of the canonical:
+  #   \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep/
+  # Rescue any files found under the doubled location into the canonical one
+  # so CI's check/complete/qualify/commit steps (and ci_postprocess.yml's
+  # SUPPB_SUBDIR-relative generate_figures.py / generate_tables.py calls) can
+  # find them. Mirrors the suppB_sc rescue in STEP 10b below.
+  _SUPPB_CANON='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep'
+  mkdir -p \"\${_SUPPB_CANON}\"
+  _SUPPB_DOUBLED=\$(find '${REPO_ROOT}' '${RESULTS_DIR}' '${EXPERIMENTS_DIR}' -maxdepth 10 -type d \\
+    -path '*/noise-sweep/noise-sweep/comparison_results/feynman-tests/noise-sweep' 2>/dev/null | head -1)
+  if [[ -n \"\${_SUPPB_DOUBLED}\" && \"\${_SUPPB_DOUBLED}\" != \"\${_SUPPB_CANON}\" && -d \"\${_SUPPB_DOUBLED}\" ]]; then
+    echo \"  [FIX-suppB-DOUBLED-PATH] rescuing outputs from \${_SUPPB_DOUBLED} -> \${_SUPPB_CANON}\"
+    find \"\${_SUPPB_DOUBLED}\" -maxdepth 1 -type f \\( -name 'noise_sweep_*.json' -o -name 'noise_sweep_*.csv' \\) \\
+      -exec mv -v {} \"\${_SUPPB_CANON}/\" \\; 2>/dev/null || true
+    # Remove the now-empty doubled tree so it doesn't get committed/rescanned
+    # on subsequent runs (rmdir is a no-op if anything unexpected remains).
+    rmdir -p \"\${_SUPPB_DOUBLED}\" 2>/dev/null || true
+  else
+    echo \"  [suppB] no doubled-path directory found — assuming OUT_BASE was honored correctly.\"
+  fi
 "
 
 # ── STEP 10b: suppB_sc — sample-complexity sweep ─────────────────────────────

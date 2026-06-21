@@ -185,12 +185,22 @@ DATA_INSTAB_CSV    = _rpath("instability_extrapolation_v2.csv")
 #
 # Searched RECURSIVELY under _RESULTS_DIR. The canonical noise-sweep / sample-
 # complexity JSON is not always written flat into _RESULTS_DIR — it has been
-# observed nested under noise_sweep_saved/, and even self-nested under a
-# duplicated comparison_results/... subtree (an earlier relative-path write
-# landed inside _RESULTS_DIR instead of at the repo root). generate_tables.py
-# already searches multiple candidate locations and combines shards; this
-# mirrors that robustness so figures don't silently fall back to MISSING from
-# the same --results-dir that tables succeeds from.
+# observed nested under noise_sweep_saved/.
+#
+# HISTORICAL NOTE: noise_sweep_*.json was previously also seen self-nested
+# under a duplicated comparison_results/... subtree, because
+# run_noise_sweep_benchmark.py did not honor OUT_BASE and wrote relative to
+# its CWD using the same subdir suffix OUT_BASE already encoded. That write-
+# side bug is now fixed at the source: run_all.sh STEP 10 (FIX-suppB-
+# DOUBLED-PATH) detects and flattens the doubled tree into the canonical
+# SUPPB_SUBDIR immediately after run_noise_sweep_benchmark.py exits, mirroring
+# the equivalent suppB_sc fix already in STEP 10b. New runs should never
+# produce the self-nested layout again; this recursive glob is kept as
+# defense-in-depth (e.g. for manual re-invocations or pre-fix committed data)
+# rather than as the primary mechanism. generate_tables.py already searches
+# multiple candidate locations and combines shards; this mirrors that
+# robustness so figures don't silently fall back to MISSING from the same
+# --results-dir that tables succeeds from.
 #
 # Per-sig checkpoint shards (noise_sweep_sig0000_checkpoint.json, etc.) and the
 # MISSING placeholder itself are excluded so they're never picked up as "the"
