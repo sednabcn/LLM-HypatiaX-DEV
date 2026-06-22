@@ -97,7 +97,7 @@ on:
 
       # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards (1-4). exp1b, exp1_ablation, and exp3b default to 4; all other experiments default to 1."
+        description: "Number of parallel worker shards for this dispatch input (1-4; ignored for table-forced experiments). exp1b, exp1_ablation, and exp3b default to 4; suppB always uses 5 (one per noise level, not user-overridable); all other experiments default to 1."
         required: false
         default: "1"
 
@@ -430,9 +430,62 @@ jobs:
           N_SHARDS_RAW = int(os.environ["N_SHARDS"])
 
           # Per-experiment shard table — authoritative source.
-          # All experiments run with exactly 1 worker shard.
-          # Single-shard mode avoids checkpoint collisions, concurrent-push
-          # races, and wasted runner quota for all experiment sizes.
+          # Most experiments run with exactly 1 worker shard to avoid
+          # checkpoint collisions, concurrent-push races, and wasted runner
+          # quota. exp1b, exp1_ablation, exp3b use 4 shards (multi-task runs
+          # over DEFI_TASKS / multi-seed runs respectively).
+          #
+          # suppB uses 5 shards — NOT 4 — because its task list is built as
+          # [f"noise{nl}__{eq}" for nl in NOISE_LEVELS for eq in
+          # FEYNMAN_DOMAINS] (5 noise levels x 11 domains = 55 tasks,
+          # ordered as 5 contiguous blocks of 11). run_all.sh STEP 10 reads
+          # the FIRST task ID in each shard to pin a single NOISE_LEVEL for
+          # the whole shard (see run_noise_sweep_benchmark.py NOISE_LEVEL
+          # env var handling) — it assumes every task in a shard shares one
+          # noise level. The block-partition splitter below (_block_shards)
+          # divides 55 tasks evenly by COUNT, not by noise-level boundary:
+          # at N_SHARDS=4, divmod(55,4)=(13,3) gives shard sizes
+          # [14,14,14,13], and 14 does not divide evenly into blocks of 11,
+          # so every shard would straddle two noise levels and silently mis-
+          # pin (or fail to pin) NOISE_LEVEL for the tail tasks. N_SHARDS=5
+          # gives shard sizes [11,11,11,11,11] — exactly one noise level per
+          # shard, matching what STEP 10's pinning logic actually assumes.
+          # If NOISE_LEVELS or FEYNMAN_DOMAINS ever change, re-verify this
+          # alignment (shard count must equal len(NOISE_LEVELS) for the
+          # one-level-per-shard property to hold).
+          # FIX-suppB_sc-SHARD-6 (cost rationale, supersedes the old table=1):
+          # suppB_sc previously ran as a single shard covering all 66 tasks
+          # (6 sample sizes x 11 feynman domains) inside one 330-minute job.
+          # Per-task cost is NOT uniform across sample sizes — larger n means
+          # slower fits, especially for the two PySR-backed methods (5, 6),
+          # whose --pysr-timeout/--method-timeout bound per-fit time but not
+          # the job's total wall-clock. Six methods x 11 domains x worst-case
+          # PySR timeouts already triples the wall-clock estimate that
+          # justified --methods 3 4 as suppB_sc's own historical default (see
+          # FIX-suppB_sc-ALL-METHODS below) — at six methods, a single shard
+          # for the full sweep is no longer reliably within the job timeout,
+          # which is exactly the failure mode that silently truncated method
+          # coverage to begin with (a timed-out/killed shard can still leave
+          # a partial sample_complexity_*.json on disk from whichever
+          # methods finished first).
+          #   SHARD COUNT = 6 = len(SC_SAMPLE_COUNTS), one sample size n per
+          #   shard, mirroring suppB's one-noise-level-per-shard design.
+          #   SUPPB_SC_IDS below is built as an outer loop over n and an
+          #   inner loop over FEYNMAN_DOMAINS (11), so it is laid out in 6
+          #   contiguous blocks of 11 — divmod(66, 6) = (11, 0), so
+          #   _block_shards() partitions it into exactly 6 even shards of 11
+          #   tasks, each shard landing entirely within one sample size n.
+          #   This mirrors suppB's NOISE_LEVELS/FEYNMAN_DOMAINS alignment
+          #   requirement: if SUPPB_SC_SAMPLE_COUNTS or FEYNMAN_DOMAINS ever
+          #   change, re-verify that shard count still equals len(sample
+          #   sizes) for the one-n-per-shard property to hold.
+          #   PER-SHARD COST: 11 domains x 6 methods, methods 5/6 PySR-backed
+          #   at up to (pysr-timeout=1100s + method-timeout=900s) worst-case
+          #   each. Largest-n shard (n=1000) is the long pole; if it
+          #   approaches the 330-minute job timeout, the run_all.sh
+          #   FIX-suppB_sc-ALL-METHODS comment's options (b) and (c) — finer
+          #   sharding or dropping back to fewer methods for the largest n —
+          #   are the next things to try, NOT reverting to table=1.
           EXP_SHARD_TABLE = {
               "exp1":               1,
               "exp1b":              4,
@@ -443,8 +496,8 @@ jobs:
               "exp3":               1,
               "exp3b":              4,
               "suppA":              1,
-              "suppB":              1,
-              "suppB_sc":           1,
+              "suppB":              5,
+              "suppB_sc":           6,
               "instability":        1,
               "hybrid_all_domains": 1,
               "extrap":             1,
@@ -453,6 +506,11 @@ jobs:
           # Most experiments use exactly 1 shard to avoid concurrent-push races
           # and checkpoint collisions.  exp1b, exp1_ablation, and exp3b use 4 shards
           # (multi-task runs over DEFI_TASKS / multi-seed runs respectively).
+          # suppB uses 5 shards (one per noise level — see EXP_SHARD_TABLE comment
+          # above for why 4 would silently mis-pin NOISE_LEVEL on some tasks).
+          # suppB_sc uses 6 shards (one per sample size n — see EXP_SHARD_TABLE
+          # comment above for the one-n-per-shard alignment requirement, and
+          # the FIX-suppB_sc-SHARD-6 block below for the cost rationale).
           # Any dispatch input is ignored for single-shard experiments.
           if N_SHARDS_DEFAULT == 1:
               N_SHARDS = 1
@@ -462,8 +520,11 @@ jobs:
                         f"Using N_SHARDS=1.")
           else:
               # Table default is the minimum — user input cannot go below it.
-              # exp1b/exp3b always get at least 4 shards even if the dispatch
-              # form is left at its default value of "1".
+              # exp1b/exp3b always get at least 4 shards, suppB always gets
+              # exactly 5, suppB_sc always gets exactly 6 (min(4, N_SHARDS_RAW)
+              # caps the dispatch input at 4, but max() with the table default
+              # table default of 5 always wins), even if the dispatch form is
+              # left at its default value of "1".
               N_SHARDS = max(N_SHARDS_DEFAULT, min(4, N_SHARDS_RAW))
               if N_SHARDS != N_SHARDS_RAW:
                   print(f"::notice::n_shards: input={N_SHARDS_RAW} "

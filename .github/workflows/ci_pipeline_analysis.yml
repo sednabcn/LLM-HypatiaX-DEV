@@ -294,12 +294,17 @@ jobs:
           fi
           python3 .github/scripts/validate_analysis_input.py
 
-      # ── Merge shards (MERGE_REQUIRED_EXPERIMENTS only — exp1b, exp3b) ────────
+      # ── Merge shards (MERGE_REQUIRED_EXPERIMENTS only) ────────────────────────
       # Mirrors ci_analysis.yml's "Merge shards" step. locate_analysis_input.sh
       # may already have produced _merged.json via its own fallback (in which
       # case INPUT_MODE is already "merged" and this is a no-op); otherwise
-      # call merge_shards.py inline so exp1b/exp3b analyze the full merged
-      # shard set rather than whatever locate happened to find on its own.
+      # call merge_shards.py inline. MERGE_REQUIRED_EXPERIMENTS (single source
+      # of truth, imported below) currently covers exp1b, exp1_ablation, exp3b,
+      # instability, suppB, and suppB_sc — the last two use merge_shards.py's
+      # Shape S sweep merge (merge_sweep_files()), not the task-row merge used
+      # by the others; see merge_shards.py's Shape S comment block for why
+      # those two need a different merge policy (union of sweep points/
+      # methods across shards, not highest-score-row-wins per task_id).
       - name: Merge shards
         if: matrix.experiment != 'instability'
         id: merge
@@ -342,8 +347,19 @@ jobs:
             exit 1
           fi
 
-          N_MERGED=$(python3 -c "import json; d=json.load(open('${MERGED_JSON}')); print(len(d))")
-          echo "  _merged.json: ${N_MERGED} unique task record(s)"
+          N_MERGED=$(python3 -c "
+          import json
+          d = json.load(open('${MERGED_JSON}'))
+          # Shape S (suppB/suppB_sc): top-level dict has sample_sizes/noise_levels +
+          # methods + per_n/per_noise, NOT a flat task-id-keyed dict — len(d) on the
+          # whole object would report ~5 (the wrapper keys), not the sweep-point count.
+          is_sweep = '${EXP}' in ('suppB', 'suppB_sc')
+          dict_key = 'per_n' if '${EXP}' == 'suppB_sc' else 'per_noise'
+          n_points = len(d.get(dict_key, {})) if is_sweep else None
+          n_methods = len(d.get('methods', [])) if is_sweep else None
+          print(f'{n_points} sweep point(s), {n_methods} method(s)' if is_sweep else len(d))
+          ")
+          echo "  _merged.json: ${N_MERGED}"
 
           echo "INPUT_MODE=merged"          >> "$GITHUB_OUTPUT"
           echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_OUTPUT"
@@ -901,6 +917,20 @@ jobs:
               # sig*/n* task IDs done. ci_postprocess.yml figures_deploy
               # performs the equivalent check before regenerating sweep
               # figures and emits ::warning:: for the same gap.
+              #
+              # FIX-suppB_sc-METHOD-COVERAGE: a sample-size being present is
+              # NOT sufficient for suppB_sc — run_all.sh's STEP 10b
+              # FIX-suppB_sc-METHOD-ASSERT already hard-fails the producing
+              # shard if it doesn't contain all 6 methods, but that assertion
+              # can be bypassed (a manual re-run, an old committed JSON from
+              # before the assertion existed, a future change that removes
+              # it). This check is the second line of defense: an n{NNNN}
+              # task is only marked done if the shard JSON's top-level
+              # "methods" list has length >= 6 — see fig_runtime_comparison /
+              # fig_comparative_table in generate_figures.py, which silently
+              # produce degraded output from partial-method JSONs with no
+              # error of their own.
+              _SUPPB_SC_REQUIRE_METHODS = 6
               if exp_id in ("suppB", "suppB_sc"):
                   import glob as _g, json as _j
                   if exp_id == "suppB":
@@ -922,10 +952,17 @@ jobs:
                               d = _j.loads(open(sf).read())
                           except Exception:
                               continue
+                          n_methods = len(d.get("methods", []))
                           for n in d.get("sample_sizes", []):
                               tid = f"n{int(n):04d}"
-                              if tid in all_ids:
+                              if tid not in all_ids:
+                                  continue
+                              if n_methods >= _SUPPB_SC_REQUIRE_METHODS:
                                   done.add(tid)
+                              elif tid not in done:
+                                  print(f"::warning::suppB_sc task {tid} found in {sf} "
+                                        f"but only {n_methods}/{_SUPPB_SC_REQUIRE_METHODS} "
+                                        f"methods present — NOT marking done.")
                   return done
 
               # Fallback globs: when the REGISTRY task-id substring does not match

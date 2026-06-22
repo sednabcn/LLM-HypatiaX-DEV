@@ -75,11 +75,20 @@ logger = logging.getLogger("hypatiax.merge")
 # exp1_ablation — 4-shard Core-15 ablation (PySR-only vs HypatiaX, DEFI_TASKS × 4 workers)
 # exp3b      — 4-shard Nguyen-12 multi-seed (seeds 99/123/777/2024)
 # instability — CSV shards → _merged.json via _merge_instability_csvs()
+# suppB      — 5-shard noise sweep (one noise level per shard, EXP_SHARD_TABLE=5).
+#              Shape S (sweep-format, NOT task-row), merged via merge_sweep_files().
+# suppB_sc   — 6-shard sample-complexity sweep (one n per shard,
+#              EXP_SHARD_TABLE=6, see FIX-suppB_sc-SHARD-6 in run_all.sh).
+#              Shape S, same merge path as suppB — shares method_summary/
+#              per_equation inner schema, differs only in sweep axis
+#              (per_noise vs per_n).
 MERGE_REQUIRED_EXPERIMENTS: frozenset[str] = frozenset({
     "exp1b",
     "exp1_ablation",
     "exp3b",
     "instability",
+    "suppB",
+    "suppB_sc",
 })
 
 DEFI_IDS = {
@@ -363,6 +372,138 @@ def _normalise_protocol_record(test: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# SWEEP-SHAPE HELPERS (Shape S) — suppB / suppB_sc
+# ============================================================
+#
+# Shape S is the sweep-format wrapper produced by run_noise_sweep_benchmark.py
+# (suppB) and run_sample_complexity_benchmark.py (suppB_sc). Both share the
+# same inner shape — an N-method method_summary/per_equation block — keyed by
+# a different sweep axis:
+#
+#   suppB_sc (sample-complexity):
+#     {"sample_sizes": [50], "methods": [...], "per_n": {
+#         "50": {"method_summary": {"<method>": {...}},
+#                "per_equation":    {"<eq>": {"<method>": {"r2", "rmse", ...}}}}
+#     }, "data_efficiency": {...}}
+#
+#   suppB (noise sweep) — confirmed schema (see run_all.sh FIX-METHOD-SUMMARY-
+#   SCHEMA / FIX-NOISE-SCHEMA comments, 2026-06-01):
+#     {"noise_levels": [0.05], "methods": [...], "per_noise": {
+#         "0.05": {"method_summary": {"<method>": {...}},
+#                  "per_equation":   {"<eq>": {"<method>": {"r2", ...}}}}
+#     }}
+#
+# Unlike Shape A/B/P, Shape S is NOT a per-task-id row format — it is a
+# per-sweep-point aggregate keyed by N methods (not the fixed hypatia/nn
+# pair). Merging across shards therefore means taking the UNION of sweep
+# points across shard files, not "highest-score row wins per task_id".
+# extract_rows() / merge_rows() / build_stats() / write_csv() are all
+# task-row-shaped and do not apply here — Shape S gets its own merge path,
+# invoked directly from main() before the generic row-merge path runs.
+
+_SWEEP_AXIS_KEY = {
+    "suppB":    ("noise_levels", "per_noise"),
+    "suppB_sc": ("sample_sizes", "per_n"),
+}
+
+
+def is_sweep_file(raw: Any, experiment: str) -> bool:
+    """Return True if `raw` is a Shape S sweep-format wrapper for this experiment."""
+    if experiment not in _SWEEP_AXIS_KEY:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    list_key, dict_key = _SWEEP_AXIS_KEY[experiment]
+    return isinstance(raw.get(list_key), list) and isinstance(raw.get(dict_key), dict)
+
+
+def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
+    """
+    Merge Shape S shard files (one sweep point per shard, per FIX-suppB-
+    ALL-METHODS / FIX-suppB_sc-SHARD-6 sharding) into one consolidated sweep
+    object covering all sweep points and the union of methods seen.
+
+    Returns a dict shaped like the per-shard input but with `list_key`
+    (sample_sizes / noise_levels) and `dict_key` (per_n / per_noise) merged
+    across all shards, plus a top-level "methods" list giving the UNION of
+    method names found anywhere in the merge — NOT just the methods of the
+    last-read shard — so a shard missing methods is visible in the output
+    instead of silently shrinking the merged method set.
+    """
+    list_key, dict_key = _SWEEP_AXIS_KEY[experiment]
+
+    merged_points: Dict[str, Any] = {}
+    all_methods: set = set()
+    per_point_methods: Dict[str, set] = {}
+    mode = None
+    generated_at = None
+
+    for path in files:
+        try:
+            raw = load_json(path)
+        except Exception as e:
+            logger.warning(f"SWEEP MERGE: could not read {path}: {e}")
+            continue
+        if not is_sweep_file(raw, experiment):
+            continue
+
+        mode = raw.get("mode", mode)
+        generated_at = raw.get("generated", generated_at)
+
+        sweep_dict = raw.get(dict_key, {})
+        for point_key, point_val in sweep_dict.items():
+            if not isinstance(point_val, dict):
+                continue
+            ms = point_val.get("method_summary", {})
+            point_methods = set(ms.keys()) if isinstance(ms, dict) else set()
+
+            if point_key in merged_points:
+                existing_methods = per_point_methods.get(point_key, set())
+                # Highest method-coverage shard for this point wins outright
+                # (mirrors merge_rows' highest-score-wins policy, but scored
+                # by method coverage since Shape S has no per-row R² score).
+                if len(point_methods) > len(existing_methods):
+                    merged_points[point_key] = point_val
+                    per_point_methods[point_key] = point_methods
+                elif len(point_methods) == len(existing_methods):
+                    logger.warning(
+                        f"SWEEP MERGE: duplicate sweep point {point_key!r} "
+                        f"from {path} with equal method coverage "
+                        f"({len(point_methods)}) — keeping first-seen."
+                    )
+            else:
+                merged_points[point_key] = point_val
+                per_point_methods[point_key] = point_methods
+
+            all_methods.update(point_methods)
+
+    sorted_points = sorted(merged_points.keys(), key=lambda k: float(k))
+
+    for point_key in sorted_points:
+        found = per_point_methods.get(point_key, set())
+        missing = all_methods - found
+        if missing:
+            logger.warning(
+                f"SWEEP MERGE: sweep point {point_key!r} has only "
+                f"{len(found)}/{len(all_methods)} methods "
+                f"(missing: {sorted(missing)})."
+            )
+
+    out: Dict[str, Any] = {
+        "experiment":   experiment,
+        "generated":    generated_at,
+        "mode":         mode,
+        "methods":      sorted(all_methods),
+        dict_key:       merged_points,
+    }
+    if experiment == "suppB_sc":
+        out[list_key] = [int(k) for k in sorted_points]
+    else:
+        out[list_key] = [float(k) for k in sorted_points]
+    return out
+
+
+# ============================================================
 # EXTRACTION
 # ============================================================
 
@@ -556,6 +697,63 @@ def main() -> None:
         glob.glob(f"{config.input_root}/**/*.json", recursive=True)
     )
     logger.info(f"JSON FILES FOUND: {len(files)}")
+
+    # ── Shape S (suppB / suppB_sc): sweep-format merge, not task-row merge ──
+    # See merge_sweep_files() docstring. These two experiments produce
+    # method_summary/per_equation sweep blocks keyed by noise level or sample
+    # size, not hypatia/nn task rows — extract_rows()/merge_rows()/
+    # build_stats()/write_csv() do not apply and are skipped entirely.
+    if config.experiment in _SWEEP_AXIS_KEY:
+        merged_sweep = merge_sweep_files([Path(p) for p in files], config.experiment)
+        list_key, dict_key = _SWEEP_AXIS_KEY[config.experiment]
+        n_points = len(merged_sweep.get(dict_key, {}))
+        n_methods = len(merged_sweep.get("methods", []))
+
+        logger.info("=" * 70)
+        logger.info(f"MERGED SWEEP POINTS ({list_key}): {merged_sweep.get(list_key)}")
+        logger.info(f"MERGED METHODS ({n_methods}): {merged_sweep.get('methods')}")
+        logger.info("=" * 70)
+
+        if not n_points:
+            raise RuntimeError("FATAL: sweep merge produced zero sweep points")
+
+        merged_path     = config.output_dir / "_merged.json"
+        stats_path      = config.output_dir / "_stats.json"
+        checkpoint_path = config.output_dir / "_checkpoint.json"
+
+        sweep_stats = {
+            "experiment":    config.experiment,
+            "generated_at":  datetime.now(timezone.utc).isoformat(),
+            "n_sweep_points": n_points,
+            "n_methods":      n_methods,
+            list_key:         merged_sweep.get(list_key),
+            "methods":        merged_sweep.get("methods"),
+        }
+
+        safe_write_json(merged_path, merged_sweep)
+        safe_write_json(stats_path, sweep_stats)
+        # write_checkpoint() expects a task_id-keyed `merged` dict for
+        # task_ids; sweep points (not task ids) are the natural analogue here.
+        write_checkpoint(checkpoint_path, config.experiment, result_subdir,
+                          merged_sweep.get(dict_key, {}))
+
+        logger.info("=" * 70)
+        logger.info(f"WRITE OK: {merged_path}")
+        logger.info(f"WRITE OK: {stats_path}")
+        logger.info(f"WRITE OK: {checkpoint_path}")
+        logger.info("=" * 70)
+        logger.info(
+            f"SUMMARY: {n_points} sweep points merged across {len(files)} shard "
+            f"file(s) | methods={n_methods}"
+        )
+        if n_methods < 6 and config.experiment in ("suppB", "suppB_sc"):
+            logger.warning(
+                f"SUMMARY: only {n_methods}/6 methods found across all shards — "
+                f"fig_runtime_comparison / fig_comparative_table will be "
+                f"incomplete. See FIX-suppB_sc-ALL-METHODS / FIX-suppB_sc-"
+                f"METHOD-ASSERT in run_all.sh."
+            )
+        return
 
     all_rows: List[Dict[str, Any]] = []
 

@@ -1868,6 +1868,34 @@ run suppA "DeFi routing improvement experiments (Supplement A - Tab 11-13 routin
 
 # ── STEP 10: suppB — noise sweep ─────────────────────────────────────────────
 # FIX CRITICAL 2: noise sweep now its own step; sample-complexity in suppB_sc
+#
+# FIX-suppB-ALL-METHODS: run_dual_sweep_benchmarks.py (the orchestrator that
+# wraps both run_noise_sweep_benchmark.py and run_sample_complexity_benchmark.py)
+# defaults --methods to [3, 4] for BOTH sweeps. run_sample_complexity_benchmark.py
+# confirms this is its own --methods default too (docstring: "top two methods").
+# run_noise_sweep_benchmark.py's source was not directly inspected here, but
+# ci_postprocess.yml's own comments group suppB and suppB_sc together as both
+# producing only "EnhancedHybridSystemDeFi (core)" + "HybridSystemLLMNN
+# all-domains (core)" — i.e. the same 2-method scope — so this is treated as
+# the same default and patched the same way as suppB_sc's FIX-suppB_sc-ALL-
+# METHODS fix. fig_runtime_comparison and fig_comparative_table in
+# generate_figures.py read EXCLUSIVELY from noise_sweep_*.json /
+# sample_complexity_*.json — there is no code path pulling method coverage
+# from exp2, suppA, or hybrid_all_domains for these two figures, so the
+# cross-experiment ALLEXP_FIGDIR regeneration pass in ci_postprocess.yml
+# cannot fill the gap no matter how complete those other experiments are.
+#
+# COST/RISK + MITIGATION: this is why EXP_SHARD_TABLE["suppB"] was bumped
+# from 1 to 5 shards (one per noise level — see that table's comment in
+# ci_runner.yml for why 4 shards would silently mis-pin NOISE_LEVEL). Each
+# shard now only needs to cover 1 noise level x 11 domains x 6 methods
+# instead of 5 noise levels x 11 domains x 2 methods on a single shard, so
+# total wall-clock per shard should stay comparable to (or lower than) the
+# pre-fix single-shard 2-method run. Methods 5/6 remain PySR-backed with
+# their own --pysr-timeout/--method-timeout per fit; if a shard still hits
+# its job timeout, verify run_noise_sweep_benchmark.py actually has a
+# --methods flag (the assumption above) before assuming the timeout is
+# purely a workload-size problem.
 run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Supplement B)" bash -c "
   # FIX-suppB-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug as all other steps.
   cd '${REPO_ROOT}'
@@ -1882,7 +1910,9 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   #
   # CI task ID format: noise{NL}__{domain}  e.g. noise0.5__feynman_biology
   # SHARD_IDS / TASK_IDS contain the task IDs for this shard (space-separated).
-  # All tasks in one shard share the same noise level (plan groups by NL × domain).
+  # All tasks in one shard share the same noise level (plan groups by NL × domain,
+  # and EXP_SHARD_TABLE["suppB"]=5 guarantees one noise level per shard — see
+  # FIX-suppB-ALL-METHODS comment above and ci_runner.yml's EXP_SHARD_TABLE comment).
   # Extract sigma from the first task ID in this shard.
   # Task format: noise{PCT}__{domain}  e.g. noise0.5__feynman_biology
   # PCT values are percentages of signal std (0.0, 0.5, 1.0, 5.0, 10.0).
@@ -1916,6 +1946,7 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \\
+    --methods 1 2 3 4 5 6 \\
     --samples ${FEYNMAN_SAMPLES} \\
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
@@ -1953,18 +1984,87 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
 # Produces: Tab 29 sample-complexity columns · Supplement B §6
 # Task format: sc_n{n}__{feynman_id}  →  n ∈ {50,100,200,500,750,1000}, 30 equations
 # Output dir: comparison_results/feynman-tests/sample-complexity/
+#
+# FIX-suppB_sc-ALL-METHODS: run_sample_complexity_benchmark.py defaults to
+# --methods 3 4 (its own documented "top two methods" scope — see the
+# script's docstring / _DEFAULT_METHODS). That default is correct for the
+# script's own stated purpose, but it silently starves two downstream
+# figures: fig_runtime_comparison and fig_comparative_table in
+# generate_figures.py read EXCLUSIVELY from noise_sweep_*.json /
+# sample_complexity_*.json (the suppB / suppB_sc outputs) — there is no
+# code path that pulls method coverage from exp2, suppA, or
+# hybrid_all_domains for these two figures, so ci_postprocess.yml's
+# cross-experiment ALLEXP_FIGDIR regeneration pass cannot fill the gap no
+# matter how complete those other experiments are. Passing --methods
+# explicitly here is therefore the only way to get all 6 methods into
+# those two figures.
+#
+# FIX-suppB_sc-SHARD-6: this step now runs as 6 CI shards (ci_runner.yml
+# EXP_SHARD_TABLE["suppB_sc"] = 6), one per sample size n, mirroring suppB's
+# one-noise-level-per-shard design (STEP 10 above). Each shard covers
+# 1 sample size x 11 feynman domains x 6 methods instead of 6 sample sizes
+# x 11 domains x 6 methods on a single shard — this is what makes running
+# all 6 methods (instead of the 2-method default) tractable within a single
+# job timeout; see COST/RISK below for the per-shard budget this assumes.
+# SC_SAMPLE_COUNTS is pinned to the single n extracted from this shard's
+# first task ID (sc_n{n}__{domain}) below, the same way STEP 10 pins
+# NOISE_LEVEL from its shard's first task ID.
+#
+# FIX-suppB_sc-METHOD-ASSERT: after the run, this step now hard-fails if the
+# resulting sample_complexity_*.json for this shard's n does not contain all
+# 6 methods in method_summary. Without this check, a shard that times out or
+# is invoked without --methods (e.g. a future manual re-run, or a stale cached
+# checkpoint with RESUME=true) silently writes a partial 2-method JSON that
+# passes ci_pipeline_analysis.yml's content-based completion check (which
+# only verifies sample_sizes coverage, not method coverage — see that file's
+# "suppB / suppB_sc: content-based check (FIX 6)" comment) and produces
+# degraded fig_runtime_comparison / fig_comparative_table downstream with no
+# CI signal. This assertion turns that into a loud, immediate job failure.
+#
+# COST/RISK: each of the 6 shards covers 11 domains x 6 methods at one fixed
+# n. Methods 5 and 6 are PySR-backed (see run_sample_complexity_benchmark.py
+# --skip-pysr) with their own --pysr-timeout (1100s) and --method-timeout
+# (900s) per fit. Per-task cost is NOT uniform across n — larger n means
+# slower fits — so the n=1000 shard is expected to be the long pole among
+# the 6. Those per-method/per-PySR-fit timeouts bound worst-case time per
+# (equation, method) — they do NOT bound the job's TOTAL wall-clock, which
+# is gated only by the 330-minute job timeout and JOB_DEADLINE (19800s)
+# above it. If the largest-n shard starts hitting the job timeout, the
+# first things to try are: (a) sharding suppB_sc further by splitting the
+# n=1000 block across two shards (EXP_SHARD_TABLE bump from 6 to 7, with a
+# matching split in SUPPB_SC_IDS/ci_runner.yml's domain partition for that
+# one n), or (b) dropping back to --methods 3 4 5 6 (skip the two cheapest/
+# least informative methods instead of the two PySR ones) for the n=1000
+# shard only, via a per-shard SC_METHODS override mirroring SC_SAMPLE_COUNTS.
 run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6)" bash -c "
   # FIX-suppB_sc-1: cd REPO_ROOT (not EXPERIMENTS_DIR) — same doubled-path bug.
   cd '${REPO_ROOT}'
   # FIX-suppB_sc-2: --output-dir, --populations, --parsimony are NOT in argparse — removed.
   # FIX-suppB_sc-3: bare \\ → \\\\ (line-continuations inside double-quoted bash -c string).
   # FIX-RESUME: RESUME=false so stale committed checkpoint doesn't skip all work silently.
+  #
+  # FIX-suppB_sc-SHARD-6: pin SC_SAMPLE_COUNTS to the single n carried by this
+  # shard's task IDs, the same way STEP 10 pins NOISE_LEVEL from SHARD_IDS.
+  # Task format: sc_n{n}__{domain}  e.g. sc_n500__feynman_biology
+  # EXP_SHARD_TABLE[\"suppB_sc\"]=6 + SUPPB_SC_IDS' n-outer/domain-inner layout
+  # (see ci_runner.yml) guarantees every task in a shard shares one n — see
+  # FIX-suppB_sc-SHARD-6 comment above for why 6 shards keeps that property.
+  _SHARD_TASKS='${SHARD_IDS:-${TASK_IDS:-}}'
+  _FIRST_TASK=\$(echo \"\${_SHARD_TASKS}\" | tr ' ' '\n' | grep -v '^\$' | head -1)
+  if echo \"\${_FIRST_TASK}\" | grep -qE '^sc_n[0-9]'; then
+    _SC_N=\$(echo \"\${_FIRST_TASK}\" | sed 's/^sc_n\([0-9]\+\)__.*/\1/')
+    export SC_SAMPLE_COUNTS=\"\${_SC_N}\"
+    echo \"  [suppB_sc] SC_SAMPLE_COUNTS=\${SC_SAMPLE_COUNTS} (n from task \${_FIRST_TASK})\"
+  else
+    export SC_SAMPLE_COUNTS='50,100,200,500,750,1000'
+    echo \"  [suppB_sc] WARNING: no sc_n{N}__ task ID found in SHARD_IDS — full sweep will run\"
+  fi
   NOISE_LEVEL='5.0' \\
-  SC_SAMPLE_COUNTS='50,100,200,500,750,1000' \\
   OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
+    --methods 1 2 3 4 5 6 \\
     --samples ${FEYNMAN_SAMPLES} \\
     --pysr-timeout ${FEYNMAN_TIMEOUT} \\
     --method-timeout ${METHOD_TIMEOUT} \\
@@ -1991,6 +2091,37 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
   else
     echo \"  [suppB_sc] no doubled-path directory found — assuming OUT_BASE was honored correctly.\"
   fi
+
+  # FIX-suppB_sc-METHOD-ASSERT: hard-fail this shard if its output JSON does
+  # not contain all 6 methods. ci_pipeline_analysis.yml's content-based
+  # completion check only verifies sample_sizes coverage (see its
+  # \"suppB / suppB_sc: content-based check (FIX 6)\" comment) — it cannot
+  # see method coverage, so a partial-method shard would otherwise pass
+  # completion checks silently and degrade fig_runtime_comparison /
+  # fig_comparative_table downstream with no CI signal at all.
+  python3 -c \"
+import glob, json, os, sys
+
+sc_n = '\${SC_SAMPLE_COUNTS}'.split(',')[0].strip()
+candidates = sorted(
+    glob.glob('\${_SC_CANON}/sample_complexity_*.json'),
+    key=os.path.getmtime,
+    reverse=True,
+)
+if not candidates:
+    print(f'[suppB_sc-METHOD-ASSERT] no sample_complexity_*.json found for n={sc_n} -- FAIL')
+    sys.exit(1)
+
+latest = candidates[0]
+data = json.load(open(latest))
+methods = data.get('methods', [])
+n_found = len(methods)
+print(f'[suppB_sc-METHOD-ASSERT] n={sc_n} file={latest} methods_found={n_found} methods={methods}')
+if n_found < 6:
+    print(f'[suppB_sc-METHOD-ASSERT] FAIL: expected 6 methods, found {n_found} for n={sc_n}')
+    sys.exit(1)
+print('[suppB_sc-METHOD-ASSERT] OK -- all 6 methods present')
+\"
 "
 
 # ── STEP 11: tables ──────────────────────────────────────────────────────────
