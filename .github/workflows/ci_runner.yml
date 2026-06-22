@@ -349,7 +349,13 @@ jobs:
                 NEEDS_JULIA=false
                 echo "suppB: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
               fi
-              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep/noise-sweep"
+              # FIX-suppB-DOUBLED-PATH (root-caused, see run_all.sh STEP 10 comment):
+              # run_noise_sweep_benchmark.py joins OUT_BASE with its own fixed
+              # suffix "comparison_results/feynman-tests/noise-sweep", so RESULT_SUBDIR
+              # (= OUT_BASE/RESULT_SUBDIR via TARGET) must be that same single-level
+              # path, not a path with an extra trailing "/noise-sweep" — the old value
+              # caused outputs to land one directory level too deep.
+              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
               DEFAULT_SEEDS="42"
               ;;
 
@@ -910,7 +916,7 @@ jobs:
             "${OUT_BASE}/comparison_results/feynman-tests/exp2" \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2_extrap" \
             "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi" \
-            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep/noise-sweep" \
+            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep" \
             "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
             "${OUT_BASE}/comparison_results/noise-noiseless/noiseless/defi" \
             "${OUT_BASE}/comparison_results/noise-noiseless/15" \
@@ -1482,6 +1488,16 @@ jobs:
             suppB)
               move_matching "noise_sweep_*.json" "${TARGET}"
               move_matching "noise_sweep_*.csv"  "${TARGET}"
+              # FIX-suppB-MOVE-PROTOCOL: protocol_core_*.json and benchmark_results.json
+              # (written by run_comparative_suite_benchmark_v2.py via --output-dir, which
+              # now resolves to this same TARGET once OUT_BASE/RESULT_SUBDIR are no longer
+              # doubled — see run_all.sh STEP 10 and RESULT_SUBDIR comment above) were
+              # previously left for the per-equation find/mv rescue below to catch
+              # incidentally. Move them explicitly, mirroring the exp2/exp2_extrap cases,
+              # so they're never missed if the inner runner's CWD or output path changes.
+              move_matching "protocol_core_*.json"            "${TARGET}"
+              move_matching "protocol_core_*_checkpoint.json" "${TARGET}"
+              move_matching "benchmark_results.json"          "${TARGET}"
               # Rescue per-equation sub-dirs preserving directory name
               find . -maxdepth 8 \
                 -path "*/noise-sweep/*" \( -name "*.json" -o -name "*.csv" \) \
@@ -1497,6 +1513,14 @@ jobs:
             suppB_sc)
               move_matching "sample_complexity_*.json" "${TARGET}"
               move_matching "sample_complexity_*.csv"  "${TARGET}"
+              # FIX-suppB_sc-MOVE-PROTOCOL: protocol_core_*.json and benchmark_results.json
+              # (written by run_comparative_suite_benchmark_v2.py via --output-dir, which
+              # now resolves to this same TARGET once OUT_BASE is no longer doubled — see
+              # run_all.sh STEP 10b FIX-suppB_sc-DOUBLED-PATH comment) — mirrors the same
+              # fix applied to the suppB block above.
+              move_matching "protocol_core_*.json"            "${TARGET}"
+              move_matching "protocol_core_*_checkpoint.json" "${TARGET}"
+              move_matching "benchmark_results.json"          "${TARGET}"
               ;;
 
             # -- hybrid_all_domains: LLM+NN all-domains run -------------------

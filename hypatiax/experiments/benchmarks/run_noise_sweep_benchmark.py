@@ -41,8 +41,8 @@ What it does
    collisions between the three noisy passes that all write
    protocol_core_noisy_*.json.
 4. Saves
-       data/results/comparison_results/noise_sweep_<TS>.json
-       data/results/comparison_results/noise_sweep_<TS>.csv
+       data/results/comparison_results/feynman-tests/noise-sweep/noise_sweep_<TS>.json
+       data/results/comparison_results/feynman-tests/noise-sweep/noise_sweep_<TS>.csv
 
 Usage
 -----
@@ -64,8 +64,8 @@ Usage
 
 Outputs
 -------
-  data/results/comparison_results/noise_sweep_<TS>.json
-  data/results/comparison_results/noise_sweep_<TS>.csv
+  data/results/comparison_results/feynman-tests/noise-sweep/noise_sweep_<TS>.json
+  data/results/comparison_results/feynman-tests/noise-sweep/noise_sweep_<TS>.csv
 """
 
 from __future__ import annotations
@@ -220,11 +220,28 @@ def _build_runner_cmd(
     sigma_label = f"sig{int(round(noise_level * 1000)):04d}"
     cmd = [sys.executable, str(runner)]
 
+    # Per-sigma threshold — use the fine-grained map when available so each
+    # noise level gets the right R2 floor (0.999999 for sigma=0, 0.995 for
+    # sigma=0.5%, ..., 0.90 for sigma=10%).
+    _PER_SIGMA_DEFAULTS: dict = {
+        0.0:   args.threshold_noiseless,      # 0.999999
+        0.005: 0.995,
+        0.01:  0.990,
+        0.05:  args.threshold_noisy,          # 0.950
+        0.10:  0.900,
+    }
+    # Override defaults with any --threshold-per-sigma tokens
+    for _tok in getattr(args, "threshold_per_sigma", []):
+        try:
+            _s, _v = _tok.split(":")
+            _PER_SIGMA_DEFAULTS[float(_s)] = float(_v)
+        except ValueError:
+            pass
+    _sigma_threshold = _PER_SIGMA_DEFAULTS.get(noise_level, args.threshold_noisy)
+
     if noise_level == 0.0:
         cmd.append("--noiseless")
-        cmd += ["--threshold", str(args.threshold_noiseless)]
-    else:
-        cmd += ["--threshold", str(args.threshold_noisy)]
+    cmd += ["--threshold", str(_sigma_threshold)]
 
     cmd += ["--samples",        str(args.samples)]
     cmd += ["--nn-seeds",       str(args.nn_seeds)]

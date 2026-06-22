@@ -1942,7 +1942,7 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # RESUME=true (set globally by CI) causes the script to read the committed
   # checkpoint, conclude all tasks are done, and exit silently with 0 outputs.
   NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.05,0.1,0.5,1.0}' \\
-  OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep' \\
+  OUT_BASE='${RESULTS_DIR}' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \\
@@ -1952,32 +1952,24 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
     --method-timeout ${METHOD_TIMEOUT} \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 
-  # FIX-suppB-DOUBLED-PATH: run_noise_sweep_benchmark.py does not honor OUT_BASE
-  # for its output directory — it writes relative to its CWD using the same
-  # 'comparison_results/feynman-tests/noise-sweep/noise-sweep' suffix that
-  # OUT_BASE already encodes, producing a doubled path:
-  #   <cwd>/comparison_results/feynman-tests/noise-sweep/noise-sweep/comparison_results/feynman-tests/noise-sweep/
-  # instead of the canonical:
-  #   \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep/
-  # Rescue any files found under the doubled location into the canonical one
-  # so CI's check/complete/qualify/commit steps (and ci_postprocess.yml's
-  # SUPPB_SUBDIR-relative generate_figures.py / generate_tables.py calls) can
-  # find them. Mirrors the suppB_sc rescue in STEP 10b below.
-  _SUPPB_CANON='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep'
-  mkdir -p \"\${_SUPPB_CANON}\"
-  _SUPPB_DOUBLED=\$(find '${REPO_ROOT}' '${RESULTS_DIR}' '${EXPERIMENTS_DIR}' -maxdepth 10 -type d \\
-    -path '*/noise-sweep/noise-sweep/comparison_results/feynman-tests/noise-sweep' 2>/dev/null | head -1)
-  if [[ -n \"\${_SUPPB_DOUBLED}\" && \"\${_SUPPB_DOUBLED}\" != \"\${_SUPPB_CANON}\" && -d \"\${_SUPPB_DOUBLED}\" ]]; then
-    echo \"  [FIX-suppB-DOUBLED-PATH] rescuing outputs from \${_SUPPB_DOUBLED} -> \${_SUPPB_CANON}\"
-    find \"\${_SUPPB_DOUBLED}\" -maxdepth 1 -type f \\( -name 'noise_sweep_*.json' -o -name 'noise_sweep_*.csv' \\) \\
-      -exec mv -v {} \"\${_SUPPB_CANON}/\" \\; 2>/dev/null || true
-    # Remove the now-empty doubled tree so it doesn't get committed/rescanned
-    # on subsequent runs (rmdir is a no-op if anything unexpected remains).
-    rmdir -p \"\${_SUPPB_DOUBLED}\" 2>/dev/null || true
-  else
-    echo \"  [suppB] no doubled-path directory found — assuming OUT_BASE was honored correctly.\"
-  fi
+  # FIX-suppB-DOUBLED-PATH (root-caused): run_noise_sweep_benchmark.py joins
+  # OUT_BASE with its own fixed suffix 'comparison_results/feynman-tests/noise-sweep'
+  # (see _RESULTS_DIR construction in that script). OUT_BASE must therefore be the
+  # plain results root -- the same contract every other step in this script and
+  # run_sample_complexity_benchmark.py use -- NOT a path that already contains that
+  # suffix. The previous value here
+  #   OUT_BASE='\${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep'
+  # pre-appended the suffix, so the script appended it AGAIN on top, producing:
+  #   \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep/comparison_results/feynman-tests/noise-sweep/
+  # Setting OUT_BASE='\${RESULTS_DIR}' (no suffix) makes the script land outputs at
+  # the canonical single-level path:
+  #   \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/
+  # RESULT_SUBDIR in ci_runner.yml still says 'noise-sweep/noise-sweep' (one level
+  # deeper) -- fix that too (drop the trailing /noise-sweep) so the 'Move results to
+  # RESULTS_DIR' step / artifact-upload TARGET line up with this same single-level
+  # path. No rescue/move-based workaround is needed once both sides agree.
 "
+
 
 # ── STEP 10b: suppB_sc — sample-complexity sweep ─────────────────────────────
 # FIX CRITICAL 2: new dedicated step, previously missing from CI and run_all.sh
@@ -2060,7 +2052,7 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
     echo \"  [suppB_sc] WARNING: no sc_n{N}__ task ID found in SHARD_IDS — full sweep will run\"
   fi
   NOISE_LEVEL='5.0' \\
-  OUT_BASE='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity' \\
+  OUT_BASE='${RESULTS_DIR}' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
@@ -2070,27 +2062,20 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
     --method-timeout ${METHOD_TIMEOUT} \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_sc_run.log
 
-  # FIX-suppB_sc-DOUBLED-PATH: run_sample_complexity_benchmark.py does not
-  # honor OUT_BASE for its output directory — it writes relative to its CWD
-  # using the same 'comparison_results/feynman-tests/sample-complexity' suffix
-  # that OUT_BASE already encodes, producing a doubled path:
-  #   <cwd>/sample-complexity/comparison_results/feynman-tests/sample-complexity/
-  # instead of the canonical:
+  # FIX-suppB_sc-DOUBLED-PATH (root-caused, mirrors FIX-suppB-DOUBLED-PATH in STEP 10):
+  # run_sample_complexity_benchmark.py joins OUT_BASE with its own fixed suffix
+  # 'comparison_results/feynman-tests/sample-complexity' (see that script's
+  # _RESULTS_DIR construction). OUT_BASE must therefore be the plain results root,
+  # NOT a path that already contains that suffix. The previous value here
+  #   OUT_BASE='\${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
+  # pre-appended the suffix, so the script appended it AGAIN on top, producing:
+  #   \${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity/comparison_results/feynman-tests/sample-complexity/
+  # Setting OUT_BASE='\${RESULTS_DIR}' (no suffix) makes the script land outputs at
+  # the canonical single-level path:
   #   \${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity/
-  # Rescue any files found under the doubled location into the canonical one
-  # so CI's check/complete/qualify/commit steps can find them. This mirrors
-  # the suppB per-equation subdir rescue (STEP 10a above).
+  # No rescue/move-based workaround is needed once the source path is correct.
   _SC_CANON='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
   mkdir -p \"\${_SC_CANON}\"
-  _SC_DOUBLED=\$(find '${REPO_ROOT}' '${RESULTS_DIR}' '${EXPERIMENTS_DIR}' -maxdepth 10 -type d \\
-    -path '*/sample-complexity/comparison_results/feynman-tests/sample-complexity' 2>/dev/null | head -1)
-  if [[ -n \"\${_SC_DOUBLED}\" && \"\${_SC_DOUBLED}\" != \"\${_SC_CANON}\" && -d \"\${_SC_DOUBLED}\" ]]; then
-    echo \"  [FIX-suppB_sc-DOUBLED-PATH] rescuing outputs from \${_SC_DOUBLED} -> \${_SC_CANON}\"
-    find \"\${_SC_DOUBLED}\" -maxdepth 1 -type f \\( -name 'sample_complexity_*.json' -o -name 'sample_complexity_*.csv' \\) \\
-      -exec mv -v {} \"\${_SC_CANON}/\" \\; 2>/dev/null || true
-  else
-    echo \"  [suppB_sc] no doubled-path directory found — assuming OUT_BASE was honored correctly.\"
-  fi
 
   # FIX-suppB_sc-METHOD-ASSERT: hard-fail this shard if its output JSON does
   # not contain all 6 methods. ci_pipeline_analysis.yml's content-based
@@ -2191,7 +2176,7 @@ run tables "Generate all LaTeX tables from result JSONs -> \${RESULTS_DIR}/table
 #
 # FIX FIGURES-B  : suppB figures must be read from AND written to the CANONICAL
 #                  suppB subdirectory (comparison_results/feynman-tests/
-#                  noise-sweep/noise-sweep/figures/) — mirrors ci_postprocess.yml
+#                  noise-sweep/figures/) — mirrors ci_postprocess.yml
 #                  A10 "CRITICAL" comment.  suppB_sc likewise uses its own subdir.
 #                  Previous code pointed --results-dir at ${RESULTS_DIR} root,
 #                  causing generate_figures.py to find no noise_sweep_*.json
@@ -2342,7 +2327,7 @@ run figures "Generate + deploy all paper figures (Groups A/B/C) -> \${RESULTS_DI
   # After generate_figures.py writes to the subdir's figures/, we sync the stems
   # LaTeX needs into ${RESULTS_DIR}/figures/ where \graphicspath looks.
 
-  _SUPPB_RDIR='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep'
+  _SUPPB_RDIR='${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep'
   _SUPPB_FDIR=\"\${_SUPPB_RDIR}/figures\"
   _SUPPB_SC_RDIR='${RESULTS_DIR}/comparison_results/feynman-tests/sample-complexity'
   _SUPPB_SC_FDIR=\"\${_SUPPB_SC_RDIR}/figures\"
@@ -2635,8 +2620,8 @@ print(f"  [{_tag}] sample-complexity outputs: {len(sc)} file(s)")
 # tables-generator uses glob 'noise_sweep_*.json' to find suppB results.
 # If run_noise_sweep_benchmark.py writes files under a different prefix,
 # all suppB tables will contain placeholder text.
-noise_sweep_matched = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise-sweep/noise_sweep_*.json")
-noise_sweep_all     = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise-sweep/*.json")
+noise_sweep_matched = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json")
+noise_sweep_all     = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/*.json")
 if noise_sweep_all:
     ok = bool(noise_sweep_matched)
     checks.append(("suppB output matches noise_sweep_*.json glob (CRITICAL 4)", 1.0 if ok else 0.0, 1.0, ok))
@@ -2903,7 +2888,7 @@ EXPERIMENTS = {
     "exp3":                   RESULTS / "extrapolation",
     "exp3b":                  RESULTS / "extrapolation/multi_seed",
     "suppA":                  RESULTS / "hybrid_pysr/defi",
-    "suppB":                  RESULTS / "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB":                  RESULTS / "comparison_results/feynman-tests/noise-sweep",
     "suppB_sc":               RESULTS / "comparison_results/feynman-tests/sample-complexity",
 }
 

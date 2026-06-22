@@ -25,8 +25,8 @@ What it does
    method first exceeds the recovery-rate threshold — to give a single
    headline number per method.
 4. Saves
-       data/results/comparison_results/sample_complexity_<TS>.json
-       data/results/comparison_results/sample_complexity_<TS>.csv
+       data/results/comparison_results/feynman-tests/sample-complexity/sample_complexity_<TS>.json
+       data/results/comparison_results/feynman-tests/sample-complexity/sample_complexity_<TS>.csv
 
 Usage
 -----
@@ -62,9 +62,9 @@ Usage
 
 Outputs
 -------
-  data/results/comparison_results/sample_complexity_<TS>.json
-  data/results/comparison_results/sample_complexity_<TS>.csv
-  data/results/comparison_results/sample_complexity_<TS>.log  (if --log)
+  data/results/comparison_results/feynman-tests/sample-complexity/sample_complexity_<TS>.json
+  data/results/comparison_results/feynman-tests/sample-complexity/sample_complexity_<TS>.csv
+  data/results/comparison_results/feynman-tests/sample-complexity/sample_complexity_<TS>.log  (if --log)
 """
 
 from __future__ import annotations
