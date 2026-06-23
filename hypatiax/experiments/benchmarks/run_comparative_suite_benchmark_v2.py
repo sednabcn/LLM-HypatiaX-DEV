@@ -4032,8 +4032,6 @@ class ProtocolBenchmarkSuite:
             print(f"\n⚠️  Could not export benchmark_results_extrap.json: {_eje}")
 
     def _save(self, noiseless: bool = False, threshold: float = 0.995, extrap: bool = False):
-        out_dir = _OUTPUT_DIR
-        out_dir.mkdir(parents=True, exist_ok=True)
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
         if extrap:
             mode = "extrap"
@@ -4041,6 +4039,13 @@ class ProtocolBenchmarkSuite:
             mode = "noiseless"
         else:
             mode = "noisy"
+
+        # Always write to _OUTPUT_DIR — the orchestrator sets --output-dir to
+        # the correct destination (noise-sweep/) for ALL sigma levels including
+        # sigma=0 (noiseless).  suppB needs every protocol_core_*.json in the
+        # same noise-sweep/ dir so the aggregate can find them all.
+        out_dir = _OUTPUT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"protocol_core_{mode}_{ts}.json"
 
         # Build PureLLM truncation audit

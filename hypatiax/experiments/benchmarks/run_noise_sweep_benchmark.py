@@ -290,10 +290,9 @@ def _build_runner_cmd(
     if getattr(args, "no_llm_cache", False):
         cmd.append("--no-llm-cache")
 
-    # Direct the inner runner to write protocol_core_*.json into the same
-    # directory that _find_result_written_after() globs — without this the
-    # inner runner writes to its default comparison_results/ root and the
-    # mtime scan finds nothing.
+    # ALL sigma levels — including sigma=0 (noiseless) — write to _RESULTS_DIR
+    # (noise-sweep/).  suppB needs every protocol_core_*.json in the same dir
+    # so the aggregate glob finds all five sigma values.
     cmd += ["--output-dir", str(_RESULTS_DIR)]
 
     # Unique checkpoint per sigma — prevents noisy passes colliding.
@@ -772,10 +771,17 @@ def main() -> None:
     _ci_noise_env = os.environ.get("NOISE_LEVEL", "").strip()
     if _ci_noise_env:
         try:
-            _ci_sigma = float(_ci_noise_env) / 100.0 if float(_ci_noise_env) > 1 else float(_ci_noise_env)
+            _raw = float(_ci_noise_env)
+            # NOISE_LEVEL is always in PERCENT units (e.g. "0.5" = 0.5%, "1.0" = 1%).
+            # Always divide by 100 to get the fraction used internally.
+            # The previous '>1' guard was wrong: it passed NOISE_LEVEL="0.5" as
+            # sigma=0.5 (50%) and NOISE_LEVEL="1.0" as sigma=1.0 (100%),
+            # which are 100x too large and caused those sigma runs to produce
+            # near-zero R² across all equations.
+            _ci_sigma = _raw / 100.0
             if args.noise_levels == _DEFAULT_NOISE_LEVELS:  # not overridden on CLI
                 args.noise_levels = [_ci_sigma]
-                print(f"  [CI] NOISE_LEVEL={_ci_noise_env!r} → sigma={_ci_sigma:.4f} (single-level run)")
+                print(f"  [CI] NOISE_LEVEL={_ci_noise_env!r}% → sigma={_ci_sigma:.4f} (single-level run)")
         except ValueError:
             print(f"  WARNING: could not parse NOISE_LEVEL={_ci_noise_env!r} — using CLI default")
 

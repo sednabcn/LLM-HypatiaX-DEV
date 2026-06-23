@@ -1916,20 +1916,20 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # Extract sigma from the first task ID in this shard.
   # Task format: noise{PCT}__{domain}  e.g. noise0.5__feynman_biology
   # PCT values are percentages of signal std (0.0, 0.5, 1.0, 5.0, 10.0).
-  # The script expects NOISE_LEVEL as a fraction (÷100) OR as a value >1 which
-  # it divides by 100 itself.  To avoid the ambiguity for 0.5 and 1.0 (both ≤1
-  # but represent 0.5% and 1.0%), we convert all values to fractions here so
-  # the script receives unambiguous sigma fractions (0.0, 0.005, 0.01, 0.05, 0.10).
+  # The script (run_noise_sweep_benchmark.py) always does _ci_sigma = _raw / 100.0
+  # (line ~781). So NOISE_LEVEL must be passed in PERCENT (e.g. "0.5" = 0.5%),
+  # NOT as a pre-divided fraction. Pass _NL_PCT directly — do NOT divide by 100 here.
   _SHARD_TASKS='${SHARD_IDS:-${TASK_IDS:-}}'
   _FIRST_TASK=\$(echo \"\${_SHARD_TASKS}\" | tr ' ' '\n' | grep -v '^\$' | head -1)
   if echo \"\${_FIRST_TASK}\" | grep -qE '^noise[0-9]'; then
     _NL_PCT=\$(echo \"\${_FIRST_TASK}\" | sed 's/^noise\([0-9][0-9.]*\)__.*/\1/')
-    # FIX-NOISE_LEVEL-FORMAT: use %.10g instead of :.6g so 0.0/100 → '0.0' not '0'.
-    # The script checks NOISE_LEVEL != '' to decide whether to pin a single level;
-    # '0' may be falsy in some Python contexts. Always emit a decimal to be safe.
-    _NL_FRAC=\$(python3 -c \"v=float('\${_NL_PCT}')/100; print(f'{v:.10g}')\")
-    export NOISE_LEVEL=\"\${_NL_FRAC}\"
-    echo \"  [suppB] NOISE_LEVEL=\${NOISE_LEVEL} (sigma fraction from task \${_FIRST_TASK}, pct=\${_NL_PCT}%)\"
+    # FIX-DOUBLE-DIVIDE: pass NOISE_LEVEL in PERCENT (not fraction).
+    # run_noise_sweep_benchmark.py line ~781 already divides by 100 (_ci_sigma = _raw / 100.0).
+    # Previously run_all.sh pre-divided by 100 here, causing a double-divide:
+    #   task noise0.5__ → _NL_PCT=0.5 → _NL_FRAC=0.005 → script: 0.005/100=0.00005 (WRONG)
+    # Fix: export _NL_PCT directly as NOISE_LEVEL so the script gets 0.5 → 0.5/100=0.005 (CORRECT)
+    export NOISE_LEVEL=\"\${_NL_PCT}\"
+    echo \"  [suppB] NOISE_LEVEL=\${NOISE_LEVEL}% → script will compute sigma=\$(python3 -c \"print(float('\${_NL_PCT}')/100)\") (task \${_FIRST_TASK})\"
   else
     echo \"  [suppB] WARNING: no noise{NL}__ task ID found in SHARD_IDS — full sweep will run\"
   fi
