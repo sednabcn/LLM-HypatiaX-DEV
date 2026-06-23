@@ -106,12 +106,15 @@ _OUT_BASE    = Path(os.environ["OUT_BASE"]) if "OUT_BASE" in os.environ else (_P
 _RESULTS_DIR = _OUT_BASE / "comparison_results/feynman-tests/noise-sweep"
 _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# FEATURE-NSHARDS-SUFFIX: when set (by ci_runner.yml's worker step, forwarding
-# the FINAL resolved shard count, e.g. "05"), append "_nshardsNN" to every
-# output filename this script writes. Lets test runs at different shard
-# counts for the same experiment coexist in _RESULTS_DIR without overwriting
-# each other. Empty string when unset (e.g. local runs outside CI) so
-# filenames are unchanged from before this feature existed.
+# FEATURE-NSHARDS-SUFFIX (corrected 2026-06-23): when set, append "_nshardsNN"
+# to every output filename this script writes. NN is the per-shard index
+# (1-based, zero-padded), not the total shard count -- run_all.sh's suppB
+# step derives it from SHARD_INDEX+1, so each of the N concurrently-running
+# matrix shards gets a DISTINCT suffix (01, 02, ... for shard 0, 1, ...).
+# Using the total count instead would tag every shard identically and risk
+# collisions, since shards run in parallel and write second-granularity
+# timestamped filenames. Empty string when unset (e.g. local runs outside
+# CI) so filenames are unchanged from before this feature existed.
 _NSHARDS_SUFFIX = os.environ.get("HYPATIAX_NSHARDS_SUFFIX", "").strip()
 _NSHARDS_TAG = f"_nshards{_NSHARDS_SUFFIX}" if _NSHARDS_SUFFIX else ""
 
@@ -305,11 +308,11 @@ def _build_runner_cmd(
     cmd += ["--output-dir", str(_RESULTS_DIR)]
 
     # Unique checkpoint per sigma — prevents noisy passes colliding.
-    # FEATURE-NSHARDS-SUFFIX: also tag with _nshardsNN so test runs at
-    # different shard counts don't collide on the same checkpoint file
-    # (checkpoints land in _FLAT_OUTPUT_DIR — see that script's
-    # _checkpoint_path() — a fixed-name location shared across all sigma/
-    # shard-count runs unless distinguished here).
+    # FEATURE-NSHARDS-SUFFIX: also tag with the per-shard-index _nshardsNN
+    # suffix so concurrently-running shards (each pinned to a different sigma
+    # via NOISE_LEVEL, but all five sharing this same _FLAT_OUTPUT_DIR
+    # checkpoint location -- see that script's _checkpoint_path()) never
+    # collide with each other, regardless of sigma.
     cmd += ["--checkpoint-name", f"noise_sweep_{sigma_label}_checkpoint{_NSHARDS_TAG}"]
 
     # NOTE: The TASK_ID env-var → --test forwarding block that previously lived

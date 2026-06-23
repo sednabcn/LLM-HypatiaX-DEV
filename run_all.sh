@@ -1941,10 +1941,29 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # _checkpoint_shard0.json committed from a prior failed run. Without this,
   # RESUME=true (set globally by CI) causes the script to read the committed
   # checkpoint, conclude all tasks are done, and exit silently with 0 outputs.
+  # FEATURE-NSHARDS-SUFFIX — CORRECTED 2026-06-23:
+  # Originally derived this suffix from N_SHARDS (the constant TOTAL shard
+  # count, e.g. 5 for suppB) — that gave every one of the 5 concurrently-
+  # running matrix shards the IDENTICAL suffix (_nshards05 on all of them),
+  # which defeats the purpose: shards run in parallel
+  # (strategy.matrix/fail-fast:false in ci_runner.yml) and write
+  # second-granularity timestamped filenames, so same-second saves from
+  # different shards would collide/overwrite on the SAME suffix.
+  #
+  # Fixed to use SHARD_INDEX instead (the per-shard 0-based index from
+  # ci_runner.yml's matrix: "shard": j for j in range(N_SHARDS) — see that
+  # file's plan job). +1 converts to the 1-based numbering requested
+  # (shard 0 -> _nshards01, shard 1 -> _nshards02, ... shard 4 -> _nshards05
+  # for suppB's 5-shard run), so every shard's output is independently
+  # distinguishable, not just every separate CI run.
+  printf -v _SHARD_TAG '%02d' \"\$((\${SHARD_INDEX:-0} + 1))\"
+  export HYPATIAX_NSHARDS_SUFFIX=\"\${_SHARD_TAG}\"
+  echo \"  [suppB] SHARD_INDEX=\${SHARD_INDEX:-0} -> HYPATIAX_NSHARDS_SUFFIX=_nshards\${HYPATIAX_NSHARDS_SUFFIX}\"
   NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.05,0.1,0.5,1.0}' \\
   OUT_BASE='${RESULTS_DIR}' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
+  HYPATIAX_NSHARDS_SUFFIX=\"\${HYPATIAX_NSHARDS_SUFFIX}\" \\
     python3 '${EXPERIMENTS_DIR}/run_noise_sweep_benchmark.py' \\
     --methods 1 2 3 4 5 6 \\
     --samples ${FEYNMAN_SAMPLES} \\
@@ -1952,22 +1971,35 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
     --method-timeout ${METHOD_TIMEOUT} \\
     2>&1 | tee '${RESULTS_DIR}'/suppB_run.log
 
-  # FIX-suppB-DOUBLED-PATH (root-caused): run_noise_sweep_benchmark.py joins
-  # OUT_BASE with its own fixed suffix 'comparison_results/feynman-tests/noise-sweep'
-  # (see _RESULTS_DIR construction in that script). OUT_BASE must therefore be the
-  # plain results root -- the same contract every other step in this script and
-  # run_sample_complexity_benchmark.py use -- NOT a path that already contains that
-  # suffix. The previous value here
-  #   OUT_BASE='\${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep'
-  # pre-appended the suffix, so the script appended it AGAIN on top, producing:
-  #   \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/noise-sweep/comparison_results/feynman-tests/noise-sweep/
-  # Setting OUT_BASE='\${RESULTS_DIR}' (no suffix) makes the script land outputs at
-  # the canonical single-level path:
-  #   \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/
-  # RESULT_SUBDIR in ci_runner.yml still says 'noise-sweep/noise-sweep' (one level
-  # deeper) -- fix that too (drop the trailing /noise-sweep) so the 'Move results to
-  # RESULTS_DIR' step / artifact-upload TARGET line up with this same single-level
-  # path. No rescue/move-based workaround is needed once both sides agree.
+  # FIX-suppB-DOUBLED-PATH — CONFIRMED ROOT CAUSE 2026-06-23 (read
+  # run_noise_sweep_benchmark.py source directly; no more guessing):
+  #
+  #   _RESULTS_DIR = _OUT_BASE / 'comparison_results/feynman-tests/noise-sweep'
+  #   (that file, line 106) — single level, no further nesting anywhere in
+  #   that script or in run_comparative_suite_benchmark_v2.py (the subprocess
+  #   it calls via --output-dir=_RESULTS_DIR; that script own _OUTPUT_DIR =
+  #   Path(args.output_dir).resolve(), unmodified). So with OUT_BASE set to
+  #   the plain results root (as it is below, and at the job-level env:
+  #   OUT_BASE: hypatiax/data/results), the script real, single-level
+  #   output directory is:
+  #     \${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/
+  #   This is correct and requires no OUT_BASE change here.
+  #
+  #   The doubled path observed in one run (.../noise-sweep/noise-sweep/) did
+  #   NOT come from this script. It came from ci_runner.yml Move-results-to-
+  #   RESULTS_DIR step, which computes TARGET equal to RESULTS_DIR joined with
+  #   RESULT_SUBDIR, and moves any matching result files it finds under the
+  #   workspace into TARGET. When RESULT_SUBDIR for suppB was (mistakenly, at
+  #   one point) set to the doubled value, that move step relocated this
+  #   script correctly-written single-level output one level deeper —
+  #   manufacturing the doubled structure AFTER the script had already run
+  #   correctly.
+  #
+  #   Fix landed in ci_runner.yml (suppB RESULT_SUBDIR), ci_postprocess.yml
+  #   (SUPPB_SUBDIR plus its MAPPING fallback), and ci_analysis.yml (MAPPING
+  #   fallback) — all three now use the single-level path to match this
+  #   script real, confirmed behavior. No change needed here in run_all.sh;
+  #   OUT_BASE='\${RESULTS_DIR}' (no suffix) was already correct.
 "
 
 

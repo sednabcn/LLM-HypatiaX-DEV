@@ -803,13 +803,16 @@ jobs:
       # Workers write this into result JSON so consolidate can cross-reference.
       SHARD_RUN_IDS:  ${{ matrix.run_ids }}
       EFFECTIVE_SEEDS: ${{ needs.plan.outputs.effective_seeds }}
-      # FEATURE-NSHARDS-SUFFIX: the FINAL resolved shard count (zero-padded to
-      # 2 digits, e.g. "05"), forwarded so the worker can pass it on to
-      # run_noise_sweep_benchmark.py / run_sample_complexity_benchmark.py as
-      # HYPATIAX_NSHARDS_SUFFIX. Lets every output filename get a _nshardsNN
-      # suffix so test runs at different shard counts coexist without
-      # collisions. This is the RESOLVED count (post table-forcing), not the
-      # raw dispatch input.
+      # N_SHARDS: the FINAL resolved total shard count (zero-padded to 2
+      # digits, e.g. "05"), forwarded for logging/diagnostics. NOT used to
+      # build the per-file _nshardsNN suffix -- that was tried initially but
+      # corrected in run_all.sh's suppB step: N_SHARDS is the same constant
+      # value across all concurrently-running matrix shards, so it would tag
+      # every shard's output identically (_nshards05 on all 5 shards) and
+      # could still collide on same-second-timestamped filenames. The suffix
+      # is instead derived from SHARD_INDEX (above, 0-based, +1 -> 01..05),
+      # which is unique per shard. See run_all.sh's suppB step,
+      # FEATURE-NSHARDS-SUFFIX comment, for the corrected derivation.
       N_SHARDS:       ${{ needs.plan.outputs.n_shards }}
       # FIX-NOISE_LEVELS: forward from dispatch input so suppB worker receives the
       # correct sweep range.  Previously NOISE_LEVELS was only set inside the plan

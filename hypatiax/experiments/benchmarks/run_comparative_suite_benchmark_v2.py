@@ -627,15 +627,19 @@ if _raw_noise_env:
         print(f"WARNING: Could not parse HYPATIAX_NOISE_LEVEL={_raw_noise_env!r} — defaulting to 0.0")
 
 # ---------------------------------------------------------------------------
-# FEATURE-NSHARDS-SUFFIX — injected by run_noise_sweep_benchmark.py /
-# run_sample_complexity_benchmark.py orchestrators (forwarded from
-# ci_runner.yml's plan job, the FINAL resolved shard count). When present,
-# every output filename this script writes (protocol_core_*.json,
-# benchmark_results.json, benchmark_results_extrap.json) gets "_nshardsNN"
-# appended before the extension, so test runs at different shard counts for
-# the same experiment can coexist on disk without overwriting each other.
-# Empty string when unset (e.g. local runs, or any other orchestrator that
-# doesn't set it) — filenames are then unchanged from before this feature.
+# FEATURE-NSHARDS-SUFFIX (corrected 2026-06-23) — injected by
+# run_noise_sweep_benchmark.py / run_sample_complexity_benchmark.py
+# orchestrators, forwarded from run_all.sh's per-shard SHARD_INDEX (1-based,
+# zero-padded), NOT the total shard count. When present, every output
+# filename this script writes (protocol_core_*.json, benchmark_results.json,
+# benchmark_results_extrap.json) gets "_nshardsNN" appended before the
+# extension, where NN distinguishes THIS shard from every other
+# concurrently-running shard in the same matrix run — necessary because all
+# shards share the same --output-dir and write second-granularity
+# timestamped filenames, so same-second saves from different shards would
+# otherwise collide. Empty string when unset (e.g. local runs, or any other
+# orchestrator that doesn't set it) — filenames are then unchanged from
+# before this feature.
 # ---------------------------------------------------------------------------
 _NSHARDS_SUFFIX = os.environ.get("HYPATIAX_NSHARDS_SUFFIX", "").strip()
 _NSHARDS_TAG = f"_nshards{_NSHARDS_SUFFIX}" if _NSHARDS_SUFFIX else ""
