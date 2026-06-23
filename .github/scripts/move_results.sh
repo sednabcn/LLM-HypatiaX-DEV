@@ -333,6 +333,20 @@ case "${EXP}" in
   # -- suppB: noise sweep --------------------------------------------
   # Top-level files + per-equation sub-directories (e.g. I.12.1-correction/)
   suppB)
+    # STALE-FILE FIX (mirrors exp1/exp1b/exp2_feynman/exp2/exp3/exp3b above):
+    # this block had NO prune_old calls, so timestamp-named outputs from past
+    # runs accumulated unbounded in noise-sweep/ on every workflow run.
+    # All 5 noise-level shards (one per matrix.shard) write into this SAME
+    # shared TARGET — pruning is therefore dir/pattern-wide, not per-shard.
+    # Each shard's job starts from the same pre-run git checkout, so all 5
+    # concurrently-running shards prune the identical set of git-tracked
+    # stale files; idempotent across the matrix, same pattern exp1b already
+    # relies on across its own 4 concurrent shards.
+    prune_old "noise_sweep_*.json"              "${TARGET}"
+    prune_old "noise_sweep_*.csv"               "${TARGET}"
+    prune_old "protocol_core_*.json"            "${TARGET}"
+    prune_old "protocol_core_*_checkpoint.json" "${TARGET}"
+    prune_old "benchmark_results*.json"         "${TARGET}"
     move_matching "noise_sweep_*.json" "${TARGET}"
     move_matching "noise_sweep_*.csv"  "${TARGET}"
     # FIX-suppB-MOVE-PROTOCOL: protocol_core_*.json and benchmark_results.json
@@ -402,6 +416,15 @@ case "${EXP}" in
 
   # -- suppB_sc: sample-complexity sweep ----------------------------
   suppB_sc)
+    # STALE-FILE FIX (mirrors exp1/exp1b/exp2_feynman/exp2/exp3/exp3b above):
+    # same gap and same fix as suppB's block — this case had NO prune_old
+    # calls. All 6 sample-size shards share this TARGET (sample-complexity/);
+    # pruning is dir/pattern-wide, idempotent across the concurrent matrix.
+    prune_old "sample_complexity_*.json"        "${TARGET}"
+    prune_old "sample_complexity_*.csv"         "${TARGET}"
+    prune_old "protocol_core_*.json"            "${TARGET}"
+    prune_old "protocol_core_*_checkpoint.json" "${TARGET}"
+    prune_old "benchmark_results*.json"         "${TARGET}"
     move_matching "sample_complexity_*.json" "${TARGET}"
     move_matching "sample_complexity_*.csv"  "${TARGET}"
     # FIX-suppB_sc-MOVE-PROTOCOL: protocol_core_*.json and benchmark_results.json

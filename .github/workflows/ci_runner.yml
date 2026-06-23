@@ -97,7 +97,7 @@ on:
 
       # -- Sharding ----------------------------------------------------------
       n_shards:
-        description: "Number of parallel worker shards for this dispatch input (1-4; ignored for table-forced experiments). exp1b, exp1_ablation, and exp3b default to 4; suppB always uses 5 (one per noise level, not user-overridable); suppB_sc always uses 6 (one per sample size, not user-overridable); all other experiments default to 1."
+        description: "Number of parallel worker shards (user input). exp1b/exp1_ablation/exp3b: floored to 4 (table minimum). suppB: forced to 5 regardless of input (one shard per noise level — divmod(55,5)=11 tasks each, preserving one-noise-level-per-shard alignment required by run_all.sh STEP 10). suppB_sc: forced to 6 regardless of input (one shard per sample size — divmod(66,6)=11 tasks each). All other experiments: forced to 1 regardless of input. Input is accepted and logged but may be overridden by the per-experiment shard table."
         required: false
         default: "1"
 
@@ -1240,17 +1240,35 @@ jobs:
 
               rescued = 0
               EXP = os.environ.get("EXP", "")
-              COMBINED_OUTPUT_EXPS = {"exp1", "exp1b"}
+              # Experiments that write ONE combined output file per shard rather
+              # than one file per task ID.  For these, checkpoint.completed is
+              # empty until "Save shard checkpoint" runs (which comes AFTER this
+              # step), so rescue by filename pattern instead of task ID.
+              #
+              # suppB  writes one noise_sweep_noise{NL}_*.json per shard
+              #        (one file covering all 11 Feynman domains for a single
+              #        noise level).  Task IDs are "noise{NL}__{domain}" — the
+              #        dot in the noise level (e.g. 0.0) is replaced to "_" for
+              #        safe globbing, but the output filename uses the raw NL
+              #        value, making per-task-ID globs unreliable.
+              # suppB_sc writes one sample_complexity_n{N}_*.json per shard
+              #          (one file covering all 11 domains for a single sample
+              #          size).  Task IDs are "sc_n{N}__{domain}"; same issue.
+              # exp1/exp1b: one aggregated JSON for all tasks (see FIX-G5-EXP1).
+              COMBINED_OUTPUT_EXPS = {"exp1", "exp1b", "suppB", "suppB_sc"}
 
               if EXP in COMBINED_OUTPUT_EXPS:
-                  # FIX-G5-EXP1: combined-output experiments write one file for all
-                  # tasks; checkpoint.completed is empty until "Save shard checkpoint"
-                  # runs, which comes AFTER this step.  Rescue by filename pattern
-                  # instead of by task ID so a crash-before-move is still handled.
+                  # FIX-G5-EXP1/suppB/suppB_sc: combined-output experiments write
+                  # one file per shard; rescue by filename pattern so a crash-
+                  # before-move is still handled.
                   combined_globs = [
-                      "*hypatiax_defi_benchmark*results*.json",
-                      "*defi_benchmark*results*.json",
-                      "*comparison_FIXED_*.json",
+                      "*hypatiax_defi_benchmark*results*.json",   # exp1 primary
+                      "*defi_benchmark*results*.json",            # exp1 variant
+                      "*comparison_FIXED_*.json",                 # exp1b portfolio
+                      "noise_sweep_*.json",                       # suppB per-shard
+                      "noise_sweep_*.csv",                        # suppB CSV output
+                      "sample_complexity_*.json",                 # suppB_sc per-shard
+                      "sample_complexity_*.csv",                  # suppB_sc CSV output
                   ]
                   for pat in combined_globs:
                       for src in glob.glob(pat):
@@ -1731,22 +1749,34 @@ jobs:
           done_set = set(completed)
 
           EXP = os.environ.get("EXP", "")
-          # FIX-CKPT-EXP1: experiments that write ONE combined result file for
-          # all tasks rather than one file per task ID.  The per-task-ID glob
-          # below never matches these filenames, so the checkpoint always records
-          # 0 completed tasks and every resume re-runs the full shard.
+          # FIX-CKPT-EXP1/suppB/suppB_sc: experiments that write ONE combined
+          # result file per shard rather than one file per task ID.  The per-
+          # task-ID glob below never matches these filenames, so without this
+          # branch the checkpoint always records 0 completed tasks and every
+          # resume re-runs the full shard.
           #
           # Strategy: if any known combined output file is found in result_dir
           # or CWD, mark EVERY task in the shard as done — the combined file
           # implicitly covers all of them.
           #
           # Experiments in this set:
-          #   exp1  — hypatiax_defi_benchmark_v3c.py writes one aggregated JSON
-          #           named "hypatiax_defi_benchmark_v3_results.json"; task IDs
-          #           ("amm", "risk_var", …) never appear in the filename.
-          #   exp1b — same script in portfolio mode; writes comparison_FIXED_*.json
-          #           (filename contains a timestamp, not a task ID).
-          COMBINED_OUTPUT_EXPS = {"exp1", "exp1b"}
+          #   exp1     — hypatiax_defi_benchmark_v3c.py writes one aggregated
+          #              JSON "hypatiax_defi_benchmark_v3_results.json"; task IDs
+          #              ("amm", "risk_var", …) never appear in the filename.
+          #   exp1b    — same script in portfolio mode; writes
+          #              comparison_FIXED_*.json (timestamp in name, not task ID).
+          #   suppB    — run_noise_sweep_benchmark.py writes one
+          #              noise_sweep_noise{NL}_*.json per shard (one noise level,
+          #              all 11 Feynman domains).  Task IDs are
+          #              "noise{NL}__{domain}" — the raw NL value (e.g. "0.0")
+          #              appears in the output filename but the dot is replaced
+          #              with "_" for safe-key globbing, making per-task-ID
+          #              pattern matches unreliable across all runs.
+          #   suppB_sc — run_sample_complexity_benchmark.py writes one
+          #              sample_complexity_n{N}_*.json per shard (one sample
+          #              size n, all 11 domains).  Task IDs "sc_n{N}__{domain}"
+          #              have the same per-shard-combined-file property.
+          COMBINED_OUTPUT_EXPS = {"exp1", "exp1b", "suppB", "suppB_sc"}
           search_dirs = [result_dir, "."]
 
           if EXP in COMBINED_OUTPUT_EXPS:
@@ -1754,6 +1784,10 @@ jobs:
                   "*hypatiax_defi_benchmark*results*.json",  # exp1 primary
                   "*defi_benchmark*results*.json",           # exp1 variant names
                   "*comparison_FIXED_*.json",                # exp1b portfolio mode
+                  "noise_sweep_*.json",                      # suppB per-shard JSON
+                  "noise_sweep_*.csv",                       # suppB per-shard CSV
+                  "sample_complexity_*.json",                # suppB_sc per-shard JSON
+                  "sample_complexity_*.csv",                 # suppB_sc per-shard CSV
               ]
               found_combined = False
               for d in search_dirs:
