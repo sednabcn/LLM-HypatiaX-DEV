@@ -1293,13 +1293,64 @@ jobs:
           TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
           mkdir -p "${TARGET}"
 
+          # FIX-CROSS-EXPERIMENT-CAPTURE (2026-06-23, confirmed from a real CI
+          # run's logs — logs_75542162448.zip, Worker shard 0-4, step "Move
+          # results to RESULTS_DIR"): move_matching's `find . -name "$pattern"`
+          # searches the ENTIRE workspace with no awareness of which
+          # experiment a matched file actually belongs to. Several
+          # experiments share generic output filenames written by the same
+          # underlying script (run_comparative_suite_benchmark_v2.py) --
+          # protocol_core_*.json and benchmark_results.json are written by
+          # exp2, exp2_extrap, exp2_multi, suppB, AND suppB_sc alike. A
+          # confirmed production run showed suppB's move step reaching into
+          # exp2_extrap/, exp2/, and exp2_multi/'s own already-committed
+          # directories and relocating THEIR files into noise-sweep/ --
+          # silently merging unrelated experiments' historical results
+          # together. This is data corruption, not just a cosmetic path bug.
+          #
+          # Fix: before considering a match, skip it if it's already sitting
+          # inside ANY OTHER experiment's canonical RESULT_SUBDIR (the full
+          # known list, kept in sync with every RESULT_SUBDIR="..." assignment
+          # in the plan job's meta step above). A file inside its OWN
+          # experiment's dir is still handled correctly by the existing
+          # same-dir-as-dest skip just below; this additional check only
+          # blocks pulling a DIFFERENT experiment's already-placed file.
+          _OTHER_EXPERIMENT_SUBDIRS=(
+            "comparison_results/noise-noiseless/noiseless/defi"
+            "comparison_results/noise-noiseless/15"
+            "comparison_results/feynman-tests/exp2"
+            "comparison_results/feynman-tests/exp2_extrap"
+            "comparison_results/feynman-tests/exp2_multi"
+            "comparison_results/feynman-tests/noise-sweep"
+            "comparison_results/feynman-tests/sample-complexity"
+            "comparison_results/extrapolation"
+          )
+
           move_matching() {
             local pattern="$1" dest="$2"
             mkdir -p "$dest"
+            local realdest_check="$(realpath "$dest" 2>/dev/null || echo "$dest")"
             while IFS= read -r src; do
               [[ -e "$src" ]] || continue
+              local realsrc="$(realpath "$src" 2>/dev/null || echo "$src")"
               # Skip if src is already inside dest (file already in canonical location)
-              [[ "$(realpath "$src" 2>/dev/null || echo "$src")" == "$(realpath "$dest" 2>/dev/null || echo "$dest")"/* ]] && continue
+              [[ "$realsrc" == "$realdest_check"/* ]] && continue
+              # FIX-CROSS-EXPERIMENT-CAPTURE: skip if src is already inside a
+              # DIFFERENT experiment's canonical subdir (not this call's own
+              # dest -- already excluded above).
+              local _skip=0
+              for _other in "${_OTHER_EXPERIMENT_SUBDIRS[@]}"; do
+                local _other_real="$(realpath "${RESULTS_DIR}/${_other}" 2>/dev/null || echo "${RESULTS_DIR}/${_other}")"
+                [[ "$_other_real" == "$realdest_check" ]] && continue  # that's this call's own dest, already handled
+                if [[ "$realsrc" == "$_other_real"/* ]]; then
+                  _skip=1
+                  break
+                fi
+              done
+              if [[ "$_skip" -eq 1 ]]; then
+                echo "  SKIP (belongs to another experiment's dir): $src"
+                continue
+              fi
               fname=$(basename "$src")
               dst="${dest}/${fname}"
               if [[ -e "$dst" ]]; then
@@ -1561,14 +1612,58 @@ jobs:
               # previously left for the per-equation find/mv rescue below to catch
               # incidentally. Move them explicitly, mirroring the exp2/exp2_extrap cases,
               # so they're never missed if the inner runner's CWD or output path changes.
+              #
+              # FIX-NSHARDS-SUFFIX-MOVE: run_comparative_suite_benchmark_v2.py
+              # now writes benchmark_results{_nshardsNN}.json /
+              # benchmark_results_extrap{_nshardsNN}.json because
+              # HYPATIAX_NSHARDS_SUFFIX is always set for suppB (run_all.sh's
+              # suppB step exports it per-shard) — the bare "benchmark_results.json"
+              # literal this used to match never matches that filename anymore.
+              # Glob-matching also still catches the bare form for any local
+              # run made outside this CI path, where the suffix env var is unset.
               move_matching "protocol_core_*.json"            "${TARGET}"
               move_matching "protocol_core_*_checkpoint.json" "${TARGET}"
-              move_matching "benchmark_results.json"          "${TARGET}"
+              move_matching "benchmark_results*.json"         "${TARGET}"
               # Rescue per-equation sub-dirs preserving directory name
+              #
+              # FIX-suppB-RESCUE-LOOP-DOUBLED-PATH (2026-06-23, confirmed from
+              # a real CI run's logs — logs_75542162448.zip, Worker shard 0-4,
+              # step "Move results to RESULTS_DIR"):
+              #
+              # This loop is meant to rescue files sitting in a per-equation
+              # SUBdirectory of noise-sweep/ (e.g.
+              # .../noise-sweep/I.12.1-correction/result.json), preserving
+              # that subdirectory name when moving it to the canonical
+              # location. It previously matched ANY *.json/*.csv under any
+              # path containing the literal string "noise-sweep" --
+              # including files the move_matching calls just above had
+              # ALREADY correctly placed directly in noise-sweep/ itself
+              # (not in a per-equation subdirectory). For those files,
+              # dirname(f) is exactly ".../noise-sweep", so
+              # basename(dirname(f)) evaluates to the literal string
+              # "noise-sweep" -- and dest becomes
+              # ".../noise-sweep/noise-sweep", manufacturing the doubled
+              # directory this codebase has hit repeatedly across multiple
+              # "FIX-suppB-DOUBLED-PATH" attempts elsewhere (RESULT_SUBDIR,
+              # SUPPB_SUBDIR, MAPPING fallbacks) — none of which were the
+              # actual cause. THIS loop was. A confirmed production run
+              # showed exactly this: 217 files moved correctly to the
+              # single-level path, then control reached this loop and the
+              # remaining ~218 files (already sitting in noise-sweep/ from
+              # the move_matching calls just above) all got "rescued" one
+              # level deeper.
+              #
+              # Fixed by skipping any match whose immediate parent directory
+              # IS noise-sweep itself (dir == "noise-sweep") -- those files
+              # are already in the canonical location and need no rescue.
+              # Only files in a genuine per-equation subdirectory (dir !=
+              # "noise-sweep") still get rescued, preserving the original
+              # intent.
               find . -maxdepth 8 \
                 -path "*/noise-sweep/*" \( -name "*.json" -o -name "*.csv" \) \
                 | while IFS= read -r f; do
                     dir=$(basename "$(dirname "$f")")
+                    [[ "$dir" == "noise-sweep" ]] && continue
                     dest="${RESULTS_DIR}/comparison_results/feynman-tests/noise-sweep/${dir}"
                     mkdir -p "$dest"
                     mv -v "$f" "$dest/" 2>/dev/null || true
@@ -1584,9 +1679,15 @@ jobs:
               # now resolves to this same TARGET once OUT_BASE is no longer doubled — see
               # run_all.sh STEP 10b FIX-suppB_sc-DOUBLED-PATH comment) — mirrors the same
               # fix applied to the suppB block above.
+              #
+              # FIX-NSHARDS-SUFFIX-MOVE: same fix as suppB's block — once
+              # run_all.sh's suppB_sc step exports HYPATIAX_NSHARDS_SUFFIX,
+              # run_comparative_suite_benchmark_v2.py writes
+              # benchmark_results{_nshardsNN}.json instead of the bare name,
+              # so the literal match below would find nothing.
               move_matching "protocol_core_*.json"            "${TARGET}"
               move_matching "protocol_core_*_checkpoint.json" "${TARGET}"
-              move_matching "benchmark_results.json"          "${TARGET}"
+              move_matching "benchmark_results*.json"         "${TARGET}"
               ;;
 
             # -- hybrid_all_domains: LLM+NN all-domains run -------------------

@@ -104,6 +104,17 @@ _OUT_BASE    = Path(os.environ["OUT_BASE"]) if "OUT_BASE" in os.environ else (_P
 _RESULTS_DIR = _OUT_BASE / "comparison_results/feynman-tests/sample-complexity"
 _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# FEATURE-NSHARDS-SUFFIX: when set (by run_all.sh's suppB_sc step, forwarding
+# the per-shard SHARD_INDEX+1, zero-padded), append "_nshardsNN" to every
+# output filename this script writes. NN distinguishes THIS shard's output
+# from every other concurrently-running shard in the same matrix run.
+# Independent of _shard_tag() below, which exists for a different concern
+# (multiple shards sharing the same n — see that function's docstring).
+# Empty string when unset (e.g. local runs outside CI) so filenames are
+# unchanged from before this feature existed.
+_NSHARDS_SUFFIX = os.environ.get("HYPATIAX_NSHARDS_SUFFIX", "").strip()
+_NSHARDS_TAG = f"_nshards{_NSHARDS_SUFFIX}" if _NSHARDS_SUFFIX else ""
+
 # Default sample sizes (training points per equation).
 # Tab 29 requires n ∈ {50, 100, 200, 500}.  750 and 1000 are EXCLUDED from
 # the default to avoid unnecessary CI cost; pass --sample-sizes explicitly
@@ -279,7 +290,11 @@ def _build_runner_cmd(
     # Tagging by n alone is not enough: the suppB_sc matrix runs several
     # shards with the SAME n in parallel (split by DOMAIN_FILTER), and they
     # would otherwise all fight over one checkpoint file. See _shard_tag().
-    cmd += ["--checkpoint-name", f"sample_complexity_n{n_samples:04d}_{_shard_tag()}_checkpoint"]
+    # FEATURE-NSHARDS-SUFFIX: _NSHARDS_TAG appended in addition to
+    # _shard_tag() — independent distinguishers for two different concerns
+    # (domain-subset identity vs. matrix shard index). Empty string when
+    # HYPATIAX_NSHARDS_SUFFIX is unset, so this is a no-op outside CI.
+    cmd += ["--checkpoint-name", f"sample_complexity_n{n_samples:04d}_{_shard_tag()}_checkpoint{_NSHARDS_TAG}"]
 
     # Direct the inner runner to write protocol_core_*.json into the same
     # directory that _find_result_written_after() globs — without this the
@@ -652,7 +667,7 @@ def _print_sample_complexity_table(agg: dict) -> None:
 
 
 def _save_complexity_json(agg: dict, ts: str) -> Path:
-    path = _RESULTS_DIR / f"sample_complexity_{ts}.json"
+    path = _RESULTS_DIR / f"sample_complexity_{ts}{_NSHARDS_TAG}.json"
     with open(path, "w") as f:
         json.dump(agg, f, indent=2, default=str)
     print(f"  💾 Sample complexity JSON → {path}")
@@ -665,7 +680,7 @@ def _save_complexity_csv(agg: dict, ts: str) -> Path:
     Section 1 — per (method, n) aggregate metrics.
     Section 2 — per (method, n, equation) individual R² values.
     """
-    path = _RESULTS_DIR / f"sample_complexity_{ts}.csv"
+    path = _RESULTS_DIR / f"sample_complexity_{ts}{_NSHARDS_TAG}.csv"
 
     # Unified fieldnames covering both sections.  Aggregate-only columns are
     # empty strings in per-equation rows; equation-level columns are empty in

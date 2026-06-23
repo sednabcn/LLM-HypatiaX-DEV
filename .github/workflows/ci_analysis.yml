@@ -379,8 +379,45 @@ jobs:
             exit 1
           fi
 
-          N_MERGED=$(python3 -c "import json; d=json.load(open('${MERGED_JSON}')); print(len(d))")
-          echo "  _merged.json: ${N_MERGED} unique task record(s)"
+          # GUARANTEE-NSHARDS-MERGE: _merged.json for suppB / suppB_sc (Shape
+          # S — see merge_shards.py's merge_sweep_files()) is a sweep dict
+          # keyed by noise_levels/per_noise or sample_sizes/per_n, NOT a flat
+          # task-row list. The generic `len(d)` below (written for the
+          # task-row shape used by every other experiment) would just count
+          # top-level dict keys for these two — a number that happens to look
+          # plausible but says nothing about whether all 5 (suppB) / 6
+          # (suppB_sc) sweep points actually merged. merge_sweep_files()
+          # itself only WARNS on a missing point or missing methods; it does
+          # not fail the build — so without an explicit check here, a merge
+          # that silently dropped a shard (a missing/corrupt
+          # noise_sweep_*_nshardsNN.json, a shard that crashed before saving,
+          # etc.) would pass this step with no signal until someone notices
+          # a gap in a downstream figure.
+          if [[ "$EXPERIMENT" == "suppB" || "$EXPERIMENT" == "suppB_sc" ]]; then
+            read N_MERGED N_METHODS_MERGED <<< "$(python3 -c "
+          import json, sys
+          d = json.load(open('${MERGED_JSON}'))
+          exp = '${EXPERIMENT}'
+          list_key = 'noise_levels' if exp == 'suppB' else 'sample_sizes'
+          dict_key = 'per_noise'    if exp == 'suppB' else 'per_n'
+          points  = d.get(dict_key, {})
+          methods = d.get('methods', [])
+          print(len(points), len(methods))
+          ")"
+            EXPECTED_POINTS=5
+            [[ "$EXPERIMENT" == "suppB_sc" ]] && EXPECTED_POINTS=6
+            echo "  _merged.json (Shape S): ${N_MERGED}/${EXPECTED_POINTS} sweep point(s), ${N_METHODS_MERGED} method(s)"
+            if [[ "$N_MERGED" -lt "$EXPECTED_POINTS" ]]; then
+              echo "::error::${EXPERIMENT} merge produced only ${N_MERGED}/${EXPECTED_POINTS} sweep points — at least one shard's output is missing, unreadable, or failed to write. Check the per-shard *_nshardsNN.json files in ${RESULT_DIR} (one expected per shard: nshards01..nshards0$([ "$EXPECTED_POINTS" = 6 ] && echo 6 || echo 5)) and re-run the missing shard(s) via ci_runner.yml before re-merging."
+              exit 1
+            fi
+            if [[ "$N_METHODS_MERGED" -lt 6 ]]; then
+              echo "::warning::${EXPERIMENT} merge has all ${EXPECTED_POINTS} sweep points but only ${N_METHODS_MERGED}/6 methods — fig_runtime_comparison / fig_comparative_table may be incomplete. See FIX-suppB-ALL-METHODS / FIX-suppB_sc-ALL-METHODS comments in run_all.sh."
+            fi
+          else
+            N_MERGED=$(python3 -c "import json; d=json.load(open('${MERGED_JSON}')); print(len(d))")
+            echo "  _merged.json: ${N_MERGED} unique task record(s)"
+          fi
 
           echo "INPUT_MODE=merged"          >> "$GITHUB_ENV"
           echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_ENV"

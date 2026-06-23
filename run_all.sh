@@ -2083,10 +2083,22 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
     export SC_SAMPLE_COUNTS='50,100,200,500,750,1000'
     echo \"  [suppB_sc] WARNING: no sc_n{N}__ task ID found in SHARD_IDS — full sweep will run\"
   fi
+  # FEATURE-NSHARDS-SUFFIX: per-shard suffix (1-based, zero-padded), mirrors
+  # run_all.sh STEP 10's suppB block. SUPPB_SC_IDS is n-outer/domain-inner
+  # (see ci_runner.yml) so with the locked 6-shard count each shard already
+  # gets a distinct n -- this suffix is therefore NOT replacing _shard_tag()
+  # (which exists for a different, currently-dormant concern: multiple
+  # shards sharing one n, which the n-outer layout + EXP_SHARD_TABLE=6
+  # together prevent) -- it is an independent, simpler distinguisher applied
+  # to THIS script's filenames the same way it is for suppB's.
+  printf -v _SHARD_TAG '%02d' \"\$((\${SHARD_INDEX:-0} + 1))\"
+  export HYPATIAX_NSHARDS_SUFFIX=\"\${_SHARD_TAG}\"
+  echo \"  [suppB_sc] SHARD_INDEX=\${SHARD_INDEX:-0} -> HYPATIAX_NSHARDS_SUFFIX=_nshards\${HYPATIAX_NSHARDS_SUFFIX}\"
   NOISE_LEVEL='5.0' \\
   OUT_BASE='${RESULTS_DIR}' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
+  HYPATIAX_NSHARDS_SUFFIX=\"\${HYPATIAX_NSHARDS_SUFFIX}\" \\
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
     --methods 1 2 3 4 5 6 \\
     --samples ${FEYNMAN_SAMPLES} \\
