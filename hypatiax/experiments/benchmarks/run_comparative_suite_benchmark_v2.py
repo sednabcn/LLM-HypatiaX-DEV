@@ -626,6 +626,20 @@ if _raw_noise_env:
     except ValueError:
         print(f"WARNING: Could not parse HYPATIAX_NOISE_LEVEL={_raw_noise_env!r} — defaulting to 0.0")
 
+# ---------------------------------------------------------------------------
+# FEATURE-NSHARDS-SUFFIX — injected by run_noise_sweep_benchmark.py /
+# run_sample_complexity_benchmark.py orchestrators (forwarded from
+# ci_runner.yml's plan job, the FINAL resolved shard count). When present,
+# every output filename this script writes (protocol_core_*.json,
+# benchmark_results.json, benchmark_results_extrap.json) gets "_nshardsNN"
+# appended before the extension, so test runs at different shard counts for
+# the same experiment can coexist on disk without overwriting each other.
+# Empty string when unset (e.g. local runs, or any other orchestrator that
+# doesn't set it) — filenames are then unchanged from before this feature.
+# ---------------------------------------------------------------------------
+_NSHARDS_SUFFIX = os.environ.get("HYPATIAX_NSHARDS_SUFFIX", "").strip()
+_NSHARDS_TAG = f"_nshards{_NSHARDS_SUFFIX}" if _NSHARDS_SUFFIX else ""
+
 # PySR subprocess timeout — overridden by --pysr-timeout at runtime.
 # Paper-quality default (repro.yaml timeouts.feynman_pysr_seconds = 1100).
 _PYSR_TIMEOUT: int = 1100
@@ -3929,7 +3943,7 @@ class ProtocolBenchmarkSuite:
                         _row["extrap_r2_far"]   = _extrap_r2_map.get(_mname)
                         _row["extrap_rmse_far"] = _extrap_rmse_map.get(_mname)
                     _flat_records.append(_row)
-            _json_path = _FLAT_OUTPUT_DIR / "benchmark_results.json"
+            _json_path = _FLAT_OUTPUT_DIR / f"benchmark_results{_NSHARDS_TAG}.json"
             _json_path.parent.mkdir(parents=True, exist_ok=True)
             # FIX: append/merge so multi-domain runs accumulate all results
             _existing: list = []
@@ -4008,7 +4022,7 @@ class ProtocolBenchmarkSuite:
                         "extrap_far_ceiling": _far_ceiling,
                     })
             if _extrap_rows:
-                _ext_path = _FLAT_OUTPUT_DIR / "benchmark_results_extrap.json"
+                _ext_path = _FLAT_OUTPUT_DIR / f"benchmark_results_extrap{_NSHARDS_TAG}.json"
                 _ext_path.parent.mkdir(parents=True, exist_ok=True)
                 _ext_existing: list = []
                 if _ext_path.exists():
@@ -4046,7 +4060,7 @@ class ProtocolBenchmarkSuite:
         # same noise-sweep/ dir so the aggregate can find them all.
         out_dir = _OUTPUT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"protocol_core_{mode}_{ts}.json"
+        path = out_dir / f"protocol_core_{mode}_{ts}{_NSHARDS_TAG}.json"
 
         # Build PureLLM truncation audit
         truncation_audit = {}

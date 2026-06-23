@@ -106,6 +106,15 @@ _OUT_BASE    = Path(os.environ["OUT_BASE"]) if "OUT_BASE" in os.environ else (_P
 _RESULTS_DIR = _OUT_BASE / "comparison_results/feynman-tests/noise-sweep"
 _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# FEATURE-NSHARDS-SUFFIX: when set (by ci_runner.yml's worker step, forwarding
+# the FINAL resolved shard count, e.g. "05"), append "_nshardsNN" to every
+# output filename this script writes. Lets test runs at different shard
+# counts for the same experiment coexist in _RESULTS_DIR without overwriting
+# each other. Empty string when unset (e.g. local runs outside CI) so
+# filenames are unchanged from before this feature existed.
+_NSHARDS_SUFFIX = os.environ.get("HYPATIAX_NSHARDS_SUFFIX", "").strip()
+_NSHARDS_TAG = f"_nshards{_NSHARDS_SUFFIX}" if _NSHARDS_SUFFIX else ""
+
 # Full 5-level sweep matching CI `noise_levels` default "0.0,0.5,1.0,5.0,10.0"
 # (fractions: 0.0, 0.005, 0.01, 0.05, 0.10).
 # sigma=0% and sigma=0.5% are passed via --existing-results when already done;
@@ -296,7 +305,12 @@ def _build_runner_cmd(
     cmd += ["--output-dir", str(_RESULTS_DIR)]
 
     # Unique checkpoint per sigma — prevents noisy passes colliding.
-    cmd += ["--checkpoint-name", f"noise_sweep_{sigma_label}_checkpoint"]
+    # FEATURE-NSHARDS-SUFFIX: also tag with _nshardsNN so test runs at
+    # different shard counts don't collide on the same checkpoint file
+    # (checkpoints land in _FLAT_OUTPUT_DIR — see that script's
+    # _checkpoint_path() — a fixed-name location shared across all sigma/
+    # shard-count runs unless distinguished here).
+    cmd += ["--checkpoint-name", f"noise_sweep_{sigma_label}_checkpoint{_NSHARDS_TAG}"]
 
     # NOTE: The TASK_ID env-var → --test forwarding block that previously lived
     # here has been removed.  The CI suppB dispatch shards by feynman *domain*
@@ -620,7 +634,7 @@ def _print_noise_sweep_table(agg: dict) -> None:
 
 
 def _save_sweep_json(agg: dict, ts: str) -> Path:
-    path = _RESULTS_DIR / f"noise_sweep_{ts}.json"
+    path = _RESULTS_DIR / f"noise_sweep_{ts}{_NSHARDS_TAG}.json"
     with open(path, "w") as f:
         json.dump(agg, f, indent=2, default=str)
     print(f"  Saved noise sweep JSON  -> {path}")
@@ -633,7 +647,7 @@ def _save_sweep_csv(agg: dict, ts: str) -> Path:
       section=aggregate    : one row per (method, sigma) -- summary stats
       section=per_equation : one row per (method, sigma, equation) -- individual R2
     """
-    path = _RESULTS_DIR / f"noise_sweep_{ts}.csv"
+    path = _RESULTS_DIR / f"noise_sweep_{ts}{_NSHARDS_TAG}.csv"
     fieldnames = [
         "section", "method", "noise_level_fraction", "noise_level_pct", "equation",
         "median_r2", "mean_r2", "std_r2", "recovery_rate",

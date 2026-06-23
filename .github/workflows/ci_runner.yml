@@ -229,6 +229,7 @@ jobs:
     outputs:
       shard_matrix:    ${{ steps.split.outputs.shard_matrix }}
       all_pending:     ${{ steps.split.outputs.all_pending }}
+      n_shards:        ${{ steps.split.outputs.n_shards }}
       exp_id:          ${{ steps.meta.outputs.exp_id }}
       script_path:     ${{ steps.meta.outputs.script_path }}
       needs_julia:     ${{ steps.meta.outputs.needs_julia }}
@@ -349,12 +350,38 @@ jobs:
                 NEEDS_JULIA=false
                 echo "suppB: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
               fi
-              # FIX-suppB-DOUBLED-PATH (root-caused, see run_all.sh STEP 10 comment):
-              # run_noise_sweep_benchmark.py joins OUT_BASE with its own fixed
-              # suffix "comparison_results/feynman-tests/noise-sweep", so RESULT_SUBDIR
-              # (= OUT_BASE/RESULT_SUBDIR via TARGET) must be that same single-level
-              # path, not a path with an extra trailing "/noise-sweep" — the old value
-              # caused outputs to land one directory level too deep.
+              # FIX-suppB-DOUBLED-PATH — CONFIRMED 2026-06-23 by reading
+              # run_noise_sweep_benchmark.py's actual source directly (user
+              # uploaded it):
+              #   _RESULTS_DIR = _OUT_BASE / "comparison_results/feynman-tests/noise-sweep"   (line 106)
+              # This is the ONLY suffix appended — single level, no further
+              # nesting. The subprocess (run_comparative_suite_benchmark_v2.py)
+              # receives this exact path via --output-dir and writes
+              # protocol_core_*.json / noise_sweep_*.json directly into it
+              # (its own _OUTPUT_DIR = Path(args.output_dir).resolve(), no
+              # extra suffix). Checkpoints go to that script's separate
+              # _FLAT_OUTPUT_DIR (bare comparison_results/ root, deliberately
+              # NOT nested under noise-sweep at all — see that script's
+              # _checkpoint_path()).
+              #
+              # So with OUT_BASE = plain results root (confirmed at job env
+              # level: OUT_BASE: "hypatiax/data/results"), the script's real
+              # output directory is the SINGLE-level path below. The doubled
+              # ".../noise-sweep/noise-sweep" path observed on disk in a prior
+              # run was traced to a DIFFERENT bug: the "Move results to
+              # RESULTS_DIR" step does TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
+              # and then moves any matching files it finds under the workspace
+              # into TARGET — if RESULT_SUBDIR is ever set to the doubled path
+              # (as it was, mistakenly, in an earlier pass at this exact line),
+              # that move step relocates the script's correctly-written
+              # single-level output one level deeper, manufacturing the
+              # doubled structure after the fact. The fix belongs HERE
+              # (RESULT_SUBDIR must match the script's real single-level
+              # output), not by accepting the doubled path as canonical.
+              # ci_postprocess.yml's SUPPB_SUBDIR and ci_analysis.yml's
+              # MAPPING entry for suppB must be corrected to match this same
+              # single-level value — they currently still have the doubled
+              # path and need the same fix.
               RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
               DEFAULT_SEEDS="42"
               ;;
@@ -721,6 +748,16 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"shard_matrix={json.dumps(matrix)}\n")
               fh.write(f"all_pending={json.dumps(pending)}\n")
+              # FEATURE-NSHARDS-SUFFIX: expose the FINAL resolved shard count
+              # (post table-forcing / cap logic above) as its own output, zero-
+              # padded to 2 digits, so worker steps can tag every output
+              # filename with _nshards{NN} — lets test runs at different shard
+              # counts for the same experiment coexist on disk without
+              # collisions or overwrites. This is the resolved N_SHARDS, NOT
+              # the raw dispatch input — for suppB/suppB_sc it will always be
+              # 5/6 respectively, matching what actually ran, not what was
+              # requested.
+              fh.write(f"n_shards={N_SHARDS:02d}\n")
 
           print("Shard assignment (block-partition):")
           for s in matrix:
@@ -766,6 +803,14 @@ jobs:
       # Workers write this into result JSON so consolidate can cross-reference.
       SHARD_RUN_IDS:  ${{ matrix.run_ids }}
       EFFECTIVE_SEEDS: ${{ needs.plan.outputs.effective_seeds }}
+      # FEATURE-NSHARDS-SUFFIX: the FINAL resolved shard count (zero-padded to
+      # 2 digits, e.g. "05"), forwarded so the worker can pass it on to
+      # run_noise_sweep_benchmark.py / run_sample_complexity_benchmark.py as
+      # HYPATIAX_NSHARDS_SUFFIX. Lets every output filename get a _nshardsNN
+      # suffix so test runs at different shard counts coexist without
+      # collisions. This is the RESOLVED count (post table-forcing), not the
+      # raw dispatch input.
+      N_SHARDS:       ${{ needs.plan.outputs.n_shards }}
       # FIX-NOISE_LEVELS: forward from dispatch input so suppB worker receives the
       # correct sweep range.  Previously NOISE_LEVELS was only set inside the plan
       # job's Python step and never exported to worker jobs, so run_noise_sweep_benchmark.py
