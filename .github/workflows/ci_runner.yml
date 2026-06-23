@@ -524,13 +524,31 @@ jobs:
                   print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
                         f"— this experiment is single-shard only (table=1). "
                         f"Using N_SHARDS=1.")
+          elif N_SHARDS_DEFAULT > 4:
+              # suppB (table=5) and suppB_sc (table=6) require an EXACT shard
+              # count for the one-noise-level-per-shard / one-n-per-shard
+              # alignment documented above — NOT just a floor. The dispatch
+              # input is therefore fully ignored here, the same way it is for
+              # table=1 above. (The old `max(N_SHARDS_DEFAULT, min(4,
+              # N_SHARDS_RAW))` formula below this branch can never produce
+              # anything but N_SHARDS_DEFAULT when N_SHARDS_DEFAULT > 4 — the
+              # min(4, ...) term tops out at 4 — so it silently discarded the
+              # input while *looking* like it respected it whenever
+              # N_SHARDS_RAW happened to equal the table value. Make that
+              # explicit instead of implicit.)
+              N_SHARDS = N_SHARDS_DEFAULT
+              if N_SHARDS_RAW != N_SHARDS_DEFAULT:
+                  print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
+                        f"— this experiment requires an exact shard count "
+                        f"(table={N_SHARDS_DEFAULT}) for correct noise-level/"
+                        f"sample-size alignment. Using N_SHARDS={N_SHARDS_DEFAULT}.")
           else:
               # Table default is the minimum — user input cannot go below it.
-              # exp1b/exp3b always get at least 4 shards, suppB always gets
-              # exactly 5, suppB_sc always gets exactly 6 (min(4, N_SHARDS_RAW)
-              # caps the dispatch input at 4, but max() with the table default
-              # table default of 5 always wins), even if the dispatch form is
-              # left at its default value of "1".
+              # exp1b/exp1_ablation/exp3b (table=4) always get at least 4
+              # shards; the dispatch input can raise that up to a cap of 4
+              # (i.e. it has no effect for this group in practice, since the
+              # table value already equals the cap — left in place in case a
+              # table value < 4 is ever added to this branch).
               N_SHARDS = max(N_SHARDS_DEFAULT, min(4, N_SHARDS_RAW))
               if N_SHARDS != N_SHARDS_RAW:
                   print(f"::notice::n_shards: input={N_SHARDS_RAW} "
