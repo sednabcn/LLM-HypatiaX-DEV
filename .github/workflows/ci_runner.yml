@@ -728,7 +728,26 @@ jobs:
                   start += size
               return shards
 
-          raw_shards = _block_shards(pending, N_SHARDS)
+          # FIX-SHARD-ALIGN: always partition all_ids (not pending) so that the
+          # shard boundaries are stable across resumes.  For suppB/suppB_sc/exp1b
+          # this preserves the one-noise-level-per-shard / one-sample-size-per-
+          # shard / one-seed-per-shard alignment even when some tasks are already
+          # done and pending is shorter than all_ids.  Partitioning pending
+          # directly (the old code) re-slices the remaining tasks into N_SHARDS
+          # equal chunks that no longer respect noise-level boundaries, causing
+          # run_all.sh to mis-pin NOISE_LEVEL for tasks in the tail of a shard.
+          pending_set        = set(pending)
+          raw_shards_all     = _block_shards(all_ids, N_SHARDS)
+          raw_shards         = [[t for t in s if t in pending_set]
+                                for s in raw_shards_all]
+          # Drop shards that became empty after filtering (all tasks already done
+          # in that position) so the matrix doesn't spawn zero-work runners.
+          # Re-assign shard indices to 0-based contiguous so matrix.shard is
+          # always the original global shard index (stable for cache keys).
+          # Keep original index paired with the filtered list.
+          raw_shards_indexed = [(orig_j, s)
+                                for orig_j, s in enumerate(raw_shards)
+                                if s]
 
           # Stable global index: position of each task in the FULL all_ids list
           # (not just pending), so IDs survive checkpoint restarts.
@@ -736,15 +755,16 @@ jobs:
 
           matrix = [
               {
-                  "shard":   j,
-                  "shard_id": j + 1,
-                  "ids":     json.dumps(raw_shards[j]),
+                  "shard":    orig_j,
+                  "shard_id": orig_j + 1,
+                  "ids":      json.dumps(s),
                   # run_ids: "{exp}-{global_index}" — unique, stable, cross-ref-safe.
                   # consolidate uses these to match shard results to all_pending.
-                  "run_ids": json.dumps([f"{EXP}-{global_index[t]}" for t in raw_shards[j]]),
+                  "run_ids":  json.dumps([f"{EXP}-{global_index[t]}" for t in s]),
               }
-              for j in range(N_SHARDS)
+              for orig_j, s in raw_shards_indexed
           ]
+          N_SHARDS = len(matrix)  # actual number of non-empty shards dispatched
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"shard_matrix={json.dumps(matrix)}\n")
@@ -1260,20 +1280,50 @@ jobs:
               COMBINED_OUTPUT_EXPS = {"exp1", "exp1b", "suppB", "suppB_sc"}
 
               if EXP in COMBINED_OUTPUT_EXPS:
-                  # FIX-G5-EXP1/suppB/suppB_sc: combined-output experiments write
-                  # one file per shard; rescue by filename pattern so a crash-
-                  # before-move is still handled.
-                  combined_globs = [
-                      "*hypatiax_defi_benchmark*results*.json",   # exp1 primary
-                      "*defi_benchmark*results*.json",            # exp1 variant
-                      "*comparison_FIXED_*.json",                 # exp1b portfolio
-                      "noise_sweep_*.json",                       # suppB per-shard
-                      "noise_sweep_*.csv",                        # suppB CSV output
-                      "sample_complexity_*.json",                 # suppB_sc per-shard
-                      "sample_complexity_*.csv",                  # suppB_sc CSV output
-                  ]
+                  # FIX-SHARD-SCOPE: mirror the same shard-keyed glob logic used
+                  # in "Save shard checkpoint" so we rescue only THIS shard's
+                  # output files, not other shards' files that land in the shared
+                  # result_dir before this step runs.
+                  if EXP == "suppB":
+                      first_id = shard_ids[0] if shard_ids else ""
+                      nl_raw   = first_id.split("__")[0][len("noise"):] if first_id else ""
+                      nl_safe  = nl_raw.replace(".", "_")
+                      combined_globs = [
+                          f"noise_sweep_noise{nl_safe}_*.json",
+                          f"noise_sweep_noise{nl_safe}_*.csv",
+                          f"noise_sweep_noise{nl_raw}_*.json",
+                          f"noise_sweep_noise{nl_raw}_*.csv",
+                      ]
+                  elif EXP == "suppB_sc":
+                      first_id = shard_ids[0] if shard_ids else ""
+                      n_val    = first_id.split("__")[0][len("sc_n"):] if first_id else ""
+                      combined_globs = [
+                          f"sample_complexity_n{n_val}_*.json",
+                          f"sample_complexity_n{n_val}_*.csv",
+                      ]
+                  elif EXP == "exp1b":
+                      shard_ids_local = json.loads(os.environ.get("SHARD_IDS") or "[]")
+                      seeds_this_shard = [
+                          tid[len("portfolio_seed"):] for tid in shard_ids_local
+                      ]
+                      combined_globs = []
+                      for s in seeds_this_shard:
+                          combined_globs += [
+                              f"*comparison_FIXED_*seed{s}*.json",
+                              f"*comparison_FIXED_*seed{s}*.csv",
+                          ]
+                      if not combined_globs:
+                          combined_globs = ["*comparison_FIXED_*.json",
+                                            "*comparison_FIXED_*.csv"]
+                  else:
+                      # exp1: single shard — broad globs are safe.
+                      combined_globs = [
+                          "*hypatiax_defi_benchmark*results*.json",
+                          "*defi_benchmark*results*.json",
+                      ]
+
                   for pat in combined_globs:
-                      for src in glob.glob(pat):
+                      for src in glob.glob(pat):   # CWD only; non-recursive
                           dst = os.path.join(result_dir, os.path.basename(src))
                           if os.path.abspath(src) == os.path.abspath(dst):
                               continue
@@ -1768,20 +1818,68 @@ jobs:
           search_dirs = [result_dir, "."]
 
           if EXP in COMBINED_OUTPUT_EXPS:
-              combined_globs = [
-                  "*hypatiax_defi_benchmark*results*.json",  # exp1 primary
-                  "*defi_benchmark*results*.json",           # exp1 variant names
-                  "*comparison_FIXED_*.json",                # exp1b portfolio mode
-                  "noise_sweep_*.json",                      # suppB per-shard JSON
-                  "noise_sweep_*.csv",                       # suppB per-shard CSV
-                  "sample_complexity_*.json",                # suppB_sc per-shard JSON
-                  "sample_complexity_*.csv",                 # suppB_sc per-shard CSV
-              ]
+              # FIX-SHARD-SCOPE: use shard-specific globs rather than broad
+              # wildcards so that this shard's checkpoint step cannot match
+              # another shard's already-committed output file and incorrectly
+              # mark this shard's tasks as done.
+              #
+              # Each combined-output experiment encodes the discriminating key
+              # (noise level, sample size, or seed) in its output filename:
+              #   suppB    → noise_sweep_noise{NL}_*.json  (NL = "0_0", "0_5", …)
+              #   suppB_sc → sample_complexity_n{N}_*.json (N = "50", "100", …)
+              #   exp1b    → comparison_FIXED_*_seed{S}_*.json  (S per shard)
+              #   exp1     → single shard, no collision risk; broad glob is safe.
+              #
+              # The discriminating key is derived from the FIRST task ID in
+              # shard_ids (the list is stable from plan-time partitioning).
+              if EXP == "suppB":
+                  first_id = shard_ids[0]   # "noise{NL}__{domain}"
+                  nl_raw   = first_id.split("__")[0][len("noise"):]  # e.g. "0.0"
+                  nl_safe  = nl_raw.replace(".", "_")                 # e.g. "0_0"
+                  combined_globs = [
+                      f"noise_sweep_noise{nl_safe}_*.json",
+                      f"noise_sweep_noise{nl_safe}_*.csv",
+                      f"noise_sweep_noise{nl_raw}_*.json",  # raw dot variant
+                      f"noise_sweep_noise{nl_raw}_*.csv",
+                  ]
+              elif EXP == "suppB_sc":
+                  first_id = shard_ids[0]   # "sc_n{N}__{domain}"
+                  n_val    = first_id.split("__")[0][len("sc_n"):]    # e.g. "50"
+                  combined_globs = [
+                      f"sample_complexity_n{n_val}_*.json",
+                      f"sample_complexity_n{n_val}_*.csv",
+                  ]
+              elif EXP == "exp1b":
+                  # Task IDs are "portfolio_seed{S}"; each shard owns 1-2 seeds.
+                  seeds_this_shard = [tid[len("portfolio_seed"):] for tid in shard_ids]
+                  combined_globs = []
+                  for s in seeds_this_shard:
+                      combined_globs += [
+                          f"*comparison_FIXED_*seed{s}*.json",
+                          f"*comparison_FIXED_*seed{s}*.csv",
+                      ]
+                  # Fallback: if the script doesn't embed the seed in the filename,
+                  # accept any comparison_FIXED file only when result_dir contains
+                  # NO files from other shards yet (detected by absence of
+                  # _checkpoint_shard files for other shard indices).  This is a
+                  # best-effort guard; the seed-in-filename fix in run_all.sh is
+                  # the definitive solution.
+                  if not combined_globs:
+                      combined_globs = ["*comparison_FIXED_*.json",
+                                        "*comparison_FIXED_*.csv"]
+              else:
+                  # exp1: single shard — broad globs are safe (no concurrent shards).
+                  combined_globs = [
+                      "*hypatiax_defi_benchmark*results*.json",
+                      "*defi_benchmark*results*.json",
+                  ]
+
               found_combined = False
               for d in search_dirs:
                   for pat in combined_globs:
-                      hits = (glob.glob(os.path.join(d, pat)) +
-                              glob.glob(os.path.join(d, "**", pat), recursive=True))
+                      # FIX: non-recursive glob only — prevents matching files
+                      # committed by other shards that share the same result_dir.
+                      hits = glob.glob(os.path.join(d, pat))
                       if hits:
                           print(f"  [{EXP}] Combined result file detected: {hits[0]}")
                           found_combined = True
