@@ -737,6 +737,7 @@ jobs:
           matrix = [
               {
                   "shard":   j,
+                  "shard_id": j + 1,
                   "ids":     json.dumps(raw_shards[j]),
                   # run_ids: "{exp}-{global_index}" — unique, stable, cross-ref-safe.
                   # consolidate uses these to match shard results to all_pending.
@@ -757,7 +758,7 @@ jobs:
               # the raw dispatch input — for suppB/suppB_sc it will always be
               # 5/6 respectively, matching what actually ran, not what was
               # requested.
-              fh.write(f"n_shards={N_SHARDS:02d}\n")
+              fh.write(f"n_shards={N_SHARDS}\n")
 
           print("Shard assignment (block-partition):")
           for s in matrix:
@@ -799,6 +800,7 @@ jobs:
       RESULT_SUBDIR:  ${{ needs.plan.outputs.result_subdir }}
       SHARD_IDS:      ${{ matrix.ids }}
       SHARD_INDEX:    ${{ matrix.shard }}
+      SHARD_ID:       ${{ matrix.shard_id }}
       # Stable unique run_id per task: "{exp}-{global_index}" (from plan matrix).
       # Workers write this into result JSON so consolidate can cross-reference.
       SHARD_RUN_IDS:  ${{ matrix.run_ids }}
@@ -1293,20 +1295,6 @@ jobs:
                                   rescued += 1
               print(f"Safety-net rescue complete: {rescued} file(s) moved for shard {shard_idx}")
           PYEOF
-
-      # -- Move results to canonical RESULTS_DIR after each experiment ----------
-      # Picks up outputs written to CWD or a temp path and places them into the
-      # canonical ${OUT_BASE}/${RESULT_SUBDIR} location that the consolidate job
-      # and artifact upload expect.  Uses 'mv -v ... || true' so the step never
-      # fails when a file already lives in the right place or when a subset of
-      # tasks produced no output (partial shard).
-      - name: Move results to RESULTS_DIR
-        if: always()
-        env:
-          EXP:           ${{ needs.plan.outputs.exp_id }}
-          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
-          RESULTS_DIR:   ${{ github.workspace }}/${{ env.OUT_BASE }}
-        run: bash .github/scripts/move_results.sh
 
       # -- Store results in canonical RESULT_SUBDIR (all experiments) -----------
       # Some experiment scripts write their primary output to the OUT_BASE root
