@@ -1,0 +1,29 @@
+name: ci_model_validation
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Nightly run enables Tier 2 live-API checks (needs ANTHROPIC_API_KEY
+    # secret) so a model retirement is caught here, not mid-pipeline.
+    - cron: "0 7 * * *"
+
+jobs:
+  model-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pytest anthropic pyyaml python-dotenv
+
+      - name: Run model validation tests
+        run: pytest scripts/tests/test_model_validation.py -v
+        env:
+          # Present on the scheduled run / repos with the secret set --
+          # enables Tier 2 live API checks. Offline tier always runs.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
