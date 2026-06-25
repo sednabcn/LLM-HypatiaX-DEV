@@ -2058,10 +2058,31 @@ jobs:
             # a result from a previous shard or run (silent data loss).
             OVERWRITTEN=$(git diff --cached --name-status | grep '^M' | awk '{print $2}' || true)
             if [[ -n "$OVERWRITTEN" ]]; then
-              echo "::warning::OVERWRITE DETECTED — shard ${SHARD} is overwriting committed result file(s):"
-              echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
-              echo "  The move_matching collision-guard should have disambiguated filenames."
-              echo "  Proceeding with push so results are not lost — investigate filename uniqueness."
+              # ISOLATION-GUARD: exp1b/exp3b/suppB/suppB_sc each carry a documented
+              # per-shard isolation suffix (HYPATIAX_NSHARDS_SUFFIX / _shard${SHARD_INDEX}
+              # tag — see run_all.sh STEP 2/8b/10/10b) whose entire purpose is to make
+              # this overwrite impossible. For those four, a modified tracked file here
+              # means the suffix mechanism itself failed (e.g. SHARD_INDEX missing/blank,
+              # or a code path that bypassed the rename) — that is a real bug, not an
+              # expected re-run overwrite, so it hard-fails instead of warning.
+              case "${EXP}" in
+                exp1b|exp3b|suppB|suppB_sc)
+                  echo "::error::ISOLATION GUARD FAILED — shard ${SHARD} (${EXP}) is overwriting "
+                  echo "  committed result file(s); the per-shard isolation suffix should have "
+                  echo "  prevented this:"
+                  echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
+                  echo "  Check that SHARD_INDEX/HYPATIAX_NSHARDS_SUFFIX is actually set and"
+                  echo "  non-empty for this shard, and that the move/rename step in run_all.sh"
+                  echo "  ran before this commit step."
+                  exit 1
+                  ;;
+                *)
+                  echo "::warning::OVERWRITE DETECTED — shard ${SHARD} is overwriting committed result file(s):"
+                  echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
+                  echo "  The move_matching collision-guard should have disambiguated filenames."
+                  echo "  Proceeding with push so results are not lost — investigate filename uniqueness."
+                  ;;
+              esac
             fi
 
             STAGED=$(git diff --cached --name-only | wc -l)
