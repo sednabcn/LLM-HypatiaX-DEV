@@ -3,12 +3,12 @@ name: Isolation Guard Regression Test
 on:
   push:
     paths:
-      - ci_runner.yml
+      - .github/workflows/ci_runner.yml
       - run_all.sh
       - test_isolation_guard.sh
   pull_request:
     paths:
-      - ci_runner.yml
+      - .github/workflows/ci_runner.yml
       - run_all.sh
       - test_isolation_guard.sh
   workflow_dispatch:  # allow manual trigger at any time
@@ -28,14 +28,14 @@ jobs:
       - name: Validate ci_runner.yml is parseable
         # Catches YAML syntax errors before the test even runs, giving a
         # cleaner error message than a cryptic Python traceback.
-        run: python3 -c "import yaml; yaml.safe_load(open('ci_runner.yml'))"
+        run: python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci_runner.yml'))"
 
       - name: Run isolation guard regression test
         # test_isolation_guard.sh exits 0 on full PASS, 1 on any FAIL,
         # 2 if ci_runner.yml is missing or unreadable.
         run: |
           chmod +x test_isolation_guard.sh
-          ./test_isolation_guard.sh ci_runner.yml
+          ./test_isolation_guard.sh .github/workflows/ci_runner.yml
 
       - name: Upload guard-block snapshot on failure
         if: failure()
