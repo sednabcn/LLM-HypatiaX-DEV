@@ -1278,13 +1278,18 @@ jobs:
               #          size).  Task IDs are "sc_n{N}__{domain}"; same issue.
               # exp1/exp1b: one aggregated JSON for all tasks (see FIX-G5-EXP1).
               COMBINED_OUTPUT_EXPS = {"exp1", "exp1b", "suppB", "suppB_sc"}
+              # FIX-SHARD-IDS-SCOPE: assign shard_ids BEFORE the if/else so that
+              # the else branch (non-combined experiments) can reference it without
+              # a NameError.  Previously shard_ids was only assigned inside the
+              # if-block, causing "NameError: name 'shard_ids' is not defined" for
+              # any experiment not in COMBINED_OUTPUT_EXPS.
+              shard_ids = json.loads(os.environ.get("SHARD_IDS") or "[]")
 
               if EXP in COMBINED_OUTPUT_EXPS:
                   # FIX-SHARD-SCOPE: mirror the same shard-keyed glob logic used
                   # in "Save shard checkpoint" so we rescue only THIS shard's
                   # output files, not other shards' files that land in the shared
                   # result_dir before this step runs.
-                  shard_ids = json.loads(os.environ.get("SHARD_IDS") or "[]")
                   if EXP == "suppB":
                       first_id = shard_ids[0] if shard_ids else ""
                       nl_raw   = first_id.split("__")[0][len("noise"):] if first_id else ""
@@ -2037,7 +2042,18 @@ jobs:
 
           commit_and_push() {
             # Rebase on any concurrent shard commits before staging.
-            git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
+            # --autostash saves/restores untracked+modified files around the
+            # rebase.  If the remote has committed a file that also exists
+            # untracked locally (e.g. fixc3_baseline.json written by a gate
+            # job between our checkout and this pull), git reset --hard will
+            # refuse to overwrite it and abort.  Detect that case and stash
+            # the conflicting untracked file aside before retrying.
+            if ! git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1; then
+              echo "::warning::git pull --rebase failed (possibly untracked file conflict) — stashing untracked files and retrying"
+              git stash --include-untracked --quiet || true
+              git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
+              git stash pop --quiet 2>/dev/null || true
+            fi
 
             # Stage every result file produced by this shard.
             # -f overrides any .gitignore rules that might exclude data/results/**
@@ -2057,7 +2073,15 @@ jobs:
 
             # Detect any MODIFIED (M) tracked files — means this shard would overwrite
             # a result from a previous shard or run (silent data loss).
-            OVERWRITTEN=$(git diff --cached --name-status | grep '^M' | awk '{print $2}' || true)
+            # EXCEPTION: _checkpoint_shard*.json files are intentionally re-written
+            # every run (they accumulate completed task IDs across resumptions) — a
+            # modified M status for these is expected and must NOT trigger the
+            # isolation guard.
+            OVERWRITTEN=$(git diff --cached --name-status \
+              | grep '^M' \
+              | awk '{print $2}' \
+              | grep -v '_checkpoint_shard[0-9].*\.json$' \
+              || true)
             if [[ -n "$OVERWRITTEN" ]]; then
               # ISOLATION-GUARD: exp1b/exp3b/suppB/suppB_sc each carry a documented
               # per-shard isolation suffix (HYPATIAX_NSHARDS_SUFFIX / _shard${SHARD_INDEX}

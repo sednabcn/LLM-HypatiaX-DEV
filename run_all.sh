@@ -1777,11 +1777,30 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
   # FIX-GLOB: exclude seed42 explicitly so exp3 output is never swept here.
   # FIX-OUTDIR-3: add CI-matching globs for exp3b (full_run_*, report_hybrid_*, hybrid_defi_*)
   # CI Move step moves all four patterns; run_all.sh was only moving *nguyen*.json.
+  #
+  # FEATURE-NSHARDS-SUFFIX (exp3b) — mirrors STEP 10/10b's suppB/suppB_sc
+  # isolation pattern. exp3b runs as EXP_SHARD_TABLE["exp3b"]=4 parallel CI
+  # matrix shards. Previously this move step moved matched files into
+  # extrapolation/multi_seed/ with their ORIGINAL names, with no per-shard
+  # tag — if two shards ever produced same-named outputs (e.g. a re-run, or
+  # any future change that lets two shards share a seed), the second push
+  # would silently overwrite the first on disk. Tag every moved filename
+  # with a zero-padded, 1-based SHARD_INDEX suffix (same convention as
+  # suppB/suppB_sc's HYPATIAX_NSHARDS_SUFFIX) so each shard's outputs are
+  # independently distinguishable on disk, the same guarantee suppB relies on.
+  printf -v _SHARD_TAG '%02d' \"\$((\${SHARD_INDEX:-0} + 1))\"
+  echo \"  [exp3b] SHARD_INDEX=\${SHARD_INDEX:-0} -> isolation suffix _nshards\${_SHARD_TAG}\"
+  _DEST_MS='${RESULTS_DIR}/extrapolation/multi_seed'
   find '${RESULTS_DIR}' -maxdepth 1 \
     \( -name '*nguyen*.json' -o -name 'full_run_*.json' \
        -o -name 'report_hybrid_*.json' -o -name 'hybrid_defi_*.json' \) \
-    ! -name '*seed42*' ! -name '*nguyen12*42*' \
-    -exec mv -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \;
+    ! -name '*seed42*' ! -name '*nguyen12*42*' | while IFS= read -r src; do
+      fname=\$(basename \"\$src\")
+      stem=\"\${fname%.*}\"
+      ext=\"\${fname##*.}\"
+      dst=\"\${_DEST_MS}/\${stem}_nshards\${_SHARD_TAG}.\${ext}\"
+      mv -v \"\$src\" \"\$dst\" || true
+  done
   find '${RESULTS_DIR}' -maxdepth 1 -name 'experiment_registry.json' \
     -exec cp -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \; 2>/dev/null || true
 "
