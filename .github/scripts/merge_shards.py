@@ -74,7 +74,6 @@ logger = logging.getLogger("hypatiax.merge")
 # exp1b      — 4-shard multi-seed DeFi portfolio sweep (seeds 42/99/123/777/2024)
 # exp1_ablation — 4-shard Core-15 ablation (PySR-only vs HypatiaX, DEFI_TASKS × 4 workers)
 # exp3b      — 4-shard Nguyen-12 multi-seed (seeds 99/123/777/2024)
-# instability — CSV shards → _merged.json via _merge_instability_csvs()
 # suppB      — 5-shard noise sweep (one noise level per shard, EXP_SHARD_TABLE=5).
 #              Shape S (sweep-format, NOT task-row), merged via merge_sweep_files().
 # suppB_sc   — 6-shard sample-complexity sweep (one n per shard,
@@ -82,11 +81,25 @@ logger = logging.getLogger("hypatiax.merge")
 #              Shape S, same merge path as suppB — shares method_summary/
 #              per_equation inner schema, differs only in sweep axis
 #              (per_noise vs per_n).
+#
+# NOTE on "instability": it is intentionally NOT in this set. Its outputs are
+# CSVs/figures only (instability_analysis.csv, instability_extrapolation.csv,
+# fig_*.png/pdf) — there is no task-row JSON schema to merge, and no
+# _merge_instability_csvs() implementation exists in this module. A prior
+# version of this comment claimed such a helper merged instability via this
+# path; it was never written. main() has no branch for "instability", so
+# adding it back here causes it to fall into the generic JSON task-row merge
+# below, which only globs *.json, finds non-data files left in the result
+# dir (e.g. _checkpoint_shard0.json, fixc3_baseline.json), extracts zero rows
+# from each, and raises "FATAL: merge produced zero rows". run_analysis.py
+# already short-circuits cleanly for experiment == "instability" (writing a
+# WARN_INSTABILITY_NO_MERGED_JSON stub) without needing any merged input —
+# instability must stay in DIRECT/SHARDS mode so that short-circuit is
+# reached instead of crashing here first.
 MERGE_REQUIRED_EXPERIMENTS: frozenset[str] = frozenset({
     "exp1b",
     "exp1_ablation",
     "exp3b",
-    "instability",
     "suppB",
     "suppB_sc",
 })

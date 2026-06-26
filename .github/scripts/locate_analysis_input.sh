@@ -25,11 +25,11 @@
 #                    and falls through to merge_shards.py rather than producing a downstream
 #                    FATAL: EMPTY DATASET.  Shape S files count per_equation entries across
 #                    all sweep points; Shape A/B count top-level task-row keys.)
-#      Fallback   — run merge_shards.py on committed shard/CSV files → INPUT_MODE=merged
-#                   instability: CSV→_merged.json via _merge_instability_csvs()
-#                   exp1b/exp3b: JSON shards → _merged.json via standard path
-#                   exp1_ablation: JSON shards → _merged.json via standard path (NSHARDS=4)
-#    All others (REQUIRE_MERGE=false):
+#      Fallback   — run merge_shards.py on committed shard files → INPUT_MODE=merged
+#                   exp1b/exp1_ablation/exp3b: JSON shards → _merged.json via standard path
+#                   suppB/suppB_sc: Shape S sweep shards → _merged.json via merge_sweep_files()
+#    All others (REQUIRE_MERGE=false) — including "instability", which is CSV/figures-only
+#    and has no task-row JSON to merge (run_analysis.py short-circuits for it directly):
 #      DIRECT     — exactly 1 shard file → INPUT_MODE=direct
 #      SHARDS     — N>1 shard files      → INPUT_MODE=shards + manifest
 #
@@ -155,14 +155,14 @@ try:
     print('true' if '$EXPERIMENT' in MERGE_REQUIRED_EXPERIMENTS else 'false')
 except Exception as e:
     # Fallback: known merge experiments hard-coded as a safety net
-    print('true' if '$EXPERIMENT' in ('exp1b', 'exp1_ablation', 'exp3b', 'instability') else 'false',
+    print('true' if '$EXPERIMENT' in ('exp1b', 'exp1_ablation', 'exp3b') else 'false',
           file=sys.stdout)
     print(f'::warning::Could not import MERGE_REQUIRED_EXPERIMENTS: {e}', file=sys.stderr)
 ")
 echo "REQUIRE_MERGE=$REQUIRE_MERGE"
 
 # ==============================================================================
-#  MERGED MODE (exp1b / exp1_ablation / exp3b / instability)
+#  MERGED MODE (exp1b / exp1_ablation / exp3b / suppB / suppB_sc)
 # ==============================================================================
 
 if [[ "$REQUIRE_MERGE" == "true" ]]; then
@@ -232,11 +232,11 @@ PYEOF
   fi
 
   # ── Fallback: run merge_shards.py against committed shard files ─────────────
-  # For JSON-shard experiments (exp1b, exp3b): collects *.json files.
-  # For CSV-only experiments (instability): collects *.csv files.
-  # merge_shards.py reads EXP_CONFIG[exp_id].shard_globs so it always finds
-  # the right files regardless of extension — we just need at least one file
-  # present to confirm the directory isn't empty before invoking it.
+  # For JSON-shard experiments (exp1b, exp1_ablation, exp3b): collects *.json files.
+  # For Shape-S sweep experiments (suppB, suppB_sc): collects *.json sweep shards.
+  # "instability" is NOT in MERGE_REQUIRED_EXPERIMENTS and never reaches this
+  # branch — its CSV outputs (instability_analysis.csv, etc.) are not merged
+  # here; run_analysis.py short-circuits for it before any input is needed.
   echo
   echo "No _merged.json found — falling back to merge_shards.py."
 
