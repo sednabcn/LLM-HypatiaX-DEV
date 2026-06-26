@@ -259,8 +259,8 @@ print(f"  [{_tag}] sample-complexity outputs: {len(sc)} file(s)")
 # tables-generator uses glob 'noise_sweep_*.json' to find suppB results.
 # If run_noise_sweep_benchmark.py writes files under a different prefix,
 # all suppB tables will contain placeholder text.
-noise_sweep_matched = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise-sweep/noise_sweep_*.json")
-noise_sweep_all     = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise-sweep/*.json")
+noise_sweep_matched = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/noise_sweep_*.json")
+noise_sweep_all     = glob.glob(f"{RESULTS}/comparison_results/feynman-tests/noise-sweep/*.json")
 if noise_sweep_all:
     ok = bool(noise_sweep_matched)
     checks.append(("suppB output matches noise_sweep_*.json glob (CRITICAL 4)", 1.0 if ok else 0.0, 1.0, ok))
@@ -528,7 +528,7 @@ EXPERIMENTS = {
     "exp3":                   RESULTS / "extrapolation",
     "exp3b":                  RESULTS / "extrapolation/multi_seed",
     "suppA":                  RESULTS / "hybrid_pysr/defi",
-    "suppB":                  RESULTS / "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+    "suppB":                  RESULTS / "comparison_results/feynman-tests/noise-sweep",
     "suppB_sc":               RESULTS / "comparison_results/feynman-tests/sample-complexity",
 }
 
