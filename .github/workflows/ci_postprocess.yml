@@ -15,11 +15,12 @@ name: "HypatiaX - post-process (figures + tables)"
 #
 #    BUG-B  WRONG SOURCE DIRECTORY FOR suppB / suppB_sc TABLES
 #           suppB tables require noise_sweep_*.json files under
-#           noise-sweep/noise-sweep/. When postprocess ran for ANY other
-#           experiment (e.g. instability, exp3b) it called generate_tables.py
-#           with --results-dir pointing at THAT experiment's dir, found no
-#           noise_sweep_*.json, and wrote empty suppb_*.tex placeholders into
-#           the wrong location, destroying previously committed suppB data.
+#           comparison_results/feynman-tests/noise-sweep/. When postprocess ran
+#           for ANY other experiment (e.g. instability, exp3b) it called
+#           generate_tables.py with --results-dir pointing at THAT experiment's
+#           dir, found no noise_sweep_*.json, and wrote empty suppb_*.tex
+#           placeholders into the wrong location, destroying previously
+#           committed suppB data.
 #
 #    BUG-C  MANY EXPERIMENTS PRODUCED ZERO TABLES
 #           exp1, exp1b, exp2_feynman, exp2, suppA, hybrid_all_domains, extrap,
@@ -137,7 +138,7 @@ env:
 
   # ── Canonical subdirs for cross-experiment outputs ────────────────────────
   # These are referenced both in per-experiment steps and in the Commit step.
-  SUPPB_SUBDIR:    "comparison_results/feynman-tests/noise-sweep/noise-sweep"
+  SUPPB_SUBDIR:    "comparison_results/feynman-tests/noise-sweep"
   SUPPB_SC_SUBDIR: "comparison_results/feynman-tests/sample-complexity"
   EXP2_PCA_SUBDIR: "comparison_results/feynman-tests/exp2_pca_4060"
   EXP2_SUBDIR:     "comparison_results/feynman-tests/exp2"
@@ -292,7 +293,7 @@ jobs:
               'exp3':                'extrapolation',
               'exp3b':               'extrapolation/multi_seed',
               'suppA':               'hybrid_pysr/defi',
-              'suppB':               'comparison_results/feynman-tests/noise-sweep/noise-sweep',
+              'suppB':               'comparison_results/feynman-tests/noise-sweep',
               'suppB_sc':            'comparison_results/feynman-tests/sample-complexity',
               'hybrid_all_domains':  'hybrid_llm_nn/all_domains',
               'instability':         'figures',
@@ -1578,7 +1579,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Source: noise_sweep_*.json in noise-sweep/noise-sweep (SUPPB_SUBDIR)
+          # Source: noise_sweep_*.json in comparison_results/feynman-tests/noise-sweep (SUPPB_SUBDIR)
           # Verify the source data exists before running.
           NOISE_DATA=$(find "${OUT_BASE}/${SUPPB_SUBDIR}" \
             \( -name "noise_sweep_*.json" -o -name "noise*.json" \) \
