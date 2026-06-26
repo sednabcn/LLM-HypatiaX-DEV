@@ -1094,6 +1094,34 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
     \${BENCH_ARG} \
     --format png pdf \
     2>&1 | tee '${RESULTS_DIR}'/instability_run.log
+
+  # FIX-INSTABILITY-CSV-RESCUE: run_instability_suite.py has been observed
+  # (CI run 2026-06-26) writing instability_analysis.csv to a CWD-relative
+  # 'figures/' directory (e.g. \${REPO_ROOT}/figures/instability_analysis.csv)
+  # instead of honouring --csv-out's full path, even though the 46 image/pdf
+  # figures from the SAME run land correctly under --out. Net effect: the run
+  # exits 0, figures are present, but \${RESULTS_DIR}/figures/instability_analysis.csv
+  # is missing and the CI 'Verify instability output files exist' step fails.
+  # Rescue: if the canonical CSV is absent but a same-named CSV exists
+  # elsewhere under REPO_ROOT (most recently written one wins), copy it into
+  # place instead of letting the whole step fail on what is otherwise a
+  # successful run. This mirrors the CI-side FIX-G5 safety-net pattern and
+  # the suppB doubled-path fix already applied above in this file.
+  _CANON_CSV='${RESULTS_DIR}/figures/instability_analysis.csv'
+  if [[ ! -s \"\${_CANON_CSV}\" ]]; then
+    echo \"[instability] WARNING: \${_CANON_CSV} missing or empty after run_instability_suite.py exited 0.\"
+    _STRAY_CSV=\$(find '${REPO_ROOT}' -maxdepth 6 -name 'instability_analysis.csv' \
+                   -not -path \"\${_CANON_CSV}\" 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1 || true)
+    if [[ -n \"\${_STRAY_CSV}\" && -s \"\${_STRAY_CSV}\" ]]; then
+      echo \"[instability] Found stray CSV at \${_STRAY_CSV} -- copying into canonical location.\"
+      mkdir -p '${RESULTS_DIR}/figures'
+      cp \"\${_STRAY_CSV}\" \"\${_CANON_CSV}\"
+    else
+      echo '[instability] No stray instability_analysis.csv found anywhere under REPO_ROOT either.'
+      echo '              run_instability_suite.py likely failed internally before writing the CSV'
+      echo '              (e.g. \"Loaded 0 cases\") -- check instability_run.log above for the real cause.'
+    fi
+  fi
 "
 
 

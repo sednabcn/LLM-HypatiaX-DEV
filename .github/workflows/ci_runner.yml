@@ -1697,10 +1697,27 @@ jobs:
           echo "  instability_analysis.csv : ${COUNT_CSV}"
           echo "  Figure files (.png/.pdf) : ${COUNT_FIG}"
           find "${TARGET}" -type f 2>/dev/null | sort || true
+          # FIX-INSTABILITY-CSV-RESCUE (CI-side mirror): run_all.sh's instability
+          # step already attempts to rescue a misplaced instability_analysis.csv
+          # into TARGET, but as a second line of defense (e.g. if run_all.sh was
+          # invoked with an older revision, or the rescue's `find` missed it for
+          # some reason), retry the same rescue here before failing the gate.
+          # See 2026-06-26 CI run 28252247591: run_instability_suite.py exited 0,
+          # wrote all 46 figures correctly under TARGET, but the CSV landed at
+          # github.workspace/figures/instability_analysis.csv instead of TARGET.
           if [[ "${COUNT_CSV}" -eq 0 ]]; then
             echo "=== locating instability_analysis.csv ==="
-            find "${{ github.workspace }}" -name "instability_analysis.csv" 2>/dev/null || true
-            echo "::error::instability produced NO instability_analysis.csv in '${TARGET}'."
+            STRAY_CSV=$(find "${{ github.workspace }}" -name "instability_analysis.csv" 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1 || true)
+            echo "  Stray CSV found: ${STRAY_CSV:-<none>}"
+            if [[ -n "${STRAY_CSV}" && -s "${STRAY_CSV}" ]]; then
+              echo "  Rescuing into canonical location: ${TARGET}/instability_analysis.csv"
+              mkdir -p "${TARGET}"
+              cp "${STRAY_CSV}" "${TARGET}/instability_analysis.csv"
+              COUNT_CSV=1
+            fi
+          fi
+          if [[ "${COUNT_CSV}" -eq 0 ]]; then
+            echo "::error::instability produced NO instability_analysis.csv in '${TARGET}' (and no stray copy found anywhere in the workspace)."
             exit 1
           fi
           # FIX-INSTABILITY-ZEROROWS: the file existing is not sufficient — a
