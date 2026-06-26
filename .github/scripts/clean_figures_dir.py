@@ -1,43 +1,57 @@
 #!/usr/bin/env python3
 """
-clean_figures_dir.py
-=====================
-One-time cleanup for a local figures/ (or tables/) directory that has
-accumulated repeated "<dir>__" prefixes from merging multiple CI artifact
-downloads on top of each other, e.g.:
+clean_figures_dir.py — strip figures__* / Figures__* duplicate-prefix files
+from a figures/ directory, leaving only the canonical bare-stem originals.
 
-    figures__figures__figures__fig09_r2_heatmap_regimes.png
-    Figures__fig09_r2_heatmap_regimes.png
-    fig09_r2_heatmap_regimes.png
+BACKGROUND
+----------
+The figures__figures__fig09_... duplication pattern is caused by local manual
+merging of downloaded CI artifact zips.  When two artifact zips (each
+containing a figures/ subfolder) are merged into one directory without
+deduplication, the zip-extraction library prefixes the source folder name:
 
-All three are really the same file under different mangled names. This
-script:
+    figures/fig09_r2_heatmap_regimes.png          ← original (canonical)
+    figures__fig09_r2_heatmap_regimes.png          ← 1st re-zip round-trip
+    figures__figures__fig09_r2_heatmap_regimes.png ← 2nd re-zip round-trip
+    Figures__fig09_r2_heatmap_regimes.png          ← case variant
 
-  1. Strips any number of leading literal "figures_" or "figures__"
-     prefixes (case-insensitive, so "figures_", "figures__", "Figures_",
-     "Figures__" all count — but ONLY that exact word "figures"; "fig_",
-     "hypatiax_", "backup__", etc. are left untouched since they are part
-     of real canonical filenames, not a duplication artifact) to recover
-     the canonical basename.
-  2. Groups files by canonical basename.
-  3. Within each group, compares file content via SHA-256:
-       - If all copies are byte-identical: keep exactly one (the file with
-         the fewest stripped prefixes — i.e. the cleanest name already on
-         disk), rename it to the canonical basename if needed, and move
-         the rest to a quarantine folder (never deletes outright).
-       - If copies differ in content: nothing is auto-resolved. All
-         variants are listed under "CONFLICTS" for manual review — the
-         script does not guess which one is "correct".
-  4. Default mode is --dry-run (prints the plan only). Pass --apply to
-     actually move/rename files on disk.
+This script groups every file that shares the same canonical stem (the name
+with all leading `figures__` / `Figures__` / `figures__figures__` etc. prefixes
+stripped) and resolves the group:
 
-Usage
+    IDENTICAL CONTENT  → keep the bare-stem canonical file, move all
+                         prefix-mangled duplicates into _duplicates_removed/
+                         inside the same directory (quarantine, not delete).
+    CONFLICTING CONTENT→ leave ALL files untouched and print a [CONFLICT] line
+                         so the caller (ci_postprocess.yml step A17) can emit a
+                         ::warning:: for manual review.  The script NEVER
+                         auto-resolves genuine content conflicts.
+    ONLY MANGLED FILES → if no bare-stem file exists but all mangled copies are
+                         identical, rename the first one to the canonical name
+                         and quarantine the rest.
+
+OUTPUT FORMAT (stdout, one line per action)
+-------------------------------------------
+[DRY-RUN] <dir>/<file>  →  would quarantine
+[QUARANTINE] <dir>/<file>  →  moved to _duplicates_removed/
+[RENAME] <dir>/<mangled>  →  <dir>/<canonical>
+[CONFLICT] <canonical_stem>: <n> files with differing content — left untouched
+[OK] <canonical_stem>: only canonical file present, nothing to do
+[SKIP] <dir>: not a directory or empty
+
+The caller checks for `^[CONFLICT]` to decide whether to emit a warning.
+
+USAGE
 -----
-    python clean_figures_dir.py /path/to/figures            # dry-run
-    python clean_figures_dir.py /path/to/figures --apply     # do it
-    python clean_figures_dir.py /path/to/figures --apply --delete-duplicates
-        # instead of quarantining duplicates, delete them outright
-        # (only use after reviewing a dry-run / quarantine pass first)
+    python3 clean_figures_dir.py <directory> [--apply]
+
+    Without --apply: dry-run only (no files moved/renamed).
+    With    --apply: perform moves/renames.
+
+EXIT CODES
+----------
+    0  — completed (even if conflicts were found; caller inspects stdout)
+    1  — unhandled exception
 """
 
 from __future__ import annotations
@@ -47,170 +61,160 @@ import hashlib
 import re
 import shutil
 import sys
-from collections import defaultdict
 from pathlib import Path
 
-# Matches a literal "figures" mangling prefix, either the double-underscore
-# directory-flatten artifact ("figures__") or a single-underscore variant
-# ("figures_") seen from a different merge/join step. Requires the FULL word
-# "figures" (7 letters) before the underscore(s), so this can never match
-# "fig_" or "hypatiax_" — those are 4 and 9 characters respectively and do
-# not start with "figures".
-PREFIX_RE = re.compile(r'^figures_{1,2}', re.IGNORECASE)
+# Prefix patterns to strip (case-insensitive match at start of filename)
+# Strip any sequence of "figures__" / "Figures__" prefixes plus REPO_AUDIT noise.
+_PREFIX_RE = re.compile(r'^(?:[Ff]igures__)+', re.IGNORECASE)
+
+# File extensions considered "figure" files (others are ignored by this script)
+_FIG_EXTS = {'.pdf', '.png', '.jpg', '.jpeg', '.eps', '.svg'}
+
+# Also treat REPO_AUDIT / PROD__REPO_AUDIT files as noise to quarantine
+_AUDIT_RE = re.compile(r'^(?:PROD__)?REPO_AUDIT', re.IGNORECASE)
 
 
-def canonical_name(filename: str) -> tuple[str, int]:
-    """
-    Strip repeated '<word>__' prefixes off a filename.
-    Returns (canonical_basename, num_prefixes_stripped).
-    """
-    name = filename
-    count = 0
-    while True:
-        m = PREFIX_RE.match(name)
-        if not m:
-            break
-        name = name[m.end():]
-        count += 1
-    return name, count
-
-
-def sha256_of(path: Path) -> str:
+def _sha256(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
+    with path.open('rb') as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b''):
             h.update(chunk)
     return h.hexdigest()
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("directory", help="Path to the mangled figures/ (or tables/) directory")
-    p.add_argument("--apply", action="store_true",
-                    help="Actually move/rename files. Without this, only prints the plan.")
-    p.add_argument("--delete-duplicates", action="store_true",
-                    help="Delete duplicate copies instead of quarantining them "
-                         "(requires --apply; use only after reviewing a dry-run first).")
-    p.add_argument("--quarantine-dir", default="_duplicates_removed",
-                    help="Subfolder (relative to directory) where duplicates are "
-                         "moved instead of deleted. Default: _duplicates_removed")
-    args = p.parse_args()
+def _canonical_stem(name: str) -> str:
+    """Strip all leading figures__/Figures__ prefixes from a filename."""
+    return _PREFIX_RE.sub('', name)
 
-    target = Path(args.directory).resolve()
-    if not target.is_dir():
-        print(f"ERROR: {target} is not a directory", file=sys.stderr)
-        return 1
 
-    quarantine = target / args.quarantine_dir
+def clean_directory(directory: Path, apply: bool) -> int:
+    """
+    Process one directory.  Returns number of unresolved conflicts.
+    """
+    if not directory.is_dir():
+        print(f'[SKIP] {directory}: not a directory or does not exist')
+        return 0
 
-    # Only look at files directly inside target (matches the flat layout
-    # shown in the original listing). Skip the quarantine dir itself if
-    # this script is re-run.
-    files = [f for f in target.iterdir()
-             if f.is_file() and f.parent.name != args.quarantine_dir]
+    files = [
+        f for f in directory.iterdir()
+        if f.is_file() and f.suffix.lower() in _FIG_EXTS
+    ]
+    if not files:
+        print(f'[SKIP] {directory}: no figure files found')
+        return 0
 
-    groups: dict[str, list[Path]] = defaultdict(list)
-    for f in files:
-        canon, _ = canonical_name(f.name)
-        groups[canon].append(f)
-
-    n_clean = 0
-    n_dupe_groups = 0
-    n_dupes_resolved = 0
+    quarantine_dir = directory / '_duplicates_removed'
     n_conflicts = 0
-    actions: list[tuple[str, Path, Path | None]] = []  # (kind, src, dest)
 
-    for canon, paths in sorted(groups.items()):
-        if len(paths) == 1:
-            f = paths[0]
-            if f.name != canon:
-                # Single file but still has a stray prefix — just rename it.
-                actions.append(("rename", f, target / canon))
-            else:
-                n_clean += 1
+    # ── Group files by canonical stem (stem without extension) ───────────────
+    # Key: (canonical_stem_no_ext, ext_lower)
+    # e.g. "fig09_r2_heatmap_regimes", ".png"
+    groups: dict[tuple[str, str], list[Path]] = {}
+    audit_files: list[Path] = []
+
+    for f in files:
+        canonical_name = _canonical_stem(f.name)
+        # Audit files — quarantine unconditionally
+        if _AUDIT_RE.match(canonical_name):
+            audit_files.append(f)
+            continue
+        # Only process files that ARE prefix-mangled OR are the bare canonical
+        canonical_stem_no_ext = Path(canonical_name).stem
+        ext = f.suffix.lower()
+        key = (canonical_stem_no_ext, ext)
+        groups.setdefault(key, []).append(f)
+
+    # ── Quarantine audit noise ────────────────────────────────────────────────
+    for f in audit_files:
+        _quarantine(f, quarantine_dir, apply)
+
+    # ── Resolve each group ────────────────────────────────────────────────────
+    for (stem, ext), group in sorted(groups.items()):
+        canonical_name = stem + ext
+        canonical_path = directory / canonical_name
+
+        # Partition: canonical vs mangled
+        canonical_files = [f for f in group if f.name == canonical_name]
+        mangled_files   = [f for f in group if f.name != canonical_name]
+
+        if not mangled_files:
+            # Nothing to do — only the bare-stem file present
+            print(f'[OK] {stem}{ext}: only canonical file present, nothing to do')
             continue
 
-        # Multiple files map to the same canonical name — check content.
-        hashes = {f: sha256_of(f) for f in paths}
-        distinct_hashes = set(hashes.values())
+        # ── Hash everything in the group ─────────────────────────────────────
+        try:
+            hashes = {f: _sha256(f) for f in group}
+        except OSError as exc:
+            print(f'[ERROR] could not hash files for {stem}{ext}: {exc}', file=sys.stderr)
+            continue
 
-        if len(distinct_hashes) == 1:
-            # All identical content — keep the one with fewest stripped
-            # prefixes (cleanest existing name), quarantine the rest.
-            paths_sorted = sorted(paths, key=lambda f: canonical_name(f.name)[1])
-            keeper = paths_sorted[0]
-            losers = paths_sorted[1:]
+        unique_hashes = set(hashes.values())
 
-            if keeper.name != canon:
-                actions.append(("rename", keeper, target / canon))
-            for loser in losers:
-                actions.append(("quarantine", loser, quarantine / loser.name))
-
-            n_dupe_groups += 1
-            n_dupes_resolved += len(losers)
-        else:
-            # Content differs — do not guess, flag for manual review.
+        if len(unique_hashes) > 1:
+            # CONFLICT — differing content; leave untouched
+            print(
+                f'[CONFLICT] {stem}{ext}: {len(group)} file(s) with differing '
+                f'content — left untouched, needs manual review'
+            )
+            for f in sorted(group, key=lambda p: p.name):
+                print(f'           {f.name}  sha256={hashes[f][:12]}')
             n_conflicts += 1
-            print(f"\n[CONFLICT] '{canon}' has {len(distinct_hashes)} different "
-                  f"content variants — not auto-resolved:")
-            for f in paths:
-                size = f.stat().st_size
-                print(f"    {f.name}  ({size:,} bytes, sha256={hashes[f][:12]}…)")
+            continue
 
-    # ── Report plan ─────────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print(f"clean_figures_dir.py — {'APPLY' if args.apply else 'DRY-RUN'}")
-    print("=" * 70)
-    print(f"Directory scanned   : {target}")
-    print(f"Total files found   : {len(files)}")
-    print(f"Already clean       : {n_clean}")
-    print(f"Duplicate groups    : {n_dupe_groups}  ({n_dupes_resolved} duplicate file(s) to remove)")
-    print(f"Conflicting groups  : {n_conflicts}  (left untouched — see above)")
-    print(f"Rename-only actions : {sum(1 for k, _, _ in actions if k == 'rename')}")
-    print()
+        # All files in the group have identical content.
+        if canonical_files:
+            # Canonical already exists — quarantine all mangled copies
+            for f in sorted(mangled_files, key=lambda p: p.name):
+                _quarantine(f, quarantine_dir, apply)
+        else:
+            # No canonical file — rename first mangled → canonical, quarantine rest
+            first = sorted(mangled_files, key=lambda p: p.name)[0]
+            rest  = sorted(mangled_files, key=lambda p: p.name)[1:]
+            _rename_to_canonical(first, canonical_path, apply)
+            for f in rest:
+                _quarantine(f, quarantine_dir, apply)
 
-    if not actions:
-        print("Nothing to do.")
-        return 0
-
-    if not args.apply:
-        print("Planned actions (re-run with --apply to execute):")
-        for kind, src, dest in actions:
-            arrow = "→ rename to" if kind == "rename" else "→ quarantine to"
-            print(f"  [{kind:10}] {src.name}  {arrow}  {dest}")
-        return 0
-
-    # ── Apply ───────────────────────────────────────────────────────────────
-    if any(k == "quarantine" for k, _, _ in actions) and not args.delete_duplicates:
-        quarantine.mkdir(exist_ok=True)
-
-    for kind, src, dest in actions:
-        if kind == "rename":
-            if dest.exists():
-                print(f"  [SKIP] rename target already exists: {dest}")
-                continue
-            src.rename(dest)
-            print(f"  [RENAMED] {src.name} → {dest.name}")
-        elif kind == "quarantine":
-            if args.delete_duplicates:
-                src.unlink()
-                print(f"  [DELETED] {src.name}")
-            else:
-                dest_final = dest
-                i = 1
-                while dest_final.exists():
-                    dest_final = dest.with_name(f"{dest.stem}.dup{i}{dest.suffix}")
-                    i += 1
-                shutil.move(str(src), str(dest_final))
-                print(f"  [QUARANTINED] {src.name} → {args.quarantine_dir}/{dest_final.name}")
-
-    print("\nDone.")
-    if not args.delete_duplicates and any(k == "quarantine" for k, _, _ in actions):
-        print(f"Duplicates moved to: {quarantine}")
-        print("Review and delete that folder once you've confirmed nothing was lost.")
-    return 0
+    return n_conflicts
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def _quarantine(src: Path, quarantine_dir: Path, apply: bool) -> None:
+    tag = '[QUARANTINE]' if apply else '[DRY-RUN]'
+    dest = quarantine_dir / src.name
+    print(f'{tag} {src.name}  →  {quarantine_dir.name}/{src.name}')
+    if apply:
+        quarantine_dir.mkdir(exist_ok=True)
+        shutil.move(str(src), str(dest))
+
+
+def _rename_to_canonical(src: Path, dest: Path, apply: bool) -> None:
+    tag = '[RENAME]' if apply else '[DRY-RUN RENAME]'
+    print(f'{tag} {src.name}  →  {dest.name}')
+    if apply:
+        src.rename(dest)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Strip figures__* prefix duplicates from a figures/ directory.'
+    )
+    parser.add_argument('directory', help='Path to the figures directory to clean')
+    parser.add_argument(
+        '--apply',
+        action='store_true',
+        default=False,
+        help='Actually move/rename files (default: dry-run)',
+    )
+    args = parser.parse_args()
+
+    directory = Path(args.directory).resolve()
+    n_conflicts = clean_directory(directory, apply=args.apply)
+
+    if n_conflicts:
+        # Exit 0 so the caller's `|| true` doesn't mask the conflict output,
+        # but the [CONFLICT] lines in stdout are what the caller grep-checks.
+        sys.exit(0)
+
+
+if __name__ == '__main__':
+    main()
