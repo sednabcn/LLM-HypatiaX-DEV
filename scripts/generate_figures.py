@@ -124,9 +124,23 @@ _parser.add_argument(
 _ARGS, _unknown = _parser.parse_known_args()
 
 # Resolve results_dir and figures_dir to absolute paths.
-_RESULTS_DIR = os.path.abspath(_ARGS.results_dir) if _ARGS.results_dir else os.getcwd()
+# Collapse any doubled trailing directory segment (e.g. noise-sweep/noise-sweep
+# → noise-sweep) that can arise when a caller double-encodes the subdir suffix.
+def _dedup_trailing(path):
+    """If the last two path components are identical, drop the final one."""
+    head, tail = os.path.split(path)
+    parent_tail = os.path.basename(head)
+    if tail and tail == parent_tail:
+        return head
+    return path
+
+_RESULTS_DIR = _dedup_trailing(
+    os.path.abspath(_ARGS.results_dir) if _ARGS.results_dir else os.getcwd()
+)
 _EXPERIMENT  = _ARGS.experiment  # may be None (legacy invocation)
-_FIGURES_DIR = (
+# For _FIGURES_DIR, also collapse a doubled "figures/figures" that would arise
+# when --results-dir already ends in "figures" and we append "figures" below.
+_FIGURES_DIR = _dedup_trailing(
     os.path.abspath(_ARGS.figures_dir) if _ARGS.figures_dir
     else os.path.join(_RESULTS_DIR, "figures")
 )
@@ -2384,7 +2398,7 @@ if _noise_rows or _sample_rows:
 # ── Final summary ─────────────────────────────────────────────────────────────
 all_figs = sorted(glob.glob(os.path.join(_FIGURES_DIR, "*.png")))
 print(f"\n{'='*60}")
-print(f"Generated {len(all_figs)} figures in ./figures/")
+print(f"Generated {len(all_figs)} figures in {_FIGURES_DIR}/")
 print(f"{'='*60}")
 for f in all_figs:
     print(f"  {os.path.basename(f)}")
