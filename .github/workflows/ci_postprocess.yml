@@ -321,17 +321,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # FIX FIGS-DEPLOY-SUBDIR: figures_deploy maps SUB="figures" (see the
-          # MAPPING dict in "Resolve result_subdir"), which is correct for the
-          # purge/guard steps that treat SUB as a label, but WRONG here — it
-          # makes FIGS resolve to "${OUT_BASE}/figures/figures", a doubled path
-          # that never exists, so every figures_deploy snapshot (before AND
-          # after, in the matching "Post-run overwrite summary" step) silently
-          # finds nothing and reports all-zero counts even when A17 actually
+          # FIX FIGS-DEPLOY-SUBDIR: figures_deploy AND instability both map
+          # SUB="figures" (see the MAPPING dict in "Resolve result_subdir"),
+          # which is correct for the purge/guard steps that treat SUB as a
+          # label, but WRONG here — it makes FIGS resolve to
+          # "${OUT_BASE}/figures/figures", a doubled path that never exists,
+          # so every figures_deploy/instability snapshot (before AND after, in
+          # the matching "Post-run overwrite summary" step) silently finds
+          # nothing and reports all-zero counts even when the run actually
           # wrote/overwrote dozens of files in "${OUT_BASE}/figures". This
           # branch must stay in sync with the identical branch in "Post-run
           # overwrite summary" below, or the before/after comparison breaks.
-          if [[ "${EXPERIMENT}" == "figures_deploy" ]]; then
+          if [[ "${EXPERIMENT}" == "figures_deploy" || "${EXPERIMENT}" == "instability" ]]; then
             FIGS="${OUT_BASE}/figures"
           else
             FIGS="${OUT_BASE}/${SUB}/figures"
@@ -401,90 +402,30 @@ jobs:
           done
 
       # ── 5. Pre-create output directories ────────────────────────────────────
+      # FIX FIGS-DEPLOY-SUBDIR (instability variant): instability and
+      # figures_deploy both map result_subdir="figures" (see MAPPING in
+      # "Resolve result_subdir"). For every OTHER experiment, figures/tables
+      # live in a subfolder nested under the experiment's own result dir
+      # ("${SUB}/figures"). For these two, "figures" IS the result dir itself
+      # — generate_figures.py writes straight into "${OUT_BASE}/figures/",
+      # not into a nested "${OUT_BASE}/figures/figures/". Pre-creating that
+      # nested path here used to leave a permanently-empty
+      # hypatiax/data/results/figures/figures/ directory on disk every run,
+      # which is what made the later Commit step's stage_if_nonempty warn
+      # "directory empty or missing — skipping git add" — there was never
+      # any content to stage there in the first place.
       - name: Create output directories
         env:
           SUB: ${{ steps.meta.outputs.result_subdir }}
+          EXPERIMENT: ${{ env.EFFECTIVE_EXPERIMENT }}
         shell: bash
         run: |
-          mkdir -p \
-            "${OUT_BASE}/${SUB}/figures" \
-            "${OUT_BASE}/${SUB}/tables"
-
-      # ── 5c. Repo-wide figures__ prefix cleanup ──────────────────────────────
-      # Removes every file whose name starts with "figures__" or "Figures__"
-      # (single-prefix AND double-prefix layers) from every figures/ dir in the
-      # repo, plus REPO_AUDIT / PROD__REPO_AUDIT PDFs that leaked in.
-      # Runs before ANY figure-generation step so the source dirs are clean.
-      # Uses clean_figures_dir.py (mode: --apply) on each known figures/ dir,
-      # then falls back to a raw find+rm sweep for any stragglers the script
-      # did not reach (e.g. unrecognised extension, deeply-nested paths).
-      - name: "Cleanup: remove figures__* double-prefix files repo-wide"
-        if: |
-          env.EFFECTIVE_EXPERIMENT != 'SKIP' &&
-          env.EFFECTIVE_EXPERIMENT != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== figures__ prefix cleanup (all figures/ dirs) ==="
-
-          # 1. Run clean_figures_dir.py --apply on every known figures/ dir
-          FIGURE_DIRS=(
-            "${OUT_BASE}/figures"
-            "${OUT_BASE}/${EXP1_SUBDIR}/figures"
-            "${OUT_BASE}/${SUPPB_SUBDIR}/figures"
-            "${OUT_BASE}/${SUPPB_SC_SUBDIR}/figures"
-            "${OUT_BASE}/ablation/exp1_ablation/figures"
-            "${OUT_BASE}/comparison_results/extrapolation/figures"
-            "${OUT_BASE}/comparison_results/feynman-tests/exp2/figures"
-            "${OUT_BASE}/comparison_results/feynman-tests/exp2_extrap/figures"
-            "${OUT_BASE}/comparison_results/feynman-tests/exp2_pca_4060/figures"
-            "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi/figures"
-            "${OUT_BASE}/extrapolation/figures"
-            "${OUT_BASE}/extrapolation/multi_seed/figures"
-            "${OUT_BASE}/hybrid_pysr/defi/figures"
-            "${OUT_BASE}/hybrid_llm_nn/all_domains/figures"
-          )
-          n_conflicts=0
-          for D in "${FIGURE_DIRS[@]}"; do
-            [[ -d "$D" ]] || continue
-            LOG="$(python3 .github/scripts/clean_figures_dir.py "$D" --apply 2>&1)" || true
-            echo "$LOG"
-            if grep -q '^\[CONFLICT\]' <<< "$LOG"; then
-              echo "::warning::Conflicting-content duplicates in ${D} — left untouched, review manually."
-              (( n_conflicts++ )) || true
-            fi
-          done
-
-          # 2. Belt-and-suspenders: raw find sweep catches any dirs the list
-          #    above missed (e.g. new experiment subdirs, partial checkouts).
-          echo ""
-          echo "--- Raw sweep: find figures__* / Figures__* anywhere under ${OUT_BASE} ---"
-          TOTAL=0
-          while IFS= read -r -d '' f; do
-            echo "  [REMOVE] $f"
-            git rm -f --cached "$f" 2>/dev/null || true
-            rm -f "$f"
-            (( TOTAL++ )) || true
-          done < <(find "${OUT_BASE}" \
-            \( -name "figures__*" -o -name "Figures__*" \) \
-            -type f -print0 2>/dev/null)
-
-          # 3. Also purge REPO_AUDIT leakage from figures/ dirs
-          while IFS= read -r -d '' f; do
-            case "$(basename "$f")" in
-              REPO_AUDIT*|PROD__REPO_AUDIT*)
-                echo "  [REMOVE audit] $f"
-                git rm -f --cached "$f" 2>/dev/null || true
-                rm -f "$f"
-                (( TOTAL++ )) || true
-                ;;
-            esac
-          done < <(find "${OUT_BASE}" -path "*/figures/*" -type f -print0 2>/dev/null)
-
-          echo ""
-          echo "Sweep removed ${TOTAL} stray file(s). Conflicts unresolved: ${n_conflicts}."
-          [[ $n_conflicts -eq 0 ]] || echo "::warning::${n_conflicts} dir(s) had conflicting-content duplicates — see warnings above."
+          if [[ "${EXPERIMENT}" == "figures_deploy" || "${EXPERIMENT}" == "instability" ]]; then
+            mkdir -p "${OUT_BASE}/figures"
+          else
+            mkdir -p "${OUT_BASE}/${SUB}/figures"
+          fi
+          mkdir -p "${OUT_BASE}/${SUB}/tables"
 
       # ── 5b. Purge contamination from canonical dirs ──────────────────────────
       # Each experiment's figures/ and tables/ dirs may contain files committed
@@ -872,10 +813,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # FIX FIGS-DEPLOY-SUBDIR: SUB="figures" for instability (see MAPPING
+          # in "Resolve result_subdir") — "${SUB}/figures" would double to
+          # "${OUT_BASE}/figures/figures", which is not where this experiment's
+          # figures actually belong. instability's figures live directly in
+          # "${OUT_BASE}/${SUB}" (i.e. "${OUT_BASE}/figures"), matching the
+          # generator's actual write location confirmed in CI logs ("Generated
+          # N figures in .../hypatiax/data/results/figures/").
           python scripts/generate_figures.py \
             --experiment  instability \
             --results-dir "${OUT_BASE}/${SUB}" \
-            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --figures-dir "${OUT_BASE}/${SUB}" \
             --source      auto \
             || echo "::warning::instability figure generation failed — instability — variance JSON may be absent. Run ci_runner.yml for instability first."
 
@@ -1861,12 +1809,12 @@ jobs:
           set -euo pipefail
           # FIX FIGS-DEPLOY-SUBDIR: must mirror the identical branch in
           # "Overwrite audit (pre-run snapshot)" above — see the comment there
-          # for why figures_deploy needs "${OUT_BASE}/figures" rather than the
-          # doubled "${OUT_BASE}/${SUB}/figures" (SUB="figures" for this
-          # experiment). If these two branches ever diverge, before/after will
+          # for why figures_deploy AND instability need "${OUT_BASE}/figures"
+          # rather than the doubled "${OUT_BASE}/${SUB}/figures" (SUB="figures"
+          # for both). If these two branches ever diverge, before/after will
           # be comparing two different directories and the summary table will
           # be wrong again even though neither side is individually "empty".
-          if [[ "${EXPERIMENT}" == "figures_deploy" ]]; then
+          if [[ "${EXPERIMENT}" == "figures_deploy" || "${EXPERIMENT}" == "instability" ]]; then
             FIGS="${OUT_BASE}/figures"
           else
             FIGS="${OUT_BASE}/${SUB}/figures"
@@ -2006,12 +1954,18 @@ jobs:
           git pull --rebase --autostash origin "${{ github.ref_name }}"
 
           # FIX FIGS-DEPLOY-SUBDIR: same doubled-path issue as the two snapshot
-          # steps above — SUB="figures" for figures_deploy makes the default
-          # branch resolve to "${OUT_BASE}/figures/figures" (nonexistent).
-          # Functionally harmless here (stage_if_nonempty just warns-and-skips,
-          # and the dedicated figures_deploy block below stages the real path),
-          # but fixed for consistency and to avoid a spurious ::warning::.
-          if [[ "${EXPERIMENT}" == "figures_deploy" ]]; then
+          # steps above — SUB="figures" for figures_deploy AND instability
+          # makes the default branch resolve to "${OUT_BASE}/figures/figures"
+          # (nonexistent, and even pre-created empty by "Create output
+          # directories" until that step's own fix above). For figures_deploy
+          # this was merely cosmetic (the dedicated figures_deploy block below
+          # stages the real path), but for instability there is no such
+          # dedicated block — leaving this unfixed meant instability's own
+          # figures (generated straight into "${OUT_BASE}/figures") were never
+          # staged by this step at all, only ever picked up later by a
+          # subsequent figures_deploy run. Including instability here ensures
+          # its own run commits its own figures.
+          if [[ "${EXPERIMENT}" == "figures_deploy" || "${EXPERIMENT}" == "instability" ]]; then
             FIGS="${OUT_BASE}/figures"
           else
             FIGS="${OUT_BASE}/${SUB}/figures"
