@@ -1936,6 +1936,67 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
+# Shared method-key map for sweep-shape extraction (Shape S / Shape N below).
+# Maps the long-form method names emitted by merge_shards.py to the canonical
+# short keys expected by analyse(). Mirrors the mapping inside
+# _load_records_from_json's Shape-P fallback — keep all three in sync if
+# merge_shards.py's naming changes.
+_SWEEP_METHOD_KEY_MAP: dict[str, str] = {
+    "PureLLM Baseline":                "pure_llm",
+    "PureLLM Baseline (core)":         "pure_llm",
+    "ImprovedNN":                      "neural_network",
+    "ImprovedNN (core)":               "neural_network",
+    "EnhancedHybridSystemDeFi":        "hybrid",
+    "EnhancedHybridSystemDeFi (core)": "hybrid",
+    "pure_llm":                        "pure_llm",
+    "neural_network":                  "neural_network",
+    "hybrid":                          "hybrid",
+}
+
+
+def _records_from_sweep_dict(
+    sweep: dict, sweep_key_label: str
+) -> list[dict]:
+    """
+    Shared extraction for merge_shards.py sweep shapes that nest
+    {sweep_point: {"method_summary": {...}, "per_equation": {eq: {method: {...}}}}}.
+
+    Used by both Shape S (per_noise, keyed by noise_level) and Shape N
+    (per_n, keyed by sample_size). One record per (sweep_point, equation)
+    pair; "results" built from per_equation with method names canonicalised
+    via _SWEEP_METHOD_KEY_MAP where possible. method_summary stats are
+    hoisted onto each record under "_method_summary" for provenance only.
+
+    sweep_key_label is the record field name to store the sweep point under
+    (e.g. "noise_level" or "sample_size").
+    """
+    records: list[dict] = []
+    for point, point_val in sweep.items():
+        if not isinstance(point_val, dict):
+            continue
+        method_summary = point_val.get("method_summary", {}) or {}
+        per_equation = point_val.get("per_equation", {}) or {}
+        for eq, eq_methods in per_equation.items():
+            if not isinstance(eq_methods, dict):
+                continue
+            results: dict = {}
+            for raw_method, mval in eq_methods.items():
+                if not isinstance(mval, dict):
+                    continue
+                canonical = _SWEEP_METHOD_KEY_MAP.get(raw_method, raw_method)
+                results[canonical] = mval
+            records.append({
+                "equation_id":               eq,
+                sweep_key_label:             point,
+                "difficulty":                None,
+                "formula_type":              None,
+                "extrapolation_intractable": False,
+                "results":                   results,
+                "_method_summary":           method_summary,
+            })
+    return records
+
+
 def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
     """
     Load records from a single JSON file using the same shape-detection logic
@@ -1957,12 +2018,19 @@ def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
                  (merge_shards.py's own log calls this "Shape S sweep file").
                  One record per (noise_level, equation), with a "results"
                  dict keyed by canonical method name where the raw long-form
-                 method name maps via _METHOD_KEY_MAP; unmapped methods are
-                 kept under their raw name so WARN_NO_METHOD_RECORDS / report
-                 sections can still see them, but are excluded from the
-                 canonical pure_llm/neural_network/hybrid comparisons.
+                 method name maps via _SWEEP_METHOD_KEY_MAP; unmapped methods
+                 are kept under their raw name so WARN_NO_METHOD_RECORDS /
+                 report sections can still see them, but are excluded from
+                 the canonical pure_llm/neural_network/hybrid comparisons.
                  method_summary stats are hoisted onto every record as
                  "_method_summary" for provenance (not consumed by analyse()).
+      Shape N  {"sample_sizes":[...], "methods":[...],
+                "per_n": {n: {"method_summary": {...},
+                               "per_equation": {eq: {method: {...}}}}}}
+               — suppB_sc sample-complexity-sweep _merged.json from
+                 merge_shards.py. Same structure and extraction as Shape S,
+                 keyed by sample_size instead of noise_level (one record per
+                 (sample_size, equation) pair). See _records_from_sweep_dict().
     """
     with open(json_path, encoding="utf-8") as f:
         raw = json.load(f)
@@ -2068,53 +2136,28 @@ def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
     # was the root cause of TOO_FEW_RECORDS firing on a 900-record sweep file
     # (Shape B reported 1 record: "per_noise" itself, treated as one task).
     #
-    # The meaningful unit is one (noise_level x equation) pair. Each pair's
-    # "results" dict is built from per_noise[nl]["per_equation"][eq], with
-    # method names mapped to canonical pure_llm/neural_network/hybrid keys
-    # where possible (mirrors _METHOD_KEY_MAP above); unmapped long-form
-    # method names (e.g. multi-method/tool variants) are kept under their
-    # raw name so report sections can still surface them, but they fall
-    # outside the canonical METHODS comparisons used by analyse().
-    # method_summary aggregate stats are hoisted onto each record under
-    # "_method_summary" for provenance only — analyse() does not read it.
+    # The meaningful unit is one (noise_level x equation) pair. See
+    # _records_from_sweep_dict() for the shared extraction logic (also used
+    # by Shape N below for the suppB_sc sample-complexity sweep).
     if isinstance(raw, dict) and isinstance(raw.get("per_noise"), dict) and raw["per_noise"]:
-        _SWEEP_METHOD_KEY_MAP: dict[str, str] = {
-            "PureLLM Baseline":                "pure_llm",
-            "PureLLM Baseline (core)":         "pure_llm",
-            "ImprovedNN":                      "neural_network",
-            "ImprovedNN (core)":               "neural_network",
-            "EnhancedHybridSystemDeFi":        "hybrid",
-            "EnhancedHybridSystemDeFi (core)": "hybrid",
-            "pure_llm":                        "pure_llm",
-            "neural_network":                  "neural_network",
-            "hybrid":                          "hybrid",
-        }
-        records = []
-        for nl, nl_val in raw["per_noise"].items():
-            if not isinstance(nl_val, dict):
-                continue
-            method_summary = nl_val.get("method_summary", {}) or {}
-            per_equation = nl_val.get("per_equation", {}) or {}
-            for eq, eq_methods in per_equation.items():
-                if not isinstance(eq_methods, dict):
-                    continue
-                results: dict = {}
-                for raw_method, mval in eq_methods.items():
-                    if not isinstance(mval, dict):
-                        continue
-                    canonical = _SWEEP_METHOD_KEY_MAP.get(raw_method, raw_method)
-                    results[canonical] = mval
-                records.append({
-                    "equation_id":               eq,
-                    "noise_level":               nl,
-                    "difficulty":                None,
-                    "formula_type":              None,
-                    "extrapolation_intractable": False,
-                    "results":                   results,
-                    "_method_summary":           method_summary,
-                })
+        records = _records_from_sweep_dict(raw["per_noise"], "noise_level")
         print(f"  Shape S (noise-sweep _merged.json from merge_shards.py): "
               f"{len(records)} records across {len(raw['per_noise'])} noise level(s).")
+        return records
+
+    # Shape N — suppB_sc sample-complexity-sweep _merged.json from
+    # merge_shards.py. Detected by a non-empty "per_n" dict at top level
+    # (same guard used by validate_analysis_input.py's
+    # "sample_complexity_per_n" Tier-2 extractor). Same root-cause fix as
+    # Shape S above: "per_n" is itself a dict and was previously swallowed
+    # whole as a single Shape-B "record", firing TOO_FEW_RECORDS on a
+    # 1080-record sweep file.
+    #
+    # The meaningful unit is one (sample_size x equation) pair.
+    if isinstance(raw, dict) and isinstance(raw.get("per_n"), dict) and raw["per_n"]:
+        records = _records_from_sweep_dict(raw["per_n"], "sample_size")
+        print(f"  Shape N (sample-complexity-sweep _merged.json from merge_shards.py): "
+              f"{len(records)} records across {len(raw['per_n'])} sample size(s).")
         return records
 
     if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
