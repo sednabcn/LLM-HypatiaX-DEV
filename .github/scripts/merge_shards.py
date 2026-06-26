@@ -445,6 +445,11 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
             logger.warning(f"SWEEP MERGE: could not read {path}: {e}")
             continue
         if not is_sweep_file(raw, experiment):
+            logger.info(
+                f"SWEEP MERGE: SKIP {path} — not a Shape S sweep file for "
+                f"{experiment!r} (missing '{list_key}' list and/or "
+                f"'{dict_key}' dict at top level)."
+            )
             continue
 
         mode = raw.get("mode", mode)
@@ -456,6 +461,26 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
                 continue
             ms = point_val.get("method_summary", {})
             point_methods = set(ms.keys()) if isinstance(ms, dict) else set()
+            pe = point_val.get("per_equation", {})
+            n_pe = len(pe) if isinstance(pe, dict) else 0
+            # FIX-EMPTY-SWEEP-POINT-DIAGNOSTIC: a shard can legitimately be a
+            # Shape S file (passes is_sweep_file) while its point body carries
+            # NO usable data — e.g. the underlying benchmark run timed out /
+            # crashed for every equation at this sweep point, leaving
+            # method_summary={} and per_equation={}. Previously this was
+            # silently accepted as a valid sweep point (n_points >= 1), so
+            # merge_shards.py reported success while writing a _merged.json
+            # with zero actual records — the emptiness only surfaced several
+            # steps later as an opaque "FATAL: EMPTY DATASET" with no pointer
+            # back to which shard/point caused it. Log it loudly here, at the
+            # only point in the pipeline that still has the source file path.
+            if not point_methods and n_pe == 0:
+                logger.warning(
+                    f"SWEEP MERGE: {path} :: point {point_key!r} has EMPTY "
+                    f"method_summary AND per_equation — this shard point "
+                    f"contributes ZERO records. Check whether the upstream "
+                    f"benchmark run for this point completed successfully."
+                )
 
             if point_key in merged_points:
                 existing_methods = per_point_methods.get(point_key, set())
@@ -488,6 +513,32 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
                 f"{len(found)}/{len(all_methods)} methods "
                 f"(missing: {sorted(missing)})."
             )
+
+    # FIX-EMPTY-SWEEP-POINT-DIAGNOSTIC: count actual equation-level records
+    # across all merged points so a "successful" merge that produced
+    # structurally-valid-but-empty sweep points (n_points >= 1, but every
+    # point's per_equation is {}) is caught HERE — at merge time, with full
+    # file-path context already logged above — rather than several pipeline
+    # steps later as an opaque "FATAL: EMPTY DATASET" with no provenance.
+    n_equation_records = 0
+    for point_val in merged_points.values():
+        pe = point_val.get("per_equation", {}) if isinstance(point_val, dict) else {}
+        if isinstance(pe, dict):
+            n_equation_records += len(pe)
+    logger.info(
+        f"SWEEP MERGE: {len(merged_points)} sweep point(s), "
+        f"{n_equation_records} total per_equation record(s) across all points."
+    )
+    if merged_points and n_equation_records == 0:
+        raise RuntimeError(
+            f"FATAL: sweep merge produced {len(merged_points)} sweep point(s) "
+            f"for {experiment!r} but ZERO per_equation records across all of "
+            f"them. Every merged point's method_summary/per_equation block is "
+            f"empty — see the SWEEP MERGE warnings above for which shard "
+            f"file(s) and point(s) are responsible. This almost always means "
+            f"the upstream benchmark run failed/timed out for every equation "
+            f"at every sweep point in this shard, not a bug in the merge step."
+        )
 
     out: Dict[str, Any] = {
         "experiment":   experiment,
