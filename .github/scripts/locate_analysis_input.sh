@@ -58,6 +58,32 @@ set -euo pipefail
 : "${RESULT_SUBDIR:?RESULT_SUBDIR must be set}"
 OUTPUT_TARGET="${OUTPUT_TARGET:-env}"
 
+# ── Self-heal known doubled-path bug (FIX-suppB-DOUBLED-PATH lineage) ────────
+# Some callers of this script (e.g. an analysis workflow with a stale
+# RESULT_SUBDIR/MAPPING entry) may still pass a RESULT_DIR whose final path
+# segment is duplicated, e.g.:
+#   .../comparison_results/feynman-tests/noise-sweep/noise-sweep
+# instead of the canonical single-level path that run_noise_sweep_benchmark.py
+# (and run_all.sh / ci_runner.yml) actually write to / expect:
+#   .../comparison_results/feynman-tests/noise-sweep
+# (see run_all.sh's FIX-suppB-DOUBLED-PATH comment for the full history —
+# the benchmark script itself writes single-level; doubling has only ever
+# been introduced by a caller appending RESULT_SUBDIR a second time.)
+#
+# If the directory as given does not exist, but stripping one duplicated
+# trailing path segment resolves to a directory that DOES exist, use the
+# corrected path instead of failing outright. This keeps locate_analysis_input.sh
+# the single source of truth even when an upstream caller still carries the bug.
+if [[ ! -d "$RESULT_DIR" ]]; then
+  _rd_parent="$(dirname "$RESULT_DIR")"
+  _rd_base="$(basename "$RESULT_DIR")"
+  _rd_grandparent_base="$(basename "$_rd_parent")"
+  if [[ "$_rd_base" == "$_rd_grandparent_base" && -d "$_rd_parent" ]]; then
+    echo "::warning::RESULT_DIR has a duplicated trailing path segment ('${_rd_base}/${_rd_base}') — falling back to '${_rd_parent}'. Fix the caller's RESULT_SUBDIR/MAPPING entry for ${EXPERIMENT} so this doesn't recur."
+    RESULT_DIR="$_rd_parent"
+  fi
+fi
+
 # ── Metadata filename patterns excluded from the shard manifest ───────────────
 # These are known non-record files committed alongside result shards.
 # Keep in sync with METADATA_FILENAME_PATTERNS in validate_analysis_input.py.
