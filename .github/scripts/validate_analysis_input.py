@@ -680,6 +680,57 @@ _SELF_TEST_CASES = [
         expected_n=5, expected_fmt="sample_complexity_per_n", tier=2,
     ),
     dict(
+        name="tier2 / sample_complexity_per_n  (suppC runner, nshards=6 merged)",
+        # Simulates merge_shards.py combining 6 per-sample-size shards (one
+        # shard per sample_size: 25, 50, 100, 200, 400, 800) into a single
+        # per_n dict. Each shard contributes "method_summary" + "per_equation"
+        # for its sample size, same shape as the 2-shard case above, just at
+        # nshards=6 scale with 1 equation x 1 method per shard.
+        payload={
+            "generated": "2026-05-22T19:11:12",
+            "sample_sizes": [25, 50, 100, 200, 400, 800],
+            "mode": "noisy",
+            "threshold": {str(n): 0.995 for n in (25, 50, 100, 200, 400, 800)},
+            "methods": ["MethodA"],
+            "per_n": {
+                str(n): {
+                    "method_summary": {
+                        "MethodA": {
+                            "median_r2": min(0.5 + i * 0.1, 1.0),
+                            "mean_r2": min(0.5 + i * 0.1, 1.0),
+                            "std_r2": 0.01,
+                            "recovery_rate": min(0.2 + i * 0.15, 1.0),
+                            "n_success": i + 1,
+                            "n_total": 6,
+                            "threshold_used": 0.995,
+                        },
+                    },
+                    "per_equation": {
+                        "Eq1": {
+                            "MethodA": {
+                                "r2": min(0.5 + i * 0.1, 1.0),
+                                "rmse": max(0.5 - i * 0.08, 0.0),
+                                "success": i >= 3,
+                            },
+                        },
+                    },
+                }
+                for i, n in enumerate((25, 50, 100, 200, 400, 800))
+            },
+            "data_efficiency": {
+                "MethodA": {
+                    "min_n_above_threshold": 400,
+                    "recovery_curve": {
+                        str(n): min(0.2 + i * 0.15, 1.0)
+                        for i, n in enumerate((25, 50, 100, 200, 400, 800))
+                    },
+                },
+            },
+        },
+        # 6 shards x 1 eq x 1 method = 6 records total
+        expected_n=6, expected_fmt="sample_complexity_per_n", tier=2,
+    ),
+    dict(
         name="tier2 / experiment_summary_dict  (exp2_pca_4060_summary.json)",
         payload={
             "fixc3_step": "pca_4060",

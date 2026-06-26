@@ -425,14 +425,23 @@ jobs:
 
           # Confirmed false-positives — issues that do not exist in the paper.
           # See audit report section "False Positives in the Audit Report".
-          # NOTE: FIX-B1, FIX-N1, FIX-N2 removed from this list — live audit
-          # report confirms these ARE real issues. They are now auto-fixed by
-          # the "Auto-fix LaTeX issues" step in the guard job before notebooks run.
+          # NOTE: FIX-B1, FIX-N1 remain real — auto-fixed by the "Auto-fix
+          # LaTeX issues" step in the guard job before notebooks run.
+          # FIX-N2 was RE-ADDED here 2026-06-26: direct ground-truth grep of
+          # jmlr_paper_main.tex shows §8.3 already reads "Five-Stage Routing
+          # Architecture Overview" / "all five stages" — the "Five-Layer"
+          # wording the cached audit report flagged does not exist in the
+          # current file. The audit report was stale relative to the repo,
+          # not the paper having a real defect. The FIX-N2 patch step above
+          # is left in place as a harmless idempotent no-op guard in case the
+          # wording ever regresses, but it must not be treated as an OPEN
+          # finding.
           # FIX-XR1/XR2/XR3 remain confirmed false positives per registry.
           FALSE_POSITIVE_IDS = {
               "FIX-XR1",  # sec:llm_domain label never defined; no duplicate exists
               "FIX-XR2",  # label is after \subsection, not inside \item
               "FIX-XR3",  # Supp A already says §7.4, not §7.3
+              "FIX-N2",   # "Five-Layer" wording does not exist in current .tex
           }
 
           registry_path = Path("${{ env.REGISTRY_PATH }}")
