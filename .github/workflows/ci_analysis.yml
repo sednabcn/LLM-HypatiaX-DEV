@@ -215,7 +215,7 @@ jobs:
               'exp3':                'extrapolation',
               'exp3b':               'extrapolation/multi_seed',
               'suppA':               'hybrid_pysr/defi',
-              'suppB':               'comparison_results/feynman-tests/noise-sweep/noise-sweep',
+              'suppB':               'comparison_results/feynman-tests/noise-sweep',
               'suppB_sc':            'comparison_results/feynman-tests/sample-complexity',
               'hybrid_all_domains':  'hybrid_llm_nn/all_domains',
               'instability':         'figures',
@@ -360,11 +360,37 @@ jobs:
 
           # locate_analysis_input.sh may have already run merge_shards.py
           # (its REQUIRE_MERGE fallback path) and set INPUT_MODE=merged.
-          # If _merged.json is already present, skip to avoid a double merge.
+          # If _merged.json is already present AND non-empty, skip to avoid
+          # a double merge.
+          # FIX-SKIP-EMPTY-MERGED: previously skipped on file existence alone,
+          # so an empty _merged.json (0 equation records) produced by a prior
+          # failed run would cause this step to exit 0 and the analysis step
+          # to fail with "FATAL: EMPTY DATASET". Now we count records first:
+          # Shape S (suppB/suppB_sc): sum per_equation across all sweep points.
+          # Shape A/B: count top-level non-underscore keys.
           MERGED_JSON="${RESULT_DIR}/_merged.json"
           if [[ -f "$MERGED_JSON" && "${INPUT_MODE:-}" == "merged" ]]; then
-            echo "  _merged.json already produced by locate step — skipping re-merge."
-            exit 0
+            _n_records=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('${MERGED_JSON}'))
+    total = 0
+    for axis_key in ('per_noise', 'per_n'):
+        for pt in d.get(axis_key, {}).values():
+            if isinstance(pt, dict):
+                total += len(pt.get('per_equation', {}))
+    if total == 0 and isinstance(d, dict):
+        total = sum(1 for k in d if isinstance(k, str) and not k.startswith('_'))
+    print(total)
+except Exception:
+    print(0)
+" 2>/dev/null)
+            if [[ "${_n_records:-0}" -gt 0 ]]; then
+              echo "  _merged.json already produced by locate step (${_n_records} record(s)) — skipping re-merge."
+              exit 0
+            else
+              echo "  _merged.json exists but has 0 records — ignoring and re-merging."
+            fi
           fi
 
           python3 .github/scripts/merge_shards.py \
