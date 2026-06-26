@@ -342,6 +342,27 @@ jobs:
         run: |
           set -euo pipefail
 
+          # FIX-NSHARDS1-NOMERGE: ci_runner.yml's EXP_SHARD_TABLE forces these
+          # experiments to N_SHARDS=1 unconditionally (dispatch input is ignored
+          # — see ci_runner.yml lines ~522-553). A single-shard experiment commits
+          # exactly one result set directly to RESULT_DIR; there is nothing to
+          # merge, and merge_shards.py's _find_shard_files() against that single
+          # committed tree legitimately finds zero shard files, hits "FATAL: merge
+          # produced zero rows", and aborts the workflow (see CI run 28255696132).
+          # This list is an explicit, YAML-side override of MERGE_REQUIRED_EXPERIMENTS
+          # for the single-shard table — it short-circuits BEFORE that check so a
+          # single-shard experiment can never be merge-routed even if it is ever
+          # mistakenly added to (or never excluded from) MERGE_REQUIRED_EXPERIMENTS
+          # in merge_shards.py. Keep this in sync with EXP_SHARD_TABLE entries
+          # whose value is 1 in ci_runner.yml.
+          SINGLE_SHARD_EXPERIMENTS="exp1 exp2_feynman exp2_feynman_extrap exp2 exp3 suppA instability hybrid_all_domains extrap"
+          for _s in $SINGLE_SHARD_EXPERIMENTS; do
+            if [[ "$EXPERIMENT" == "$_s" ]]; then
+              echo "Experiment '${EXPERIMENT}' is single-shard (N_SHARDS=1 per ci_runner.yml EXP_SHARD_TABLE) — no merge required, skipping."
+              exit 0
+            fi
+          done
+
           # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is the single source
           # of truth for which experiments need shard merging.  No hardcoded
           # list here — adding an experiment to that set is the only change
