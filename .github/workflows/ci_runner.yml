@@ -1183,6 +1183,26 @@ jobs:
           TASK_IDS="$(cat /tmp/pending_ids.txt | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
           echo "TASK_IDS=${TASK_IDS}"
 
+          # FIX-INSTABILITY-PREFLIGHT: run_instability_suite.py reads its K-run
+          # cases from exp1's DeFi benchmark JSONs. If exp1 hasn't been run yet
+          # (or its output was never committed), the suite still exits 0 but
+          # with "Loaded 0 cases" and mean_stab=nan for every model class —
+          # see 2026-06-26 CI run 28252247591. Fail loudly here instead of
+          # letting that pass silently through to a degenerate output.
+          if [[ "${EXP}" == "instability" ]]; then
+            _DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+            _DEFI_COUNT=$(find "${_DEFI_DIR}" -name "hypatiax_defi_benchmark_*results*.json" 2>/dev/null | wc -l)
+            echo "=== instability pre-flight: exp1 DeFi benchmark data ==="
+            echo "  Source dir : ${_DEFI_DIR}"
+            echo "  JSON count : ${_DEFI_COUNT}"
+            if [[ "${_DEFI_COUNT}" -eq 0 ]]; then
+              echo "::error::instability requires exp1 DeFi benchmark JSONs in ${_DEFI_DIR} — none found."
+              echo "  Run ci_runner.yml with experiment=exp1 first, then re-run instability."
+              exit 1
+            fi
+            echo "  OK: ${_DEFI_COUNT} exp1 benchmark JSON(s) found."
+          fi
+
           # Ensure log dir exists before run_all.sh tries to tee into it.
           mkdir -p "${OUT_BASE}"
 
@@ -1681,6 +1701,21 @@ jobs:
             echo "=== locating instability_analysis.csv ==="
             find "${{ github.workspace }}" -name "instability_analysis.csv" 2>/dev/null || true
             echo "::error::instability produced NO instability_analysis.csv in '${TARGET}'."
+            exit 1
+          fi
+          # FIX-INSTABILITY-ZEROROWS: the file existing is not sufficient — a
+          # run with no exp1 DeFi data still writes a valid but empty CSV
+          # ("Loaded 0 cases", mean_stab=nan for Hybrid/NN/LLM) and passes this
+          # check as written. Count rows to catch that case explicitly.
+          # See 2026-06-26 CI run 28252247591 for the failure this guards against.
+          COUNT_ROWS=$(python3 -c "
+          import csv, pathlib
+          f = pathlib.Path('${TARGET}/instability_analysis.csv')
+          print(sum(1 for _ in csv.DictReader(f.open())) if f.exists() else 0)
+          " 2>/dev/null || echo 0)
+          echo "  instability_analysis.csv rows: ${COUNT_ROWS}"
+          if [[ "${COUNT_ROWS}" -eq 0 ]]; then
+            echo "::error::instability_analysis.csv exists but has 0 data rows — exp1 DeFi benchmark JSONs were missing or empty when the suite ran."
             exit 1
           fi
           echo "  OK instability output files present."
