@@ -20,7 +20,11 @@
 #
 #  Architecture:
 #    MERGE_REQUIRED_EXPERIMENTS (merge_shards.py) — dynamically detected:
-#      Fast path  — committed _merged.json exists → INPUT_MODE=merged
+#      Fast path  — committed _merged.json exists AND contains ≥1 record → INPUT_MODE=merged
+#                   (FIX-EMPTY-MERGED-FASTPATH: a _merged.json with 0 records is rejected
+#                    and falls through to merge_shards.py rather than producing a downstream
+#                    FATAL: EMPTY DATASET.  Shape S files count per_equation entries across
+#                    all sweep points; Shape A/B count top-level task-row keys.)
 #      Fallback   — run merge_shards.py on committed shard/CSV files → INPUT_MODE=merged
 #                   instability: CSV→_merged.json via _merge_instability_csvs()
 #                   exp1b/exp3b: JSON shards → _merged.json via standard path
@@ -178,13 +182,52 @@ if [[ "$REQUIRE_MERGE" == "true" ]]; then
       | sort
   )
 
+  # FIX-EMPTY-MERGED-FASTPATH: reject a _merged.json that was committed with
+  # zero records (e.g. every upstream benchmark run failed/timed out, leaving
+  # empty per_equation blocks inside the Shape S sweep file).  If we accept it
+  # as-is the analysis step will hit "FATAL: EMPTY DATASET" with no pointer
+  # back to the cause.  Instead, discard it here and fall through to the
+  # merge_shards.py fallback, which will either raise a clear RuntimeError with
+  # full file-path context or produce a fresh _merged.json from the shard files.
+  #
+  # Record-count heuristic (mirrors merge_shards.py merge_sweep_files logic):
+  #   Shape S (suppB / suppB_sc): sum len(per_equation) across all sweep points
+  #                                in per_noise / per_n.
+  #   Shape A/B (task-row):       count top-level keys that are not underscore
+  #                                meta-keys (_checkpoint, _stats, …).
+  if [[ ${#CANDIDATES[@]} -gt 0 ]]; then
+    INPUT_JSON="${CANDIDATES[0]}"
+    _n_records=$(python3 - <<PYEOF 2>/dev/null
+import json, sys
+try:
+    d = json.load(open('${INPUT_JSON}'))
+    total = 0
+    # Shape S: count equation-level entries across all sweep-axis points.
+    for axis_key in ('per_noise', 'per_n'):
+        for pt in d.get(axis_key, {}).values():
+            if isinstance(pt, dict):
+                total += len(pt.get('per_equation', {}))
+    # Shape A/B: if no sweep axis found, count non-underscore top-level keys.
+    if total == 0 and isinstance(d, dict):
+        total = sum(1 for k in d if isinstance(k, str) and not k.startswith('_'))
+    print(total)
+except Exception:
+    print(0)
+PYEOF
+)
+    if [[ "${_n_records:-0}" -eq 0 ]]; then
+      echo "::warning::Fast-path _merged.json at '${INPUT_JSON}' has 0 records — rejecting stale/empty file and falling back to merge_shards.py. If shard files are also missing, delete '${INPUT_JSON}' from the repo and re-run the workers."
+      CANDIDATES=()   # fall through to merge_shards.py fallback below
+    fi
+  fi
+
   if [[ ${#CANDIDATES[@]} -gt 0 ]]; then
     INPUT_JSON="${CANDIDATES[0]}"
     emit "INPUT_MODE" "merged"
     emit "INPUT_JSON" "$INPUT_JSON"
     emit "SHARD_MANIFEST" ""
     echo
-    echo "Selected merged input: $INPUT_JSON"
+    echo "Selected merged input: $INPUT_JSON  (${_n_records} record(s))"
     exit 0
   fi
 

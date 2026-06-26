@@ -768,6 +768,38 @@ def main() -> None:
         if not n_points:
             raise RuntimeError("FATAL: sweep merge produced zero sweep points")
 
+        # FIX-EMPTY-MERGED-WRITE: guard against writing a _merged.json whose
+        # sweep points are structurally present (n_points >= 1) but whose
+        # per_equation blocks are all empty — an outcome that passes the
+        # n_points guard above yet causes "FATAL: EMPTY DATASET" several
+        # pipeline steps later with no pointer back to this file.
+        #
+        # This mirrors the inline diagnostic in merge_sweep_files() (which
+        # logs warnings and raises RuntimeError there) but closes the gap
+        # where the write in main() happened unconditionally after that call
+        # returned, meaning a committed empty _merged.json from a prior run
+        # would survive as the fast-path file in locate_analysis_input.sh.
+        #
+        # Count equation-level records the same way locate_analysis_input.sh
+        # does so both layers agree on what constitutes "non-empty".
+        n_equation_records_total = sum(
+            len(v.get("per_equation", {}))
+            for v in merged_sweep.get(dict_key, {}).values()
+            if isinstance(v, dict)
+        )
+        if n_equation_records_total == 0:
+            raise RuntimeError(
+                f"FATAL: sweep merge produced {n_points} sweep point(s) for "
+                f"{config.experiment!r} but ZERO per_equation records across "
+                f"all of them.  Every merged point's method_summary / "
+                f"per_equation block is empty — the upstream benchmark run(s) "
+                f"failed or timed out for every equation at every sweep point. "
+                f"See the SWEEP MERGE warnings above for which shard file(s) "
+                f"and point(s) are responsible.  Do NOT commit a _merged.json "
+                f"produced from this run; fix the upstream failure and re-run "
+                f"the workers."
+            )
+
         merged_path     = config.output_dir / "_merged.json"
         stats_path      = config.output_dir / "_stats.json"
         checkpoint_path = config.output_dir / "_checkpoint.json"

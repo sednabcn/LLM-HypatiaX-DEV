@@ -637,6 +637,39 @@ def _print_noise_sweep_table(agg: dict) -> None:
 
 
 def _save_sweep_json(agg: dict, ts: str) -> Path:
+    # FIX-EMPTY-SHARD-WRITE: refuse to write a noise_sweep_*.json (the Shape S
+    # shard file that merge_shards.py will later read) when every per_noise
+    # point's per_equation dict is empty.  An empty shard file passes
+    # merge_sweep_files()'s is_sweep_file() check (it has the correct top-level
+    # keys) but contributes zero equation records, so the merged _merged.json
+    # ends up with 0 records and the analysis step dies with "FATAL: EMPTY
+    # DATASET" several pipeline steps later with no pointer back to here.
+    #
+    # Raising here gives an immediate, actionable error message in the worker
+    # job log — the correct place to diagnose why the inner benchmark produced
+    # no results — rather than a cryptic downstream failure in the analysis job.
+    #
+    # Note: agg["noise_levels"] may legitimately contain only one sigma when
+    # running in CI single-level mode (NOISE_LEVEL env var).  The guard checks
+    # per_equation across ALL sigma points that are present, so a single empty
+    # point still triggers the error.
+    n_eq_total = sum(
+        len(pt.get("per_equation", {}))
+        for pt in agg.get("per_noise", {}).values()
+        if isinstance(pt, dict)
+    )
+    if n_eq_total == 0:
+        sigmas_present = list(agg.get("per_noise", {}).keys())
+        raise RuntimeError(
+            f"FATAL: noise sweep produced 0 equation records across all "
+            f"sigma points {sigmas_present} — the inner benchmark run(s) "
+            f"failed or timed out for every equation.  The shard file "
+            f"'{_RESULTS_DIR / f'noise_sweep_{ts}{_SHARD_TAG}.json'}' will "
+            f"NOT be written to prevent poisoning the downstream merge step.  "
+            f"Check the run_comparative_suite_benchmark_v2.py output above "
+            f"for the underlying failure cause (missing runner, API key "
+            f"error, timeout, etc.)."
+        )
     path = _RESULTS_DIR / f"noise_sweep_{ts}{_SHARD_TAG}.json"
     with open(path, "w") as f:
         json.dump(agg, f, indent=2, default=str)
