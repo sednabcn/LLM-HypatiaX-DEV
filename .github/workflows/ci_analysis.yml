@@ -370,21 +370,12 @@ jobs:
           # Shape A/B: count top-level non-underscore keys.
           MERGED_JSON="${RESULT_DIR}/_merged.json"
           if [[ -f "$MERGED_JSON" && "${INPUT_MODE:-}" == "merged" ]]; then
-            _n_records=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('${MERGED_JSON}'))
-    total = 0
-    for axis_key in ('per_noise', 'per_n'):
-        for pt in d.get(axis_key, {}).values():
-            if isinstance(pt, dict):
-                total += len(pt.get('per_equation', {}))
-    if total == 0 and isinstance(d, dict):
-        total = sum(1 for k in d if isinstance(k, str) and not k.startswith('_'))
-    print(total)
-except Exception:
-    print(0)
-" 2>/dev/null)
+            # FIX-SKIP-EMPTY-MERGED: only skip re-merge if _merged.json is non-empty.
+            # Previously skipped on file existence alone, so an empty _merged.json
+            # (0 equation records) caused "FATAL: EMPTY DATASET" in the analysis step.
+            # Shape S (suppB/suppB_sc): count per_equation entries across sweep points.
+            # Shape A/B: count non-underscore top-level keys.
+            _n_records=$(python3 -c "import json,sys; d=json.load(open('${MERGED_JSON}')); total=sum(len(pt.get('per_equation',{})) for ak in ('per_noise','per_n') for pt in d.get(ak,{}).values() if isinstance(pt,dict)); total=total or sum(1 for k in d if isinstance(k,str) and not k.startswith('_')); print(total)" 2>/dev/null || echo 0)
             if [[ "${_n_records:-0}" -gt 0 ]]; then
               echo "  _merged.json already produced by locate step (${_n_records} record(s)) — skipping re-merge."
               exit 0
