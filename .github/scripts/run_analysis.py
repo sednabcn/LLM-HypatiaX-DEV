@@ -1950,6 +1950,19 @@ def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
                — protocol_core_*.json / _merged_benchmark.json from the
                  "Locate analysis input" step.  Normalised via
                  _normalise_protocol_record() unless ablation.
+      Shape S  {"noise_levels":[...], "methods":[...],
+                "per_noise": {nl: {"method_summary": {...},
+                                    "per_equation": {eq: {method: {...}}}}}}
+               — suppB noise-sweep _merged.json from merge_shards.py
+                 (merge_shards.py's own log calls this "Shape S sweep file").
+                 One record per (noise_level, equation), with a "results"
+                 dict keyed by canonical method name where the raw long-form
+                 method name maps via _METHOD_KEY_MAP; unmapped methods are
+                 kept under their raw name so WARN_NO_METHOD_RECORDS / report
+                 sections can still see them, but are excluded from the
+                 canonical pure_llm/neural_network/hybrid comparisons.
+                 method_summary stats are hoisted onto every record as
+                 "_method_summary" for provenance (not consumed by analyse()).
     """
     with open(json_path, encoding="utf-8") as f:
         raw = json.load(f)
@@ -2045,6 +2058,63 @@ def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]:
                 records.append(_normalise_protocol_record(test))
         print(f"  Shape P (protocol wrapper / NSHARDS=1 direct): "
               f"{len(records)} records from 'tests' key.")
+        return records
+
+    # Shape S — suppB noise-sweep _merged.json from merge_shards.py.
+    # Detected by a non-empty "per_noise" dict at top level (same guard used
+    # by validate_analysis_input.py's "noise_sweep_per_noise" Tier-2 extractor).
+    # Must be checked BEFORE Shape A/B, since "per_noise" is itself a dict and
+    # would otherwise be swallowed whole as a single Shape-B "record" — this
+    # was the root cause of TOO_FEW_RECORDS firing on a 900-record sweep file
+    # (Shape B reported 1 record: "per_noise" itself, treated as one task).
+    #
+    # The meaningful unit is one (noise_level x equation) pair. Each pair's
+    # "results" dict is built from per_noise[nl]["per_equation"][eq], with
+    # method names mapped to canonical pure_llm/neural_network/hybrid keys
+    # where possible (mirrors _METHOD_KEY_MAP above); unmapped long-form
+    # method names (e.g. multi-method/tool variants) are kept under their
+    # raw name so report sections can still surface them, but they fall
+    # outside the canonical METHODS comparisons used by analyse().
+    # method_summary aggregate stats are hoisted onto each record under
+    # "_method_summary" for provenance only — analyse() does not read it.
+    if isinstance(raw, dict) and isinstance(raw.get("per_noise"), dict) and raw["per_noise"]:
+        _SWEEP_METHOD_KEY_MAP: dict[str, str] = {
+            "PureLLM Baseline":                "pure_llm",
+            "PureLLM Baseline (core)":         "pure_llm",
+            "ImprovedNN":                      "neural_network",
+            "ImprovedNN (core)":               "neural_network",
+            "EnhancedHybridSystemDeFi":        "hybrid",
+            "EnhancedHybridSystemDeFi (core)": "hybrid",
+            "pure_llm":                        "pure_llm",
+            "neural_network":                  "neural_network",
+            "hybrid":                          "hybrid",
+        }
+        records = []
+        for nl, nl_val in raw["per_noise"].items():
+            if not isinstance(nl_val, dict):
+                continue
+            method_summary = nl_val.get("method_summary", {}) or {}
+            per_equation = nl_val.get("per_equation", {}) or {}
+            for eq, eq_methods in per_equation.items():
+                if not isinstance(eq_methods, dict):
+                    continue
+                results: dict = {}
+                for raw_method, mval in eq_methods.items():
+                    if not isinstance(mval, dict):
+                        continue
+                    canonical = _SWEEP_METHOD_KEY_MAP.get(raw_method, raw_method)
+                    results[canonical] = mval
+                records.append({
+                    "equation_id":               eq,
+                    "noise_level":               nl,
+                    "difficulty":                None,
+                    "formula_type":              None,
+                    "extrapolation_intractable": False,
+                    "results":                   results,
+                    "_method_summary":           method_summary,
+                })
+        print(f"  Shape S (noise-sweep _merged.json from merge_shards.py): "
+              f"{len(records)} records across {len(raw['per_noise'])} noise level(s).")
         return records
 
     if isinstance(raw, dict) and isinstance(raw.get("results"), dict):
