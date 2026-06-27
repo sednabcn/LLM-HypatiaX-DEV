@@ -369,8 +369,9 @@ jobs:
           snapshot_dir "Figures" "$FIGS" "*.png" /tmp/postprocess_audit/figs_png_before.txt
           snapshot_dir "Tables"  "$TABS" "*.tex" /tmp/postprocess_audit/tabs_before.txt
 
-          # Count both .pdf and .png — generate_figures.py writes only .png,
-          # so figs_before.txt (*.pdf) would always be 0 on its own.
+          # Count both .pdf and .png — generate_figures.py now writes both formats
+          # via its _savefig() helper, so figs_before.txt (*.pdf) is no longer
+          # always 0 after the first figures_deploy run.
           N_FIGS=$(cat /tmp/postprocess_audit/figs_before.txt \
                        /tmp/postprocess_audit/figs_png_before.txt \
                    | sort -u | wc -l)
@@ -1159,9 +1160,12 @@ jobs:
 
           # ── Helper: copy the first candidate path that exists, else warn ──
           # Priority: explicit candidates (pdf preferred) → RUNNER_FIGS .png → warn.
-          # RUNNER_FIGS (hypatiax/data/results/figures/) holds .png outputs from
-          # the instability/exp1 runner — a reliable .png fallback for all five
+          # RUNNER_FIGS (hypatiax/data/results/figures/) holds .pdf and .png outputs
+          # from the instability/exp1 runner — a reliable fallback for all five
           # embedded stems even before generate_figures.py runs.
+          # generate_figures.py now writes both .pdf (vector, for JMLR) and .png
+          # (300 dpi, for NB-05 checks) via its _savefig() helper; copy_fig()
+          # below prefers .pdf by listing it before .png in every candidates array.
           copy_fig() {
             local stem="$1" label="$2"; shift 2
             local src src_png
@@ -1178,7 +1182,7 @@ jobs:
                 return 0
               fi
             done
-            # 2. Fallback: check RUNNER_FIGS (instability runner .png output)
+            # 2. Fallback: check RUNNER_FIGS (instability/exp1 runner output — .pdf and .png)
             for ext in pdf png jpg eps svg; do
               local runner_src="${RUNNER_FIGS}/${stem}.${ext}"
               if [[ -f "$runner_src" ]]; then
