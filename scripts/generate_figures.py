@@ -258,12 +258,21 @@ GLOB_STANDALONE    = os.path.join(_RESULTS_DIR, "standalone_real_methods_*.json"
 DATA_SYSTEMS_232   = _rpath("systems_2_3_2_data.json")
 
 def _load_json(path, label=None):
-    """Load JSON; return None and print a warning if the file is absent."""
+    """Load JSON; return None and print a warning if the file is absent.
+    Uses parse_constant to handle NaN / Infinity / -Infinity literals that
+    some result files emit (non-standard JSON but valid Python float values).
+    """
     if not os.path.isfile(path):
         print(f"  [SKIP] {label or path} not found — dependent figures will be skipped.")
         return None
     with open(path) as f:
-        return json.load(f)
+        text = f.read()
+    # Replace bare NaN / Infinity / -Infinity with JSON-safe equivalents
+    import re as _re
+    text = _re.sub(r'\bNaN\b',       'null', text)
+    text = _re.sub(r'\bInfinity\b',  '1e308', text)
+    text = _re.sub(r'\b-Infinity\b', '-1e308', text)
+    return json.loads(text)
 
 def _load_csv_np(path, label=None):
     """Load a CSV as a numpy structured array; return None if absent."""
@@ -398,37 +407,41 @@ def _normalise_cases(raw):
         hyp    = entry.get("hypatia",   {})
         domain = entry.get("domain", "unknown")
         # Map near/medium/far extrap_r2 onto stability_score (far) for legacy figures.
+        # Use safe_float() for every field read — dict.get() returns None when
+        # the key exists with a JSON null value, which causes TypeError on
+        # arithmetic. safe_float(None) returns float("nan") safely.
+        def _sf(d, key):
+            return safe_float(d.get(key))
+
         case = {
             "test_case":    eq_name,
             "formula_type": domain,
             "difficulty":   _infer_difficulty(pysr, hyp),
             "results": {
                 "hybrid": {
-                    "train_r2":        hyp.get("train_r2",        float("nan")),
-                    "test_r2":         hyp.get("extrap_r2_far",   float("nan")),
-                    "stability_score": hyp.get("extrap_r2_far",   float("nan")),
+                    "train_r2":        _sf(hyp, "train_r2"),
+                    "test_r2":         _sf(hyp, "extrap_r2_far"),
+                    "stability_score": _sf(hyp, "extrap_r2_far"),
                     "extrapolation_gap": (
-                        hyp.get("train_r2", float("nan")) -
-                        hyp.get("extrap_r2_far", float("nan"))
+                        _sf(hyp, "train_r2") - _sf(hyp, "extrap_r2_far")
                     ),
-                    "time_s":          hyp.get("total_time_s",    float("nan")),
+                    "time_s":          _sf(hyp, "total_time_s"),
                     # Store regime scores for new heatmap figures.
-                    "extrap_r2_near":   hyp.get("extrap_r2_near",   float("nan")),
-                    "extrap_r2_medium": hyp.get("extrap_r2_medium", float("nan")),
-                    "extrap_r2_far":    hyp.get("extrap_r2_far",    float("nan")),
+                    "extrap_r2_near":   _sf(hyp, "extrap_r2_near"),
+                    "extrap_r2_medium": _sf(hyp, "extrap_r2_medium"),
+                    "extrap_r2_far":    _sf(hyp, "extrap_r2_far"),
                 },
                 "neural_network": {
-                    "train_r2":        pysr.get("train_r2",        float("nan")),
-                    "test_r2":         pysr.get("extrap_r2_far",   float("nan")),
-                    "stability_score": pysr.get("extrap_r2_far",   float("nan")),
+                    "train_r2":        _sf(pysr, "train_r2"),
+                    "test_r2":         _sf(pysr, "extrap_r2_far"),
+                    "stability_score": _sf(pysr, "extrap_r2_far"),
                     "extrapolation_gap": (
-                        pysr.get("train_r2", float("nan")) -
-                        pysr.get("extrap_r2_far", float("nan"))
+                        _sf(pysr, "train_r2") - _sf(pysr, "extrap_r2_far")
                     ),
-                    "time_s":          pysr.get("total_time_s",    float("nan")),
-                    "extrap_r2_near":   pysr.get("extrap_r2_near",   float("nan")),
-                    "extrap_r2_medium": pysr.get("extrap_r2_medium", float("nan")),
-                    "extrap_r2_far":    pysr.get("extrap_r2_far",    float("nan")),
+                    "time_s":          _sf(pysr, "total_time_s"),
+                    "extrap_r2_near":   _sf(pysr, "extrap_r2_near"),
+                    "extrap_r2_medium": _sf(pysr, "extrap_r2_medium"),
+                    "extrap_r2_far":    _sf(pysr, "extrap_r2_far"),
                 },
                 # pure_llm is not present in the new schema; use NaN placeholders.
                 "pure_llm": {},
@@ -1278,15 +1291,25 @@ if RAW is not None:
         cx = np.linspace(complexity.min(), complexity.max(), 20)
         dy = np.linspace(0, 2, 20)
         CX, DY = np.meshgrid(cx, dy)
-        # Interpolate using nearest-neighbor approach
+        # Interpolate; fall back to nearest-neighbor if points are degenerate
         from scipy.interpolate import griddata
-        ZZ = griddata(
-            np.column_stack([complexity, diff_num]),
-            instability,
-            (CX, DY),
-            method="linear",
-            fill_value=0,
-        )
+        from scipy.spatial import QhullError
+        try:
+            ZZ = griddata(
+                np.column_stack([complexity, diff_num]),
+                instability,
+                (CX, DY),
+                method="linear",
+                fill_value=0,
+            )
+        except QhullError:
+            ZZ = griddata(
+                np.column_stack([complexity, diff_num]),
+                instability,
+                (CX, DY),
+                method="nearest",
+                fill_value=0,
+            )
         surf = ax.plot_surface(CX, DY, ZZ, cmap="RdYlGn_r", alpha=0.7, edgecolor="none", vmin=0, vmax=1)
         ax.scatter(complexity, diff_num, instability, color=C_HYB, s=25, alpha=0.9, zorder=5)
         ax.set_xlabel("Complexity"); ax.set_ylabel("Difficulty")
@@ -1490,8 +1513,8 @@ if RAW is not None:
         x_ = complexity[mask]; y_ = instability[mask]
         ax.scatter(x_, y_, c=DIFF_COLORS[diff], s=65, alpha=0.75,
                    edgecolors="white", lw=0.4, label=diff.capitalize(), zorder=3)
-        # per-difficulty trend
-        if len(x_) > 2:
+        # per-difficulty trend (skip if all x values are identical — no regression possible)
+        if len(x_) > 2 and x_.min() != x_.max():
             m_, b_, _, _, _ = scipy_stats.linregress(x_, y_)
             xs_ = np.linspace(x_.min(), x_.max(), 50)
             ax.plot(xs_, m_*xs_+b_, color=DIFF_COLORS[diff], lw=1.5, ls="--", alpha=0.6)
@@ -2422,9 +2445,20 @@ if _noise_rows or _sample_rows:
 
 
 # ── Final summary ─────────────────────────────────────────────────────────────
-all_figs = sorted(glob.glob(os.path.join(_FIGURES_DIR, "*.png")))
+all_pngs = sorted(glob.glob(os.path.join(_FIGURES_DIR, "*.png")))
+all_pdfs = {os.path.splitext(os.path.basename(f))[0]
+            for f in glob.glob(os.path.join(_FIGURES_DIR, "*.pdf"))}
 print(f"\n{'='*60}")
-print(f"Generated {len(all_figs)} figures in {_FIGURES_DIR}/")
+print(f"Generated {len(all_pngs)} figures in {_FIGURES_DIR}/")
 print(f"{'='*60}")
-for f in all_figs:
-    print(f"  {os.path.basename(f)}")
+pdf_missing = []
+for f in all_pngs:
+    stem = os.path.splitext(os.path.basename(f))[0]
+    pdf_flag = "" if stem in all_pdfs else "  ⚠ PDF missing"
+    print(f"  {os.path.basename(f)}{pdf_flag}")
+    if pdf_flag:
+        pdf_missing.append(stem)
+if pdf_missing:
+    print(f"\n  ⚠ {len(pdf_missing)} figure(s) have no PDF — PDF is required for LaTeX:")
+    for s in pdf_missing:
+        print(f"      {s}")
