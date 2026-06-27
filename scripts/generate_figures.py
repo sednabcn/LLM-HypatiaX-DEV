@@ -355,6 +355,30 @@ if RAW is None:
 # Ensure the figures output directory exists.
 os.makedirs(_FIGURES_DIR, exist_ok=True)
 
+# ── Dual-format save helper ────────────────────────────────────────────────────
+# Saves every figure as both PNG (300 dpi, for quick preview / NB-05 checks)
+# and PDF (vector, required by JMLR for line charts and heatmaps).
+# All savefig() calls in this script go through here so the format list is
+# controlled in one place — add/remove formats here, not at each figure site.
+_SAVE_FORMATS = [
+    ("png", dict(dpi=300)),
+    ("pdf", dict()),          # PDF is vector; dpi is irrelevant and omitted
+]
+
+def _savefig(fig, stem, **kwargs):
+    """Save fig to _FIGURES_DIR/<stem>.png and <stem>.pdf.
+
+    kwargs are forwarded to both formats (e.g. bbox_inches="tight").
+    Returns the PNG path (used in print confirmations).
+    """
+    png_path = None
+    for fmt, fmt_kwargs in _SAVE_FORMATS:
+        path = os.path.join(_FIGURES_DIR, f"{stem}.{fmt}")
+        fig.savefig(path, **{**fmt_kwargs, **kwargs})
+        if fmt == "png":
+            png_path = path
+    return png_path
+
 # Support both schemas:
 #   New (dict-of-dicts): {"Equation Name": {"domain": ..., "pysr_only": {...}, "hypatia": {...}}, ...}
 #   Legacy (list):       {"cases": [...]}  or a bare list
@@ -558,9 +582,9 @@ if RAW is not None:
     _sys_ax.text(7.0, 5.7, "HypatiaX — Three-System Architecture",
                  ha="center", va="center", fontsize=14, fontweight="bold", color="#1E293B")
     _sys_fig.tight_layout()
-    _sys_fig.savefig(os.path.join(_FIGURES_DIR, "hypatiax_three_systems.png"), dpi=300, bbox_inches="tight")
+    _savefig(_sys_fig, "hypatiax_three_systems", bbox_inches="tight")
     plt.close(_sys_fig)
-    print("✓ hypatiax_three_systems.png")
+    print("✓ hypatiax_three_systems.png/.pdf")
 
 
     # ══════════════════════════════════════════════════════════════════════════════
@@ -590,9 +614,9 @@ if RAW is not None:
     fig.legend(handles=patches, loc="lower center", ncol=3, fontsize=9, framealpha=0.9)
     fig.suptitle("Train $R^2$ vs Extrapolation Stability by Method", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0.07, 1, 1])
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig07_scatter_train_vs_extrap.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "fig07_scatter_train_vs_extrap", bbox_inches="tight")
     plt.close(fig)
-    print("✓ fig07_scatter_train_vs_extrap.png")
+    print("✓ fig07_scatter_train_vs_extrap.png/.pdf")
 
 
     # ── fig08: train_r2 bar chart per method per difficulty ───────────────────────
@@ -618,9 +642,9 @@ if RAW is not None:
     ax.set_title("Train $R^2$ by Difficulty and Method", fontsize=12, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig08_train_r2_bar.png"), dpi=300)
+    _savefig(fig, "fig08_train_r2_bar")
     plt.close(fig)
-    print("✓ fig08_train_r2_bar.png")
+    print("✓ fig08_train_r2_bar.png/.pdf")
 
 
     # ── fig09: r2 heatmap across regimes ─────────────────────────────────────────
@@ -671,9 +695,9 @@ if RAW is not None:
                     if _DICT_SCHEMA else "$R^2$ Heatmap: Train / Test / Stability")
     fig.suptitle(_fig09_title, fontsize=12, fontweight="bold", y=1.002)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig09_r2_heatmap_regimes.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "fig09_r2_heatmap_regimes", bbox_inches="tight")
     plt.close(fig)
-    print("✓ fig09_r2_heatmap_regimes.png")
+    print("✓ fig09_r2_heatmap_regimes.png/.pdf")
 
 
     # ── fig10: far extrapolation head-to-head (Hybrid vs NN) ─────────────────────
@@ -695,9 +719,9 @@ if RAW is not None:
     ax.set_title("Extrapolation Stability: HypatiaX vs Neural Net (All Cases)", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig10_far_extrap_head2head.png"), dpi=300)
+    _savefig(fig, "fig10_far_extrap_head2head")
     plt.close(fig)
-    print("✓ fig10_far_extrap_head2head.png")
+    print("✓ fig10_far_extrap_head2head.png/.pdf")
 
 
     # ── fig11: speedup bar (hybrid time / nn time) ───────────────────────────────
@@ -714,9 +738,9 @@ if RAW is not None:
     ax.axhline(valid_sp.mean(), color=C_LLM, lw=1.5, ls=":", label=f"Mean ratio: {valid_sp.mean():.2f}x")
     ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig11_speedup_bar.png"), dpi=300)
+    _savefig(fig, "fig11_speedup_bar")
     plt.close(fig)
-    print("✓ fig11_speedup_bar.png")
+    print("✓ fig11_speedup_bar.png/.pdf")
 
 
     # ── fig12: ridge vs train_r2 (stability score distribution) ──────────────────
@@ -741,9 +765,9 @@ if RAW is not None:
     ax.set_title("Distribution of Extrapolation Stability by Method", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(alpha=0.25)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig12_ridge_vs_train_r2.png"), dpi=300)
+    _savefig(fig, "fig12_ridge_vs_train_r2")
     plt.close(fig)
-    print("✓ fig12_ridge_vs_train_r2.png")
+    print("✓ fig12_ridge_vs_train_r2.png/.pdf")
 
 
     # ── fig14: per-equation r2 profile ───────────────────────────────────────────
@@ -776,9 +800,9 @@ if RAW is not None:
     fig.suptitle("Per-Case Extrapolation Stability Profile\n(green=easy, amber=medium, red=hard)",
                  fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig14_per_equation_r2_profile.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "fig14_per_equation_r2_profile", bbox_inches="tight")
     plt.close(fig)
-    print("✓ fig14_per_equation_r2_profile.png")
+    print("✓ fig14_per_equation_r2_profile.png/.pdf")
 
 
     # ── fig16: instability vs extrapolation scatter ───────────────────────────────
@@ -800,9 +824,9 @@ if RAW is not None:
     ax.set_title("Instability vs Extrapolation Gap", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(alpha=0.25)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig16_instability_vs_extrapolation.png"), dpi=300)
+    _savefig(fig, "fig16_instability_vs_extrapolation")
     plt.close(fig)
-    print("✓ fig16_instability_vs_extrapolation.png")
+    print("✓ fig16_instability_vs_extrapolation.png/.pdf")
 
 
     # ── fig17: 3D surface instability vs complexity ───────────────────────────────
@@ -827,9 +851,9 @@ if RAW is not None:
     ax.set_title("3D: Instability vs Formula Type & Difficulty (HypatiaX)", fontsize=10, fontweight="bold")
     fig.colorbar(sc, ax=ax, fraction=0.025, pad=0.1, label="Instability")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig17_3d_surface_instability_complexity.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "fig17_3d_surface_instability_complexity", bbox_inches="tight")
     plt.close(fig)
-    print("✓ fig17_3d_surface_instability_complexity.png")
+    print("✓ fig17_3d_surface_instability_complexity.png/.pdf")
 
 
     # ── fig18: r2 heatmap improved (formula_type × difficulty) ───────────────────
@@ -897,9 +921,9 @@ if RAW is not None:
         fig.suptitle("Mean Stability by Formula Type × Difficulty", fontsize=12, fontweight="bold")
 
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig18_r2_heatmap_improved.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "fig18_r2_heatmap_improved", bbox_inches="tight")
     plt.close(fig)
-    print("✓ fig18_r2_heatmap_improved.png")
+    print("✓ fig18_r2_heatmap_improved.png/.pdf")
 
 
     # ── fig19: far extrap improved (success rate donut grid) ─────────────────────
@@ -926,9 +950,9 @@ if RAW is not None:
     fig.legend(handles=patches, loc="lower center", ncol=2, fontsize=10)
     fig.suptitle("Far-Extrapolation Success Rate by Method × Difficulty", fontsize=12, fontweight="bold")
     fig.tight_layout(rect=[0, 0.04, 1, 1])
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig19_far_extrap_improved.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "fig19_far_extrap_improved", bbox_inches="tight")
     plt.close(fig)
-    print("✓ fig19_far_extrap_improved.png")
+    print("✓ fig19_far_extrap_improved.png/.pdf")
 
 
     # ── fig20: wall clock speedup ─────────────────────────────────────────────────
@@ -959,9 +983,9 @@ if RAW is not None:
     axes[1].set_title("Total Wall-Clock Time Distribution")
     fig.suptitle("Wall-Clock Time Analysis", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig20_wall_clock_speedup.png"), dpi=300)
+    _savefig(fig, "fig20_wall_clock_speedup")
     plt.close(fig)
-    print("✓ fig20_wall_clock_speedup.png")
+    print("✓ fig20_wall_clock_speedup.png/.pdf")
 
 
     # ── fig21: portfolio variance seed sweep ──────────────────────────────────────
@@ -1034,9 +1058,9 @@ if RAW is not None:
 
     fig.suptitle("Portfolio Variance Seed Sweep: PySR-only vs HypatiaX", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig21_portfolio_variance_sweep.png"), dpi=300)
+    _savefig(fig, "fig21_portfolio_variance_sweep")
     plt.close(fig)
-    print("✓ fig21_portfolio_variance_sweep.png")
+    print("✓ fig21_portfolio_variance_sweep.png/.pdf")
 
 
     # ── fig22: bubble train vs far ────────────────────────────────────────────────
@@ -1067,9 +1091,9 @@ if RAW is not None:
     fig.legend(handles=patches, loc="lower center", ncol=3, fontsize=9)
     fig.suptitle("Bubble Chart: Train vs Stability (bubble size = extrapolation gap)", fontsize=12, fontweight="bold")
     fig.tight_layout(rect=[0, 0.06, 1, 1])
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig22_bubble_train_vs_far.png"), dpi=300)
+    _savefig(fig, "fig22_bubble_train_vs_far")
     plt.close(fig)
-    print("✓ fig22_bubble_train_vs_far.png")
+    print("✓ fig22_bubble_train_vs_far.png/.pdf")
 
 
     # ── fig_seed_sweep_comparison ─────────────────────────────────────────────────
@@ -1106,9 +1130,9 @@ if RAW is not None:
     ax.legend(fontsize=8); ax.grid(alpha=0.25)
     fig.suptitle("Portfolio Variance Seed Sweep Comparison", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_seed_sweep_comparison.png"), dpi=300)
+    _savefig(fig, "fig_seed_sweep_comparison")
     plt.close(fig)
-    print("✓ fig_seed_sweep_comparison.png")
+    print("✓ fig_seed_sweep_comparison.png/.pdf")
 
 
     # ── fig1_seed_sweep — richer per-seed line chart (P0 paper figure) ────────────
@@ -1157,9 +1181,9 @@ if RAW is not None:
                     "(PySR-only vs HypatiaX across all extrapolation regimes)",
                     fontsize=12, fontweight="bold")
     fig_sw.tight_layout()
-    fig_sw.savefig(os.path.join(_FIGURES_DIR, "fig1_seed_sweep.png"), dpi=300)
+    _savefig(fig_sw, "fig1_seed_sweep")
     plt.close(fig_sw)
-    print("✓ fig1_seed_sweep.png")
+    print("✓ fig1_seed_sweep.png/.pdf")
 
 
     # ══════════════════════════════════════════════════════════════════════════════
@@ -1180,9 +1204,9 @@ if RAW is not None:
     ax.set_title("HypatiaX Instability Distribution (74 cases)", fontsize=12, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_hist.png"), dpi=300)
+    _savefig(fig, "fig_instability_hist")
     plt.close(fig)
-    print("✓ fig_instability_hist.png")
+    print("✓ fig_instability_hist.png/.pdf")
 
 
     # ── fig_instability_regimes ───────────────────────────────────────────────────
@@ -1206,9 +1230,9 @@ if RAW is not None:
     ax.set_title("Mean Instability by Difficulty", fontsize=12, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_regimes.png"), dpi=300)
+    _savefig(fig, "fig_instability_regimes")
     plt.close(fig)
-    print("✓ fig_instability_regimes.png")
+    print("✓ fig_instability_regimes.png/.pdf")
 
 
     # ── fig_instability_3d ────────────────────────────────────────────────────────
@@ -1224,9 +1248,9 @@ if RAW is not None:
     ax.set_title("3D Instability Space (HypatiaX)", fontsize=11, fontweight="bold")
     fig.colorbar(sc, ax=ax, fraction=0.025, pad=0.12, label="Instability")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_3d.png"), dpi=300)
+    _savefig(fig, "fig_instability_3d")
     plt.close(fig)
-    print("✓ fig_instability_3d.png")
+    print("✓ fig_instability_3d.png/.pdf")
 
 
     # ── fig_instability_phase ─────────────────────────────────────────────────────
@@ -1241,9 +1265,9 @@ if RAW is not None:
     ax.legend(handles=patches, fontsize=9)
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_phase.png"), dpi=300)
+    _savefig(fig, "fig_instability_phase")
     plt.close(fig)
-    print("✓ fig_instability_phase.png")
+    print("✓ fig_instability_phase.png/.pdf")
 
 
     # ── fig_instability_surface ───────────────────────────────────────────────────
@@ -1271,9 +1295,9 @@ if RAW is not None:
         ax.set_title("Instability Surface (HypatiaX)", fontsize=11, fontweight="bold")
         fig.colorbar(surf, ax=ax, fraction=0.025, pad=0.1)
         fig.tight_layout()
-        fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_surface.png"), dpi=300)
+        _savefig(fig, "fig_instability_surface")
         plt.close(fig)
-        print("✓ fig_instability_surface.png")
+        print("✓ fig_instability_surface.png/.pdf")
     else:
         print(f"  [SKIP] fig_instability_surface.png — need >=4 points for surface "
               f"interpolation, got {len(complexity)}.")
@@ -1293,9 +1317,9 @@ if RAW is not None:
     patches = [mpatches.Patch(color=DIFF_COLORS[d], label=d.capitalize()) for d in DIFF_ORDER]
     ax.legend(handles=patches, fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_instability_success_vs_instability.png"), dpi=300)
+    _savefig(fig, "fig_instability_success_vs_instability")
     plt.close(fig)
-    print("✓ fig_instability_success_vs_instability.png")
+    print("✓ fig_instability_success_vs_instability.png/.pdf")
 
 
     # ── hypatiax_instability_per_case ─────────────────────────────────────────────
@@ -1325,9 +1349,9 @@ if RAW is not None:
                  fontsize=11, fontweight="bold")
     ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "hypatiax_instability_per_case.png"), dpi=300, bbox_inches="tight")
+    _savefig(fig, "hypatiax_instability_per_case", bbox_inches="tight")
     plt.close(fig)
-    print("✓ hypatiax_instability_per_case.png")
+    print("✓ hypatiax_instability_per_case.png/.pdf")
 
 
     # ── hypatiax_instability_histogram ────────────────────────────────────────────
@@ -1343,9 +1367,9 @@ if RAW is not None:
         ax.legend(fontsize=8); ax.grid(alpha=0.3)
     fig.suptitle("HypatiaX Instability by Difficulty Level", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "hypatiax_instability_histogram.png"), dpi=300)
+    _savefig(fig, "hypatiax_instability_histogram")
     plt.close(fig)
-    print("✓ hypatiax_instability_histogram.png")
+    print("✓ hypatiax_instability_histogram.png/.pdf")
 
 
     # ── hypatiax_instability_scatter ─────────────────────────────────────────────
@@ -1371,9 +1395,9 @@ if RAW is not None:
     ax.set_title("HypatiaX Instability vs Complexity", fontsize=12, fontweight="bold")
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "hypatiax_instability_scatter.png"), dpi=300)
+    _savefig(fig, "hypatiax_instability_scatter")
     plt.close(fig)
-    print("✓ hypatiax_instability_scatter.png")
+    print("✓ hypatiax_instability_scatter.png/.pdf")
 
 
     # ── fig_paper_instability_hist ────────────────────────────────────────────────
@@ -1408,9 +1432,9 @@ if RAW is not None:
     ax.legend(fontsize=8); ax.grid(alpha=0.25)
     fig.suptitle("Paper Figure: Instability Distribution & CDF", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_paper_instability_hist.png"), dpi=300)
+    _savefig(fig, "fig_paper_instability_hist")
     plt.close(fig)
-    print("✓ fig_paper_instability_hist.png")
+    print("✓ fig_paper_instability_hist.png/.pdf")
 
 
     # ── fig_paper_mean_vs_instability ─────────────────────────────────────────────
@@ -1454,9 +1478,9 @@ if RAW is not None:
     ax.legend(fontsize=8); ax.grid(axis="x", alpha=0.3)
     fig.suptitle("Performance by Formula Type", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_paper_mean_vs_instability.png"), dpi=300)
+    _savefig(fig, "fig_paper_mean_vs_instability")
     plt.close(fig)
-    print("✓ fig_paper_mean_vs_instability.png")
+    print("✓ fig_paper_mean_vs_instability.png/.pdf")
 
 
     # ── fig_paper_complexity_vs_instability ───────────────────────────────────────
@@ -1476,9 +1500,9 @@ if RAW is not None:
     ax.set_title("Complexity vs Instability by Difficulty (HypatiaX)", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_paper_complexity_vs_instability.png"), dpi=300)
+    _savefig(fig, "fig_paper_complexity_vs_instability")
     plt.close(fig)
-    print("✓ fig_paper_complexity_vs_instability.png")
+    print("✓ fig_paper_complexity_vs_instability.png/.pdf")
 
 
     # ── fig_paper_complexity_vs_success ──────────────────────────────────────────
@@ -1498,9 +1522,9 @@ if RAW is not None:
     ax.set_title("Complexity vs Success (HypatiaX, threshold=0.99)", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_paper_complexity_vs_success.png"), dpi=300)
+    _savefig(fig, "fig_paper_complexity_vs_success")
     plt.close(fig)
-    print("✓ fig_paper_complexity_vs_success.png")
+    print("✓ fig_paper_complexity_vs_success.png/.pdf")
 
 
     # ── fig_paper_regime_counts ───────────────────────────────────────────────────
@@ -1549,9 +1573,9 @@ if RAW is not None:
     ax.set_title("Hybrid Decision Types (74 cases)", fontsize=10, fontweight="bold")
     fig.suptitle("Regime Counts and Decision Distribution", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_paper_regime_counts.png"), dpi=300)
+    _savefig(fig, "fig_paper_regime_counts")
     plt.close(fig)
-    print("✓ fig_paper_regime_counts.png")
+    print("✓ fig_paper_regime_counts.png/.pdf")
 
 
 
@@ -1582,9 +1606,9 @@ if _v3c3 and "cases" in _v3c3:
         ax.legend(fontsize=8); ax.grid(alpha=0.3)
     fig.suptitle("DeFi Benchmark $R^2$ Distribution (v3c3)", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(_FIGURES_DIR, "fig_defi_r2_distribution.png"), dpi=300)
+    _savefig(fig, "fig_defi_r2_distribution")
     plt.close(fig)
-    print("✓ fig_defi_r2_distribution.png")
+    print("✓ fig_defi_r2_distribution.png/.pdf")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1617,9 +1641,9 @@ if _ng:
                      fontsize=11, fontweight="bold")
         ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
         fig.tight_layout()
-        fig.savefig(os.path.join(_FIGURES_DIR, "exp3_nguyen12_hybrid50v_extrap_r2.png"), dpi=300)
+        _savefig(fig, "exp3_nguyen12_hybrid50v_extrap_r2")
         plt.close(fig)
-        print("✓ exp3_nguyen12_hybrid50v_extrap_r2.png")
+        print("✓ exp3_nguyen12_hybrid50v_extrap_r2.png/.pdf")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1680,9 +1704,9 @@ if _dom_files or _solo_files or _sys232:
                      fontsize=12, fontweight="bold")
         ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
         fig.tight_layout()
-        fig.savefig(os.path.join(_FIGURES_DIR, "figure_5systems_comparison.png"), dpi=300)
+        _savefig(fig, "figure_5systems_comparison")
         plt.close(fig)
-        print("✓ figure_5systems_comparison.png")
+        print("✓ figure_5systems_comparison.png/.pdf")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2052,9 +2076,10 @@ def _line_fig(xs, ys, sems, xlabel, ylabel, title, color, outpath, hline=None):
     ax.set_title(title, fontsize=11, fontweight="bold")
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=300)
+    stem = os.path.splitext(os.path.basename(outpath))[0]
+    _savefig(fig, stem)
     plt.close(fig)
-    print(f"✓ {os.path.basename(outpath)}")
+    print(f"✓ {stem}.png/.pdf")
 
 
 _METHOD_COLORS = {}  # filled in lazily so any method name gets a stable color
@@ -2113,9 +2138,10 @@ def _multi_method_line_fig(rows, x_key, y_key, xlabel, ylabel, title, outpath, h
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=300)
+    stem = os.path.splitext(os.path.basename(outpath))[0]
+    _savefig(fig, stem)
     plt.close(fig)
-    print(f"✓ {os.path.basename(outpath)}")
+    print(f"✓ {stem}.png/.pdf")
     return True
 
 
@@ -2184,9 +2210,9 @@ if _noise_rows:
             ax.set_title("Per-Equation $R^2$ Box Plots vs Noise (σ)", fontsize=11, fontweight="bold")
             ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
             fig.tight_layout()
-            fig.savefig(os.path.join(_FIGURES_DIR, "fig10_r2_boxplot_noise.png"), dpi=300)
+            _savefig(fig, "fig10_r2_boxplot_noise")
             plt.close(fig)
-            print("✓ fig10_r2_boxplot_noise.png")
+            print("✓ fig10_r2_boxplot_noise.png/.pdf")
 
 
 # ── Sample-complexity figures (fig4–fig6, fig8) ───────────────────────────────
@@ -2305,9 +2331,9 @@ if _noise_rows or _sample_rows:
                             fontsize=7, color="white" if v < 0.4 else "black")
         fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label="Recovery rate")
         fig.tight_layout()
-        fig.savefig(os.path.join(_FIGURES_DIR, "fig11_recovery_heatmap.png"), dpi=300, bbox_inches="tight")
+        _savefig(fig, "fig11_recovery_heatmap", bbox_inches="tight")
         plt.close(fig)
-        print("✓ fig11_recovery_heatmap.png")
+        print("✓ fig11_recovery_heatmap.png/.pdf")
     else:
         print("  [SKIP] fig11_recovery_heatmap.png — no (sigma, n, recovery_rate) triples could be built from available sweep data.")
 
@@ -2347,9 +2373,9 @@ if _noise_rows or _sample_rows:
                     f"{v:.2f}s", va="center", fontsize=8)
         ax.grid(axis="x", alpha=0.3)
         fig.tight_layout()
-        fig.savefig(os.path.join(_FIGURES_DIR, "fig_runtime_comparison.png"), dpi=300)
+        _savefig(fig, "fig_runtime_comparison")
         plt.close(fig)
-        print("✓ fig_runtime_comparison.png")
+        print("✓ fig_runtime_comparison.png/.pdf")
 
 
 # ── fig_comparative_table (domain × method, rendered as PNG) ─────────────────
@@ -2390,9 +2416,9 @@ if _noise_rows or _sample_rows:
         ax.set_title("Domain × Method $R^2$ Comparison (median)", fontsize=11, fontweight="bold",
                      pad=10)
         fig.tight_layout()
-        fig.savefig(os.path.join(_FIGURES_DIR, "fig_comparative_table.png"), dpi=300, bbox_inches="tight")
+        _savefig(fig, "fig_comparative_table", bbox_inches="tight")
         plt.close(fig)
-        print("✓ fig_comparative_table.png")
+        print("✓ fig_comparative_table.png/.pdf")
 
 
 # ── Final summary ─────────────────────────────────────────────────────────────
