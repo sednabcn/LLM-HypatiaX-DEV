@@ -29,12 +29,7 @@ Figure groups produced
 P0               : hypatiax_three_systems
 RF02 / cosmetic  : fig07–fig22, fig_seed_sweep_comparison / fig1_seed_sweep
 RF09 instability : fig_instability_*.png, hypatiax_instability_*.png, fig_paper_*.png
-instability_per_case : hypatiax_instability_per_case  (hypatiax_defi_variance_results.json)
-portfolio_variance   : fig_defi_r2_distribution       (hypatiax_defi_benchmark_v3c3_results.json)
-nguyen12             : exp3_nguyen12_hybrid50v_extrap_r2 (exp3_nguyen12_output.json)
-five_systems         : figure_5systems_comparison      (all_domains_extrap_v4_*.json +
-                                                        standalone_real_methods_*.json +
-                                                        systems_2_3_2_data.json)
+instability_per_case : hypatiax_instability_per_case  (uses primary CASES array)
 Supp-B sweep         : fig1_r2_vs_noise … fig_comparative_table
                        (noise_sweep_*.json + sample_complexity_*.json
                         — latest file matched by glob at runtime)
@@ -68,12 +63,7 @@ cosmetic            fig22_bubble_train_vs_far                  exp1_ablation_res
                                                                instability_extrapolation_v2.csv
 cosmetic [P0]       fig1_seed_sweep  (≡fig_seed_sweep_comparison)
                                                                portfolio_variance_seed_sweep.json
-instability_per_case hypatiax_instability_per_case             hypatiax_defi_variance_results.json
-portfolio_variance  fig_defi_r2_distribution                   hypatiax_defi_benchmark_v3c3_results.json
-nguyen12            exp3_nguyen12_hybrid50v_extrap_r2          exp3_nguyen12_output.json
-five_systems        figure_5systems_comparison                 all_domains_extrap_v4_*.json +
-                                                               standalone_real_methods_*.json +
-                                                               systems_2_3_2_data.json
+instability_per_case hypatiax_instability_per_case             (primary CASES array — no ext. file)
 Supp-B              fig1_r2_vs_noise … fig_comparative_table
                                                                noise_sweep_*.json (latest by glob) +
                                                                sample_complexity_*.json (latest by glob)
@@ -188,9 +178,6 @@ if _EXPERIMENT == "exp1_ablation" and not os.path.isfile(DATA_MAIN):
 DATA_ABLATION_PAIRED  = _rpath("ablation_paired.json")
 DATA_EXTRAP_BENCHMARK = _rpath("benchmark_results_extrap.json")
 # Secondary sources (optional — figures skipped gracefully if absent)
-DATA_VARIANCE      = _rpath("hypatiax_defi_variance_results.json")
-DATA_DEFI_V3C3     = _rpath("hypatiax_defi_benchmark_v3c3_results.json")
-DATA_NGUYEN12      = _rpath("exp3_nguyen12_output.json")
 DATA_WALL_CLOCK    = _rpath("wall_clock_flags.json")
 DATA_PORTFOLIO_SW  = _rpath("portfolio_variance_seed_sweep.json")
 DATA_INSTAB_CSV    = _rpath("instability_extrapolation_v2.csv")
@@ -252,10 +239,7 @@ else:
 
 DATA_NOISE_SWEEP   = _noise_glob  or _rpath("noise_sweep_MISSING.json")
 DATA_SAMPLE_SWEEP  = _sample_glob or _rpath("sample_complexity_MISSING.json")
-# Five-systems (glob patterns resolved at runtime under _RESULTS_DIR)
-GLOB_DOMAINS_V4    = os.path.join(_RESULTS_DIR, "all_domains_extrap_v4_*.json")
-GLOB_STANDALONE    = os.path.join(_RESULTS_DIR, "standalone_real_methods_*.json")
-DATA_SYSTEMS_232   = _rpath("systems_2_3_2_data.json")
+# (five-systems comparison removed — not in paper inventory or any .tex file)
 
 def _load_json(path, label=None):
     """Load JSON; return None and print a warning if the file is absent.
@@ -1346,10 +1330,9 @@ if RAW is not None:
 
 
     # ── hypatiax_instability_per_case ─────────────────────────────────────────────
-    # Source: hypatiax_defi_variance_results.json (instability_per_case group).
-    # Falls back to the primary CASES array if the variance file is absent.
-    _variance_raw = _load_json(DATA_VARIANCE, DATA_VARIANCE)
-    _var_cases    = _variance_raw["cases"] if (_variance_raw and "cases" in _variance_raw) else CASES
+    # Uses the primary CASES array (hypatiax_defi_variance_results.json removed —
+    # not referenced in paper inventory or any .tex file).
+    _var_cases = CASES
     fig, ax = plt.subplots(figsize=(10, 14))
     y_pos = np.arange(len(_var_cases))
     _var_stab = np.array([
@@ -1421,6 +1404,57 @@ if RAW is not None:
     _savefig(fig, "hypatiax_instability_scatter")
     plt.close(fig)
     print("✓ hypatiax_instability_scatter.png/.pdf")
+
+
+    # ── hypatiax_instability_histogram_v2 (with KDE overlay) ─────────────────────
+    try:
+        from scipy.stats import gaussian_kde
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4.5))
+        for ax, diff in zip(axes, DIFF_ORDER):
+            subset_inst = [instability[i] for i, c in enumerate(CASES) if c["difficulty"] == diff]
+            ax.hist(subset_inst, bins=10, color=DIFF_COLORS[diff], alpha=0.55,
+                    edgecolor="white", lw=0.5, density=True)
+            if len(subset_inst) > 2:
+                kde = gaussian_kde(subset_inst)
+                xs_kde = np.linspace(min(subset_inst) - 0.05, max(subset_inst) + 0.05, 200)
+                ax.plot(xs_kde, kde(xs_kde), color=DIFF_COLORS[diff], lw=2)
+            ax.axvline(np.mean(subset_inst), color="black", lw=1.5, ls="--",
+                       label=f"μ={np.mean(subset_inst):.3f}")
+            ax.set_title(f"{diff.capitalize()} (n={len(subset_inst)})", fontsize=11,
+                         fontweight="bold", color=DIFF_COLORS[diff])
+            ax.set_xlabel("Instability"); ax.set_ylabel("Density")
+            ax.legend(fontsize=8); ax.grid(alpha=0.3)
+        fig.suptitle("HypatiaX Instability by Difficulty Level (KDE)", fontsize=12, fontweight="bold")
+        fig.tight_layout()
+        _savefig(fig, "hypatiax_instability_histogram_v2")
+        plt.close(fig)
+        print("✓ hypatiax_instability_histogram_v2.png/.pdf")
+    except Exception as _e:
+        print(f"  [SKIP] hypatiax_instability_histogram_v2 — {_e}")
+
+    # ── hypatiax_instability_scatter_v2 (per-difficulty regression lines) ─────────
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    ax.scatter(complexity, instability,
+               c=[DIFF_COLORS[d] for d in difficulties],
+               s=60, alpha=0.75, edgecolors="white", lw=0.4, zorder=3)
+    patches_v2 = []
+    for diff in DIFF_ORDER:
+        mask = np.array([d == diff for d in difficulties])
+        xd, yd = complexity[mask], instability[mask]
+        patches_v2.append(mpatches.Patch(color=DIFF_COLORS[diff], label=diff.capitalize()))
+        if len(xd) > 2 and xd.min() != xd.max():
+            md, bd, rd, pd, _ = scipy_stats.linregress(xd, yd)
+            xs_d = np.linspace(xd.min(), xd.max(), 50)
+            ax.plot(xs_d, md * xs_d + bd, color=DIFF_COLORS[diff], lw=1.8, ls="--", alpha=0.7)
+    ax.legend(handles=patches_v2, fontsize=9)
+    ax.set_xlabel("Complexity Score", fontsize=11)
+    ax.set_ylabel("Instability", fontsize=11)
+    ax.set_title("HypatiaX Instability vs Complexity (per-difficulty trends)", fontsize=11, fontweight="bold")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    _savefig(fig, "hypatiax_instability_scatter_v2")
+    plt.close(fig)
+    print("✓ hypatiax_instability_scatter_v2.png/.pdf")
 
 
     # ── fig_paper_instability_hist ────────────────────────────────────────────────
@@ -1603,133 +1637,16 @@ if RAW is not None:
 
 
 
-    # ══════════════════════════════════════════════════════════════════════════════
-# PORTFOLIO VARIANCE — fig_defi_r2_distribution
-# Source: hypatiax_defi_benchmark_v3c3_results.json
-# ══════════════════════════════════════════════════════════════════════════════
-_v3c3 = _load_json(DATA_DEFI_V3C3, DATA_DEFI_V3C3)
-if _v3c3 and "cases" in _v3c3:
-    _v3c3_cases = _v3c3["cases"]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
-    for ax, method, label, color in [
-        (axes[0], "hybrid",         "HypatiaX Hybrid", C_HYB),
-        (axes[1], "neural_network", "Neural Net",       C_NN),
-    ]:
-        vals = [safe_float(c["results"].get(method, {}).get("stability_score"))
-                for c in _v3c3_cases]
-        vals = [v for v in vals if not math.isnan(v)]
-        vals_c = np.clip(vals, -3, 1)
-        ax.hist(vals_c, bins=25, color=color, alpha=0.75, edgecolor="white", lw=0.4)
-        ax.axvline(np.nanmean(vals_c), color="black", lw=1.5, ls="--",
-                   label=f"μ = {np.nanmean(vals_c):.3f}")
-        ax.axvline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
-        ax.set_xlabel("DeFi $R^2$ (stability, clipped $[-3,1]$)", fontsize=10)
-        ax.set_ylabel("Count", fontsize=10)
-        ax.set_title(label, fontsize=11, fontweight="bold", color=color)
-        ax.legend(fontsize=8); ax.grid(alpha=0.3)
-    fig.suptitle("DeFi Benchmark $R^2$ Distribution (v3c3)", fontsize=12, fontweight="bold")
-    fig.tight_layout()
-    _savefig(fig, "fig_defi_r2_distribution")
-    plt.close(fig)
-    print("✓ fig_defi_r2_distribution.png/.pdf")
+    # (fig_defi_r2_distribution removed — hypatiax_defi_benchmark_v3c3_results.json
+#  not in paper inventory or any .tex file)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# NGUYEN-12 — exp3_nguyen12_hybrid40v_extrap_r2
-# Source: exp3_nguyen12_output.json
-# ══════════════════════════════════════════════════════════════════════════════
-_ng = _load_json(DATA_NGUYEN12, DATA_NGUYEN12)
-if _ng:
-    # Expected schema: list of dicts with keys: equation, hybrid_r2, pysr_r2, regime
-    # or {"results": [...]}
-    _ng_rows = _ng if isinstance(_ng, list) else _ng.get("results", [])
-    if _ng_rows:
-        _ng_eqs    = [r.get("equation", f"eq{i}") for i, r in enumerate(_ng_rows)]
-        _ng_hybrid = np.array([safe_float(r.get("hybrid_r2",  r.get("hybrid",  float("nan")))) for r in _ng_rows])
-        _ng_pysr   = np.array([safe_float(r.get("pysr_r2",    r.get("pysr",    float("nan")))) for r in _ng_rows])
-        _ng_regime = [r.get("regime", "far") for r in _ng_rows]
-
-        fig, ax = plt.subplots(figsize=(max(8, len(_ng_rows)*0.55), 5))
-        x = np.arange(len(_ng_rows)); w = 0.36
-        _pysr_c  = np.clip(np.nan_to_num(_ng_pysr,   nan=0), -5, 1.05)
-        _hybrid_c= np.clip(np.nan_to_num(_ng_hybrid,  nan=0), -5, 1.05)
-        ax.bar(x - w/2, _pysr_c,   w, color=C_NN,  alpha=0.85, label="PySR-only",     edgecolor="white", lw=0.4)
-        ax.bar(x + w/2, _hybrid_c, w, color=C_HYB, alpha=0.85, label="HypatiaX v50+", edgecolor="white", lw=0.4)
-        ax.axhline(0.99, color=C_OK,    lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
-        ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
-        ax.set_xticks(x)
-        ax.set_xticklabels(_ng_eqs, rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel("Extrapolation $R^2$ (clipped $[-5,1]$)", fontsize=10)
-        ax.set_title("Nguyen-12 Hybrid v50+ vs PySR-only: Extrapolation $R^2$",
-                     fontsize=11, fontweight="bold")
-        ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
-        fig.tight_layout()
-        _savefig(fig, "exp3_nguyen12_hybrid50v_extrap_r2")
-        plt.close(fig)
-        print("✓ exp3_nguyen12_hybrid50v_extrap_r2.png/.pdf")
+# (exp3_nguyen12_hybrid50v_extrap_r2 removed — exp3_nguyen12_output.json
+#  not in paper inventory or any .tex file)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# FIVE SYSTEMS — figure_5systems_comparison
-# Sources: all_domains_extrap_v4_*.json  +  standalone_real_methods_*.json
-#          +  systems_2_3_2_data.json
-# ══════════════════════════════════════════════════════════════════════════════
-_dom_files  = sorted(glob.glob(GLOB_DOMAINS_V4))
-_solo_files = sorted(glob.glob(GLOB_STANDALONE))
-_sys232     = _load_json(DATA_SYSTEMS_232, DATA_SYSTEMS_232)
-
-if _dom_files or _solo_files or _sys232:
-    # Aggregate per-system mean far-R² across all available source files
-    _system_scores: dict[str, list] = {}
-
-    def _ingest(rows, system_key="system", score_key="far_r2"):
-        for r in (rows if isinstance(rows, list) else []):
-            sys_name = r.get(system_key, "unknown")
-            val = safe_float(r.get(score_key, r.get("extrap_r2", float("nan"))))
-            _system_scores.setdefault(sys_name, []).append(val)
-
-    for fp in _dom_files:
-        d = _load_json(fp, fp)
-        if d: _ingest(d if isinstance(d, list) else d.get("results", []))
-    for fp in _solo_files:
-        d = _load_json(fp, fp)
-        if d: _ingest(d if isinstance(d, list) else d.get("results", []))
-    if _sys232:
-        rows232 = _sys232 if isinstance(_sys232, list) else _sys232.get("results", [])
-        _ingest(rows232)
-
-    if _system_scores:
-        _sys_names  = list(_system_scores.keys())
-        _sys_means  = [np.nanmean(v) for v in _system_scores.values()]
-        _sys_sems   = [scipy_stats.sem([x for x in v if not math.isnan(x)]) if
-                       sum(not math.isnan(x) for x in v) > 1 else 0
-                       for v in _system_scores.values()]
-        _sys_colors = [C_HYB if "hypatia" in n.lower() else
-                       (C_LLM if "llm" in n.lower() else
-                        (C_NN  if "nn" in n.lower() or "neural" in n.lower() else C_WARN))
-                       for n in _sys_names]
-
-        fig, ax = plt.subplots(figsize=(max(8, len(_sys_names)*1.2), 5))
-        x = np.arange(len(_sys_names))
-        bars = ax.bar(x, np.clip(_sys_means, -5, 1.05), color=_sys_colors, alpha=0.85,
-                      edgecolor="white", lw=0.5,
-                      yerr=_sys_sems, capsize=5, error_kw={"lw": 1.2})
-        for bar, v in zip(bars, _sys_means):
-            ax.text(bar.get_x() + bar.get_width()/2,
-                    min(max(v, -5), 1.05) + 0.02,
-                    f"{v:.2f}", ha="center", va="bottom", fontsize=8, fontweight="bold")
-        ax.axhline(0.99, color=C_OK,    lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
-        ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
-        ax.set_xticks(x)
-        ax.set_xticklabels(_sys_names, rotation=30, ha="right", fontsize=9)
-        ax.set_ylabel("Mean far-extrapolation $R^2$ (clipped $[-5,1]$)", fontsize=10)
-        ax.set_title("Five-System Comparison: Far-Extrapolation $R^2$",
-                     fontsize=12, fontweight="bold")
-        ax.legend(fontsize=9); ax.grid(axis="y", alpha=0.3)
-        fig.tight_layout()
-        _savefig(fig, "figure_5systems_comparison")
-        plt.close(fig)
-        print("✓ figure_5systems_comparison.png/.pdf")
+# (figure_5systems_comparison removed — systems_2_3_2_data.json + glob sources
+#  not in paper inventory or any .tex file)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
