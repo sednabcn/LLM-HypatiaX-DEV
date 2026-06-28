@@ -51,19 +51,19 @@ from collections import defaultdict
 # so far in this investigation.
 # ---------------------------------------------------------------------------
 
-HYPATIAX_METHOD_NAMES = {
-    "EnhancedHybridSystemDeFi",  # confirmed HypatiaX column in the 6-method pool
-    "HybridDiscoverySystem",     # fallback alias, in case naming differs by file
+HYPATIAX_METHOD_CANDIDATES = {
+    "HybridDiscoverySystem": "HybridDiscoverySystem v50_2 (tools)",
+    "EnhancedHybridSystemDeFi": "EnhancedHybridSystemDeFi (core)",
 }
 
-ALL_SIX_METHODS = {
-    "PureLLM",
-    "ImprovedNN",
-    "EnhancedHybridSystemDeFi",
-    "HybridSystemLLMNN",
-    "SymbolicEngineWithLLM",
-    "HybridDiscoverySystem",
-}
+ALL_SIX_METHODS_RAW = [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "EnhancedHybridSystemDeFi (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)",
+]
 
 PROTOCOL_GLOB = "protocol_core_noiseless_pca_*.json"
 SUMMARY_NAME = "exp2_pca_4060_summary.json"
@@ -241,19 +241,34 @@ def report_duplicate_path_fidelity(search_dir: Path):
 
 def find_records(obj):
     """
-    Normalize the many shapes seen so far in this investigation:
-      - a flat list of records
-      - a dict keyed by index/equation name -> record
-      - a dict with a top-level 'results' / 'records' / 'data' wrapper
-    Returns a list of dict-like records.
+    Real schema confirmed from protocol_core_noiseless_pca_20260604_131820.json:
+        {
+          "timestamp": ..., "script": ..., "protocol": {...},
+          "total_tests": int,
+          "methods": [ ... 6 full method name strings ... ],
+          "tests": [
+            {
+              "description": "<equation name>",
+              "domain": "...",
+              "results": {
+                 "<full method name>": {"method":..., "success": bool, "r2":..., "error":...},
+                 ...
+              }
+            },
+            ...
+          ]
+        }
+    Each file is a SHARD covering only a few equations (e.g. 3 here), not all 30.
     """
+    if isinstance(obj, dict) and isinstance(obj.get("tests"), list):
+        return obj["tests"]
+    # fallbacks for other shapes seen elsewhere in this investigation
     if isinstance(obj, list):
         return obj
     if isinstance(obj, dict):
         for key in ("results", "records", "data", "rows"):
             if key in obj and isinstance(obj[key], list):
                 return obj[key]
-        # dict keyed by id -> record
         if all(isinstance(v, dict) for v in obj.values()):
             return list(obj.values())
     return []
@@ -261,32 +276,35 @@ def find_records(obj):
 
 def extract_method_records(record):
     """
-    Given one top-level record (one equation's results, possibly nested
-    under a 'results' sub-dict keyed by method name, as seen in
-    hypatiax_defi_benchmark_pca_results.json / _merged.json), return a
-    dict of method_name -> method_result_dict.
-
-    Also handles the flatter '30 equations x 6 methods, all flattened
-    into one list' shape described in the original transcript, where each
-    row IS one (equation, method) pair with its own 'method' field.
+    For the real schema, each test record's 'results' dict IS already
+    method_full_name -> result_dict. Keep full names (with " (core)"/" (tools)"
+    suffixes) as keys so HypatiaX candidate matching can be done explicitly
+    against HYPATIAX_METHOD_CANDIDATES rather than guessing.
     """
     if not isinstance(record, dict):
         return {}
 
-    # Shape A: {'results': {method_name: {...}, ...}, ...}
     if "results" in record and isinstance(record["results"], dict):
         return record["results"]
 
-    # Shape B: flat row with an explicit 'method' field
     method = record.get("method") or record.get("method_name") or record.get("system")
     if method:
         return {method: record}
 
-    # Shape C: top-level dict IS already method_name -> result
-    if any(k in ALL_SIX_METHODS for k in record.keys()):
-        return {k: v for k, v in record.items() if k in ALL_SIX_METHODS}
+    if any(k in ALL_SIX_METHODS_RAW for k in record.keys()):
+        return {k: v for k, v in record.items() if k in ALL_SIX_METHODS_RAW}
 
     return {}
+
+
+def get_equation_id(record):
+    return (
+        record.get("description")
+        or record.get("equation_id")
+        or record.get("name")
+        or record.get("equation")
+        or record.get("id")
+    )
 
 
 def is_success(method_result):
@@ -295,11 +313,24 @@ def is_success(method_result):
     val = method_result.get("success")
     if isinstance(val, bool):
         return val
-    # fallback heuristics seen elsewhere in this investigation
     r2 = method_result.get("r2", method_result.get("train_r2"))
     if isinstance(r2, (int, float)) and not (isinstance(r2, float) and math.isnan(r2)):
         return r2 > 0.0
     return False
+
+
+def is_env_failure(method_result):
+    """Distinguish 'not available' / import-probe failures from genuine
+    accuracy failures, since these mean completely different things for
+    the §10.7 conclusion (see hybrid_system_v50_2.py + exp1_ablation_run.log
+    investigation earlier — same root cause as the env-probe bug)."""
+    if not isinstance(method_result, dict):
+        return False
+    err = method_result.get("error")
+    if not err:
+        return False
+    err_lower = str(err).lower()
+    return "not available" in err_lower or "import" in err_lower or "probe" in err_lower
 
 
 # ---------------------------------------------------------------------------
@@ -308,77 +339,97 @@ def is_success(method_result):
 
 def step1_recount_hypatiax_only(protocol_files):
     print("=" * 78)
-    print("STEP 1 — HypatiaX-only recount across protocol_core_noiseless_pca_*.json")
+    print("STEP 1 — Recount across protocol_core_noiseless_pca_*.json (real schema)")
     print("=" * 78)
 
     if not protocol_files:
         print("  [MISSING] No protocol_core_noiseless_pca_*.json files found.")
-        print("  -> Cannot compute the corrected 'N/30' figure without these.")
         return None
 
     print(f"  Found {len(protocol_files)} file(s):")
     for f in protocol_files:
         print(f"    - {f}")
 
-    equation_results = {}  # equation_id -> bool success (HypatiaX only), last-write-wins
-    method_pool_counts = defaultdict(lambda: defaultdict(int))  # method -> {success,fail}
+    # Track BOTH HypatiaX candidates separately, plus all 6 methods pooled.
+    candidate_eq_results = {name: {} for name in HYPATIAX_METHOD_CANDIDATES}
+    candidate_env_failures = {name: 0 for name in HYPATIAX_METHOD_CANDIDATES}
+    method_pool_counts = defaultdict(lambda: defaultdict(int))
     total_rows_seen = 0
-    duplicate_equation_ids = defaultdict(int)
+    seen_equations_per_file = {}
 
     for f in protocol_files:
         obj = safe_load_json(f)
         if obj is None:
             continue
         records = find_records(obj)
-        print(f"\n  --- {f.name}: {len(records)} top-level record(s) ---")
+        n_in_file = len(records)
+        seen_equations_per_file[f.name] = n_in_file
+        print(f"\n  --- {f.name}: {n_in_file} test(s) in this shard ---")
 
         for rec in records:
-            eq_id = (
-                rec.get("equation_id")
-                or rec.get("name")
-                or rec.get("equation")
-                or rec.get("id")
-            )
+            eq_id = get_equation_id(rec)
             method_map = extract_method_records(rec)
             if not method_map:
                 continue
+            print(f"      {eq_id!r}")
 
             for method_name, mres in method_map.items():
                 total_rows_seen += 1
                 succ = is_success(mres)
+                envfail = is_env_failure(mres)
                 method_pool_counts[method_name]["success" if succ else "fail"] += 1
+                tag = "OK" if succ else ("ENV-FAIL" if envfail else "FAIL")
+                print(f"          {method_name:45s} {tag:9s} r2={mres.get('r2')}")
 
-                if method_name in HYPATIAX_METHOD_NAMES and eq_id is not None:
-                    if eq_id in equation_results:
-                        duplicate_equation_ids[eq_id] += 1
-                    equation_results[eq_id] = succ
+                for cand_short, cand_full in HYPATIAX_METHOD_CANDIDATES.items():
+                    if method_name == cand_full:
+                        if eq_id in candidate_eq_results[cand_short]:
+                            print(f"          [WARN] duplicate equation_id {eq_id!r} "
+                                  f"for candidate {cand_short} — overwriting")
+                        candidate_eq_results[cand_short][eq_id] = succ
+                        if envfail:
+                            candidate_env_failures[cand_short] += 1
 
-    print(f"\n  Total (equation, method) rows seen across all files: {total_rows_seen}")
-    print("\n  Per-method pooled success/fail counts (sanity check vs 30x6=180):")
+    print(f"\n  Total (equation, method) rows seen: {total_rows_seen}")
+    print("\n  Per-method pooled success/fail counts (sanity check vs N_equations x 6):")
     for method, counts in sorted(method_pool_counts.items()):
         s, fa = counts.get("success", 0), counts.get("fail", 0)
-        print(f"    {method:30s} success={s:3d}  fail={fa:3d}  total={s+fa:3d}")
+        print(f"    {method:45s} success={s:3d}  fail={fa:3d}  total={s+fa:3d}")
 
-    if duplicate_equation_ids:
-        print("\n  [WARN] Equation IDs appearing in HypatiaX rows more than once "
-              "(possible duplicate shards / re-runs — last value won):")
-        for eq, n in duplicate_equation_ids.items():
-            print(f"    {eq!r}: seen {n + 1} times")
+    print("\n  --- HypatiaX candidate comparison ---")
+    summary_per_candidate = {}
+    for cand_short, results in candidate_eq_results.items():
+        n_pass = sum(1 for v in results.values() if v)
+        n_total = len(results)
+        envfails = candidate_env_failures[cand_short]
+        rate = (n_pass / n_total) if n_total else None
+        print(f"  Candidate: {cand_short} ({HYPATIAX_METHOD_CANDIDATES[cand_short]})")
+        print(f"    -> {n_pass}/{n_total} = {rate}" if n_total else "    -> no rows found")
+        if envfails:
+            print(f"    [ALERT] {envfails}/{n_total} of these are ENVIRONMENT FAILURES "
+                  f"('not available'/import errors), not genuine accuracy failures.")
+            print(f"    -> These rows cannot be counted as a real performance result "
+                  f"until the underlying env/import issue is fixed (see "
+                  f"hybrid_system_v50_2.py probe investigation).")
+        summary_per_candidate[cand_short] = {
+            "n_pass": n_pass, "n_total": n_total, "rate": rate,
+            "env_failures": envfails,
+        }
 
-    n_pass = sum(1 for v in equation_results.values() if v)
-    n_total = len(equation_results)
-    print(f"\n  >>> HypatiaX-only result: {n_pass}/{n_total} "
-          f"({n_pass / n_total:.4f})" if n_total else "  >>> No HypatiaX rows found.")
-    if n_total != 30:
-        print(f"  [WARN] Expected 30 distinct equations, found {n_total}. "
-              f"Check for missing files or naming mismatches.")
+    if not protocol_files:
+        return None
 
     return {
-        "n_pass": n_pass,
-        "n_total": n_total,
-        "rate": (n_pass / n_total) if n_total else None,
         "method_pool_counts": {k: dict(v) for k, v in method_pool_counts.items()},
-        "equation_results": equation_results,
+        "candidates": summary_per_candidate,
+        "candidate_equation_results": candidate_eq_results,
+        "shard_sizes": seen_equations_per_file,
+        # backward-compat top-level fields point at whichever candidate has
+        # the most total rows (best guess until confirmed by the user)
+        "n_pass": max(summary_per_candidate.values(), key=lambda v: v["n_total"])["n_pass"]
+        if summary_per_candidate else 0,
+        "n_total": max(summary_per_candidate.values(), key=lambda v: v["n_total"])["n_total"]
+        if summary_per_candidate else 0,
     }
 
 
@@ -505,9 +556,9 @@ def main():
         "protocol_files_found": [str(p) for p in protocol_files],
         "summary_file_found": str(summary_file) if summary_file else None,
         "recount_result": {
-            k: v for k, v in (recount_result or {}).items() if k != "equation_results"
+            k: v for k, v in (recount_result or {}).items() if k != "candidate_equation_results"
         } if recount_result else None,
-        "equation_results": recount_result["equation_results"] if recount_result else None,
+        "candidate_equation_results": recount_result["candidate_equation_results"] if recount_result else None,
         "exp2_pca_4060_summary_contents": summary_obj,
         "duplicate_files_found": {
             name: [str(p) for p in paths] for name, paths in dup_groups.items()

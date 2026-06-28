@@ -1259,8 +1259,18 @@ def _rows(data):
 
 n_pass = n_total = 0
 source_files = []
+stray_pca_files = []
 for fp in sorted(LEG_DIR.glob('*.json')) if LEG_DIR.exists() else []:
     if any(x in fp.name for x in ('checkpoint','disclosure','baseline')):
+        continue
+    # FIX-GATEC-PCA: protocol_core_*_pca_<ts>.json can only be produced by
+    # run_comparative_suite_benchmark_pca.py (see its _save() mode logic).
+    # exp2_feynman (this legacy step) only ever calls run_comparative_suite
+    # _benchmark_v2.py, so any '_pca' file found in LEG_DIR is a stray
+    # leftover from a mis-routed PCA run and must NOT be counted toward the
+    # legacy 9/30 baseline, nor allowed to collide with exp2_pca_4060/ output.
+    if '_pca' in fp.name:
+        stray_pca_files.append(fp.name)
         continue
     try:
         data = json.loads(fp.read_text())
@@ -1292,6 +1302,12 @@ baseline = {
 BASELINE.parent.mkdir(parents=True, exist_ok=True)
 BASELINE.write_text(json.dumps(baseline, indent=2))
 print(f'  [FIX-C3] Baseline locked: {n_pass}/{n_total} (random_80_20) → fixc3_baseline.json')
+if stray_pca_files:
+    print(f'  [WARN]  {len(stray_pca_files)} stray _pca file(s) found in legacy exp2/ dir')
+    print('          (excluded from baseline — they belong in exp2_pca_4060/):')
+    for _f in stray_pca_files[:10]:
+        print(f'            - {_f}')
+    print(f'          Move them: mv {LEG_DIR}/*_pca_*.json {LEG_DIR.parent}/exp2_pca_4060/  (verify timestamps first)')
 PYEOF
   fi
 
