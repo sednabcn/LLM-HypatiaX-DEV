@@ -1,0 +1,461 @@
+name: "HypatiaX - JMLR Submission Package"
+run-name: "HypatiaX Submission — run ${{ github.run_id }}"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Purpose
+#   Assembles the complete JMLR submission package from already-built artefacts:
+#     • Downloads PDFs from the latest successful ci_create_pdf run
+#     • Downloads the audit report from the latest ci_report run
+#     • Runs a final pre-submission gate (page count, file size, no undefined refs)
+#     • Bundles everything into a timestamped submission ZIP
+#     • Optionally commits the ZIP to a submissions/ directory
+#
+# Triggers
+#   • workflow_dispatch only — submission is a deliberate manual action.
+#   • workflow_run on ci_create_pdf completing successfully (auto-arm path).
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      pdf_run_id:
+        description: "Run ID of ci_create_pdf that produced the PDFs (leave blank = latest successful)"
+        required: false
+        default: ""
+      audit_run_id:
+        description: "Run ID of ci_report that produced the audit HTML (leave blank = latest successful)"
+        required: false
+        default: ""
+      commit_zip:
+        description: "Commit the submission ZIP to submissions/ in the repo?"
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: "Run all checks but do NOT upload/commit anything"
+        required: false
+        default: false
+        type: boolean
+
+  workflow_run:
+    workflows: ["Build HypatiaX PDF"]
+    types:
+      - completed
+    branches: [main]
+
+permissions:
+  contents: write
+  actions:  read
+
+env:
+  PYTHON_VERSION: "3.12"
+  MAIN_TEX:    jmlr_paper_main.tex
+  SUPP_A_TEX:  supp_routing_improvements.tex
+  SUPP_B_TEX:  supp_benchmark_report.tex
+  BIB_FILE:    references.bib
+  MAIN_PDF:    jmlr_paper_main.pdf
+  SUPPA_PDF:   supp_routing_improvements.pdf
+  SUPPB_PDF:   supp_benchmark_report.pdf
+  MERGED_PDF:  HypatiaX_JMLR_complete.pdf
+  AUDIT_HTML:  HypatiaX_Paper_Audit_Report.html
+  ZIP_NAME:    HypatiaX_JMLR_submission.zip
+
+concurrency:
+  group: submission-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight submission
+
+# =============================================================================
+# JOB 1 — gate: only proceed if ci_create_pdf succeeded (workflow_run path)
+# =============================================================================
+jobs:
+  gate:
+    name: "Gate — check upstream workflow result"
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Check upstream result
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+              echo "Upstream ci_create_pdf did not succeed — aborting submission."
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "proceed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # workflow_dispatch — always proceed
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+# =============================================================================
+# JOB 2 — resolve: find the correct run IDs for artifacts
+# =============================================================================
+  resolve-runs:
+    name: "Resolve artifact run IDs"
+    runs-on: ubuntu-latest
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    outputs:
+      pdf_run_id:   ${{ steps.resolve.outputs.pdf_run_id }}
+      audit_run_id: ${{ steps.resolve.outputs.audit_run_id }}
+    steps:
+      - name: Resolve run IDs
+        id: resolve
+        env:
+          GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
+          REPO:                ${{ github.repository }}
+          INPUT_PDF_RUN:       ${{ github.event.inputs.pdf_run_id }}
+          INPUT_AUDIT_RUN:     ${{ github.event.inputs.audit_run_id }}
+          UPSTREAM_RUN:        ${{ github.event.workflow_run.id }}
+        run: |
+          # PDF run — prefer explicit input, then upstream trigger, then latest
+          if [[ -n "$INPUT_PDF_RUN" ]]; then
+            PDF_RUN="$INPUT_PDF_RUN"
+          elif [[ -n "$UPSTREAM_RUN" ]]; then
+            PDF_RUN="$UPSTREAM_RUN"
+          else
+            PDF_RUN=$(gh run list \
+              --repo "$REPO" \
+              --workflow "ci_create_pdf.yml" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+          fi
+
+          # Audit run — prefer explicit input, then latest successful ci_report run
+          if [[ -n "$INPUT_AUDIT_RUN" ]]; then
+            AUDIT_RUN="$INPUT_AUDIT_RUN"
+          else
+            AUDIT_RUN=$(gh run list \
+              --repo "$REPO" \
+              --workflow "ci_report.yml" \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+          fi
+
+          echo "pdf_run_id=$PDF_RUN"     >> "$GITHUB_OUTPUT"
+          echo "audit_run_id=$AUDIT_RUN" >> "$GITHUB_OUTPUT"
+          echo "Resolved PDF run  : $PDF_RUN"
+          echo "Resolved audit run: $AUDIT_RUN"
+
+# =============================================================================
+# JOB 3 — assemble: download artefacts, gate checks, build ZIP
+# =============================================================================
+  assemble:
+    name: "Assemble Submission Package"
+    runs-on: ubuntu-latest
+    needs: [gate, resolve-runs]
+    if: needs.gate.outputs.proceed == 'true'
+
+    steps:
+      - name: Checkout repository (for tex sources)
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install tools
+        run: |
+          sudo apt-get install -y --no-install-recommends qpdf poppler-utils zip
+          pip install --upgrade pip
+
+      # ── Download PDFs ───────────────────────────────────────────────────
+      - name: Download main paper PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: main-paper-pdf
+          path: submission/
+          run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Supplementary A PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: supp-a-pdf
+          path: submission/
+          run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Supplementary B PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: supp-b-pdf
+          path: submission/
+          run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download combined PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: HypatiaX-JMLR-complete
+          path: submission/
+          run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # not produced for partial builds
+
+      # ── Download audit report ───────────────────────────────────────────
+      - name: Download audit report HTML
+        uses: actions/download-artifact@v4
+        with:
+          name: HypatiaX_Audit_Report
+          path: submission/audit/
+          run-id: ${{ needs.resolve-runs.outputs.audit_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # ── Include tex sources ─────────────────────────────────────────────
+      - name: Copy tex sources into submission package
+        run: |
+          mkdir -p submission/sources/figures
+          cp "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX" "$BIB_FILE" submission/sources/
+          # PDF figures only — keeps the ZIP reasonable
+          find figures/ -name "*.pdf" -exec cp {} submission/sources/figures/ \; 2>/dev/null || true
+          echo "Sources staged:"
+          ls -lh submission/sources/
+
+      # ── Pre-submission gate ─────────────────────────────────────────────
+      - name: Pre-submission gate checks
+        id: gate_checks
+        run: |
+          python3 - <<'PYEOF'
+          import re, sys, subprocess
+          from pathlib import Path
+
+          REQUIRED_PDFS = [
+              "submission/jmlr_paper_main.pdf",
+              "submission/supp_routing_improvements.pdf",
+              "submission/supp_benchmark_report.pdf",
+          ]
+          TEX_FILES = [
+              "jmlr_paper_main.tex",
+              "supp_routing_improvements.tex",
+              "supp_benchmark_report.tex",
+          ]
+          BIB_FILE = "references.bib"
+
+          errors   = []
+          warnings = []
+
+          # 1. PDF existence + size + page count
+          print("── PDF checks ─────────────────────────────────────────────────────")
+          for pdf_path in REQUIRED_PDFS:
+              p = Path(pdf_path)
+              if not p.exists():
+                  errors.append(f"MISSING PDF: {pdf_path}")
+                  continue
+              size = p.stat().st_size
+              if size < 10_240:
+                  errors.append(f"PDF suspiciously small ({size} bytes): {pdf_path}")
+              result = subprocess.run(
+                  ["pdfinfo", pdf_path], capture_output=True, text=True)
+              pages = next(
+                  (int(l.split()[1]) for l in result.stdout.splitlines()
+                   if l.startswith("Pages:")), 0)
+              if pages < 1:
+                  errors.append(f"PDF has 0 pages: {pdf_path}")
+              else:
+                  print(f"  OK  {p.name}: {pages} pages, {size//1024} KB")
+
+          # 2. qpdf structural check on each PDF
+          print("── qpdf structural integrity ───────────────────────────────────────")
+          for pdf_path in REQUIRED_PDFS:
+              if not Path(pdf_path).exists():
+                  continue
+              r = subprocess.run(["qpdf", "--check", pdf_path],
+                                 capture_output=True, text=True)
+              if r.returncode != 0:
+                  errors.append(f"qpdf structural error in {pdf_path}: {r.stderr.strip()}")
+              else:
+                  print(f"  OK  {Path(pdf_path).name} — structure valid")
+
+          # 3. Static cross-reference check
+          print("── Cross-reference check ───────────────────────────────────────────")
+          label_set = set()
+          for f in TEX_FILES:
+              if Path(f).exists():
+                  src = Path(f).read_text(encoding="utf-8")
+                  label_set |= set(re.findall(r'\\label\{([^}]+)\}', src))
+
+          if Path("jmlr_paper_main.tex").exists():
+              main_src  = Path("jmlr_paper_main.tex").read_text(encoding="utf-8")
+              refs      = set(re.findall(r'\\(?:ref|eqref)\{([^}]+)\}', main_src))
+              cites     = set(k.strip()
+                              for m in re.findall(r'\\cite[pt]?\{([^}]+)\}', main_src)
+                              for k in m.split(','))
+              bibitem_k = set(re.findall(r'\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}', main_src))
+              bib_keys  = set(re.findall(r'@\w+\{([^,\n]+)',
+                              Path(BIB_FILE).read_text())) if Path(BIB_FILE).exists() else set()
+
+              undef_refs  = sorted(refs - label_set)
+              undef_cites = sorted(cites - (bibitem_k | bib_keys))
+
+              if undef_refs:
+                  errors.append(f"Undefined \\ref targets: {undef_refs}")
+              else:
+                  print(f"  OK  All \\ref targets defined ({len(refs)} checked)")
+              if undef_cites:
+                  errors.append(f"Undefined \\cite keys: {undef_cites}")
+              else:
+                  print(f"  OK  All \\cite keys found ({len(cites)} checked)")
+
+          # 4. Audit report present?
+          print("── Audit report ────────────────────────────────────────────────────")
+          audit = Path("submission/audit/index.html")
+          if not audit.exists():
+              warnings.append("Audit report (index.html) not bundled — OK for submission")
+              print(f"  WARN  Audit report not found at {audit}")
+          else:
+              print(f"  OK  Audit report: {audit.stat().st_size//1024} KB")
+
+          # Summary
+          print()
+          for w in warnings:
+              print(f"  WARN  {w}")
+          for e in errors:
+              print(f"  ERROR {e}")
+          print()
+          if errors:
+              print(f"GATE FAILED — {len(errors)} error(s). Submission aborted.")
+              sys.exit(1)
+          else:
+              print(f"GATE PASSED — {len(warnings)} warning(s), 0 errors. Package is ready.")
+          PYEOF
+
+      # ── Build submission manifest ───────────────────────────────────────
+      - name: Generate submission manifest
+        run: |
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          cat > submission/MANIFEST.txt <<EOF
+          HypatiaX JMLR Submission Package
+          =================================
+          Generated    : ${TIMESTAMP}
+          Commit       : ${{ github.sha }}
+          PDF run ID   : ${{ needs.resolve-runs.outputs.pdf_run_id }}
+          Audit run ID : ${{ needs.resolve-runs.outputs.audit_run_id }}
+          Workflow run : ${{ github.run_id }}
+
+          Contents
+          --------
+          jmlr_paper_main.pdf           — Main paper
+          supp_routing_improvements.pdf — Supplementary A: Routing Improvements
+          supp_benchmark_report.pdf     — Supplementary B: Benchmark Report
+          HypatiaX_JMLR_complete.pdf    — Combined (main + supp A + supp B)
+          audit/index.html              — Audit report (reference only)
+          sources/                      — LaTeX sources + PDF figures
+          MANIFEST.txt                  — This file
+          EOF
+
+      # ── Build ZIP ───────────────────────────────────────────────────────
+      - name: Build submission ZIP
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          ZIP="${{ env.ZIP_NAME }}"
+          cd submission
+          zip -r "../${ZIP}" . -x "*.DS_Store"
+          cd ..
+          echo "✔ Submission ZIP: $(du -h ${ZIP} | cut -f1)"
+
+      - name: Upload submission ZIP artifact
+        if: github.event.inputs.dry_run != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: HypatiaX_JMLR_submission
+          path: ${{ env.ZIP_NAME }}
+          retention-days: 90
+
+      - name: Upload dry-run inspection artifact
+        if: github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: HypatiaX_JMLR_submission_dryrun
+          path: submission/
+          retention-days: 7
+
+# =============================================================================
+# JOB 4 — commit-zip: optionally commit the ZIP to submissions/ in the repo
+# =============================================================================
+  commit-zip:
+    name: "Commit ZIP to submissions/"
+    runs-on: ubuntu-latest
+    needs: [resolve-runs, assemble]
+    if: >
+      needs.assemble.result == 'success' &&
+      github.event.inputs.commit_zip == 'true' &&
+      github.event.inputs.dry_run != 'true' &&
+      github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Download submission ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: HypatiaX_JMLR_submission
+          path: submissions/
+
+      - name: Commit and push ZIP
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add submissions/
+          if git diff --cached --quiet; then
+            echo "Submission ZIP unchanged — nothing to commit."
+          else
+            SHORT_SHA="${{ github.sha }}"
+            SHORT_SHA="${SHORT_SHA:0:7}"
+            git commit -m "ci: submission package [${SHORT_SHA}]
+
+          Built from commit ${{ github.sha }}
+          PDF run   : ${{ needs.resolve-runs.outputs.pdf_run_id }}
+          Audit run : ${{ needs.resolve-runs.outputs.audit_run_id }}"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "✔ Submission ZIP committed to submissions/"
+          fi
+
+# =============================================================================
+# JOB 5 — summary
+# =============================================================================
+  summary:
+    name: "Submission Pipeline Summary"
+    runs-on: ubuntu-latest
+    needs: [gate, resolve-runs, assemble]
+    if: always()
+
+    steps:
+      - name: Write step summary
+        run: |
+          echo "## HypatiaX JMLR — Submission Pipeline" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Step | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Gate              | ${{ needs.gate.result }} |"         >> "$GITHUB_STEP_SUMMARY"
+          echo "| Resolve run IDs   | ${{ needs.resolve-runs.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Assemble \& gate  | ${{ needs.assemble.result }} |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**PDF source run :** \`${{ needs.resolve-runs.outputs.pdf_run_id }}\`"   >> "$GITHUB_STEP_SUMMARY"
+          echo "**Audit source run:** \`${{ needs.resolve-runs.outputs.audit_run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Triggered by   :** \`${{ github.event_name }}\`"                        >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit         :** \`${{ github.sha }}\`"                               >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${{ needs.assemble.result }}" == "success" ]]; then
+            echo "✅ **Package ready** — download the \`HypatiaX_JMLR_submission\` artifact." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ **Package failed** — check assemble job logs." >> "$GITHUB_STEP_SUMMARY"
+          fi

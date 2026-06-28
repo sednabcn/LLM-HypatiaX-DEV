@@ -5,15 +5,22 @@
 #  Triggers: push / PR to main or dev branches, or manual dispatch
 #  Jobs:
 #    1. validate       — source file & cross-reference checks
-#    2. compile-main   — main paper (4-pass pdflatex + bibtex)
-#    3. compile-supp-a — Supplementary A
-#    4. compile-supp-b — Supplementary B
+#    2. compile-main   — main paper (4-pass pdflatex + bibtex, via `make main`)
+#    3. compile-supp-a — Supplementary A (via `make suppa`)
+#    4. compile-supp-b — Supplementary B (via `make suppb`)
 #    5. merge-pdf      — combine all three PDFs into one
 #    6. commit-pdfs    — download all PDFs & commit them to repo root
 #    7. report         — upload artefacts & post summary
+#
+#  Build logic lives in the repo's Makefile (`make main|suppa|suppb|
+#  verify-main|...`) so local builds and CI builds share one implementation —
+#  see Makefile and scripts/check_xrefs.py.
 # =============================================================================
 
 name: Build HypatiaX PDF
+
+permissions:
+  contents: read
 
 on:
   push:
@@ -31,9 +38,9 @@ on:
   workflow_dispatch:
     inputs:
       clean_build:
-        description: "Force clean build (ignore cache)"
+        description: "Force clean build (rm -rf build/ output/ before compiling)"
         required: false
-        default: "false"
+        default: false
         type: boolean
       target:
         description: "What to compile"
@@ -103,78 +110,15 @@ jobs:
           exit 0
 
       # ── Static cross-reference analysis ────────────────────────────────
+      # Delegates to scripts/check_xrefs.py — the same script `make validate`
+      # uses — instead of a separate inline bash/awk implementation. (The
+      # previous inline version used the .tex filename as an `awk -F`
+      # separator; since "." is an ERE metacharacter, that could silently
+      # mis-split labels containing characters near a literal dot.)
+      # python3 ships preinstalled on ubuntu-latest runners — no setup step needed.
       - name: Cross-reference static analysis
         id: xref
-        run: |
-          echo "::group::Label / ref / cite analysis"
-
-          # Collect all \label definitions
-          declare -A label_src
-          while IFS='|' read -r label src; do
-            label_src["$label"]="$src"
-          done < <(
-            for tex in "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX"; do
-              grep -oP '(?<=\\label\{)[^}]+' "$tex" 2>/dev/null \
-                | sed "s|$|$tex|" | tr -d ' ' | awk -F"${tex}" '{print $1"|'"$tex"'"}'
-            done 2>/dev/null || true
-          )
-          echo "Labels found: ${#label_src[@]}"
-
-          # Collect \ref targets from main paper
-          mapfile -t refs < <(
-            grep -oP '(?<=\\ref\{)[^}]+|(?<=\\eqref\{)[^}]+|(?<=\\autoref\{)[^}]+' \
-              "$MAIN_TEX" 2>/dev/null | sort -u || true
-          )
-          echo "\\ref targets in main paper: ${#refs[@]}"
-
-          # Collect citation keys from main paper
-          mapfile -t cites < <(
-            grep -oP '(?<=\\cite[pt]?\{)[^}]+' "$MAIN_TEX" 2>/dev/null \
-              | tr ',' '\n' | tr -d ' ' | sort -u || true
-          )
-          echo "\\cite keys in main paper: ${#cites[@]}"
-
-          # Collect .bib keys
-          mapfile -t bib_keys < <(
-            grep -oP '(?<=@\w{2,20}\{)[^,]+' "$BIB_FILE" 2>/dev/null \
-              | tr -d ' ' | sort -u || true
-          )
-          echo ".bib entries: ${#bib_keys[@]}"
-
-          # Check for undefined refs
-          undef_refs=()
-          for ref in "${refs[@]}"; do
-            [[ -v label_src["$ref"] ]] || undef_refs+=("$ref")
-          done
-
-          # Check for undefined cites
-          declare -A bib_set
-          for k in "${bib_keys[@]}"; do bib_set["$k"]=1; done
-          undef_cites=()
-          for cite in "${cites[@]}"; do
-            [[ -v bib_set["$cite"] ]] || undef_cites+=("$cite")
-          done
-
-          # Report
-          if [[ ${#undef_refs[@]} -gt 0 ]]; then
-            for r in "${undef_refs[@]}"; do
-              echo "::warning::Undefined \\ref target: $r"
-            done
-          else
-            echo "✔  All \\ref targets have matching \\label definitions"
-          fi
-
-          if [[ ${#undef_cites[@]} -gt 0 ]]; then
-            for c in "${undef_cites[@]}"; do
-              echo "::warning::Citation key not in .bib: $c"
-            done
-          else
-            echo "✔  All \\cite keys found in $BIB_FILE"
-          fi
-
-          echo "undef_refs=${#undef_refs[@]}"  >> "$GITHUB_OUTPUT"
-          echo "undef_cites=${#undef_cites[@]}" >> "$GITHUB_OUTPUT"
-          echo "::endgroup::"
+        run: python3 scripts/check_xrefs.py "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX" "$BIB_FILE"
 
       - name: Annotate PR with cross-reference summary
         if: github.event_name == 'pull_request'
@@ -201,35 +145,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Install TeX Live (selective for speed) ──────────────────────────
-      - name: Install LaTeX (TeX Live)
-        uses: xu-cheng/latex-action@v3
-        with:
-          pre_compile: "echo 'LaTeX environment ready'"
-          post_compile: "echo 'Post-compile hook'"
-          root_file: ${{ env.MAIN_TEX }}
-          latexmk_use_xelatex: false
-          latexmk_shell_escape: false
-          work_in_root_file_dir: false
-          extra_packages: >-
-            jmlr
-            algorithms
-            algorithmicx
-            booktabs
-            caption
-            subcaption
-            multirow
-            threeparttable
-            longtable
-            tabularx
-            colortbl
-            silence
-            makecell
-            enumitem
-            microtype
-        continue-on-error: true  # fall back to manual steps below
-
-      # ── Manual 4-pass compile (fallback / primary) ──────────────────────
+      # ── Install TeX Live ──────────────────────────────────────────────────
+      # NOTE: there is no apt package literally named "bibtex" on Ubuntu —
+      # the bibtex binary is shipped inside texlive-binaries, which the
+      # packages below already pull in transitively. Listing "bibtex"
+      # explicitly used to make this whole `apt-get install` fail.
       - name: Install TeX Live (apt)
         run: |
           sudo apt-get update -qq
@@ -239,46 +159,17 @@ jobs:
             texlive-fonts-recommended \
             texlive-bibtex-extra \
             texlive-publishers \
-            bibtex \
             qpdf \
+            poppler-utils \
             latexmk
 
-      - name: Prepare build directories
-        run: mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+      - name: Clean build dirs (clean_build requested)
+        if: github.event.inputs.clean_build == 'true'
+        run: make clean
 
-      - name: "Pass 1 — pdflatex (initial)"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$MAIN_TEX" | tee build/main_pass1.log
-          echo "Exit: $?"
-
-      - name: "BibTeX — resolve bibliography"
-        run: |
-          bibtex "$BUILD_DIR/jmlr_paper_main" | tee build/main_bibtex.log || true
-
-      - name: "Pass 2 — pdflatex (resolve citations)"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$MAIN_TEX" | tee build/main_pass2.log
-
-      - name: "Pass 3 — pdflatex (stabilise cross-refs)"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$MAIN_TEX" | tee build/main_pass3.log
-
-      - name: "Pass 4 — pdflatex (if Rerun detected)"
-        run: |
-          if grep -q 'Rerun' "$BUILD_DIR/jmlr_paper_main.log" 2>/dev/null; then
-            echo "Rerun detected — running Pass 4"
-            pdflatex -interaction=nonstopmode -halt-on-error \
-              -file-line-error -output-directory="$BUILD_DIR" \
-              "$MAIN_TEX" | tee build/main_pass4.log
-          else
-            echo "No Rerun needed — Pass 4 skipped"
-          fi
+      # ── Build via the shared Makefile (4-pass pdflatex + bibtex) ─────────
+      - name: "Compile main paper (make main)"
+        run: make main
 
       - name: Scan log for undefined refs / citations
         run: |
@@ -292,39 +183,9 @@ jobs:
             grep 'undefined' "$logfile" | head -20 || true
           fi
 
-      - name: Copy PDF to output
-        run: |
-          cp "$BUILD_DIR/jmlr_paper_main.pdf" "$OUTPUT_DIR/jmlr_paper_main.pdf"
-          echo "✔ PDF size: $(du -h $OUTPUT_DIR/jmlr_paper_main.pdf | cut -f1)"
-
       # ── Verify & inspect generated PDF ─────────────────────────────────
       - name: Verify main paper PDF
-        run: |
-          echo "::group::PDF integrity & metadata — jmlr_paper_main.pdf"
-          pdf="$OUTPUT_DIR/jmlr_paper_main.pdf"
-
-          # Structural check
-          if qpdf --check "$pdf"; then
-            echo "✔  qpdf: PDF structure is valid"
-          else
-            echo "::error::qpdf reported structural errors in jmlr_paper_main.pdf"
-            exit 1
-          fi
-
-          # Metadata / page count
-          if command -v pdfinfo &>/dev/null; then
-            pdfinfo "$pdf"
-            pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
-            echo "✔  Page count: $pages"
-            [[ "$pages" -gt 0 ]] || { echo "::error::PDF has 0 pages"; exit 1; }
-          fi
-
-          # File-size sanity (must be > 10 KB)
-          size=$(stat -c%s "$pdf")
-          echo "File size: $size bytes"
-          [[ "$size" -gt 10240 ]] || { echo "::error::PDF suspiciously small ($size bytes)"; exit 1; }
-
-          echo "::endgroup::"
+        run: make verify-main
 
       - name: Upload main paper PDF
         uses: actions/upload-artifact@v4
@@ -338,7 +199,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: main-paper-logs
-          path: build/main_*.log
+          path: |
+            build/jmlr_paper_main.log
+            build/jmlr_paper_main.blg
           retention-days: 7
 
 # =============================================================================
@@ -357,79 +220,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # See compile-main for why "bibtex" is intentionally not in this list.
       - name: Install TeX Live (apt)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             texlive-latex-extra texlive-science \
             texlive-fonts-recommended texlive-bibtex-extra \
-            bibtex qpdf
+            qpdf poppler-utils
 
-      - name: Prepare build directories
-        run: mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+      - name: Clean build dirs (clean_build requested)
+        if: github.event.inputs.clean_build == 'true'
+        run: make clean
 
-      - name: "Pass 1 — pdflatex"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$SUPP_A_TEX" | tee build/suppa_pass1.log
-
-      - name: "BibTeX"
-        run: bibtex "$BUILD_DIR/supp_routing_improvements" | tee build/suppa_bibtex.log || true
-
-      - name: "Pass 2 — pdflatex"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$SUPP_A_TEX" | tee build/suppa_pass2.log
-
-      - name: "Pass 3 — pdflatex"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$SUPP_A_TEX" | tee build/suppa_pass3.log
-
-      - name: "Pass 4 — pdflatex (if Rerun detected)"
-        run: |
-          if grep -q 'Rerun' "$BUILD_DIR/supp_routing_improvements.log" 2>/dev/null; then
-            pdflatex -interaction=nonstopmode -halt-on-error \
-              -file-line-error -output-directory="$BUILD_DIR" \
-              "$SUPP_A_TEX" | tee build/suppa_pass4.log
-          else
-            echo "Pass 4 skipped"
-          fi
-
-      - name: Copy PDF to output
-        run: cp "$BUILD_DIR/supp_routing_improvements.pdf" "$OUTPUT_DIR/supp_routing_improvements.pdf"
+      - name: "Compile Supplementary A (make suppa)"
+        run: make suppa
 
       # ── Verify & inspect generated PDF ─────────────────────────────────
       - name: Verify Supplementary A PDF
-        run: |
-          echo "::group::PDF integrity & metadata — supp_routing_improvements.pdf"
-          pdf="$OUTPUT_DIR/supp_routing_improvements.pdf"
-
-          # Structural check
-          if qpdf --check "$pdf"; then
-            echo "✔  qpdf: PDF structure is valid"
-          else
-            echo "::error::qpdf reported structural errors in supp_routing_improvements.pdf"
-            exit 1
-          fi
-
-          # Metadata / page count
-          if command -v pdfinfo &>/dev/null; then
-            pdfinfo "$pdf"
-            pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
-            echo "✔  Page count: $pages"
-            [[ "$pages" -gt 0 ]] || { echo "::error::PDF has 0 pages"; exit 1; }
-          fi
-
-          # File-size sanity (must be > 10 KB)
-          size=$(stat -c%s "$pdf")
-          echo "File size: $size bytes"
-          [[ "$size" -gt 10240 ]] || { echo "::error::PDF suspiciously small ($size bytes)"; exit 1; }
-
-          echo "::endgroup::"
+        run: make verify-suppa
 
       - name: Upload Supplementary A PDF
         uses: actions/upload-artifact@v4
@@ -443,7 +252,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: supp-a-logs
-          path: build/suppa_*.log
+          path: |
+            build/supp_routing_improvements.log
+            build/supp_routing_improvements.blg
           retention-days: 7
 
 # =============================================================================
@@ -462,79 +273,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # See compile-main for why "bibtex" is intentionally not in this list.
       - name: Install TeX Live (apt)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             texlive-latex-extra texlive-science \
             texlive-fonts-recommended texlive-bibtex-extra \
-            bibtex qpdf
+            qpdf poppler-utils
 
-      - name: Prepare build directories
-        run: mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+      - name: Clean build dirs (clean_build requested)
+        if: github.event.inputs.clean_build == 'true'
+        run: make clean
 
-      - name: "Pass 1 — pdflatex"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$SUPP_B_TEX" | tee build/suppb_pass1.log
-
-      - name: "BibTeX"
-        run: bibtex "$BUILD_DIR/supp_benchmark_report" | tee build/suppb_bibtex.log || true
-
-      - name: "Pass 2 — pdflatex"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$SUPP_B_TEX" | tee build/suppb_pass2.log
-
-      - name: "Pass 3 — pdflatex"
-        run: |
-          pdflatex -interaction=nonstopmode -halt-on-error \
-            -file-line-error -output-directory="$BUILD_DIR" \
-            "$SUPP_B_TEX" | tee build/suppb_pass3.log
-
-      - name: "Pass 4 — pdflatex (if Rerun detected)"
-        run: |
-          if grep -q 'Rerun' "$BUILD_DIR/supp_benchmark_report.log" 2>/dev/null; then
-            pdflatex -interaction=nonstopmode -halt-on-error \
-              -file-line-error -output-directory="$BUILD_DIR" \
-              "$SUPP_B_TEX" | tee build/suppb_pass4.log
-          else
-            echo "Pass 4 skipped"
-          fi
-
-      - name: Copy PDF to output
-        run: cp "$BUILD_DIR/supp_benchmark_report.pdf" "$OUTPUT_DIR/supp_benchmark_report.pdf"
+      - name: "Compile Supplementary B (make suppb)"
+        run: make suppb
 
       # ── Verify & inspect generated PDF ─────────────────────────────────
       - name: Verify Supplementary B PDF
-        run: |
-          echo "::group::PDF integrity & metadata — supp_benchmark_report.pdf"
-          pdf="$OUTPUT_DIR/supp_benchmark_report.pdf"
-
-          # Structural check
-          if qpdf --check "$pdf"; then
-            echo "✔  qpdf: PDF structure is valid"
-          else
-            echo "::error::qpdf reported structural errors in supp_benchmark_report.pdf"
-            exit 1
-          fi
-
-          # Metadata / page count
-          if command -v pdfinfo &>/dev/null; then
-            pdfinfo "$pdf"
-            pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
-            echo "✔  Page count: $pages"
-            [[ "$pages" -gt 0 ]] || { echo "::error::PDF has 0 pages"; exit 1; }
-          fi
-
-          # File-size sanity (must be > 10 KB)
-          size=$(stat -c%s "$pdf")
-          echo "File size: $size bytes"
-          [[ "$size" -gt 10240 ]] || { echo "::error::PDF suspiciously small ($size bytes)"; exit 1; }
-
-          echo "::endgroup::"
+        run: make verify-suppb
 
       - name: Upload Supplementary B PDF
         uses: actions/upload-artifact@v4
@@ -548,7 +305,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: supp-b-logs
-          path: build/suppb_*.log
+          path: |
+            build/supp_benchmark_report.log
+            build/supp_benchmark_report.blg
           retention-days: 7
 
 # =============================================================================
