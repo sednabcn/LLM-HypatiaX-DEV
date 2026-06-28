@@ -31,7 +31,7 @@ Auto-fixable (status=open, auto_fixable=true in registry)
   FIX-XR1  Remove \\label{sec:llm_domain}; fix \\ref call sites
   FIX-XR2  Move \\label{sec:r2_bugfix} out of \\item block
   FIX-XR3  Section 7.3 → 7.4 in supp_routing_improvements.tex
-  FIX-XR4  jmlr_paper_main.tex → jmlr-hypatiax-paper-final.tex in Supp A
+  FIX-XR4  jmlr_paper_main.tex → jmlr-paper-main.tex in Supp A
   FIX-N1   "71 cases" → "70 tasks"
   FIX-N2   "Five-Layer Architecture Overview" → "Five-Stage Routing…"
   FIX-C2   hybrid_system_v40 → hybrid_system_v50_2
@@ -279,7 +279,7 @@ class Inspector:
             if "jmlr_paper_main.tex" in src:
                 self._add(Finding("FIX-XR4", "medium",
                     f"Stale filename 'jmlr_paper_main.tex' in {p.name}",
-                    "Replace with 'jmlr-hypatiax-paper-final.tex' throughout Supp A.",
+                    "Replace with 'jmlr-paper-main.tex' throughout Supp A.",
                     [str(p)], auto_fixable=True))
 
         # Informational: undefined \ref targets
@@ -707,10 +707,10 @@ class Fixer:
     def apply_FIX_XR4(self):
         # Fix stale filename in ALL supplementary files, not just routing
         for p in self._supp_files():
-            n = self._patch_str(p, "jmlr_paper_main.tex", "jmlr-hypatiax-paper-final.tex",
+            n = self._patch_str(p, "jmlr_paper_main.tex", "jmlr-paper-main.tex",
                                 "FIX-XR4 filename")
             n += self._patch_re(p, r"\\texttt\{jmlr_paper_main\}",
-                                r"\\texttt{jmlr-hypatiax-paper-final}", "FIX-XR4 texttt")
+                                r"\\texttt{jmlr-paper-main}", "FIX-XR4 texttt")
             if n: self.applied.append(f"FIX-XR4 — {p.name}")
 
     # ── Section / subsection label fixes ──────────────────────────────────────
@@ -1085,13 +1085,13 @@ def main() -> int:
     # instead of the repo root), which causes FileNotFoundError deep inside
     # notebook cells that open the file by bare name.  Fail fast with a clear
     # message rather than a cryptic traceback.
-    PAPER_TEX = repo / "jmlr-hypatiax-paper-final.tex"
+    PAPER_TEX = repo / "jmlr-paper-main.tex"
     if not PAPER_TEX.exists():
-        print(f"\n[ERROR] jmlr-hypatiax-paper-final.tex not found under --repo {repo}")
+        print(f"\n[ERROR] jmlr-paper-main.tex not found under --repo {repo}")
         print(f"        Expected: {PAPER_TEX}")
         print(f"        Run hypatia_inspector.py from the repository root, or pass")
         print(f"        --repo /path/to/repo pointing at the directory that contains")
-        print(f"        jmlr-hypatiax-paper-final.tex.")
+        print(f"        jmlr-paper-main.tex.")
         sys.exit(1)
 
     sev_filter = {s.strip().lower() for s in args.severity.split(",")} if args.severity else None
