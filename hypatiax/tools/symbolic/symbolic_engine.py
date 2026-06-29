@@ -1564,6 +1564,24 @@ class SymbolicEngine:
                     _trace.append(f"iter_scale={_iter_scale:.2f}({pysr_kwargs['niterations']}→{_adjusted_iters})")
                     pysr_kwargs["niterations"] = _adjusted_iters
 
+            # FIX v1.1 (§10.7 investigation, Bug #2 root cause): hybrid_system_v50_2.py
+            # retrieves these via getattr(self.symbolic_engine, "_last_X_aug"/"_last_aug_names",
+            # None) to recompute RMSE against the SAME engineered feature matrix the
+            # formula was actually fitted on (e.g. ratio_A_HA from the EXP-RATIO block
+            # above, or geometric-mean columns from OPTICS-GM). These attributes were
+            # never set anywhere in this class, so that getattr ALWAYS returned None —
+            # the "RC-5 stale matrix guard" fallback in hybrid_system_v50_2.py was
+            # therefore not a rare edge case, it was the ONLY path ever taken. Any
+            # formula referencing an engineered column (e.g. Henderson-Hasselbalch,
+            # Rate Law) would have that column silently dropped downstream, leaving an
+            # unbound symbol that crashed numpy with "... has no callable <fn> method"
+            # (or, after the FIX-B patch in hybrid_system_v50_2.py, a clean ValueError).
+            # Storing the actual final _X_fit/safe_names here — taken AFTER all
+            # augmentation (geometric-mean, ratio) and BEFORE fit() mutates anything
+            # further — closes the loop so RMSE can be computed correctly.
+            self._last_X_aug = _X_fit
+            self._last_aug_names = list(safe_names)
+
             # Fit model with safe variable names
             _log_rss("before PySR")
             self.model.fit(_X_fit, _y_fit, variable_names=safe_names)

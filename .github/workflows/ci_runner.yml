@@ -2574,12 +2574,67 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION || '3.12' }}
 
+      # FIX (Bug #1, §10.7 investigation): same missing pint + Julia setup
+      # as exp1_pca / exp2_feynman_pca above — same root cause.
+      - name: Set up Julia 1.11
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        uses: julia-actions/setup-julia@v2.6.1
+        with:
+          version: "1.11"
+
+      - name: Cache Julia depot
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.julia
+          key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+          restore-keys: |
+            julia-depot-${{ runner.os }}-
+
       - name: Install dependencies
         if: steps.check_exp1b.outputs.already_done != 'true'
         run: |
           pip install --upgrade pip
           if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
-          pip install numpy scipy scikit-learn pysr juliacall
+          pip install numpy scipy scikit-learn pysr juliacall pint
+
+      - name: Install Julia / SymbolicRegression
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        run: |
+          python3 -c "import pysr; pysr.install()"
+
+      - name: Precompile Julia / SymbolicRegression
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys
+
+          warmup = """
+          import numpy as np
+          import pysr
+          X = np.random.randn(20, 1)
+          y = X[:, 0] * 2.0 + 1.0
+          model = pysr.PySRRegressor(
+              niterations=5,
+              populations=1,
+              verbosity=0,
+              progress=False,
+              tempdir="/tmp/pysr_warmup",
+          )
+          model.fit(X, y)
+          print("Julia/PySR precompile warmup OK")
+          """
+          result = subprocess.run(
+              [sys.executable, "-c", warmup],
+              timeout=300,
+              capture_output=True,
+              text=True,
+          )
+          print(result.stdout or "")
+          if result.returncode != 0:
+              print("WARNING: Julia precompile warmup failed (HypatiaX/HDS may be N/A):")
+              print(result.stderr[-3000:] if result.stderr else "(no stderr)")
+          PYEOF
 
       - name: Run exp1b_pca via run_all.sh
         if: steps.check_exp1b.outputs.already_done != 'true'
@@ -3116,32 +3171,12 @@ jobs:
           print(f"  [OK]  Corrected path: {CORRECTED_DIR.relative_to(OUT_BASE)}")
 
           # ── Check 2: if legacy results exist, capture baseline ────────────
-          # FIX-GATEC-PCA: any file containing "_pca" (e.g.
-          # protocol_core_noiseless_pca_<ts>.json) can ONLY have been written
-          # by run_comparative_suite_benchmark_pca.py — exp2_feynman (the
-          # legacy step) never calls that script. A "_pca" file in LEGACY_DIR
-          # is therefore always a stray/mis-routed leftover, not a genuine
-          # legacy result — exclude it from the baseline AND from collision
-          # detection (it should never have been written here).
-          stray_pca_in_legacy = [
-              f for f in (sorted(LEGACY_DIR.glob("*.json")) if LEGACY_DIR.exists() else [])
-              if "_pca" in f.name
-          ]
           legacy_jsons = [
               f for f in (sorted(LEGACY_DIR.glob("*.json")) if LEGACY_DIR.exists() else [])
               if "checkpoint" not in f.name
               and "disclosure" not in f.name
-              and "_pca" not in f.name          # FIX-GATEC-PCA
               and not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
           ]
-
-          if stray_pca_in_legacy:
-              print(f"  [WARN] {len(stray_pca_in_legacy)} stray '_pca' file(s) found in "
-                    f"{LEGACY_DIR.relative_to(OUT_BASE)} — these belong in "
-                    f"{CORRECTED_DIR.relative_to(OUT_BASE)} and were excluded from the baseline:")
-              for _f in stray_pca_in_legacy[:10]:
-                  print(f"           - {_f.name}")
-              print("           Move or delete these files to fully resolve Gate C.")
 
           if legacy_jsons:
               # Extract 9/30 solve rate from legacy results
@@ -3269,10 +3304,6 @@ jobs:
 
           if corrected_jsons:
               # Confirm no file in CORRECTED_DIR is also in LEGACY_DIR (name clash)
-              # NOTE (FIX-GATEC-PCA): legacy_jsons already excludes any "_pca" file,
-              # so a stray PCA-named file sitting in LEGACY_DIR can no longer
-              # produce a false collision here — it was already reported above
-              # under stray_pca_in_legacy instead.
               legacy_names    = {f.name for f in legacy_jsons}
               corrected_names = {f.name for f in corrected_jsons}
               overlap = legacy_names & corrected_names

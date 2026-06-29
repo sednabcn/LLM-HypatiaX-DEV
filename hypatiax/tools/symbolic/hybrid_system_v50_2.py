@@ -1238,6 +1238,31 @@ class HybridDiscoverySystem:
                     # sympy.lambdify — safer than eval(), caches well for repeated calls
                     _expr_sym = _sp.sympify(_norm_expr)
                     _ordered_syms = [_sp.Symbol(k) for k in _vars_dict]
+
+                    # FIX-B v5.5 (§10.7 investigation, Bug #2): when the RC-5
+                    # stale-matrix guard above fires, _aug_nms is replaced with
+                    # plain `var_names`, dropping any engineered/derived feature
+                    # names (e.g. ratio_A_HA) that the *fitted formula* may still
+                    # reference. Previously this left those symbols unbound in
+                    # `_expr_sym`; lambdify would compile a function that, when
+                    # evaluated, returned a raw sympy object (Symbol/Pow/Mul)
+                    # instead of a float wherever that symbol appeared, and the
+                    # first numpy ufunc applied to it (log/exp/sqrt/...) raised
+                    # a TypeError ("... has no callable <fn> method"), silently
+                    # leaving rmse/nrmse as NaN with no real diagnostic.
+                    #
+                    # Detect this case explicitly and fail loudly with the
+                    # actual missing variable name(s), rather than crashing
+                    # inside the numpy evaluation a few lines down.
+                    _unbound = _expr_sym.free_symbols - set(_ordered_syms)
+                    if _unbound:
+                        raise ValueError(
+                            f"Formula references {sorted(str(s) for s in _unbound)} "
+                            f"which are not present in _vars_dict (likely engineered/"
+                            f"ratio features dropped by the RC-5 stale-matrix fallback "
+                            f"at line ~1223-1224). Cannot evaluate RMSE for this formula."
+                        )
+
                     _func = _sp.lambdify(_ordered_syms, _expr_sym, modules="numpy")
                     _y_pred = _func(*[_vars_dict[k] for k in _vars_dict])
                     _y_pred = np.asarray(_y_pred, dtype=np.float64)
