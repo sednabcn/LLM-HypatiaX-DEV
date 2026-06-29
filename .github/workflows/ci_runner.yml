@@ -2379,11 +2379,32 @@ jobs:
             echo "Nothing new to commit."
           else
             git commit -m "ci: exp2_feynman_pca results (PCA 40/60) [skip ci]"
+            # FIX: stash any *other* unstaged changes left in the tree before
+            # rebasing — otherwise "git pull --rebase" refuses outright with
+            # "cannot pull with rebase: you have unstaged changes" on every
+            # retry, since sleep 5 doesn't clean the tree. Also: the loop could
+            # previously exhaust all 3 attempts, never push, and still print
+            # "Results committed and pushed." (the echo was unconditional).
+            # PUSHED now tracks the real outcome and the job fails loudly if a
+            # push never succeeds.
+            PUSHED=false
             for i in 1 2 3; do
-              git pull --rebase origin "${{ github.ref_name }}" && \
-              git push origin HEAD:"${{ github.ref_name }}" && break || sleep 5
+              git stash --include-untracked --quiet || true
+              if git pull --rebase origin "${{ github.ref_name }}" && \
+                 git push origin HEAD:"${{ github.ref_name }}"; then
+                git stash pop --quiet 2>/dev/null || true
+                PUSHED=true
+                break
+              fi
+              git stash pop --quiet 2>/dev/null || true
+              sleep 5
             done
-            echo "Results committed and pushed."
+            if [[ "${PUSHED}" == "true" ]]; then
+              echo "Results committed and pushed."
+            else
+              echo "::error::Failed to push exp2_feynman_pca results after 3 attempts."
+              exit 1
+            fi
           fi
 
   # ── C5c-1: exp1_pca (DeFi all-74, PCA 40/60) ───────────────────────────────
@@ -2524,11 +2545,27 @@ jobs:
             echo "Nothing new to commit."
           else
             git commit -m "ci: exp1_pca results (DeFi all-74, PCA 40/60) [skip ci]"
+            # FIX: see exp2_feynman_pca step above — stash unstaged changes
+            # before each rebase retry, and only report success if a push
+            # actually went through.
+            PUSHED=false
             for i in 1 2 3; do
-              git pull --rebase origin "${{ github.ref_name }}" && \
-              git push origin HEAD:"${{ github.ref_name }}" && break || sleep 5
+              git stash --include-untracked --quiet || true
+              if git pull --rebase origin "${{ github.ref_name }}" && \
+                 git push origin HEAD:"${{ github.ref_name }}"; then
+                git stash pop --quiet 2>/dev/null || true
+                PUSHED=true
+                break
+              fi
+              git stash pop --quiet 2>/dev/null || true
+              sleep 5
             done
-            echo "Results committed and pushed."
+            if [[ "${PUSHED}" == "true" ]]; then
+              echo "Results committed and pushed."
+            else
+              echo "::error::Failed to push exp1_pca results after 3 attempts."
+              exit 1
+            fi
           fi
 
   # ── C5c-2: exp1b_pca (DeFi portfolio seed sweep, PCA 40/60) ────────────────
@@ -2669,11 +2706,31 @@ jobs:
             echo "Nothing new to commit."
           else
             git commit -m "ci: exp1b_pca results (DeFi portfolio seed sweep, PCA 40/60) [skip ci]"
+            # FIX: this is the block that actually failed in run 76608547410 —
+            #   "error: cannot pull with rebase: You have unstaged changes" on
+            #   all 3 attempts (sleep 5 doesn't clean the tree), yet
+            #   "Results committed and pushed." printed anyway because that
+            #   echo was unconditional and outside the loop. Stash any other
+            #   unstaged changes left in the tree before each rebase retry,
+            #   and only report success if a push actually went through.
+            PUSHED=false
             for i in 1 2 3; do
-              git pull --rebase origin "${{ github.ref_name }}" && \
-              git push origin HEAD:"${{ github.ref_name }}" && break || sleep 5
+              git stash --include-untracked --quiet || true
+              if git pull --rebase origin "${{ github.ref_name }}" && \
+                 git push origin HEAD:"${{ github.ref_name }}"; then
+                git stash pop --quiet 2>/dev/null || true
+                PUSHED=true
+                break
+              fi
+              git stash pop --quiet 2>/dev/null || true
+              sleep 5
             done
-            echo "Results committed and pushed."
+            if [[ "${PUSHED}" == "true" ]]; then
+              echo "Results committed and pushed."
+            else
+              echo "::error::Failed to push exp1b_pca results after 3 attempts."
+              exit 1
+            fi
           fi
 
 # ==============================================================================
