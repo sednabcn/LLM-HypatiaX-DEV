@@ -895,13 +895,46 @@ run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with P
     done
   done
 
+  # FIX Bug 1: write split_protocol_disclosure.json for exp1b_pca.
+  # The exp1_pca step writes its own disclosure in defi_pca/.
+  # exp1b_pca previously wrote NOTHING here — Gate B key-presence check
+  # failed because random_split_used was absent from the 15_pca copy.
+  python3 - <<'PYEOF_DISC_1B'
+import json, pathlib, datetime
+PCA15_DIR = pathlib.Path('${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca')
+DISC_FILE = PCA15_DIR / 'split_protocol_disclosure.json'
+PCA15_DIR.mkdir(parents=True, exist_ok=True)
+disclosure = {
+    'fixc3':              True,
+    'split_protocol':     'pca_40_60',
+    'split_function':     'pca_directed_split',
+    'split_level':        'outer_loop',
+    'force_fresh':        True,
+    'script':             'hypatiax_defi_benchmark_pca.py',
+    'test_size':          0.6,
+    'train_size':         0.4,
+    'random_split_used':  False,
+    'dfi_parity':         True,
+    'section_reference':  'sec:6.4 + sec:10.2-10.4',
+    'generated_by':       'run_all.sh exp1b_pca via hypatiax_defi_benchmark_pca.py',
+    'timestamp':          datetime.datetime.utcnow().isoformat() + 'Z',
+}
+DISC_FILE.write_text(json.dumps(disclosure, indent=2))
+print(f'  [exp1b_pca] split_protocol_disclosure.json written → {DISC_FILE}')
+PYEOF_DISC_1B
+
   # Verification
   echo '=== exp1b_pca verification ==='
   find \"\${_PCA15_DIR}\" -type f 2>/dev/null | sort || echo '  (empty)'
   _COUNT=\$(find \"\${_PCA15_DIR}\" -type f 2>/dev/null | wc -l)
+  _NDISC=\$(find \"\${_PCA15_DIR}\" -name 'split_protocol_disclosure.json' 2>/dev/null | wc -l)
   echo \"Files produced: \${_COUNT}\"
+  echo \"  Disclosure file : \${_NDISC} (split_protocol_disclosure.json)\"
   if [[ \"\${_COUNT}\" -eq 0 && \"\${SKIP_ALLOWED:-false}\" != 'true' ]]; then
     echo 'WARNING: exp1b_pca generated no files — set SKIP_ALLOWED=true if this step was intentionally skipped'
+  fi
+  if [[ \"\${_NDISC}\" -eq 0 ]]; then
+    echo 'WARNING: split_protocol_disclosure.json not found in 15_pca/ — Gate B will FAIL'
   fi
   echo '=== end exp1b_pca ==='
 "

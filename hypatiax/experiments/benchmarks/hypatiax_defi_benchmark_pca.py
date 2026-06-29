@@ -1352,6 +1352,8 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
         "split_protocol":   "pca_40_60",
         "script":           Path(__file__).name,
         "test_size":        0.6,
+        "train_size":       0.4,
+        "random_split_used": False,       # FIX Bug 1: was missing — Gate B key-presence check failed
         "split_function":   "pca_directed_split",
         "split_level":      "outer_loop",
         "force_fresh":      True,

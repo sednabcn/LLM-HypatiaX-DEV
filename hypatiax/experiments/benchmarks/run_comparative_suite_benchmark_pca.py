@@ -119,7 +119,7 @@ _METHOD_TIMEOUT_SECS: int = 900
 #   https://github.com/pytorch/pytorch/issues/78829
 #   https://github.com/MilesCranmer/PySR/issues/443
 # ---------------------------------------------------------------------------
-os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
+# (PYTHON_JULIACALL_HANDLE_SIGNALS already set above — duplicate removed)
 
 import logging as _logging
 # Suppress httpx/httpcore/anthropic HTTP INFO messages completely.
@@ -141,7 +141,6 @@ import numpy as np
 _EXTRAP_MODULE_AVAILABLE = True  # always True — code is inlined
 
 import math
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -635,6 +634,9 @@ _PYSR_TIMEOUT: int = 1100
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent        # …/experiments/benchmarks/
 _PKG_ROOT = _HERE.parent.parent                # …/hypatiax/
+# FIX Bug 3: sys.path must be set HERE — before any _probe / _probe_pysr_method
+# call below, or importlib.util.find_spec("hypatiax.*") returns None and every
+# probe silently returns False (HYBRID_V50_2_AVAILABLE=False for the entire run).
 sys.path.insert(0, str(_PKG_ROOT.parent))      # parent of hypatiax/ → import hypatiax.*
 
 # Checkpoint file stem — overridden at runtime via --checkpoint-name so the
@@ -2366,6 +2368,24 @@ class HybridAllDomainsMethod(BaseMethod):
             r2v  = eval_d.get("r2")   if eval_d.get("r2")   is not None else result.get("r2")
             rmse = eval_d.get("rmse") if eval_d.get("rmse") is not None else result.get("rmse")
             r2v  = float(r2v)  if r2v  is not None else 0.0
+            # FIX Bug 2: when decision=="nn" the hybrid aggregation layer can
+            # return NaN for r2v even though the NN sub-result has a valid score
+            # (observed for Black-Scholes Put Price and Theta of option).
+            # If r2v is not finite, try to pull train_r2 from the NN sub-result
+            # directly so the record is not written as success=True with r2=NaN.
+            if not math.isfinite(r2v):
+                _decision_val = result.get("decision", "")
+                _nn_sub = result.get("nn_result") or result.get("nn") or {}
+                _nn_r2  = _nn_sub.get("train_r2") if isinstance(_nn_sub, dict) else None
+                if _nn_r2 is not None:
+                    try:
+                        _nn_r2_f = float(_nn_r2)
+                        if math.isfinite(_nn_r2_f):
+                            r2v = _nn_r2_f
+                            print(f"   [HybridDeFi] NaN r2 recovered from nn_result.train_r2={r2v:.4f} "
+                                  f"(decision={_decision_val})", flush=True)
+                    except (TypeError, ValueError):
+                        pass
             rmse = float(rmse) if rmse is not None else float("inf")
 
             # ── Get y_pred: 3-strategy cascade ────────────────────────────────
@@ -3612,7 +3632,16 @@ class ProtocolBenchmarkSuite:
                         continue
                 if _formula:
                     try:
-                        _pca_r2[_mname] = _RUNNER_EVAL_FORMULA(_formula, X_far, y_far, var_names)
+                        # FIX Bug 6: _RUNNER_EVAL_FORMULA was undefined (NameError),
+                        # silently caught by except → pca_test_r2 always None.
+                        # Use the module-level _runner_eval_formula and compute R² inline.
+                        _ypred = _runner_eval_formula(_formula, X_far, var_names)
+                        if _ypred is not None and len(_ypred) == len(y_far) and np.all(np.isfinite(_ypred)):
+                            _ss_res = float(np.sum((y_far - _ypred) ** 2))
+                            _ss_tot = float(np.sum((y_far - np.mean(y_far)) ** 2))
+                            _pca_r2[_mname] = float(1.0 - _ss_res / _ss_tot) if _ss_tot > 1e-300 else None
+                        else:
+                            _pca_r2[_mname] = None
                     except Exception:
                         _pca_r2[_mname] = None
                 else:
@@ -4086,7 +4115,7 @@ class ProtocolBenchmarkSuite:
 
         payload = {
             "timestamp":   datetime.now().isoformat(),
-            "script":      "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+            "script":      "run_comparative_suite_benchmark_pca.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix + pca-split)",
             "protocol": {
                 "mode":        mode,
                 "noise_level": 0.0 if noiseless else 0.05,

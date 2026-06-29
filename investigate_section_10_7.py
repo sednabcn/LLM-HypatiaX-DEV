@@ -41,6 +41,7 @@ investigate_section_10_7_report.json next to this script for archiving.
 
 import json
 import math
+import re
 import sys
 import hashlib
 from pathlib import Path
@@ -81,6 +82,24 @@ DUP_WATCH_NAMES = ["fixc3_baseline.json", "split_protocol_disclosure.json"]
 # ---------------------------------------------------------------------------
 
 EXPECTED_PROTOCOL_PATHS = [
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_140009.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_140241.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_140351.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_140849.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_141131.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_141238.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_141708.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_141952.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_142056.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_142621.json",
+    "comparison_results/feynman-tests/exp2_pca_4060/protocol_core_noiseless_pca_20260629_143025.json",
+]
+
+# LEGACY (pre-fix) batch: these lived under exp2/ instead of exp2_pca_4060/ —
+# either a stale misplaced run or an older _PCA_DIR config. Kept here ONLY so
+# the script can report a before/after comparison if both batches are present
+# on disk; the canonical/current batch is EXPECTED_PROTOCOL_PATHS above.
+LEGACY_PROTOCOL_PATHS = [
     "comparison_results/feynman-tests/exp2/protocol_core_noiseless_pca_20260604_131820.json",
     "comparison_results/feynman-tests/exp2/protocol_core_noiseless_pca_20260604_132102.json",
     "comparison_results/feynman-tests/exp2/protocol_core_noiseless_pca_20260604_132207.json",
@@ -193,7 +212,18 @@ def report_path_fidelity(search_dir: Path):
         print(f"  [OK flat]      {summary_filename}  (found at {summary_path}, not at canonical path)")
 
     print()
-    return resolved_protocol_files, summary_path
+    print("  --- Legacy batch (pre-fix, exp2/ instead of exp2_pca_4060/) ---")
+    resolved_legacy_files = []
+    for rel in LEGACY_PROTOCOL_PATHS:
+        p = search_dir / rel
+        if p.is_file():
+            print(f"  [FOUND legacy] {rel}")
+            resolved_legacy_files.append(p)
+        else:
+            print(f"  [absent]       {rel}  (expected if cleaned up / never existed in this checkout)")
+
+    print()
+    return resolved_protocol_files, summary_path, resolved_legacy_files
 
 
 def report_duplicate_path_fidelity(search_dir: Path):
@@ -337,9 +367,9 @@ def is_env_failure(method_result):
 # Main investigation steps
 # ---------------------------------------------------------------------------
 
-def step1_recount_hypatiax_only(protocol_files):
+def step1_recount_hypatiax_only(protocol_files, label="CURRENT"):
     print("=" * 78)
-    print("STEP 1 — Recount across protocol_core_noiseless_pca_*.json (real schema)")
+    print(f"STEP 1 — Recount across protocol_core_noiseless_pca_*.json [{label}]")
     print("=" * 78)
 
     if not protocol_files:
@@ -512,6 +542,128 @@ def step3_diff_duplicates(dup_groups):
                 print(f"      hash {h[:12]}...:")
                 for p in plist:
                     print(f"        - {p}")
+                obj2 = safe_load_json(plist[0])
+                if isinstance(obj2, dict):
+                    interesting = {
+                        k: obj2[k] for k in
+                        ("n_pass", "n_total", "solve_rate", "random_split_used",
+                         "split_function", "test_size", "paper_claim")
+                        if k in obj2
+                    }
+                    if interesting:
+                        print(f"        content: {interesting}")
+
+
+def step4_scan_logs_for_known_bugs(search_dir: Path):
+    """
+    Scan any .txt/.log files under search_dir (e.g. extracted CI log zips)
+    for the two known bug signatures discovered during this investigation:
+
+      BUG 1 (env-probe failure): "HybridDiscoverySystem v50_2 not available"
+        -> seen so far ONLY in exp2/Feynman-PCA protocol runs, not in
+           exp1_ablation. Root cause: import/probe check in whatever script
+           sets HYBRID_V50_2_AVAILABLE (likely run_protocol_benchmark_core.py
+           or run_comparative_suite_benchmark_pca.py — not yet confirmed).
+
+      BUG 2 (FIX-A RMSE substitution failure): "[FIX-A] RMSE computation
+        failed: loop of ufunc does not support argument 0 of type <T> which
+        has no callable <fn> method" -- seen with T in {Symbol, Pow, Mul} and
+        fn in {log, exp, sqrt} so far. Root cause: incomplete substitution
+        dict in hybrid_system_v50_2.py before lambdify/numpy evaluation,
+        leaving unevaluated sympy objects of varying types.
+
+    Reports every occurrence with file, line number, and the exact captured
+    error string, plus a tally by bug type and by file.
+    """
+    print("=" * 78)
+    print("STEP 4 — Scanning log files for known bug signatures")
+    print("=" * 78)
+
+    log_files = sorted(search_dir.rglob("*.txt")) + sorted(search_dir.rglob("*.log"))
+    if not log_files:
+        print("  No .txt/.log files found under this directory.")
+        return {"bug1_env_probe": [], "bug2_fix_a_rmse": []}
+
+    print(f"  Scanning {len(log_files)} log file(s)...")
+
+    bug1_pattern = re.compile(r".*not available.*", re.IGNORECASE)
+    bug2_pattern = re.compile(
+        r"\[FIX-A\] RMSE computation failed: (.*does not support argument 0 of type (\w+) "
+        r"which has no callable (\w+) method.*)"
+    )
+
+    bug1_hits = []
+    bug2_hits = []
+
+    for f in log_files:
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            print(f"  [WARN] Could not read {f}: {e}")
+            continue
+
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if "HybridDiscoverySystem" in line and bug1_pattern.search(line):
+                bug1_hits.append({"file": str(f), "line": lineno, "text": line.strip()})
+            m = bug2_pattern.search(line)
+            if m:
+                bug2_hits.append({
+                    "file": str(f), "line": lineno, "text": line.strip(),
+                    "sympy_type": m.group(2), "numpy_fn": m.group(3),
+                })
+
+    print(f"\n  BUG 1 (env-probe 'not available') — {len(bug1_hits)} occurrence(s):")
+    by_file_1 = defaultdict(int)
+    for h in bug1_hits:
+        by_file_1[h["file"]] += 1
+    for fname, n in by_file_1.items():
+        print(f"    {fname}: {n}")
+
+    print(f"\n  BUG 2 (FIX-A RMSE substitution failure) — {len(bug2_hits)} occurrence(s):")
+    by_type = defaultdict(int)
+    for h in bug2_hits:
+        by_type[(h["sympy_type"], h["numpy_fn"])] += 1
+        print(f"    {h['file']}:{h['line']}  type={h['sympy_type']:8s} fn={h['numpy_fn']:6s}")
+    print(f"\n  BUG 2 breakdown by (sympy type, numpy fn):")
+    for (t, fn), n in sorted(by_type.items()):
+        print(f"    {t:10s} x {fn:6s}: {n}")
+
+    if bug1_hits and not bug2_hits:
+        print("\n  [PATTERN] Bug 1 present, Bug 2 absent in these logs — "
+              "consistent with prior finding that Bug 1 is exp2/PCA-specific.")
+    if bug2_hits and not bug1_hits:
+        print("\n  [PATTERN] Bug 2 present, Bug 1 absent in these logs — "
+              "consistent with prior finding that Bug 2 occurs in exp1_ablation "
+              "without the import-level probe ever failing.")
+
+    return {"bug1_env_probe": bug1_hits, "bug2_fix_a_rmse": bug2_hits}
+
+
+
+    print("\n" + "=" * 78)
+    print("STEP 3 — Diff duplicate fixc3_baseline.json / split_protocol_disclosure.json copies")
+    print("=" * 78)
+
+    for name, paths in dup_groups.items():
+        print(f"\n  {name}: {len(paths)} copy/copies found")
+        if len(paths) < 2:
+            for p in paths:
+                print(f"    (only one copy) {p}")
+            continue
+
+        hashes = {}
+        for p in paths:
+            h = sha256_of(p)
+            hashes.setdefault(h, []).append(p)
+
+        if len(hashes) == 1:
+            print(f"    [OK] All {len(paths)} copies are byte-identical.")
+        else:
+            print(f"    [DIVERGENT] {len(hashes)} distinct content variant(s) found:")
+            for h, plist in hashes.items():
+                print(f"      hash {h[:12]}...:")
+                for p in plist:
+                    print(f"        - {p}")
                 # show a quick content fingerprint for the divergent groups
                 obj = safe_load_json(plist[0])
                 if isinstance(obj, dict):
@@ -539,7 +691,7 @@ def main():
     print(f"(Checking exact canonical paths from tree_r.txt first, "
           f"falling back to flat filename search.)\n")
 
-    protocol_files, summary_file = report_path_fidelity(search_dir)
+    protocol_files, summary_file, legacy_files = report_path_fidelity(search_dir)
 
     print("=" * 78)
     print("Duplicate-prone files — canonical path check")
@@ -547,9 +699,29 @@ def main():
     dup_groups = report_duplicate_path_fidelity(search_dir)
     print()
 
-    recount_result = step1_recount_hypatiax_only(protocol_files)
+    recount_result = step1_recount_hypatiax_only(protocol_files, label="CURRENT (exp2_pca_4060)")
+    legacy_recount_result = None
+    if legacy_files:
+        legacy_recount_result = step1_recount_hypatiax_only(legacy_files, label="LEGACY (exp2/, pre-fix)")
+
+        print("=" * 78)
+        print("BEFORE/AFTER COMPARISON — legacy batch vs current batch")
+        print("=" * 78)
+        for cand in HYPATIAX_METHOD_CANDIDATES:
+            old = legacy_recount_result["candidates"].get(cand, {}) if legacy_recount_result else {}
+            new = recount_result["candidates"].get(cand, {}) if recount_result else {}
+            print(f"  {cand}:")
+            print(f"    LEGACY:  {old.get('n_pass')}/{old.get('n_total')}  "
+                  f"env_failures={old.get('env_failures')}")
+            print(f"    CURRENT: {new.get('n_pass')}/{new.get('n_total')}  "
+                  f"env_failures={new.get('env_failures')}")
+            if old and new and old.get("env_failures", 0) > 0 and new.get("env_failures", 0) == 0:
+                print(f"    [FIXED] env-probe failures cleared for {cand} between legacy and current batch.")
+        print()
+
     summary_obj = step2_crosscheck_summary(summary_file, recount_result)
     step3_diff_duplicates(dup_groups)
+    log_scan_result = step4_scan_logs_for_known_bugs(search_dir)
 
     # Write machine-readable report alongside this script
     report = {
@@ -563,6 +735,11 @@ def main():
         "duplicate_files_found": {
             name: [str(p) for p in paths] for name, paths in dup_groups.items()
         },
+        "log_scan_result": log_scan_result,
+        "legacy_recount_result": {
+            k: v for k, v in (legacy_recount_result or {}).items()
+            if k != "candidate_equation_results"
+        } if legacy_recount_result else None,
     }
     out_path = Path(__file__).parent / "investigate_section_10_7_report.json"
     out_path.write_text(json.dumps(report, indent=2, default=str))
