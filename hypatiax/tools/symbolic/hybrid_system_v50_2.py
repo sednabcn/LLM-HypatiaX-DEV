@@ -230,9 +230,12 @@ def _to_serialisable(obj: Any) -> Any:
     return obj
 
 
+ENGINE_VERSION = "5.4"
+
+
 class HybridDiscoverySystem:
     """
-    Hybrid discovery system v5.1.
+    Hybrid discovery system v5.4.
 
     Now correctly wires LLM guidance through SymbolicEngineWithLLM when
     use_llm=True or when an API key is present.  Backward-compatible:
@@ -244,6 +247,8 @@ class HybridDiscoverySystem:
         "hybrid"   — LLM attempts first; PySR refines if needed
         "fallback" — PySR first; LLM fires only when PySR underperforms
     """
+
+    VERSION = ENGINE_VERSION  # programmatic access: HybridDiscoverySystem.VERSION
 
     # PROD-3: Alias table (unchanged from v4.1-PROD)
     _PYSR_OP_ALIASES: dict[str, str] = {
