@@ -758,8 +758,8 @@ def run_condition(eq, condition, seed=42, niterations=None,
             "complexity":            complexity,
             "llm_expression":        None,
             "llm_confidence":        None,
-            # v5.1 provenance extras
-            "engine_version":        "5.1",
+            # v5.4 provenance extras
+            "engine_version":        "5.4",
             "scale_log":             scale_log,
             "rmse_original_units":   train_rmse,
             "llm_mode_used":         res.get("llm_mode", "none"),
@@ -1513,7 +1513,7 @@ def run_instability_stats(all_results: dict) -> None:
     with open(INSTAB_STATS, "w") as f:
         json.dump({
             "core15_instability": instability_rows,
-            "engine_version":     "5.1",
+            "engine_version":     "5.4",
             "note": (
                 "instability_index = |near_R2 - far_R2| (regime-range proxy). "
                 "For full 30-run stochastic sweep (Spearman ρ=−0.70 claim) "
@@ -1578,7 +1578,7 @@ def write_provenance(all_results: dict) -> None:
     provenance = {
         "family":                "ablation_exp1",
         "engine":                "hybrid_system_v50_2.py",
-        "engine_version":        "5.1",
+        "engine_version":        "5.4",
         "seed":                  SEED,
         "seed_is_paper_primary": SEED == 42,
         "populations":           POPULATIONS,
