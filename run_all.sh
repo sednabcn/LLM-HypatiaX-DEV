@@ -1657,13 +1657,25 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   _SAVED=\$(find \"\${_EXT_DIR}/_saved\" -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   echo \"[E2-guard] \${_SAVED} protocol_core_extrap_*.json hard-linked into \${_EXT_DIR}/_saved/\"
 
-  # FIX-E6: copy benchmark_results_extrap.json to a shard-suffixed name so
-  # parallel shard pushes do not silently overwrite each other on master.
+  # FIX-E6 (updated): run_comparative_suite_benchmark_v2.py now writes
+  # benchmark_results_extrap.json directly into --output-dir (_EXT_DIR) —
+  # see that script's FIX-EXTRAP-OUTPUT-DIR change. This copy step now just
+  # renames it to a shard-suffixed name so parallel shard pushes do not
+  # collide on master. Fallback to the old parent comparison_results/
+  # location is kept in case an unpatched/older script version is deployed.
   _BENCH_EXT_SRC=\"\${_EXT_DIR}/benchmark_results_extrap.json\"
+  if [ ! -f \"\${_BENCH_EXT_SRC}\" ]; then
+    _BENCH_EXT_SRC=\"\${RESULTS_DIR}/comparison_results/benchmark_results_extrap.json\"
+    if [ -f \"\${_BENCH_EXT_SRC}\" ]; then
+      echo \"WARNING: benchmark_results_extrap.json found in comparison_results/ root, not \${_EXT_DIR} — script may be an older/unpatched version (expected it to honor --output-dir).\"
+    fi
+  fi
   if [ -f \"\${_BENCH_EXT_SRC}\" ]; then
     _BENCH_EXT_DST=\"\${_EXT_DIR}/benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
     cp \"\${_BENCH_EXT_SRC}\" \"\${_BENCH_EXT_DST}\"
-    echo \"[E6-guard] shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
+    echo \"[E6-guard] copied \${_BENCH_EXT_SRC} -> benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
+  else
+    echo \"WARNING: benchmark_results_extrap.json not found in \${_EXT_DIR} or \${RESULTS_DIR}/comparison_results\"
   fi
 
   echo '=== exp2_feynman_extrap verification ==='
@@ -1672,7 +1684,7 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   COUNT_EXTRAP=\$(find \"\${_EXT_DIR}\" \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   COUNT_BENCH_EXTRAP=\$(find \"\${_EXT_DIR}\" \
-    -name 'benchmark_results_extrap.json' 2>/dev/null | wc -l)
+    -maxdepth 1 -name 'benchmark_results_extrap*.json' 2>/dev/null | wc -l)
   COUNT_SAVED=\$(find \"\${_EXT_DIR}/_saved\" \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   if [[ \"\${COUNT_EXTRAP}\" -eq 0 && \"\${COUNT_SAVED}\" -gt 0 ]]; then
@@ -1684,11 +1696,10 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
     echo \"OK: \${COUNT_EXTRAP} extrap protocol file(s) produced  (\${COUNT_SAVED} backed up in _saved/)\"
   fi
   if [[ \"\${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
-    echo 'WARNING: benchmark_results_extrap.json not found — ci_analysis.yml merge step will find nothing'
-    echo '  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is in use (writes this file when --extrap is active)'
+    echo 'WARNING: benchmark_results_extrap.json not found in exp2_extrap/ or comparison_results/ — ci_analysis.yml merge step will find nothing'
   else
-    echo \"OK: benchmark_results_extrap.json present (shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json)\"
-    echo '    ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
+    echo \"OK: benchmark_results_extrap_shard\${_EXT_SHARD}.json present in \${_EXT_DIR}\"
+    echo '    ci_analysis.yml / the local merge block will merge this into ablation_paired.json in exp2_extrap/'
   fi
 "
 
