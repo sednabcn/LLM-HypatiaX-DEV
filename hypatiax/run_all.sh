@@ -399,14 +399,14 @@ run env_check "Verify environment (Python, Julia/PySR, API key, directories)" ba
   python3 -c "import pysr; print(\"PySR:\", pysr.__version__)" || { echo "ERROR: pysr not installed"; exit 1; }
   python3 -c "import torch; print(\"PyTorch:\", torch.__version__)"
   python3 -c "import anthropic; print(\"anthropic SDK: ok\")"
-  # BUG 10 FIX: claude-sonnet-4-6 (repro.yaml llm_model) requires SDK >= 0.40.0.
+  # BUG 10 FIX: claude-sonnet-4-20250514 (repro.yaml llm_model) requires SDK >= 0.40.0.
   # environment.yml was pinned to 0.28.0 which predates this model family.
   # Assert the minimum here so local runs fail fast with a clear message.
   python3 - <<'SDKCHECK'
 import anthropic, sys
 ver = tuple(int(x) for x in anthropic.__version__.split(".")[:3])
 if ver < (0, 40, 0):
-    print("ERROR: anthropic SDK " + anthropic.__version__ + " is too old; need >= 0.40.0 for claude-sonnet-4-6")
+    print("ERROR: anthropic SDK " + anthropic.__version__ + " is too old; need >= 0.40.0 for claude-sonnet-4-20250514")
     sys.exit(1)
 print("anthropic SDK version: " + anthropic.__version__ + " (>= 0.40.0 OK)")
 SDKCHECK
@@ -895,13 +895,46 @@ run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with P
     done
   done
 
+  # FIX Bug 1: write split_protocol_disclosure.json for exp1b_pca.
+  # The exp1_pca step writes its own disclosure in defi_pca/.
+  # exp1b_pca previously wrote NOTHING here — Gate B key-presence check
+  # failed because random_split_used was absent from the 15_pca copy.
+  python3 - <<'PYEOF_DISC_1B'
+import json, pathlib, datetime
+PCA15_DIR = pathlib.Path('${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca')
+DISC_FILE = PCA15_DIR / 'split_protocol_disclosure.json'
+PCA15_DIR.mkdir(parents=True, exist_ok=True)
+disclosure = {
+    'fixc3':              True,
+    'split_protocol':     'pca_40_60',
+    'split_function':     'pca_directed_split',
+    'split_level':        'outer_loop',
+    'force_fresh':        True,
+    'script':             'hypatiax_defi_benchmark_pca.py',
+    'test_size':          0.6,
+    'train_size':         0.4,
+    'random_split_used':  False,
+    'dfi_parity':         True,
+    'section_reference':  'sec:6.4 + sec:10.2-10.4',
+    'generated_by':       'run_all.sh exp1b_pca via hypatiax_defi_benchmark_pca.py',
+    'timestamp':          datetime.datetime.utcnow().isoformat() + 'Z',
+}
+DISC_FILE.write_text(json.dumps(disclosure, indent=2))
+print(f'  [exp1b_pca] split_protocol_disclosure.json written → {DISC_FILE}')
+PYEOF_DISC_1B
+
   # Verification
   echo '=== exp1b_pca verification ==='
   find \"\${_PCA15_DIR}\" -type f 2>/dev/null | sort || echo '  (empty)'
   _COUNT=\$(find \"\${_PCA15_DIR}\" -type f 2>/dev/null | wc -l)
+  _NDISC=\$(find \"\${_PCA15_DIR}\" -name 'split_protocol_disclosure.json' 2>/dev/null | wc -l)
   echo \"Files produced: \${_COUNT}\"
+  echo \"  Disclosure file : \${_NDISC} (split_protocol_disclosure.json)\"
   if [[ \"\${_COUNT}\" -eq 0 && \"\${SKIP_ALLOWED:-false}\" != 'true' ]]; then
     echo 'WARNING: exp1b_pca generated no files — set SKIP_ALLOWED=true if this step was intentionally skipped'
+  fi
+  if [[ \"\${_NDISC}\" -eq 0 ]]; then
+    echo 'WARNING: split_protocol_disclosure.json not found in 15_pca/ — Gate B will FAIL'
   fi
   echo '=== end exp1b_pca ==='
 "
@@ -1094,6 +1127,34 @@ run instability "Instability Index analysis + all figures -- SS10.9 (Regime A/B/
     \${BENCH_ARG} \
     --format png pdf \
     2>&1 | tee '${RESULTS_DIR}'/instability_run.log
+
+  # FIX-INSTABILITY-CSV-RESCUE: run_instability_suite.py has been observed
+  # (CI run 2026-06-26) writing instability_analysis.csv to a CWD-relative
+  # 'figures/' directory (e.g. \${REPO_ROOT}/figures/instability_analysis.csv)
+  # instead of honouring --csv-out's full path, even though the 46 image/pdf
+  # figures from the SAME run land correctly under --out. Net effect: the run
+  # exits 0, figures are present, but \${RESULTS_DIR}/figures/instability_analysis.csv
+  # is missing and the CI 'Verify instability output files exist' step fails.
+  # Rescue: if the canonical CSV is absent but a same-named CSV exists
+  # elsewhere under REPO_ROOT (most recently written one wins), copy it into
+  # place instead of letting the whole step fail on what is otherwise a
+  # successful run. This mirrors the CI-side FIX-G5 safety-net pattern and
+  # the suppB doubled-path fix already applied above in this file.
+  _CANON_CSV='${RESULTS_DIR}/figures/instability_analysis.csv'
+  if [[ ! -s \"\${_CANON_CSV}\" ]]; then
+    echo \"[instability] WARNING: \${_CANON_CSV} missing or empty after run_instability_suite.py exited 0.\"
+    _STRAY_CSV=\$(find '${REPO_ROOT}' -maxdepth 6 -name 'instability_analysis.csv' \
+                   -not -path \"\${_CANON_CSV}\" 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1 || true)
+    if [[ -n \"\${_STRAY_CSV}\" && -s \"\${_STRAY_CSV}\" ]]; then
+      echo \"[instability] Found stray CSV at \${_STRAY_CSV} -- copying into canonical location.\"
+      mkdir -p '${RESULTS_DIR}/figures'
+      cp \"\${_STRAY_CSV}\" \"\${_CANON_CSV}\"
+    else
+      echo '[instability] No stray instability_analysis.csv found anywhere under REPO_ROOT either.'
+      echo '              run_instability_suite.py likely failed internally before writing the CSV'
+      echo '              (e.g. \"Loaded 0 cases\") -- check instability_run.log above for the real cause.'
+    fi
+  fi
 "
 
 
@@ -1231,8 +1292,18 @@ def _rows(data):
 
 n_pass = n_total = 0
 source_files = []
+stray_pca_files = []
 for fp in sorted(LEG_DIR.glob('*.json')) if LEG_DIR.exists() else []:
     if any(x in fp.name for x in ('checkpoint','disclosure','baseline')):
+        continue
+    # FIX-GATEC-PCA: protocol_core_*_pca_<ts>.json can only be produced by
+    # run_comparative_suite_benchmark_pca.py (see its _save() mode logic).
+    # exp2_feynman (this legacy step) only ever calls run_comparative_suite
+    # _benchmark_v2.py, so any '_pca' file found in LEG_DIR is a stray
+    # leftover from a mis-routed PCA run and must NOT be counted toward the
+    # legacy 9/30 baseline, nor allowed to collide with exp2_pca_4060/ output.
+    if '_pca' in fp.name:
+        stray_pca_files.append(fp.name)
         continue
     try:
         data = json.loads(fp.read_text())
@@ -1264,6 +1335,12 @@ baseline = {
 BASELINE.parent.mkdir(parents=True, exist_ok=True)
 BASELINE.write_text(json.dumps(baseline, indent=2))
 print(f'  [FIX-C3] Baseline locked: {n_pass}/{n_total} (random_80_20) → fixc3_baseline.json')
+if stray_pca_files:
+    print(f'  [WARN]  {len(stray_pca_files)} stray _pca file(s) found in legacy exp2/ dir')
+    print('          (excluded from baseline — they belong in exp2_pca_4060/):')
+    for _f in stray_pca_files[:10]:
+        print(f'            - {_f}')
+    print(f'          Move them: mv {LEG_DIR}/*_pca_*.json {LEG_DIR.parent}/exp2_pca_4060/  (verify timestamps first)')
 PYEOF
   fi
 
@@ -1315,8 +1392,15 @@ import glob, json, pathlib, sys
 PCA_DIR   = pathlib.Path('${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060')
 SUMMARY   = PCA_DIR / 'exp2_pca_4060_summary.json'
 THRESHOLD = 0.999999
-PREFERRED = {'hypatiax','hybridv50','hybrid50','hybridsymbolic',
-             'hybriddefi','hypatia','hybrid','ours','proposed'}
+# FIX (Bug #2, §10.7 investigation, 2026-06-30): the PREFERRED method-name
+# filter previously restricted counting to only methods whose normalized
+# name contained 'hybrid'/'hypatia'/'ours'/'proposed' -- 3 of the 6
+# benchmarked methods. PureLLM Baseline, ImprovedNN, and
+# SymbolicEngineWithLLM were silently excluded from n_pass/n_total
+# entirely. This contradicted the paper's stated methodology (Sec.10.7:
+# "applied to the full 180-instance pool"), which is explicitly pooled
+# across all benchmarked methods, baselines included. The filter has been
+# removed -- every method is now counted.
 
 def _r2(row):
     for k in ('r2','r2_test','r2_train','best_r2','R2'):
@@ -1345,6 +1429,17 @@ def _rows(data):
 
 n_pass = n_total = 0
 source_files = []
+# FIX (Bug #2, §10.7 investigation, 2026-06-30): benchmark_results_pca_4060.json
+# and benchmark_results_extrap.json (and potentially other globbed files)
+# contain near-duplicate rows for the same (domain, test, method)
+# evaluation -- the extrap file simply adds extrapolation-specific fields
+# on top of the same core r2/success values. Globbing all of them without
+# deduplication double-counted every evaluation (verified: it produced
+# exactly 2x the correct n_pass/n_total). We now dedupe by a composite
+# (domain, test, method) key across ALL source files, keeping only the
+# first occurrence encountered in sorted-filename order, so each logical
+# evaluation is counted exactly once no matter how many files report it.
+seen = set()
 for fp in sorted(PCA_DIR.glob('*.json')) if PCA_DIR.exists() else []:
     if any(x in fp.name for x in ('checkpoint','disclosure','summary','baseline')):
         continue
@@ -1352,18 +1447,27 @@ for fp in sorted(PCA_DIR.glob('*.json')) if PCA_DIR.exists() else []:
         data = json.loads(fp.read_text())
     except Exception:
         continue
-    source_files.append(fp.name)
+    file_contributed = False
     for row in _rows(data):
         raw    = row.get('method') or row.get('model') or ''
         method = str(raw).lower().replace('-','').replace('_','').replace(' ','')
-        if method and not any(p in method for p in PREFERRED):
+        domain = str(row.get('domain') or '').lower()
+        test   = str(row.get('test') or '').lower()
+        if not method or not test:
             continue
+        key = (domain, test, method)
+        if key in seen:
+            continue
+        seen.add(key)
         r2 = _r2(row)
         if r2 is None:
             continue
+        file_contributed = True
         n_total += 1
         if r2 >= THRESHOLD:
             n_pass += 1
+    if file_contributed:
+        source_files.append(fp.name)
 
 summary = {
     'fixc3_step':      'exp2_feynman_pca_4060',
@@ -1375,7 +1479,8 @@ summary = {
     'n_total':         n_total,
     'solve_rate':      (n_pass / n_total) if n_total > 0 else None,
     'paper_legacy_claim': '9/30 = 0.300 (random_80_20)',
-    'source_files':    source_files[:10],
+    'source_files':    source_files,
+    'methods_counted': sorted({k[2] for k in seen}),
 }
 SUMMARY.write_text(json.dumps(summary, indent=2))
 rate_str = f'{n_pass}/{n_total}' if n_total > 0 else '?/?'
@@ -1580,13 +1685,25 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   _SAVED=\$(find \"\${_EXT_DIR}/_saved\" -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   echo \"[E2-guard] \${_SAVED} protocol_core_extrap_*.json hard-linked into \${_EXT_DIR}/_saved/\"
 
-  # FIX-E6: copy benchmark_results_extrap.json to a shard-suffixed name so
-  # parallel shard pushes do not silently overwrite each other on master.
+  # FIX-E6 (updated): run_comparative_suite_benchmark_v2.py now writes
+  # benchmark_results_extrap.json directly into --output-dir (_EXT_DIR) —
+  # see that script's FIX-EXTRAP-OUTPUT-DIR change. This copy step now just
+  # renames it to a shard-suffixed name so parallel shard pushes do not
+  # collide on master. Fallback to the old parent comparison_results/
+  # location is kept in case an unpatched/older script version is deployed.
   _BENCH_EXT_SRC=\"\${_EXT_DIR}/benchmark_results_extrap.json\"
+  if [ ! -f \"\${_BENCH_EXT_SRC}\" ]; then
+    _BENCH_EXT_SRC=\"\${RESULTS_DIR}/comparison_results/benchmark_results_extrap.json\"
+    if [ -f \"\${_BENCH_EXT_SRC}\" ]; then
+      echo \"WARNING: benchmark_results_extrap.json found in comparison_results/ root, not \${_EXT_DIR} — script may be an older/unpatched version (expected it to honor --output-dir).\"
+    fi
+  fi
   if [ -f \"\${_BENCH_EXT_SRC}\" ]; then
     _BENCH_EXT_DST=\"\${_EXT_DIR}/benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
     cp \"\${_BENCH_EXT_SRC}\" \"\${_BENCH_EXT_DST}\"
-    echo \"[E6-guard] shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
+    echo \"[E6-guard] copied \${_BENCH_EXT_SRC} -> benchmark_results_extrap_shard\${_EXT_SHARD}.json\"
+  else
+    echo \"WARNING: benchmark_results_extrap.json not found in \${_EXT_DIR} or \${RESULTS_DIR}/comparison_results\"
   fi
 
   echo '=== exp2_feynman_extrap verification ==='
@@ -1595,7 +1712,7 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
   COUNT_EXTRAP=\$(find \"\${_EXT_DIR}\" \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   COUNT_BENCH_EXTRAP=\$(find \"\${_EXT_DIR}\" \
-    -name 'benchmark_results_extrap.json' 2>/dev/null | wc -l)
+    -maxdepth 1 -name 'benchmark_results_extrap*.json' 2>/dev/null | wc -l)
   COUNT_SAVED=\$(find \"\${_EXT_DIR}/_saved\" \
     -name 'protocol_core_extrap_*.json' 2>/dev/null | wc -l)
   if [[ \"\${COUNT_EXTRAP}\" -eq 0 && \"\${COUNT_SAVED}\" -gt 0 ]]; then
@@ -1607,11 +1724,10 @@ run exp2_feynman_extrap "Feynman far-region R² (extrap_r2_far for Mann-Whitney 
     echo \"OK: \${COUNT_EXTRAP} extrap protocol file(s) produced  (\${COUNT_SAVED} backed up in _saved/)\"
   fi
   if [[ \"\${COUNT_BENCH_EXTRAP}\" -eq 0 ]]; then
-    echo 'WARNING: benchmark_results_extrap.json not found — ci_analysis.yml merge step will find nothing'
-    echo '  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is in use (writes this file when --extrap is active)'
+    echo 'WARNING: benchmark_results_extrap.json not found in exp2_extrap/ or comparison_results/ — ci_analysis.yml merge step will find nothing'
   else
-    echo \"OK: benchmark_results_extrap.json present (shard copy: benchmark_results_extrap_shard\${_EXT_SHARD}.json)\"
-    echo '    ci_analysis.yml will merge into ablation_paired.json in exp2_extrap/'
+    echo \"OK: benchmark_results_extrap_shard\${_EXT_SHARD}.json present in \${_EXT_DIR}\"
+    echo '    ci_analysis.yml / the local merge block will merge this into ablation_paired.json in exp2_extrap/'
   fi
 "
 
@@ -1777,11 +1893,30 @@ run exp3b "Nguyen-12 stability seeds 99/123/777/2024 (tab:nguyen12 extended)" ba
   # FIX-GLOB: exclude seed42 explicitly so exp3 output is never swept here.
   # FIX-OUTDIR-3: add CI-matching globs for exp3b (full_run_*, report_hybrid_*, hybrid_defi_*)
   # CI Move step moves all four patterns; run_all.sh was only moving *nguyen*.json.
+  #
+  # FEATURE-NSHARDS-SUFFIX (exp3b) — mirrors STEP 10/10b's suppB/suppB_sc
+  # isolation pattern. exp3b runs as EXP_SHARD_TABLE["exp3b"]=4 parallel CI
+  # matrix shards. Previously this move step moved matched files into
+  # extrapolation/multi_seed/ with their ORIGINAL names, with no per-shard
+  # tag — if two shards ever produced same-named outputs (e.g. a re-run, or
+  # any future change that lets two shards share a seed), the second push
+  # would silently overwrite the first on disk. Tag every moved filename
+  # with a zero-padded, 1-based SHARD_INDEX suffix (same convention as
+  # suppB/suppB_sc's HYPATIAX_NSHARDS_SUFFIX) so each shard's outputs are
+  # independently distinguishable on disk, the same guarantee suppB relies on.
+  printf -v _SHARD_TAG '%02d' \"\$((\${SHARD_INDEX:-0} + 1))\"
+  echo \"  [exp3b] SHARD_INDEX=\${SHARD_INDEX:-0} -> isolation suffix _nshards\${_SHARD_TAG}\"
+  _DEST_MS='${RESULTS_DIR}/extrapolation/multi_seed'
   find '${RESULTS_DIR}' -maxdepth 1 \
     \( -name '*nguyen*.json' -o -name 'full_run_*.json' \
        -o -name 'report_hybrid_*.json' -o -name 'hybrid_defi_*.json' \) \
-    ! -name '*seed42*' ! -name '*nguyen12*42*' \
-    -exec mv -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \;
+    ! -name '*seed42*' ! -name '*nguyen12*42*' | while IFS= read -r src; do
+      fname=\$(basename \"\$src\")
+      stem=\"\${fname%.*}\"
+      ext=\"\${fname##*.}\"
+      dst=\"\${_DEST_MS}/\${stem}_nshards\${_SHARD_TAG}.\${ext}\"
+      mv -v \"\$src\" \"\$dst\" || true
+  done
   find '${RESULTS_DIR}' -maxdepth 1 -name 'experiment_registry.json' \
     -exec cp -v {} '${RESULTS_DIR}/extrapolation/multi_seed/' \; 2>/dev/null || true
 "
@@ -1941,15 +2076,24 @@ run suppB "Noise sweep benchmark sigma in {0,0.5,1,5,10}% (Tab 28, 29 - Suppleme
   # _checkpoint_shard0.json committed from a prior failed run. Without this,
   # RESUME=true (set globally by CI) causes the script to read the committed
   # checkpoint, conclude all tasks are done, and exit silently with 0 outputs.
-  # FEATURE-NSHARDS-SUFFIX: tag every output filename from this run with
-  # _nshardsNN (NN = zero-padded final shard count, e.g. _nshards05 for
-  # suppB's normal 5-shard run). N_SHARDS is exported from ci_runner.yml's
-  # plan job output (the RESOLVED count, post table-forcing -- see that
-  # file's EXP_SHARD_TABLE / n_shards comment). Falls back to '00' if unset
-  # (e.g. a local run outside CI) so the suffix is always present and never
-  # breaks the glob patterns below on an empty string.
-  export HYPATIAX_NSHARDS_SUFFIX=\"\$(printf '%02d' \"\${N_SHARDS:-0}\" 2>/dev/null || echo 00)\"
-  echo \"  [suppB] HYPATIAX_NSHARDS_SUFFIX=_nshards\${HYPATIAX_NSHARDS_SUFFIX}\"
+  # FEATURE-NSHARDS-SUFFIX — CORRECTED 2026-06-23:
+  # Originally derived this suffix from N_SHARDS (the constant TOTAL shard
+  # count, e.g. 5 for suppB) — that gave every one of the 5 concurrently-
+  # running matrix shards the IDENTICAL suffix (_nshards05 on all of them),
+  # which defeats the purpose: shards run in parallel
+  # (strategy.matrix/fail-fast:false in ci_runner.yml) and write
+  # second-granularity timestamped filenames, so same-second saves from
+  # different shards would collide/overwrite on the SAME suffix.
+  #
+  # Fixed to use SHARD_INDEX instead (the per-shard 0-based index from
+  # ci_runner.yml's matrix: "shard": j for j in range(N_SHARDS) — see that
+  # file's plan job). +1 converts to the 1-based numbering requested
+  # (shard 0 -> _nshards01, shard 1 -> _nshards02, ... shard 4 -> _nshards05
+  # for suppB's 5-shard run), so every shard's output is independently
+  # distinguishable, not just every separate CI run.
+  printf -v _SHARD_TAG '%02d' \"\$((\${SHARD_INDEX:-0} + 1))\"
+  export HYPATIAX_NSHARDS_SUFFIX=\"\${_SHARD_TAG}\"
+  echo \"  [suppB] SHARD_INDEX=\${SHARD_INDEX:-0} -> HYPATIAX_NSHARDS_SUFFIX=_nshards\${HYPATIAX_NSHARDS_SUFFIX}\"
   NOISE_LEVELS='${NOISE_LEVELS:-0.0,0.05,0.1,0.5,1.0}' \\
   OUT_BASE='${RESULTS_DIR}' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
@@ -2074,10 +2218,22 @@ run suppB_sc "Sample-complexity sweep n in {50..1000} (Tab 29 - Supplement B SS6
     export SC_SAMPLE_COUNTS='50,100,200,500,750,1000'
     echo \"  [suppB_sc] WARNING: no sc_n{N}__ task ID found in SHARD_IDS — full sweep will run\"
   fi
+  # FEATURE-NSHARDS-SUFFIX: per-shard suffix (1-based, zero-padded), mirrors
+  # run_all.sh STEP 10's suppB block. SUPPB_SC_IDS is n-outer/domain-inner
+  # (see ci_runner.yml) so with the locked 6-shard count each shard already
+  # gets a distinct n -- this suffix is therefore NOT replacing _shard_tag()
+  # (which exists for a different, currently-dormant concern: multiple
+  # shards sharing one n, which the n-outer layout + EXP_SHARD_TABLE=6
+  # together prevent) -- it is an independent, simpler distinguisher applied
+  # to THIS script's filenames the same way it is for suppB's.
+  printf -v _SHARD_TAG '%02d' \"\$((\${SHARD_INDEX:-0} + 1))\"
+  export HYPATIAX_NSHARDS_SUFFIX=\"\${_SHARD_TAG}\"
+  echo \"  [suppB_sc] SHARD_INDEX=\${SHARD_INDEX:-0} -> HYPATIAX_NSHARDS_SUFFIX=_nshards\${HYPATIAX_NSHARDS_SUFFIX}\"
   NOISE_LEVEL='5.0' \\
   OUT_BASE='${RESULTS_DIR}' \\
   RESULTS_DIR='${RESULTS_DIR}' \\
   RESUME='false' \\
+  HYPATIAX_NSHARDS_SUFFIX=\"\${HYPATIAX_NSHARDS_SUFFIX}\" \\
     python3 '${EXPERIMENTS_DIR}/run_sample_complexity_benchmark.py' \\
     --methods 1 2 3 4 5 6 \\
     --samples ${FEYNMAN_SAMPLES} \\
@@ -4707,6 +4863,6 @@ echo "    notebooks/NB-04_Numerical_Consistency_Checker.ipynb"
 echo "    notebooks/NB-05_Figure_Image_Dependency_Checker.ipynb"
 echo ""
 echo "  To rebuild the paper PDF:"
-echo "    cd ${REPO_ROOT} && pdflatex jmlr-hypatiax-paper-final.tex"
+echo "    cd ${REPO_ROOT} && pdflatex jmlr_paper_main.tex"
 echo ""
 log "Done. See individual *_run.log files in ${RESULTS_DIR}/ for per-step output."

@@ -146,6 +146,21 @@ on:
         required: false
         default: "false"
 
+      # -- Force clean rerun ---------------------------------------------------
+      # FIX (Bug #2, §10.7 investigation, 2026-06-30): the skip-guard below
+      # ("Check if exp2_feynman_pca results already exist") treats ANY .json
+      # file present in exp2_pca_4060/ as "already done" and silently skips
+      # the job. This previously made it impossible to regenerate a clean
+      # exp2_pca_4060_summary.json after fixing the aggregation bug in
+      # run_all.sh (method-name filter + cross-file double counting) without
+      # a manual local `git rm`/`mv` of the output directory first. Setting
+      # force_rerun=true clears stale exp2_pca_4060/*.json before the
+      # skip-guard check, for exp2_feynman_pca runs specifically.
+      force_rerun:
+        description: "exp2_feynman_pca only: clear stale exp2_pca_4060/*.json before running, bypassing the already-done skip-guard (true/false). Use after pipeline/aggregation fixes to force a clean regeneration."
+        required: false
+        default: "false"
+
 permissions:
   contents: write
   actions:  write
@@ -2255,6 +2270,7 @@ jobs:
         env:
           RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
           EXP: ${{ github.event.inputs.experiment }}
+          FORCE_RERUN: ${{ github.event.inputs.force_rerun || 'false' }}
         run: |
           if [[ "$EXP" != "exp2_feynman_pca" ]]; then
             echo "already_done=true" >> "$GITHUB_OUTPUT"
@@ -2262,6 +2278,19 @@ jobs:
             exit 0
           fi
           PCA_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060"
+          # FIX (Bug #2, §10.7 investigation, 2026-06-30): force_rerun=true
+          # clears stale result JSONs (everything except the disclosure file,
+          # which is regenerated fresh anyway) before the already-done check,
+          # so a clean exp2_pca_4060_summary.json can be regenerated under
+          # the fixed aggregation logic instead of silently no-oping because
+          # leftover files from a prior (possibly buggy-environment) run are
+          # still present.
+          if [[ "$FORCE_RERUN" == "true" ]]; then
+            if [ -d "${PCA_DIR}" ]; then
+              echo "[force_rerun] Clearing stale outputs in ${PCA_DIR} before rerun."
+              find "${PCA_DIR}" -maxdepth 1 -name '*.json' -delete
+            fi
+          fi
           if [ -d "${PCA_DIR}" ] && [ -n "$(ls -A "${PCA_DIR}"/*.json 2>/dev/null)" ]; then
             echo "already_done=true" >> "$GITHUB_OUTPUT"
             echo "[skip] Results already present in ${PCA_DIR}."
