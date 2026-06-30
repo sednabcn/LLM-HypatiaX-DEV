@@ -1771,7 +1771,7 @@ def main() -> None:
     if args.seed is not None:
         env["NN_SEED"] = env["PYSR_SEED"] = env["PYTHONHASHSEED"] = _seed_str
 
-    env.setdefault("LLM_MODEL",   _repro_config.get("llm_model",   "claude-sonnet-4-5"))
+    env.setdefault("LLM_MODEL",   _repro_config.get("llm_model",   "claude-sonnet-4-6"))
     env.setdefault("LLM_RETRIES", str(_repro_config.get("llm_retries", 3)))
     env.setdefault("LLM_K_RUNS",  "1")   # instability_analysis step overrides to 30
 

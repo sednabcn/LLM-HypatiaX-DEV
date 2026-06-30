@@ -79,7 +79,7 @@ def get_llm_prior(
     api_key: str | None = None,
     n_candidates: int = 5,
     temperature: float = 0.25,
-    model: str = "claude-sonnet-4-5",
+    model: str = "claude-sonnet-4-6",
     max_tokens: int = 1024,
     timeout: float = 60.0,
     verbose: bool = True,

@@ -399,14 +399,14 @@ run env_check "Verify environment (Python, Julia/PySR, API key, directories)" ba
   python3 -c "import pysr; print(\"PySR:\", pysr.__version__)" || { echo "ERROR: pysr not installed"; exit 1; }
   python3 -c "import torch; print(\"PyTorch:\", torch.__version__)"
   python3 -c "import anthropic; print(\"anthropic SDK: ok\")"
-  # BUG 10 FIX: claude-sonnet-4-20250514 (repro.yaml llm_model) requires SDK >= 0.40.0.
+  # BUG 10 FIX: claude-sonnet-4-6 (repro.yaml llm_model) requires SDK >= 0.40.0.
   # environment.yml was pinned to 0.28.0 which predates this model family.
   # Assert the minimum here so local runs fail fast with a clear message.
   python3 - <<'SDKCHECK'
 import anthropic, sys
 ver = tuple(int(x) for x in anthropic.__version__.split(".")[:3])
 if ver < (0, 40, 0):
-    print("ERROR: anthropic SDK " + anthropic.__version__ + " is too old; need >= 0.40.0 for claude-sonnet-4-20250514")
+    print("ERROR: anthropic SDK " + anthropic.__version__ + " is too old; need >= 0.40.0 for claude-sonnet-4-6")
     sys.exit(1)
 print("anthropic SDK version: " + anthropic.__version__ + " (>= 0.40.0 OK)")
 SDKCHECK

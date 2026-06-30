@@ -609,7 +609,7 @@ class EnhancedHybridSystemDeFi:
       evaluate_llm_formula(result_dict, X, y, var_names, verbose) -> Dict
     """
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514", no_cache: bool = False):
+    def __init__(self, model: str = "claude-sonnet-4-6", no_cache: bool = False):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
