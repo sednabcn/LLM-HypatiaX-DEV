@@ -1289,11 +1289,15 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
                 # fallback cases so the reported hybrid time is self-contained.
                 hyb_time = _hyb_wall + hy_m.get("nn_rerun_time_s", 0.0)
 
+                _train_r2 = hy_m["train_r2"]
+                _test_r2  = hy_m["test_r2"]
+                _nan = lambda v: v is None or (isinstance(v, float) and _math.isnan(v))
+
                 case_results["hybrid"] = {
-                    "train_r2":        hy_m["train_r2"],
-                    "test_r2":         hy_m["test_r2"],
+                    "train_r2":        _train_r2,
+                    "test_r2":         _test_r2,
                     "decision":        hy_m["decision"],
-                    "success":         True,
+                    "success":         not (_nan(_train_r2) or _nan(_test_r2)),  # ← fixed
                     "time_s":          round(hyb_time, 3),
                     "nn_rerun_time_s": hy_m.get("nn_rerun_time_s", 0.0),
                 }
