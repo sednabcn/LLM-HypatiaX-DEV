@@ -2395,8 +2395,18 @@ jobs:
           fi
           bash run_all.sh --step exp2_feynman_pca_4060
 
+      # FIX (CI-PCA-1): this step previously had no always(), so a failure or
+      # timeout in "Run exp2_feynman_pca via run_all.sh" (5h40m deadline,
+      # crash, network blip) caused GitHub Actions to skip this step entirely
+      # by default — silently dropping every domain result computed before
+      # the failure, since exp2_feynman_pca has no equivalent of the generic
+      # worker job's "Store results" step (which runs if: always()). always()
+      # here lets partial results still get committed; the inner git logic
+      # already no-ops cleanly via "git diff --cached --quiet" if nothing was
+      # produced at all.
       - name: Commit and push results
         if: |
+          always() &&
           github.event.inputs.dry_run != 'true' &&
           steps.check_exp2.outputs.already_done != 'true'
         env:
@@ -2567,8 +2577,11 @@ jobs:
           fi
           bash run_all.sh --step exp1_pca
 
+      # FIX (CI-PCA-1): see identical fix on exp2_feynman_pca's commit step
+      # above — same missing always(), same silent-loss-on-timeout risk.
       - name: Commit and push results
         if: |
+          always() &&
           github.event.inputs.dry_run != 'true' &&
           steps.check_exp1.outputs.already_done != 'true'
         env:
@@ -2732,8 +2745,11 @@ jobs:
           fi
           bash run_all.sh --step exp1b_pca
 
+      # FIX (CI-PCA-1): see identical fix on exp2_feynman_pca's commit step
+      # above — same missing always(), same silent-loss-on-timeout risk.
       - name: Commit and push results
         if: |
+          always() &&
           github.event.inputs.dry_run != 'true' &&
           steps.check_exp1b.outputs.already_done != 'true'
         env:
