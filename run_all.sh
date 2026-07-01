@@ -1382,7 +1382,34 @@ PYEOF
         --force-fresh \
       2>&1 | tee -a \"\${_PCA_DIR}/exp2_pca_4060_run.log\" \
     || echo 'WARNING: pca_4060 domain '\${DOMAIN_ID}' exited non-zero — continuing'
+
+    # FIX-C3-E2 (mirrors exp2_feynman_extrap's E2-guard at FIX-E2 above):
+    # protocol_core_noiseless_pca_*.json is written by
+    # run_comparative_suite_benchmark_pca.py's _save() into _PCA_DIR, one file
+    # per domain iteration of this loop. Nothing was hard-linking these out of
+    # harm's way, so CI's prune_old could delete them out from under this step
+    # exactly as it once did to protocol_core_extrap_*.json (see FIX-E2).
+    # Run INSIDE the loop (not just after it, unlike the extrap step) so a
+    # prune_old sweep between domains can't destroy an earlier domain's only
+    # copy before this guard ever sees it.
+    mkdir -p \"\${_PCA_DIR}/_saved\"
+    while IFS= read -r _pf; do
+      _pfn=\$(basename \"\${_pf}\")
+      ln -f \"\${_pf}\" \"\${_PCA_DIR}/_saved/\${_pfn}\" 2>/dev/null \
+        || cp \"\${_pf}\" \"\${_PCA_DIR}/_saved/\${_pfn}\" \
+        || true
+    done < <(find \"\${_PCA_DIR}\" -maxdepth 1 -name 'protocol_core_noiseless_pca_*.json' 2>/dev/null)
   done
+
+  _PCA_SAVED=\$(find \"\${_PCA_DIR}/_saved\" -name 'protocol_core_noiseless_pca_*.json' 2>/dev/null | wc -l)
+  _PCA_PRIMARY=\$(find \"\${_PCA_DIR}\" -maxdepth 1 -name 'protocol_core_noiseless_pca_*.json' 2>/dev/null | wc -l)
+  echo \"[C3-E2-guard] \${_PCA_PRIMARY} primary / \${_PCA_SAVED} hard-linked into \${_PCA_DIR}/_saved/\"
+  if [[ \"\${_PCA_PRIMARY}\" -eq 0 && \"\${_PCA_SAVED}\" -gt 0 ]]; then
+    echo \"WARNING: primary protocol_core_noiseless_pca_*.json were deleted (prune_old E2); \${_PCA_SAVED} copies survived in _saved/ — restore with:\"
+    echo \"         cp \${_PCA_DIR}/_saved/protocol_core_noiseless_pca_*.json \${_PCA_DIR}/\"
+  elif [[ \"\${_PCA_PRIMARY}\" -eq 0 ]]; then
+    echo 'WARNING: exp2_feynman_pca_4060 produced no protocol_core_noiseless_pca_*.json — exp2_pca_4060_summary.json will be empty/incomplete'
+  fi
 
   # ── 3. Compute corrected summary (new solve rate) ─────────────────────────────
   echo '[FIX-C3] Computing corrected solve rate from exp2_pca_4060/ results...'
