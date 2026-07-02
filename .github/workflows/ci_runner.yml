@@ -1236,6 +1236,50 @@ jobs:
           DOMAIN_FILTER="${TASK_IDS}" \
             bash run_all.sh --step "${EXP}"
 
+      # -- FIX-EXP1ABL-SHARD-CLOBBER --------------------------------------------
+      # exp1_ablation.py writes its primary output to fixed filenames
+      # (exp1_ablation_results.json / exp1_ablation_checkpoint.json) directly
+      # inside RESULT_SUBDIR, with no shard index in the name, even though this
+      # experiment always runs as 4 parallel matrix shards (one per DOMAIN_FILTER
+      # subset). Each shard's "Store results in canonical RESULT_SUBDIR" step
+      # prunes the previously-committed copy of that same fixed filename before
+      # its own commit, so whichever shard commits last silently overwrites
+      # every earlier shard's domain results in git — merge_shards.py then only
+      # ever sees the final shard's data (root cause of the 2026-07-02
+      # 3-record/0%-success _merged.json incident: all 4 _checkpoint_shardN.json
+      # files were 0-row CI bookkeeping stubs, and the real per-domain results
+      # were overwritten shard-by-shard because they shared one filename).
+      #
+      # Fix: snapshot this shard's copy of the primary output under a
+      # shard-suffixed name immediately after it's written, so each shard's
+      # contribution survives independently of commit ordering. merge_shards.py
+      # must also be updated to read exp1_ablation_results_shard*.json /
+      # exp1_ablation_checkpoint_shard*.json (glob) for this experiment instead
+      # of assuming a single combined file — that change is out of scope here
+      # since merge_shards.py wasn't provided.
+      - name: Preserve shard-specific exp1_ablation output
+        if: always() && env.EXP == 'exp1_ablation'
+        run: |
+          DEST="${OUT_BASE}/${RESULT_SUBDIR}"
+          for base in exp1_ablation_results.json exp1_ablation_checkpoint.json; do
+            SRC="${DEST}/${base}"
+            if [[ -f "${SRC}" ]]; then
+              shard_dest="${DEST}/${base%.json}_shard${SHARD_INDEX}.json"
+              # FIX-EXP1ABL-SHARD-CLOBBER (mv, not cp): a copy leaves the
+              # fixed-name file on disk, which still collides with every other
+              # shard's already-committed copy of the same fixed name at
+              # "Store results in canonical RESULT_SUBDIR" / commit time —
+              # whichever shard commits last silently overwrites the others'
+              # domain results. Moving removes the fixed-name file so only the
+              # shard-suffixed snapshot remains, matching how exp1b keeps each
+              # shard's output under a distinct filename.
+              mv "${SRC}" "${shard_dest}"
+              echo "Preserved ${SRC} → ${shard_dest}"
+            else
+              echo "::warning::Expected exp1_ablation output not found at ${SRC} — nothing to preserve for shard ${SHARD_INDEX}."
+            fi
+          done
+
       - name: Diagnostic - locate result files on disk
         if: always()
         run: |
@@ -1434,7 +1478,13 @@ jobs:
               [[ -f "$f" ]] || continue
               fname=$(basename "$f")
               # Never prune merge_shards meta-files — they are intentionally stable.
+              # Also never prune shard-suffixed snapshots (e.g. *_shard0.json)
+              # such as exp1_ablation_results_shard${SHARD_INDEX}.json written by
+              # "Preserve shard-specific exp1_ablation output" above — each one
+              # belongs to a different shard and must not be clobbered by a
+              # later shard's prune-then-overwrite pass (FIX-EXP1ABL-SHARD-CLOBBER).
               [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
+              [[ "$fname" =~ _shard[0-9]+\.(json|csv)$ ]] && continue
               if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
                 echo "  store prune: removing stale committed file: $f"
                 git rm --cached --quiet "$f" 2>/dev/null || true
@@ -2150,15 +2200,17 @@ jobs:
               | grep -v '_checkpoint_shard[0-9].*\.json$' \
               || true)
             if [[ -n "$OVERWRITTEN" ]]; then
-              # ISOLATION-GUARD: exp1b/exp3b/suppB/suppB_sc each carry a documented
-              # per-shard isolation suffix (HYPATIAX_NSHARDS_SUFFIX / _shard${SHARD_INDEX}
-              # tag — see run_all.sh STEP 2/8b/10/10b) whose entire purpose is to make
-              # this overwrite impossible. For those four, a modified tracked file here
-              # means the suffix mechanism itself failed (e.g. SHARD_INDEX missing/blank,
-              # or a code path that bypassed the rename) — that is a real bug, not an
+              # ISOLATION-GUARD: exp1b/exp1_ablation/exp3b/suppB/suppB_sc each carry
+              # a documented per-shard isolation suffix (HYPATIAX_NSHARDS_SUFFIX /
+              # _shard${SHARD_INDEX} tag — see run_all.sh STEP 2/8b/10/10b, and for
+              # exp1_ablation the "Preserve shard-specific exp1_ablation output" mv
+              # above) whose entire purpose is to make this overwrite impossible.
+              # For those five, a modified tracked file here means the suffix
+              # mechanism itself failed (e.g. SHARD_INDEX missing/blank, or a code
+              # path that bypassed the rename) — that is a real bug, not an
               # expected re-run overwrite, so it hard-fails instead of warning.
               case "${EXP}" in
-                exp1b|exp3b|suppB|suppB_sc)
+                exp1b|exp1_ablation|exp3b|suppB|suppB_sc)
                   echo "::error::ISOLATION GUARD FAILED — shard ${SHARD} (${EXP}) is overwriting "
                   echo "  committed result file(s); the per-shard isolation suffix should have "
                   echo "  prevented this:"
