@@ -243,19 +243,33 @@ DATA_SAMPLE_SWEEP  = _sample_glob or _rpath("sample_complexity_MISSING.json")
 
 def _load_json(path, label=None):
     """Load JSON; return None and print a warning if the file is absent.
-    Uses parse_constant to handle NaN / Infinity / -Infinity literals that
-    some result files emit (non-standard JSON but valid Python float values).
+    Replaces non-standard NaN / Infinity / -Infinity literals (which some
+    result files emit — not valid JSON, but valid Python float tokens) with
+    JSON `null`, matching how missing/invalid data is represented everywhere
+    else in this schema.
+    IMPORTANT: Infinity/-Infinity must NOT be replaced with a large-but-finite
+    sentinel (e.g. 1e308) — float64's max is ~1.8e308, so such a sentinel
+    passes math.isfinite() in safe_float() undetected and silently poisons
+    every downstream nanmean()/axis-range calculation with a ~1e308-magnitude
+    "real" value (see FIX-INF-SENTINEL: this caused fig17's 3D tick locator
+    to crash with "ValueError: arange: cannot compute length" when a genuine
+    -Infinity extrap_r2 collapsed the mean to ~-9e307). `null` -> None ->
+    safe_float(None) == nan is the same safe path NaN already takes.
     """
     if not os.path.isfile(path):
         print(f"  [SKIP] {label or path} not found — dependent figures will be skipped.")
         return None
     with open(path) as f:
         text = f.read()
-    # Replace bare NaN / Infinity / -Infinity with JSON-safe equivalents
+    # Replace bare NaN / Infinity / -Infinity with JSON `null`.
+    # ORDER MATTERS: '-Infinity' must be substituted before bare 'Infinity' —
+    # \bInfinity\b also matches the "Infinity" substring inside "-Infinity"
+    # (a word boundary exists between '-' and 'I'), which would otherwise
+    # leave a dangling '-null' (invalid JSON) if bare Infinity ran first.
     import re as _re
-    text = _re.sub(r'\bNaN\b',       'null', text)
-    text = _re.sub(r'\bInfinity\b',  '1e308', text)
-    text = _re.sub(r'\b-Infinity\b', '-1e308', text)
+    text = _re.sub(r'\bNaN\b',        'null', text)
+    text = _re.sub(r'-Infinity\b',    'null', text)
+    text = _re.sub(r'\bInfinity\b',   'null', text)
     return json.loads(text)
 
 def _load_csv_np(path, label=None):
