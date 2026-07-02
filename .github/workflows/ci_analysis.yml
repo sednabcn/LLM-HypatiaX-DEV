@@ -257,12 +257,15 @@ jobs:
       # PURGE RESILIENCE: continue-on-error: true prevents hard-failing when
       # the referenced run has been deleted by purge_old_runs.  The inline
       # "Merge shards" step reads directly from the committed repo files.
-      - name: Download merged artifact (exp1b / exp3b only)
+      - name: Download merged artifact (MERGE_REQUIRED_EXPERIMENTS only)
         if: |
           github.event.inputs.source_run_id != '' &&
           (
             github.event.inputs.experiment == 'exp1b' ||
-            github.event.inputs.experiment == 'exp3b'
+            github.event.inputs.experiment == 'exp1_ablation' ||
+            github.event.inputs.experiment == 'exp3b' ||
+            github.event.inputs.experiment == 'suppB' ||
+            github.event.inputs.experiment == 'suppB_sc'
           )
         # NOTE: the explicit list above mirrors MERGE_REQUIRED_EXPERIMENTS in
         # merge_shards.py. If a new multi-shard experiment is added to that set,
@@ -875,8 +878,10 @@ jobs:
             "$RESULT_DIR/_report.md" \
             "$RESULT_DIR/_analysis.json"
 
-          # Commit _merged.json for merge-required experiments (exp1b, exp3b) so
-          # that ci_postprocess.yml can read it without re-running ci_analysis.yml.
+          # Commit _merged.json for merge-required experiments (exp1b,
+          # exp1_ablation, exp3b, suppB, suppB_sc — see MERGE_REQUIRED_EXPERIMENTS
+          # in merge_shards.py) so that ci_postprocess.yml can read it without
+          # re-running ci_analysis.yml.
           # merge_shards.py produces _merged.json in RESULT_DIR; it is never
           # staged elsewhere, so this is the only place it reaches the repo.
           NEEDS_MERGE=$(python3 -c "
