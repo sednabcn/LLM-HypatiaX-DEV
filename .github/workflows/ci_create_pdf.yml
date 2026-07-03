@@ -167,6 +167,37 @@ jobs:
         if: github.event.inputs.clean_build == 'true'
         run: make clean
 
+      # ── Debug: confirm jmlr2e.sty (and other required style files) are
+      # actually present in the checkout before `make main` runs. Mirrors
+      # the equivalent check in ci_report_submission.yml's local-build
+      # fallback, so both pipelines can be compared directly if one starts
+      # failing on a missing style file and the other doesn't.
+      - name: "Debug — confirm required style files are present in checkout"
+        run: |
+          echo "::group::Working directory"
+          echo "cwd: $(pwd)"
+          echo "::endgroup::"
+
+          echo "::group::jmlr2e.sty on disk"
+          ls -la jmlr2e.sty 2>/dev/null || echo "MISSING in checkout: jmlr2e.sty"
+          echo "::endgroup::"
+
+          echo "::group::jmlr2e.sty tracked by git?"
+          git ls-files | grep -i jmlr2e || echo "NOT TRACKED by git: jmlr2e.sty"
+          echo "::endgroup::"
+
+          echo "::group::.gitignore rules matching jmlr2e.sty"
+          git check-ignore -v jmlr2e.sty 2>/dev/null || echo "No .gitignore rule matches jmlr2e.sty"
+          echo "::endgroup::"
+
+          echo "::group::All *.sty files present in checkout"
+          find . -maxdepth 3 -name "*.sty" -print || echo "No .sty files found anywhere"
+          echo "::endgroup::"
+
+          echo "::group::kpsewhich lookup (what LaTeX itself would find)"
+          kpsewhich jmlr2e.sty || echo "kpsewhich could NOT resolve jmlr2e.sty"
+          echo "::endgroup::"
+
       # ── Build via the shared Makefile (4-pass pdflatex + bibtex) ─────────
       - name: "Compile main paper (make main)"
         run: make main
