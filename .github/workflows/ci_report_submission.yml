@@ -38,6 +38,10 @@ on:
         type: boolean
 
   workflow_run:
+    # NOTE: "Build HypatiaX PDF" must exactly match the upstream workflow's
+    # top-level `name:` field (not its filename, e.g. ci_create_pdf.yml).
+    # A mismatch here means this trigger silently never fires — verify
+    # against the producing workflow before relying on the auto-arm path.
     workflows: ["Build HypatiaX PDF"]
     types:
       - completed
@@ -53,11 +57,6 @@ env:
   SUPP_A_TEX:  supp_routing_improvements.tex
   SUPP_B_TEX:  supp_benchmark_report.tex
   BIB_FILE:    references.bib
-  MAIN_PDF:    jmlr_paper_main.pdf
-  SUPPA_PDF:   supp_routing_improvements.pdf
-  SUPPB_PDF:   supp_benchmark_report.pdf
-  MERGED_PDF:  HypatiaX_JMLR_complete.pdf
-  AUDIT_HTML:  HypatiaX_Paper_Audit_Report.html
   ZIP_NAME:    HypatiaX_JMLR_submission.zip
 
 concurrency:
@@ -138,6 +137,15 @@ jobs:
               --jq '.[0].databaseId')
           fi
 
+          if [[ -z "$PDF_RUN" ]]; then
+            echo "::error::No successful ci_create_pdf run found and no pdf_run_id input given."
+            exit 1
+          fi
+          if [[ -z "$AUDIT_RUN" ]]; then
+            echo "::error::No successful ci_report run found and no audit_run_id input given."
+            exit 1
+          fi
+
           echo "pdf_run_id=$PDF_RUN"     >> "$GITHUB_OUTPUT"
           echo "audit_run_id=$AUDIT_RUN" >> "$GITHUB_OUTPUT"
           echo "Resolved PDF run  : $PDF_RUN"
@@ -165,6 +173,7 @@ jobs:
 
       - name: Install tools
         run: |
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends qpdf poppler-utils zip
           pip install --upgrade pip
 
@@ -176,6 +185,7 @@ jobs:
           path: submission/
           run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # let the pre-submission gate report a clear MISSING PDF error
 
       - name: Download Supplementary A PDF
         uses: actions/download-artifact@v4
@@ -184,6 +194,7 @@ jobs:
           path: submission/
           run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # let the pre-submission gate report a clear MISSING PDF error
 
       - name: Download Supplementary B PDF
         uses: actions/download-artifact@v4
@@ -192,6 +203,7 @@ jobs:
           path: submission/
           run-id: ${{ needs.resolve-runs.outputs.pdf_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # let the pre-submission gate report a clear MISSING PDF error
 
       - name: Download combined PDF
         uses: actions/download-artifact@v4
@@ -395,6 +407,7 @@ jobs:
 
     permissions:
       contents: write
+      actions:  read
 
     steps:
       - name: Checkout repository
@@ -425,7 +438,14 @@ jobs:
           Built from commit ${{ github.sha }}
           PDF run   : ${{ needs.resolve-runs.outputs.pdf_run_id }}
           Audit run : ${{ needs.resolve-runs.outputs.audit_run_id }}"
-            git push origin HEAD:${{ github.ref_name }}
+
+            # Sync with any commits that landed since checkout, then push.
+            # Retry once after a rebase pull in case of a non-fast-forward race.
+            if ! git push origin HEAD:${{ github.ref_name }}; then
+              echo "Push rejected — pulling and retrying once..."
+              git pull --rebase origin ${{ github.ref_name }}
+              git push origin HEAD:${{ github.ref_name }}
+            fi
             echo "✔ Submission ZIP committed to submissions/"
           fi
 
