@@ -243,33 +243,19 @@ DATA_SAMPLE_SWEEP  = _sample_glob or _rpath("sample_complexity_MISSING.json")
 
 def _load_json(path, label=None):
     """Load JSON; return None and print a warning if the file is absent.
-    Replaces non-standard NaN / Infinity / -Infinity literals (which some
-    result files emit — not valid JSON, but valid Python float tokens) with
-    JSON `null`, matching how missing/invalid data is represented everywhere
-    else in this schema.
-    IMPORTANT: Infinity/-Infinity must NOT be replaced with a large-but-finite
-    sentinel (e.g. 1e308) — float64's max is ~1.8e308, so such a sentinel
-    passes math.isfinite() in safe_float() undetected and silently poisons
-    every downstream nanmean()/axis-range calculation with a ~1e308-magnitude
-    "real" value (see FIX-INF-SENTINEL: this caused fig17's 3D tick locator
-    to crash with "ValueError: arange: cannot compute length" when a genuine
-    -Infinity extrap_r2 collapsed the mean to ~-9e307). `null` -> None ->
-    safe_float(None) == nan is the same safe path NaN already takes.
+    Uses parse_constant to handle NaN / Infinity / -Infinity literals that
+    some result files emit (non-standard JSON but valid Python float values).
     """
     if not os.path.isfile(path):
         print(f"  [SKIP] {label or path} not found — dependent figures will be skipped.")
         return None
     with open(path) as f:
         text = f.read()
-    # Replace bare NaN / Infinity / -Infinity with JSON `null`.
-    # ORDER MATTERS: '-Infinity' must be substituted before bare 'Infinity' —
-    # \bInfinity\b also matches the "Infinity" substring inside "-Infinity"
-    # (a word boundary exists between '-' and 'I'), which would otherwise
-    # leave a dangling '-null' (invalid JSON) if bare Infinity ran first.
+    # Replace bare NaN / Infinity / -Infinity with JSON-safe equivalents
     import re as _re
-    text = _re.sub(r'\bNaN\b',        'null', text)
-    text = _re.sub(r'-Infinity\b',    'null', text)
-    text = _re.sub(r'\bInfinity\b',   'null', text)
+    text = _re.sub(r'\bNaN\b',       'null', text)
+    text = _re.sub(r'\bInfinity\b',  '1e308', text)
+    text = _re.sub(r'\b-Infinity\b', '-1e308', text)
     return json.loads(text)
 
 def _load_csv_np(path, label=None):
@@ -2376,290 +2362,131 @@ if _noise_rows or _sample_rows:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# exp2_feynman_extrap — HypatiaX Hybrid vs PySR-only, train vs far-extrapolation
-# performance, from ablation_paired.json (produced by ci_analysis.yml's
-# merge_extrap_into_benchmark.py step).
+# exp2_feynman_pca — PCA 40/60 six-system benchmark
+# Data source: benchmark_results_pca_4060.json — a FLAT list of per-(test,method)
+# rows, NOT the dict-of-dicts / CASES schema used elsewhere in this file. Kept
+# fully independent of RAW/CASES (same reasoning as the suppB/suppB_sc block
+# above): this experiment never populates RAW, and this data has a different
+# shape (6 competing methods, not pysr_only/hypatia) so it wouldn't fit
+# _normalise_cases() even if RAW were populated.
 #
-# Source: ablation_paired.json — a FLAT list of per-equation records, each
-# {equation_name, equation_id, domain, hypatia: {...}, pysr_only: {...}}.
-# This is structurally the *same* per-record shape _normalise_cases() already
-# converts for the dict-of-dicts (exp1_ablation_results.json) schema — just
-# keyed by list index instead of by equation name — so it does NOT match any
-# of the three shapes _normalise_cases() accepts directly (pre-shaped case
-# list, {"cases": [...]}, or dict-of-dicts). Rather than stretch
-# _normalise_cases()/RAW/CASES to fit (which would also incorrectly trigger
-# the "if RAW is not None" cosmetic fig07–fig22 block meant for exp1_ablation
-# — see line ~520), this block builds its own canonical case list locally and
-# is fully RAW-independent, mirroring the exp2_feynman_pca pattern below. It
-# still runs even when exp1_ablation_results.json is absent (the normal case
-# for this experiment — see _EXPERIMENTS_WITHOUT_ABLATION).
-#
-# Expected output stems (see ci_postprocess.yml FIG_ALLOWLIST[exp2_feynman_extrap]):
-#   fig_ablation_paired_*, fig_extrap_*
-# ══════════════════════════════════════════════════════════════════════════════
-if _EXPERIMENT in ("exp2_feynman_extrap", "exp2_feyman_extrap"):
-    _extrap_rows = _load_json(DATA_ABLATION_PAIRED, "ablation_paired.json")
-
-    if _extrap_rows is None:
-        print("  [SKIP] exp2_feynman_extrap figures skipped — "
-              f"{DATA_ABLATION_PAIRED} not found.")
-    elif not isinstance(_extrap_rows, list):
-        print(f"  [SKIP] {DATA_ABLATION_PAIRED} is not a flat list — expected "
-              "a list of per-equation {hypatia, pysr_only} records; skipping "
-              "exp2_feynman_extrap figures.")
-    else:
-        # ── Build canonical cases from the paired hypatia/pysr_only records ──
-        _extrap_cases = []
-        for _rec in _extrap_rows:
-            if not isinstance(_rec, dict):
-                continue
-            _eq_name = _rec.get("equation_name") or _rec.get("equation_id") or "unknown"
-            _domain  = _rec.get("domain", "unknown")
-            _hyp     = _rec.get("hypatia", {}) or {}
-            _pysr    = _rec.get("pysr_only", {}) or {}
-
-            def _sf(d, key):
-                return safe_float(d.get(key))
-
-            _extrap_cases.append({
-                "test_case":    _eq_name,
-                "formula_type": _domain,
-                "difficulty":   _infer_difficulty(_pysr, _hyp),
-                "results": {
-                    "hybrid": {
-                        "train_r2":       _sf(_hyp, "train_r2"),
-                        "extrap_r2_near": _sf(_hyp, "extrap_r2_near"),
-                        "extrap_r2_far":  _sf(_hyp, "extrap_r2_far"),
-                        "success":        bool(_hyp.get("success", False)),
-                    },
-                    "neural_network": {
-                        "train_r2":       _sf(_pysr, "train_r2"),
-                        "extrap_r2_near": _sf(_pysr, "extrap_r2_near"),
-                        "extrap_r2_far":  _sf(_pysr, "extrap_r2_far"),
-                        "success":        bool(_pysr.get("success", False)),
-                    },
-                },
-            })
-
-        if not _extrap_cases:
-            print(f"  [SKIP] {DATA_ABLATION_PAIRED} contained no usable "
-                  "records — skipping exp2_feynman_extrap figures.")
-        else:
-            print(f"  [INFO] exp2_feynman_extrap: loaded {len(_extrap_cases)} "
-                  f"paired cases from {DATA_ABLATION_PAIRED}.")
-
-            _eh_train = np.array([c["results"]["hybrid"]["train_r2"] for c in _extrap_cases])
-            _eh_far   = np.array([c["results"]["hybrid"]["extrap_r2_far"] for c in _extrap_cases])
-            _ep_train = np.array([c["results"]["neural_network"]["train_r2"] for c in _extrap_cases])
-            _ep_far   = np.array([c["results"]["neural_network"]["extrap_r2_far"] for c in _extrap_cases])
-
-            # ── fig_ablation_paired_scatter: train R² vs far-extrap R² ──────
-            fig, ax = plt.subplots(figsize=(7, 6))
-            ax.scatter(_ep_train, _ep_far, color=C_NN, alpha=0.7, s=50,
-                       edgecolor="white", label="PySR-only")
-            ax.scatter(_eh_train, _eh_far, color=C_HYB, alpha=0.7, s=50,
-                       edgecolor="white", label="HypatiaX Hybrid")
-            ax.plot([0, 1], [0, 1], "--", color=C_GRID, lw=1, zorder=0)
-            ax.set_xlabel("Train $R^2$", fontsize=10)
-            ax.set_ylabel("Far-extrapolation $R^2$", fontsize=10)
-            ax.set_title("Ablation-Paired: Train vs Far-Extrap $R^2$\n"
-                         "(exp2_feynman_extrap)", fontsize=11, fontweight="bold")
-            ax.legend(fontsize=9)
-            ax.grid(alpha=0.3)
-            fig.tight_layout()
-            _savefig(fig, "fig_ablation_paired_scatter")
-            plt.close(fig)
-            print("✓ fig_ablation_paired_scatter.png/.pdf")
-
-            # ── fig_extrap_far_r2_bar: per-equation far-extrap R², both methods ──
-            _order  = np.argsort(-np.nan_to_num(_eh_far, nan=-999))
-            _labels = [_extrap_cases[i]["test_case"][:35] for i in _order]
-            fig, ax = plt.subplots(figsize=(9, max(4, 0.28 * len(_labels))))
-            y = np.arange(len(_labels))
-            ax.barh(y - 0.2, _eh_far[_order], height=0.4, color=C_HYB,
-                   alpha=0.9, label="Hybrid")
-            ax.barh(y + 0.2, _ep_far[_order], height=0.4, color=C_NN,
-                   alpha=0.9, label="PySR-only")
-            ax.set_yticks(y)
-            ax.set_yticklabels(_labels, fontsize=7)
-            ax.invert_yaxis()
-            ax.set_xlabel("Far-extrapolation $R^2$", fontsize=10)
-            ax.set_title("exp2_feynman_extrap — Far-Extrap $R^2$ by Equation",
-                         fontsize=11, fontweight="bold")
-            ax.legend(fontsize=8)
-            ax.grid(axis="x", alpha=0.3)
-            fig.tight_layout()
-            _savefig(fig, "fig_extrap_far_r2_bar")
-            plt.close(fig)
-            print("✓ fig_extrap_far_r2_bar.png/.pdf")
-
-            # ── fig_extrap_domain_summary: mean far-extrap R² by domain ─────
-            from collections import defaultdict as _dd
-            _dom_h, _dom_p = _dd(list), _dd(list)
-            for c in _extrap_cases:
-                d = c["formula_type"]
-                if not math.isnan(c["results"]["hybrid"]["extrap_r2_far"]):
-                    _dom_h[d].append(c["results"]["hybrid"]["extrap_r2_far"])
-                if not math.isnan(c["results"]["neural_network"]["extrap_r2_far"]):
-                    _dom_p[d].append(c["results"]["neural_network"]["extrap_r2_far"])
-            _domains = sorted(set(_dom_h) | set(_dom_p))
-
-            if not _domains:
-                print("  [SKIP] fig_extrap_domain_summary — no domains with "
-                      "finite far-extrap R² values found.")
-            else:
-                _h_means = [np.mean(_dom_h[d]) if _dom_h[d] else float("nan") for d in _domains]
-                _p_means = [np.mean(_dom_p[d]) if _dom_p[d] else float("nan") for d in _domains]
-                x = np.arange(len(_domains))
-                w = 0.35
-                fig, ax = plt.subplots(figsize=(max(7, 0.6 * len(_domains)), 4.5))
-                ax.bar(x - w / 2, _h_means, w, color=C_HYB, alpha=0.9, label="Hybrid")
-                ax.bar(x + w / 2, _p_means, w, color=C_NN, alpha=0.9, label="PySR-only")
-                ax.set_xticks(x)
-                ax.set_xticklabels(_domains, fontsize=8, rotation=35, ha="right")
-                ax.set_ylabel("Mean far-extrap $R^2$", fontsize=10)
-                ax.set_title("exp2_feynman_extrap — Mean Far-Extrap $R^2$ by Domain",
-                             fontsize=11, fontweight="bold")
-                ax.legend(fontsize=9)
-                ax.grid(axis="y", alpha=0.3)
-                fig.tight_layout()
-                _savefig(fig, "fig_extrap_domain_summary")
-                plt.close(fig)
-                print("✓ fig_extrap_domain_summary.png/.pdf")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# exp2_feynman_pca — 6-way routing-time comparison + four 3-way (LLM vs NN vs
-# hybrid) comparisons.
-#
-# Source: benchmark_results_pca_4060.json — a FLAT list of 180 rows (30 tests
-# × 6 methods), each {test, domain, method, formula, r2, rmse, runtime,
-# success, extrap_r2_far, extrap_rmse_far}. This does NOT match either shape
-# _normalise_cases() understands (bare list of pre-shaped cases, {"cases":[..]},
-# or dict-of-dicts keyed by equation with pysr_only/hypatia sub-entries) — it's
-# long-format with 6 competing methods, so it is intentionally NOT run through
-# _normalise_cases()/CASES/RAW. This block is fully RAW-independent, mirroring
-# the suppB noise-sweep pattern above, so it still runs even when
-# exp1_ablation_results.json is absent (the normal case for this experiment).
-#
-# Method → bucket mapping (confirmed 2026-07-02): pure_llm and neural_network
-# are unambiguous; "hybrid" is ambiguous across 4 candidate methods, so rather
-# than pick one, all four get their own 3-way comparison figure.
+# Produces two figure groups:
+#   fig_exp2_pca_runtime_6way  — all 6 methods, routing/runtime comparison
+#   fig_exp2_pca_r2_3way       — pure_llm vs neural_network vs hybrid, reusing
+#                                 the existing METHODS/MCOLORS/MLABELS palette
 # ══════════════════════════════════════════════════════════════════════════════
 if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
     DATA_PCA_4060 = _rpath("benchmark_results_pca_4060.json")
-    _pca_rows = _load_json(DATA_PCA_4060, "benchmark_results_pca_4060.json")
+    _pca_raw = _load_json(DATA_PCA_4060, DATA_PCA_4060)
 
-    if _pca_rows is None:
-        print("  [SKIP] exp2_feynman_pca 6-way/3-way figures skipped — "
-              f"{DATA_PCA_4060} not found.")
-    elif not isinstance(_pca_rows, list):
-        print(f"  [SKIP] {DATA_PCA_4060} is not a flat list — expected 180 "
-              "(test, method) rows; skipping 6-way/3-way figures.")
+    if _pca_raw is None:
+        print("  [SKIP] exp2_feynman_pca figures skipped — benchmark_results_pca_4060.json not found.")
+    elif not isinstance(_pca_raw, list):
+        print(f"  [WARN] benchmark_results_pca_4060.json is not a flat list "
+              f"(got {type(_pca_raw).__name__}) — exp2_feynman_pca figures skipped.")
     else:
-        from collections import defaultdict
+        _pca_rows = [r for r in _pca_raw if isinstance(r, dict) and "method" in r]
+        print(f"  [INFO] exp2_feynman_pca: loaded {len(_pca_rows)} rows "
+              f"({len(set(r['method'] for r in _pca_rows))} methods, "
+              f"{len(set(r['test'] for r in _pca_rows))} tests).")
 
-        _PCA_PURE_LLM = "PureLLM Baseline (core)"
-        _PCA_NN       = "ImprovedNN (core)"
-        # The four hybrid-ish methods, each producing its own 3-way figure.
-        _PCA_HYBRID_CANDIDATES = [
-            ("EnhancedHybridSystemDeFi (core)",      "defi"),
-            ("HybridSystemLLMNN all-domains (core)", "alldomains"),
-            ("SymbolicEngineWithLLM (tools)",        "symbolicllm"),
-            ("HybridDiscoverySystem v50_2 (tools)",  "v50_2"),
+        # All 6 methods present in the file, in a fixed display order.
+        _PCA_METHOD_ORDER = [
+            "PureLLM Baseline (core)",
+            "ImprovedNN (core)",
+            "EnhancedHybridSystemDeFi (core)",
+            "HybridSystemLLMNN all-domains (core)",
+            "SymbolicEngineWithLLM (tools)",
+            "HybridDiscoverySystem v50_2 (tools)",
         ]
+        _pca_methods_present = [m for m in _PCA_METHOD_ORDER
+                                 if any(r["method"] == m for r in _pca_rows)]
+        # Any method in the data not in our fixed order still gets plotted,
+        # appended at the end, rather than silently dropped.
+        _pca_methods_present += sorted(
+            set(r["method"] for r in _pca_rows) - set(_pca_methods_present)
+        )
 
-        # ── fig_pca_6way_timing: routing time, all 6 methods, all 30 tests ───
-        _pca_rt: dict = defaultdict(list)
-        for r in _pca_rows:
-            m = r.get("method", "unknown")
-            v = safe_float(r.get("runtime"))
-            if not math.isnan(v):
-                _pca_rt[m].append(v)
+        # 3-way bucket mapping onto the existing pure_llm/neural_network/hybrid
+        # palette. "hybrid" picked as HybridSystemLLMNN all-domains (core) —
+        # the only all-domains hybrid variant in this file; the other three
+        # hybrid-ish methods are DeFi-specific, tool-variant, or a versioned
+        # discovery-system build, not the general-purpose hybrid this figure
+        # is meant to represent.
+        _PCA_3WAY_MAP = {
+            "pure_llm":        "PureLLM Baseline (core)",
+            "neural_network":  "ImprovedNN (core)",
+            "hybrid":          "HybridSystemLLMNN all-domains (core)",
+        }
 
-        if not _pca_rt:
-            print(f"  [SKIP] fig_pca_6way_timing — no 'runtime' values found "
-                  f"in {DATA_PCA_4060}.")
+        if not _pca_rows:
+            print("  [SKIP] exp2_feynman_pca: no valid rows — figures skipped.")
         else:
-            _m_sorted = sorted(_pca_rt, key=lambda m: -np.mean(_pca_rt[m]))
-            _v_sorted = [np.mean(_pca_rt[m]) for m in _m_sorted]
+            # ── fig_exp2_pca_runtime_6way: all 6 methods, runtime comparison ──
+            _pca_runtimes = {
+                m: [safe_float(r["runtime"]) for r in _pca_rows if r["method"] == m]
+                for m in _pca_methods_present
+            }
+            _pca_runtimes = {m: [v for v in vs if not math.isnan(v)]
+                              for m, vs in _pca_runtimes.items()}
+            _pca_runtimes = {m: vs for m, vs in _pca_runtimes.items() if vs}
 
-            def _pca_color(m):
-                if m == _PCA_PURE_LLM: return C_LLM
-                if m == _PCA_NN:       return C_NN
-                return C_HYB
-            _colors6 = [_pca_color(m) for m in _m_sorted]
+            if not _pca_runtimes:
+                print("  [SKIP] fig_exp2_pca_runtime_6way — no valid runtime values.")
+            else:
+                fig, ax = plt.subplots(figsize=(11, 6))
+                _labels6 = list(_pca_runtimes.keys())
+                _data6 = [_pca_runtimes[m] for m in _labels6]
+                bp = ax.boxplot(_data6, labels=_labels6, patch_artist=True, showmeans=True)
+                _palette6 = plt.cm.tab10(np.linspace(0, 1, len(_labels6)))
+                for patch, color in zip(bp["boxes"], _palette6):
+                    patch.set_facecolor(color)
+                    patch.set_alpha(0.7)
+                ax.set_ylabel("Runtime (s)")
+                ax.set_title("exp2_feynman_pca — Runtime by Method (all 6 systems)",
+                              fontsize=12, fontweight="bold")
+                ax.set_yscale("log")
+                plt.setp(ax.get_xticklabels(), rotation=25, ha="right", fontsize=8)
+                ax.grid(axis="y", color=C_GRID, linewidth=0.6)
+                fig.tight_layout()
+                _savefig(fig, "fig_exp2_pca_runtime_6way", bbox_inches="tight")
+                plt.close(fig)
+                print("✓ fig_exp2_pca_runtime_6way.png/.pdf")
 
-            fig, ax = plt.subplots(figsize=(8, 4.5))
-            bars = ax.barh(range(len(_m_sorted)), _v_sorted,
-                           color=_colors6, alpha=0.85, edgecolor="white", lw=0.5)
-            ax.set_yticks(range(len(_m_sorted)))
-            ax.set_yticklabels(_m_sorted, fontsize=9)
-            ax.invert_yaxis()
-            ax.set_xlabel("Mean runtime (s)", fontsize=10)
-            ax.set_title("PCA 40/60 — Routing Time, 6 Methods (Feynman-30)",
-                         fontsize=11, fontweight="bold")
-            for bar, v in zip(bars, _v_sorted):
-                ax.text(v + max(_v_sorted) * 0.01, bar.get_y() + bar.get_height() / 2,
-                        f"{v:.2f}s", va="center", fontsize=8)
-            ax.grid(axis="x", alpha=0.3)
-            fig.tight_layout()
-            _savefig(fig, "fig_pca_6way_timing")
-            plt.close(fig)
-            print("✓ fig_pca_6way_timing.png/.pdf")
+            # ── fig_exp2_pca_r2_3way: pure_llm vs neural_network vs hybrid ──
+            _pca_r2_3way = {}
+            for bucket, method_name in _PCA_3WAY_MAP.items():
+                vals = [safe_float(r["r2"]) for r in _pca_rows if r["method"] == method_name]
+                vals = [v for v in vals if not math.isnan(v)]
+                if vals:
+                    _pca_r2_3way[bucket] = vals
 
-        # ── fig_pca_3way_<slug> ×4: Pure LLM vs Neural Net vs each hybrid ────
-        def _pca_bucket(method_name):
-            vals_r2, vals_extrap = [], []
-            for r in _pca_rows:
-                if r.get("method") != method_name:
-                    continue
-                v1 = safe_float(r.get("r2"))
-                v2 = safe_float(r.get("extrap_r2_far"))
-                if not math.isnan(v1): vals_r2.append(v1)
-                if not math.isnan(v2): vals_extrap.append(v2)
-            return vals_r2, vals_extrap
+            _missing_3way = [b for b in _PCA_3WAY_MAP if b not in _pca_r2_3way]
+            if _missing_3way:
+                print(f"  [WARN] fig_exp2_pca_r2_3way — no data for bucket(s) "
+                      f"{_missing_3way} (expected method(s): "
+                      f"{[_PCA_3WAY_MAP[b] for b in _missing_3way]}); "
+                      f"plotting available buckets only.")
 
-        _llm_r2, _llm_ext = _pca_bucket(_PCA_PURE_LLM)
-        _nn_r2,  _nn_ext  = _pca_bucket(_PCA_NN)
-
-        for _hyb_method, _hyb_slug in _PCA_HYBRID_CANDIDATES:
-            _hy_r2, _hy_ext = _pca_bucket(_hyb_method)
-
-            if not (_llm_r2 or _nn_r2 or _hy_r2):
-                print(f"  [SKIP] fig_pca_3way_{_hyb_slug} — no matching rows "
-                      f"for method '{_hyb_method}' (or LLM/NN) in "
-                      f"{DATA_PCA_4060}.")
-                continue
-
-            _labels3   = ["Pure LLM", "Neural Net", "HypatiaX Hybrid"]
-            _colors3   = [C_LLM, C_NN, C_HYB]
-            _r2_means  = [np.nanmean(v) if v else float("nan")
-                         for v in (_llm_r2, _nn_r2, _hy_r2)]
-            _ext_means = [np.nanmean(v) if v else float("nan")
-                         for v in (_llm_ext, _nn_ext, _hy_ext)]
-            _finite = [v for v in (_r2_means + _ext_means) if not math.isnan(v)]
-            _ymin = min(0.0, min(_finite) - 0.05) if _finite else 0.0
-
-            x = np.arange(3)
-            w = 0.35
-            fig, ax = plt.subplots(figsize=(7, 4.5))
-            ax.bar(x - w / 2, _r2_means, w, label="$R^2$ (in-distribution)",
-                   color=_colors3, alpha=0.9, edgecolor="white")
-            ax.bar(x + w / 2, _ext_means, w, label="Extrap $R^2$ (far)",
-                   color=_colors3, alpha=0.5, edgecolor="white", hatch="//")
-            ax.set_xticks(x)
-            ax.set_xticklabels(_labels3, fontsize=10)
-            ax.set_ylabel("$R^2$", fontsize=10)
-            ax.set_ylim(_ymin, 1.05)
-            ax.set_title("PCA 40/60 — Pure LLM vs Neural Net vs Hybrid\n"
-                         f"(hybrid = {_hyb_method})", fontsize=10, fontweight="bold")
-            ax.legend(fontsize=8, loc="lower left")
-            ax.grid(axis="y", alpha=0.3)
-            fig.tight_layout()
-            _savefig(fig, f"fig_pca_3way_{_hyb_slug}")
-            plt.close(fig)
-            print(f"✓ fig_pca_3way_{_hyb_slug}.png/.pdf")
+            if not _pca_r2_3way:
+                print("  [SKIP] fig_exp2_pca_r2_3way — no valid r2 values for any of the 3 buckets.")
+            else:
+                fig, ax = plt.subplots(figsize=(7, 6))
+                _labels3 = [b for b in METHODS if b in _pca_r2_3way]
+                _data3 = [_pca_r2_3way[b] for b in _labels3]
+                bp = ax.boxplot(_data3, labels=[MLABELS[b] for b in _labels3],
+                                 patch_artist=True, showmeans=True)
+                for patch, b in zip(bp["boxes"], _labels3):
+                    patch.set_facecolor(MCOLORS[b])
+                    patch.set_alpha(0.7)
+                ax.set_ylabel("$R^2$")
+                ax.set_title("exp2_feynman_pca — $R^2$ by System (Pure LLM / NN / Hybrid)",
+                              fontsize=12, fontweight="bold")
+                ax.grid(axis="y", color=C_GRID, linewidth=0.6)
+                fig.tight_layout()
+                _savefig(fig, "fig_exp2_pca_r2_3way", bbox_inches="tight")
+                plt.close(fig)
+                print("✓ fig_exp2_pca_r2_3way.png/.pdf")
 
 
 # ── Final summary ─────────────────────────────────────────────────────────────
