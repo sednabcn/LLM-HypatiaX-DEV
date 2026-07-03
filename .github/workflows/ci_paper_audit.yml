@@ -784,8 +784,22 @@ jobs:
             for src in "$@"; do
               if [[ -f "$src" ]]; then
                 ext="${src##*.}"
-                cp -v "$src" "Figures/${stem}.${ext}"
-                cp -v "$src" "figures/${stem}.${ext}"
+                dst_upper="Figures/${stem}.${ext}"
+                dst_lower="figures/${stem}.${ext}"
+                # Guard: cp errors (and set -e kills the job) if src and dest
+                # resolve to the same file — which happens whenever $src is
+                # itself already sitting in figures/ or Figures/ under the
+                # target name (e.g. the lowercase figures/ fallback path).
+                if [[ "$(readlink -f "$src")" != "$(readlink -f "$dst_upper" 2>/dev/null || echo "$dst_upper")" ]]; then
+                  cp -v "$src" "$dst_upper"
+                else
+                  echo "  [SKIP] ${stem}: src already at $dst_upper"
+                fi
+                if [[ "$(readlink -f "$src")" != "$(readlink -f "$dst_lower" 2>/dev/null || echo "$dst_lower")" ]]; then
+                  cp -v "$src" "$dst_lower"
+                else
+                  echo "  [SKIP] ${stem}: src already at $dst_lower"
+                fi
                 echo "  [OK] ${stem} deployed from $src"
                 return 0
               fi
@@ -1082,6 +1096,17 @@ jobs:
           retention-days:    30
 
       - name: Upload canonical figures/ and tables/ as artifact
+        # if: always() is REQUIRED — earlier steps in this job (figure/table
+        # collection) can exit 1 on empty pools or missing generator scripts.
+        # Without this, a step failure upstream silently skips this upload,
+        # the canonical-assets-<run_id> artifact never exists, and every
+        # downstream job (preflight-check, numerical-verify, paper-audit,
+        # figures-tables-validate) fails with a confusing
+        # "Artifact not found for name: canonical-assets-<run_id>" instead
+        # of surfacing the real collection failure. Safe to always-run since
+        # if-no-files-found: warn already tolerates an empty/partial set —
+        # preflight-check is what should report the real problem clearly.
+        if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name:              canonical-assets-${{ github.run_id }}
