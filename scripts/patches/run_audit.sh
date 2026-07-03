@@ -686,9 +686,40 @@ def _find_metric(data, *keys):
                 return r
     return None
 
-def _scan_result(exp, metric, result_subdir=None):
+def _scan_result(exp, metric, result_subdir=None, json_key=None, result_glob=None):
     """Search result JSONs for a given metric key; return (value, source_path) or (None, None).
-    Uses recursive glob so results in subdirectories are found."""
+    Uses recursive glob so results in subdirectories are found.
+
+    FIX: json_key/result_glob were present in several paper_targets.json
+    entries (e.g. exp2_pca_4060: json_key="solve_rate",
+    result_glob="comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json")
+    but were never read by this function — it only ever searched for a key
+    literally named after `metric` (e.g. "feynman_pca_4060_solve_rate"), which
+    does not match the actual key inside the result file. When json_key is
+    given, search for THAT key instead of `metric`. When result_glob is
+    given, scope the candidate file search to files matching that pattern
+    (relative to RESULTS) instead of every *.json under RESULTS/result_subdir.
+    """
+    lookup_keys = [json_key] if json_key else [
+        metric, metric.lower(), metric.upper(),
+        metric.replace("-", "_"), metric.replace("_", "-"),
+    ]
+
+    if result_glob:
+        candidates = sorted(_glob.glob(str(RESULTS / result_glob), recursive=True), reverse=True)
+        for fpath in candidates:
+            p = Path(fpath)
+            data = all_jsons.get(p)
+            if data is None:
+                try:
+                    data = json.loads(p.read_text())
+                except Exception:
+                    continue
+            val = _find_metric(data, *lookup_keys)
+            if val is not None:
+                return float(val), p
+        return None, None
+
     search_roots = []
     if result_subdir:
         d = RESULTS / result_subdir
@@ -702,9 +733,7 @@ def _scan_result(exp, metric, result_subdir=None):
             data = all_jsons.get(p)
             if data is None:
                 continue
-            val = _find_metric(data, metric,
-                               metric.lower(), metric.upper(),
-                               metric.replace("-", "_"), metric.replace("_", "-"))
+            val = _find_metric(data, *lookup_keys)
             if val is not None:
                 return float(val), p
     return None, None
@@ -1456,12 +1485,24 @@ HYBRID_N_DOMAINS  = int(os.environ.get("HYBRID_N_DOMAINS", "10"))
 for claim in targets:
     if "_EXCLUDED" in claim:
         continue
+    # FIX: stub/pending claims (e.g. FIX-N3 nguyen12_dual_threshold_seed123)
+    # use a "_PENDING_*" sentinel key and/or status="awaiting_data" to mark
+    # themselves as intentionally not-yet-wired, the same way "_EXCLUDED"
+    # entries mark themselves as permanently excluded. Previously only
+    # "_EXCLUDED" was recognised, so a stub with a real exp/metric/paper_value
+    # (paper_value=null) fell through to the paper_value-is-None branch below
+    # and was reported as MISSING instead of being skipped as intended.
+    if claim.get("status") == "awaiting_data" or any(
+            k.startswith("_PENDING") for k in claim):
+        continue
 
     exp    = claim.get("exp", "?")
     metric = claim.get("metric", "?")
     paper  = claim.get("paper_value")
     tol    = claim.get("tolerance", TOLERANCE)
     subdir = claim.get("result_subdir")
+    rglob  = claim.get("result_glob")
+    jkey   = claim.get("json_key")
     note   = claim.get("note", "")
 
     if paper is None:
@@ -1487,10 +1528,12 @@ for claim in targets:
 
     else:
         # General key-lookup path
-        got_val, src_path = _scan_result(exp, metric, subdir)
+        got_val, src_path = _scan_result(exp, metric, subdir, json_key=jkey, result_glob=rglob)
         if got_val is None:
             findings.append({"exp": exp, "metric": metric, "status": "MISSING",
-                             "detail": f"metric '{metric}' not found in any result JSON under {RESULTS}"})
+                             "detail": f"metric '{metric}' (json_key='{jkey}') not found "
+                                       f"in any result JSON under {RESULTS}"
+                                       + (f" matching '{rglob}'" if rglob else "")})
             continue
         expected = float(paper)
         ok = abs(got_val - expected) <= max(tol * max(abs(expected), 1e-9), 1e-9)
