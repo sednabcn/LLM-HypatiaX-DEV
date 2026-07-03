@@ -1436,6 +1436,26 @@ def _r2(row):
 
 def _rows(data):
     if isinstance(data, dict):
+        # FIX-C3-SCHEMA: protocol_core_noiseless_pca_*.json (the raw _save()
+        # output of run_comparative_suite_benchmark_pca.py) nests real
+        # per-method results under top-level "tests" -> [i] -> "results" ->
+        # {method_name: {..., "r2": ...}}. None of ('results','equation_results',
+        # 'data','rows') exist at the TOP level of this shape, so without this
+        # branch the generic case below falls through to `yield data`, handing
+        # back one useless pseudo-row per file with no r2 field — silently
+        # contributing 0/0 for every raw result file. Handle it explicitly.
+        if isinstance(data.get('tests'), list):
+            for test in data['tests']:
+                if not isinstance(test, dict):
+                    continue
+                results = test.get('results')
+                if isinstance(results, dict):
+                    for rec in results.values():
+                        if isinstance(rec, dict):
+                            yield rec
+                else:
+                    yield from _rows(test)
+            return
         for key in ('results','equation_results','data','rows'):
             v = data.get(key)
             if v is not None:
@@ -1450,7 +1470,15 @@ def _rows(data):
 n_pass = n_total = 0
 source_files = []
 for fp in sorted(PCA_DIR.glob('*.json')) if PCA_DIR.exists() else []:
-    if any(x in fp.name for x in ('checkpoint','disclosure','summary','baseline')):
+    # FIX-C3-DEDUPE: benchmark_results_pca_4060.json and benchmark_results_
+    # extrap.json are flattened re-exports of the exact same per-test,
+    # per-method rows already present in protocol_core_noiseless_pca_*.json
+    # (confirmed: per-domain record counts in exp2_pca_4060_run.log match
+    # exactly between the two exports, every domain). Now that _rows() above
+    # can read the raw files directly, counting these too would double- (or
+    # with both exports present, triple-) count every row. Exclude them —
+    # protocol_core_noiseless_pca_*.json is the single source of truth.
+    if any(x in fp.name for x in ('checkpoint','disclosure','summary','baseline','benchmark_results')):
         continue
     try:
         data = json.loads(fp.read_text())
