@@ -9,14 +9,17 @@
 #
 #  NOTE: ci_runner.yml has NO consolidate job — each worker shard
 #    commits its own result files directly to the repo.  _merged.json is NOT
-#    automatically produced for most experiments; for exp1b and exp3b it is
-#    produced inline by the "Merge shards" step in this workflow (see below).
+#    automatically produced for most experiments; for exp1b, exp1_ablation,
+#    exp3b, suppB, and suppB_sc (i.e. MERGE_REQUIRED_EXPERIMENTS in
+#    merge_shards.py) it is produced inline by the "Merge shards" step in
+#    this workflow (see below).
 #    ci_consolidate_experiment.yml does not exist; no manual consolidation
 #    step is required.
 #
 #  Input modes (set by "Locate analysis input" → $INPUT_MODE env var):
 #
-#    MERGED  (exp1b, exp3b only):
+#    MERGED  (exp1b, exp1_ablation, exp3b, suppB, suppB_sc — i.e.
+#             MERGE_REQUIRED_EXPERIMENTS in merge_shards.py):
 #      Reads _merged.json produced inline by the "Merge shards" step, which
 #      calls merge_shards.py against the committed shard files in RESULT_DIR.
 #      Hard-fails if _merged.json is absent after the merge step.
@@ -245,10 +248,12 @@ jobs:
       # source_run_id is provided by ci_pipeline.yml; omit when
       # re-running analysis manually against already-committed files.
       #
-      # MERGE-REQUIRED GATE: exp1b and exp3b are multi-shard experiments.
-      # Their _merged.json is now produced inline by the "Merge shards" step
-      # below rather than by a separate consolidation workflow.  This download
-      # step is therefore a no-op for exp1b/exp3b in the normal pipeline
+      # MERGE-REQUIRED GATE: exp1b, exp1_ablation, exp3b, suppB, and suppB_sc
+      # (MERGE_REQUIRED_EXPERIMENTS in merge_shards.py) are multi-shard
+      # experiments. Their _merged.json is now produced inline by the
+      # "Merge shards" step below rather than by a separate consolidation
+      # workflow.  This download step is therefore a no-op for these
+      # experiments in the normal pipeline
       # (no consolidated artifact is ever uploaded), but is kept so that a
       # future ci_consolidate_experiment.yml can slot in without YAML changes:
       # if the artifact IS present it is downloaded and the merge step below
