@@ -2437,7 +2437,9 @@ if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
                 fig, ax = plt.subplots(figsize=(11, 6))
                 _labels6 = list(_pca_runtimes.keys())
                 _data6 = [_pca_runtimes[m] for m in _labels6]
-                bp = ax.boxplot(_data6, labels=_labels6, patch_artist=True, showmeans=True)
+                bp = ax.boxplot(_data6, patch_artist=True, showmeans=True)
+                ax.set_xticks(range(1, len(_labels6) + 1))
+                ax.set_xticklabels(_labels6)
                 _palette6 = plt.cm.tab10(np.linspace(0, 1, len(_labels6)))
                 for patch, color in zip(bp["boxes"], _palette6):
                     patch.set_facecolor(color)
@@ -2474,8 +2476,9 @@ if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
                 fig, ax = plt.subplots(figsize=(7, 6))
                 _labels3 = [b for b in METHODS if b in _pca_r2_3way]
                 _data3 = [_pca_r2_3way[b] for b in _labels3]
-                bp = ax.boxplot(_data3, labels=[MLABELS[b] for b in _labels3],
-                                 patch_artist=True, showmeans=True)
+                bp = ax.boxplot(_data3, patch_artist=True, showmeans=True)
+                ax.set_xticks(range(1, len(_labels3) + 1))
+                ax.set_xticklabels([MLABELS[b] for b in _labels3])
                 for patch, b in zip(bp["boxes"], _labels3):
                     patch.set_facecolor(MCOLORS[b])
                     patch.set_alpha(0.7)
