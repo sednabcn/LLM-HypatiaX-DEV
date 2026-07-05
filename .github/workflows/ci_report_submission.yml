@@ -302,6 +302,27 @@ jobs:
           mkdir -p submission
           echo "── No usable upstream ci_create_pdf artefacts — building locally ──"
 
+          # Wrap latexmk so a LaTeX *fatal error* (as opposed to a missing
+          # source file, handled separately below) surfaces immediately as
+          # a readable ::error:: annotation, instead of the job just dying
+          # with an opaque "Process completed with exit code N" and the
+          # actual cause buried inside the raw .log a hundred+ lines back.
+          # This is what bit us in run 77692655843: a `\proof already
+          # defined` clash between jmlr2e and amsthm took several minutes
+          # of manual log digging to find.
+          build_tex() {
+            local tex="$1"
+            local log="${tex%.tex}.log"
+            if ! latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$tex"; then
+              echo "::group::LaTeX fatal error detail ($log)"
+              grep -A3 '^!' "$log" 2>/dev/null || echo "(no '!' error lines found in $log)"
+              echo "::endgroup::"
+              err=$(grep -m1 '^!' "$log" 2>/dev/null | sed 's/^! //')
+              echo "::error::pdflatex failed on $tex — ${err:-see LaTeX fatal error detail above}"
+              exit 1
+            fi
+          }
+
           # Round 1: compile all three once, in dependency order (main first).
           # supp_routing_improvements.tex and supp_benchmark_report.tex each
           # cross-reference the OTHER's labels via xr-hyper
@@ -317,12 +338,12 @@ jobs:
               exit 1
             fi
             echo "Building $TEX (round 1) ..."
-            latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$TEX"
+            build_tex "$TEX"
           done
 
           echo "Rebuilding Supp A + Supp B (round 2 — resolves mutual xr-hyper cross-refs) ..."
-          latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$SUPP_A_TEX"
-          latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$SUPP_B_TEX"
+          build_tex "$SUPP_A_TEX"
+          build_tex "$SUPP_B_TEX"
 
           [[ -f "${MAIN_TEX%.tex}.pdf" ]]   && cp "${MAIN_TEX%.tex}.pdf"   submission/jmlr_paper_main.pdf
           [[ -f "${SUPP_A_TEX%.tex}.pdf" ]] && cp "${SUPP_A_TEX%.tex}.pdf" submission/supp_routing_improvements.pdf
