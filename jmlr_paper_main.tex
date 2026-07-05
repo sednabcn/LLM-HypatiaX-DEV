@@ -79,15 +79,23 @@
 \newcommand{\verified}[1]{\textcolor{blue!60!black}{#1}}
 
 %% ── Theorem environments ────────────────────────────────────
-\newtheorem{theorem}{Theorem}[section]
-\newtheorem{definition}[theorem]{Definition}
-\newtheorem{proposition}[theorem]{Proposition}
-\newtheorem{corollary}[theorem]{Corollary}
-\newtheorem{remark}[theorem]{Remark}
-\newtheorem{lemma}[theorem]{Lemma}
-\newtheorem{result}{Empirical Result}
-\newtheorem{finding}{Empirical Finding}
-\newtheorem{constraint}{System Constraint}
+%% jmlr2e already defines theorem/definition/proposition/corollary/
+%% remark/lemma internally (same root cause as the earlier \proof
+%% clash: "Command \theorem already defined"). Rather than assume
+%% exactly which names jmlr2e claims, only \newtheorem a name here
+%% if jmlr2e hasn't already created its counter — this is robust to
+%% jmlr2e defining more or fewer of these than we expect.
+\makeatletter
+\@ifundefined{c@theorem}{\newtheorem{theorem}{Theorem}[section]}{}
+\@ifundefined{c@definition}{\newtheorem{definition}[theorem]{Definition}}{}
+\@ifundefined{c@proposition}{\newtheorem{proposition}[theorem]{Proposition}}{}
+\@ifundefined{c@corollary}{\newtheorem{corollary}[theorem]{Corollary}}{}
+\@ifundefined{c@remark}{\newtheorem{remark}[theorem]{Remark}}{}
+\@ifundefined{c@lemma}{\newtheorem{lemma}[theorem]{Lemma}}{}
+\@ifundefined{c@result}{\newtheorem{result}{Empirical Result}}{}
+\@ifundefined{c@finding}{\newtheorem{finding}{Empirical Finding}}{}
+\@ifundefined{c@constraint}{\newtheorem{constraint}{System Constraint}}{}
+\makeatother
 \newenvironment{demonstration}{\begin{trivlist}\item[\hskip\labelsep\textbf{Empirical Demonstration.}]}{\end{trivlist}}
 \newenvironment{argument}{\begin{trivlist}\item[\hskip\labelsep\textbf{Theoretical Argument.}]}{\end{trivlist}}
 
