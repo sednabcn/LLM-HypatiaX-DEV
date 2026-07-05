@@ -6,11 +6,12 @@
 #  Jobs:
 #    1. validate       — source file & cross-reference checks
 #    2. compile-main   — main paper (4-pass pdflatex + bibtex, via `make main`)
-#    3. compile-supp-a — Supplementary A (via `make suppa`)
-#    4. compile-supp-b — Supplementary B (via `make suppb`)
-#    5. merge-pdf      — combine all three PDFs into one
-#    6. commit-pdfs    — download all PDFs & commit them to repo root
-#    7. report         — upload artefacts & post summary
+#    3. compile-supp   — Supplementary A + B, merged (via `make suppa`/`make suppb`,
+#                         two rounds each — see job comment for why they can't
+#                         be separate parallel jobs anymore)
+#    4. merge-pdf      — combine all three PDFs into one
+#    5. commit-pdfs    — download all PDFs & commit them to repo root
+#    6. report         — upload artefacts & post summary
 #
 #  Build logic lives in the repo's Makefile (`make main|suppa|suppb|
 #  verify-main|...`) so local builds and CI builds share one implementation —
@@ -136,10 +137,10 @@ jobs:
     name: "Steps 4–5 · Compile Main Paper"
     runs-on: ubuntu-latest
     needs: validate
-    if: >
-      github.event.inputs.target == 'all' ||
-      github.event.inputs.target == 'main-only' ||
-      github.event.inputs.target == ''
+    # Always runs (regardless of `target`) — compile-supp now depends on
+    # jmlr_paper_main.aux for its xr-hyper cross-references, even when the
+    # user only asked for target=supp-only. `target` still controls which
+    # PDFs get uploaded/merged/committed further downstream.
 
     steps:
       - name: Checkout repository
@@ -235,13 +236,37 @@ jobs:
             build/jmlr_paper_main.blg
           retention-days: 7
 
+      # ── Share the .aux so Supp A/B can resolve their \externaldocument{jmlr_paper_main}
+      # xr-hyper cross-references without needing a full duplicate compile of
+      # the main paper inside their own job. See compile-supp for why this
+      # dependency exists now.
+      - name: Upload main paper .aux (for Supp A/B xr-hyper cross-refs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-paper-aux
+          path: ${{ env.BUILD_DIR }}/jmlr_paper_main.aux
+          retention-days: 1
+
 # =============================================================================
-# JOB 3 — Compile Supplementary A
+# JOB 3 — Compile Supplementary A + B together
 # =============================================================================
-  compile-supp-a:
-    name: "Steps 4–6 · Compile Supplementary A"
+# MERGED (was two independent parallel jobs: compile-supp-a, compile-supp-b).
+#
+# Reason: both Supp A and Supp B now cross-reference each other's labels via
+# xr-hyper (\externaldocument{supp_benchmark_report} in Supp A,
+# \externaldocument{supp_routing_improvements} in Supp B), plus both need
+# \externaldocument{jmlr_paper_main}. Two independent GitHub Actions jobs run
+# on separate runners with separate filesystems — neither could ever see the
+# other's .aux, and neither could see jmlr_paper_main.aux, so those
+# cross-references would silently resolve to "??" no matter how many times
+# each job's own `make suppa`/`make suppb` re-ran internally. Compiling both
+# in the same job (same filesystem) lets a second round of each `make`
+# target pick up the other's freshly-written .aux, exactly like the manual
+# two-round process used to verify this locally.
+  compile-supp:
+    name: "Steps 4–7 · Compile Supplementary A + B"
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, compile-main]
     if: >
       github.event.inputs.target == 'all' ||
       github.event.inputs.target == 'supp-only' ||
@@ -251,25 +276,62 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # See compile-main for why "bibtex" is intentionally not in this list.
       - name: Install TeX Live (apt)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             texlive-latex-extra texlive-science \
             texlive-fonts-recommended texlive-bibtex-extra \
+            texlive-publishers \
             qpdf poppler-utils
 
       - name: Clean build dirs (clean_build requested)
         if: github.event.inputs.clean_build == 'true'
         run: make clean
 
-      - name: "Compile Supplementary A (make suppa)"
-        run: make suppa
+      # ── Pull in jmlr_paper_main.aux so \externaldocument{jmlr_paper_main}
+      # resolves without recompiling the whole main paper here.
+      - name: Download main paper .aux
+        uses: actions/download-artifact@v4
+        with:
+          name: main-paper-aux
+          path: ${{ env.BUILD_DIR }}
 
-      # ── Verify & inspect generated PDF ─────────────────────────────────
+      # ── Round 1: first pass of each. Each may still show undefined
+      # xr-hyper refs to the OTHER supp doc at this point — expected,
+      # resolved by round 2 below.
+      - name: "Compile Supplementary A — round 1 (make suppa)"
+        run: make suppa
+      - name: "Compile Supplementary B — round 1 (make suppb)"
+        run: make suppb
+
+      # ── Round 2: rerun both now that each other's .aux exists from
+      # round 1. This is the step that actually resolves the mutual
+      # xr-hyper cross-references.
+      - name: "Compile Supplementary A — round 2 (make suppa)"
+        run: make suppa
+      - name: "Compile Supplementary B — round 2 (make suppb)"
+        run: make suppb
+
+      # ── Verify & inspect generated PDFs ─────────────────────────────────
       - name: Verify Supplementary A PDF
         run: make verify-suppa
+
+      - name: Verify Supplementary B PDF
+        run: make verify-suppb
+
+      - name: Scan logs for undefined refs / citations (both supp docs)
+        run: |
+          for f in supp_routing_improvements supp_benchmark_report; do
+            logfile="$BUILD_DIR/$f.log"
+            [[ -f "$logfile" ]] || continue
+            undef=$(grep -c 'undefined' "$logfile" || true)
+            echo "$f — undefined refs/citations in log: $undef"
+            if [[ $undef -gt 0 ]]; then
+              echo "::warning::$f still has $undef undefined reference(s)/citation(s) after 2 rounds"
+              grep 'undefined' "$logfile" | head -20 || true
+            fi
+          done
 
       - name: Upload Supplementary A PDF
         uses: actions/upload-artifact@v4
@@ -277,52 +339,6 @@ jobs:
           name: supp-a-pdf
           path: ${{ env.OUTPUT_DIR }}/supp_routing_improvements.pdf
           retention-days: 30
-
-      - name: Upload compile logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: supp-a-logs
-          path: |
-            build/supp_routing_improvements.log
-            build/supp_routing_improvements.blg
-          retention-days: 7
-
-# =============================================================================
-# JOB 4 — Compile Supplementary B
-# =============================================================================
-  compile-supp-b:
-    name: "Steps 4–7 · Compile Supplementary B"
-    runs-on: ubuntu-latest
-    needs: validate
-    if: >
-      github.event.inputs.target == 'all' ||
-      github.event.inputs.target == 'supp-only' ||
-      github.event.inputs.target == ''
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # See compile-main for why "bibtex" is intentionally not in this list.
-      - name: Install TeX Live (apt)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            texlive-latex-extra texlive-science \
-            texlive-fonts-recommended texlive-bibtex-extra \
-            qpdf poppler-utils
-
-      - name: Clean build dirs (clean_build requested)
-        if: github.event.inputs.clean_build == 'true'
-        run: make clean
-
-      - name: "Compile Supplementary B (make suppb)"
-        run: make suppb
-
-      # ── Verify & inspect generated PDF ─────────────────────────────────
-      - name: Verify Supplementary B PDF
-        run: make verify-suppb
 
       - name: Upload Supplementary B PDF
         uses: actions/upload-artifact@v4
@@ -335,8 +351,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: supp-b-logs
+          name: supp-logs
           path: |
+            build/supp_routing_improvements.log
+            build/supp_routing_improvements.blg
             build/supp_benchmark_report.log
             build/supp_benchmark_report.blg
           retention-days: 7
@@ -347,12 +365,11 @@ jobs:
   merge-pdf:
     name: "Step 8 · Merge PDFs → HypatiaX_JMLR_complete.pdf"
     runs-on: ubuntu-latest
-    needs: [compile-main, compile-supp-a, compile-supp-b]
+    needs: [compile-main, compile-supp]
     if: >
       always() &&
       needs.compile-main.result == 'success' &&
-      needs.compile-supp-a.result == 'success' &&
-      needs.compile-supp-b.result == 'success' &&
+      needs.compile-supp.result == 'success' &&
       (github.event.inputs.target == 'all' || github.event.inputs.target == '')
 
     steps:
@@ -400,13 +417,13 @@ jobs:
   commit-pdfs:
     name: "Step 9 · Commit PDFs to Repo Root"
     runs-on: ubuntu-latest
-    needs: [compile-main, compile-supp-a, compile-supp-b, merge-pdf]
+    needs: [compile-main, compile-supp, merge-pdf]
     if: >
       always() &&
       needs.compile-main.result == 'success' &&
-      needs.compile-supp-a.result == 'success' &&
-      needs.compile-supp-b.result == 'success' &&
-      github.event_name != 'pull_request'
+      needs.compile-supp.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      (github.event.inputs.target == 'all' || github.event.inputs.target == '')
 
     permissions:
       contents: write
@@ -486,7 +503,7 @@ jobs:
   report:
     name: "Step 10–11 · Pipeline Summary"
     runs-on: ubuntu-latest
-    needs: [validate, compile-main, compile-supp-a, compile-supp-b, merge-pdf, commit-pdfs]
+    needs: [validate, compile-main, compile-supp, merge-pdf, commit-pdfs]
     if: always()
 
     steps:
@@ -498,8 +515,7 @@ jobs:
           echo "|-----|--------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Validate sources & cross-refs | ${{ needs.validate.result }} |"       >> "$GITHUB_STEP_SUMMARY"
           echo "| Compile main paper            | ${{ needs.compile-main.result }} |"   >> "$GITHUB_STEP_SUMMARY"
-          echo "| Compile Supplementary A       | ${{ needs.compile-supp-a.result }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Compile Supplementary B       | ${{ needs.compile-supp-b.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Compile Supplementary A + B   | ${{ needs.compile-supp.result }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Merge PDFs                    | ${{ needs.merge-pdf.result }} |"      >> "$GITHUB_STEP_SUMMARY"
           echo "| Commit PDFs to repo           | ${{ needs.commit-pdfs.result }} |"    >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -509,8 +525,7 @@ jobs:
       - name: Fail pipeline if any compile job failed
         if: >
           needs.compile-main.result == 'failure' ||
-          needs.compile-supp-a.result == 'failure' ||
-          needs.compile-supp-b.result == 'failure'
+          needs.compile-supp.result == 'failure'
         run: |
           echo "One or more compile jobs failed."
           exit 1

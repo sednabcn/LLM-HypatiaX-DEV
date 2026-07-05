@@ -261,7 +261,8 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends \
             texlive-latex-base texlive-latex-recommended texlive-latex-extra \
-            texlive-fonts-recommended texlive-bibtex-extra biber latexmk
+            texlive-science texlive-fonts-recommended texlive-bibtex-extra \
+            biber latexmk
 
       # ── Debug: confirm jmlr2e.sty (and other required style files) are
       # actually present in the checkout before we try to compile. This
@@ -300,18 +301,41 @@ jobs:
         run: |
           mkdir -p submission
           echo "── No usable upstream ci_create_pdf artefacts — building locally ──"
+
+          # Round 1: compile all three once, in dependency order (main first).
+          # supp_routing_improvements.tex and supp_benchmark_report.tex each
+          # cross-reference the OTHER's labels via xr-hyper
+          # (\externaldocument{...}), plus both need jmlr_paper_main.aux.
+          # A single pass through this list cannot satisfy that: whichever
+          # supp doc compiles second in the loop still can't see the first's
+          # freshly-written .aux from THIS run, and neither supp doc's very
+          # first pass has anything to read for the OTHER one yet. Round 2
+          # below reruns both supp docs now that all three .aux files exist.
           for TEX in "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX"; do
             if [[ ! -f "$TEX" ]]; then
               echo "::error::Cannot build locally — source file missing: $TEX"
               exit 1
             fi
-            echo "Building $TEX ..."
+            echo "Building $TEX (round 1) ..."
             latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$TEX"
           done
+
+          echo "Rebuilding Supp A + Supp B (round 2 — resolves mutual xr-hyper cross-refs) ..."
+          latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$SUPP_A_TEX"
+          latexmk -pdf -interaction=nonstopmode -halt-on-error -bibtex "$SUPP_B_TEX"
 
           [[ -f "${MAIN_TEX%.tex}.pdf" ]]   && cp "${MAIN_TEX%.tex}.pdf"   submission/jmlr_paper_main.pdf
           [[ -f "${SUPP_A_TEX%.tex}.pdf" ]] && cp "${SUPP_A_TEX%.tex}.pdf" submission/supp_routing_improvements.pdf
           [[ -f "${SUPP_B_TEX%.tex}.pdf" ]] && cp "${SUPP_B_TEX%.tex}.pdf" submission/supp_benchmark_report.pdf
+
+          echo "── Checking for unresolved cross-references / citations ──"
+          for LOG in "${MAIN_TEX%.tex}.log" "${SUPP_A_TEX%.tex}.log" "${SUPP_B_TEX%.tex}.log"; do
+            [[ -f "$LOG" ]] || continue
+            undef=$(grep -c 'undefined' "$LOG" || true)
+            if [[ $undef -gt 0 ]]; then
+              echo "::warning::$LOG still has $undef undefined reference(s)/citation(s) after 2 rounds"
+            fi
+          done
 
           if [[ -f submission/jmlr_paper_main.pdf && -f submission/supp_routing_improvements.pdf \
                 && -f submission/supp_benchmark_report.pdf ]]; then

@@ -138,7 +138,16 @@ def tex_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*.tex") if ".bak" not in p.suffixes)
 
 def py_files(root: Path) -> list[Path]:
-    return sorted(p for p in root.rglob("*.py") if ".bak" not in p.suffixes)
+    # Exclude this script's own file: content-migration checks like FIX-C2
+    # (stale import rename) scan for old identifier names as plain
+    # substrings, and this file's own rule definitions necessarily contain
+    # those same substrings as string literals (e.g. OLD = "hybrid_system_v40"
+    # a few lines below this file's own detect_ methods) — not actual
+    # imports. Without this exclusion the scanner flags itself as having a
+    # "stale import" purely because it defines what a stale import looks like.
+    _self = Path(__file__).name
+    return sorted(p for p in root.rglob("*.py")
+                  if ".bak" not in p.suffixes and p.name != _self)
 
 def read(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
