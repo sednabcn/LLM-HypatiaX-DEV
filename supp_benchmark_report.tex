@@ -69,17 +69,17 @@
 \newcommand{\warn}{{\color{warnAmber}\textbf{!}}}
 
 %% ── Theorem-like environments ────────────────────────────────────────────────
-%% jmlr2e already defines a `proof` environment; amsthm redefines
-%% \proof/\endproof too, which is a fatal clash. Clear jmlr2e's
-%% version first so amsthm can load cleanly.
-\let\proof\relax
-\let\endproof\relax
-\usepackage{amsthm}
-%% Guard against jmlr2e already claiming `example` too (same class of
-%% clash as the \proof and \theorem issues in jmlr_paper_main.tex).
-\makeatletter
-\@ifundefined{example}{\newtheorem{example}{Example}[section]}{}
-\makeatother
+%% NOTE: amsthm is deliberately NOT loaded and `example` is NOT
+%% redeclared here. jmlr2e.sty already defines proof/theorem/lemma/
+%% proposition/remark/corollary/definition/example unconditionally
+%% via plain-LaTeX \newtheorem/\newenvironment. Loading amsthm here
+%% interferes with jmlr2e's optional-argument counter machinery
+%% (symptom: "No counter 'Definition' defined" elsewhere in the
+%% submission), and redeclaring `example` collides outright
+%% ("Command \theorem already defined"-class error). Neither
+%% needed — jmlr2e's `example` environment (shared, continuous
+%% numbering, not per-section) already supports the
+%% \begin{example}[Title] usage below.
 
 %% ============================================================
 \begin{document}

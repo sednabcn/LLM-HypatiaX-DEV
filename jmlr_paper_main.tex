@@ -16,15 +16,17 @@
 \usepackage{jmlr2e}
 
 %% ── Core maths & fonts ──────────────────────────────────────
+%% NOTE: amsthm is deliberately NOT loaded. jmlr2e.sty already
+%% defines proof/theorem/lemma/proposition/remark/corollary/
+%% definition (see jmlr2e.sty "PROOF, THEOREM, and FRIENDS" section)
+%% using plain-LaTeX \newtheorem/\newenvironment. Loading amsthm on
+%% top of that redefines the kernel theorem-optional-argument
+%% machinery and breaks jmlr2e's already-declared environments
+%% (symptom: "No counter 'Definition' defined" on
+%% \begin{definition}[Title]). Neither this file nor the
+%% supplementary files use any amsthm-only feature (\theoremstyle,
+%% \qedhere, \newtheorem*), so it isn't needed.
 \usepackage{amsmath,amssymb,amsfonts}
-
-%% jmlr2e already defines a `proof` environment; amsthm redefines
-%% \proof/\endproof too, which is a fatal clash ("Command \proof
-%% already defined"). Clear jmlr2e's version first so amsthm can
-%% load cleanly.
-\let\proof\relax
-\let\endproof\relax
-\usepackage{amsthm}
 
 \usepackage{bm}
 \usepackage{microtype}
@@ -79,23 +81,14 @@
 \newcommand{\verified}[1]{\textcolor{blue!60!black}{#1}}
 
 %% ── Theorem environments ────────────────────────────────────
-%% jmlr2e already defines theorem/definition/proposition/corollary/
-%% remark/lemma internally (same root cause as the earlier \proof
-%% clash: "Command \theorem already defined"). Rather than assume
-%% exactly which names jmlr2e claims, only \newtheorem a name here
-%% if jmlr2e hasn't already created its counter — this is robust to
-%% jmlr2e defining more or fewer of these than we expect.
-\makeatletter
-\@ifundefined{theorem}{\newtheorem{theorem}{Theorem}[section]}{}
-\@ifundefined{definition}{\newtheorem{definition}[theorem]{Definition}}{}
-\@ifundefined{proposition}{\newtheorem{proposition}[theorem]{Proposition}}{}
-\@ifundefined{corollary}{\newtheorem{corollary}[theorem]{Corollary}}{}
-\@ifundefined{remark}{\newtheorem{remark}[theorem]{Remark}}{}
-\@ifundefined{lemma}{\newtheorem{lemma}[theorem]{Lemma}}{}
-\@ifundefined{result}{\newtheorem{result}{Empirical Result}}{}
-\@ifundefined{finding}{\newtheorem{finding}{Empirical Finding}}{}
-\@ifundefined{constraint}{\newtheorem{constraint}{System Constraint}}{}
-\makeatother
+%% theorem/definition/proposition/corollary/remark/lemma are ALL
+%% already defined unconditionally by jmlr2e.sty (identical names,
+%% shared "theorem" counter) — see jmlr2e.sty lines 388-394. They
+%% must NOT be redeclared here; only result/finding/constraint are
+%% genuinely new and not touched by jmlr2e.
+\newtheorem{result}{Empirical Result}
+\newtheorem{finding}{Empirical Finding}
+\newtheorem{constraint}{System Constraint}
 \newenvironment{demonstration}{\begin{trivlist}\item[\hskip\labelsep\textbf{Empirical Demonstration.}]}{\end{trivlist}}
 \newenvironment{argument}{\begin{trivlist}\item[\hskip\labelsep\textbf{Theoretical Argument.}]}{\end{trivlist}}
 
