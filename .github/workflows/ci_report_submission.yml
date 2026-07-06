@@ -297,6 +297,58 @@ jobs:
           kpsewhich jmlr2e.sty || echo "kpsewhich could NOT resolve jmlr2e.sty"
           echo "::endgroup::"
 
+      # ── Pre-flight lint: catch unescaped underscores in text-mode
+      # commands before we spend a full latexmk run only to die with a
+      # cryptic "! Missing $ inserted." buried deep in a .log file.
+      # Scope is intentionally narrow: it inspects the literal argument
+      # text of \texttt{...}, \textbf{...}, \textit{...}, \emph{...},
+      # \textsc{...}, \textrm{...} calls per-occurrence, rather than
+      # stripping math/verbatim across the whole file first — that
+      # whole-file-strip approach is what caused the line-shifting false
+      # positives/negatives we hit last time this was attempted.
+      # \path{...}, \verb, \label{...}, \ref{...}, \cite{...}, \input{...},
+      # \includegraphics{...}, and \bibliography{...} are excluded: they're
+      # either not text-mode rendering commands, or already handle
+      # underscores literally.
+      - name: "Lint — unescaped underscores in text-mode commands"
+        if: steps.need_local_build.outputs.need_local_build == 'true'
+        run: |
+          python3 - "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX" <<'PYEOF'
+          import re, sys
+
+          TEXT_CMDS = ("texttt", "textbf", "textit", "emph", "textsc", "textrm")
+          found = []
+
+          for path in sys.argv[1:]:
+              try:
+                  with open(path, encoding="utf-8") as fh:
+                      lines = fh.readlines()
+              except FileNotFoundError:
+                  continue
+
+              for lineno, line in enumerate(lines, start=1):
+                  if line.lstrip().startswith('%'):
+                      continue
+                  for cmd in TEXT_CMDS:
+                      for m in re.finditer(r'\\' + cmd + r'\{([^{}]*)\}', line):
+                          arg = m.group(1)
+                          if re.search(r'(?<!\\)_', arg):
+                              found.append((path, lineno, cmd, arg))
+
+          if found:
+              print("::group::Unescaped underscores found in text-mode commands")
+              for path, lineno, cmd, arg in found:
+                  print(f"{path}:{lineno}: \\{cmd}{{{arg}}}")
+              print("::endgroup::")
+              for path, lineno, cmd, arg in found:
+                  print(f"::error file={path},line={lineno}::Unescaped underscore in "
+                        f"\\{cmd}{{{arg}}} — use \\{cmd}{{...\\_...}} or \\verb, "
+                        f"or the {{underscore}} package.")
+              sys.exit(1)
+          else:
+              print("OK — no unescaped underscores found in \\texttt/\\textbf/\\textit/\\emph/\\textsc/\\textrm arguments.")
+          PYEOF
+
       - name: Build PDFs locally from LaTeX sources
         if: steps.need_local_build.outputs.need_local_build == 'true'
         run: |
