@@ -16,9 +16,29 @@ run-name: "HypatiaX Submission — run ${{ github.run_id }}"
 #     • Bundles everything into a timestamped submission ZIP.
 #     • Optionally commits the ZIP to a submissions/ directory.
 #
+# Delivery: two options, chosen via the `commit_zip` workflow_dispatch input
+#   OPTION A — commit_zip: true
+#     The ZIP is git-committed to submissions/ in the repo (job: commit-zip).
+#     Permanent, versioned, visible in normal git history/browsing. BUT
+#     GitHub hard-blocks any single file over 100 MB — this pipeline is not
+#     set up with Git LFS, so an oversized ZIP fails fast with a clear error
+#     (see the "Check ZIP size" step in the assemble job) rather than being
+#     silently rejected after a slow commit+push+retry cycle.
+#   OPTION B — commit_zip: false (default)
+#     The ZIP is uploaded as a GitHub Actions artifact only (job: assemble,
+#     "Upload submission ZIP artifact" step) — download it from the run's
+#     Artifacts list. Never touches git, so there's no size limit risk, but
+#     it expires after the configured retention (currently 90 days).
+#   Only Option A requires a manual, explicit choice (the checkbox defaults
+#   to false); Option B always happens automatically as a side effect of a
+#   successful assemble job, on every trigger — manual or auto-armed alike.
+#
 # Triggers
 #   • workflow_dispatch only — submission is a deliberate manual action.
 #   • workflow_run on ci_create_pdf completing successfully (auto-arm path).
+#     NOTE: the auto-arm path can only ever produce Option B (artifact-only)
+#     — commit-zip's condition requires github.event_name == 'workflow_dispatch',
+#     so an auto-armed run never attempts to commit anything to the repo.
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -33,7 +53,11 @@ on:
         required: false
         default: ""
       commit_zip:
-        description: "Commit the submission ZIP to submissions/ in the repo?"
+        description: >-
+          OPTION A (true): commit the ZIP to submissions/ in the repo — permanent, in
+          git history, but blocked by GitHub's 100 MB file limit (fails fast if too big).
+          OPTION B (false, default): leave the ZIP as a downloadable Actions artifact
+          only — never touches git, no size risk, but expires after 90 days.
         required: false
         default: false
         type: boolean
