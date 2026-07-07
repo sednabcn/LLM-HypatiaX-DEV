@@ -436,14 +436,49 @@ jobs:
         continue-on-error: true
 
       # ── Include tex sources ─────────────────────────────────────────────
+      # NOTE: previously used `find figures/ -name "*.pdf" -exec cp ...`,
+      # which swept up EVERY PDF anywhere under figures/ — including
+      # per-experiment diagnostic output (exp1, exp1b, exp2, exp2_feynman,
+      # exp2_feynman_extrap, exp3, exp3b, suppA, suppB, suppB_sc,
+      # instability, extrap) never actually referenced in the paper. That's
+      # what produced a 394 MB submission ZIP (run 28862337879), which then
+      # got rejected on push for exceeding GitHub's 100 MB file limit. Now
+      # we only bundle figures that are actually \includegraphics'd in the
+      # three .tex sources.
       - name: Copy tex sources into submission package
         run: |
           mkdir -p submission/sources/figures
           cp "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX" "$BIB_FILE" submission/sources/
-          # PDF figures only — keeps the ZIP reasonable
-          find figures/ -name "*.pdf" -exec cp {} submission/sources/figures/ \; 2>/dev/null || true
+
+          echo "Resolving \\includegraphics references to only the figures actually used ..."
+          grep -ohP '\\includegraphics(\[[^]]*\])?\{[^}]+\}' \
+            "$MAIN_TEX" "$SUPP_A_TEX" "$SUPP_B_TEX" \
+            | grep -oP '\{[^}]+\}' | tr -d '{}' | sort -u > /tmp/referenced_figures.txt || true
+
+          copied=0
+          missing=0
+          while IFS= read -r fig; do
+            [[ -z "$fig" ]] && continue
+            found=0
+            # \includegraphics often omits the extension — try as-is, then .pdf
+            for candidate in "figures/${fig}" "figures/${fig}.pdf"; do
+              if [[ -f "$candidate" ]]; then
+                cp "$candidate" submission/sources/figures/
+                copied=$((copied + 1))
+                found=1
+                break
+              fi
+            done
+            if [[ $found -eq 0 ]]; then
+              echo "::warning::Referenced figure not found on disk: $fig"
+              missing=$((missing + 1))
+            fi
+          done < /tmp/referenced_figures.txt
+
+          echo "Figures copied: $copied   Referenced-but-missing: $missing"
           echo "Sources staged:"
           ls -lh submission/sources/
+          du -sh submission/sources/figures/ 2>/dev/null || true
 
       # ── Pre-submission gate ─────────────────────────────────────────────
       - name: Pre-submission gate checks
@@ -597,6 +632,33 @@ jobs:
           cd ..
           echo "✔ Submission ZIP: $(du -h ${ZIP} | cut -f1)"
 
+      # ── Fail fast if the ZIP can never be committed to git ────────────────
+      # GitHub hard-blocks any single file over 100 MB — this is a platform
+      # limit, not something a .gitignore/config change can work around
+      # (Git LFS is the only route past it, and this pipeline doesn't use
+      # LFS). Catching this here, right after the ZIP is built, means a
+      # too-big package fails in seconds with a clear message instead of
+      # burning the rest of the commit-zip job on a git commit + push +
+      # rebase-retry that was always going to be rejected by the remote
+      # (see run 28862337879: 394 MB ZIP, rejected after two push attempts).
+      - name: Check ZIP size against GitHub's 100 MB file limit
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          ZIP="${{ env.ZIP_NAME }}"
+          LIMIT_BYTES=$((100 * 1024 * 1024))
+          WARN_BYTES=$((80 * 1024 * 1024))
+          SIZE_BYTES=$(stat -c%s "$ZIP")
+          SIZE_HUMAN=$(du -h "$ZIP" | cut -f1)
+
+          echo "Submission ZIP size: $SIZE_HUMAN ($SIZE_BYTES bytes)"
+
+          if [[ "$SIZE_BYTES" -ge "$LIMIT_BYTES" ]]; then
+            echo "::error::Submission ZIP is ${SIZE_HUMAN}, which exceeds GitHub's 100 MB per-file limit. This ZIP CANNOT be committed to the repo as-is (Git LFS is not configured for this pipeline). Likely cause: submission/sources/figures/ pulling in more than the figures actually referenced by \\includegraphics in the .tex sources — check the 'Copy tex sources into submission package' step output above. The ZIP is still available as a workflow artifact for manual download."
+            exit 1
+          elif [[ "$SIZE_BYTES" -ge "$WARN_BYTES" ]]; then
+            echo "::warning::Submission ZIP is ${SIZE_HUMAN} — getting close to GitHub's 100 MB file limit. Consider trimming submission/sources/ contents if this grows further."
+          fi
+
       - name: Upload submission ZIP artifact
         if: github.event.inputs.dry_run != 'true'
         uses: actions/upload-artifact@v4
@@ -642,6 +704,23 @@ jobs:
         with:
           name: HypatiaX_JMLR_submission
           path: submissions/
+
+      # ── Defensive re-check ────────────────────────────────────────────
+      # The 'assemble' job already gates on this, but re-check here too in
+      # case commit-zip is ever pointed at an artifact from an older run
+      # (e.g. via a re-run of just this job, or a manually re-triggered
+      # workflow_dispatch against a stale run) that predates that gate.
+      - name: Re-verify ZIP size before attempting commit
+        run: |
+          ZIP="submissions/${{ env.ZIP_NAME }}"
+          LIMIT_BYTES=$((100 * 1024 * 1024))
+          SIZE_BYTES=$(stat -c%s "$ZIP")
+          SIZE_HUMAN=$(du -h "$ZIP" | cut -f1)
+          echo "Downloaded ZIP size: $SIZE_HUMAN"
+          if [[ "$SIZE_BYTES" -ge "$LIMIT_BYTES" ]]; then
+            echo "::error::Downloaded ZIP is ${SIZE_HUMAN} — exceeds GitHub's 100 MB limit. Refusing to attempt commit/push (would be rejected by the remote anyway). Re-run the 'assemble' job to rebuild a trimmed ZIP."
+            exit 1
+          fi
 
       - name: Commit and push ZIP
         run: |
