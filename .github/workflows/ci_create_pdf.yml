@@ -62,6 +62,7 @@ env:
   BIB_FILE:    references.bib
   BUILD_DIR:   build
   OUTPUT_DIR:  output
+  PDF_DIR:     PDF
 
 # =============================================================================
 # JOB 1 — Validate source files & cross-references (no LaTeX needed)
@@ -470,16 +471,32 @@ jobs:
         continue-on-error: true  # not produced for partial builds
 
       # ── Copy PDFs to repo root & commit ────────────────────────────────
-      - name: Copy PDFs to repo root
+      - name: Copy PDFs to repo root and PDF/ directory
         run: |
           echo "::group::Files downloaded"
           ls -lh downloaded-pdfs/
           echo "::endgroup::"
 
+          # Combined PDF (if built) stays at repo root only.
           cp downloaded-pdfs/*.pdf .
 
-          echo "::group::PDFs staged for commit"
+          # The three individual PDFs also get their own copy in PDF_DIR,
+          # kept separate from the combined PDF.
+          mkdir -p "$PDF_DIR"
+          for f in jmlr_paper_main.pdf supp_routing_improvements.pdf supp_benchmark_report.pdf; do
+            if [[ -f "downloaded-pdfs/$f" ]]; then
+              cp "downloaded-pdfs/$f" "$PDF_DIR/$f"
+            else
+              echo "::warning::$f not found in downloaded-pdfs/ — skipping copy to $PDF_DIR/"
+            fi
+          done
+
+          echo "::group::PDFs staged for commit (repo root)"
           ls -lh *.pdf
+          echo "::endgroup::"
+
+          echo "::group::PDFs staged for commit ($PDF_DIR/)"
+          ls -lh "$PDF_DIR"/*.pdf
           echo "::endgroup::"
 
       - name: Commit and push PDFs
@@ -487,7 +504,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add *.pdf
+          git add *.pdf "$PDF_DIR"/*.pdf
 
           # Only commit if there is something new / changed
           if git diff --cached --quiet; then
