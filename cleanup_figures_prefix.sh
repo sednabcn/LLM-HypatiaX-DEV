@@ -19,6 +19,32 @@
 #   bash cleanup_figures_prefix.sh --move --dry-run      # preview move destinations only
 #   bash cleanup_figures_prefix.sh --move --dest=/some/other/dir
 #   bash cleanup_figures_prefix.sh /path/to/repo --move  # explicit repo root + move
+#
+# ── FIX (doubled-prefix / numbered-copy contamination) ──────────────────────
+# Two bugs previously made repeated --move runs generate files like
+# "figures_back__figures__fig07_..._10.png":
+#
+#   1. DEST_DIR is named "figures_back", but moved files kept their existing
+#      "figures__"/"Figures__" prefix instead of having it stripped. A file
+#      ends up at ".../figures_back/figures__X.png" — dir name and file
+#      prefix both encode "figures", so any later flattening of that path
+#      into a single filename ("dir__file") reproduces the exact
+#      "figures_back__figures__X.png" doubled-prefix pattern.
+#      FIX: strip_known_prefix() below removes any leading figures__/
+#      Figures__ (repeated, in case of prior double-prefixing) before the
+#      destination name is built, so files land in figures_back/ with their
+#      clean base name.
+#
+#   2. The collision loop treated "destination already exists" as "make a
+#      new numbered copy" (__1, __2, ...) unconditionally. Since the script
+#      is not idempotent, running it again on a repo already containing a
+#      prior run's backups just kept incrementing the counter forever,
+#      producing __1 through __N duplicates on every re-run.
+#      FIX: before numbering, compare the existing destination's contents
+#      to the source with `cmp`. If they're identical, this file was
+#      already backed up in a previous run — skip it (no new copy, source
+#      removed) instead of creating another numbered duplicate. Numbering
+#      is now reserved for genuine same-name-different-content conflicts.
 
 set -euo pipefail
 
@@ -82,11 +108,23 @@ if [[ "$ACTION" == "move" && "$APPLY" == true ]]; then
 fi
 
 TOTAL=0
+N_SKIPPED_DUP=0
 declare -A USED_DESTS
+
+# Strip any number of leading "figures__" / "Figures__" prefixes so a file
+# doesn't carry a prefix that duplicates the "figures_back" destination
+# directory name (root cause of the "figures_back__figures__X" pattern).
+strip_known_prefix() {
+    local name="$1"
+    while [[ "$name" == figures__* || "$name" == Figures__* ]]; do
+        name="${name#*__}"
+    done
+    printf '%s' "$name"
+}
 
 process_file() {
     local f="$1"
-    local base dest ext stem n
+    local base clean_base dest ext stem n
 
     if [[ "$ACTION" == "delete" ]]; then
         if $APPLY; then
@@ -97,15 +135,36 @@ process_file() {
         fi
     else
         base="$(basename -- "$f")"
-        dest="${DEST_DIR}/${base}"
+        clean_base="$(strip_known_prefix "$base")"
+        dest="${DEST_DIR}/${clean_base}"
+
         # Check both what's already on disk AND what we've already planned
         # to put there this run, so dry-run previews match real --move output.
         if [[ -e "$dest" || -n "${USED_DESTS[$dest]:-}" ]]; then
-            if [[ "$base" == *.* ]]; then
-                stem="${base%.*}"
-                ext=".${base##*.}"
+            # Idempotency fix: if the existing destination is byte-identical
+            # to the source, this exact file was already backed up on a
+            # prior run. Don't pile on another numbered copy -- just drop
+            # the redundant source (or, in dry-run, report what would
+            # happen) and move on.
+            if [[ -e "$dest" && -f "$dest" ]] && cmp -s -- "$f" "$dest"; then
+                if $APPLY; then
+                    echo "  SKIP-DUP (identical to existing backup, removing source)  $f"
+                    git rm -f --cached -- "$f" 2>/dev/null || true
+                    rm -f -- "$f"
+                else
+                    echo "  [DRY-RUN] would SKIP-DUP (identical, remove source only)  $f"
+                fi
+                (( N_SKIPPED_DUP++ )) || true
+                (( TOTAL++ )) || true
+                return
+            fi
+
+            # Genuine conflict: same name, different content -> number it.
+            if [[ "$clean_base" == *.* ]]; then
+                stem="${clean_base%.*}"
+                ext=".${clean_base##*.}"
             else
-                stem="$base"
+                stem="$clean_base"
                 ext=""
             fi
             n=1
@@ -152,6 +211,9 @@ echo ""
 ACTION_LABEL="deleted"
 [[ "$ACTION" == "move" ]] && ACTION_LABEL="moved"
 echo "=== Total files $( $APPLY && echo "$ACTION_LABEL" || echo 'flagged' ): ${TOTAL} ==="
+if [[ "$ACTION" == "move" && "$N_SKIPPED_DUP" -gt 0 ]]; then
+    echo "    (of which $N_SKIPPED_DUP were exact duplicates of an existing backup -- source removed, no new copy made)"
+fi
 
 if ! $APPLY; then
     echo ""
