@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""
+extract_repo_subset_full.py — build a separate, self-contained directory
+containing every .yml/.yaml, .sh, and .py file that a single entry-point
+workflow transitively depends on.
+
+Unlike extract_repo_subset.py (which only scans ONE workflow file for
+literal ".py" strings and then traces Python imports), this script
+follows the FULL dispatch/call graph starting from the entry workflow:
+
+    ci_pipeline_public.yml
+        --references--> ci_runner.yml, ci_analysis.yml,
+                         ci_postprocess.yml, ci_pipeline_check.yml, run_all.sh, ...
+            --references--> further .yml/.sh/.py files (recursively)
+                --.py files also get their local `import` graph traced
+                  (reusing find_py_deps.py's ast-based tracer)
+
+So it correctly handles pipelines like ci_pipeline_public.yml, whose own
+Python is inline (python3 - <<EOF) but which does its real work by
+dispatching OTHER workflow files via `gh workflow run <name>.yml`.
+
+The source repo is only ever READ. Nothing is written back into it.
+
+Usage:
+    python3 extract_repo_subset_full.py REPO_ROOT \\
+        --entry ci_pipeline_public.yml \\
+        --out /path/to/subset
+
+    # --entry accepts a bare filename (searched under .github/workflows/
+    # and then anywhere in the repo), or an explicit relative/absolute path.
+
+Requires find_py_deps.py to be in the same directory (imported, not
+re-run as a subprocess, so it reuses the same resolution/import-tracing
+code).
+"""
+
+import argparse
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from find_py_deps import extract_imports, strip_comments  # noqa: E402
+
+# Matches path-like tokens ending in .yml/.yaml/.sh/.py — used to scan
+# workflow files and shell scripts for references to OTHER such files.
+REF_RE = re.compile(r'[A-Za-z0-9_./\-]+\.(?:ya?ml|sh|py)\b')
+
+# Directories that historically hold stale/backup/legacy copies of scripts
+# in this repo (duplicated run_all.sh, trace_pipeline.py, etc.). When a
+# reference is ambiguous, candidates inside these are deprioritized rather
+# than picked. Override/extend with --exclude-dir.
+DEFAULT_NOISE_DIR_PATTERNS = [
+    "no-used-hypatiax",
+    "notebooks_",
+    "RUN_ALL_INJECTED",
+    "hypatiax-windows",  # .ps1 variant, not part of the Linux CI pipeline
+]
+
+
+def find_refs(text_file: Path) -> set[str]:
+    """Return raw path-like strings ending in .yml/.yaml/.sh/.py found in a
+    text file. Comments (# ...) are stripped first so that a filename only
+    *mentioned* in a comment/docstring/warning message — e.g. a note about
+    a related-but-separate pipeline — isn't treated as a live reference
+    that needs to be pulled into the subset.
+    """
+    try:
+        content = text_file.read_text(errors="ignore")
+    except OSError:
+        return set()
+    return set(REF_RE.findall(strip_comments(content)))
+
+
+def is_noisy(path: Path, repo_root: Path, noise_patterns: list[str]) -> bool:
+    rel = str(path.relative_to(repo_root))
+    if rel.endswith(".bak"):
+        return True
+    if "_back" in rel:
+        return True
+    return any(pat in rel for pat in noise_patterns)
+
+
+def resolve_reference_smart(
+    ref: str,
+    repo_root: Path,
+    noise_patterns: list[str],
+    manual_map: dict[str, str],
+) -> tuple[Path | None, list[Path]]:
+    """Resolve a raw referenced path string to a file in the repo.
+
+    Returns (resolved_path_or_None, ambiguous_candidates).
+    ambiguous_candidates is non-empty only when resolution failed *because*
+    more than one plausible file remained after filtering.
+    """
+    # 0. Manual override takes precedence over everything.
+    if ref in manual_map:
+        p = (repo_root / manual_map[ref]).resolve()
+        if p.is_file():
+            return p, []
+
+    # 1. Exact / lstripped relative path, as before.
+    for c in (repo_root / ref, repo_root / ref.lstrip("./")):
+        if c.is_file():
+            return c.resolve(), []
+
+    ref_parts = Path(ref).parts
+
+    # 2. Suffix-path match: any file whose path (relative to repo_root)
+    #    ends with the same sequence of components as ref. This resolves
+    #    e.g. "scripts/verify_results.py" against the real
+    #    "scripts/patches/verify_results.py" when only the basename
+    #    ("verify_results.py") would otherwise be ambiguous.
+    basename = ref_parts[-1]
+    all_matches = [m for m in repo_root.rglob(basename) if m.is_file()]
+
+    def matches_suffix(m: Path, parts: tuple[str, ...]) -> bool:
+        rel_parts = m.relative_to(repo_root).parts
+        if len(parts) > len(rel_parts):
+            return False
+        return rel_parts[-len(parts):] == parts
+
+    if len(ref_parts) > 1:
+        suffix_matches = [m for m in all_matches if matches_suffix(m, ref_parts)]
+        if len(suffix_matches) == 1:
+            return suffix_matches[0].resolve(), []
+        if len(suffix_matches) > 1:
+            all_matches = suffix_matches  # narrow down, continue to noise filtering below
+
+    if len(all_matches) == 1:
+        return all_matches[0].resolve(), []
+    if not all_matches:
+        return None, []
+
+    # 3. Multiple candidates: drop known noise/backup directories and retry.
+    clean_matches = [m for m in all_matches if not is_noisy(m, repo_root, noise_patterns)]
+    if len(clean_matches) == 1:
+        return clean_matches[0].resolve(), []
+
+    # Still ambiguous (0 or 2+ after filtering) — surface all original
+    # candidates so the user can add a manual_map entry.
+    return None, sorted(all_matches)
+
+
+def resolve_entry(entry: str, repo_root: Path) -> Path | None:
+    """Resolve the --entry argument to an actual file.
+
+    Tries, in order: as given (relative to repo_root), under
+    .github/workflows/, then a basename search anywhere in the repo.
+    """
+    candidate = repo_root / entry
+    if candidate.is_file():
+        return candidate.resolve()
+
+    wf_candidate = repo_root / ".github" / "workflows" / entry
+    if wf_candidate.is_file():
+        return wf_candidate.resolve()
+
+    basename = Path(entry).name
+    matches = [m for m in repo_root.rglob(basename) if m.is_file()]
+    if len(matches) == 1:
+        return matches[0].resolve()
+    if len(matches) > 1:
+        print(f"ERROR: --entry {entry!r} matches multiple files:", file=sys.stderr)
+        for m in matches:
+            print(f"    - {m.relative_to(repo_root)}", file=sys.stderr)
+        print("  Pass a more specific relative path.", file=sys.stderr)
+        sys.exit(1)
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("repo_root", help="Path to the real repo root (read-only)")
+    parser.add_argument(
+        "-e", "--entry", required=True,
+        help="Entry-point file to start the dependency graph from, e.g. "
+             "ci_pipeline_public.yml (bare filename is searched for under "
+             ".github/workflows/ and then the whole repo)",
+    )
+    parser.add_argument(
+        "-o", "--out", required=True, type=Path,
+        help="Output directory for the extracted subset repo (must not exist or must be empty)",
+    )
+    parser.add_argument(
+        "--exclude-dir", action="append", default=[],
+        help="Substring of a path to deprioritize when a reference is ambiguous "
+             "(e.g. --exclude-dir old_pipeline). Can be passed multiple times. "
+             "Added on top of the built-in defaults (no-used-hypatiax, notebooks_, "
+             "RUN_ALL_INJECTED, hypatiax-windows, *.bak, *_back).",
+    )
+    parser.add_argument(
+        "--resolve-map", type=Path, default=None,
+        help='Path to a JSON file of {"reference_string": "relative/path/to/real/file"} '
+             "overrides, used to force-resolve specific ambiguous or unresolved "
+             "references without editing this script.",
+    )
+    args = parser.parse_args()
+
+    repo_root = Path(args.repo_root).resolve()
+    out_root = args.out.expanduser().resolve()
+
+    noise_patterns = DEFAULT_NOISE_DIR_PATTERNS + args.exclude_dir
+
+    manual_map: dict[str, str] = {}
+    if args.resolve_map:
+        try:
+            manual_map = json.loads(args.resolve_map.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"ERROR: could not read --resolve-map {args.resolve_map}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if not repo_root.is_dir():
+        print(f"ERROR: {repo_root} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    if out_root.exists() and any(out_root.iterdir()):
+        print(f"ERROR: --out {out_root} already exists and is not empty; "
+              f"refusing to write into it", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        out_root.relative_to(repo_root)
+        print(f"ERROR: --out must not be inside the repo root ({repo_root})", file=sys.stderr)
+        sys.exit(1)
+    except ValueError:
+        pass  # good: out_root is not inside repo_root
+
+    entry_file = resolve_entry(args.entry, repo_root)
+    if entry_file is None:
+        print(f"ERROR: could not resolve --entry {args.entry!r} to a file under {repo_root}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Entry point: {entry_file.relative_to(repo_root)}")
+
+    touched: set[Path] = {entry_file}
+    visited: set[Path] = set()
+    # ref string -> list of files it was found in (truly no match at all)
+    unresolved: dict[str, list[str]] = {}
+    # ref string -> (candidates, list of files it was found in) (multiple
+    # plausible matches — needs a --resolve-map entry to disambiguate)
+    ambiguous: dict[str, tuple[list[Path], list[str]]] = {}
+    # resolved file -> list of files that reference it (for the report)
+    referenced_in: dict[Path, set[str]] = {}
+
+    queue = [entry_file]
+
+    while queue:
+        current = queue.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+
+        current_rel = str(current.relative_to(repo_root))
+
+        # 1. Text-scan for .yml/.yaml/.sh/.py references (dispatch chains,
+        #    `uses:` composite workflows, shell scripts calling scripts, etc.)
+        for ref in sorted(find_refs(current)):
+            resolved, candidates = resolve_reference_smart(ref, repo_root, noise_patterns, manual_map)
+            if resolved:
+                referenced_in.setdefault(resolved, set()).add(current_rel)
+                if resolved not in touched:
+                    touched.add(resolved)
+                if resolved not in visited:
+                    queue.append(resolved)
+            elif candidates:
+                existing = ambiguous.setdefault(ref, ([], []))
+                existing[1].append(current_rel)
+                ambiguous[ref] = (candidates, existing[1])
+            else:
+                unresolved.setdefault(ref, []).append(current_rel)
+
+        # 2. If it's a .py file, also trace its local `import` graph —
+        #    those dependencies won't show up as literal path strings.
+        if current.suffix == ".py":
+            for dep in extract_imports(current, repo_root):
+                referenced_in.setdefault(dep, set()).add(f"{current_rel} (import)")
+                if dep not in touched:
+                    touched.add(dep)
+                if dep not in visited:
+                    queue.append(dep)
+
+    # --- Copy everything found ---
+    out_root.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for f in sorted(touched):
+        rel = f.relative_to(repo_root)
+        dest = out_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dest)
+        copied.append(str(rel))
+
+    by_ext: dict[str, int] = {}
+    for c in copied:
+        ext = Path(c).suffix
+        by_ext[ext] = by_ext.get(ext, 0) + 1
+
+    print(f"Repo root (read-only): {repo_root}")
+    print(f"Subset output dir:     {out_root}")
+    print(f"Copied {len(copied)} files ({', '.join(f'{n} {ext}' for ext, n in sorted(by_ext.items()))}):")
+    for c in copied:
+        found_via = referenced_in.get(repo_root / c)
+        suffix = f"  (referenced in: {', '.join(sorted(found_via))})" if found_via else "  (entry point)"
+        print(f"  + {c}{suffix}")
+
+    if unresolved:
+        print(f"\nUnresolved references ({len(unresolved)}) — not copied, "
+              f"no matching file found in repo:")
+        for ref, found_in in sorted(unresolved.items()):
+            print(f"  - {ref}  (in: {', '.join(sorted(set(found_in)))})")
+        print(
+            "\nThese are likely dynamically-constructed filenames (shell/CI "
+            "variables like ${{ inputs.script }}) that can't be resolved "
+            "statically. If they're real files needed at runtime, add them "
+            "manually."
+        )
+
+
+if __name__ == "__main__":
+    main()

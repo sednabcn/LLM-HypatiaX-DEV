@@ -5,7 +5,7 @@
 #   bash clean_figures_dirs.sh [FIGURES_DIR]
 #
 # Reads  : ~/Downloads/tree_f.txt
-# Writes : /tmp/clean_figures_dir_<timestamp>.sh   (the quarantine bash script)
+# Writes :  ~/Downloads/tmp/clean_figures_dir_<timestamp>.sh   (the quarantine bash script)
 # Then   : executes that generated script against FIGURES_DIR (default: current dir)
 #
 # Requirements: python3
@@ -45,9 +45,11 @@ data_files = [f for f in files if os.path.splitext(f)[1].lower() not in IMG_EXTS
 clean_set  = set(f for f in img_files if is_clean(f))
 quarantine = sorted(f for f in img_files if not is_clean(f))
 
-import tempfile, time
+import time
+out_dir    = os.path.expanduser('~/Downloads/tmp')
+os.makedirs(out_dir, exist_ok=True)
 timestamp  = time.strftime('%Y%m%d_%H%M%S')
-out_path   = f'/tmp/clean_figures_dir_{timestamp}.sh'
+out_path   = os.path.join(out_dir, f'clean_figures_dir_{timestamp}.sh')
 
 lines = [
     '#!/usr/bin/env bash',
@@ -120,12 +122,12 @@ lines += [
     'echo ""',
     'echo "Next steps:"',
     'echo "  1. Verify figures/ looks correct:"',
-    'echo "       ls \${DIR}/*.pdf \${DIR}/*.png | sort"',
+    'echo "       ls ${DIR}/*.pdf ${DIR}/*.png | sort"',
     'echo "  2. Stage the removals:"',
-    'echo "       git -C \${DIR}/.. add -u"',
+    'echo "       git -C ${DIR}/.. add -u"',
     'echo "  3. Commit:"',
-    'echo "       git -C \${DIR}/.. commit -m \\"ci: purge doubled-prefix contamination from figures/\\""',
-    'echo "  4. If anything was wrongly quarantined, recover from \${QUARANTINE_DIR}"',
+    'echo "       git -C ${DIR}/.. commit -m \\"ci: purge doubled-prefix contamination from figures/\\""',
+    'echo "  4. If anything was wrongly quarantined, recover from ${QUARANTINE_DIR}"',
 ]
 
 with open(out_path, 'w') as fh:
@@ -142,9 +144,9 @@ print(f"Now running: bash {out_path} {figures_dir}")
 PYEOF
 
 # The Python block printed the generated script path; capture and run it
-GENERATED=$(ls -t /tmp/clean_figures_dir_*.sh 2>/dev/null | head -1)
+GENERATED=$(ls -t ~/Downloads/tmp/clean_figures_dir_*.sh 2>/dev/null | head -1)
 if [[ -z "$GENERATED" ]]; then
-    echo "ERROR: could not find generated script in /tmp/" >&2
+    echo "ERROR: could not find generated script in ~/Downloads/tmp/" >&2
     exit 1
 fi
 
