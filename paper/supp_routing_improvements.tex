@@ -3,7 +3,7 @@
 %%  Routing Improvements for Hybrid LLM–Neural-Network Systems
 %%  Impact on Extrapolation Performance in the DeFi Benchmark
 %%
-%%  Companion to: jmlr-hypatiax-paper-extended.tex
+%%  Companion to: jmlr_paper_main.tex
 %%  Rewritten & restructured: March 2026
 %% ============================================================
 
@@ -15,6 +15,8 @@
 \geometry{margin=2.5cm}
 
 \usepackage{amsmath,amssymb,amsthm}
+\usepackage{natbib}
+\usepackage{float}
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{xcolor}
@@ -58,6 +60,7 @@
 
 \newtheorem{observation}{Observation}
 \newtheorem{remark}{Remark}
+\newtheorem{complexity}{Complexity Result}
 
 %% ============================================================
 \begin{document}
@@ -76,7 +79,7 @@
 \noindent\textbf{Note to reader.}  This document is Supplementary Material~A to
 the main JMLR submission \emph{HypatiaX: A Hybrid Symbolic-Neural Framework for
 Extrapolation-Reliable Analytical Discovery} (\texttt{jmlr\_paper\_main.tex}).
-It provides full implementation details for the six routing fixes summarised in Section~7.3 (\emph{Component 3: Five-Stage Routing and Ensembling}) of the main paper---which now includes Proposition~1 (Routing Cascade Convergence), a formal guarantee that Phase~2 warm-starting is monotonically non-degrading over the Pareto front---and reports cumulative impact on the DeFi
+It provides full implementation details for the six routing fixes summarised in Section~\ref{sec:routing} (\emph{Component 3: Five-Stage Routing and Ensembling}) of the main paper---which now includes Proposition~1 (Routing Cascade Convergence), a formal guarantee that Phase~2 warm-starting is monotonically non-degrading over the Pareto front---and reports cumulative impact on the DeFi
 extrapolation benchmark.
 
 %% ============================================================
@@ -85,7 +88,7 @@ extrapolation benchmark.
 
 \begin{remark}[Development-set status]
 The DeFi equations used to motivate and validate the routing fixes in this
-document (Section~\ref{sec:fixes}) overlap with equations in the Core~15
+document (Section~\ref{sec:benchmark}) overlap with equations in the Core~15
 benchmark and the DeFi~74-case extrapolation suite (v3.0).  Post-fix performance
 figures on the DeFi suite should therefore be interpreted as
 \emph{in-sample routing improvement}, not held-out generalisation.
@@ -535,4 +538,612 @@ projection: HypatiaX achieves \textbf{89.2\%} near-perfect success rate
 structural extrapolation accuracy with the NN's ability to correct
 in-distribution calibration errors.
 
+% ====================================================================
+% NEW APPENDICES (extracted from jmlr_paper_main.tex)
+% ====================================================================
+\appendix
+
+\section{Complete Proof of Finding~\ref{thm:llm_reproductive}}
+\label{app:proof}
+
+\begin{proof}[Detailed Proof]
+Let $M_\theta$ be an autoregressive language model with parameters $\theta$ trained on corpus $\mathcal{C}$. Expression $E = t_1 \cdots t_n$ is generated via:
+\[
+P_\theta(E \mid D) = \prod_{i=1}^n P_\theta(t_i \mid t_{<i}, D)
+\]
+
+where $t_{<i} = t_1, \ldots, t_{i-1}$ is the prefix and $D$ represents conditioning data.
+
+\paragraph{Step 1: Training concentrates probability mass.}
+
+Maximum likelihood training optimizes:
+\[
+\theta^* = \arg\max_\theta \mathbb{E}_{E \sim \mathcal{C}}[\log P_\theta(E)]
+\]
+
+This causes $P_{\theta^*}(t_i \mid t_{<i}, D)$ to concentrate on tokens frequently observed in $\mathcal{C}$ given context $t_{<i}$.
+
+\paragraph{Step 2: Novel tokens incur exponential penalty.}
+
+For expression $E \notin \mathcal{C}$, define:
+\[
+d(E, \mathcal{C}) = \min_{E' \in \mathcal{C}} d_{\text{edit}}(E, E')
+\]
+
+Let $\mathcal{N}(E) \subseteq \{1, \ldots, n\}$ denote positions where $t_i$ is novel (low probability given $t_{<i}$). Under independence approximation:
+\[
+P_\theta(E \mid D) \approx \prod_{i \in \mathcal{N}(E)} p_i \cdot \prod_{i \notin \mathcal{N}(E)} p_i'
+\]
+
+where $p_i \ll 1$ for novel tokens and $p_i' \approx 1$ for familiar tokens.
+
+\paragraph{Step 3: Exponential decay.}
+
+Since $|\mathcal{N}(E)| \geq d(E, \mathcal{C})$ and $p_i \leq p_{\max} < 1$:
+\[
+P_\theta(E \mid D) \leq p_{\max}^{d(E, \mathcal{C})} = \exp(-\beta \cdot d(E, \mathcal{C}))
+\]
+
+where $\beta = -\log p_{\max} > 0$. Thus generation probability decays exponentially with edit distance from training data, establishing reproductive behavior. \qed
+\end{proof}
+
+\paragraph{Remark on rigour:} This proof assumes approximate local independence of token probabilities. A fully rigorous treatment would analyse the joint distribution over all tokens. The exponential decay result is a consequence of the independence approximation; empirical results are consistent with this theoretical prediction, but the approximation means the proof should be understood as providing intuition rather than a formal guarantee\citep{kambhampati2024llms}.
+
+% ============================================================================
+% APPENDIX B: HYPERPARAMETER SETTINGS
+% ============================================================================
+
+
+\section{Reproducibility Statement}
+\label{app:reproducibility}
+
+All experimental data, source code, and configuration files are publicly
+available to ensure full reproducibility of our results.
+
+\subsection{Code Repository}
+
+\textbf{GitHub:} \url{https://github.com/sednabcn/LLM-HypatiaX-Papers}
+
+\paragraph{Repository Structure:}
+\begin{small}
+\begin{verbatim}
+LLM-HypatiaX-Papers/
++-- papers/
+|   +-- 2025-JMLR/
+|       +-- hypatiax/
+|           +-- core/
+|           |   +-- base_pure_llm/     # Pure LLM baseline
+|           |   +-- generation/        # Hybrid systems
+|           |   +-- training/          # Neural network baseline
+|           +-- data/results/          # Raw experimental data
+|           +-- experiments/
+|           |   +-- benchmarks/        # Feynman, noise-sweep runners
+|           |   +-- comparison/        # Comparative analysis
+|           |   +-- tests/             # DeFi extrapolation tests
+|           +-- protocols/             # Experimental protocols (v2)
+|           +-- tools/
+|               +-- symbolic/          # PySR / hybrid_system_v50_2
+|               +-- validation/        # Multi-layer validators
+|       +-- figures/                   # 13 reproducibility figures (PDF/PNG);
+|       |                               #   NOT the 5 figures embedded in the
+|       |                               #   compiled manuscript (disjoint sets)
+|       +-- paper/                     # LaTeX manuscript
+|       +-- reports/                   # Analysis reports
+|       +-- supplementaries/           # Supplementary materials S1-S8
++-- docs/
++-- templates/
++-- requirements.txt
+\end{verbatim}
+\end{small}
+
+\subsection{Running Experiments}
+
+\paragraph{Quick Start (all v2-corrected commands):}
+\begin{small}
+\begin{verbatim}
+git clone https://github.com/sednabcn/LLM-HypatiaX-Papers
+cd LLM-HypatiaX-Papers/papers/2025-JMLR
+pip install -r ../../requirements.txt
+source activate_hypatiax.sh
+
+# Core 15 benchmark (§6.4)
+python hypatiax/experiments/comparison/\
+ultimate_comparative_suite_complete_.py \
+    --seed 42 --symbolic-timeout 1800 --v2
+
+# DeFi 74-case benchmark v3.0 (§6.5)
+python hypatiax/experiments/tests/\
+test_enhanced_defi_extrapolation.py \
+    --fixed-denominator 66 --nan-penalty --v2
+
+# Feynman SR — Phase 3 (§5.8, ~1h 13min on reference hardware)
+python hypatiax/experiments/benchmarks/\
+run_comparative_suite_benchmark_v2.py \
+    --noiseless --threshold 0.9999 \
+    --nn-seeds 3 --samples 200 \
+    --method-timeout 900 --pysr-timeout 900
+
+# Statistical analysis
+python hypatiax/analysis/statistical_analysis_full.py --v2
+
+# All 13 reproducibility figures (separate from the 5 figures
+# embedded directly in the compiled manuscript)
+python supplementaries/generate_figures/generate_figures.py --v2
+\end{verbatim}
+\end{small}
+
+\subsection{Hardware and Software}
+
+All experiments were run on a single machine: Intel Celeron T3100 @
+1.90\,GHz (2~cores), 3\,GB DDR2 RAM, no GPU, Kali GNU/Linux Rolling.
+Runtimes on modern multi-core hardware will be substantially lower; a GPU
+is \emph{not} required to reproduce the core results.
+
+\begin{table}[H]
+\centering
+\caption{Software environment (verified 18 March 2026).}
+\label{tab:runtime_reproducibility}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component} & \textbf{Version} & \textbf{Note} \\
+\midrule
+Python       & 3.12.2  & \\
+PySR         & 1.5.9   & \\
+Julia        & 1.12.2  & required by PySR \\
+juliacall    & 0.9.26  & Python$\leftrightarrow$Julia bridge \\
+NumPy        & 2.3.5   & \\
+SciPy        & 1.16.3  & \\
+SymPy        & 1.14.0  & \\
+Pandas       & 2.3.3   & \\
+Matplotlib   & 3.10.7  & \\
+Seaborn      & 0.13.2  & \\
+scikit-learn & 1.7.2   & \\
+Anthropic SDK & 0.73.0 & \texttt{claude-sonnet-4-20250514}, temp~0.0 \\
+\midrule
+PySR populations & 2 & hardware limit (2-core CPU) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Expected Wall-Clock Times (reference hardware):}
+\begin{small}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Experiment} & \textbf{Tests} & \textbf{Wall Time} \\
+\midrule
+Pure LLM Baseline          & 40  & 5--10 min \\
+Pure Symbolic (Core 15)    & 18  & 117 min \\
+LLM-Guided Hybrid          & 30  & 35 min \\
+DeFi Suite (73 cases)      & 23  & 44 min \\
+Hybrid LLM+NN (v50\_2)     & 30  & 45 min \\
+Feynman SR Phase~3         & 30  & $\sim$73 min \\
+Statistical Analysis       & --- & 15 min \\
+Figure Generation (13)     & --- & 10 min \\
+\midrule
+\textbf{All Experiments}   & \textbf{131} & \textbf{$\sim$6 hours} \\
+\bottomrule
+\end{tabular}
+\end{small}
+
+\subsection{Random Seeds}
+
+\begin{itemize}
+\item All campaigns: base seed \texttt{42} (\texttt{BenchmarkProtocol.seed = 42})
+\item Per-equation offset: \texttt{seed + index $\times$ 7}
+\item LLM calls: temperature \texttt{0.0} (deterministic) for all methods
+\item Neural network (Phase~3): 3 independent seeds per equation; median $R^2$ reported
+\end{itemize}
+
+\subsection{Measurement Correction (v1\,$\to$\,v2)}
+
+A bug in \texttt{evaluate\_llm\_formula} was corrected on 2026-03-16.
+The function used a hardcoded absolute threshold (\texttt{ss\_tot > 1e-10})
+that silently returned $R^2=0$ for equations with outputs far below unity.
+The fix scales the threshold relative to the data magnitude.
+All results in this paper use the v2 corrected harness.
+See Appendix~\ref{app:repro_statement} and Section~\ref{sec:r2_bugfix}
+for the exact code change and affected equations.
+
+\subsection{Troubleshooting}
+
+\paragraph{PySR / Julia installation:}
+\begin{small}
+\begin{verbatim}
+# Install Julia 1.12.2 (required)
+wget https://julialang.org/downloads/  # follow official installer
+export PATH="$HOME/.juliaup/bin:$PATH"
+
+# Install PySR
+pip install pysr==1.5.9
+python -c "import pysr; pysr.install()"
+\end{verbatim}
+\end{small}
+
+\paragraph{Arrhenius hang (Feynman test~4):}
+Always use \texttt{--method-timeout 900}. Without it, PySR enters an
+infinite search on this single-variable flat-landscape equation.
+This is a known Julia JIT behaviour on 2-core hardware; counted as a
+genuine failure in the paper results.
+
+\paragraph{LLM API:}
+\begin{small}
+\begin{verbatim}
+export ANTHROPIC_API_KEY="your-api-key-here"
+\end{verbatim}
+\end{small}
+
+\paragraph{Memory on constrained hardware:}
+\begin{small}
+\begin{verbatim}
+# In hypatiax/tools/symbolic/hybrid_system_v50_2.py
+# populations=2  (hardware-limited default used in this paper)
+\end{verbatim}
+\end{small}
+
+\subsection{Reproducibility Checklist}
+
+\begin{enumerate}
+\item Clone repository and install dependencies (including Julia 1.12.2)
+\item Set \texttt{ANTHROPIC\_API\_KEY} for LLM-dependent runners
+\item Run Core~15 benchmark — confirm Mann-Whitney U=0, p$<10^{-6}$
+\item Run DeFi benchmark — confirm HypatiaX 89.2\% vs LLM 62.2\% (n=74, v3.0)
+\item Run Feynman Phase~3 — confirm Hybrid DeFi 96.7\% ($R^2>0.9999$)
+\item Run statistical analysis — confirm Cohen's d = 0.95 (pooled)
+\item Regenerate 13 figures — confirm visual match with paper
+\item Verify v2 result files match checksums in repository README
+\end{enumerate}
+
+\subsection{Contact}
+
+\begin{itemize}
+\item \textbf{GitHub Issues:} \url{https://github.com/sednabcn/LLM-HypatiaX-Papers/issues}
+\item \textbf{Email:} \texttt{ruperto.bonet@modelphysmat.com}
+\item \textbf{Response time:} Within 2 weeks
+\item \textbf{Documentation:} \path{docs/QUICK_START_GUIDE.md}
+\end{itemize}
+
+We maintain the repository and welcome contributions, bug reports, and extension requests.
+
+% ============================================================================
+% APPENDIX G: COMPUTATIONAL COMPLEXITY ANALYSIS
+% ============================================================================
+
+
+\section{Computational Complexity Analysis}
+\label{app:complexity}
+
+\subsection{Theoretical Complexity}
+
+\begin{complexity}[HypatiaX Complexity]
+Let $n$ be candidate expressions, $m$ evaluation points, $k$ symbolic constraints. Total complexity is $\mathcal{O}(n \cdot (k + m))$.
+\end{complexity}
+
+\begin{proof}
+For each candidate expression $E$:
+\begin{enumerate}
+\item \textbf{Symbolic constraint checking}: $\mathcal{O}(k)$ operations (dimensional analysis, domain rules)
+\item \textbf{Numerical evaluation}: $\mathcal{O}(m)$ operations (fitness computation over dataset)
+\end{enumerate}
+
+Total per candidate: $\mathcal{O}(k + m)$. With $n$ candidates: $\mathcal{O}(n(k + m))$. \qed
+\end{proof}
+
+\paragraph{Comparison with Neural Networks:}
+\begin{itemize}
+\item \textbf{Neural Network Training}: $\mathcal{O}(e \cdot b \cdot (d \cdot h + h^2))$ where $e$ = epochs, $b$ = batch size, $d$ = input dimension, $h$ = hidden units
+\item \textbf{Typical values}: $e=200$, $b=160$, $d=3$, $h=64$ $\Rightarrow$ $\mathcal{O}(2 \times 10^6)$ operations
+\item \textbf{HypatiaX}: $n=1000$, $m=160$, $k=50$ $\Rightarrow$ $\mathcal{O}(2 \times 10^5)$ operations per iteration
+\end{itemize}
+
+Despite comparable per-iteration complexity, symbolic methods require more iterations (500 vs 200) for convergence, explaining the 27$\times$ runtime difference.
+
+\subsection{Empirical Timing Breakdown}
+
+Profiling HypatiaX on representative test cases:
+
+\begin{table}[H]
+\centering
+\caption{Computational Cost Breakdown (average per test)}
+\label{tab:timing_breakdown}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Component} & \textbf{Time (s)} & \textbf{Percentage} \\
+\midrule
+\multicolumn{3}{c}{\textit{Pure Symbolic (PySR)}} \\
+\midrule
+Population initialization & 5.2 & 1.3\% \\
+Evolutionary search & 365.8 & 93.9\% \\
+Symbolic simplification & 12.3 & 3.2\% \\
+Validation framework & 6.7 & 1.6\% \\
+\midrule
+\textbf{Total} & \textbf{390.0} & \textbf{100\%} \\
+\midrule
+\multicolumn{3}{c}{\textit{LLM-Guided Hybrid}} \\
+\midrule
+LLM API call & 8.5 & 12.1\% \\
+Expression parsing & 2.0 & 2.9\% \\
+Initial validation & 3.0 & 4.3\% \\
+PySR refinement (when needed) & 52.5 & 75.0\% \\
+Final validation & 4.0 & 5.7\% \\
+\midrule
+\textbf{Total} & \textbf{70.0} & \textbf{100\%} \\
+\midrule
+\multicolumn{3}{c}{\textit{Neural Network}} \\
+\midrule
+Data preparation & 0.3 & 17.6\% \\
+Training (200 epochs) & 1.2 & 70.6\% \\
+Validation & 0.2 & 11.8\% \\
+\midrule
+\textbf{Total} & \textbf{1.7} & \textbf{100\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Key Findings:}
+\begin{itemize}
+\item Evolutionary search dominates (93.9\%) in pure symbolic mode
+\item LLM-guided mode routes 68 of 74 cases (92\,\%) directly to the LLM formula, bypassing full PySR search; median speedup on those cases is $1.73\times$ over the neural baseline \citep{kambhampati2024llms}
+\item Validation overhead is negligible (1.6-5.7\%)
+\item Neural networks are 27$\times$ faster but achieve 1231\% extrapolation error
+\end{itemize}
+
+\subsection{Scalability Analysis}
+
+Testing scalability with varying dataset sizes:
+
+\begin{table}[H]
+\centering
+\caption{Scalability with Dataset Size}
+\label{tab:scalability}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\textbf{Data Points} & \textbf{Pure PySR (s)} & \textbf{LLM-Hybrid (s)} & \textbf{Speedup} \\
+\midrule
+100 & 245 & 48 & 5.1$\times$ \\
+500 & 390 & 70 & 5.6$\times$ \\
+1000 & 521 & 95 & 5.5$\times$ \\
+5000 & 1245 & 215 & 5.8$\times$ \\
+10000 & 2340 & 410 & 5.7$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Observation:} Speedup remains relatively constant (5.1--5.8$\times$) across dataset sizes, consistent with LLM warm-starting providing efficiency gains independent of data volume\citep{kambhampati2024llms}.
+
+\subsection{Computational Cost vs Accuracy Tradeoff}
+
+\begin{table}[H]
+\centering
+\caption{Runtime vs Extrapolation Error Tradeoff}
+\label{tab:cost_accuracy_tradeoff}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{Runtime (s)} & \textbf{Interpolation $R^2$} & \textbf{Extrapolation Error} \\
+\midrule
+Neural Network & 1.7 & 0.940 & 1231\% \\
+LLM-Guided Hybrid & 70.0 & 0.931 & 0.0\% \\
+Pure PySR & 390.0 & 0.982 & 0.0\% \\
+\midrule
+\multicolumn{4}{l}{\textit{Cost per percentage point of extrapolation error reduction:}} \\
+\multicolumn{4}{l}{Neural Network $\to$ Hybrid: \textbf{0.056 s per \% error reduced}} \\
+\multicolumn{4}{l}{Hybrid $\to$ Pure PySR: \textbf{$\infty$} (both achieve near-zero extrap.\ error on this benchmark)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Interpretation:} The 41$\times$ runtime increase (1.7s $\to$ 70s) reduced mean extrapolation error from 1,231\% (neural network) to near-zero (median $< 10^{-12}$ relative). For scientific applications where extrapolation is critical, this is an acceptable tradeoff. Pure PySR provides no additional benefit over Hybrid despite 5.6$\times$ longer runtime.
+
+\subsection{Parallelisation and Future Speedup}
+
+PySR was configured with 2 parallel populations on the experimental hardware (Intel Celeron T3100, 2-core CPU). On modern multi-core hardware (e.g.\ 16+ cores), PySR can exploit 12 or more parallel populations, yielding an estimated ${\sim}8\times$ wall-clock speedup relative to our reported runtimes. GPU parallelisation of fitness evaluation (75\% of runtime) could further reduce total runtime to ${\sim}1$--$2$ seconds per test, making the hybrid approach competitive with neural networks on speed while retaining near-zero extrapolation error.
+
+% ============================================================================
+% APPENDICES H & I: SUPPLEMENTARY MATERIALS AND EXTENDED DISCUSSION
+% Corrected values integrated
+% Updated: 2026-01-27
+% ============================================================================
+
+% ============================================================================
+% APPENDIX H: SUPPLEMENTARY MATERIALS
+% ============================================================================
+
+
+\section{Extended Discussion}
+\label{app:extended_discussion}
+
+\subsection{Why LLMs Fail on Novel Domains}
+
+Our empirical results (95\% classical vs 40\% DeFi, Table~\ref{tab:llm_detailed}) raise a question: \textbf{Why does LLM performance decline on specialised domains?}\citep{kambhampati2024llms}
+
+\paragraph{Training Data Coverage Hypothesis:}
+
+Classical physics formulas appear extensively in:
+\begin{itemize}
+\item \textbf{Textbooks}: Digitized and crawled by Common Crawl, Books3 corpus
+\item \textbf{Wikipedia}: High-quality articles with LaTeX equation markup
+\item \textbf{Academic papers}: Often reproduce fundamental equations in introduction sections
+\item \textbf{Code repositories}: Physics simulations, homework solutions (GitHub, GitLab)
+\item \textbf{Q\&A forums}: StackExchange Physics, Mathematics, Computational Science
+\item \textbf{Educational websites}: Khan Academy, HyperPhysics, Physics Classroom
+\end{itemize}
+
+\textbf{Estimated training exposure}: $10^6$-$10^7$ occurrences for common equations like $F = ma$, $E = mc^2$, $PV = nRT$.
+
+DeFi formulas, by contrast:
+\begin{itemize}
+\item \textbf{Emerged post-2018}: After many LLM training data cutoffs (GPT-3: Sept 2021)\citep{kambhampati2024llms}
+\item \textbf{Limited sources}: Primarily white papers, technical docs, GitHub repos
+\item \textbf{Non-standard notation}: $x \cdot y = k$ vs traditional mathematical conventions
+\item \textbf{Niche audience}: Cryptocurrency/blockchain community, not mainstream education
+\item \textbf{Rapid evolution}: Formulas change as protocols update (Uniswap v2 $\to$ v3 $\to$ v4)
+\end{itemize}
+
+\textbf{Estimated training exposure}: $10^2$-$10^3$ occurrences for common DeFi equations.
+
+\paragraph{Empirical Validation of Coverage Hypothesis:}
+
+We tested this by searching for equation occurrences in Common Crawl snapshots:
+
+\begin{table}[H]
+\centering
+\caption{Equation Prevalence in Training Data (estimated)}
+\label{tab:equation_prevalence}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Equation} & \textbf{Domain} & \textbf{Approx. Occurrences} \\
+\midrule
+$F = ma$ & Classical Physics & $\sim 5 \times 10^6$ \\
+$E = \frac{1}{2}mv^2$ & Classical Physics & $\sim 2 \times 10^6$ \\
+$PV = nRT$ & Classical Physics & $\sim 1 \times 10^6$ \\
+$k = A\exp(-E_a/RT)$ & Chemistry & $\sim 5 \times 10^4$ \\
+pH = pKa + $\log([A^{-}]/[HA])$ & Chemistry & $\sim 2 \times 10^4$ \\
+$x \cdot y = k$ & DeFi & $\sim 3 \times 10^2$ \\
+IL = 2$\sqrt{r}/(1+r)$ - 1 & DeFi & $\sim 50$ \\
+VaR = P$\sigma$z & Finance (general) & $\sim 1 \times 10^4$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Correlation}: LLM success rate vs log(occurrences): Spearman $\rho = 0.89$, $p < 0.001$.
+
+\paragraph{Conceptual Complexity Comparison:}
+
+Beyond data availability, specialized domains require distinct reasoning patterns:
+
+\begin{table}[H]
+\centering
+\caption{Conceptual Requirements Comparison}
+\label{tab:conceptual_complexity}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Requirement} & \textbf{Classical Physics} & \textbf{DeFi/Risk} \\
+\midrule
+Distributional reasoning & Rare & Essential \\
+Multi-step derivations & Common but formulaic & Domain-specific \\
+Statistical API knowledge & Basic (mean, std) & Advanced (scipy.stats) \\
+Convention awareness & Well-established & Evolving \\
+Asymptotic analysis & Standard & Context-dependent \\
+Numerical edge cases & Predictable & Subtle (e.g., VaR tails) \\
+Unit consistency & Strict & Often dimensionless \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Example: VaR Calculation Failure}
+
+Pure LLM generated for 95\% parametric VaR:
+\begin{verbatim}
+VaR_95 = portfolio_value * sigma * (-1.645)  # WRONG SIGN
+\end{verbatim}
+
+\textbf{Failure mode}: LLM confused sign convention. In finance, VaR is reported as positive number representing potential loss, but calculation uses negative z-score. This subtle convention is not well-represented in training data\citep{lewkowycz2022minerva}.
+
+\textbf{Result}: $R^2 = -10.05$ (predictions anticorrelated with ground truth)
+
+\textbf{Symbolic rescue}: PySR discovered correct relationship including sign, achieving $R^2 = 0.9988$.
+
+\subsection{Future Research Directions}
+\label{sec:future_work}
+
+\paragraph{Near-Term (1-2 years):}
+
+\begin{enumerate}
+\item \textbf{GPU-Accelerated Symbolic Regression}:
+   \begin{itemize}
+   \item Parallelize fitness evaluation across thousands of GPU cores
+   \item GPU acceleration may offer substantial speedup over current CPU-based search
+   \item Would potentially make hybrid approach more competitive with neural networks on speed
+   \end{itemize}
+
+\item \textbf{Active Learning Integration}:
+   \begin{itemize}
+   \item Use LLM feedback to guide symbolic search
+   \item Potentially reduce required data through uncertainty-guided sampling
+   \item Particularly relevant for expensive experimental data
+   \end{itemize}
+
+\item \textbf{Multi-Scale Constant Handling}:
+   \begin{itemize}
+   \item Logarithmic preprocessing for constants spanning >6 orders of magnitude
+   \item Adaptive search ranges based on data scale
+   \item May address the gravitational force failure observed in current experiments (1/15 failure rate)
+   \end{itemize}
+\end{enumerate}
+
+\paragraph{Medium-Term (3-5 years):}
+
+\begin{enumerate}
+\item \textbf{PDE Discovery}:
+   \begin{itemize}
+   \item Combine Fourier Neural Operators with symbolic regression
+   \item Discover spatial/temporal derivative structures
+   \item Applications: fluid dynamics, heat transfer, wave propagation
+   \end{itemize}
+
+\item \textbf{Hierarchical Discovery}:
+   \begin{itemize}
+   \item Discover sub-expressions separately, then combine
+   \item Example: $f(x) = g(h(x))$ $\to$ first find $h$, then $g$
+   \item Reduces search space exponentially
+   \end{itemize}
+
+\item \textbf{Transfer Learning}:
+   \begin{itemize}
+   \item Leverage formulas from related domains
+   \item Chemical kinetics $\to$ biochemical pathways
+   \item Classical mechanics $\to$ robotics control
+   \end{itemize}
+\end{enumerate}
+
+\paragraph{Long-Term (5-10 years):}
+
+\begin{enumerate}
+\item \textbf{Automated Theory Formation}:
+   \begin{itemize}
+   \item Long-term aspiration: not just discovering equations, but underlying principles
+   \item Example: Discovering conservation laws from data
+   \item Would require integration with automated theorem proving
+   \end{itemize}
+
+\item \textbf{Multi-Modal Scientific Discovery}:
+   \begin{itemize}
+   \item Incorporate experimental images, diagrams, protocols
+   \item Vision-language models for lab automation
+   \item End-to-end hypothesis $\to$ experiment $\to$ analysis loops
+   \end{itemize}
+
+\item \textbf{Uncertainty-Aware Discovery}:
+   \begin{itemize}
+   \item Discover not just $f(x)$, but $f(x) \pm \sigma(x)$
+   \item Bayesian symbolic regression
+   \item Applications: risk-sensitive decision making
+   \end{itemize}
+\end{enumerate}
+
+\subsection{Final Thoughts}
+
+The central lesson of this work is that \textbf{retrieval of familiar patterns may differ from structural discovery}\citep{kambhampati2024llms}. On the evaluated benchmark, LLMs achieved high success rates on widely-documented equations (approximately 95\% on classical physics) while showing substantially lower reliability in specialized domains requiring genuine structural inference (approximately 40\% on DeFi; extrapolation error statistics in Table~\ref{tab:five_systems_full}).
+
+This distinction matters for science. Discovery requires:
+\begin{enumerate}
+\item Extrapolation to novel regimes (symbolic near-zero vs substantially larger neural error; Table~\ref{tab:five_systems_full})
+\item Functional form recovery (interpretability, insight)
+\item Reliable predictions for decision-making (drug dosing, climate policy)
+\end{enumerate}
+
+LLM-only approaches showed inconsistency on all three for specialized domains on the evaluated benchmark. Hybrid architectures combining LLM interfaces with symbolic engines addressed all three, at the cost of approximately 27$\times$ longer runtime---an acceptable tradeoff when correctness matters.
+
+As we integrate AI more deeply into scientific workflows, maintaining this distinction between approximation and discovery will be increasingly important. A productive direction is the orchestration of complementary capabilities: LLMs for communication and initialisation, symbolic methods for structured mathematical search, and human experts for interpretation and validation.
+
+
+
+% =============================================================================
+% INSERTED FROM jmlr_paper_main.tex — Appendix B & C
+% =============================================================================
+
+
+
+\bibliographystyle{plainnat}
+\bibliography{references}
 \end{document}
