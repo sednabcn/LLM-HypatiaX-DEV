@@ -120,36 +120,36 @@ _No LOO data (no failure equations or scipy unavailable)._
 
 | Equation | Domain | Near R² | Far R² | Instability | Skipped? |
 |----------|--------|---------|--------|-------------|----------|
-| Michaelis-Menten enzyme kinetics — cross-benchmark consistency check | feynman_biology | 0.0000 | 1.0000 | 0.0000 | no |
-| Logistic growth rate — cross-benchmark consistency check | feynman_biology | 0.0000 | 1.0000 | 0.0000 | no |
-| Allometric scaling law (metabolic rate vs mass) | feynman_biology | 0.0000 | 1.0000 | 0.0000 | no |
-| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | feynman_chemistry | 0.0000 | 0.0610 | 0.9390 | no |
-| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | 0.0000 | 1.0000 | 0.0000 | no |
-| Nernst equation for electrode potential — cross-benchmark consistency check | feynman_electrochemistry | 0.0000 | 0.0000 | 0.0000 | yes |
-| Clausius-Mossotti: effective field in dielectric | feynman_electromagnetism | 0.0000 | 1.0000 | 0.0000 | no |
-| Dielectric polarisation: P = n * alpha * E (dilute limit) | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
-| Lorentz force on moving charge in magnetic field: F = qvB | feynman_electromagnetism | 0.0000 | 0.0000 | 0.0000 | yes |
-| Ohm's law: voltage as product of current and resistance | feynman_electromagnetism | 0.0000 | 1.0000 | 0.0000 | no |
-| Energy stored in a capacitor: E = 0.5 * C * V^2 | feynman_electromagnetism | 0.0000 | 1.0000 | 0.0000 | no |
-| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | 0.0000 | 0.0000 | 0.0000 | yes |
-| Coulomb's law: electric force between charges | feynman_electrostatics | 0.0000 | 1.0000 | 0.0000 | no |
-| Curie's law for magnetic susceptibility: chi = C/T | feynman_magnetism | 0.0000 | 0.0000 | 0.0000 | yes |
-| Newton's gravitational force between two masses | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Kinetic energy (classical): KE = 0.5 * m * v² | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Reduced mass of a two-body system | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Total mechanical energy: spring potential + kinetic | feynman_mechanics | 0.0000 | 1.0000 | 0.0000 | no |
-| Snell's law: refracted angle from incident angle and refractive indices | feynman_optics | 0.0000 | 0.0000 | 0.0000 | yes |
-| Double-slit wave interference intensity | feynman_optics | 0.0000 | 1.0000 | 0.0000 | no |
-| Gaussian/normal distribution probability density | feynman_probability | 0.0000 | 1.0000 | 0.0000 | no |
-| Photon energy: E = h * f (Planck relation) | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
-| Zeeman energy: electron spin in magnetic field | feynman_quantum | 0.0000 | 1.0000 | 0.0000 | no |
-| Bose-Einstein occupation number for bosons | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
-| Fermi-Dirac occupation number for fermions | feynman_quantum | 0.0000 | -4.5198 | 5.5198 | no |
-| Rabi frequency of two-level atom in magnetic field | feynman_quantum | 0.0000 | 0.0000 | 0.0000 | yes |
-| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
-| Fourier's law of heat conduction: heat flux across material | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
-| Stefan-Boltzmann law: blackbody radiated power | feynman_thermodynamics | 0.0000 | 1.0000 | 0.0000 | no |
-| Ideal gas law: pressure from moles, temperature, volume | feynman_thermodynamics | 0.0000 | 0.0000 | 0.0000 | yes |
+| Michaelis-Menten enzyme kinetics — cross-benchmark consistency check | feynman_biology | N/A | 1.0000 | 0.0000 | no |
+| Logistic growth rate — cross-benchmark consistency check | feynman_biology | N/A | 1.0000 | 0.0000 | no |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | N/A | 1.0000 | 0.0000 | no |
+| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | feynman_chemistry | N/A | 0.0610 | 0.9390 | no |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | N/A | 1.0000 | 0.0000 | no |
+| Nernst equation for electrode potential — cross-benchmark consistency check | feynman_electrochemistry | N/A | 0.0000 | 0.0000 | yes |
+| Clausius-Mossotti: effective field in dielectric | feynman_electromagnetism | N/A | 1.0000 | 0.0000 | no |
+| Dielectric polarisation: P = n * alpha * E (dilute limit) | feynman_electromagnetism | N/A | 0.0000 | 0.0000 | yes |
+| Lorentz force on moving charge in magnetic field: F = qvB | feynman_electromagnetism | N/A | 0.0000 | 0.0000 | yes |
+| Ohm's law: voltage as product of current and resistance | feynman_electromagnetism | N/A | 1.0000 | 0.0000 | no |
+| Energy stored in a capacitor: E = 0.5 * C * V^2 | feynman_electromagnetism | N/A | 1.0000 | 0.0000 | no |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | N/A | 0.0000 | 0.0000 | yes |
+| Coulomb's law: electric force between charges | feynman_electrostatics | N/A | 1.0000 | 0.0000 | no |
+| Curie's law for magnetic susceptibility: chi = C/T | feynman_magnetism | N/A | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Kinetic energy (classical): KE = 0.5 * m * v² | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Reduced mass of a two-body system | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Total mechanical energy: spring potential + kinetic | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Snell's law: refracted angle from incident angle and refractive indices | feynman_optics | N/A | 0.0000 | 0.0000 | yes |
+| Double-slit wave interference intensity | feynman_optics | N/A | 1.0000 | 0.0000 | no |
+| Gaussian/normal distribution probability density | feynman_probability | N/A | 1.0000 | 0.0000 | no |
+| Photon energy: E = h * f (Planck relation) | feynman_quantum | N/A | 0.0000 | 0.0000 | yes |
+| Zeeman energy: electron spin in magnetic field | feynman_quantum | N/A | 1.0000 | 0.0000 | no |
+| Bose-Einstein occupation number for bosons | feynman_quantum | N/A | 0.0000 | 0.0000 | yes |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | N/A | -4.5198 | 5.5198 | no |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | N/A | 0.0000 | 0.0000 | yes |
+| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | feynman_thermodynamics | N/A | 1.0000 | 0.0000 | no |
+| Fourier's law of heat conduction: heat flux across material | feynman_thermodynamics | N/A | 1.0000 | 0.0000 | no |
+| Stefan-Boltzmann law: blackbody radiated power | feynman_thermodynamics | N/A | 1.0000 | 0.0000 | no |
+| Ideal gas law: pressure from moles, temperature, volume | feynman_thermodynamics | N/A | 0.0000 | 0.0000 | yes |
 
 ## Wall-clock Timing
 
