@@ -655,7 +655,19 @@ jobs:
           fi
 
           PAIRED="${RESULT_DIR}/ablation_paired.json"
-          # benchmark_results.json (noiseless train r2) lives in exp2, not exp2_extrap.
+          # benchmark_results.json (noiseless train r2): run_comparative_suite_
+          # benchmark_v2.py always writes its own copy to _FLAT_OUTPUT_DIR
+          # (comparison_results/ ROOT, not feynman-tests/exp2), intentionally never
+          # overridden by --output-dir so concurrent noise-sweep/sample-complexity
+          # runs can't bury or clobber it. BUT that flat-root copy only ever exists
+          # on the exp2_feynman worker's own ephemeral runner — ci_runner.yml's
+          # "Store results in canonical RESULT_SUBDIR" step only rescues stray files
+          # one level below OUT_BASE, comparison_results/benchmark_results.json is
+          # two levels down, so it was never staged/committed from the root path.
+          # FIX-EXP2-FLATFILE (ci_runner.yml) now explicitly copies that flat file
+          # into feynman-tests/exp2/ (DEST) before the commit step runs, so the
+          # committed, discoverable copy lives in feynman-tests/exp2/, not the
+          # (never-committed) comparison_results/ root. Point BENCHMARK_DIR there.
           # benchmark_results_extrap.json (extrap_r2_far) lives in RESULT_DIR (exp2_extrap).
           BENCHMARK_DIR="hypatiax/data/results/comparison_results/feynman-tests/exp2"
 
