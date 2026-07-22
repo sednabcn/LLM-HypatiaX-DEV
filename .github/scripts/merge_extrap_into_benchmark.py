@@ -12,13 +12,22 @@ expects:
         "equation_name":  str,
         "equation_id":    str,
         "domain":         str,
-        "hypatia":   { "train_r2": float, "extrap_r2_near": float, "extrap_r2_far": float },
-        "pysr_only": { "extrap_r2_far": float, "extrap_r2_near": float },
+        "hypatia":   { "train_r2": float, "extrap_r2_near": float|null, "extrap_r2_far": float|null,
+                       "train_success": bool, "extrap_success": bool },
+        "pysr_only": { "train_r2": float, "extrap_r2_near": float|null, "extrap_r2_far": float|null,
+                       "train_success": bool, "extrap_success": bool },
         "complexity": { "hypatia": int|null, "pysr_only": int|null },
         "scale_log":  float|null,
       },
       ...
     ]
+
+NOTE on extrap_r2_near: the current benchmark runner (run_comparative_suite_
+benchmark_v2.py) does not compute a near-domain extrapolation split -- it only
+writes extrap_r2_far. This field will therefore be null for every record until
+that runner is extended to produce it. It is carried through here (not
+dropped) so the schema is forward-compatible and so run_analysis.py's
+instability-index table can distinguish "not measured" (null) from a real 0.0.
 
 PRIMARY data source (preferred):
     benchmark_results_extrap.json  — written by run_comparative_suite_benchmark_v2.py
@@ -53,10 +62,17 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
+
+# Must match EXTRAP_SUCCESS_THRESHOLD in run_analysis.py (paper §10.7: "9/30
+# successes"). Duplicated here (not imported) because this script runs in a
+# separate CI step/venv from run_analysis.py. If you change one, change both.
+EXTRAP_SUCCESS_THRESHOLD = 0.99
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +348,14 @@ def merge(
         else:
             n_missing_extrap += 1
 
+        def _extrap_success(far):
+            """True iff far is a finite R2 at/above EXTRAP_SUCCESS_THRESHOLD.
+            Mirrors run_analysis.py's Tier-3 (success-subset) criterion exactly,
+            so a reader of this file alone can identify the same "9/30" rows
+            without cross-referencing run_analysis.py source."""
+            import math as _math
+            return far is not None and _math.isfinite(far) and far >= EXTRAP_SUCCESS_THRESHOLD
+
         paired.append({
             "equation_name": eq_name,
             "equation_id":   eq_name,
@@ -340,13 +364,22 @@ def merge(
                 "train_r2":       h_train_r2,
                 "extrap_r2_near": h_near,
                 "extrap_r2_far":  h_far,
-                "success":        any(g["hypatia_success"]),
+                # train_success: did the *fit* complete/converge (upstream benchmark
+                # flag). This is NOT extrapolation quality -- nearly every row is True
+                # here even when extrap_r2_far is terrible. Renamed from "success" to
+                # stop it being read as an extrapolation verdict.
+                "train_success":  any(g["hypatia_success"]),
+                # extrap_success: the actual extrapolation-quality verdict, i.e. the
+                # Tier-3 "success-subset" criterion used for the paper's "9/30
+                # successes" claim (extrap_r2_far >= EXTRAP_SUCCESS_THRESHOLD).
+                "extrap_success": _extrap_success(h_far),
             },
             "pysr_only": {
                 "train_r2":       max(g["pysr_r2"]) if g["pysr_r2"] else None,
                 "extrap_r2_near": p_near,
                 "extrap_r2_far":  p_far,
-                "success":        any(g["pysr_success"]),
+                "train_success":  any(g["pysr_success"]),
+                "extrap_success": _extrap_success(p_far),
             },
         })
 
@@ -437,11 +470,77 @@ Examples
         json.dump(paired, f, indent=2)
     print(f"  Written {len(paired)} paired records → {out_path}")
 
-    # Warn if Mann-Whitney will fail
+    # -----------------------------------------------------------------------
+    # Provenance manifest — this is the "run log" for ablation_paired.json.
+    # ablation_paired.json is a *derived* artifact (built here from
+    # benchmark_results.json + benchmark_results_extrap.json), not a direct
+    # pipeline checkpoint, so it has no checkpoint of its own. This manifest
+    # is that checkpoint: which inputs (with content hashes) produced this
+    # exact output, when, and what the two ambiguous fields mean.
+    # Written as <output>.manifest.json alongside ablation_paired.json and
+    # committed together with it by ci_analysis.yml.
+    # -----------------------------------------------------------------------
+    def _sha256(p: Path) -> str | None:
+        if not p.exists():
+            return None
+        h = hashlib.sha256()
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
     n_with_far = sum(
         1 for r in paired
         if r.get("hypatia", {}).get("extrap_r2_far") is not None
     )
+
+    bench_path        = bench_dir / "benchmark_results.json"
+    extrap_bench_path = (Path(args.extrap_benchmark_dir) / "benchmark_results_extrap.json"
+                          if args.extrap_benchmark_dir else None)
+
+    manifest = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "script": "merge_extrap_into_benchmark.py",
+        "output_path": str(out_path),
+        "record_count": len(paired),
+        "n_with_extrap_r2_far": n_with_far,
+        "inputs": {
+            "benchmark_results.json": {
+                "path": str(bench_path),
+                "sha256": _sha256(bench_path),
+            },
+            "benchmark_results_extrap.json": {
+                "path": str(extrap_bench_path) if extrap_bench_path else None,
+                "sha256": _sha256(extrap_bench_path) if extrap_bench_path else None,
+            },
+            "extrap_results_legacy_dir": str(args.extrap_dir) if args.extrap_dir else None,
+        },
+        "field_definitions": {
+            "train_success": (
+                "Whether the underlying fit completed/converged, inherited from the "
+                "upstream benchmark's per-run 'success' flag. NOT a measure of "
+                "extrapolation quality -- almost always true even when "
+                "extrap_r2_far is very poor."
+            ),
+            "extrap_success": (
+                f"extrap_r2_far is finite and >= {EXTRAP_SUCCESS_THRESHOLD} "
+                "(mirrors run_analysis.py EXTRAP_SUCCESS_THRESHOLD / Tier-3 "
+                "'success-subset' criterion, paper §10.7 '9/30 successes'). "
+                "Keep this constant in sync with run_analysis.py if it changes."
+            ),
+            "extrap_r2_near": (
+                "Not computed by the current benchmark runner (only "
+                "extrap_r2_far is produced). Always null until a near-domain "
+                "extrapolation split is implemented upstream."
+            ),
+        },
+    }
+    manifest_path = out_path.with_suffix(out_path.suffix + ".manifest.json")
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"  Written provenance manifest → {manifest_path}")
+
+    # Warn if Mann-Whitney will fail
     if n_with_far == 0:
         print(
             "::warning::ablation_paired.json has 0 equations with hypatia.extrap_r2_far. "

@@ -728,7 +728,12 @@ def analyse_ablation(records: list[dict], experiment: str,
             "domain":            domain,
             "train_r2_hypatia":  _safe_float(hyp.get("train_r2")),
             "train_r2_pysr":     _safe_float(pysr.get("train_r2")),
-            "extrap_r2_near":    0.0 if not math.isfinite(h_near) else round(h_near, 6),
+            # extrap_r2_near is currently never computed upstream (the benchmark
+            # runner only produces extrap_r2_far) -- every value is None today.
+            # Keep it as None here (do NOT coerce to 0.0) so this table can tell
+            # "not measured" apart from a genuine 0.0 R². Consumers of this row
+            # (report/CSV rendering) must handle None explicitly.
+            "extrap_r2_near":    None if not math.isfinite(h_near) else round(h_near, 6),
             "extrap_r2_far":     0.0 if h_far is None else round(h_far, 6),
             "instability_index": round(instability, 6),
             "far_r2_skipped":    not h_far_finite,
@@ -1296,9 +1301,13 @@ def write_report_ablation(analysis: dict, path: Path) -> None:
         lines.append("| Equation | Domain | Near R² | Far R² | Instability | Skipped? |")
         lines.append("|----------|--------|---------|--------|-------------|----------|")
         for row in rows:
+            # extrap_r2_near is currently always None (not computed upstream) —
+            # render "N/A" rather than crashing or faking a 0.0 that would read
+            # as a real (bad) measurement.
+            near_str = "N/A" if row["extrap_r2_near"] is None else f"{row['extrap_r2_near']:.4f}"
             lines.append(
                 f"| {row['equation']} | {row['domain']} "
-                f"| {row['extrap_r2_near']:.4f} | {row['extrap_r2_far']:.4f} "
+                f"| {near_str} | {row['extrap_r2_far']:.4f} "
                 f"| {row['instability_index']:.4f} | {'yes' if row['far_r2_skipped'] else 'no'} |"
             )
 
