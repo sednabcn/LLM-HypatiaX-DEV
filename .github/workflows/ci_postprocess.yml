@@ -623,6 +623,35 @@ jobs:
             --source      auto \
             || echo "::warning::exp1b figure generation failed — exp1b — _merged.json may be absent. Run ci_analysis.yml for exp1b first."
 
+      # ── A2a: exp1_ablation — prep canonical input + regen Fig 3/4 ───────────
+      # Drop-in copy of the merged ablation results into the flat working dir
+      # regen_fig3_fig4.py expects (exp1_ablation/exp1_ablation_results.json),
+      # then run the regen script directly. No reshaping — schema matches
+      # as-is (extra keys task_id/name/nn are harmless).
+      #
+      # NOTE: regen_fig3_fig4.py's own diff-check at the end only compares its
+      # OUTPUT against the RAW file it just loaded (i.e. against itself) — it
+      # will pass trivially regardless of whether exp1_ablation_results.json
+      # matches the manuscript's Table 6. It confirms the script transcribed
+      # its input correctly, NOT that the regenerated figures match published
+      # claims. Treat a green run here as "figures reflect _merged.json", not
+      # as "figures reflect Table 6" — those are different claims.
+      - name: "Prep + regen: exp1_ablation Fig 3/4 from canonical _merged.json"
+        if: env.EFFECTIVE_EXPERIMENT == 'exp1_ablation'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          MERGED="${OUT_BASE}/${SUB}/_merged.json"
+          if [[ ! -f "$MERGED" ]]; then
+            echo "::error::${MERGED} not found. Run ci_analysis.yml for exp1_ablation first."
+            exit 1
+          fi
+          mkdir -p exp1_ablation
+          cp "$MERGED" exp1_ablation/exp1_ablation_results.json
+          python3 .github/scripts/regen_fig3_fig4.py
+
       # ── A2b: exp1_ablation ──────────────────────────────────────────────────
       - name: "Figures: exp1_ablation — Core-15 ablation (PySR-only vs HypatiaX)"
         if: env.EFFECTIVE_EXPERIMENT == 'exp1_ablation'
