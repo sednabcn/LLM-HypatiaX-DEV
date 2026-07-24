@@ -624,10 +624,22 @@ jobs:
             || echo "::warning::exp1b figure generation failed — exp1b — _merged.json may be absent. Run ci_analysis.yml for exp1b first."
 
       # ── A2a: exp1_ablation — prep canonical input + regen Fig 3/4 ───────────
-      # Drop-in copy of the merged ablation results into the flat working dir
-      # regen_fig3_fig4.py expects (exp1_ablation/exp1_ablation_results.json),
+      # Drop-in copy of the merged ablation results into the flat working dir,
       # then run the regen script directly. No reshaping — schema matches
       # as-is (extra keys task_id/name/nn are harmless).
+      #
+      # PATH NOTE: regen_fig3_fig4.py resolves its DEFAULT input path relative
+      # to the script's own location (.github/scripts/exp1_ablation/...), not
+      # relative to $GITHUB_WORKSPACE / the step's cwd. A bare `mkdir -p
+      # exp1_ablation` at repo root therefore silently misses it — pass
+      # --data-path explicitly instead of relying on the default resolution.
+      #
+      # DATA-SOURCE NOTE: the script's own help text describes its default
+      # input as "a hand-transcribed Table-6 JSON, not raw CI pipeline
+      # output." We are deliberately overriding that here and pointing it at
+      # the real _merged.json via --data-path, so the regenerated figures
+      # reflect actual pipeline output rather than a hand-transcribed file
+      # that may not match it.
       #
       # NOTE: regen_fig3_fig4.py's own diff-check at the end only compares its
       # OUTPUT against the RAW file it just loaded (i.e. against itself) — it
@@ -650,7 +662,8 @@ jobs:
           fi
           mkdir -p exp1_ablation
           cp "$MERGED" exp1_ablation/exp1_ablation_results.json
-          python3 .github/scripts/regen_fig3_fig4.py
+          python3 .github/scripts/regen_fig3_fig4.py \
+            --data-path "$(pwd)/exp1_ablation/exp1_ablation_results.json"
 
       # ── A2b: exp1_ablation ──────────────────────────────────────────────────
       - name: "Figures: exp1_ablation — Core-15 ablation (PySR-only vs HypatiaX)"
