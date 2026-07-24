@@ -835,7 +835,12 @@ if RAW is not None:
     ftype_idx = {ft: i for i, ft in enumerate(sorted(set(ftypes)))}
     x3d = np.array([ftype_idx[ft] for ft in ftypes], dtype=float)
     y3d = np.array([{"easy":0,"medium":1,"hard":2}[d] for d in difficulties], dtype=float)
-    z3d = 1 - np.nan_to_num(h_stab, nan=0)
+    # Clip before plotting: stability_score is an R2-derived value and is
+    # unbounded below for catastrophically bad fits (can reach ~1e15+),
+    # which would blow up the 3D z-axis limits and crash tight_layout's
+    # tick locator (np.arange overflow). Matches the vmin=0/vmax=1.5 color
+    # scale already used for this plot and for fig_instability_3d below.
+    z3d = 1 - np.clip(np.nan_to_num(h_stab, nan=0), -0.5, 1)
 
     sc = ax.scatter(x3d, y3d, z3d, c=z3d, cmap="RdYlGn_r", s=40, alpha=0.8,
                     vmin=0, vmax=1.5, edgecolors="none")
@@ -1187,7 +1192,11 @@ if RAW is not None:
     # RF09 INSTABILITY FIGURES
     # ══════════════════════════════════════════════════════════════════════════════
 
-    instability = 1 - np.nan_to_num(h_stab, nan=0)  # 0=stable, 1=fully collapsed
+    # Same clip as fig17's z3d above — stability_score is unbounded below,
+    # and this variable feeds several more 3D plots (fig_instability_3d,
+    # fig_instability_surface) plus histograms/scatters that would otherwise
+    # be dominated by a single extreme outlier.
+    instability = 1 - np.clip(np.nan_to_num(h_stab, nan=0), -0.5, 1)  # 0=stable, 1=fully collapsed
     complexity  = np.array([len(ftypes[i].split("_")) + {"easy":1,"medium":2,"hard":3}[difficulties[i]]
                             for i in range(len(CASES))], dtype=float)
 
