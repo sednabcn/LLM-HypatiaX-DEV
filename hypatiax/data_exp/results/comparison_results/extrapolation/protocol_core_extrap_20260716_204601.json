@@ -1,0 +1,776 @@
+{
+  "timestamp": "2026-07-16T20:46:01.210570",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "extrap",
+    "noise_level": 0.0,
+    "threshold": 0.995,
+    "note": "Noisy 200-sample run. R\u00b2 ceiling ~0.9982. NOT directly comparable to published noiseless figures. Re-run with --noiseless --threshold 0.9999."
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 4,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Newton's gravitational force between two masses": {
+        "truncated": false,
+        "r2": 0.9958452549961747,
+        "success": true,
+        "formula": "def formula(m1, m2, r):\n    # Newton's Law of Universal Gravitation\n    # G = gr"
+      },
+      "Kinetic energy (classical): KE = 0.5 * m * v\u00b2": {
+        "truncated": false,
+        "r2": 0.9974602905387556,
+        "success": true,
+        "formula": "def formula(m, v):\n    # m: mass (kg)\n    # v: velocity (m/s)\n    return 0.5 * m"
+      },
+      "Reduced mass of a two-body system": {
+        "truncated": false,
+        "r2": 0.9972225008522336,
+        "success": true,
+        "formula": "def formula(m1, m2):\n    # Reduced mass of a two-body system\n    return (m1 * m2"
+      },
+      "Total mechanical energy: spring potential + kinetic": {
+        "truncated": false,
+        "r2": 0.9970156501499272,
+        "success": true,
+        "formula": "def formula(k, x, m, v):\n    # Spring potential energy + kinetic energy\n    spri"
+      }
+    }
+  },
+  "total_tests": 4,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "EnhancedHybridSystemDeFi (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Newton's gravitational force between two masses",
+      "domain": "feynman_mechanics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 0.9958452549961747,
+          "rmse": 4.924866552677701e-12,
+          "formula": "def formula(m1, m2, r):\n    # Newton's Law of Universal Gravitation\n    # G = gravitational constant (exact value)\n    G = 6.674e-11\n    F = G * m1 * m2 / r**2\n    return F",
+          "formula_hash": "2e7868b9e2bd66e64395a4ee68f8c728927b1ced8b9cc619d052929c4d1b98f9",
+          "error": null,
+          "time": 8.175795793533325,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.993962053635765,
+          "rmse": 5.936998037339247e-12,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,3seeds,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 4.008856773376465,
+          "metadata": {
+            "nn_seeds": 3,
+            "r2_per_seed": [
+              0.994795251844213,
+              0.9912538741518978,
+              0.993962053635765
+            ],
+            "r2_std": 0.001851567413977855,
+            "r2_median": 0.993962053635765
+          }
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999998519126724,
+          "rmse": 2.9402294812651495e-14,
+          "formula": "def formula(m1, m2, r):\n    # G = gravitational constant (exact value specified)\n    G = 6.674e-11\n    F = G * m1 * m2 / r**2\n    return F",
+          "formula_hash": "0ccc94e1cd19a9948d7a03fbc3ad201355ec07168d759e8a6a17533b64f8d51c",
+          "error": null,
+          "time": 8.072142124176025,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999998411466495,
+          "rmse": 3.045232594741867e-14,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 9.688568353652954,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9962689330605353,
+          "rmse": 4.66701074058577e-12,
+          "formula": "7.640509e-11 * (((-0.101273574 / (r - m1)) / (r - (m2 + m1))) + ((safe_asin(((-1.1824039 - m2) / r) / 7.5423193) * (m1 * -5.39637)) / r))",
+          "formula_hash": "45326f6b558e05c48fd632c161b9f3e1a1caa36fb78cfea835ecad2810e41c62",
+          "error": null,
+          "time": 48.183318853378296,
+          "metadata": {
+            "iterations": 156
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9962249741920199,
+          "rmse": 5.940245961845585e-12,
+          "formula": "3.318231e-11 * (((asin_of_sin(tan(((0.6574114 ^ m2) * tan(sqrt(0.53812265 ^ ((r / m1) + m2)) + -2.0163689)) + -0.85225433)) + m2) * (r ^ -2.0177345)) * m1)",
+          "formula_hash": "9b0a637d5e07c4447905dd433ca9573c54d750c63570d05e88a405bfd5585be3",
+          "error": null,
+          "time": 146.73945784568787,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "EnhancedHybridSystemDeFi (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 0.9958452549961747,
+          "ImprovedNN (core)": 0.993962053635765,
+          "EnhancedHybridSystemDeFi (core)": 0.9999998519126724,
+          "HybridSystemLLMNN all-domains (core)": 0.9999998411466495,
+          "SymbolicEngineWithLLM (tools)": 0.9962689330605353,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9962249741920199
+        },
+        "rankings": {
+          "EnhancedHybridSystemDeFi (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "PureLLM Baseline (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5,
+          "ImprovedNN (core)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 1.0766022850994261e-08,
+            "pct": 1.0766024561213335e-06
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.003730918852137055,
+            "pct": 0.37448912922293814
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0037748777206524364,
+            "pct": 0.37891819804196536
+          },
+          {
+            "method": "PureLLM Baseline (core)",
+            "diff": 0.004154596916497666,
+            "pct": 0.4171930222746931
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0060377982769074245,
+            "pct": 0.60744756349823
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 7.640508794495444e-11,
+          "mean": 1.6728055856998785e-11,
+          "range": 8.719625752131609e-10,
+          "max": 8.602223113543085e-10,
+          "denom": 7.640508794495444e-11
+        }
+      },
+      "winner": "EnhancedHybridSystemDeFi (core)",
+      "timestamp": "2026-07-16T20:35:08.377574",
+      "extrap_r2_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_rmse_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_error_pct": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_train_frac": 0.8,
+      "extrap_multiplier": 2.0,
+      "extrap_n_train": 160,
+      "extrap_n_test": 40,
+      "extrap_x_train_max": 8.056353561301233,
+      "extrap_far_ceiling": 23.85972276485637
+    },
+    {
+      "description": "Kinetic energy (classical): KE = 0.5 * m * v\u00b2",
+      "domain": "feynman_mechanics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 0.9974602905387556,
+          "rmse": 105.7707025030007,
+          "formula": "def formula(m, v):\n    # m: mass (kg)\n    # v: velocity (m/s)\n    return 0.5 * m * v ** 2",
+          "formula_hash": "f0a7a8d95b3e68cf6687009d254d7d34374da54777e76ab98e07452c906a3e3d",
+          "error": null,
+          "time": 6.8887834548950195,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9976493699596094,
+          "rmse": 101.75728510050965,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,3seeds,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.4350242614746094,
+          "metadata": {
+            "nn_seeds": 3,
+            "r2_per_seed": [
+              0.9976493699596094,
+              0.9976674475601841,
+              0.9976207311441259
+            ],
+            "r2_std": 2.3556332921198143e-05,
+            "r2_median": 0.9976493699596094
+          }
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999997562128877,
+          "rmse": 1.0362838785949338,
+          "formula": "def formula(m, v):\n    # Kinetic energy: KE = 0.5 * m * v^2\n    # m: mass (kg)\n    # v: velocity (m/s)\n    import numpy as np\n    return 0.5 * m * np.power(v, 2)",
+          "formula_hash": "995658d6b43c127ea75ed713127b61584aa63353d03aee29a118aa739c6bb6f0",
+          "error": null,
+          "time": 10.620999813079834,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999997266512948,
+          "rmse": 1.0973164277301821,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 7.491437911987305,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9977925783517447,
+          "rmse": 98.60887840784459,
+          "formula": "((v * ((m * (v * 0.5005306)) + asin_of_sin(tan(((v * m) * m) * 1.4294649) - sin(sin(sin(tan(v + v))))))) - 7.5104666) - m",
+          "formula_hash": "39969d4e01b2ded032d0d0ad8acaedd71432b87cd36e33c64cb4e0411bc236d9",
+          "error": null,
+          "time": 39.69581127166748,
+          "metadata": {
+            "iterations": 92
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9979130136821136,
+          "rmse": 95.88113609586114,
+          "formula": "tan(tan(sin(v + -0.8659339) + 0.43192756)) - ((v * (m * (v * -0.50022644))) - (cos((v * -0.43019047) + tan(-0.6917483 - sin(v))) / 0.016843192))",
+          "formula_hash": "ec77c26ac992c4945a5efda7f9e0cfdc32359fe7223f3857a83e6878ad441c59",
+          "error": null,
+          "time": 112.74839878082275,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "EnhancedHybridSystemDeFi (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 0.9974602905387556,
+          "ImprovedNN (core)": 0.9976493699596094,
+          "EnhancedHybridSystemDeFi (core)": 0.9999997562128877,
+          "HybridSystemLLMNN all-domains (core)": 0.9999997266512948,
+          "SymbolicEngineWithLLM (tools)": 0.9977925783517447,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9979130136821136
+        },
+        "rankings": {
+          "EnhancedHybridSystemDeFi (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "PureLLM Baseline (core)": 4,
+          "SymbolicEngineWithLLM (tools)": 5,
+          "HybridDiscoverySystem v50_2 (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 2.9561592951310445e-08,
+            "pct": 2.9561601031935813e-06
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0020867425307741216,
+            "pct": 0.20911066417246424
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.002207177861142995,
+            "pct": 0.22120608120668084
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.002350386253278325,
+            "pct": 0.2355924159380246
+          },
+          {
+            "method": "PureLLM Baseline (core)",
+            "diff": 0.002539465674132102,
+            "pct": 0.2545931600706096
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 2098.8111870937178,
+          "mean": 1785.4387232099427,
+          "range": 9475.545110359237,
+          "max": 9351.26425680196,
+          "denom": 2098.8111870937178
+        }
+      },
+      "winner": "EnhancedHybridSystemDeFi (core)",
+      "timestamp": "2026-07-16T20:38:07.261412",
+      "extrap_r2_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": 0.9984445341384323
+      },
+      "extrap_rmse_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": 134.4908891848522
+      },
+      "extrap_error_pct": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": 140.26835169160842
+      },
+      "extrap_train_frac": 0.8,
+      "extrap_multiplier": 2.0,
+      "extrap_n_train": 160,
+      "extrap_n_test": 40,
+      "extrap_x_train_max": 8.183808946160722,
+      "extrap_far_ceiling": 24.339228267836525
+    },
+    {
+      "description": "Reduced mass of a two-body system",
+      "domain": "feynman_mechanics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 0.9972225008522336,
+          "rmse": 0.05728566866644757,
+          "formula": "def formula(m1, m2):\n    # Reduced mass of a two-body system\n    return (m1 * m2) / (m1 + m2)",
+          "formula_hash": "06dcd1269b60e1c291e55f71ce1973893f5dc8c1a07150286ce59eb400eb5f90",
+          "error": null,
+          "time": 7.290639162063599,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9975553773729456,
+          "rmse": 0.053743374655222255,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,3seeds,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.4309611320495605,
+          "metadata": {
+            "nn_seeds": 3,
+            "r2_per_seed": [
+              0.9973472382735245,
+              0.9975553773729456,
+              0.9975759441679689
+            ],
+            "r2_std": 0.0001265248749713094,
+            "r2_median": 0.9975553773729456
+          }
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999997789426744,
+          "rmse": 0.0005110595112958552,
+          "formula": "def formula(m1, m2):\n    # Reduced mass of a two-body system\n    return (m1 * m2) / (m1 + m2)",
+          "formula_hash": "06dcd1269b60e1c291e55f71ce1973893f5dc8c1a07150286ce59eb400eb5f90",
+          "error": null,
+          "time": 9.363477230072021,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999997761853567,
+          "rmse": 0.0005142369369462736,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 8.844627618789673,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9977411700519087,
+          "rmse": 0.05166075966364941,
+          "formula": "m2 * (((0.0006666019 / sin(cos(m2))) + (0.00021714259 / sin(tan(tan(tan(m2 + 0.17808582)))))) + (m1 / (m1 + m2)))",
+          "formula_hash": "5a6bdb4a62da604eee58c2826c12189459a4badb4cd34be26318702d923913d3",
+          "error": null,
+          "time": 36.28246474266052,
+          "metadata": {
+            "iterations": 86
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9976850588659444,
+          "rmse": 0.03964594797213725,
+          "formula": "((m1 * m2) / (m1 + (m2 + 0.009082802))) - (0.033743646 * sin((m2 + (-0.04384957 / (m1 * m1))) + ((m2 + (0.6212305 / m1)) / asin_of_sin(m1))))",
+          "formula_hash": "c403fa13e898acfffb648e4987eca0719cc72abd7478382c4c438dba4c0c7623",
+          "error": null,
+          "time": 121.37587070465088,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "EnhancedHybridSystemDeFi (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 0.9972225008522336,
+          "ImprovedNN (core)": 0.9975553773729456,
+          "EnhancedHybridSystemDeFi (core)": 0.9999997789426744,
+          "HybridSystemLLMNN all-domains (core)": 0.9999997761853567,
+          "SymbolicEngineWithLLM (tools)": 0.9977411700519087,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9976850588659444
+        },
+        "rankings": {
+          "EnhancedHybridSystemDeFi (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "PureLLM Baseline (core)": 4,
+          "SymbolicEngineWithLLM (tools)": 5,
+          "HybridDiscoverySystem v50_2 (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 2.7573177074913247e-09,
+            "pct": 2.757318324619542e-07
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0022586088907657897,
+            "pct": 0.22637222543881624
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.002314720076730059,
+            "pct": 0.23200909507066
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0024444015697288046,
+            "pct": 0.24503918530980376
+          },
+          {
+            "method": "PureLLM Baseline (core)",
+            "diff": 0.0027772780904408156,
+            "pct": 0.2785013462960707
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 1.0869736584243341,
+          "mean": 1.8008444248807778,
+          "range": 4.120261173876929,
+          "max": 4.211789328833553,
+          "denom": 1.0869736584243341
+        }
+      },
+      "winner": "EnhancedHybridSystemDeFi (core)",
+      "timestamp": "2026-07-16T20:41:11.853698",
+      "extrap_r2_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 0.9141069449959416,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_rmse_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 0.36035511056815867,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_error_pct": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 697.541253582686,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_train_frac": 0.8,
+      "extrap_multiplier": 2.0,
+      "extrap_n_train": 160,
+      "extrap_n_test": 40,
+      "extrap_x_train_max": 7.970174978367476,
+      "extrap_far_ceiling": 23.678004697254856
+    },
+    {
+      "description": "Total mechanical energy: spring potential + kinetic",
+      "domain": "feynman_mechanics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 0.9970156501499272,
+          "rmse": 2.417660797078292,
+          "formula": "def formula(k, x, m, v):\n    # Spring potential energy + kinetic energy\n    spring_potential = 0.5 * k * x**2\n    kinetic = 0.5 * m * v**2\n    return spring_potential + kinetic",
+          "formula_hash": "bf978d1d68900565c2fd625b5e20f32a053edbd9f96dda2a48a59777bc883c9d",
+          "error": null,
+          "time": 7.431508541107178,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9951677494575999,
+          "rmse": 3.076417147805463,
+          "formula": "ImprovedNN(4\u2192256\u2192128\u219264\u219232\u21921,3seeds,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 3.885532855987549,
+          "metadata": {
+            "nn_seeds": 3,
+            "r2_per_seed": [
+              0.9951677494575999,
+              0.9945417817331312,
+              0.9966866894912155
+            ],
+            "r2_std": 0.001102999222460206,
+            "r2_median": 0.9951677494575999
+          }
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.999999965107873,
+          "rmse": 0.008266738950179084,
+          "formula": "def formula(k, x, m, v):\n    # Spring potential energy + kinetic energy\n    spring_potential = 0.5 * k * x**2\n    kinetic = 0.5 * m * v**2\n    return spring_potential + kinetic",
+          "formula_hash": "bf978d1d68900565c2fd625b5e20f32a053edbd9f96dda2a48a59777bc883c9d",
+          "error": null,
+          "time": 10.222136974334717,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999998728488383,
+          "rmse": 0.01578086003490202,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 8.603446006774902,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9971703697740432,
+          "rmse": 2.3541565763670547,
+          "formula": "(k * (x + -0.71894765)) + (((-0.73404586 / (v * k)) + 1.4197824) + ((v * v) * (m * 0.4978164)))",
+          "formula_hash": "ad8eea8cf48a3d708724d680a49f7c0621c6d44aad6f2d098f7d17ef4971a52d",
+          "error": null,
+          "time": 50.36751937866211,
+          "metadata": {
+            "iterations": 170
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.997356750747017,
+          "rmse": 2.2753046833959503,
+          "formula": "(x - (sin(sin(sin(v ^ m))) - (((k ^ x) - (0.23496766 / (v - 0.16341276))) / 2.4258962))) - ((-0.49890044 * ((v * m) * v)) - -0.0840354)",
+          "formula_hash": "8b42a1dbf7f850217b67e2a0cfb9e8e6ec12e0fcbf0a07aa8b0bacd20b330936",
+          "error": null,
+          "time": 208.83899068832397,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "EnhancedHybridSystemDeFi (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 0.9970156501499272,
+          "ImprovedNN (core)": 0.9951677494575999,
+          "EnhancedHybridSystemDeFi (core)": 0.999999965107873,
+          "HybridSystemLLMNN all-domains (core)": 0.9999998728488383,
+          "SymbolicEngineWithLLM (tools)": 0.9971703697740432,
+          "HybridDiscoverySystem v50_2 (tools)": 0.997356750747017
+        },
+        "rankings": {
+          "EnhancedHybridSystemDeFi (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "PureLLM Baseline (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5,
+          "ImprovedNN (core)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 9.225903474519015e-08,
+            "pct": 9.225904647603509e-06
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0026432143608560166,
+            "pct": 0.26502195517063054
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0028295953338298707,
+            "pct": 0.2837624762628127
+          },
+          {
+            "method": "PureLLM Baseline (core)",
+            "diff": 0.0029843149579458217,
+            "pct": 0.2993247856738309
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.004832215650273142,
+            "pct": 0.4855679510220124
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 44.25583117266619,
+          "mean": 40.25979943107392,
+          "range": 188.6369342264056,
+          "max": 181.58505412790538,
+          "denom": 44.25583117266619
+        }
+      },
+      "winner": "EnhancedHybridSystemDeFi (core)",
+      "timestamp": "2026-07-16T20:46:01.207163",
+      "extrap_r2_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 0.9981042130069468,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_rmse_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 2.9174309922632005,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_error_pct": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 123.92680340597369,
+        "HybridDiscoverySystem v50_2 (tools)": null
+      },
+      "extrap_train_frac": 0.8,
+      "extrap_multiplier": 2.0,
+      "extrap_n_train": 160,
+      "extrap_n_test": 40,
+      "extrap_x_train_max": 3.9802302981380655,
+      "extrap_far_ceiling": 10.917472419677212
+    }
+  ]
+}

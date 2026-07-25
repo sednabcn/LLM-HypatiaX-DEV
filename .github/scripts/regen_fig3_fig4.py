@@ -103,7 +103,19 @@ with open(DATA_PATH) as f:
 CAP = 1.5e4  # values beyond this are almost certainly a data error, not real R^2
 
 def _safe(v):
-    """Return (finite_float_or_None, was_nonfinite: bool)."""
+    """Return (finite_float_or_None, was_nonfinite: bool).
+
+    FIX: the original check only caught literal inf/-inf via math.isinf().
+    That misses the actual failure mode seen in the submitted Fig. 3/4: an
+    upstream `np.nan_to_num()` call (somewhere in the production pipeline,
+    before this JSON was written) replaces +/-inf with the largest
+    *finite* representable float, +/-1.7976931348623157e+308 -- which is
+    exactly the ~300-digit garbage seen rendered as text in the submitted
+    figures. math.isinf() on that value is False, so the old check let it
+    straight through to _fmt(), which printed it in full with `:.0f`.
+    Any |value| beyond CAP is treated the same as literal inf: capped and
+    flagged, regardless of whether Python considers it technically finite.
+    """
     if v is None:
         return None, False
     try:
@@ -112,7 +124,7 @@ def _safe(v):
         return None, False
     if math.isnan(f):
         return None, False
-    if math.isinf(f):
+    if math.isinf(f) or abs(f) > CAP:
         return (CAP if f > 0 else -CAP), True
     return f, False
 
@@ -282,22 +294,54 @@ for name in SPOT:
     for method_key, mlabel in [("pysr_only", "P"), ("hypatia", "H")]:
         for k, klabel in zip(col_keys, ["train", "near", "med", "far"]):
             table6_v = entry[method_key][k]
-            rendered_v, _ = _safe(table6_v)
-            ok = (rendered_v == table6_v) or (rendered_v is not None and table6_v is not None and abs(rendered_v - table6_v) < 1e-9)
-            status = "OK" if ok else "MISMATCH"
-            if not ok:
+            rendered_v, was_capped = _safe(table6_v)
+            exact_match = (rendered_v == table6_v) or (
+                rendered_v is not None and table6_v is not None
+                and abs(rendered_v - table6_v) < 1e-9
+            )
+            # A cap is not a bug: it's this script correctly refusing to
+            # print a sentinel/garbage value as a raw number. Only an
+            # uncapped, unexplained numeric difference is a real mismatch.
+            if exact_match:
+                status = "OK"
+            elif was_capped:
+                status = "CAPPED (expected)"
+            else:
+                status = "MISMATCH"
                 all_ok = False
             table6_disp = "null" if table6_v is None else f"{table6_v:>12}"
             rendered_disp = "null" if rendered_v is None else f"{rendered_v:>12}"
             print(f"  {name:22s} {mlabel} {klabel:5s}: table6={table6_disp:>12} rendered={rendered_disp:>12}  [{status}]")
 
-print(f"\nAll spot-checked cells match Table 6: {all_ok}")
+print(f"\nAll spot-checked cells OK or expectedly capped (no unexplained mismatches): {all_ok}")
 
-# Full diff over every cell used in Fig. 4 (not just the 5 spot-check cases)
-mismatches = [d for d in diff_report_fig4 if d[3] is not None and d[4] is not None and abs(d[3] - d[4]) > 1e-9]
-mismatches += [d for d in diff_report_fig4 if (d[3] is None) != (d[4] is None)]
+# Full diff over every cell used in Fig. 4 (not just the 5 spot-check cases).
+# A capped cell (|raw| > CAP, or literal inf) is expected to differ from its
+# raw source value by design -- that's the fix working, not a defect -- so
+# it is reported separately from a genuine, unexplained numeric mismatch.
+capped_by_design = []
+mismatches = []
+for d in diff_report_fig4:
+    name, method_key, k, raw_v, safe_v = d
+    if raw_v is None or safe_v is None:
+        if (raw_v is None) != (safe_v is None):
+            mismatches.append(d)
+        continue
+    if abs(raw_v - safe_v) <= 1e-9:
+        continue
+    if math.isinf(raw_v) or abs(raw_v) > CAP:
+        capped_by_design.append(d)
+    else:
+        mismatches.append(d)
+
 print(f"Full Fig.4 cell diff against Table 6: {len(diff_report_fig4)} cells checked, "
-      f"{len(mismatches)} mismatches.")
+      f"{len(capped_by_design)} capped by design (expected), "
+      f"{len(mismatches)} genuine mismatches.")
+if capped_by_design:
+    print("\nCells capped by design (raw value was a sentinel/garbage value, now safely flagged):")
+    for m in capped_by_design[:20]:
+        print("  CAPPED:", m)
 if mismatches:
+    print("\nGenuine, unexplained mismatches (investigate these):")
     for m in mismatches[:20]:
         print("  MISMATCH:", m)
