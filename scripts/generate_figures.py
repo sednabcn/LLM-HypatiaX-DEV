@@ -446,6 +446,27 @@ def safe_float(v):
     except: return float("nan")
 
 
+# CAP_R2_DISPLAY / _cap_display: FIX for the fig09/fig18 garbled-number bug.
+# safe_float() above only screens out literal NaN/inf -- it does NOT catch a
+# huge but technically-finite float such as the 1e308 that _load_json()
+# substitutes for a literal "Infinity" JSON token, or a genuine numeric
+# blow-up from unstable far-extrapolation. Those values sailed straight
+# through into the per-cell TEXT annotation (which used the raw, unclipped
+# value) even though the color-mapped copy was safely clipped, producing the
+# ~300-digit / 37-digit / 47-digit garbage seen in fig09_r2_heatmap_regimes
+# and fig18_r2_heatmap_improved. Any |value| beyond CAP_R2_DISPLAY is not a
+# real R^2 and is capped + flagged instead of ever being formatted in full.
+CAP_R2_DISPLAY = 1.5e4
+
+def _cap_display(v, cap=CAP_R2_DISPLAY):
+    """Return (display_value, was_capped) for safe cell-text rendering."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return v, False
+    if abs(v) > cap:
+        return (cap if v > 0 else -cap), True
+    return v, False
+
+
 def _infer_difficulty(pysr, hyp):
     """Heuristically assign difficulty from far-extrap R² performance."""
     far = safe_float(hyp.get("extrap_r2_far", pysr.get("extrap_r2_far", float("nan"))))
@@ -679,9 +700,15 @@ if RAW is not None:
         ax.set_title(label, fontsize=11, fontweight="bold")
         for i in range(len(CASES)):
             for j in range(len(_col_keys)):
-                v = mat[i, j]
-                txt = f"{v:.2f}" if abs(v) < 10 and not math.isnan(v) else ("nan" if math.isnan(v) else f"{v:.0f}")
+                v_disp, was_capped = _cap_display(mat[i, j])
                 col = "white" if mat_disp[i, j] < -0.4 else "black"
+                if v_disp is None or (isinstance(v_disp, float) and math.isnan(v_disp)):
+                    txt = "nan"
+                elif was_capped:
+                    txt = "+INF" if v_disp > 0 else "-INF"
+                    col = "#7C3AED"  # flag capped/sentinel values distinctly
+                else:
+                    txt = f"{v_disp:.2f}" if abs(v_disp) < 10 else f"{v_disp:.0f}"
                 ax.text(j, i, txt, ha="center", va="center", fontsize=5.5, color=col)
         for tick, c in zip(ax.get_yticklabels(), CASES):
             tick.set_color(DIFF_COLORS[c["difficulty"]])
@@ -887,9 +914,15 @@ if RAW is not None:
             ax.set_title(label, fontsize=11, fontweight="bold")
             for i in range(len(ft_list)):
                 for j in range(3):
-                    v = mat[i, j]
-                    txt = f"{v:.2f}" if not math.isnan(v) else "—"
+                    v_disp, was_capped = _cap_display(mat[i, j])
                     col = "white" if mat_d[i, j] < -0.3 else "black"
+                    if v_disp is None or math.isnan(v_disp):
+                        txt = "—"
+                    elif was_capped:
+                        txt = "+INF" if v_disp > 0 else "-INF"
+                        col = "#7C3AED"
+                    else:
+                        txt = f"{v_disp:.2f}"
                     ax.text(j, i, txt, ha="center", va="center", fontsize=8, color=col)
         fig.colorbar(im, ax=axes[1], fraction=0.04, pad=0.02, label="Mean far-extrap $R^2$")
         fig.suptitle("Far-Extrap $R^2$: PySR-only vs HypatiaX (Formula Type × Difficulty)",
@@ -915,9 +948,14 @@ if RAW is not None:
             ax.set_title(label, fontsize=11, fontweight="bold")
             for i in range(len(ft_list)):
                 for j in range(3):
-                    v = mat[i,j]
-                    txt = f"{v:.2f}" if not math.isnan(v) else "—"
-                    col = "white" if mat_d[i,j] < -0.3 else "black"
+                    v_disp, was_capped = _cap_display(mat[i, j])
+                    if v_disp is None or math.isnan(v_disp):
+                        txt = "—"
+                    elif was_capped:
+                        txt = "+INF" if v_disp > 0 else "-INF"
+                    else:
+                        txt = f"{v_disp:.2f}"
+                    col = "#7C3AED" if was_capped else ("white" if mat_d[i,j] < -0.3 else "black")
                     ax.text(j, i, txt, ha="center", va="center", fontsize=8, color=col)
         fig.colorbar(im, ax=axes[2], fraction=0.04, pad=0.02, label="Mean stability $R^2$")
         fig.suptitle("Mean Stability by Formula Type × Difficulty", fontsize=12, fontweight="bold")
