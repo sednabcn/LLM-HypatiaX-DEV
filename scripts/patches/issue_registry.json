@@ -192,9 +192,10 @@
     "nb_source": "NB-06",
     "auto_fixable": false,
     "description": "Feynman benchmark used random 80/20 split instead of PCA-directed 40/60.",
-    "action": "Resolved. Results in exp2_pca_4060/; Gates A/B/C passed. Update \u00a710.7 to cite corrected number or disclose baseline protocol.",
-    "updated": "2026-06-05",
-    "false_positive_reason": null
+    "action": "SUPERSEDED 2026-07-03 (re-verified against paper source, not just audit configs): both prior 'corrected' values \u2014 106/180=0.5889 (this entry's original 2026-06-05 close) and the subsequent 71/90=0.7889 (paper_targets.json 2026-07-03) \u2014 are now dead ends. paper_targets.json's own 71/90 fix is itself flagged by the paper as sharing the withdrawn 9/30 run's duplicate-counting failure mode. The paper's current, self-verification-gated numbers (tab:provenance, recomputed from raw per-equation JSON, strict R\u00b2\u22650.999999) are: 12/30 (40.0%) under random 80/20, and 13/30 (43.3%) under PCA 40/60. Legacy 9/30 is retained in the paper only as a labeled historical table entry, not a live claim. TRUTH dict in NB-04 and paper_targets.json's feynman_pca_4060_solve_rate must both be re-anchored to these figures.",
+    "updated": "2026-07-03",
+    "false_positive_reason": null,
+    "note": "Third re-open of this issue. Each prior 'resolution' (106/180, then 71/90) was itself later found to be a stale/duplicated count \u2014 same pattern as FIX-XR4's backwards correction. Recommend closing only once NB-04/NB-06 outputs are re-run against the 12/30 & 13/30 values and match on a live CI gate, not a hardcoded dict."
   },
   {
     "id": "FIX-C4",
@@ -242,9 +243,35 @@
     "nb_source": "NB-04",
     "auto_fixable": false,
     "description": "Nguyen-12 seed=123 rerun results not committed \u2014 CI cannot verify 91.7% vs 33.3% dual-threshold claim.",
-    "action": "Run exp_nguyen12_seed123 and commit _merged.json; add claim to paper_targets.json for automated gate.",
-    "updated": "2026-06-16",
+    "action": "UPDATED 2026-07-03: paper's own table note (line 2274-75) now states the dual-threshold split directly in-text \u2014 4/12=33.3% strict vs 91.7% (4-decimal) \u2014 and presents it as settled prose, not contingent on a future rerun. This resolves the paper-facing claim. However the underlying seed=123 rerun (exp_nguyen12_seed123_merged.json) still has not been run/committed, so the claim remains asserted rather than CI-gated \u2014 paper_targets.json's _PENDING_FIX_N3 stub is still accurate on that narrower point and should stay open until a real result file exists.",
+    "updated": "2026-07-03",
     "false_positive_reason": null,
-    "note": "auto_fixable=false; Nguyen-12 seed=123 rerun not committed; CI cannot verify dual-threshold claim."
+    "note": "Split status: paper text is settled; automated verification is not. Do not close the paper_targets.json stub until exp_nguyen12_seed123_merged.json is committed."
+  },
+  {
+    "id": "FIX-N4",
+    "category": "numerical",
+    "severity": "medium",
+    "status": "open",
+    "nb_source": null,
+    "auto_fixable": false,
+    "description": "9/30 (=0.300) legacy Feynman baseline vs a separately-cited 0.678 baseline rate, both appearing in the same \u00a710.7 paragraph \u2014 referenced by paper_targets.json's exp2_pca_4060 note but never formally logged in this registry, despite hypatia_inspector.py's docstring claiming 'the registry is the single source of truth.'",
+    "action": "Not yet investigated. detect_numerical() in hypatia_inspector.py has no regex for this discrepancy \u2014 NB-04 currently cannot detect it at all. Needs: (1) confirm both 9/30 and 0.678 actually co-occur in \u00a710.7 as currently written, (2) determine whether 0.678 is a mislabeled/stale figure or a distinct legitimate baseline, (3) add a detector regex and a paper_targets.json entry once the correct value is known.",
+    "updated": "2026-07-03",
+    "false_positive_reason": null,
+    "note": "Newly logged from paper_targets.json cross-reference; not previously tracked anywhere."
+  },
+  {
+    "id": "FIX-D1",
+    "category": "numerical",
+    "severity": "critical",
+    "status": "open",
+    "nb_source": null,
+    "auto_fixable": false,
+    "description": "DeFi hybrid-system headline numbers are stale/pre-bug and untracked: paper's new \u00a7hybrid-attribution-bug section discloses a decision-attribution bug where hybrid.success=True was recorded even when the cited sub-method itself failed. Corrected figures: overall 89.2%/90.5% (uncorrected) \u2192 60.8% (45/74) corrected; hard-tier +38.1pp \u2192 \u22124.8pp (an actual loss); medium-tier 93.1% \u2192 58.6% (no gain over LLM); easy-tier 100% \u2192 87.5% (no gain over LLM); 'zero catastrophic failures' \u2192 22/74 tasks actually route through a sub-method that failed catastrophically (masked, not eliminated).",
+    "action": "Not yet fixed. NB-04's abstract checker (checks = [(\"89.2\", ...), (\"38.1\", ...), ...]) is a substring presence test only \u2014 it will report [OK] on all pre-bug numbers because the paper keeps them visible inline with a correction footnote in the same sentence. TRUTH dict currently encodes hypatix_success_pct=89.2, hypatix_gain_over_nn_pp=83.8, hypatix_catastrophic=0 as ground truth; these are the paper's own disclosed pre-bug values, not what the paper says is currently true. Need: (1) re-anchor TRUTH dict to 60.8% / \u22124.8pp / 22-masked-failures, (2) make the abstract checker footnote-aware so it distinguishes 'number is correct' from 'number is flagged as superseded in the same sentence'.",
+    "updated": "2026-07-03",
+    "false_positive_reason": null,
+    "note": "Largest untracked discrepancy found in this audit round \u2014 not referenced by any existing FIX- id, issue_registry entry, or paper_targets.json target prior to this update."
   }
 ]

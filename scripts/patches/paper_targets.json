@@ -22,19 +22,17 @@
     "json_key": "summary.h_rate",
     "absolute": false,
     "status": "awaiting_data",
-    "note": "STUB ONLY — not wired into the automated gate. See _PENDING_FIX_N3 above."
+    "note": "STUB ONLY — not wired into the automated gate. See _PENDING_FIX_N3 above. STATUS UPDATE 2026-07-03: paper's own table note (line 2274-75) now states the 33.3%/91.7% dual-threshold split directly in prose, so the paper-facing claim is settled independent of this stub. This stub remains open ONLY for the narrower CI-gating purpose (no seed=123 result file committed yet). See issue_registry.json FIX-N3."
   },
   {
     "exp": "exp2",
     "metric": "feynman30_solve_rate",
-    "paper_value": 0.3,
-    "tolerance": 0.05,
-    "result_glob": "comparison_results/feynman-tests/exp2_multi/benchmark_results*.json",
-    "compute": "list_field_mean",
-    "compute_field": "success",
+    "paper_value": 0.4,
+    "tolerance": 0.02,
+    "result_glob": "comparison_results/feynman-tests/exp2_random8020/exp2_random8020_summary.json",
+    "json_key": "solve_rate",
     "absolute": false,
-    "note": "≥9/30 solved §10.7 — lower bound; actual=99.4% (156 items)",
-    "min_bound": true
+    "note": "UPDATED 2026-07-03: 12/30=0.40 (random 80/20 split), from paper's current tab:provenance figure, self-verification-gated, strict R²≥0.999999, recomputed from raw per-equation JSON. Legacy '9/30' (0.300) and the interim '99.4%/156 items' figure previously here are both stale — 156 items does not correspond to any live 30-item Feynman run and was never traced to a source file. Retained-for-history 9/30 table entry in §10.7 is not a live claim; see FIX-N4 for the separate, still-open 9/30-vs-0.678 wording issue in that same paragraph."
   },
   {
     "exp": "suppB",
@@ -62,11 +60,41 @@
   {
     "exp": "exp2_pca_4060",
     "metric": "feynman_pca_4060_solve_rate",
-    "paper_value": 0.7889,
+    "paper_value": 0.4333,
     "tolerance": 0.001,
     "result_glob": "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json",
     "json_key": "solve_rate",
     "absolute": false,
-    "note": "UPDATED 2026-07-03: prior paper_value=0.5889 (n_pass=106/n_total=180) was stale — traced to July 1 protocol_core_noiseless_pca_*.json reruns whose 'tests'->'results' schema wasn't recognized by run_all.sh's _rows() (contributed 0/0 each), combined with benchmark_results_pca_4060.json and benchmark_results_extrap.json both being counted as independent sources despite being duplicate flat exports of the same 90 rows (142/180 double-counted, which happens to reduce to the same ratio as the correct count). Both bugs fixed in run_all.sh (FIX-C3-SCHEMA + FIX-C3-DEDUPE). True rate independently verified two ways — direct schema-aware read of all 11 raw protocol_core files, and the single (non-duplicated) benchmark_results_pca_4060.json — both giving n_pass=71, n_total=90, solve_rate=0.788889. ⚠️ PAPER TEXT NOT YET RECONCILED: jmlr_paper_main.tex §10.7 and the abstract currently state 58.9% (106/180) — this is a ~20-point jump from what the paper says, and needs sign-off from whoever owns §10.7 before this is treated as settled, not just an audit-config correction. Legacy 9/30 (random 80/20, =0.300) remains separately disclosed in §10.7 as the conservative Kaggle 4-vCPU baseline — see FIX-N4 for an unresolved 9/30 vs 0.678 baseline-rate inconsistency in that same paragraph."
+    "note": "UPDATED 2026-07-03 (second correction): the prior 71/90=0.7889 value stored here (itself a fix of an earlier stale 106/180=0.5889) is now ALSO stale. The paper's current tab:provenance entry discards the 71/90-equivalent 142/180 run as 'unconfirmed... shares the withdrawn 9/30 run's known failure mode' (duplicate-counting artifact), same root cause class as the original run_all.sh bug. True current figure, self-verification-gated: 13/30=0.4333 (PCA-directed 40/60 split). Do not treat any of 0.5889, 0.7889, or 106/180, 71/90, 142/180 as live going forward — only 13/30. Tracks FIX-C3 (now on its third re-open)."
+  },
+  {
+    "exp": "hypatix_defi",
+    "metric": "hypatix_success_pct_corrected",
+    "paper_value": 0.608,
+    "tolerance": 0.005,
+    "result_glob": "defi/hypatix_defi_benchmark_v3c_corrected_*.json",
+    "json_key": "summary.corrected_success_rate",
+    "absolute": false,
+    "note": "NEW 2026-07-03: paper's §hybrid-attribution-bug discloses a decision-attribution bug (hybrid.success=True recorded even when the cited sub-method itself failed). Corrected overall rate is 60.8% (45/74), down from the uncorrected 89.2%/90.5% still printed in the abstract. Both figures now legitimately co-occur in the paper text (uncorrected number + inline correction footnote); NB-04's substring-only abstract checker cannot tell them apart and will falsely report [OK]. Was not tracked anywhere prior to this audit. See issue_registry.json FIX-D1."
+  },
+  {
+    "exp": "hypatix_defi",
+    "metric": "hypatix_hard_tier_gain_pp_corrected",
+    "paper_value": -4.8,
+    "tolerance": 0.1,
+    "result_glob": "defi/hypatix_defi_benchmark_v3c_corrected_*.json",
+    "json_key": "summary.hard_tier_gain_pp_corrected",
+    "absolute": true,
+    "note": "NEW 2026-07-03: corrected hard-tier delta vs baseline is −4.8pp (an actual loss), replacing the uncorrected +38.1pp still printed in the abstract. See FIX-D1."
+  },
+  {
+    "exp": "hypatix_defi",
+    "metric": "hypatix_catastrophic_masked_count",
+    "paper_value": 22,
+    "tolerance": 0,
+    "result_glob": "defi/hypatix_defi_benchmark_v3c_corrected_*.json",
+    "json_key": "summary.catastrophic_masked_count",
+    "absolute": true,
+    "note": "NEW 2026-07-03: 'zero catastrophic failures' claim is disclosed by the paper as masked, not eliminated — 22/74 tasks actually route through a sub-method that failed catastrophically. TRUTH dict's hypatix_catastrophic=0 reflects only the pre-bug/masked reading. See FIX-D1."
   }
 ]
