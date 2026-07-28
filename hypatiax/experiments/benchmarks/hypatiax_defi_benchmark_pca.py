@@ -18,9 +18,9 @@ This mirrors the FIX-C3 split used in the Feynman benchmark
 extrapolation results (§6.4) are produced under the same protocol
 and are directly comparable.
 
-pca_directed_split is inlined here — no local hypatiax package import
-is required.  The function is identical to the reference implementation
-used by Gate A of ci_runner_disclosure.yml.
+pca_directed_split is imported from hypatiax.tools.utils.pca_split_utils
+(see SECTION 6 below) — it is NOT inlined in this file. It is the same
+reference implementation verified by Gate A of ci_runner_disclosure.yml.
 
 Output files:
   hypatiax_defi_benchmark_pca_checkpoint.json
@@ -221,6 +221,14 @@ class _MLP(nn.Module):
         return self.net(x)
 
 
+# ── Model-identity constants ─────────────────────────────────────────────────
+# Single source of truth for which model produced which result. Every result
+# record below tags itself with one of these strings (or a composite of them
+# for ensemble/fallback paths) so that runs mixing models are auditable after
+# the fact, rather than silently assuming a single model throughout.
+_HYBRID_LLM_MODEL_NAME = "claude-sonnet-4-6"          # model used inside _generate_llm_formula
+_NN_MODEL_NAME          = "mlp_128_64_32"             # fixed MLP architecture used by _train_and_eval_nn
+
 _NN_SEED = 2024   # fixed seed → deterministic NN scores across resume sessions
 
 
@@ -231,28 +239,63 @@ _NN_MAX_TIME_S = 120  # Wall-clock cap per NN training run (Issue 2 fix).
                       # PySR timeout_in_seconds used in Experiments 1–3.
 
 
-def _augment_features(X: np.ndarray) -> np.ndarray:
+def _compute_augment_plan(X_train: np.ndarray) -> dict:
     """
-    Physics-informed feature augmentation for NN extrapolation (v3c2-fix4).
-    Adds log, sqrt, and ratio features — common in DeFi formula families
-    (exponential compounding, AMM sqrt, rational collateral ratios).
-    This gives the MLP structural hooks beyond raw linear inputs.
+    FIX (feature-count mismatch): decide which augmented columns to add
+    from the TRAINING split ONLY, and return a fixed plan. The old
+    _augment_features() evaluated np.all(xi > 0) / np.all(xi >= 0)
+    independently on whatever array it was given, so train and test —
+    which can have systematically different value ranges under the
+    PCA-directed 40/60 split — could qualify a different number of
+    columns for log/sqrt augmentation. That produced train/test feature
+    matrices of different width, which StandardScaler then rejected
+    ("X has 9 features, but StandardScaler is expecting 7 features").
+    Deciding the plan from X_train alone and applying it identically to
+    every other split guarantees a fixed, split-independent column count.
+    """
+    plan = {"log_cols": [], "sqrt_cols": [], "ratio": X_train.shape[1] == 2}
+    for i in range(X_train.shape[1]):
+        xi = X_train[:, i]
+        if np.all(xi > 0):
+            plan["log_cols"].append(i)
+        if np.all(xi >= 0):
+            plan["sqrt_cols"].append(i)
+    return plan
+
+
+def _apply_augment_plan(X: np.ndarray, plan: dict) -> np.ndarray:
+    """
+    Apply a previously computed augmentation plan (see _compute_augment_plan)
+    to X — train or test — so every split produces the same number of
+    columns regardless of that split's own values. Values are clipped
+    before log/sqrt: a split (typically test, under PCA split) may contain
+    values outside the range that qualified the column on train (e.g. a
+    column that was all-positive on train but dips <= 0 on test); clipping
+    keeps the column finite instead of reintroducing NaN and silently
+    failing training/evaluation downstream.
     """
     cols = [X]
     eps = 1e-8
-    for i in range(X.shape[1]):
-        xi = X[:, i]
-        # log-transform for positive columns (rates, prices, liquidity)
-        if np.all(xi > 0):
-            cols.append(np.log(xi + eps).reshape(-1, 1))
-        # sqrt for non-negative columns
-        if np.all(xi >= 0):
-            cols.append(np.sqrt(xi + eps).reshape(-1, 1))
-    # Pairwise ratios for 2-column inputs (common: collateral/borrowed, S/K)
-    if X.shape[1] == 2:
+    for i in plan["log_cols"]:
+        cols.append(np.log(np.clip(X[:, i], eps, None)).reshape(-1, 1))
+    for i in plan["sqrt_cols"]:
+        cols.append(np.sqrt(np.clip(X[:, i], 0.0, None) + eps).reshape(-1, 1))
+    if plan["ratio"]:
         cols.append((X[:, 0] / (X[:, 1] + eps)).reshape(-1, 1))
         cols.append((X[:, 1] / (X[:, 0] + eps)).reshape(-1, 1))
     return np.hstack(cols)
+
+
+def _augment_features(X: np.ndarray) -> np.ndarray:
+    """
+    DEPRECATED — kept only for any external caller that still imports this
+    name directly on a single array. Internal training/eval now uses
+    _compute_augment_plan(X_train) + _apply_augment_plan(X, plan) so train
+    and test always get the same column layout. Calling this function
+    directly on train and test separately reintroduces the original bug —
+    do not use it that way.
+    """
+    return _apply_augment_plan(X, _compute_augment_plan(X))
 
 
 def _train_and_eval_nn(
@@ -277,9 +320,13 @@ def _train_and_eval_nn(
     hidden = hidden or [128, 64, 32]
 
     # v3c2-fix4: augment features BEFORE scaling
+    # FIX (feature-count mismatch): plan is derived from X_train only and
+    # applied identically to X_test, so the two splits always produce the
+    # same number of columns (see _compute_augment_plan/_apply_augment_plan).
     if augment:
-        X_train = _augment_features(X_train)
-        X_test  = _augment_features(X_test)
+        _plan   = _compute_augment_plan(X_train)
+        X_train = _apply_augment_plan(X_train, _plan)
+        X_test  = _apply_augment_plan(X_test, _plan)
 
     sx, sy = StandardScaler(), StandardScaler()
     Xtr = sx.fit_transform(X_train)
@@ -565,7 +612,7 @@ def _generate_llm_formula(
         client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     except Exception as e:
         return {"python_code": None, "formula": None, "success": False,
-                "error": f"API client error: {e}"}
+                "error": f"API client error: {e}", "model": _HYBRID_LLM_MODEL_NAME}
 
     var_list = ", ".join(var_names)
     constants = metadata.get("constants", {})
@@ -594,7 +641,7 @@ def formula({var_list}):
 """
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=_HYBRID_LLM_MODEL_NAME,
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -605,10 +652,11 @@ def formula({var_list}):
                      if not ln.strip().startswith("```")]
             code  = "\n".join(lines).strip()
         return {"python_code": code, "formula": code,
-                "success": "def formula" in code, "error": None}
+                "success": "def formula" in code, "error": None,
+                "model": _HYBRID_LLM_MODEL_NAME}
     except Exception as e:
         return {"python_code": None, "formula": None,
-                "success": False, "error": str(e)}
+                "success": False, "error": str(e), "model": _HYBRID_LLM_MODEL_NAME}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -639,6 +687,7 @@ def _hybrid_predict_and_eval(
     X_train: np.ndarray, y_train: np.ndarray,
     X_test:  np.ndarray, y_test:  np.ndarray,
     var_names: list[str], metadata: dict,
+    seed: int = _NN_SEED,
 ) -> dict:
     """
     Full hybrid pipeline for one test case.
@@ -657,6 +706,9 @@ def _hybrid_predict_and_eval(
     llm_result = _generate_llm_formula(description, domain, var_names, metadata)
     llm_code   = llm_result.get("python_code") or ""
     has_formula = bool(llm_code and "def formula" in llm_code)
+    # Model that generated llm_code — recorded regardless of whether the LLM
+    # path is ultimately used, so the audit trail shows what was *tried*.
+    llm_model_name = llm_result.get("model", _HYBRID_LLM_MODEL_NAME)
 
     # Extract constants from metadata — injected into exec globals so formulas
     # that reference protocol constants (e.g. K=100) don't NameError at eval time.
@@ -715,7 +767,7 @@ def _hybrid_predict_and_eval(
         test_r2, ok = _eval_formula_r2(llm_code, X_test, y_test, constants=constants)
         if not ok or np.isnan(test_r2):
             _t_nn0 = time.time()
-            nn_m    = _train_and_eval_nn(X_train, y_train, X_test, y_test)
+            nn_m    = _train_and_eval_nn(X_train, y_train, X_test, y_test, seed=seed)
             nn_rerun_time_s = time.time() - _t_nn0
             test_r2 = nn_m["test_r2"]
             decision = "nn_fallback"
@@ -724,7 +776,7 @@ def _hybrid_predict_and_eval(
         # Fix 5: LLM test predictions via unified evaluator
         llm_test_preds = _execute_formula(llm_code, X_test, constants=constants)
         _t_nn0         = time.time()
-        nn_m           = _train_and_eval_nn(X_train, y_train, X_test, y_test)
+        nn_m           = _train_and_eval_nn(X_train, y_train, X_test, y_test, seed=seed)
         nn_rerun_time_s = time.time() - _t_nn0
 
         if llm_test_preds is not None:
@@ -754,6 +806,7 @@ def _hybrid_predict_and_eval(
     else:
         # decision == "nn"
         # Fix 3: if formula trustworthy, augment X with LLM predictions
+        nn_used_llm_features = False  # tracks whether X was augmented with LLM output
         if llm_trustworthy:
             try:
                 llm_tr_preds = _execute_formula(llm_code, X_train, constants=constants)
@@ -762,21 +815,38 @@ def _hybrid_predict_and_eval(
                     X_tr_aug = np.column_stack([X_train, llm_tr_preds])
                     X_te_aug = np.column_stack([X_test,  llm_te_preds])
                     _t_nn0 = time.time()
-                    nn_m     = _train_and_eval_nn(X_tr_aug, y_train, X_te_aug, y_test)
+                    nn_m     = _train_and_eval_nn(X_tr_aug, y_train, X_te_aug, y_test, seed=seed)
                     nn_rerun_time_s = time.time() - _t_nn0
+                    nn_used_llm_features = True
                 else:
                     _t_nn0 = time.time()
-                    nn_m     = _train_and_eval_nn(X_train, y_train, X_test, y_test)
+                    nn_m     = _train_and_eval_nn(X_train, y_train, X_test, y_test, seed=seed)
                     nn_rerun_time_s = time.time() - _t_nn0
             except Exception:
                 _t_nn0 = time.time()
-                nn_m         = _train_and_eval_nn(X_train, y_train, X_test, y_test)
+                nn_m         = _train_and_eval_nn(X_train, y_train, X_test, y_test, seed=seed)
                 nn_rerun_time_s = time.time() - _t_nn0
         else:
             _t_nn0 = time.time()
-            nn_m             = _train_and_eval_nn(X_train, y_train, X_test, y_test)
+            nn_m             = _train_and_eval_nn(X_train, y_train, X_test, y_test, seed=seed)
             nn_rerun_time_s = time.time() - _t_nn0
         test_r2 = nn_m["test_r2"]
+
+    # ── Model-identity audit trail ──────────────────────────────────────────
+    # `decision` reflects which path actually produced test_r2 (it may have
+    # been overwritten to "nn_fallback" above). Map it to the concrete model
+    # name(s) responsible, rather than leaving that implicit in `decision`.
+    if decision == "llm":
+        model_used = llm_model_name
+    elif decision == "ensemble":
+        model_used = f"ensemble({llm_model_name}+{_NN_MODEL_NAME})"
+    elif decision == "nn_fallback":
+        model_used = _NN_MODEL_NAME
+    else:  # decision == "nn"
+        model_used = (
+            f"{_NN_MODEL_NAME}(llm_augmented_features={llm_model_name})"
+            if nn_used_llm_features else _NN_MODEL_NAME
+        )
 
     return {
         "train_r2":       float(llm_train_r2) if llm_train_ok else float("nan"),
@@ -784,6 +854,8 @@ def _hybrid_predict_and_eval(
         "decision":       decision,
         "llm_code":       llm_code if has_formula else None,
         "llm_train_r2":   float(llm_train_r2) if llm_train_ok else float("nan"),
+        "llm_model":      llm_model_name,     # model that generated llm_code, whether or not it was ultimately used
+        "model_used":     model_used,         # model(s) that actually produced test_r2 — the auditable ground truth
         "nn_rerun_time_s": round(nn_rerun_time_s, 3),  # Issue 3: NN cost paid by hybrid
         "success":        True,
     }
@@ -793,29 +865,19 @@ def _hybrid_predict_and_eval(
 # SECTION 6 — Data splitting
 # ─────────────────────────────────────────────────────────────────────────────
 
-# FIX-C3: PCA-directed 40/60 split — inlined, no local package import needed.
-# Identical to the reference implementation verified by Gate A of
-# ci_runner_disclosure.yml.  Replaces _aggressive_split() for every case.
+# FIX-C3: PCA-directed 40/60 split — imported from the local hypatiax
+# package (NOT inlined). Identical to the reference implementation
+# verified by Gate A of ci_runner_disclosure.yml. Called directly at the
+# case loop (see pca_directed_split() call below); replaces v3c.py's
+# _aggressive_split() for every case.
 from hypatiax.tools.utils.pca_split_utils import pca_directed_split
 
-def _aggressive_split(
-    X: np.ndarray, y: np.ndarray, config: dict
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Train on lower 40% of primary variable; test on upper 60%.
-    Falls back to index-based split when array is too small.
-    Backward-compatible wrapper around
-    pca_directed_split().
-    """
-
-    test_size = config.get("test_size", 0.6)
-
-    return pca_directed_split(
-        X,
-        y,
-        test_size=test_size,
-        random_state=42,
-    )
+# NOTE: the old v3c.py-style _aggressive_split() wrapper was removed here.
+# It was dead code (never called) whose return-tuple order
+# (X_train, X_test, y_train, y_test) did not match v3c.py's convention
+# (X_train, y_train, X_test, y_test), and would have silently swapped
+# y_train/X_test if anyone had wired it in. The call site below unpacks
+# pca_directed_split() directly and correctly.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -923,10 +985,13 @@ def _load_checkpoint() -> tuple[list, int]:
         data = json.loads(CHECKPOINT_FILE.read_text())
         if not isinstance(data, list):
             return [], 0
-        # Deduplicate — keep last occurrence of each case name
+        # Deduplicate — keep last occurrence of each (case name, seed) pair.
+        # seed-loop fix: without the seed in the key, a multi-seed sweep would
+        # collapse to one record per case (last seed wins) on resume.
         seen = {}
         for item in data:
-            seen[item.get("equation_id", id(item))] = item
+            key = (item.get("equation_id", id(item)), item.get("seed"))
+            seen[key] = item
         data = list(seen.values())
         return data, len(data)
     except Exception:
@@ -1163,194 +1228,272 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
         print(f"\n🔍 Case filter active: running {total} case(s) — "
               f"{[tc['name'] for tc in test_cases]}")
 
-    # NSHARDS=1 FIX: on a fresh (non-resume) run, remove any stale checkpoint
-    # and final-output JSON left over from a prior run.  Without this, a second
-    # run in the same workspace smuggles the prior run's cases through
-    # _load_checkpoint, producing duplicate records and a bloated output file
-    # that ci_analysis misreads as multiple seeds.
-    if not resume:
-        if CHECKPOINT_FILE.exists():
-            CHECKPOINT_FILE.unlink()
-            print(f"  [fresh run] Removed stale checkpoint: {CHECKPOINT_FILE}")
-        if FINAL_OUTPUT.exists():
-            FINAL_OUTPUT.unlink()
-            print(f"  [fresh run] Removed stale output: {FINAL_OUTPUT}")
+    global CHECKPOINT_FILE, FINAL_OUTPUT
 
-    existing, n_done = _load_checkpoint() if resume else ([], 0)
-    all_results      = list(existing)
+    # ── Multi-seed sweep support (mirrors hypatiax_defi_benchmark_v3c.py) ──
+    # `seeds` (from DEFI_SEEDS env, a bare SEED override, or an explicit
+    # seeds= kwarg) drives a real sweep: we loop over every seed in
+    # `seeds`, reseeding all RNGs and writing a DISTINCT, seed-tagged
+    # checkpoint/output file per seed whenever a sweep was explicitly
+    # requested — not just when more than one seed is present, since a
+    # single-seed CI shard run is still logically part of a sweep and must
+    # get a file that survives alongside every other shard's (see
+    # FIX-SINGLE-SEED-SHARD in v3c.py). Single-seed / no-seed runs keep the
+    # plain, unsuffixed filenames.
+    _base_results_dir = RESULTS_DIR
+    _orig_checkpoint, _orig_final = CHECKPOINT_FILE, FINAL_OUTPUT
+    seed_list  = seeds if seeds else [None]
+    multi_seed = len(seed_list) > 1 or bool(_seeds_env)
+    all_seed_results = []
 
-    print("=" * 80)
-    print("HypatiaX DeFi Extrapolation Benchmark v3.0")
-    print("=" * 80)
-    print(f"Cases: {total} | Resuming from: {n_done + 1}" if resume else
-          f"Cases: {total} | Fresh run")
-    print(f"Checkpoint: {CHECKPOINT_FILE}")
-    print(f"Output    : {FINAL_OUTPUT}")
-    print("=" * 80)
+    for _seed_idx, _seed in enumerate(seed_list, 1):
+        if _seed is not None:
+            random.seed(_seed); np.random.seed(_seed); torch.manual_seed(_seed)
+            if multi_seed:
+                print(f"\n🌱 Seed sweep {_seed_idx}/{len(seed_list)}: seed={_seed}")
+            else:
+                print(f"\n🌱 Seed = {_seed}")
+            _nn_seed = _seed
+        else:
+            _nn_seed = _NN_SEED
 
-    for i, tc in enumerate(test_cases, 1):
-        # Skip already-done cases when resuming
-        if resume and any(r.get("equation_id") == tc["name"] for r in all_results):
-            print(f"[{i:02d}/{total}] ⏭  {tc['name']} — already done")
-            continue
+        if multi_seed:
+            CHECKPOINT_FILE = _base_results_dir / f"hypatiax_defi_benchmark_pca_checkpoint_seed{_seed}.json"
+            FINAL_OUTPUT    = _base_results_dir / f"hypatiax_defi_benchmark_pca_results_seed{_seed}.json"
+        else:
+            CHECKPOINT_FILE, FINAL_OUTPUT = _orig_checkpoint, _orig_final
 
-        is_intractable = tc.get("extrapolation_intractable", False)
-        print(f"\n[{i:02d}/{total}] {tc['name']}  "
-              f"({tc['difficulty'].upper()}"
-              f"{' — INTRACTABLE' if is_intractable else ''})")
+        # NSHARDS=1 FIX: on a fresh (non-resume) run, remove any stale checkpoint
+        # and final-output JSON left over from a prior run.  Without this, a second
+        # run in the same workspace smuggles the prior run's cases through
+        # _load_checkpoint, producing duplicate records and a bloated output file
+        # that ci_analysis misreads as multiple seeds.
+        if not resume:
+            if CHECKPOINT_FILE.exists():
+                CHECKPOINT_FILE.unlink()
+                print(f"  [fresh run] Removed stale checkpoint: {CHECKPOINT_FILE}")
+            if FINAL_OUTPUT.exists():
+                FINAL_OUTPUT.unlink()
+                print(f"  [fresh run] Removed stale output: {FINAL_OUTPUT}")
 
-        try:
-            # Load protocol data
-            protocol_cases = protocol.load_test_data(
-                tc["domain"], num_samples=tc["num_samples"]
-            )
-            match = next(
-                ((d, X, y, v, m) for d, X, y, v, m in protocol_cases
-                 if tc["name"].lower() in d.lower()),
-                None,
-            )
-            if not match:
-                print(f"  ⚠️  No protocol match for '{tc['name']}' — skipping")
+        existing, n_done = _load_checkpoint() if resume else ([], 0)
+        all_results       = list(existing)
+
+        print("=" * 80)
+        print("HypatiaX DeFi Extrapolation Benchmark v3.0 (PCA split)")
+        print("=" * 80)
+        print(f"Cases: {total} | Resuming from: {n_done + 1}" if resume else
+              f"Cases: {total} | Fresh run")
+        print(f"Checkpoint: {CHECKPOINT_FILE}")
+        print(f"Output    : {FINAL_OUTPUT}")
+        print("=" * 80)
+
+        for i, tc in enumerate(test_cases, 1):
+            # Skip already-done cases when resuming (separate file per seed,
+            # so no need to also match on seed here).
+            if resume and any(r.get("equation_id") == tc["name"] for r in all_results):
+                print(f"[{i:02d}/{total}] ⏭  {tc['name']} — already done")
                 continue
 
-            desc, X_full, y_full, var_names, metadata = match
-            metadata.update({
-                "extrapolation_test": True,
-                "difficulty":         tc["difficulty"],
-                "formula_type":       tc["formula_type"],
-            })
-            tc.setdefault("description", desc)
+            is_intractable = tc.get("extrapolation_intractable", False)
+            print(f"\n[{i:02d}/{total}] {tc['name']}  "
+                  f"({tc['difficulty'].upper()}"
+                  f"{' — INTRACTABLE' if is_intractable else ''})"
+                  f"{f' seed={_seed}' if _seed is not None else ''}")
 
-            # FIX-C3: PCA-directed 40/60 split replaces _aggressive_split.
-            # Matches the Feynman benchmark protocol (run_comparative_suite_benchmark_pca.py).
-            X_tr, X_te, y_tr, y_te = pca_directed_split(
-                X_full, y_full, test_size=0.6, random_state=42
-            )
-            print(f"  Split (PCA 40/60) → train={len(X_tr)}, test={len(X_te)}")
-
-            case_results = {}
-
-            # ── Pure LLM ────────────────────────────────────────────────────
             try:
-                _t0_llm = time.time()
-                from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
-                    PureLLMBaseline,
+                # Load protocol data
+                protocol_cases = protocol.load_test_data(
+                    tc["domain"], num_samples=tc["num_samples"]
                 )
-                llm_base  = PureLLMBaseline()
-                llm_res   = llm_base.generate_formula(desc, tc["domain"],
-                                                      var_names, metadata)
-                llm_tr_m  = llm_base.test_formula_accuracy(llm_res, X_tr, y_tr,
-                                                           var_names, verbose=False)
-                llm_te_m  = llm_base.test_formula_accuracy(llm_res, X_te, y_te,
-                                                           var_names, verbose=False)
-                case_results["pure_llm"] = {
-                    "train_r2": float(llm_tr_m["r2"]) if llm_tr_m.get("success") else float("nan"),
-                    "test_r2":  float(llm_te_m["r2"]) if llm_te_m.get("success") else float("nan"),
-                    "success":  llm_te_m.get("success", False),
-                    "time_s":   round(time.time() - _t0_llm, 3),
-                }
-            except Exception as e:
-                case_results["pure_llm"] = {
-                    "train_r2": float("nan"), "test_r2": float("nan"),
-                    "success": False, "time_s": 0.0, "error": str(e),
-                }
-
-            # ── Neural Network ───────────────────────────────────────────────
-            try:
-                _t0_nn = time.time()
-                nn_m = _train_and_eval_nn(X_tr, y_tr, X_te, y_te)
-                case_results["neural_network"] = {
-                    "train_r2":    nn_m["train_r2"],
-                    "test_r2":     nn_m["test_r2"],
-                    "success":     True,
-                    "timed_out":   nn_m.get("timed_out", False),
-                    "time_s":      round(time.time() - _t0_nn, 3),
-                    "y_pred_train": nn_m["y_pred_train"].tolist(),
-                    "y_pred_test":  nn_m["y_pred_test"].tolist(),
-                }
-            except Exception as e:
-                case_results["neural_network"] = {
-                    "train_r2": float("nan"), "test_r2": float("nan"),
-                    "success": False, "time_s": 0.0, "error": str(e),
-                }
-
-            # ── Hybrid (all Fixes applied) ────────────────────────────────────
-            try:
-                _t0_hyb = time.time()
-                hy_m = _hybrid_predict_and_eval(
-                    desc, tc["domain"], X_tr, y_tr, X_te, y_te, var_names, metadata
+                match = next(
+                    ((d, X, y, v, m) for d, X, y, v, m in protocol_cases
+                     if tc["name"].lower() in d.lower()),
+                    None,
                 )
-                _hyb_wall = round(time.time() - _t0_hyb, 3)
+                if not match:
+                    print(f"  ⚠️  No protocol match for '{tc['name']}' — skipping")
+                    continue
 
-                # Issue 3 fix: when hybrid fell back to NN, the time already
-                # recorded for the standalone NN run CANNOT be reused — the
-                # hybrid must pay the full NN training cost itself.
-                # _hybrid_predict_and_eval() now returns nn_rerun_time_s for
-                # fallback cases so the reported hybrid time is self-contained.
-                hyb_time = _hyb_wall + hy_m.get("nn_rerun_time_s", 0.0)
+                desc, X_full, y_full, var_names, metadata = match
+                metadata.update({
+                    "extrapolation_test": True,
+                    "difficulty":         tc["difficulty"],
+                    "formula_type":       tc["formula_type"],
+                })
+                tc.setdefault("description", desc)
 
-                _train_r2 = hy_m["train_r2"]
-                _test_r2  = hy_m["test_r2"]
-                _nan = lambda v: v is None or (isinstance(v, float) and _math.isnan(v))
-
-                case_results["hybrid"] = {
-                    "train_r2":        _train_r2,
-                    "test_r2":         _test_r2,
-                    "decision":        hy_m["decision"],
-                    "success":         not (_nan(_train_r2) or _nan(_test_r2)),  # ← fixed
-                    "time_s":          round(hyb_time, 3),
-                    "nn_rerun_time_s": hy_m.get("nn_rerun_time_s", 0.0),
-                }
-            except Exception as e:
-                case_results["hybrid"] = {
-                    "train_r2": float("nan"), "test_r2": float("nan"),
-                    "success": False, "time_s": 0.0, "error": str(e),
-                }
-
-            # ── Augment with extrapolation gap and stability score ────────────
-            for method, res in case_results.items():
-                tr_ = res.get("train_r2", float("nan"))
-                te_ = res.get("test_r2",  float("nan"))
-                res["extrapolation_gap"] = (
-                    float(tr_ - te_) if not (np.isnan(tr_) or np.isnan(te_)) else float("nan")
+                # FIX-C3: PCA-directed 40/60 split replaces _aggressive_split.
+                # Matches the Feynman benchmark protocol (run_comparative_suite_benchmark_pca.py).
+                X_tr, X_te, y_tr, y_te = pca_directed_split(
+                    X_full, y_full, test_size=0.6, random_state=42
                 )
-                res["stability_score"] = (
-                    float(te_ / tr_)
-                    if (not np.isnan(tr_) and not np.isnan(te_) and abs(tr_) > 1e-6)
-                    else float("nan")
-                )
+                print(f"  Split (PCA 40/60) → train={len(X_tr)}, test={len(X_te)}")
 
-            # ── Print per-case summary ────────────────────────────────────────
-            def _fmt(v):
-                return "   nan" if (v is None or (isinstance(v, float) and np.isnan(v))) else f"{v:6.4f}"
+                case_results = {}
 
-            for method, res in case_results.items():
-                dec = f" [{res.get('decision', '')}]" if method == "hybrid" else ""
-                print(f"  {method:15s}: train={_fmt(res.get('train_r2'))}, "
-                      f"test={_fmt(res.get('test_r2'))}{dec}")
+                # ── Pure LLM ────────────────────────────────────────────────────
+                try:
+                    _t0_llm = time.time()
+                    from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import (
+                        PureLLMBaseline,
+                    )
+                    llm_base  = PureLLMBaseline()
+                    llm_res   = llm_base.generate_formula(desc, tc["domain"],
+                                                          var_names, metadata)
+                    llm_tr_m  = llm_base.test_formula_accuracy(llm_res, X_tr, y_tr,
+                                                               var_names, verbose=False)
+                    llm_te_m  = llm_base.test_formula_accuracy(llm_res, X_te, y_te,
+                                                               var_names, verbose=False)
+                    case_results["pure_llm"] = {
+                        "train_r2": float(llm_tr_m["r2"]) if llm_tr_m.get("success") else float("nan"),
+                        "test_r2":  float(llm_te_m["r2"]) if llm_te_m.get("success") else float("nan"),
+                        "executed": llm_te_m.get("success", False),
+                        # FIX 11: PureLLMBaseline.test_formula_accuracy()'s own "success"
+                        # only means the generated code executed without raising — it does
+                        # NOT gate on fit quality (observed: 11/74 exp1_pca cases report
+                        # success=True with test_r2 as low as -126,483). Recompute success
+                        # here as a fit-quality gate, reusing the >0.5 "trustworthy"
+                        # threshold already established for the hybrid arm's LLM trust
+                        # gate (FIX 10, above) so both arms share one pass definition.
+                        "success": bool(
+                            llm_te_m.get("success", False)
+                            and not _math.isnan(llm_te_m.get("r2", float("nan")))
+                            and llm_te_m["r2"] > 0.5
+                        ),
+                        "time_s":   round(time.time() - _t0_llm, 3),
+                        # Model tracking: PureLLMBaseline.generate_formula() reports
+                        # which model it used (self.model) at every return path —
+                        # surface it here so a run mixing model versions is auditable.
+                        "model":    llm_res.get("model"),
+                    }
+                except Exception as e:
+                    # llm_res may not exist if generate_formula() itself raised —
+                    # fall back to None rather than assuming a model was used.
+                    _attempted_model = llm_res.get("model") if "llm_res" in dir() else None
+                    case_results["pure_llm"] = {
+                        "train_r2": float("nan"), "test_r2": float("nan"),
+                        "executed": False, "success": False, "time_s": 0.0, "error": str(e),
+                        "model": _attempted_model,
+                    }
 
-            record = {
-                "equation_id":            tc["name"],
-                "difficulty":           tc["difficulty"],
-                "formula_type":         tc["formula_type"],
-                "extrapolation_intractable": is_intractable,
-                "results":              case_results,
-            }
-            all_results.append(record)
-            _save_checkpoint(all_results)
-            print(f"  💾 Checkpoint saved ({len(all_results)}/{total})")
+                # ── Neural Network ───────────────────────────────────────────────
+                try:
+                    _t0_nn = time.time()
+                    nn_m = _train_and_eval_nn(X_tr, y_tr, X_te, y_te, seed=_nn_seed)
+                    case_results["neural_network"] = {
+                        "train_r2":    nn_m["train_r2"],
+                        "test_r2":     nn_m["test_r2"],
+                        "success":     True,
+                        "timed_out":   nn_m.get("timed_out", False),
+                        "time_s":      round(time.time() - _t0_nn, 3),
+                        "y_pred_train": nn_m["y_pred_train"].tolist(),
+                        "y_pred_test":  nn_m["y_pred_test"].tolist(),
+                        "model":       _NN_MODEL_NAME,
+                    }
+                except Exception as e:
+                    case_results["neural_network"] = {
+                        "train_r2": float("nan"), "test_r2": float("nan"),
+                        "success": False, "time_s": 0.0, "error": str(e),
+                        "model": _NN_MODEL_NAME,
+                    }
 
-        except Exception as outer_e:
-            print(f"  ❌ Outer error: {outer_e}")
-            continue
+                # ── Hybrid (all Fixes applied) ────────────────────────────────────
+                try:
+                    _t0_hyb = time.time()
+                    hy_m = _hybrid_predict_and_eval(
+                        desc, tc["domain"], X_tr, y_tr, X_te, y_te, var_names, metadata,
+                        seed=_nn_seed,
+                    )
+                    _hyb_wall = round(time.time() - _t0_hyb, 3)
 
-    # Final report + save
-    _generate_report(all_results)
-    _save_final(all_results)
+                    # Issue 3 fix: when hybrid fell back to NN, the time already
+                    # recorded for the standalone NN run CANNOT be reused — the
+                    # hybrid must pay the full NN training cost itself.
+                    # _hybrid_predict_and_eval() now returns nn_rerun_time_s for
+                    # fallback cases so the reported hybrid time is self-contained.
+                    hyb_time = _hyb_wall + hy_m.get("nn_rerun_time_s", 0.0)
+
+                    _train_r2 = hy_m["train_r2"]
+                    _test_r2  = hy_m["test_r2"]
+                    _nan = lambda v: v is None or (isinstance(v, float) and _math.isnan(v))
+
+                    case_results["hybrid"] = {
+                        "train_r2":        _train_r2,
+                        "test_r2":         _test_r2,
+                        "decision":        hy_m["decision"],
+                        "success":         not (_nan(_train_r2) or _nan(_test_r2)),  # ← fixed
+                        "time_s":          round(hyb_time, 3),
+                        "nn_rerun_time_s": hy_m.get("nn_rerun_time_s", 0.0),
+                        # Model tracking: llm_model is what generated the candidate
+                        # formula; model_used is what actually produced test_r2
+                        # (they can differ — e.g. decision="nn_fallback" still
+                        # tried an LLM formula first). Both are needed to audit
+                        # whether/how models were mixed within this one case.
+                        "llm_model":       hy_m.get("llm_model"),
+                        "model_used":      hy_m.get("model_used"),
+                    }
+                except Exception as e:
+                    case_results["hybrid"] = {
+                        "train_r2": float("nan"), "test_r2": float("nan"),
+                        "success": False, "time_s": 0.0, "error": str(e),
+                        "llm_model": None, "model_used": None,
+                    }
+
+                # ── Augment with extrapolation gap and stability score ────────────
+                for method, res in case_results.items():
+                    tr_ = res.get("train_r2", float("nan"))
+                    te_ = res.get("test_r2",  float("nan"))
+                    res["extrapolation_gap"] = (
+                        float(tr_ - te_) if not (np.isnan(tr_) or np.isnan(te_)) else float("nan")
+                    )
+                    res["stability_score"] = (
+                        float(te_ / tr_)
+                        if (not np.isnan(tr_) and not np.isnan(te_) and abs(tr_) > 1e-6)
+                        else float("nan")
+                    )
+
+                # ── Print per-case summary ────────────────────────────────────────
+                def _fmt(v):
+                    return "   nan" if (v is None or (isinstance(v, float) and np.isnan(v))) else f"{v:6.4f}"
+
+                for method, res in case_results.items():
+                    dec = f" [{res.get('decision', '')}]" if method == "hybrid" else ""
+                    print(f"  {method:15s}: train={_fmt(res.get('train_r2'))}, "
+                          f"test={_fmt(res.get('test_r2'))}{dec}")
+
+                record = {
+                    "equation_id":            tc["name"],
+                    "seed":                 _seed,
+                    "difficulty":           tc["difficulty"],
+                    "formula_type":         tc["formula_type"],
+                    "extrapolation_intractable": is_intractable,
+                    "results":              case_results,
+                }
+                all_results.append(record)
+                _save_checkpoint(all_results)
+                print(f"  💾 Checkpoint saved ({len(all_results)}/{total})")
+
+            except Exception as outer_e:
+                print(f"  ❌ Outer error: {outer_e}")
+                continue
+
+        # Final report + save (per seed — each seed gets its own report/output)
+        _generate_report(all_results)
+        _save_final(all_results)
+
+        # Remove checkpoint on clean completion (not on verify-fix5 partial run)
+        if not verify_fix5 and CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
+            print("🗑️  Checkpoint removed (run complete)")
+
+        all_seed_results.append(all_results)
 
     # FIX-C3: write split_protocol_disclosure.json so Gate B of
     # ci_runner_disclosure.yml can verify protocol parity with the
-    # Feynman benchmark (run_comparative_suite_benchmark_pca.py).
+    # Feynman benchmark (run_comparative_suite_benchmark_pca.py). One
+    # disclosure file for the whole sweep — the split protocol doesn't
+    # vary by seed.
     import datetime as _dt
     _disclosure = {
         "split_protocol":   "pca_40_60",
@@ -1361,19 +1504,15 @@ def run_benchmark(resume: bool = False, verify_fix5: bool = False,
         "split_function":   "pca_directed_split",
         "split_level":      "outer_loop",
         "force_fresh":      True,
+        "seeds":            seed_list,
         "description":      "PC1-directed sort; train on lowest 40%, test on highest 60%",
         "timestamp_utc":    _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
-    _disc_path = RESULTS_DIR / "split_protocol_disclosure.json"
+    _disc_path = _base_results_dir / "split_protocol_disclosure.json"
     _disc_path.write_text(json.dumps(_disclosure, indent=2))
     print(f"📋 split_protocol_disclosure.json written → {_disc_path}")
 
-    # Remove checkpoint on clean completion (not on verify-fix5 partial run)
-    if not verify_fix5 and CHECKPOINT_FILE.exists():
-        CHECKPOINT_FILE.unlink()
-        print("🗑️  Checkpoint removed (run complete)")
-
-    return all_results
+    return all_seed_results[0] if len(all_seed_results) == 1 else all_seed_results
 
 
 def report_only():
@@ -1436,6 +1575,12 @@ Examples:
                             "'hypatiax/data/results' path. Created if it does not exist. "
                             "E.g. --output-dir /tmp/benchmark_out"
                         ))
+    parser.add_argument("--seeds",       nargs="+", type=int, metavar="SEED", default=None,
+                        help=(
+                            "One or more seeds to sweep (each case is run once per "
+                            "seed, with results tagged by seed). Equivalent to setting "
+                            "the DEFI_SEEDS env var. E.g. --seeds 42 99 123 777 2024"
+                        ))
 
     args = parser.parse_args()
 
@@ -1465,4 +1610,5 @@ Examples:
             verify_fix5=args.verify_fix5,
             verbose=args.verbose,
             cases=args.cases,
+            seeds=args.seeds,
         )

@@ -39,6 +39,10 @@ CI / sharding fixes (v03 → current):
           before. The old order [:n_tasks] → filter could silently exclude
           shard-assigned IDs that fell beyond the ceiling. New order: load all,
           filter by TASK_IDS, then apply the N_NGUYEN_TASKS smoke-test cap.
+  [FIX-CHECKPOINT-CALL] Invoke _save() after each equation (not just at end).
+          The _save() function was defined but never called in the main loop.
+          If the job was killed mid-run, zero checkpoint data was written.
+          Now checkpoints are saved after every equation and on deadline approach.
 
 Expected result : 11/12 H (91.7 %) · 10/12 P (83.3 %) · 0/12 NN
                   MW P>NN U=113, p=0.0097
@@ -51,7 +55,7 @@ Usage
     python3 exp3_nguyen12_hybrid50v_02.py --seed 123  # stability check
     python3 exp3_nguyen12_hybrid50v_02.py --seed 777  # stability check
 
-CI shard usage (set by ci_experiment_instability.yml worker dispatch):
+CI shard usage (set by ci_runner.yml worker dispatch):
     TASK_IDS="N1 N3 N7" PYSR_SEED=42 EXPERIMENT_SEED=42 \\
         python3 exp3_nguyen12_hybrid50v_02.py --seed 42
 """
@@ -315,6 +319,51 @@ def run(seed: int = 42):
         with open(_out_path) as _f:
             return json.load(_f)
 
+    # [FIX-CHECKPOINT] The old version of this script only ever wrote
+    # exp3_nguyen12_seed{seed}.json ONCE, after the full 12-equation loop
+    # finished (2 PySR fits/equation x up to METHOD_TIMEOUT=1100s each =
+    # worst case ~440 min). That exceeds the CI worker's 330-min job
+    # timeout, so if the runner is SIGKILLed mid-loop, NOTHING is ever
+    # written -- not even the equations that had already finished --
+    # because the write only happens after the loop. This is what produced
+    # the "No exp3_nguyen12_seed*.json files found" failure with zero
+    # output files on disk despite the job apparently running for hours.
+    #
+    # Fix: (1) write a checkpoint after every equation so completed work is
+    # never lost, and (2) honour JOB_DEADLINE (already exported by
+    # run_all.sh/CI but previously never read by this script) to stop
+    # gracefully with a partial-but-valid JSON instead of being killed
+    # mid-write.
+    _start_time    = time.time()
+    _job_deadline  = int(os.environ.get("JOB_DEADLINE", 0)) or None  # seconds; 0/unset = no cap
+    _CKPT_PATH     = _results_dir / f"_exp3_seed{seed}_partial.json"
+
+    def _save(results_hypatia, results_pysr, n_total, complete):
+        h_recovered = sum(1 for r in results_hypatia if r["evaluation"]["r2"] >= 0.9999)
+        p_recovered = sum(1 for r in results_pysr    if r["evaluation"]["r2"] >= 0.9999)
+        payload = {
+            "config": {
+                "name": "nguyen12_exp3", "seed": seed, "n_tasks": n_total,
+                "niterations": _niter, "populations": _pops,
+                "timeout": _timeout, "use_llm": USE_LLM,
+            },
+            "results": {"hypatiax": results_hypatia, "pysr": results_pysr},
+            "summary": {
+                "h_recovered": h_recovered, "p_recovered": p_recovered,
+                "n_total": n_total,
+                "h_rate": h_recovered / n_total if n_total else 0.0,
+                "p_rate": p_recovered / n_total if n_total else 0.0,
+                "n_completed": len(results_hypatia),
+                "complete": complete,
+            },
+        }
+        _target = _out_path if complete else _CKPT_PATH
+        _tmp = _target.with_suffix(".json.tmp")
+        with open(_tmp, "w") as _f:
+            json.dump(payload, _f, indent=2, default=str)
+        os.replace(_tmp, _target)  # atomic — never leaves a truncated file if killed mid-write
+        return payload
+
     # ── Config from env vars (smoke-test / paper-quality modes) ──────────
     _n_tasks        = int(os.environ.get("N_NGUYEN_TASKS", 12))
     _niter          = int(os.environ.get("N_ITERATIONS",   1000))
@@ -485,6 +534,17 @@ def run(seed: int = 42):
             "elapsed":    elapsed_p,
         })
 
+        # [FIX-CHECKPOINT-CALL] Save checkpoint after each equation ────────
+        _save(results_hypatia, results_pysr, len(all_cases), complete=False)
+
+        # ── Check JOB_DEADLINE and exit gracefully if running out of time ──
+        if _job_deadline:
+            elapsed = time.time() - _start_time
+            if elapsed > _job_deadline * 0.9:  # exit at 90% of deadline
+                print(f"\n⏰ Approaching job deadline ({elapsed:.0f}s/{_job_deadline}s)")
+                print(f"   Saving partial results ({len(results_hypatia)}/{len(all_cases)} completed) and exiting gracefully...")
+                break  # exit loop, save final checkpoint below
+
     # ── Aggregate summary ─────────────────────────────────────────────────
     THRESH      = 0.9999
     h_recovered = sum(1 for r in results_hypatia if r["evaluation"]["r2"] >= THRESH)
@@ -498,35 +558,12 @@ def run(seed: int = 42):
     print("  Expected : 11/12 H (91.7%) · 10/12 P")
     print(f"{'='*68}\n")
 
-    # ── Save JSON output ──────────────────────────────────────────────────
+    # ── Save JSON output (final) ──────────────────────────────────────────
     # [FIX-4] _results_dir already resolved above via _resolve_results_dir().
-    result = {
-        "config": {
-            "name":        "nguyen12_exp3",
-            "seed":        seed,
-            "n_tasks":     n,
-            "niterations": _niter,
-            "populations": _pops,
-            "timeout":     _timeout,
-            "use_llm":     USE_LLM,
-        },
-        "results": {
-            "hypatiax": results_hypatia,
-            "pysr":     results_pysr,
-        },
-        "summary": {
-            "h_recovered": h_recovered,
-            "p_recovered": p_recovered,
-            "n_total":     n,
-            "h_rate":      h_recovered / n if n else 0.0,
-            "p_rate":      p_recovered / n if n else 0.0,
-        },
-    }
+    # [FIX-CHECKPOINT-CALL] Use _save() for final output too (complete=True).
+    result = _save(results_hypatia, results_pysr, len(all_cases), complete=True)
 
-    OUTPUT_JSON = str(_results_dir / f"exp3_nguyen12_seed{seed}.json")
-    with open(OUTPUT_JSON, "w") as _f:
-        json.dump(result, _f, indent=2, default=str)
-
+    OUTPUT_JSON = str(_out_path)
     print("\n  Protocol returned: success")
     print(f"  JSON: {OUTPUT_JSON}")
 

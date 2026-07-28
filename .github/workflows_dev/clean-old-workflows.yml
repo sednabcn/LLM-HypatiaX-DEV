@@ -1,0 +1,220 @@
+name: Cleanup Old Workflow Runs
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Every Sunday at 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      hours_threshold:
+        description: 'Delete workflow runs older than this many hours'
+        required: false
+        default: '72'
+        type: string
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: write
+      contents: read
+    steps:
+      - name: Cleanup Old Workflow Runs
+        uses: actions/github-script@v8
+        env:
+          HOURS_THRESHOLD: ${{ github.event.inputs.hours_threshold || '72' }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN}}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Configuration
+            const KEEP_RECENT_RUNS = 3;   // Keep only 3 runs per workflow MAX
+            const KEEP_HOURS = parseInt(process.env.HOURS_THRESHOLD || '72', 10);
+            const MAX_TOTAL_RUNS = 25;    // STRICT global limit
+            const MAX_PAGES = 30;
+
+            console.log('🧹 Starting ULTRA aggressive workflow cleanup...');
+            console.log(`Policy: STRICT limit of ${MAX_TOTAL_RUNS} runs total (max ${KEEP_RECENT_RUNS} per workflow)`);
+            console.log(`Deleting runs older than ${KEEP_HOURS} hours`);
+            console.log(`Repository: ${owner}/${repo}`);
+            console.log('================================');
+
+            const cutoffDate = new Date();
+            cutoffDate.setHours(cutoffDate.getHours() - KEEP_HOURS);
+            console.log(`Cutoff date: ${cutoffDate.toISOString()} (${KEEP_HOURS} hours ago)`);
+
+            let totalDeleted = 0;
+            let totalKept = 0;
+            let totalProcessed = 0;
+            let workflowCount = 0;
+            let allRunsAcrossWorkflows = [];
+
+            try {
+              // Fetch ALL runs at repo level — catches orphaned runs from renamed/deleted
+              // workflow files that won't appear when querying by workflow ID.
+              console.log('📋 Fetching all runs across repo (including orphaned)...');
+
+              let page = 1;
+              while (page <= MAX_PAGES) {
+                try {
+                  console.log(`  📖 Fetching page ${page}...`);
+                  const { data: runsPage } = await github.rest.actions.listWorkflowRunsForRepo({
+                    owner,
+                    repo,
+                    page,
+                    per_page: 100
+                  });
+
+                  console.log(`    📊 Got ${runsPage.workflow_runs.length} runs on page ${page}`);
+
+                  if (runsPage.workflow_runs.length === 0) break;
+
+                  const runsWithWorkflow = runsPage.workflow_runs.map(run => ({
+                    ...run,
+                    workflow_name: run.name || `workflow_${run.workflow_id}`,
+                    workflow_id: run.workflow_id
+                  }));
+
+                  allRunsAcrossWorkflows = allRunsAcrossWorkflows.concat(runsWithWorkflow);
+                  console.log(`    📈 Total runs collected so far: ${allRunsAcrossWorkflows.length}`);
+
+                  page++;
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                } catch (error) {
+                  console.log(`    ❌ Error fetching page ${page}: ${error.message}`);
+                  break;
+                }
+              }
+
+              workflowCount = new Set(allRunsAcrossWorkflows.map(r => r.workflow_id)).size;
+              totalProcessed = allRunsAcrossWorkflows.length;
+              console.log(`\n📊 Total runs collected: ${totalProcessed} across ${workflowCount} workflows`);
+
+              // Sort ALL runs by creation date (newest first)
+              allRunsAcrossWorkflows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              // Apply policies
+              const runsToKeep = [];
+              const runsToDelete = [];
+              const workflowRunCounts = {};
+
+              for (const run of allRunsAcrossWorkflows) {
+                const runDate = new Date(run.created_at);
+                const workflowId = run.workflow_id;
+
+                if (!workflowRunCounts[workflowId]) {
+                  workflowRunCounts[workflowId] = 0;
+                }
+
+                const isWithinHours = runDate > cutoffDate;
+                const isWithinWorkflowLimit = workflowRunCounts[workflowId] < KEEP_RECENT_RUNS;
+                const isWithinGlobalLimit = runsToKeep.length < MAX_TOTAL_RUNS;
+
+                // Hours threshold is the PRIMARY filter.
+                // Only keep a run if it is within the hours window AND within both caps.
+                if (isWithinHours && isWithinWorkflowLimit && isWithinGlobalLimit) {
+                  runsToKeep.push(run);
+                  workflowRunCounts[workflowId]++;
+                } else {
+                  runsToDelete.push(run);
+                }
+              }
+
+              console.log(`\n📊 Final decision:`);
+              console.log(`  📦 Will keep: ${runsToKeep.length} runs`);
+              console.log(`  🗑️  Will delete: ${runsToDelete.length} runs`);
+
+              // Group deletions by workflow for organised processing
+              const deletesByWorkflow = {};
+              for (const run of runsToDelete) {
+                if (!deletesByWorkflow[run.workflow_id]) {
+                  deletesByWorkflow[run.workflow_id] = [];
+                }
+                deletesByWorkflow[run.workflow_id].push(run);
+              }
+
+              for (const [workflowId, runs] of Object.entries(deletesByWorkflow)) {
+                const workflowName = runs[0].workflow_name;
+                console.log(`\n🗑️  Deleting ${runs.length} runs from: ${workflowName}`);
+
+                const BATCH_SIZE = 5;
+                let workflowDeleted = 0;
+
+                for (let i = 0; i < runs.length; i += BATCH_SIZE) {
+                  const batch = runs.slice(i, i + BATCH_SIZE);
+                  console.log(`    🗑️  Batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(runs.length/BATCH_SIZE)} (${batch.length} runs)`);
+
+                  const deletePromises = batch.map(async (run) => {
+                    try {
+                      await github.rest.actions.deleteWorkflowRun({
+                        owner,
+                        repo,
+                        run_id: run.id
+                      });
+                      return true;
+                    } catch (error) {
+                      console.log(`      ❌ Failed to delete run ${run.id}: ${error.message}`);
+                      return false;
+                    }
+                  });
+
+                  const results = await Promise.allSettled(deletePromises);
+                  const successful = results.filter(r => r.status === 'fulfilled' && r.value).length;
+                  workflowDeleted += successful;
+
+                  if (i + BATCH_SIZE < runs.length) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                }
+
+                console.log(`  📊 Deleted ${workflowDeleted}/${runs.length} runs from ${workflowName}`);
+                totalDeleted += workflowDeleted;
+              }
+
+              totalKept = runsToKeep.length;
+
+            } catch (error) {
+              console.error('❌ Fatal error during cleanup:', error.message);
+              throw error;
+            }
+
+            console.log('\n=================================');
+            console.log('🎉 Cleanup completed!');
+            console.log('📊 Total summary:');
+            console.log(`  • Workflows processed: ${workflowCount}`);
+            console.log(`  • Total runs processed: ${totalProcessed}`);
+            console.log(`  • Runs kept: ${totalKept}`);
+            console.log(`  • Runs deleted: ${totalDeleted}`);
+            console.log(`  • Success rate: ${totalProcessed > 0 ? Math.round((totalDeleted + totalKept) / totalProcessed * 100) : 0}%`);
+
+            if (totalDeleted > 10) {
+              const issueBody = [
+                '## Workflow Cleanup Results',
+                '',
+                `**Date:** ${new Date().toISOString()}`,
+                `**Repository:** ${owner}/${repo}`,
+                '',
+                '### Summary',
+                `- **Workflows processed:** ${workflowCount}`,
+                `- **Total runs processed:** ${totalProcessed}`,
+                `- **Runs kept:** ${totalKept}`,
+                `- **Runs deleted:** ${totalDeleted}`,
+                '',
+                '### Policy Applied',
+                `- Hours threshold: runs older than ${KEEP_HOURS} hours are deleted`,
+                `- Per-workflow limit: max ${KEEP_RECENT_RUNS} runs kept per workflow`,
+                `- Global limit: max ${MAX_TOTAL_RUNS} runs kept across all workflows`,
+                '',
+                '### Status',
+                '✅ Cleanup completed successfully'
+              ].join('\n');
+
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title: `🧹 Workflow Cleanup Summary - ${new Date().toISOString().split('T')[0]}`,
+                body: issueBody,
+                labels: ['maintenance', 'automated']
+              });
+            }

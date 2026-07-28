@@ -43,7 +43,7 @@ load_dotenv(dotenv_path=env_path)
 class PureLLMBaseline:
     """Fixed Pure LLM baseline with liquidation domain corrections."""
 
-    def __init__(self, model: str = "claude-sonnet-4-6"):
+    def __init__(self, model: str = "claude-sonnet-5"):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
@@ -332,7 +332,20 @@ class PureLLMBaseline:
                 max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
             )
-            content = response.content[0].text
+            # FIX (ThinkingBlock crash): response.content[0] is not guaranteed to be
+            # the text block. When the model returns extended-thinking output, the
+            # content list starts with a ThinkingBlock (no .text attribute), and
+            # content[0].text raised 'ThinkingBlock' object has no attribute 'text'
+            # on every case where thinking preceded the answer — observed on ~70%
+            # of exp1 (v3/non-PCA) cases in the seed-42 re-run. Explicitly locate
+            # the first text block instead of assuming position 0.
+            text_blocks = [b for b in response.content if getattr(b, "type", None) == "text"]
+            if not text_blocks:
+                raise ValueError(
+                    f"No text block in response.content "
+                    f"(block types: {[getattr(b, 'type', type(b).__name__) for b in response.content]})"
+                )
+            content = text_blocks[0].text
             parsed = self._parse_response(content)
 
             return {

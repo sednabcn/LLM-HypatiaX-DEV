@@ -137,7 +137,7 @@ class EnhancedExtrapolationTest:
         Returns (r2: float, success: bool).
         """
         try:
-            from hypatiax.experiments.tests.hybrid_ensemble_system_defi_domain import (
+            from hypatiax.core.generation.hybrid_defi_llm_nn.hybrid_ensemble_system_defi_domain import (
                 execute_python_code_get_predictions,
             )
             y_pred = execute_python_code_get_predictions(llm_code, X)

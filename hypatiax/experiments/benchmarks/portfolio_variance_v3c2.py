@@ -372,20 +372,24 @@ if sweep_data and df_pysr is not None:
     plt.show()
     print('Figure saved to RESULTS_DIR')
 
-if 'success' not in df_pysr.columns:
-    df_pysr['success'] = df_pysr['far_r2'] > 0.99
+if sweep_data and df_pysr is not None:
+    if 'success' not in df_pysr.columns:
+        df_pysr['success'] = df_pysr['far_r2'] > 0.99
 
-if 'success' not in df_hypatia.columns:
-    df_hypatia['success'] = df_hypatia['far_r2'] > 0.99
+    if 'success' not in df_hypatia.columns:
+        df_hypatia['success'] = df_hypatia['far_r2'] > 0.99
 
-print("df_pysr with 'success' column:")
-display(df_pysr.head())
+    print("df_pysr with 'success' column:")
+    display(df_pysr.head())
 
-print("\ndf_hypatia with 'success' column:")
-display(df_hypatia.head())
+    print("\ndf_hypatia with 'success' column:")
+    display(df_hypatia.head())
 
-print('Summary statistics for df_all:')
-display(df_all.describe())
+    print('Summary statistics for df_all:')
+    display(df_all.describe())
+else:
+    print('Skipping success-column summary — no sweep data available '
+          '(df_pysr is None).')
 
 """---
 ## §3 — Rerun Strategy & Execution

@@ -262,6 +262,39 @@ class HybridDiscoverySystem:
         _PYSR_OP_ALIASES
     )
 
+    # FIX (2026-07-27): _PYSR_OP_ALIASES above aliases asin_of_sin/acos_of_cos
+    # to *bare* arcsin/arccos, and safe_asin/safe_acos to bare arcsin/arccos
+    # with no clipping. That's fine for _safe_validate's symbolic/dimensional
+    # checks (which don't care about numeric domain), but it silently
+    # destroyed the clip/compose semantics when reused for the RMSE
+    # lambdify path: asin_of_sin(x) -- meant to handle x outside [-1, 1] by
+    # composing through sin() first -- became plain arcsin(x), which is
+    # exactly the domain failure asin_of_sin exists to avoid. This table
+    # supplies numerically-correct implementations for use with sympy's
+    # lambdify(modules=...) override, keyed by the *original* PySR names
+    # (left un-substituted by _normalise_expression_numeric below) rather
+    # than by aliasing the names away before lambdify ever sees them.
+    _TRIG_NUMERIC_FUNCS: dict[str, Any] = {
+        "safe_asin":   lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+        "safe_acos":   lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+        "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+        "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+        "atan_of_tan": lambda x: np.arctan(np.tan(x)),
+    }
+
+    @staticmethod
+    def _normalise_expression_numeric(expression_str: str) -> str:
+        """Numeric-safe counterpart to _normalise_expression.
+
+        Only rewrites '^' -> '**'. Deliberately leaves safe_asin/safe_acos/
+        asin_of_sin/acos_of_cos/atan_of_tan as literal function names so
+        sympy.sympify parses them as undefined Functions; the caller must
+        pass _TRIG_NUMERIC_FUNCS in lambdify's `modules` list so they
+        evaluate with correct clip/compose semantics instead of being
+        aliased to domain-unsafe bare arcsin/arccos/arctan.
+        """
+        return expression_str.replace("^", "**")
+
     def __init__(
         self,
         domain: str = "general",
@@ -1212,7 +1245,14 @@ class HybridDiscoverySystem:
             ):
                 try:
                     import sympy as _sp
-                    _norm_expr = self._normalise_expression(formula)
+                    # FIX (2026-07-27): use the numeric-safe normaliser here,
+                    # not _normalise_expression -- see _TRIG_NUMERIC_FUNCS
+                    # comment above. This keeps safe_asin/asin_of_sin/etc as
+                    # literal function names so lambdify's modules override
+                    # (below) can give them correct clip/compose semantics,
+                    # instead of _normalise_expression silently aliasing them
+                    # to domain-unsafe bare arcsin/arccos/arctan.
+                    _norm_expr = self._normalise_expression_numeric(formula)
                     _safe_names = discovery.get("variable_names", var_names)
 
                     # RC-1 / RC-5: prefer engine's augmented matrix; validate row count
@@ -1268,7 +1308,11 @@ class HybridDiscoverySystem:
                             f"at line ~1223-1224). Cannot evaluate RMSE for this formula."
                         )
 
-                    _func = _sp.lambdify(_ordered_syms, _expr_sym, modules="numpy")
+                    _func = _sp.lambdify(
+                        _ordered_syms,
+                        _expr_sym,
+                        modules=[HybridDiscoverySystem._TRIG_NUMERIC_FUNCS, "numpy"],
+                    )
                     _y_pred = _func(*[_vars_dict[k] for k in _vars_dict])
                     _y_pred = np.asarray(_y_pred, dtype=np.float64)
 

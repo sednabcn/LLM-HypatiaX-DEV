@@ -344,6 +344,20 @@ def _runner_eval_formula(
         "cosh":   np.cosh,
         "erf":    (np.vectorize(math.erf) if _spsp is None else _spsp.erf),
         "erfc":   (np.vectorize(math.erfc) if _spsp is None else _spsp.erfc),
+        # FIX (2026-07-25): safe_asin/safe_acos are injected into the
+        # DISCOVERY-time namespace by SymbolicEngineWithLLM.auto_inject_trig
+        # for optics/waves domains (symbolic_engine.py), but were never
+        # added to this SCORING-time namespace. Reuse the same clipped
+        # implementation as arcsin/arccos so the two cannot drift apart
+        # again. Same fix as applied to run_comparative_suite_benchmark_v2.py.
+        "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+        "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+        "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+        # FIX (2026-07-27): acos_of_cos/atan_of_tan were named alongside
+        # asin_of_sin in the paper's fix description but never actually
+        # added here. Same composition-bypass pattern as asin_of_sin.
+        "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+        "atan_of_tan": lambda x: np.arctan(np.tan(x)),
     }
     if _spsp is not None:
         safe_globals["scipy"]   = type("m", (), {"special": _spsp})()
@@ -355,6 +369,23 @@ def _runner_eval_formula(
         local_ns[vn] = X[:, i] if X.ndim == 2 else X
 
     code   = python_code.strip()
+
+    # FIX (2026-07-25), applied to ALL THREE strategies below since they
+    # all operate on `code`. Same fix as applied to
+    # run_comparative_suite_benchmark_v2.py.
+    #
+    # FIX-2: strip a leading bracketed human-readable annotation, e.g.
+    # "[X-normalised: q÷3.958e-18] 1.194902e-10 * (...)" -- upstream
+    # normalisation metadata that was never stripped before being handed
+    # to eval()/exec(), causing an immediate SyntaxError.
+    code = re.sub(r"^\s*\[[^\]]*\]\s*", "", code)
+
+    # FIX-1: '^' is used as a conventional power operator by the formula
+    # generator (a PySR/Julia-style convention) but is bitwise XOR in
+    # Python, undefined for float operands (TypeError). No formula in
+    # this pipeline intends genuine bitwise XOR.
+    code = code.replace("^", "**")
+
     y_pred = None
 
     # Strategy 1: bare expression
@@ -679,6 +710,39 @@ except ImportError:
 # PCA-directed split utility (FIX-C3: replaces random 80/20 sklearn random-split)
 from hypatiax.tools.utils import pca_directed_split 
 
+
+def _require_matching_width(fitted: np.ndarray, incoming: np.ndarray, where: str) -> None:
+    """
+    Guard against the feature-count mismatch class of bug fixed in
+    hypatiax_defi_benchmark_pca.py ("X has 9 features, but StandardScaler is
+    expecting 7 features as input"). That bug came from deciding which
+    columns to log/sqrt-augment independently on whatever array a helper
+    happened to receive, so train and test — which can have systematically
+    different value ranges under the PCA-directed 40/60 split — qualified a
+    different number of columns and were appended with a different number of
+    extra features before hitting the same StandardScaler.
+
+    This file avoids that today because every log-transform plan is decided
+    once (from X_train) and applied identically, in place, to every split —
+    so the column count can never drift. This assertion is a cheap tripwire:
+    if a future edit reintroduces per-split column selection or column
+    appending, it fails immediately with a precise message (which call site,
+    which widths) instead of surfacing later as a bare sklearn ValueError
+    deep in a training run.
+    """
+    if fitted.shape[1] != incoming.shape[1]:
+        raise ValueError(
+            f"[feature-count mismatch @ {where}] scaler was fit on "
+            f"{fitted.shape[1]} features but is being applied to "
+            f"{incoming.shape[1]} features. This is the same class of bug "
+            f"fixed in hypatiax_defi_benchmark_pca.py (_compute_augment_plan / "
+            f"_apply_augment_plan) — a column-selection plan (log_cols, "
+            f"sqrt_cols, ratio, etc.) is being decided independently per "
+            f"split instead of once from X_train and applied identically "
+            f"everywhere. Fix the augmentation call site at '{where}' so its "
+            f"plan is computed from the training split only."
+        )
+
 # ---------------------------------------------------------------------------
 # Anthropic client
 # ---------------------------------------------------------------------------
@@ -710,13 +774,18 @@ def _probe(module_path: str, class_name: str) -> bool:
     """Return True if a dotted module path exports the given class name.
 
     NOTE: Any module imported here that transitively loads torch will be safe
-    because torch has already been imported (eagerly, after juliacall) above.
+    because torch has already been imported (eagerly, after juliacall) above —
+    UNLESS the eager `import torch` itself failed, in which case every module
+    that transitively imports torch will fail here too. Previously that real
+    exception was swallowed silently, making the resulting AVAILABLE=False
+    flags undiagnosable. Print it, same as _probe_hybrid_all() already does.
     """
     import importlib
     try:
         mod = importlib.import_module(module_path)
         return hasattr(mod, class_name)
-    except Exception:
+    except Exception as exc:
+        print(f"⚠️  _probe({module_path!r}, {class_name!r}): {exc}")
         return False
 
 
@@ -1018,6 +1087,18 @@ class BaseMethod:
             "cosh":  np.cosh,
             "erf":   (np.vectorize(math.erf) if _spsp is None else _spsp.erf),
             "erfc":  (np.vectorize(math.erfc) if _spsp is None else _spsp.erfc),
+            # FIX (2026-07-27): this safe_globals construction (BaseMethod,
+            # used by Hybrid/SymbolicEngine/HybridSystemV50_2 methods) was
+            # missing safe_asin/safe_acos/asin_of_sin/acos_of_cos/atan_of_tan
+            # entirely -- same defect already fixed in
+            # run_comparative_suite_benchmark_v2.py, ported over here.
+            # Formulas using these names (e.g. Snell's law) raised NameError
+            # here, silently returning None via the broad except below.
+            "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+            "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+            "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+            "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+            "atan_of_tan": lambda x: np.arctan(np.tan(x)),
         }
         if _spsp is not None:
             safe_globals["scipy"] = type("m", (), {"special": _spsp})()
@@ -1344,6 +1425,19 @@ class PureLLMBaselineMethod(BaseMethod):
             "cosh":  np.cosh,
             "erf":   (np.vectorize(math.erf) if _spsp is None else _spsp.erf),
             "erfc":  (np.vectorize(math.erfc) if _spsp is None else _spsp.erfc),
+            # FIX (2026-07-27): this safe_globals construction
+            # (PureLLMBaselineMethod, the pure-LLM baseline's main scoring
+            # path) was missing safe_asin/safe_acos/asin_of_sin/acos_of_cos/
+            # atan_of_tan entirely. Any LLM-generated formula using these
+            # names raised NameError here, silently returning None via the
+            # broad except below -- this is the primary in-range Rsq scoring
+            # path for the LLM baseline, not just the far-extrapolation
+            # recheck.
+            "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+            "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+            "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+            "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+            "atan_of_tan": lambda x: np.arctan(np.tan(x)),
         }
         if _spsp is not None:
             safe_globals["scipy"] = type("m", (), {"special": _spsp})()
@@ -1614,7 +1708,9 @@ class ImprovedNN(BaseMethod):
             scaler_y = StandardScaler()
 
             X_train_s = scaler_X.fit_transform(X_train_t)
+            _require_matching_width(X_train_t, X_test_t, "ImprovedNN.run: X_test_t")
             X_test_s  = scaler_X.transform(X_test_t)
+            _require_matching_width(X_train_t, X_all_t, "ImprovedNN.run: X_all_t")
             X_all_s   = scaler_X.transform(X_all_t)   # full dataset, same scaler
             y_train_s = scaler_y.fit_transform(y_train_t.reshape(-1, 1)).flatten()
 
@@ -1726,6 +1822,10 @@ class ImprovedNN(BaseMethod):
                     scaler_X_lin = StandardScaler()
                     scaler_y_lin = StandardScaler()
                     X_train_lin_s = scaler_X_lin.fit_transform(X_train.astype(float))
+                    _require_matching_width(
+                        X_train.astype(float), X_test.astype(float),
+                        "ImprovedNN.run linear-fallback: X_test",
+                    )
                     X_test_lin_s  = scaler_X_lin.transform(X_test.astype(float))
                     y_train_lin_s = scaler_y_lin.fit_transform(
                         y_train.reshape(-1, 1)).flatten()
@@ -1782,6 +1882,10 @@ class ImprovedNN(BaseMethod):
                 elif space_tag == "lin-fallback" and _lin_model is not None:
                     # Linear-space NN was the best predictor — replay on all 200 rows
                     _lin_model.eval()
+                    _require_matching_width(
+                        X_train.astype(float), X.astype(float),
+                        "ImprovedNN.run linear-fallback: X_all",
+                    )
                     _X_all_lin_s = _lin_scaler_X.transform(X.astype(float))
                     with torch.no_grad():
                         _yp_lin = _lin_scaler_y.inverse_transform(
@@ -2704,6 +2808,11 @@ try:
         _parsimony = kwargs.get("parsimony", 0.01)       # repro.yaml pysr.parsimony=0.01
         _populations = kwargs.get("populations", 30)     # repro.yaml pysr.populations=30
         _use_tc    = kwargs.get("use_transcendental_compositions", False)
+        # ── FIX: forward domain — same pattern as the symbolic_engine branch
+        # above. Without this, HybridDiscoverySystem always sees domain=
+        # "general" (its internal default) and never fires the trig-operator
+        # auto-injection that SymbolicEngineWithLLM already benefits from.
+        _domain    = kwargs.get("domain", metadata.get("domain", "general"))
         _disc_cfg_kwargs = dict(
             niterations=_n_iter,
             pysr_timeout=_pysr_to,
@@ -2717,6 +2826,7 @@ try:
         system = HybridDiscoverySystem(
             discovery_config=_disc_cfg,
             max_retries=_n_retry,
+            domain=_domain,
         )
         result = system.discover(
             X=X, y=y,

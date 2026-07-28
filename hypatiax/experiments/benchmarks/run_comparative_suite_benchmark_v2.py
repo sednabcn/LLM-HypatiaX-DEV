@@ -333,6 +333,21 @@ def _runner_eval_formula(
         "cosh":   np.cosh,
         "erf":    (np.vectorize(math.erf) if _spsp is None else _spsp.erf),
         "erfc":   (np.vectorize(math.erfc) if _spsp is None else _spsp.erfc),
+        # FIX (2026-07-25): safe_asin/safe_acos are injected into the
+        # DISCOVERY-time namespace by SymbolicEngineWithLLM.auto_inject_trig
+        # for optics/waves domains (symbolic_engine.py), but were never
+        # added to this SCORING-time namespace, causing formulas that use
+        # them (e.g. Snell's law) to silently fail here. Reuse the same
+        # clipped implementation as arcsin/arccos so the two cannot drift
+        # apart again.
+        "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+        "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+        "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+        # FIX (2026-07-27): acos_of_cos/atan_of_tan were named alongside
+        # asin_of_sin in the paper's fix description but never actually
+        # added here. Same composition-bypass pattern as asin_of_sin.
+        "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+        "atan_of_tan": lambda x: np.arctan(np.tan(x)),
     }
     if _spsp is not None:
         safe_globals["scipy"]   = type("m", (), {"special": _spsp})()
@@ -344,6 +359,24 @@ def _runner_eval_formula(
         local_ns[vn] = X[:, i] if X.ndim == 2 else X
 
     code   = python_code.strip()
+
+    # FIX (2026-07-25), applied to ALL THREE strategies below since they
+    # all operate on `code`:
+    #
+    # FIX-2: strip a leading bracketed human-readable annotation, e.g.
+    # "[X-normalised: q÷3.958e-18] 1.194902e-10 * (...)" -- this is
+    # upstream normalisation metadata that was never stripped before
+    # being handed to eval()/exec(), causing an immediate SyntaxError
+    # (the bracket, colon, and unicode '÷' are not valid Python).
+    code = re.sub(r"^\s*\[[^\]]*\]\s*", "", code)
+
+    # FIX-1: '^' is used as a conventional power operator by the formula
+    # generator (a PySR/Julia-style convention) but is bitwise XOR in
+    # Python, undefined for float operands (TypeError). No formula in
+    # this pipeline intends genuine bitwise XOR, so a blanket rewrite is
+    # safe.
+    code = code.replace("^", "**")
+
     y_pred = None
 
     # Strategy 1: bare expression
@@ -1043,6 +1076,18 @@ class BaseMethod:
             "cosh":  np.cosh,
             "erf":   (np.vectorize(math.erf) if _spsp is None else _spsp.erf),
             "erfc":  (np.vectorize(math.erfc) if _spsp is None else _spsp.erfc),
+            # FIX (2026-07-27): this safe_globals construction (BaseMethod,
+            # used by Hybrid/SymbolicEngine/HybridSystemV50_2 methods) was
+            # missing safe_asin/safe_acos/asin_of_sin/acos_of_cos/atan_of_tan
+            # entirely -- the same defect identified and "fixed" elsewhere in
+            # this script, but the earlier fix never reached this block.
+            # Formulas using these names (e.g. Snell's law) raised NameError
+            # here, silently returning None via the broad except below.
+            "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+            "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+            "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+            "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+            "atan_of_tan": lambda x: np.arctan(np.tan(x)),
         }
         if _spsp is not None:
             safe_globals["scipy"] = type("m", (), {"special": _spsp})()
@@ -1369,6 +1414,19 @@ class PureLLMBaselineMethod(BaseMethod):
             "cosh":  np.cosh,
             "erf":   (np.vectorize(math.erf) if _spsp is None else _spsp.erf),
             "erfc":  (np.vectorize(math.erfc) if _spsp is None else _spsp.erfc),
+            # FIX (2026-07-27): this safe_globals construction
+            # (PureLLMBaselineMethod, the pure-LLM baseline's main scoring
+            # path -- see line ~1516) was missing
+            # safe_asin/safe_acos/asin_of_sin/acos_of_cos/atan_of_tan
+            # entirely. Any LLM-generated formula using these names raised
+            # NameError here, silently returning None via the broad except
+            # below -- this is the primary in-range Rsq scoring path for
+            # the LLM baseline, not just the far-extrapolation recheck.
+            "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+            "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+            "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+            "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+            "atan_of_tan": lambda x: np.arctan(np.tan(x)),
         }
         if _spsp is not None:
             safe_globals["scipy"] = type("m", (), {"special": _spsp})()
@@ -3402,6 +3460,51 @@ class ProtocolBenchmarkSuite:
                 else:
                     print(f"✗ {(result.error or 'failed')[:60]}")
 
+        # ── Decision-attribution consistency check ─────────────────────────
+        # BUG (see paper §"Hybrid Decision-Attribution Bug"): the hybrid
+        # method's run() records success=True / a real r2 whenever it can
+        # locate *any* numeric r2 or recompute one from y_pred — without
+        # verifying that the sub-method named in metadata["decision"]
+        # actually succeeded on this task. Concretely we have observed
+        # hybrid.decision == "llm" with hybrid.success == True while
+        # pure_llm.success == False (NaN) on the same task in the same run,
+        # reproducing deterministically across all 5 available seeds for at
+        # least one DeFi task ("Portfolio Expected Shortfall for correlated").
+        #
+        # This block applies the same conservative correction used for the
+        # paper's post-hoc analysis, but at generation time: a hybrid result
+        # is only trusted as a genuine success if the sub-method its own
+        # `decision` field names also reports success == True. It does not
+        # touch any other method's result, and does not manufacture a
+        # success where the pipeline reported none — it only downgrades
+        # hybrid successes that are provably attributed to a failed
+        # sub-method.
+        _decision_to_submethod = {
+            "llm": "pure_llm",
+            "nn": "neural_network",
+            "nn_fallback": "neural_network",
+        }
+        _hybrid_result = results.get("hybrid")
+        if _hybrid_result is not None and getattr(_hybrid_result, "success", False):
+            _decision = (_hybrid_result.metadata or {}).get("decision")
+            _sub_name = _decision_to_submethod.get(_decision)
+            _sub_result = results.get(_sub_name) if _sub_name else None
+            if _sub_result is not None and not getattr(_sub_result, "success", True):
+                _hybrid_result.metadata = dict(_hybrid_result.metadata or {})
+                _hybrid_result.metadata["decision_attribution_corrected"] = True
+                _hybrid_result.metadata["success_raw"] = True
+                _hybrid_result.metadata["correction_reason"] = (
+                    f"decision={_decision!r} names sub-method "
+                    f"{_sub_name!r} which reported success=False on this task"
+                )
+                _hybrid_result.success = False
+                if verbose:
+                    print(
+                        f"  ⚠️  hybrid decision-attribution correction applied: "
+                        f"decision={_decision!r} but {_sub_name}.success=False "
+                        f"→ hybrid.success forced to False"
+                    )
+
         comparison = self._compare(results, y)
 
         if verbose:
@@ -4224,7 +4327,30 @@ Examples
         "--benchmark",
         choices=["feynman", "srbench", "both"],
         default="feynman",
-        help="Which published SR benchmark to use (default: feynman)",
+        help=(
+            "Which published SR benchmark to use (default: feynman). "
+            "Only meaningful with --protocol benchmark (the default) — it "
+            "selects the sub-benchmark *inside* BenchmarkProtocol and does "
+            "NOT switch protocol classes. It cannot produce the exp2 "
+            "10-domain set (mechanics/quantum/electro/fluid_dynamics/etc.); "
+            "use --protocol all_domains for that."
+        ),
+    )
+    parser.add_argument(
+        "--protocol",
+        choices=["benchmark", "all_domains"],
+        default="benchmark",
+        help=(
+            "Which protocol class to load. 'benchmark' (default) loads "
+            "BenchmarkProtocol (Feynman/SRBench, controlled by --benchmark). "
+            "'all_domains' loads ExperimentProtocolAll from "
+            "hypatiax.core.generation.hybrid_all_domains_llm_nn."
+            "hybrid_system_llm_nn_all_domains — the 30-equation, "
+            "multi-domain protocol exp2 actually needs. There is no "
+            "'all30' choice; the run_all.sh comment referencing "
+            "'--protocol all30' referred to a flag/value that was never "
+            "implemented. Use --protocol all_domains instead."
+        ),
     )
     parser.add_argument(
         "--domain", type=str, default="all_domains",
@@ -4481,50 +4607,97 @@ Examples
     global _METHOD_TIMEOUT_SECS
     _METHOD_TIMEOUT_SECS = args.method_timeout
 
-    # ── Load BenchmarkProtocol ──────────────────────────────────────────────
-    try:
-        from hypatiax.protocols.experiment_protocol_benchmark_v2 import BenchmarkProtocol
-        _noiseless = getattr(args, "noiseless", False)
-        _threshold = getattr(args, "threshold", None)
-        if _threshold is None:
-            _threshold = 0.9999 if _noiseless else 0.995
+    # ── Load protocol ────────────────────────────────────────────────────────
+    # NOTE ON ROOT CAUSE (exp2 "Unknown domain" failures, 7/10 shards):
+    # This script previously *always* instantiated BenchmarkProtocol
+    # regardless of --benchmark/--protocol, because no branch existed to load
+    # anything else. BenchmarkProtocol's domain space (Feynman series +
+    # SRBench PMLB categories) does not contain — and structurally cannot
+    # contain — the exp2 10-domain set (mechanics/quantum/electro/
+    # fluid_dynamics/math/stats/econ/bio/chem/phys), which is defined by
+    # EXP2_DOMAINS / HYBRID_ALL_DOMAINS_IDS and served by ExperimentProtocolAll
+    # instead. A prior fix swapped a nonexistent "--protocol all30" for
+    # "--benchmark both", on the assumption that "both" would route into
+    # ExperimentProtocolAll — it does not; "both" only tells BenchmarkProtocol
+    # to combine its own Feynman+SRBench domains, which is why
+    # get_all_domains() kept surfacing just {biology, chemistry, economics}
+    # and every _DOMAIN_ALIASES lookup for the exp2 names failed downstream.
+    # --protocol all_domains below is the actual fix: it loads
+    # ExperimentProtocolAll, which is why it exists.
+    _noiseless = getattr(args, "noiseless", False)
+    _threshold = getattr(args, "threshold", None)
+    if _threshold is None:
+        _threshold = 0.9999 if _noiseless else 0.995
 
-        protocol = BenchmarkProtocol(
-            benchmark=args.benchmark,
-            num_samples=args.samples,
-            seed=42,
-            feynman_series=args.series,
-            noiseless=_noiseless,
-        )
-        print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
+    if args.protocol == "all_domains":
+        try:
+            from hypatiax.core.generation.hybrid_all_domains_llm_nn.hybrid_system_llm_nn_all_domains import (
+                ExperimentProtocolAll,
+            )
+        except ImportError:
+            print("❌  ExperimentProtocolAll not found.")
+            print("    Expected at: hypatiax/core/generation/hybrid_all_domains_llm_nn/"
+                  "hybrid_system_llm_nn_all_domains.py")
+            sys.exit(1)
+
+        # ExperimentProtocolAll is pure @staticmethods with no __init__
+        # override (confirmed against source), so it only accepts the
+        # default no-arg constructor. num_samples is passed per-call to
+        # load_test_data() below (see protocol.load_test_data(domain,
+        # num_samples=...) at the call sites), and seed/noiseless are not
+        # consumed by this protocol's interface at all — get_all_domains()
+        # takes nothing and load_test_data() only takes num_samples — so
+        # nothing is lost by dropping them here.
+        try:
+            protocol = ExperimentProtocolAll()
+        except TypeError as e:
+            print(f"❌  ExperimentProtocolAll(...) constructor mismatch: {e}")
+            print("    ExperimentProtocolAll takes no arguments; check for "
+                  "local modifications to its __init__.")
+            sys.exit(1)
+        print("✅ ExperimentProtocolAll loaded  (protocol=all_domains)")
         print()
-        if getattr(args, "extrap", False):
-            print("=" * 70)
-            print("  EXTRAP MODE  —  train on first 80% of range, test beyond it")
-            print(f"  R² threshold    :  {_threshold}")
-            print("  Output file     :  protocol_core_extrap_TIMESTAMP.json")
-            print("=" * 70)
-        elif _noiseless:
-            print("=" * 70)
-            print("  NOISELESS MODE  —  noise_level = 0.0")
-            print(f"  R² threshold    :  {_threshold}")
-            print("  Comparable to   :  NeSymReS (59.4%)  AI Feynman (79.3%)")
-            print("                     TPSR (56.0%)       DSR (32.0%)")
-            print("  Output file     :  protocol_core_noiseless_TIMESTAMP.json")
-            print("=" * 70)
-        else:
-            print("=" * 70)
-            print(f"  NOISY MODE  —  noise_level = {_HYPATIAX_NOISE_LEVEL:.4f}  (HYPATIAX_NOISE_LEVEL)")
-            print(f"  R² threshold    :  {_threshold}  (practical)")
-            print("  R² ceiling      :  ~0.9982  (noise floor)")
-            print("  NOT comparable to published noiseless figures.")
-            print("  Use --noiseless --threshold 0.9999 for literature comparison.")
-            print("=" * 70)
-        print()
-    except ImportError:
-        print("❌  experiment_protocol_benchmark_v2.py not found.")
-        print("    Expected at: hypatiax/protocols/experiment_protocol_benchmark_v2.py")
-        sys.exit(1)
+    else:
+        # ── Load BenchmarkProtocol ──────────────────────────────────────────
+        try:
+            from hypatiax.protocols.experiment_protocol_benchmark_v2 import BenchmarkProtocol
+
+            protocol = BenchmarkProtocol(
+                benchmark=args.benchmark,
+                num_samples=args.samples,
+                seed=42,
+                feynman_series=args.series,
+                noiseless=_noiseless,
+            )
+            print(f"✅ BenchmarkProtocol loaded  (benchmark={args.benchmark})")
+            print()
+            if getattr(args, "extrap", False):
+                print("=" * 70)
+                print("  EXTRAP MODE  —  train on first 80% of range, test beyond it")
+                print(f"  R² threshold    :  {_threshold}")
+                print("  Output file     :  protocol_core_extrap_TIMESTAMP.json")
+                print("=" * 70)
+            elif _noiseless:
+                print("=" * 70)
+                print("  NOISELESS MODE  —  noise_level = 0.0")
+                print(f"  R² threshold    :  {_threshold}")
+                print("  Comparable to   :  NeSymReS (59.4%)  AI Feynman (79.3%)")
+                print("                     TPSR (56.0%)       DSR (32.0%)")
+                print("  Output file     :  protocol_core_noiseless_TIMESTAMP.json")
+                print("=" * 70)
+            else:
+                print("=" * 70)
+                print(f"  NOISY MODE  —  noise_level = {_HYPATIAX_NOISE_LEVEL:.4f}  (HYPATIAX_NOISE_LEVEL)")
+                print(f"  R² threshold    :  {_threshold}  (practical)")
+                print("  R² ceiling      :  ~0.9982  (noise floor)")
+                print("  NOT comparable to published noiseless figures.")
+                print("  Use --noiseless --threshold 0.9999 for literature comparison.")
+                print("=" * 70)
+            print()
+        except ImportError:
+            print("❌  experiment_protocol_benchmark_v2.py not found.")
+            print("    Expected at: hypatiax/protocols/experiment_protocol_benchmark_v2.py")
+            sys.exit(1)
 
     # ── Build suite ─────────────────────────────────────────────────────────
     # --skip-pysr: exclude methods 5 (SymbolicEngine) and 6 (HybridV50_2).

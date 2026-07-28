@@ -23,10 +23,18 @@ from sklearn.metrics import r2_score
 
 # Import your LLM baseline and NN baseline implementations
 from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
-from hypatiax.core.training.baseline_neural_network_defi_improved import (
-    NeuralNetworkBaseline,
-)
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
+# NOTE: `NeuralNetworkBaseline` is only used inside main() below (the CLI demo
+# block) and is not defined anywhere in this codebase — baseline_neural_network_
+# defi_improved.py only exports ImprovedNN. Importing it at module scope broke
+# every other function in this file (including execute_python_code_get_predictions,
+# which has no dependency on it) for anyone who merely imports this module.
+# The import is deferred into main() below so it only fails if the CLI demo is
+# actually run. If you need main() to work, either implement NeuralNetworkBaseline
+# (docstring at top of file says it should wrap ImprovedNN with a
+# train_get_model()/get_predictions() API) or update main() to use ImprovedNN
+# directly, matching the pattern in _train_and_eval_nn() in
+# hypatiax/experiments/tests/test_enhanced_defi_extrapolation.py.
 
 
 def execute_python_code_get_predictions(python_code: str, X: np.ndarray):
@@ -208,6 +216,9 @@ def formula(expected_fee_apy, il_risk):
         llm_r2 = None
 
     # 3) Train NN and obtain predictions (use train_get_model/get_predictions)
+    from hypatiax.core.training.baseline_neural_network_defi_improved import (
+        NeuralNetworkBaseline,
+    )  # see NOTE at top of file: this class is not currently implemented
     nn = NeuralNetworkBaseline(hidden_dims=[128, 64, 32], epochs=200, batch_size=64)
     model, nn_metrics, scaler_X, scaler_y = nn.train_get_model(
         X,

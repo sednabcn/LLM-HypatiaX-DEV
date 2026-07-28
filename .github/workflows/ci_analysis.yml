@@ -721,21 +721,14 @@ jobs:
           git pull --rebase origin ${{ github.ref_name }}
           git stash pop || true
 
-          # Commit the paired file together with its provenance manifest
-          # (ablation_paired.json.manifest.json, written by
-          # merge_extrap_into_benchmark.py) so the two are always in sync in
-          # git history. The manifest is the run log for this derived
-          # artifact: input file paths + sha256 hashes, record count, and the
-          # definitions of train_success / extrap_success / extrap_r2_near.
-          git add -f "${RESULT_DIR}/ablation_paired.json" \
-                     "${RESULT_DIR}/ablation_paired.json.manifest.json"
+          git add -f "${RESULT_DIR}/ablation_paired.json"
 
           if git diff --cached --quiet; then
             echo "ablation_paired.json unchanged — nothing to commit."
           else
             git commit -m "data: ablation_paired.json ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed ablation_paired.json + manifest to master."
+            echo "Pushed ablation_paired.json to master."
           fi
 
       # -----------------------------------------------------------------------

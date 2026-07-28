@@ -2194,6 +2194,20 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 "sign": np.sign,
                 "pi": np.pi,
                 "e": np.e,
+                # FIX (2026-07-27): this engine injects safe_asin/safe_acos/
+                # asin_of_sin/acos_of_cos/atan_of_tan into PySR's operator
+                # set elsewhere in this file (see extra_sympy near line 974),
+                # but this internal evaluation namespace never defined them,
+                # so any discovered formula using them raised a NameError
+                # here (caught above and re-raised as ValueError). Definitions
+                # match the clipped/composition semantics used everywhere
+                # else in this codebase, so results are consistent with the
+                # production scoring scripts.
+                "safe_asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)),
+                "safe_acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
+                "asin_of_sin": lambda x: np.arcsin(np.clip(np.sin(x), -1.0, 1.0)),
+                "acos_of_cos": lambda x: np.arccos(np.clip(np.cos(x), -1.0, 1.0)),
+                "atan_of_tan": lambda x: np.arctan(np.tan(x)),
                 # Physical constants (prefixed to avoid shadowing variables/np.e)
                 "h_planck": 6.62607015e-34,
                 "h":        6.62607015e-34,   # Planck constant
