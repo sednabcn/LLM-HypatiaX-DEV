@@ -475,10 +475,16 @@ def build_findings(registry_entries: list[dict],
             display_status = inspector_status.get(fid, "OPEN")
 
         meta   = nb_summary.get(fid) or STATIC_META.get(fid) or {}
-        desc   = meta.get("description")   or entry.get("description", "")
-        action = meta.get("action")        or entry.get("action", "")
-        sev    = (meta.get("severity")     or entry.get("severity", "medium")).upper()
-        nb     = meta.get("nb")            or entry.get("nb_source", "")
+        # NOTE: dict.get(key, default) only falls back to `default` when the key is
+        # MISSING, not when its value is JSON null (Python None). Several registry
+        # entries (e.g. FIX-N4, FIX-D1) have "nb_source": null because they aren't
+        # tied to a specific notebook, so entry.get("nb_source", "") still yields
+        # None here, and the `or` chain below propagates None straight through.
+        # Fix: coalesce explicitly with `or ""` after the .get(), not just a default arg.
+        desc   = meta.get("description")   or entry.get("description") or ""
+        action = meta.get("action")        or entry.get("action")      or ""
+        sev    = (meta.get("severity")     or entry.get("severity")    or "medium").upper()
+        nb     = meta.get("nb")            or entry.get("nb_source")   or "N/A"
 
         if reg_st == "false_positive":
             fp_reason = entry.get("false_positive_reason", "")
@@ -511,6 +517,13 @@ def build_findings(registry_entries: list[dict],
 def _make_rows(items: list[dict], fp: bool = False) -> str:
     rows = []
     e = html_mod.escape
+
+    def safe(val, default=""):
+        # Defense in depth: build_findings() should already guarantee non-None
+        # fields, but never let a None (from any future data source) reach
+        # html.escape() and crash the whole report build again.
+        return e(val) if val is not None else e(default)
+
     for f in items:
         sev = f["severity"]
         style, sev_label = SEV_STYLE.get(sev, ("", sev))
@@ -519,11 +532,11 @@ def _make_rows(items: list[dict], fp: bool = False) -> str:
         badge  = STATUS_BADGE.get(f["status"], STATUS_BADGE["OPEN"])
         rows.append(f"""
           <tr style="{style}">
-            <td><strong>{e(f['id'])}</strong><br><small>{badge}</small></td>
+            <td><strong>{safe(f.get('id'))}</strong><br><small>{badge}</small></td>
             <td style="font-size:0.85em;">{sev_label}</td>
-            <td>{e(f['description'])}<br>
-              <small style="color:#666;"><em>Action:</em> {e(f['action'])}</small></td>
-            <td style="font-size:0.85em;">{e(f['nb'])}</td>
+            <td>{safe(f.get('description'))}<br>
+              <small style="color:#666;"><em>Action:</em> {safe(f.get('action'))}</small></td>
+            <td style="font-size:0.85em;">{safe(f.get('nb'), 'N/A')}</td>
           </tr>""")
     return "".join(rows)
 
