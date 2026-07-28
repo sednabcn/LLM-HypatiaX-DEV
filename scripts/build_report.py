@@ -625,7 +625,40 @@ def render_conclusions(findings: list[dict], upstream_run: str, report_run: str,
             {_table_wrap(_make_rows(false_positives, fp=True))}
           </details>"""
 
-    # ── Priority action list ──────────────────────────────────────────────────
+    # ── Results-quality summary (data-driven, not hardcoded) ───────────────────
+    # PREVIOUSLY: this paragraph was a fixed string that still said "Feynman 9/30"
+    # and asserted blanket "internally consistent" even after FIX-D1 (critical,
+    # OPEN) started tracking a real numerical discrepancy in the same headline
+    # figures this paragraph vouches for. A hardcoded claim sitting one section
+    # above a live findings table is exactly the "0 open issues" failure mode
+    # from the CI dashboard, reproduced inside this report itself. Fixed to
+    # derive its wording from `open_findings` / `critical_open` so it can't
+    # silently contradict the table below it again.
+    if critical_open:
+        crit_ids = ", ".join(f["id"] for f in critical_open)
+        results_quality_html = f"""
+          <p>
+            NB-04 Step&nbsp;2's abstract substring checks currently report [OK] on every
+            checked value, but that check is <strong>not footnote-aware</strong>: it cannot
+            tell a correct number from a pre-bug number sitting next to its own correction.
+            <strong style="color:#c00;">{len(critical_open)} critical issue(s) are open
+            ({e(crit_ids)})</strong> that affect headline figures quoted in the abstract —
+            see the Open Issues table below before treating any [OK] as final confirmation.
+          </p>"""
+    elif open_findings:
+        results_quality_html = f"""
+          <p>
+            NB-04 Step&nbsp;2's abstract checks currently report [OK] on every checked value,
+            and no critical issues remain open. {len(open_findings)} lower-severity issue(s)
+            remain open — see the Open Issues table below.
+          </p>"""
+    else:
+        results_quality_html = """
+          <p>
+            All abstract claims pass verification, and no open issues remain in the registry.
+          </p>"""
+
+
     open_ids = {f["id"] for f in open_findings}
     pri_rows = []
     for label, ids, text in PRIORITY_ITEMS:
@@ -662,13 +695,7 @@ def render_conclusions(findings: list[dict], upstream_run: str, report_run: str,
           {pipeline_html}
 
           <h3>Results Quality</h3>
-          <p>
-            All nine abstract claims pass verification ([OK] across every check in NB-04 Step&nbsp;2).
-            The core numerical story — 89.2&nbsp;% near-perfect success rate, +27&nbsp;pp gain over
-            the LLM baseline, 1.73×&nbsp;speedup, Nguyen 11/12, Feynman 9/30 (random 80/20 baseline,
-            locked in <code>fixc3_baseline.json</code>) — is internally consistent throughout the paper.
-            The FIX-C3 split-protocol correction has been applied; Gates A/B/C pass.
-          </p>
+          {results_quality_html}
 
           <h3>Open Issues ({len(open_findings)} {open_heading_suffix})</h3>
           {open_table}
