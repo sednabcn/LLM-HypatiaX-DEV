@@ -547,10 +547,23 @@ def dim_check(exp, rdir):
            status="WARN" if not ckpt_glob else "PASS")  # warn not fail — CI may not write these
 
     # (2) result files
-    jsons = list(rdir.glob("*.json")) if rdir.exists() else []
-    ok2 = bool(jsons)
-    record(f"{exp} · (2) result files", ok2,
-           f"{len(jsons)} JSON(s) in {rdir.relative_to(RESULTS) if rdir.is_relative_to(RESULTS) else rdir}")
+    # NOTE (instability special-case): unlike every other experiment, "instability"
+    # is pointed at RESULTS/figures, which by design only ever holds CSV summaries
+    # (instability_analysis.csv, instability_extrapolation.csv) plus PNG/PDF figures
+    # — it never contains *.json. Checking for *.json here was a guaranteed-fail
+    # false positive for this experiment alone, unrelated to whether the instability
+    # run actually succeeded. Check *.csv instead for "instability"; all other
+    # experiments keep the original *.json check unchanged.
+    if exp == "instability":
+        result_files = list(rdir.glob("*.csv")) if rdir.exists() else []
+        ok2 = bool(result_files)
+        record(f"{exp} · (2) result files", ok2,
+               f"{len(result_files)} CSV(s) in {rdir.relative_to(RESULTS) if rdir.is_relative_to(RESULTS) else rdir}")
+    else:
+        result_files = list(rdir.glob("*.json")) if rdir.exists() else []
+        ok2 = bool(result_files)
+        record(f"{exp} · (2) result files", ok2,
+               f"{len(result_files)} JSON(s) in {rdir.relative_to(RESULTS) if rdir.is_relative_to(RESULTS) else rdir}")
     if not ok2:
         ok_all = False
 
