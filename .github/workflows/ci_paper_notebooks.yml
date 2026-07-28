@@ -106,27 +106,54 @@ jobs:
           mkdir -p figures
 
           # deploy_fig: copy src to figures/; if .pdf missing, try .png sibling.
-          # Also checks hypatiax/data/results/figures/ (runner .png output) as fallback.
+          # Guards against src already resolving to the destination (happens on
+          # re-runs after figures/ was previously committed to the branch),
+          # which would otherwise make cp fail on a self-copy.
           deploy_fig() {
             local src="$1"
             local png="${src%.pdf}.png"
+            local dest="figures/$(basename "$src")"
+            local pngdest="figures/$(basename "$png")"
             if [[ -f "$src" ]]; then
-              cp -v "$src" "figures/$(basename "$src")"
+              if [[ "$(readlink -f "$src")" == "$(readlink -f "$dest")" ]]; then
+                echo "  [SKIP] Already in place: $dest"
+              else
+                cp -v "$src" "$dest"
+              fi
             elif [[ "$src" == *.pdf && -f "$png" ]]; then
-              cp -v "$png" "figures/$(basename "$png")"
+              if [[ "$(readlink -f "$png")" == "$(readlink -f "$pngdest")" ]]; then
+                echo "  [SKIP] Already in place: $pngdest"
+              else
+                cp -v "$png" "$pngdest"
+              fi
             fi
           }
 
           # Runner figures dir — contains .png for most stems even before
           # generate_figures.py has run (written by instability/exp1 runners).
           RUNNER_FIGS="hypatiax/data/results/figures"
+          # Committed ablation figures dir — matches the actual repo layout
+          # (see tree_fig.txt); there is no "Figures/" (capital F) tree in this repo.
+          ABLATION_FIGS="figures-tales-july24-ablation/figures"
 
           deploy_fig_with_runner_fallback() {
             local stem="$1"; shift
             for src in "$@"; do
               local png="${src%.pdf}.png"
-              if [[ -f "$src" ]]; then cp -v "$src" "figures/$(basename "$src")"; return; fi
-              if [[ "$src" == *.pdf && -f "$png" ]]; then cp -v "$png" "figures/$(basename "$png")"; return; fi
+              local dest="figures/$(basename "$src")"
+              local pngdest="figures/$(basename "$png")"
+              if [[ -f "$src" ]]; then
+                if [[ "$(readlink -f "$src")" == "$(readlink -f "$dest")" ]]; then
+                  echo "  [SKIP] Already in place: $dest"; return
+                fi
+                cp -v "$src" "$dest"; return
+              fi
+              if [[ "$src" == *.pdf && -f "$png" ]]; then
+                if [[ "$(readlink -f "$png")" == "$(readlink -f "$pngdest")" ]]; then
+                  echo "  [SKIP] Already in place: $pngdest"; return
+                fi
+                cp -v "$png" "$pngdest"; return
+              fi
             done
             # Runner fallback
             for ext in pdf png jpg eps svg; do
@@ -138,19 +165,22 @@ jobs:
           }
 
           deploy_fig_with_runner_fallback "fig18_r2_heatmap_improved" \
-            "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf"
+            "fig18_r2_heatmap_improved.pdf" \
+            "${ABLATION_FIGS}/fig18_r2_heatmap_improved.pdf"
           deploy_fig_with_runner_fallback "fig09_r2_heatmap_regimes" \
-            "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf"
+            "fig09_r2_heatmap_regimes.pdf" \
+            "${ABLATION_FIGS}/fig09_r2_heatmap_regimes.pdf"
           deploy_fig_with_runner_fallback "fig1_seed_sweep" \
-            "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
-            "Figures/figures-portfolio-variance/fig1_seed_sweep.png"
+            "fig1_seed_sweep.pdf" \
+            "${ABLATION_FIGS}/fig1_seed_sweep.pdf" \
+            "${ABLATION_FIGS}/fig1_seed_sweep.png"
           deploy_fig_with_runner_fallback "hypatiax_three_systems" \
-            "Figures/architecture_figures/hypatiax_three_systems.pdf" \
-            "Figures/architecture_figures/hypatiax_three_systems.png" \
+            "hypatiax_three_systems.pdf" \
+            "${ABLATION_FIGS}/hypatiax_three_systems.pdf" \
+            "${ABLATION_FIGS}/hypatiax_three_systems.png" \
             "${RUNNER_FIGS}/hypatiax_three_systems.png"
           deploy_fig_with_runner_fallback "hypatiax_algorithm1_routing_cascade_v2" \
-            "figures/hypatiax_algorithm1_routing_cascade_v2.pdf" \
-            "figures/hypatiax_algorithm1_routing_cascade_v2.png" \
+            "hypatiax_algorithm1_routing_cascade_v2.pdf" \
             "${RUNNER_FIGS}/hypatiax_algorithm1_routing_cascade_v2.png"
 
           echo "--- figures/ ---"; ls -lh figures/ 2>/dev/null || echo "(empty)"
@@ -634,21 +664,35 @@ jobs:
 
           # Runner figures dir — .png outputs deposited by ci_postprocess / exp1 runners
           RUNNER_FIGS="hypatiax/data/results/figures"
+          # Committed ablation figures dir — matches the actual repo layout
+          # (see tree_fig.txt); there is no "Figures/" (capital F) tree in this repo.
+          ABLATION_FIGS="figures-tales-july24-ablation/figures"
 
+          # deploy_fig: copy src to figures/, skipping the copy (but still
+          # counting as success) if src already resolves to the destination —
+          # this happens on re-runs after a previous run committed figures/
+          # back to the branch (see the commit step below), which would
+          # otherwise make src and dest the same file and cp would fail.
           deploy_fig() {
             local src="$1" dest="figures/$(basename "$1")"
-            if [[ -f "$src" ]]; then
+            if [[ ! -f "$src" ]]; then
+              echo "::warning::FIX source not found — skipping: $src"
+              return 1
+            fi
+            if [[ "$(readlink -f "$src")" == "$(readlink -f "$dest")" ]]; then
+              echo "  [SKIP] Already in place: $dest"
+            else
               cp -v "$src" "$dest"
               echo "  [OK]  Deployed: $dest"
-            else
-              echo "::warning::FIX source not found — skipping: $src"
             fi
           }
 
-          # FIX-F2: R² heatmap clipped — check Figures/ inventory first, then ablation results
+          # FIX-F2: R² heatmap clipped — root, then ablation copy, then generated output
           for src in \
-              "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf" \
-              "Figures/fig18_r2_heatmap_improved.pdf" \
+              "fig18_r2_heatmap_improved.pdf" \
+              "${ABLATION_FIGS}/fig18_r2_heatmap_improved.pdf" \
+              "${ABLATION_FIGS}/fig18_r2_heatmap_improved.png" \
+              "png/fig18_r2_heatmap_improved.png" \
               "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.png" \
               "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.pdf"; do
             [[ -f "$src" ]] && { deploy_fig "$src"; break; }
@@ -656,8 +700,10 @@ jobs:
 
           # FIX-F3: R² heatmap raw
           for src in \
-              "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf" \
-              "Figures/fig09_r2_heatmap_regimes.pdf" \
+              "fig09_r2_heatmap_regimes.pdf" \
+              "${ABLATION_FIGS}/fig09_r2_heatmap_regimes.pdf" \
+              "${ABLATION_FIGS}/fig09_r2_heatmap_regimes.png" \
+              "png/fig09_r2_heatmap_regimes.png" \
               "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.png" \
               "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.pdf"; do
             [[ -f "$src" ]] && { deploy_fig "$src"; break; }
@@ -665,10 +711,10 @@ jobs:
 
           # FIX-F4/F5: Portfolio Variance seed sweep
           for src in \
-              "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
-              "Figures/figures-portfolio-variance/fig1_seed_sweep.png" \
-              "Figures/fig1_seed_sweep.pdf" \
-              "Figures/fig1_seed_sweep.png" \
+              "fig1_seed_sweep.pdf" \
+              "${ABLATION_FIGS}/fig1_seed_sweep.pdf" \
+              "${ABLATION_FIGS}/fig1_seed_sweep.png" \
+              "png/fig1_seed_sweep.png" \
               "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.png" \
               "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.pdf"; do
             [[ -f "$src" ]] && { deploy_fig "$src"; break; }
@@ -676,8 +722,12 @@ jobs:
 
           # FIX-F1 guard: check for the architecture figure; warn if still missing
           ARCH_FOUND=false
-          for ext in pdf png jpg eps svg; do
-            candidate="Figures/architecture_figures/hypatiax_three_systems.${ext}"
+          for candidate in \
+              "hypatiax_three_systems.pdf" \
+              "${ABLATION_FIGS}/hypatiax_three_systems.pdf" \
+              "${ABLATION_FIGS}/hypatiax_three_systems.png" \
+              "hypatiaX_three_systems.png" \
+              "png/hypatiax_three_systems.png"; do
             if [[ -f "$candidate" ]]; then
               deploy_fig "$candidate"
               ARCH_FOUND=true
@@ -685,19 +735,19 @@ jobs:
             fi
           done
           if [[ "$ARCH_FOUND" == "false" ]]; then
-            echo "::warning::FIX-F1 (MANUAL): hypatiax_three_systems not found in Figures/architecture_figures/ — \\fbox placeholder remains in §7.1"
+            echo "::warning::FIX-F1 (MANUAL): hypatiax_three_systems not found — \\fbox placeholder remains in §7.1"
           fi
 
           # FIX-F5: routing cascade algorithm diagram
-          # Generated by generate_figures.py (hypatiax_algorithm1_routing_cascade_v2.png).
-          # Check runner figures dir (where ci_postprocess deposits it) then Figures/.
+          # Lives at repo root per tree_fig.txt (hypatiax_algorithm1_routing_cascade_v2.pdf),
+          # NOT inside a figures/ subdirectory — checking "figures/..." here as a
+          # source would collide with the destination and self-copy would fail.
           ALG1_FOUND=false
           for src in \
+              "hypatiax_algorithm1_routing_cascade_v2.pdf" \
               "${RUNNER_FIGS}/hypatiax_algorithm1_routing_cascade_v2.png" \
-              "figures/hypatiax_algorithm1_routing_cascade_v2.pdf" \
-              "figures/hypatiax_algorithm1_routing_cascade_v2.png" \
-              "figures/architecture_figures/hypatiax_algorithm1_routing_cascade_v2.pdf" \
-              "figures/architecture_figures/hypatiax_algorithm1_routing_cascade_v2.png"; do
+              "hypatiax_algorithm1_routine_cascade_v2.png" \
+              "png/hypatiax_algorithm1_routing_cascade_v2.png"; do
             if [[ -f "$src" ]]; then
               deploy_fig "$src"
               ALG1_FOUND=true
@@ -766,6 +816,7 @@ jobs:
       # FIX: now includes figures/ and tables/ so NB-05's SEARCH_DIRS resolves
       # correctly inside the notebooks/ workspace (paths: figures/, ../figures/).
       - name: Upload notebooks workspace
+        if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name: notebooks-workspace
@@ -775,6 +826,7 @@ jobs:
             tables/
             jmlr_paper_main.tex
           retention-days: 3
+          if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────
   # NOTE ON DEPENDENCY STRUCTURE
