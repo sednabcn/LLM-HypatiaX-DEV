@@ -37,6 +37,15 @@ permissions:
   contents: read
   pages:    write
   id-token: write
+  actions:  read
+  # FIX: actions:read is required by actions/download-artifact@v4 when
+  # pulling NB-01..NB-06 artifacts by run-id from a different workflow run
+  # (ci_paper_notebooks.yml). Without this scope every download-artifact
+  # step below fails silently (each has continue-on-error: true),
+  # notebooks/ stays empty, and build_report.py reports false-positive
+  # "Notebook not found" banners even when the upstream notebooks ran
+  # successfully. Matches ci_paper_audit.yml and ci_report_submission.yml,
+  # which already have this scope.
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
