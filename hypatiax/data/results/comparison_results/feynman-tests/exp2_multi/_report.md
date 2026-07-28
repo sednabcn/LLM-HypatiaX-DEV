@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp2`
 
 Experiment mode: **multi_method**
-N total: 30 | N standard: 30 | N intractable: 0
+N total: 56 | N standard: 56 | N intractable: 0
 R² success threshold: 0.8
 
 > **Multi-method experiment**: a 4th method key (`HybridSystemLLMNN all-domains`) is present in the raw output but is not in `METHODS` and is excluded from comparisons. Verify `merge_shards.py` translates method names correctly.
@@ -45,10 +45,36 @@ Hybrid wins:  0  (N/A)
 NN wins:      0
 Tied:         0
 
-## Coverage Gaps (30 equations with best R² < 0.8)
+## Coverage Gaps (56 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
+| ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
