@@ -7,15 +7,10 @@
 %%  Rewritten & restructured: March 2026
 %% ============================================================
 
-\documentclass[11pt,a4paper]{article}
+\documentclass[twoside,11pt]{article}
+\usepackage[preprint]{jmlr2e}
 
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
-\usepackage{geometry}
-\geometry{margin=2.5cm}
-
-\usepackage{amsmath,amssymb,amsthm}
-\usepackage{natbib}
+\usepackage{amsmath,amssymb}
 \usepackage{float}
 \usepackage{booktabs}
 \usepackage{array}
@@ -23,10 +18,7 @@
 \usepackage{listings}
 \usepackage{caption}
 \usepackage{subcaption}
-\usepackage{hyperref}
 \usepackage{enumitem}
-\usepackage{titlesec}
-\usepackage{parskip}
 
 %% ── Code listings ────────────────────────────────────────────────────────────
 \definecolor{codeblue}{RGB}{0,90,170}
@@ -56,30 +48,43 @@
   captionpos=b
 }
 
-\hypersetup{colorlinks=true, linkcolor=codeblue, citecolor=codeblue, urlcolor=codeblue}
-
 \newtheorem{observation}{Observation}
-\newtheorem{remark}{Remark}
 \newtheorem{complexity}{Complexity Result}
+\providecommand{\qed}{\hfill\BlackBox}
+
+\jmlrheading{--}{2026}{1--18}{--}{--}{--}{Supplementary Material A}
+
+\ShortHeadings{Supplementary Material A: Routing Improvements}
+              {Routing Improvements for Hybrid LLM--Neural-Network Systems}
+
+\firstpageno{1}
 
 %% ============================================================
 \begin{document}
 
 \title{%
-  \textbf{Supplementary Material A}\\[6pt]
-  \textbf{Routing Improvements for the Hybrid LLM--Neural-Network System}\\[4pt]
+  Supplementary Material A:\\
+  Routing Improvements for the Hybrid LLM--Neural-Network System\\
   \large Impact on DeFi Extrapolation Benchmark Performance
 }
-\author{Technical Note --- Hybrid System Development Log}
-\date{February--March 2026}
+\author{\name Technical Note --- Hybrid System Development Log \email{} \\
+       \addr February--March 2026}
 \maketitle
+
+\begin{quote}\small
+\textbf{Note.} A consolidated list of every unconfirmed, withdrawn, or
+stale claim identified across this file and its companion documents is
+maintained separately in \texttt{unconfirmed\_paper\_claims.tex}. Consult
+it before citing any figure flagged in this document.
+\end{quote}
+
 \tableofcontents
 \bigskip
 
 \noindent\textbf{Note to reader.}  This document is Supplementary Material~A to
 the main JMLR submission \emph{HypatiaX: A Hybrid Symbolic-Neural Framework for
 Extrapolation-Reliable Analytical Discovery} (\texttt{jmlr\_paper\_main.tex}).
-It provides full implementation details for the six routing fixes summarised in Section~\ref{sec:routing} (\emph{Component 3: Five-Stage Routing and Ensembling}) of the main paper---which now includes Proposition~1 (Routing Cascade Convergence), a formal guarantee that Phase~2 warm-starting is monotonically non-degrading over the Pareto front---and reports cumulative impact on the DeFi
+It provides full implementation details for the six routing fixes summarised in the main paper's \emph{Component 3: Five-Stage Routing and Ensembling} subsection---which now includes Proposition~1 (Routing Cascade Convergence), a formal guarantee that Phase~2 warm-starting is monotonically non-degrading over the Pareto front---and reports cumulative impact on the DeFi
 extrapolation benchmark.
 
 %% ============================================================
@@ -88,11 +93,12 @@ extrapolation benchmark.
 
 \begin{remark}[Development-set status]
 The DeFi equations used to motivate and validate the routing fixes in this
-document (Section~\ref{sec:benchmark}) overlap with equations in the Core~15
+document (the main paper's \emph{Benchmark Design} section) overlap with equations in the Core~15
 benchmark and the DeFi~74-case extrapolation suite (v3.0).  Post-fix performance
 figures on the DeFi suite should therefore be interpreted as
 \emph{in-sample routing improvement}, not held-out generalisation.
-This is noted explicitly in Remark~3.2 of the main paper.
+This caveat is disclosed here; no equivalently-numbered remark exists in
+the current main paper draft, so it should not be cited as appearing there.
 \end{remark}
 
 The DeFi extrapolation benchmark evaluates three methods --- \emph{Pure LLM},
@@ -106,7 +112,15 @@ Prior to the improvements described here, the aggregate picture was:
 \begin{table}[h]
 \centering
 \caption{Baseline performance before routing improvements (standard cases,
-         intractable cases excluded).}
+         intractable cases excluded). Denominator $= 66$ standard cases
+         (pre-v3.0 historical). The v3.0 benchmark uses $n=74$; the
+         previously-reported \textbf{89.2\%} figure is now disclosed in the
+         main paper (Table~\ref{tab:main_results}\ in
+         \texttt{jmlr\_paper\_main.tex}, \S~``The Hybrid
+         Decision-Attribution Bug'') as \emph{uncorrected} for a
+         success-attribution bug; the corrected figure is
+         \textbf{60.8\%} ($45/74$), below Pure LLM's $62.2\%$. See that
+         section before citing either number as current.}
 \label{tab:baseline}
 \begin{tabular}{lcccc}
 \toprule
@@ -417,7 +431,12 @@ where all three methods fail equally).
 \begin{table}[h]
 \centering
 \caption{Measured and projected $R^2 > 0.99$ (\%) by fix.
-         Denominator $= 66$ standard cases (pre-v3.0 historical). The v3.0 benchmark uses $n=74$; confirmed final figure: \textbf{89.2\%} (see main paper Table~1).}
+         Denominator $= 66$ standard cases (pre-v3.0 historical). The
+         v3.0 benchmark's uncorrected figure is \textbf{89.2\%}; the
+         main paper's decision-attribution-bug correction
+         (Table~\ref{tab:main_results} in \texttt{jmlr\_paper\_main.tex})
+         gives \textbf{60.8\%} as the current figure. See the
+         corrected-observation note below the table.}
 \label{tab:projected}
 \begin{tabular}{llccc}
 \toprule
@@ -436,7 +455,8 @@ Fix~4       & Distance-gated blend weight       & $+1$ & 82.2 & measured  \\
 \midrule
 Fix~5 (proj.) & Unified evaluator + routing guard & $+3$ & \textbf{75.8} & projected \\
 \midrule
-\textbf{v3.0 confirmed} & All fixes + benchmark corrections & --- & \textbf{89.2} & \textbf{measured} \\
+\textbf{v3.0 (uncorrected)} & All fixes + benchmark corrections & --- & \textbf{89.2} & \textbf{measured} \\
+\textbf{v3.0 (bug-corrected)} & Decision-attribution bug removed & $-28.4$ & \textbf{60.8} & \textbf{measured} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -445,10 +465,18 @@ Fix~5 (proj.) & Unified evaluator + routing guard & $+3$ & \textbf{75.8} & proje
 The first complete benchmark run confirms the Hybrid already
 \emph{beats} the Pure LLM on the honest (NaN-penalty) metric:
 $72.7\%$ vs $69.7\%$, a net advantage of $+3$ percentage points.
-In the v3.0 benchmark ($n=74$), the confirmed final figure is
-\textbf{89.2\%} near-perfect success rate ($R^2>0.99$)---within
-the projected 88--90\% range---with zero catastrophic failures.
-See main paper Table~1 for full verified figures.
+\textbf{Correction (see main paper, \S~``The Hybrid Decision-Attribution
+Bug'').} The $89.2\%$ figure reported for the $n=74$ v3.0 benchmark was
+subsequently found to be inflated by a success-attribution bug: 22 of the
+67 reported near-perfect successes credited a sub-method
+(\texttt{hybrid.decision}) that the pipeline's own records show had
+actually failed on that task. The corrected figure is $45/74 = 60.8\%$,
+which is \emph{below} Pure LLM's $62.2\%$ on the same run --- the opposite
+of the comparison this document originally reported. This does not
+invalidate Fixes~0--5 individually (each addresses a distinct, verified
+routing or data-generation defect), but the headline "Hybrid beats Pure
+LLM by 27pp" framing based on $89.2\%$ should not be cited; see the main
+paper for the current, corrected comparison and its own caveats.
 \end{observation}
 
 \begin{remark}
@@ -499,6 +527,18 @@ to the honest $n{=}66$ fixed denominator.
   \item \textbf{LLM API timeouts.}  Two scores on cases~6--7 remain NaN
     due to connection errors.  These should be retried with exponential
     backoff ($\leq 3$ attempts, delays 5/15/45\,s).
+  \item \textbf{[Open, process/credibility.]} The July~9 CI dashboard
+    should not be cited: its own notebooks (NB-01--NB-06) report ``not
+    found'' for that run, while its summary asserts ``0 open issues''
+    and specific claims resolved. \texttt{build\_report.py} should
+    hard-fail rather than emit a stale green summary over missing
+    notebook output; re-run for real before citing this dashboard again.
+  \item \textbf{[Open, process/credibility, not confirmable from
+    material available to this document.]} The legacy exp2 baseline-lock
+    threshold fix ($R^2 \geq 0.999999$ replacing $R^2 \geq 0.9999$, which
+    had inflated the legacy baseline from 74/90 to 81/90) is applied in
+    code but not yet confirmed against a live CI run of the patched
+    script. Treat 74/90 as correct; do not cite 81/90 as current.
 \end{enumerate}
 
 %% ============================================================
@@ -532,18 +572,23 @@ to the honest $n{=}66$ fixed denominator.
 
 \bigskip
 \noindent The net projection is that the Hybrid closes or exceeds the Pure
-LLM's $R^2 > 0.99$ rate of $83.9\%$.  The v3.0 benchmark confirms this
-projection: HypatiaX achieves \textbf{89.2\%} near-perfect success rate
-($R^2>0.99$, $n=74$, zero catastrophic failures), combining the LLM's
-structural extrapolation accuracy with the NN's ability to correct
-in-distribution calibration errors.
+LLM's $R^2 > 0.99$ rate of $83.9\%$. The v3.0 benchmark's uncorrected
+figure of \textbf{89.2\%} near-perfect success rate ($R^2>0.99$, $n=74$,
+zero catastrophic failures) appeared to confirm this. \textbf{This has
+since been corrected}: the main paper's decision-attribution-bug fix
+brings this down to $60.8\%$, below Pure LLM's $62.2\%$ on the same run
+(see the corrected observation in Section~\ref{sec:leaderboard} above).
+The routing fixes still combine the LLM's structural extrapolation
+accuracy with the NN's calibration correction as designed; what changed
+is which of the two methods currently has the higher confirmed
+near-perfect rate.
 
 % ====================================================================
 % NEW APPENDICES (extracted from jmlr_paper_main.tex)
 % ====================================================================
 \appendix
 
-\section{Complete Proof of Finding~\ref{thm:llm_reproductive}}
+\section{Complete Proof of the Main Paper's \emph{LLM Reproductive Behaviour} Finding}
 \label{app:proof}
 
 \begin{proof}[Detailed Proof]
@@ -742,8 +787,11 @@ The function used a hardcoded absolute threshold (\texttt{ss\_tot > 1e-10})
 that silently returned $R^2=0$ for equations with outputs far below unity.
 The fix scales the threshold relative to the data magnitude.
 All results in this paper use the v2 corrected harness.
-See Appendix~\ref{app:repro_statement} and Section~\ref{sec:r2_bugfix}
-for the exact code change and affected equations.
+See the \emph{Feynman Benchmark Reproducibility Statement} appendix and the
+\emph{Measurement Correction (v1$\to$v2)} section of Supplementary~B
+(\emph{HypatiaX: Noise Robustness, Sample Complexity, and Convergence of
+Hybrid LLM--Neural Symbolic Regression on the Feynman Benchmark}) for the
+exact code change and affected equations.
 
 \subsection{Troubleshooting}
 
@@ -787,7 +835,10 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 \item Clone repository and install dependencies (including Julia 1.12.2)
 \item Set \texttt{ANTHROPIC\_API\_KEY} for LLM-dependent runners
 \item Run Core~15 benchmark — confirm Mann-Whitney U=0, p$<10^{-6}$
-\item Run DeFi benchmark — confirm HypatiaX 89.2\% vs LLM 62.2\% (n=74, v3.0)
+\item Run DeFi benchmark --- confirm the corrected 60.8\% figure (not the
+  superseded uncorrected 89.2\%), and that it sits below Pure LLM's
+  62.2\% (n=74, v3.0; see main paper's Hybrid Decision-Attribution Bug
+  section)
 \item Run Feynman Phase~3 — confirm Hybrid DeFi 96.7\% ($R^2>0.9999$)
 \item Run statistical analysis — confirm Cohen's d = 0.95 (pooled)
 \item Regenerate 13 figures — confirm visual match with paper
@@ -954,7 +1005,7 @@ PySR was configured with 2 parallel populations on the experimental hardware (In
 
 \subsection{Why LLMs Fail on Novel Domains}
 
-Our empirical results (95\% classical vs 40\% DeFi, Table~\ref{tab:llm_detailed}) raise a question: \textbf{Why does LLM performance decline on specialised domains?}\citep{kambhampati2024llms}
+Our empirical results (95\% classical vs 40\% DeFi, see the Pure LLM Baseline table in Supplementary~B) raise a question: \textbf{Why does LLM performance decline on specialised domains?}\citep{kambhampati2024llms}
 
 \paragraph{Training Data Coverage Hypothesis:}
 
@@ -1123,11 +1174,11 @@ VaR_95 = portfolio_value * sigma * (-1.645)  # WRONG SIGN
 
 \subsection{Final Thoughts}
 
-The central lesson of this work is that \textbf{retrieval of familiar patterns may differ from structural discovery}\citep{kambhampati2024llms}. On the evaluated benchmark, LLMs achieved high success rates on widely-documented equations (approximately 95\% on classical physics) while showing substantially lower reliability in specialized domains requiring genuine structural inference (approximately 40\% on DeFi; extrapolation error statistics in Table~\ref{tab:five_systems_full}).
+The central lesson of this work is that \textbf{retrieval of familiar patterns may differ from structural discovery}\citep{kambhampati2024llms}. On the evaluated benchmark, LLMs achieved high success rates on widely-documented equations (approximately 95\% on classical physics) while showing substantially lower reliability in specialized domains requiring genuine structural inference (approximately 40\% on DeFi; extrapolation error statistics in the main paper's Five-System Comparison table).
 
 This distinction matters for science. Discovery requires:
 \begin{enumerate}
-\item Extrapolation to novel regimes (symbolic near-zero vs substantially larger neural error; Table~\ref{tab:five_systems_full})
+\item Extrapolation to novel regimes (symbolic near-zero vs substantially larger neural error; see the main paper's Five-System Comparison table)
 \item Functional form recovery (interpretability, insight)
 \item Reliable predictions for decision-making (drug dosing, climate policy)
 \end{enumerate}
@@ -1144,6 +1195,5 @@ As we integrate AI more deeply into scientific workflows, maintaining this disti
 
 
 
-\bibliographystyle{plainnat}
 \bibliography{references}
 \end{document}

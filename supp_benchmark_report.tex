@@ -24,7 +24,7 @@
 \usepackage{array}
 \usepackage{caption}
 \usepackage{subcaption}
-\usepackage{microtype}
+\usepackage[expansion=false]{microtype}
 \usepackage{rotating}
 \usepackage{algorithm}
 \usepackage{algorithmic}
@@ -155,6 +155,14 @@ undisclosed hardcoded \PureLLM{} results, scale-biased raw \rmse,
 missing Wilcoxon significance tests, and mismatched pass-rate thresholds.
 \end{abstract}
 
+\begin{quote}\small
+\textbf{Note.} A consolidated list of every unconfirmed, withdrawn, or
+stale claim identified across this file and its companion documents is
+maintained separately in \texttt{unconfirmed\_paper\_claims.tex}. Consult
+it before citing any figure flagged in this document.
+\end{quote}
+
+
 \begin{keywords}
 symbolic regression, scientific discovery, large language models,
 neural networks, Feynman benchmark, noise robustness, sample complexity,
@@ -170,20 +178,29 @@ This document is Supplementary Material~B to the main JMLR submission
 Analytical Discovery} (\texttt{jmlr\_paper\_main.tex}).
 
 \medskip
-\noindent\textbf{Cross-reference note (v4, April 2026).}
-The main paper has been updated since this supplementary was written.
-Readers are directed to the following new sections for context:
+\noindent\textbf{Cross-reference note (v5, updated 2026-07-28).}
+The main paper has been updated since this supplementary was written, and
+again since the v4 cross-reference below was added. Readers are directed
+to the following sections for context:
 \begin{itemize}
-  \item \textbf{Section~\ref{sec:results} Feynman Extrapolation Benchmark ($n=30$)} --- reports
-    HypatiaX performance on the same 30-equation Feynman suite under an
-    aggressive PCA-directed 40\%/60\% extrapolation split (9/30 successes,
-    30.0\%).  This is a different and more stringent evaluation protocol
+  \item \textbf{The main paper's \emph{Feynman Extrapolation Benchmark ($n=30$)} subsection (Results section)} --- the
+    9/30 (30.0\,\%) figure previously cited here has been superseded twice.
+    It first referred to a since-withdrawn run; the main paper now reports
+    \textbf{12/30 (40.0\,\%)} under the random 80/20 split and
+    \textbf{13/30 (43.3\,\%)} under the PCA-directed 40\,\%/60\,\% split
+    described immediately below (the split this cross-reference note
+    originally intended to point to). Both figures carry their own
+    disclosed caveats in the main paper (near-misses, unmeasured
+    placeholder-token equations, and pending full-production-rerun
+    confirmation of two evaluator defects) --- see the main paper's
+    ``Remaining limitations'' discussion before citing either number.
+    This is a different and more stringent evaluation protocol
     than the noiseless recovery results reported in this supplementary
-    (EHD: 96.7\%, HDS: 90.0\%); the figures are not directly comparable.
-  \item \textbf{Section~\ref{sec:nguyen12} Nguyen-12 Benchmark} --- new section reporting
+    (EHD: 96.7\%, HDS: 90.0\%); none of these figures are directly comparable.
+  \item \textbf{The main paper's \emph{Nguyen-12 Benchmark (Standard SR Suite)} subsection} --- new section reporting
     HypatiaX (11/12, 91.7\%), PySR-only (10/12, 83.3\%), and Neural MLP
     (0/12) on the standard Nguyen-12 suite under the same extrapolation
-    protocol.
+    protocol. This figure is current and unchanged since v4.
   \item \textbf{Section~7.4 Proposition~1 (Routing Cascade Convergence)} --- formal
     guarantee that Phase~2 warm-starting is monotonically non-degrading,
     complementing the routing improvements described in Supplementary~A.
@@ -193,7 +210,7 @@ document remain valid and unchanged.
 
 Symbolic regression (SR) aims to discover closed-form analytical expressions
 from data without prior knowledge of the functional form.  The Feynman SR
-Benchmark~\citep{udrescu2020aifeynman} provides a canonical evaluation suite spanning
+Benchmark~\citep{udrescu2020ai} provides a canonical evaluation suite spanning
 30 physics equations from 11 scientific domains.
 
 This supplementary integrates two complementary evaluations:
@@ -217,11 +234,11 @@ this paper are from the v2 rerun unless explicitly labelled v1.
 \label{suppb:related}
 
 SR has evolved from genetic programming~\citep{schmidt2009distilling} through
-physics-inspired decomposition~\citep{udrescu2020aifeynman} to transformer-based
+physics-inspired decomposition~\citep{udrescu2020ai} to transformer-based
 generation~\citep{biggio2021neural,shojaee2023transformer} and deep RL over
 expression trees~\citep{petersen2021deep}.  The best-published result on the
 noiseless Feynman benchmark prior to this work is AI~Feynman~2.0 at
-79.3\%~\citep{udrescu2020aifeynman}.
+79.3\%~\citep{udrescu2020aifeynman2}.
 
 Benchmark integrity has received increasing attention.
 \citet{memorization2024audit} show that LLMs can reproduce iconic equations
@@ -425,7 +442,7 @@ Wilcoxon signed-rank tests for all pairwise comparisons, Bonferroni corrected
 \rowcolor{passgreenBg}
 \HDS{} (this work) & Hybrid   & \textbf{90.0\%} & $+10.7$\,pp vs AI Feynman (subset) \\
 \midrule
-AI~Feynman~2.0     & Symbolic    & 79.3\% & \citet{udrescu2020aifeynman} (100-eq, SRBench) \\
+AI~Feynman~2.0     & Symbolic    & 79.3\% & \citet{udrescu2020aifeynman2} (100-eq, SRBench) \\
 NeSymReS           & Neural      & 59.4\% & \citet{biggio2021neural} (100-eq, SRBench) \\
 TPSR               & Transformer & 56.0\% & \citet{shojaee2023transformer} (100-eq, SRBench) \\
 DSR                & Deep SR     & 32.0\% & \citet{petersen2021deep} (100-eq, SRBench) \\
@@ -755,6 +772,18 @@ practical equivalence.
     exhaustive-search cost, not inference time.
   \item \textbf{No formula complexity metric.} Expression tree depth and
     operator count should accompany $\Rsq$ in future evaluations.
+  \item \textbf{[Open, process.]} The project's CI dashboard (July~9 run)
+    should not be cited: its own upstream notebooks (NB-01--NB-06) report
+    ``not found'' for that run, while its summary asserts ``0 open
+    issues'' and specific claims resolved. \texttt{build\_report.py}
+    needs to hard-fail on missing notebook output rather than emit a
+    stale green summary, and the dashboard needs a genuine re-run before
+    any of its figures are used.
+  \item \textbf{[Open, process.]} The legacy exp2 baseline-lock threshold
+    fix ($R^2 \geq 0.999999$ replacing $R^2 \geq 0.9999$, which had
+    inflated 74/90 to 81/90) is applied in code but not yet confirmed
+    against a live CI run; 81/90 should not be cited as current pending
+    that confirmation.
 \end{enumerate}
 
 %% ============================================================
@@ -796,9 +825,11 @@ Statistical significance & \textcolor{passgreen}{\textbf{PASS}} & \textcolor{pas
   Add Wilcoxon test; report 66\% tie rate\\
 Hardcoding disclosure   & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{REQUIRED}}} &
   \PureLLM: disclose 11/30 hardcoded\\
+Process/CI credibility  & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{OPEN}}} &
+  Do not cite July~9 dashboard or 81/90 baseline until live-confirmed (\S\ref{suppb:limitations})\\
 \midrule
 \textbf{Overall verdict} & \textcolor{passgreen}{\textbf{READY}} & \textcolor{passgreen}{\textbf{READY}} &
-  Both methods ready for JMLR submission\\
+  Ready on accuracy/robustness grounds; two process items above remain open\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -827,72 +858,7 @@ Hardcoding disclosure   & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{REQUI
 \end{enumerate}
 
 %% ── Bibliography ─────────────────────────────────────────────────────────────
-\bibliographystyle{plainnat}
-
-\begin{thebibliography}{9}
-
-\bibitem[Biggio et~al.(2021)]{biggio2021neural}
-L.~Biggio, T.~Bendinelli, A.~Neitz, A.~Lucchi, and G.~Rätsch.
-\newblock Neural symbolic regression that scales.
-\newblock \textit{Proc.\ ICML}, 2021.
-
-\bibitem[Roberts et~al.(2023)]{contamination2023check}
-M.~Roberts, H.~Thakur, C.~Herlihy, C.~White, and S.~Dooley.
-\newblock Data contamination through the lens of time.
-\newblock \textit{arXiv:2310.10628}, 2023.
-
-\bibitem[Satvaty et~al.(2024)]{memorization2024audit}
-A.~Satvaty, S.~Verberne, and F.~Turkmen.
-\newblock Undesirable memorization in large language models: A survey.
-\newblock \textit{arXiv:2410.02650}, 2024.
-
-\bibitem[Schmidt and Lipson(2009)]{schmidt2009distilling}
-M.~Schmidt and H.~Lipson.
-\newblock Distilling free-form natural laws from experimental data.
-\newblock \textit{Science}, 324(5923):81--85, 2009.
-
-\bibitem[Shojaee et~al.(2023)]{shojaee2023transformer}
-P.~Shojaee, K.~Meidani, A.~Barati~Farimani, and C.~K.~Reddy.
-\newblock Transformer-based planning for symbolic regression.
-\newblock \textit{NeurIPS}, 36:45907--45919, 2023.
-
-\bibitem[Petersen et~al.(2021)]{petersen2021deep}
-B.~K.~Petersen et~al.
-\newblock Deep symbolic regression.
-\newblock \textit{Proc.\ ICLR}, 2021.
-
-\bibitem[Udrescu and Tegmark(2020)]{udrescu2020aifeynman}
-S.-M.~Udrescu and M.~Tegmark.
-\newblock AI Feynman: A physics-inspired method for symbolic regression.
-\newblock \textit{Science Advances}, 6(16):eaay2631, 2020.
-
-\bibitem[Wilcoxon(1945)]{Wilcoxon1945}
-F.~Wilcoxon.
-\newblock Individual comparisons by ranking methods.
-\newblock \textit{Biometrics Bulletin}, 1(6):80--83, 1945.
-
-
-\bibitem[Meidani et~al.(2024)]{meidani2024snip}
-K.~Meidani, P.~Shojaee, C.~K.~Reddy, and A.~Barati~Farimani.
-\newblock SNIP: Bridging mathematical symbolic and numeric realms with unified pre-training.
-\newblock \textit{Proc.\ ICLR}, 2024.
-
-\bibitem[Balestriero et~al.(2021)]{balestriero2021high}
-R.~Balestriero, J.~Pesenti, and Y.~LeCun.
-\newblock Learning in high dimension always amounts to extrapolation.
-\newblock \textit{arXiv:2110.09485}, 2021.
-
-\bibitem[Neyshabur et~al.(2017)]{neyshabur2017exploring}
-B.~Neyshabur, S.~Bhojanapalli, D.~McAllester, and N.~Srebro.
-\newblock Exploring generalization in deep learning.
-\newblock \textit{Proc.\ NeurIPS}, 30:5949--5958, 2017.
-
-\bibitem[Zhang et~al.(2021)]{zhang2021understanding}
-C.~Zhang, S.~Bengio, M.~Hardt, B.~Recht, and O.~Vinyals.
-\newblock Understanding deep learning (still) requires rethinking generalization.
-\newblock \textit{Commun.\ ACM}, 64(3):107--115, 2021.
-
-\end{thebibliography}
+\bibliography{references}
 
 %% ============================================================
 \appendix
@@ -938,7 +904,7 @@ manuscript (see \texttt{figures\_inventory.tex}, 5 files, listed in
 \noindent\textbf{Generation note:} Regenerate from
 \texttt{noise\_sweep\_20260316\_192711.json} and
 \texttt{sample\_complexity\_20260316\_193447.json} (v2 corrected
-harness; see Section~\ref{sec:r2_bugfix} for v1 vs.\ v2 provenance).
+harness; see Section~\ref{sec:r2_measurement_bugfix} for v1 vs.\ v2 provenance).
 
 \noindent\textbf{Relationship to the submitted PDF:} the 13 files
 above are reproducibility documentation only and are not
@@ -987,7 +953,7 @@ equations) is 100\%.}
 
 \subsection*{Code, Data, and Protocol}
 
-All experimental results in Section~\ref{sec:benchmark} were produced
+All experimental results in the main paper's \emph{Benchmark Design} section were produced
 using \texttt{experiment\_protocol\_benchmark\_v2.py} (version~2.0,
 2026-03-02), which will be released alongside the final paper.
 The protocol file encodes all data-generation functions, random seeds, noise
@@ -1005,7 +971,12 @@ external dataset dependencies for the physics equations.
 
 \subsection*{Exact Reproduction Commands}
 
-\paragraph{Phase~2 (noisy, $R^2>0.995$, Table~\ref{tab:feynman30}).}
+\paragraph{Phase~2 (noisy, $R^2>0.995$).\textbf{[EDITORIAL NOTE: no table in this
+document reports a noisy-protocol, six-method, 30-equation aggregate at the
+0.995 threshold --- the original \texttt{tab:feynman30} label does not exist
+anywhere in the paper or supplements. Please confirm whether this should
+point to a specific table (e.g.\ a per-equation noisy breakdown analogous to
+Table~\ref{tab:overall}) or be removed.]}}
 \begin{verbatim}
 python run_comparative_suite_benchmark_v2.py \
     --methods 1 --samples 200 --no-llm-cache
@@ -1014,8 +985,7 @@ Output: \texttt{protocol\_core\_noisy\_<timestamp>.json}.
 The \texttt{--no-llm-cache} flag forces independent fresh API calls for all
 30 Pure~LLM evaluations; this was verified via cache-clearing.
 
-\paragraph{Phase~3 (noiseless, $R^2>0.9999$, Tables~\ref{tab:feynman30}
-and~\ref{tab:feynman30}).}
+\paragraph{Phase~3 (noiseless, $R^2>0.9999$, Table~\ref{tab:overall}).}
 \begin{verbatim}
 python run_comparative_suite_benchmark_v2.py \
     --noiseless --threshold 0.9999       \
@@ -1097,7 +1067,7 @@ flat-landscape equations where PySR's complexity search does not converge
 within the timeout.
 
 \subsection*{Measurement Correction (v1\,$\to$\,v2)}
-\label{sec:r2_bugfix}
+\label{sec:r2_measurement_bugfix}
 
 A bug was identified on 2026-03-16 in \texttt{evaluate\_llm\_formula}
 and corrected before final submission. The function used a hardcoded
@@ -1136,7 +1106,7 @@ Additional fixes in the same commit:
     fixing suppression on wide-range power-law equations.
 \end{itemize}
 
-Table~\ref{tab:changes} (Section~\ref{sec:r2_bugfix}) summarises all
+The \emph{Summary of Changes} table in Supplementary~A (\emph{Routing Improvements for Hybrid LLM--Neural-Network Systems}), and Section~\ref{sec:r2_measurement_bugfix} of this document, summarise all
 aggregate recovery changes. All results reported in the paper use the
 v2 corrected harness. The v1 JSON output files are retained for audit
 purposes and are available upon request.
@@ -1170,7 +1140,7 @@ equations return the ground-truth formula verbatim with zero cross-seed
 variation, consistent with training-data recall rather than inference.
 The genuine-inference pass rate (19 non-hardcoded equations) is 100\%.
 PureLLM is therefore listed for completeness in all tables but excluded
-from all scientific comparisons (Section~\ref{sec:results}).
+from all scientific comparisons (the main paper's Results section).
 
 A controlled re-run with \texttt{--no-llm-cache} confirmed that all
 30 equations issued independent API calls and produced identical scores
@@ -1209,7 +1179,7 @@ The only valid comparison uses the shared median $R^2$ axis:
 HypatiaX Hybrid DeFi achieves median $R^2 = 1.0000$ on our 30-equation
 subset vs.\ SNIP's $0.882$ on the full 119-equation SRBench set
 (different subsets; comparison is indicative only).
-Table~\ref{tab:nguyen12} provides this comparison.
+The Nguyen-12 benchmark table in the main paper provides this comparison.
 
 % ============================================================================
 % APPENDIX A: COMPLETE PROOF OF THEOREM
@@ -1368,7 +1338,7 @@ Liquidation & Leverage ratio & --- & Fail & Multi-step missing \\
 \end{small}
 \end{table}
 
-\paragraph{Key Findings:} Pure LLM performance strongly correlates with equation prevalence in training data (Spearman $\rho = 0.89$, $p < 0.001$)\citep{kambhampati2024llms}. Classical equations achieve 95\% success rate while specialised domains (DeFi) drop to 40\%, consistent with the reproductive behaviour characterisation in Finding~\ref{thm:llm_reproductive}.
+\paragraph{Key Findings:} Pure LLM performance strongly correlates with equation prevalence in training data (Spearman $\rho = 0.89$, $p < 0.001$)\citep{kambhampati2024llms}. Classical equations achieve 95\% success rate while specialised domains (DeFi) drop to 40\%, consistent with the reproductive behaviour characterisation in the main paper's \emph{LLM Reproductive Behaviour} finding.
 
 \subsection{DeFi-Optimized Results (23 tests)}
 
@@ -1646,7 +1616,7 @@ P = n \times (T \times (8.314 / V))
 
 \subsection{Near-Perfect Recoveries}
 
-The Michaelis-Menten and Impermanent Loss equations were recovered with constant error $< 10^{-5}$, achieving $R^2 = 1.0000$ and near-zero extrapolation error (see Listing~\ref{sec:results}).
+The Michaelis-Menten and Impermanent Loss equations were recovered with constant error $< 10^{-5}$, achieving $R^2 = 1.0000$ and near-zero extrapolation error (see the discovered-expression examples above).\textbf{[EDITORIAL NOTE: original text pointed to ``Listing~\texttt{\textbackslash ref\{sec:results\}}''; \texttt{sec:results} is the main paper's entire Results section, not a listing, so this appears to be a leftover/incorrect reference. Removed pending confirmation of intended target.]}
 
 \subsection{Failure Case Analysis}
 
@@ -1657,7 +1627,7 @@ The Michaelis-Menten and Impermanent Loss equations were recovered with constant
 
 \textbf{Neural Network Result}:
 \begin{itemize}
-\item \textbf{Interpolation}: $R^2 = 0.21$ (poor fit; relative error $> 100\%$, meeting the threshold in Definition~\ref{def:decoupling})
+\item \textbf{Interpolation}: $R^2 = 0.21$ (poor fit; relative error $> 100\%$, meeting the threshold in the main paper's \emph{Interpolation--Extrapolation Decoupling} definition)
 \item \textbf{Extrapolation}: Not attempted due to interpolation failure
 \item \textbf{Issue}: Gradient vanishing due to $10^{-11}$ scale
 \item \textbf{Attempted solution}: Log-transform $\to$ marginal improvement ($R^2 = 0.35$)
@@ -1715,7 +1685,7 @@ PySR correctly discovered logarithmic relationship:
 \end{equation}
 Achieving $R^2 = 0.998$, demonstrating the value of hybrid architecture.
 
-\textbf{Lesson learned}: LLM performance declined on this specialised equation, which is consistent with Finding~\ref{thm:llm_reproductive}---generation probability is theoretically predicted to be lower for expressions that are structurally distant from the training corpus\citep{kambhampati2024llms}.
+\textbf{Lesson learned}: LLM performance declined on this specialised equation, which is consistent with the main paper's \emph{LLM Reproductive Behaviour} finding---generation probability is theoretically predicted to be lower for expressions that are structurally distant from the training corpus\citep{kambhampati2024llms}.
 \end{example}
 
 \subsection{Complete Discovered Expressions Code Listing}
@@ -1920,11 +1890,11 @@ Recommendation: Future work should increase per-domain sample sizes to n $\geq$ 
 \section{Noise Sensitivity Analysis}
 \label{app:noise_sensitivity}
 
-To assess correspondence with Condition 3 of Empirical Result~\ref{thm:llm_reproductive} (noise tolerance threshold $\sigma \leq 0.1 \cdot \text{std}(y)$), we conducted systematic experiments varying noise levels.
+To assess correspondence with Condition 3 of the main paper's \emph{LLM Reproductive Behaviour} finding (noise tolerance threshold $\sigma \leq 0.1 \cdot \text{std}(y)$), we conducted systematic experiments varying noise levels.
 
 \subsection{Experimental Protocol}
 
-We tested 15 classical formulas (Table~\ref{tab:five_systems_full}) with noise levels:
+We tested 15 classical formulas (see the main paper's Five-System Comparison table) with noise levels:
 \[
 \sigma \in \{0.01, 0.03, 0.05, 0.08, 0.10, 0.15, 0.20\} \times \text{std}(y)
 \]
