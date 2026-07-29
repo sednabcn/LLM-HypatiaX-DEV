@@ -12,9 +12,12 @@ name: Auto-patch audit notebooks (FIX-D1 / FIX-N4)
 #      without CI running, e.g. a direct push that skipped hooks).
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
-      - "hypatiax/data/results/defi/hypatix_defi_benchmark_v3c_corrected_*.json"
+      # FIX-D1-PATH: match the corrected result file at any depth under a
+      # defi/ subtree, not only a direct results/defi/ path -- in practice
+      # it has been committed nested under comparison_results/<run>/defi/.
+      - "hypatiax/data/results/**/defi/hypatix_defi_benchmark_v3c_corrected_*.json"
       - "issue_registry.json"
       - "paper_targets.json"
   workflow_dispatch: {}
@@ -133,9 +136,13 @@ jobs:
         run: |
           git config user.name "audit-bot"
           git config user.email "audit-bot@users.noreply.github.com"
+          # FIX-D1-PATH: stage the whole results/ tree, not just results/defi/ --
+          # the corrected file may land nested under a comparison_results/<run>/defi/
+          # subtree rather than directly under results/defi/, and a fixed path here
+          # would silently skip staging it, defeating the "one commit for both" guarantee.
           git add notebooks/NB-04_Numerical_Consistency_Checker.ipynb \
                   notebooks/NB-06_Code_Quality_Pipeline_Integrity.ipynb \
-                  hypatiax/data/results/defi/
+                  hypatiax/data/results/
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
           git commit -m "auto: patch NB-04/NB-06 status text for FIX-D1/FIX-N4 (verified by live execution)"
           git push
