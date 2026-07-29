@@ -1398,7 +1398,7 @@ hard; see \S\ref{sec:hybrid-attribution-bug} for the full per-task list) ---
 this is \emph{not} concentrated in the hard tier as an earlier draft of this
 analysis stated, and that concentration claim is retracted.
 
-\subsection{The Hybrid Decision-Attribution Bug: Quantification}\label{subsec:the-hybrid-decisionattribution-bug-quant}
+\subsection{The Hybrid Decision-Attribution Bug: Quantification}
 \label{sec:hybrid-attribution-bug}
 
 \paragraph{The bug.} Every hybrid-system record in the v3.0 result JSON carries
@@ -2852,19 +2852,35 @@ carried forward without re-verification against v3.0 data.
 
 \section{Outstanding Process/Credibility Items (Do Not Cite Until Resolved)}\label{sec:process_items}
 
-Two pipeline-level issues remain open as of this revision. Neither is a
-claim made in the body of this paper, but both bear on the credibility of
-figures elsewhere in the reproducibility material. Full detail is
-maintained in a single place to avoid the two copies drifting out of sync:
-see Supplementary Material A, Section~``Remaining Open Issues''
-(items~6--7), which covers (i) the project's CI dashboard (July~9 run),
-which should not be cited because its own upstream notebooks report
-``not found'' for that run while its summary asserts ``0 open issues'',
-and (ii) the legacy exp2 baseline-lock threshold defect ($R^2 \geq 0.9999$
+One pipeline-level issue remains open as of this revision, and two further
+items are noted here as resolved. Neither is a claim made in the body of this
+paper, but both bear on the credibility of figures elsewhere in the
+reproducibility material. Full detail is maintained in a single place to
+avoid the two copies drifting out of sync: see Supplementary Material A,
+Section~10 (``Process/Credibility Items''). \textbf{Open:} the project's CI
+dashboard (July~9 run; Supplementary~A \S10.1), which should not be cited
+because its own upstream notebooks report ``not found'' for that run while
+its summary asserts ``0 open issues''. \textbf{Resolved since the previous
+revision:} the legacy exp2 baseline-lock threshold defect ($R^2 \geq 0.9999$
 used in place of the pipeline's stated $R^2 \geq 0.999999$, inflating the
-legacy baseline from 74/90 to 81/90), which is fixed in code but not yet
-confirmed against a live CI run. Both remain open; 74/90 and not 81/90
-should be treated as the current legacy figure until that confirmation
-exists.
+legacy baseline from 74/90 to 81/90; Supplementary~A \S10.2) is now
+live-confirmed at 74/90 against a fresh CI run and reproduced independently
+a second time via a patched Gate~C schema check (\S10.4); 74/90 should be
+cited, not 81/90. Also resolved: the \texttt{ablation\_paired.json}
+\texttt{n\_with\_extrap\_r2\_far} 21/30 vs.\ 20/30 discrepancy
+(Supplementary~A \S10.6) --- root cause confirmed as a single degenerate
+hypatia/pysr pair (Rabi frequency; the LLM-guidance step returned output
+identical to the PySR-only baseline) and fixed in
+\texttt{run\_analysis.py}, which now computes 20/30 automatically rather
+than by manual adoption. Also resolved: the Gate~C \texttt{source\_files}
+manifest (Supplementary~A \S10.5) --- the content-based domain filter
+correctly selects all 11 Feynman-protocol shard files and rejects
+non-protocol files sharing the same output directory, and the 74/90
+solve-rate reproduces exactly from the 11 correctly-selected files, so the
+underlying scoring was never at risk; the locked manifest itself listed
+one stale, pre-filter file that has been trimmed. The remaining
+Supplementary~A \S10 sub-items (the second unreconciled
+\texttt{exp2\_run.log} and the unaudited 1.73$\times$/89.2\%/62.2\% DeFi
+figures) are unaffected by this revision and remain as stated there.
 
 \end{document}
