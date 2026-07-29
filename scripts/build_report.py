@@ -232,6 +232,50 @@ def _write_github_output(key: str, value: str) -> None:
 # Step 2 — Convert notebook to HTML body fragment
 # ══════════════════════════════════════════════════════════════════════════════
 
+def notebook_execution_status(nb_path: Path) -> tuple[bool, str]:
+    """
+    Returns (complete, reason). 'complete' is True only if every code cell in
+    the notebook has a non-null execution_count -- i.e. the notebook actually
+    ran start-to-finish this cycle, not just that the .ipynb file exists.
+
+    FIX-DASHBOARD-STALE-GREEN (verification report, item 10.1): existence
+    alone (nb_path.exists()) was previously treated as "this notebook's
+    findings are live." That's wrong on two counts, both observed directly
+    in committed notebooks: (1) a notebook can exist but never have been
+    executed at all (every code cell's execution_count is null), and (2) a
+    notebook can execute partway then stop silently -- including stopping
+    before its own final status-summary cell runs, so a human skimming the
+    notebook sees old markdown/prior-run artifacts and mistakes them for
+    this run's live conclusion. Neither case is caught by .exists(), and
+    neither is caught by the registry-driven Open Issues table either,
+    since load_registry() reads issue_registry.json independently of
+    whether these notebooks ran at all -- so "0 open issues" could
+    previously be asserted from a stale cached registry while the notebook
+    that was supposed to verify it never executed. This check closes that
+    gap by making non-execution a hard, visible failure instead of a
+    silently-ignored fact.
+    """
+    if not nb_path.exists():
+        return False, "file not found"
+    try:
+        nb = json.loads(nb_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"could not parse notebook JSON: {exc}"
+
+    code_cells = [c for c in nb.get("cells", []) if c.get("cell_type") == "code"]
+    if not code_cells:
+        return False, "notebook has no code cells"
+
+    unexecuted = [i for i, c in enumerate(code_cells) if c.get("execution_count") is None]
+    if unexecuted:
+        return False, (
+            f"{len(unexecuted)}/{len(code_cells)} code cell(s) never executed "
+            f"(execution_count is null) -- notebook did not run to completion "
+            f"this cycle"
+        )
+    return True, "all code cells executed"
+
+
 def nb_to_html_fragment(nb_path: Path) -> str:
     """
     Run nbconvert --no-input on an already-executed notebook and extract
@@ -733,6 +777,7 @@ def build_report() -> None:
         fh.write(_html_header(run_date, upstream_run, report_run))
 
         # ── Per-notebook sections ─────────────────────────────────────────────
+        incomplete_notebooks: list[str] = []
         for (_, nb_rel, anchor), title in zip(NOTEBOOKS, NB_TITLES):
             nb_path = notebooks_dir / nb_rel
             fh.write(f"""
@@ -740,16 +785,47 @@ def build_report() -> None:
         <div class="nb-header"><h2>{title}</h2></div>
         <div class="nb-body">
 """)
+            complete, reason = notebook_execution_status(nb_path)
             if nb_path.exists():
                 print(f"  Converting {nb_path} …")
                 fh.write(nb_to_html_fragment(nb_path))
+                if not complete:
+                    print(f"  ⚠ {nb_path} exists but did not fully execute: {reason}")
+                    fh.write(
+                        "  <div class='missing'>⚠️ This notebook did not run to "
+                        f"completion this cycle ({html_mod.escape(reason)}). Any "
+                        "conclusions below reflect a prior run, not this one.</div>"
+                    )
+                    incomplete_notebooks.append(f"{nb_rel} ({reason})")
             else:
                 print(f"  ⚠ Not found: {nb_path}")
                 fh.write(
                     "  <div class='missing'>⚠️ Notebook not found — "
                     "the upstream job may have failed or been skipped.</div>"
                 )
+                incomplete_notebooks.append(f"{nb_rel} (file not found)")
             fh.write("\n        </div>\n      </div>\n")
+
+        # FIX-DASHBOARD-STALE-GREEN: a dashboard asserting "0 open issues" while
+        # one or more of the notebooks that were supposed to produce that
+        # verdict never finished running is exactly the failure mode this
+        # review flagged. Hard-fail rather than publish it, except on an
+        # explicit fix-only run (NO_NOTEBOOKS=true) where notebooks are
+        # expected not to have been re-executed by design.
+        if incomplete_notebooks and not no_notebooks:
+            print("\n::error:: build_report.py: refusing to publish a dashboard "
+                  "with incomplete/missing notebook runs:")
+            for item in incomplete_notebooks:
+                print(f"    - {item}")
+            print(
+                "  The Open Issues table is driven by issue_registry.json, which "
+                "is independent of whether these notebooks actually executed --  "
+                "so a stale registry could otherwise assert '0 open issues' while "
+                "the notebooks meant to verify that never ran. Re-run "
+                "ci_paper_notebooks.yml so all notebooks execute to completion, "
+                "then re-run this report."
+            )
+            sys.exit(1)
 
         # ── Dynamic conclusions section ───────────────────────────────────────
         registry_entries = load_registry(registry_path)

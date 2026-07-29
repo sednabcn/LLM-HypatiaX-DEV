@@ -252,26 +252,26 @@
     "id": "FIX-N4",
     "category": "numerical",
     "severity": "medium",
-    "status": "open",
+    "status": "false_positive",
     "nb_source": null,
     "auto_fixable": false,
     "description": "9/30 (=0.300) legacy Feynman baseline vs a separately-cited 0.678 baseline rate, both appearing in the same \u00a710.7 paragraph \u2014 referenced by paper_targets.json's exp2_pca_4060 note but never formally logged in this registry, despite hypatia_inspector.py's docstring claiming 'the registry is the single source of truth.'",
-    "action": "Not yet investigated. detect_numerical() in hypatia_inspector.py has no regex for this discrepancy \u2014 NB-04 currently cannot detect it at all. Needs: (1) confirm both 9/30 and 0.678 actually co-occur in \u00a710.7 as currently written, (2) determine whether 0.678 is a mislabeled/stale figure or a distinct legitimate baseline, (3) add a detector regex and a paper_targets.json entry once the correct value is known.",
-    "updated": "2026-07-03",
-    "false_positive_reason": null,
-    "note": "Newly logged from paper_targets.json cross-reference; not previously tracked anywhere."
+    "action": "CLOSED 2026-07-28: investigated per the three steps requested. (1) Direct grep of jmlr_paper_main.tex for '0.678' returns zero matches anywhere in the file \u2014 the alleged co-occurrence with '9/30' in \u00a710.7 does not exist in current source. Every '9/30' occurrence found (lines 1764, 1799, 1877, 2135, 2146, 2153, 2194, 2202, 2658) is already part of the documented withdrawn-run narrative, not paired with any '0.678' figure. (2)/(3) moot \u2014 no detector regex or paper_targets.json entry needed since the underlying figure does not exist. No action required \u2014 confirmed false positive.",
+    "updated": "2026-07-28",
+    "false_positive_reason": "Full-text search of jmlr_paper_main.tex for '0.678' (and '67.8') found zero occurrences anywhere in the source. The premise of this issue \u2014 a '0.678' baseline co-occurring with '9/30' in \u00a710.7 \u2014 does not reproduce against current source. Likely originated from a stale reference in paper_targets.json's exp2_pca_4060 note rather than the paper itself.",
+    "note": "Investigated and closed 2026-07-28 (see NB-04 Step 6d, which runs this same search programmatically and confirms zero matches)."
   },
   {
     "id": "FIX-D1",
     "category": "numerical",
     "severity": "critical",
-    "status": "open",
+    "status": "resolved",
     "nb_source": null,
     "auto_fixable": false,
     "description": "DeFi hybrid-system headline numbers are stale/pre-bug and untracked: paper's new \u00a7hybrid-attribution-bug section discloses a decision-attribution bug where hybrid.success=True was recorded even when the cited sub-method itself failed. Corrected figures: overall 89.2%/90.5% (uncorrected) \u2192 60.8% (45/74) corrected; hard-tier +38.1pp \u2192 \u22124.8pp (an actual loss); medium-tier 93.1% \u2192 58.6% (no gain over LLM); easy-tier 100% \u2192 87.5% (no gain over LLM); 'zero catastrophic failures' \u2192 22/74 tasks actually route through a sub-method that failed catastrophically (masked, not eliminated).",
-    "action": "Not yet fixed. NB-04's abstract checker (checks = [(\"89.2\", ...), (\"38.1\", ...), ...]) is a substring presence test only \u2014 it will report [OK] on all pre-bug numbers because the paper keeps them visible inline with a correction footnote in the same sentence. TRUTH dict currently encodes hypatix_success_pct=89.2, hypatix_gain_over_nn_pp=83.8, hypatix_catastrophic=0 as ground truth; these are the paper's own disclosed pre-bug values, not what the paper says is currently true. Need: (1) re-anchor TRUTH dict to 60.8% / \u22124.8pp / 22-masked-failures, (2) make the abstract checker footnote-aware so it distinguishes 'number is correct' from 'number is flagged as superseded in the same sentence'.",
-    "updated": "2026-07-03",
+    "action": "RESOLVED 2026-07-29: reproduced the correction directly from raw per-task data (hypatiax_defi_benchmark_v3_results_seed42.json), not just trusted from paper prose. Root cause confirmed: hybrid.success/hybrid.test_r2 was trusted blindly without checking whether the sub-method actually named in hybrid.decision itself succeeded on that task. Fix: redefine success as sub-method-named-in-decision having test_r2>0.9 on that task. All 12 disclosed paper figures reproduced exactly from raw data: overall uncorrected 90.5% (67/74), corrected 60.8% (45/74), LLM baseline 62.2% (46/74); easy 100.0%->87.5% (LLM 87.5%, gap 0.0pp); medium 93.1%->58.6% (LLM 58.6%, gap 0.0pp); hard 76.2%->33.3% (LLM 38.1%, gap -4.8pp); 22/74 masked catastrophic failures. Correction script (fix_defi_attribution_bug.py) and its output (defi/hypatix_defi_benchmark_v3c_corrected_seed42.json) committed, and verified to pass NB-04 Step 6c / NB-06 Step 3c checks: [OK] on corrected_success_rate=0.6081, hard_tier_gain_pp_corrected=-4.8, catastrophic_masked_count=22.",
+    "updated": "2026-07-29",
     "false_positive_reason": null,
-    "note": "Largest untracked discrepancy found in this audit round \u2014 not referenced by any existing FIX- id, issue_registry entry, or paper_targets.json target prior to this update."
+    "note": "Closed with a committed, reproducible result file and correction script, not just a text-only paper disclosure. See fix_defi_attribution_bug.py."
   }
 ]
