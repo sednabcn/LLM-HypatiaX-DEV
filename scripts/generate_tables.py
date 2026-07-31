@@ -475,38 +475,87 @@ def gen_ablation() -> None:
         ("Portfolio Variance",    "DeFi Risk",  0.9504, 0.9975,  0.8865,  1.0000,  0.9493,  1.0000, -118.4482,   1.0000, 141, 141),
     ]
 
-    # Try to read per-equation data from JSON
+    # Try to read per-equation data from the authoritative merged file.
+    # _merged.json is a dict keyed by equation display name (not "equations"/
+    # "cases"/"results" -- those keys don't exist in the real schema, which
+    # is why this always fell back to PAPER_EQUATIONS before). Loaded
+    # explicitly by filename rather than via load_best()'s newest-mtime glob,
+    # because _merged.json, the per-shard files, _analysis.json, and others
+    # all share an identical mtime in this results directory -- mtime alone
+    # can't reliably pick the merged file over a partial shard.
+    def _load_merged() -> tuple[dict | None, Path | None]:
+        for base in (PATCHED, RESULTS):
+            p = (base / "ablation" / "exp1_ablation" / "_merged.json")
+            if p.exists():
+                try:
+                    return json.loads(p.read_text()), p
+                except Exception:
+                    continue
+        return None, None
+
     def _extract_equations(d):
         if not isinstance(d, dict):
             return []
-        eqs = d.get("equations", d.get("cases", d.get("results", [])))
-        if not isinstance(eqs, list) or len(eqs) < 15:
-            return []
         rows = []
-        for eq in eqs:
+        for name, eq in d.items():
+            if not isinstance(eq, dict):
+                continue
+            p = eq.get("pysr_only", {}) or {}
+            h = eq.get("hypatia", {}) or {}
             rows.append((
-                eq.get("name", eq.get("equation", "?")),
+                eq.get("name", name),
                 eq.get("domain", "?"),
-                eq.get("pysr_train_r2",     eq.get("p_train", float("nan"))),
-                eq.get("hypatia_train_r2",  eq.get("h_train", float("nan"))),
-                eq.get("pysr_near_r2",      eq.get("p_near",  float("nan"))),
-                eq.get("hypatia_near_r2",   eq.get("h_near",  float("nan"))),
-                eq.get("pysr_med_r2",       eq.get("p_med",   float("nan"))),
-                eq.get("hypatia_med_r2",    eq.get("h_med",   float("nan"))),
-                eq.get("pysr_far_r2",       eq.get("p_far",   float("nan"))),
-                eq.get("hypatia_far_r2",    eq.get("h_far",   float("nan"))),
-                eq.get("pysr_time_s",       eq.get("p_time",  float("nan"))),
-                eq.get("hypatia_time_s",    eq.get("h_time",  float("nan"))),
+                p.get("train_r2",       float("nan")),
+                h.get("train_r2",       float("nan")),
+                p.get("extrap_r2_near", float("nan")),
+                h.get("extrap_r2_near", float("nan")),
+                p.get("extrap_r2_medium", float("nan")),
+                h.get("extrap_r2_medium", float("nan")),
+                p.get("extrap_r2_far",  float("nan")),
+                h.get("extrap_r2_far",  float("nan")),
+                p.get("total_time_s",   p.get("sr_time_s", float("nan"))),
+                h.get("total_time_s",   h.get("sr_time_s", float("nan"))),
             ))
-        return rows
+        return rows if len(rows) >= 15 else []
+
+    merged_data, merged_src = _load_merged()
+    if merged_data:
+        data, src = merged_data, merged_src
 
     equations = _extract_equations(data) if data else []
     if not equations:
         equations = PAPER_EQUATIONS
 
-    _d = data if isinstance(data, dict) else {}
-    mw_p = _d.get("mw_p", _d.get("mann_whitney_p", 0.2948))
-    mw_u = _d.get("mw_u", _d.get("mann_whitney_u", 126.0))
+    # Real Mann-Whitney result, loaded explicitly from exp1_rf01_mannwhitney.json
+    # rather than hardcoded placeholder defaults (previously 0.2948 / 126.0,
+    # neither of which came from any real computation). IMPORTANT: this file
+    # reports n_pairs=3 (12 of 15 equations skipped, Chemistry domain only) --
+    # a materially different sample size than the "n=15" claimed elsewhere in
+    # the paper, and a materially different conclusion (not significant,
+    # h_wins=0). Surfaced honestly here rather than silently relabelled as
+    # n=15; do not paper over this by hand-editing n back to 15 upstream.
+    def _load_mannwhitney() -> dict | None:
+        for base in (PATCHED, RESULTS):
+            p = base / "ablation" / "exp1_ablation" / "exp1_rf01_mannwhitney.json"
+            if p.exists():
+                try:
+                    return json.loads(p.read_text()).get("rf01_mann_whitney")
+                except Exception:
+                    continue
+        return None
+
+    _mw = _load_mannwhitney()
+    if _mw:
+        mw_u = _mw.get("U_two_sided")
+        mw_p = _mw.get("p_two_sided")
+        mw_n = _mw.get("n_pairs")
+        mw_skipped = _mw.get("n_skipped", 0)
+    else:
+        _d = data if isinstance(data, dict) else {}
+        mw_p = _d.get("mw_p", _d.get("mann_whitney_p"))
+        mw_u = _d.get("mw_u", _d.get("mann_whitney_u"))
+        mw_n = None
+        mw_skipped = 0
 
     def _r(v, clip=None):
         if not isinstance(v, (int, float)) or v != v:
@@ -563,13 +612,28 @@ def gen_ablation() -> None:
         f" & {_mean_r2(cols[10])} & {_mean_r2(cols[11])} \\\\\n"
     )
 
+    if mw_u is not None and mw_p is not None:
+        _n_str = str(mw_n) if mw_n is not None else "?"
+        _mw_note = (
+            f"  Mann--Whitney (far-$R^2$): $U={mw_u:.1f}$, $p={mw_p:.4f}$ "
+            f"(two-sided, $n={_n_str}$"
+        )
+        if mw_skipped:
+            _mw_note += (
+                f"; {mw_skipped} of 15 equations excluded from this test -- "
+                r"see \texttt{exp1\_rf01\_mannwhitney.json} for which and why"
+            )
+        _mw_note += ").\n"
+    else:
+        _mw_note = "  Mann--Whitney statistic unavailable for this run.\n"
+
     tex += r"""\bottomrule
 \end{tabular}
 \begin{tablenotes}
 \small
 \item P = PySR-only; H = HypatiaX (PySR + LLM warm-start).
   Near/Med/Far $R^2$ at $1.2\times$, canonical, and $5\times$ training range.
-""" + f"  Mann--Whitney (far-$R^2$, $n=15$): $U={mw_u:.1f}$, $p={mw_p:.4f}$ (two-sided).\n" + r"""\end{tablenotes}
+""" + _mw_note + r"""\end{tablenotes}
 \end{table*}
 """
     write_table("ablation.tex", tex)
