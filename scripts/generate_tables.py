@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -72,6 +73,15 @@ def _parse_args() -> argparse.Namespace:
                    help="Experiment tag (e.g. exp2_feynman_pca).  When supplied, "
                         "only the tables relevant to that experiment are generated. "
                         "Omit (or pass 'all') to regenerate every table.")
+    p.add_argument("--allow-fallback", action="store_true", dest="allow_fallback",
+                   help="Exit 0 even if one or more result JSONs are missing and "
+                        "paper-verified fallback numbers were substituted. Without "
+                        "this flag (the default), a missing JSON causes the tables "
+                        "to still be generated (for local debugging) but the process "
+                        "exits non-zero, so a CI step invoking this script fails "
+                        "instead of reporting a stale green summary. Intended for "
+                        "deliberate local/partial drafting only — never pass this "
+                        "flag in CI.")
     return p.parse_args()
 
 
@@ -1902,6 +1912,8 @@ def main() -> None:
         print(f"\n  ⚠  MISSING JSONs ({len(_missing)}) — affected tables will use paper-verified fallbacks:")
         for msg in _missing:
             print(msg)
+        if not _ARGS.allow_fallback:
+            print(f"\n  ✗  This run will exit non-zero because of the above (no --allow-fallback given).")
     else:
         print("\n  All expected JSONs found — no fallbacks needed.")
     print()
@@ -2047,6 +2059,21 @@ def main() -> None:
     \\input{tables/timing_detail.tex}    % Tab 11 Appendix C
     \\input{tables/repro_macros.tex}
 """)
+
+    # ── Fail the build if any table used a paper-verified fallback ────────────
+    # Tables were still written above (useful for local debugging), but a CI
+    # step that runs this script must not report success while silently
+    # substituting stale hardcoded numbers for a missing fresh-run JSON.
+    if _missing and not _ARGS.allow_fallback:
+        print(f"{'═'*65}")
+        print(f"  ✗  FAILED: {len(_missing)} table(s) above used paper-verified")
+        print( "     fallback data instead of a fresh result JSON. Tables were")
+        print( "     still written to disk for inspection, but this run is")
+        print( "     exiting non-zero so CI does not report a stale green summary.")
+        print( "     Re-run with the missing JSONs in place, or pass")
+        print( "     --allow-fallback if this is deliberate local/partial drafting.")
+        print(f"{'═'*65}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
