@@ -1,0 +1,183 @@
+% !TEX root = jmlr_paper_main.tex
+% Reproducibility note: LLM model-string versioning in the Nguyen-12 pipeline
+% Generated 2026-07-29. Intended for \input into a Limitations / Reproducibility
+% appendix of jmlr_paper_main.tex. Cross-references issue_registry.json FIX-N3
+% (and proposes a new FIX-N5) and paper_targets.json.
+
+\subsection{Reproducibility Note: Unpinned LLM Model String in the Nguyen-12 Pipeline}
+\label{sec:repro-note-model-drift}
+
+While investigating a seed-reproducibility discrepancy in the Nguyen-12
+extrapolation experiment (Section~\ref{sec:nguyen12}, cf.\ FIX-N3 in the
+issue tracker), we traced the actual language model invoked by the pipeline
+across four source snapshots and found that it is not pinned to a dated
+model release, which has direct consequences for whether currently reported
+solve rates should be read as a reproduction of the originally benchmarked
+figure. A fourth snapshot, \texttt{hypatia.py} — the file that turns out to
+sit directly on the Nguyen-12 benchmark's actual LLM call path — was
+obtained after the first three were traced and resolves the model-identity
+question: see below.
+
+\paragraph{What was checked.} Three artifacts spanning the project's
+history were inspected for the model string actually compiled into the
+symbolic-regression pipeline: (i) an executed notebook from an earlier
+revision (\texttt{hybrid50v}); (ii) two Colab-exported scripts from a later
+revision, one per seed (\texttt{hybrid50v\_02}); and (iii) the current
+continuous-integration source, \texttt{symbolic\_engine.py}, as imported by
+\texttt{run\_all.sh}. Each snapshot hardcodes a different model string as
+the \texttt{LLMConfig} default (\texttt{claude-sonnet-4-6},
+\texttt{claude-sonnet-4-5}, and \texttt{claude-sonnet-4-20250514},
+respectively, the last of these appearing only in the CI configuration file
+\texttt{repro.yaml} and an accompanying SDK-version comment). Critically,
+none of the three code snapshots contains any mechanism to read an
+environment variable or the \texttt{repro.yaml} \texttt{llm\_model} field at
+runtime: \texttt{LLMConfig.model} is a plain dataclass default in each case,
+and \texttt{hybrid\_system\_v50\_2.py} instantiates \texttt{LLMConfig}
+without ever passing a \texttt{model} argument. The model that actually
+produced any given run therefore depends entirely on which hardcoded source
+revision happened to be present at execution time, not on the value
+documented in the CI configuration.
+
+\paragraph{Current live default, and a correction.} The presently shipping
+source, \texttt{symbolic\_engine.py}, sets the default to
+\texttt{claude-sonnet-4-6}. An earlier draft of this note hypothesized that
+this string behaves as an undated, evergreen alias that Anthropic could
+silently repoint to a different underlying model over time. Checking
+Anthropic's published model-versioning documentation shows this is
+incorrect: starting with the Claude 4.6 generation, dateless model IDs such
+as \texttt{claude-sonnet-4-6} are themselves pinned, fixed snapshots, not
+aliases — Anthropic does not update the weights behind an existing model
+ID, and a new version ships under a new ID entirely. Only pre-4.6 dateless
+strings (for example \texttt{claude-sonnet-4-5}, which appears in the
+\texttt{hybrid50v\_02} Colab exports rather than in the current CI source)
+behave as convenience pointers that resolve to the latest dated snapshot
+and can therefore drift. We retract the alias-drift explanation for the
+currently-live code path and flag it explicitly so it is not repeated as
+settled fact elsewhere in the paper or its supplementary material.
+
+\paragraph{Resolved: the Nguyen-12 benchmark's actual live model is a
+fourth, different string.} \texttt{hypatia.py} has now been obtained and
+verified directly. \texttt{get\_llm\_prior()}'s own signature (lines
+80–82) sets \texttt{n\_candidates: int = 5}, \texttt{temperature: float =
+0.25}, and \texttt{model: str = "claude-sonnet-5"} — a fourth distinct
+hardcoded model string, different from all three traced previously
+(\texttt{claude-sonnet-4-6} in \texttt{symbolic\_engine.py}'s
+\texttt{LLMConfig}, \texttt{claude-sonnet-4-5} in the
+\texttt{hybrid50v\_02}-era \texttt{LLMConfig} lineage, and
+\texttt{claude-sonnet-4-20250514} in \texttt{repro.yaml}).
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py}'s call site (lines 455–459)
+passes only \texttt{n\_candidates=8} and \texttt{verbose=False} — no
+\texttt{model=} or \texttt{temperature=} argument — so the call falls
+through to \texttt{hypatia.py}'s own defaults. The model that actually
+produced the Nguyen-12 results is therefore \texttt{claude-sonnet-5} at
+\texttt{temperature=0.25}, not \texttt{claude-sonnet-4-6} at
+\texttt{temperature=0.3} as \texttt{symbolic\_engine.py}'s
+\texttt{LLMConfig} would suggest; \texttt{n\_candidates=8} is a real,
+confirmed override, but of \texttt{hypatia.py}'s own default of 5, not of
+\texttt{LLMConfig}'s 3. There is a clear explanation for why
+\texttt{claude-sonnet-4-6} was previously believed to be live:
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py:263} executes
+\texttt{os.environ.setdefault('LLM\_MODEL', 'claude-sonnet-4-6')}, but
+\texttt{hypatia.py} contains no reference to an \texttt{LLM\_MODEL}
+environment variable anywhere — the variable is set but nothing reads
+it, the same "looks wired in but isn't" pattern already identified for
+\texttt{repro.yaml}'s \texttt{llm\_model} field. \texttt{hypatia.py}'s
+\texttt{client.messages.create()} call (lines 150–156) also passes no
+seed parameter, independently confirming that no user-settable sampling
+seed exists on this code path either. With \texttt{hypatia.py} resolved,
+\texttt{run\_all.sh} — to confirm which script CI actually invokes — is
+now the sole remaining unverified link in the chain.
+
+\paragraph{Observed discrepancy (partially explained; timeline
+narrowed).} The \texttt{hybrid50v\_02} script documents its own
+validated target result in-line as 11/12 harmonic-rate solves (91.7\%),
+10/12 pointwise-rate solves (83.3\%), 0/12 for the neural baseline, with a
+Mann--Whitney comparison of $U{=}113$, $p{=}0.0097$. Recent reruns of the
+same seed and code instead land at 12/12 (100\%). A cross-seed comparison
+(seeds 99, 123, 777, 2024) run under confirmed identical full paper
+parameters ($n_{\text{tasks}}{=}12$, $\text{niterations}{=}1000$,
+$\text{populations}{=}30$, $\text{timeout}{=}1100\text{s}$) found 12/12
+for every seed, which rules out both ``seed=123 was an unlucky draw'' and
+``reduced sample size inflates the recovery rate'' as explanations. A
+within-seed comparison at seed=123 across three timestamps found May~22
+disagreeing with both July runs at the expression level on all 24
+task/system entries (max $|r^2\ \text{diff}|\approx 8.46\times10^{-5}$),
+while the two July runs (Jul~16, Jul~24) match each other exactly —
+something changed between May and mid-July and has been stable since. A
+separately dated batch (filesystem-confirmed Apr~23, 2026, since none of
+the five filenames matched the analysis script's own timestamp parser)
+shows the pipeline was still running a reduced, single-task smoke-test
+configuration at that point, and had moved to the full paper-parameter
+configuration by May~22, 2026 — narrowing the configuration-migration
+window to roughly four weeks and flagging it as a plausible window for
+the GCP/Kaggle~$\to$~GitHub~Actions infrastructure migration to have
+occurred as well, since that migration remains the leading unexplained
+variable once seed and sample size are ruled out. Sampling
+nondeterminism at the LLM layer remains a contributing, independently
+verified factor regardless of which code path (\texttt{LLMConfig} or
+\texttt{hypatia.py}) is in play: \texttt{symbolic\_engine.py}'s own
+module-level comment (lines 100–101) states outright that LLM
+temperature sampling is server-side and cannot be seeded there, and its
+\texttt{LLMConfig} default sets \texttt{temperature=0.3} (line 526) — a
+non-zero value with no exposed sampling seed. The Claude API is not
+guaranteed to return bit-identical completions for identical prompts even
+at low temperature, so if \texttt{seed} in this pipeline constrains only
+the symbolic-regression search (PySR/NumPy) and not LLM sampling, two
+runs with the ``same seed'' can still produce different LLM-proposed
+candidate expressions, which PySR then refines into different final
+fits. This is independently confirmed behavior of the traced
+\texttt{LLMConfig} path; whether it also describes \texttt{hypatia.py}'s
+behavior is unknown pending that file.
+
+\paragraph{Corroborating billing evidence, re-read.} The API-key cost
+dashboard still shows a key created shortly before the earlier, disagreeing
+run with comparatively low cumulative cost, and a second key created about
+seven weeks later that had, by the same last-used date, already accrued
+roughly thirty times the cumulative cost of the first over a comparable
+usage window. This remains useful evidence of \emph{something} changing
+around that time — additional retries, a higher candidate count, or a
+configuration change — but should now be read as pointing at a
+configuration or usage-pattern change rather than at a model-version
+change, since the model string itself is confirmed pinned.
+
+\paragraph{Revised recommendation.} We no longer recommend "pinning to a
+dated snapshot" as a fix for \texttt{symbolic\_engine.py}'s
+\texttt{LLMConfig}, since \texttt{claude-sonnet-4-6} is already a fixed
+snapshot there — but that dataclass is now confirmed \emph{not} to be
+what generated the Nguyen-12 numbers in the first place. The model that
+matters, \texttt{claude-sonnet-5} in \texttt{hypatia.py}, is itself
+already a dateless post-4.6-generation string and, by the same
+documentation cited above, should likewise be a pinned snapshot rather
+than a drifting alias, so model-identity drift remains an unlikely
+explanation for the 91.7\%-vs-100\% gap on this corrected code path too.
+The concrete action items are now: (1) delete or actually wire up the
+dead \texttt{LLM\_MODEL} environment variable in
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py}, since it currently misleads
+readers of the code into believing \texttt{claude-sonnet-4-6} governs a
+call it has no effect on; (2) treat \texttt{hypatia.py}'s
+\texttt{temperature=0.25} together with its unseeded
+\texttt{client.messages.create()} call as the confirmed source of
+run-to-run expression variability at fixed recovery rate, and record a
+distribution over repeated seed=123 runs rather than a single 91.7\%
+figure if that value is to be re-benchmarked; and (3) obtain
+\texttt{run\_all.sh}, which remains the sole unverified link — it alone
+can confirm whether CI invokes
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py} directly (as analyzed here) or
+some other entry point that might call \texttt{get\_llm\_prior()} with
+different arguments. Independently of the code-tracing question,
+cross-seed and within-seed evidence from repeated
+\texttt{seed\_agreement.py} runs (see above) already rules out seed
+variance and reduced sample size as explanations for the
+91.7\%-vs-100\% gap, and narrows the likely configuration-migration
+window to Apr~23–May~22, 2026, which remains worth checking for an
+infrastructure diff (e.g., the suspected
+GCP/Kaggle~$\to$~GitHub~Actions migration) independent of the model
+question, which is now closed. This does not change any number
+currently printed in the paper text, which already states the
+33.3\%/91.7\% split directly in prose. It does mean a future seed-123
+result file should record \texttt{hypatia.py}'s sampling temperature and
+candidate count alongside the harmonic- and strict-rate fields, not a
+resolved model string from \texttt{symbolic\_engine.py}, so the
+automated gate can check for the parameters that actually matter here.
+Tracked as an extension of FIX-N3 pending the seed-123 result file and
+\texttt{run\_all.sh}.

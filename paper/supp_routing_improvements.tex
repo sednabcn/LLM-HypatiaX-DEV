@@ -114,7 +114,7 @@ Prior to the improvements described here, the aggregate picture was:
 \caption{Baseline performance before routing improvements (standard cases,
          intractable cases excluded). Denominator $= 66$ standard cases
          (pre-v3.0 historical). The v3.0 benchmark uses $n=74$; the
-         previously-reported \textbf{89.2\%} figure is now disclosed in the
+         previously-reported \textbf{90.5\%} figure is now disclosed in the
          main paper (its primary results table, in
          \texttt{jmlr\_paper\_main.tex}, \S~``The Hybrid
          Decision-Attribution Bug'') as \emph{uncorrected} for a
@@ -432,7 +432,7 @@ where all three methods fail equally).
 \centering
 \caption{Measured and projected $R^2 > 0.99$ (\%) by fix.
          Denominator $= 66$ standard cases (pre-v3.0 historical). The
-         v3.0 benchmark's uncorrected figure is \textbf{89.2\%}; the
+         v3.0 benchmark's uncorrected figure is \textbf{90.5\%}; the
          main paper's decision-attribution-bug correction
          (its primary results table, in \texttt{jmlr\_paper\_main.tex})
          gives \textbf{60.8\%} as the current figure. See the
@@ -455,8 +455,8 @@ Fix~4       & Distance-gated blend weight       & $+1$ & 82.2 & measured  \\
 \midrule
 Fix~5 (proj.) & Unified evaluator + routing guard & $+3$ & \textbf{75.8} & projected \\
 \midrule
-\textbf{v3.0 (uncorrected)} & All fixes + benchmark corrections & --- & \textbf{89.2} & \textbf{measured} \\
-\textbf{v3.0 (bug-corrected)} & Decision-attribution bug removed & $-28.4$ & \textbf{60.8} & \textbf{measured} \\
+\textbf{v3.0 (uncorrected)} & All fixes + benchmark corrections & --- & \textbf{90.5} & \textbf{measured} \\
+\textbf{v3.0 (bug-corrected)} & Decision-attribution bug removed & $-29.7$ & \textbf{60.8} & \textbf{measured} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -466,7 +466,7 @@ The first complete benchmark run confirms the Hybrid already
 \emph{beats} the Pure LLM on the honest (NaN-penalty) metric:
 $72.7\%$ vs $69.7\%$, a net advantage of $+3$ percentage points.
 \textbf{Correction (see main paper, \S~``The Hybrid Decision-Attribution
-Bug'').} The $89.2\%$ figure reported for the $n=74$ v3.0 benchmark was
+Bug'').} The $90.5\%$ figure reported for the $n=74$ v3.0 benchmark was
 subsequently found to be inflated by a success-attribution bug: 22 of the
 67 reported near-perfect successes credited a sub-method
 (\texttt{hybrid.decision}) that the pipeline's own records show had
@@ -475,7 +475,7 @@ which is \emph{below} Pure LLM's $62.2\%$ on the same run --- the opposite
 of the comparison this document originally reported. This does not
 invalidate Fixes~0--5 individually (each addresses a distinct, verified
 routing or data-generation defect), but the headline "Hybrid beats Pure
-LLM by 27pp" framing based on $89.2\%$ should not be cited; see the main
+LLM by 28.3pp" framing based on $90.5\%$ should not be cited; see the main
 paper for the current, corrected comparison and its own caveats.
 \end{observation}
 
@@ -539,6 +539,15 @@ to the honest $n{=}66$ fixed denominator.
     live-confirmed at 74/90 against a fresh CI run of the patched script,
     and reproduced independently a second time via a patched Gate~C
     schema check. Cite 74/90; do not cite 81/90.
+  \item \textbf{[Open, superseded.]} The $1.73\times$ speedup and related
+    scalability/parallelisation figures in \S\,\ref{app:complexity}
+    (\emph{Empirical Timing Breakdown} onward) do not reproduce against
+    the mechanically-regenerated 5-seed$\times$74-task$\times$2-split
+    runtime sweep (main paper \S\,10.5, ``Runtime Analysis''), which instead shows
+    the hybrid system $2.5$--$9.3\times$ \emph{slower} than the neural
+    baseline on every seed and split. See the superseded notice at the
+    start of that subsection; do not cite its absolute timings or
+    speedup figures.
 \end{enumerate}
 
 %% ============================================================
@@ -573,7 +582,7 @@ to the honest $n{=}66$ fixed denominator.
 \bigskip
 \noindent The net projection is that the Hybrid closes or exceeds the Pure
 LLM's $R^2 > 0.99$ rate of $83.9\%$. The v3.0 benchmark's uncorrected
-figure of \textbf{89.2\%} near-perfect success rate ($R^2>0.99$, $n=74$,
+figure of \textbf{90.5\%} near-perfect success rate ($R^2>0.99$, $n=74$,
 zero catastrophic failures) appeared to confirm this. \textbf{This has
 since been corrected}: the main paper's decision-attribution-bug fix
 brings this down to $60.8\%$, below Pure LLM's $62.2\%$ on the same run
@@ -836,7 +845,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 \item Set \texttt{ANTHROPIC\_API\_KEY} for LLM-dependent runners
 \item Run Core~15 benchmark — confirm Mann-Whitney U=0, p$<10^{-6}$
 \item Run DeFi benchmark --- confirm the corrected 60.8\% figure (not the
-  superseded uncorrected 89.2\%), and that it sits below Pure LLM's
+  superseded uncorrected 90.5\%), and that it sits below Pure LLM's
   62.2\% (n=74, v3.0; see main paper's Hybrid Decision-Attribution Bug
   section)
 \item Run Feynman Phase~3 — confirm Hybrid DeFi 96.7\% ($R^2>0.9999$)
@@ -890,6 +899,25 @@ Total per candidate: $\mathcal{O}(k + m)$. With $n$ candidates: $\mathcal{O}(n(k
 Despite comparable per-iteration complexity, symbolic methods require more iterations (500 vs 200) for convergence, explaining the 27$\times$ runtime difference.
 
 \subsection{Empirical Timing Breakdown}
+
+\textbf{[Superseded --- do not cite this subsection's absolute timings or
+speedup figures without independent reproduction.]} The profiling below
+predates the mechanical, script-driven regeneration of the runtime table
+directly from raw per-task result files across the complete
+5-seed$\times$74-task$\times$2-split sweep (main paper
+\S\,10.5, ``Runtime Analysis'', Table~5). That regeneration
+shows the opposite pattern from what follows: the hybrid system is
+$2.5$--$9.3\times$ \emph{slower} than the neural baseline on every seed
+and every split, never faster. In particular, the $1.73\times$ speedup
+and the $1.7$\,s neural-network timing quoted below do not reproduce;
+raw per-task neural-network times in the current benchmark cluster around
+$0.34$--$0.42$\,s, roughly $4\times$ smaller than the $1.7$\,s figure
+below, and the discrepancy is large enough to suggest this profiling
+reflects a different, earlier run configuration rather than a computation
+error. The scalability table (\S\,\ref{tab:scalability}, $5.1$--$5.8\times$)
+and the parallelisation projections that follow are built on the same
+unreproduced baseline and should be read with the same caution. Retained
+here for historical/methodological interest only.
 
 Profiling HypatiaX on representative test cases:
 

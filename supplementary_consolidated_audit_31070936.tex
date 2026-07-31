@@ -1,0 +1,927 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage[table]{xcolor}
+\usepackage{adjustbox}
+\usepackage{pdflscape}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+% --- external cross-references into the main manuscript ---
+% Compile jmlr_paper_main_3107919.tex FIRST (to produce its .aux file),
+% then compile this document, for \ref{...} below to resolve to the main
+% paper's actual section/table numbers rather than "??".
+\usepackage{xr}
+\externaldocument{jmlr_paper_main_3107919}
+
+\newcommand{\rtwo}{$R^2$}
+\newcommand{\open}{\textcolor{red!60!black}{\textbf{[OPEN]}}}
+\newcommand{\closed}{\textcolor{green!40!black}{\textbf{[CLOSED]}}}
+\newcommand{\flag}{\textcolor{orange!80!black}{\textbf{[FLAG]}}}
+\newcommand{\gap}{\textcolor{purple!60!black}{\textbf{[DATA GAP]}}}
+\newcommand{\Rsq}{R^{2}}
+
+\definecolor{match}{HTML}{C6EFCE}
+\definecolor{minor}{HTML}{FFEB9C}
+\definecolor{major}{HTML}{FFC7CE}
+\newcommand{\legenditem}[2]{\colorbox{#1}{\phantom{XX}}~#2}
+
+\newenvironment{appliesto}[1]
+  {\begin{quote}\small\itshape\noindent Applies to main manuscript
+    (\texttt{jmlr\_paper\_main\_3107919.tex}): #1\end{quote}}
+  {}
+
+\title{\bf Consolidated Reproducibility \& Audit Supplement\\
+\large Cross-Referenced to \emph{HypatiaX: A Hybrid Symbolic--Neural
+Framework for Extrapolation-Reliable Analytical Discovery}}
+\author{}
+\date{Compiled 2026-07-30}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+This document consolidates six previously separate audit and
+reproducibility notes into a single cross-referenced supplement. Each
+section below states, up front, which section(s) and table(s) of the
+main manuscript it corrects, extends, or provides evidence for. Where
+the main manuscript already reflects a finding from one of these notes,
+that is stated explicitly rather than left implicit. Sections are
+ordered to follow the manuscript's own section order, ending with a
+cross-cutting edit tracker that indexes every item back to the sections
+above.
+
+\medskip
+\noindent\textbf{Contents:}
+\begin{enumerate}[nosep]
+\item Runtime Table 1 --- full by-seed / by-split reconstruction
+  (\S\S~1--1, corrects \ref{sec:timing})
+\item Core-15 Ablation (``Table~6'') --- real-data vs.\ published
+  comparison (\ref{sec:ablation_core15})
+\item Feynman-30 Extrapolation Benchmark, Section~10.7 update
+  (\ref{sec:feynman30})
+\item Reproducibility note: unpinned LLM model string, Nguyen-12 pipeline
+  (\ref{sec:nguyen12})
+\item CI dashboard status, Item 10.1 (\ref{sec:process_items})
+\item Consolidated manuscript-edit tracker (cross-cutting)
+\end{enumerate}
+\end{abstract}
+
+\clearpage
+
+% =======================================================================
+\section{Runtime Table 1: Full By-Seed / By-Split Reconstruction}
+\label{supp:runtime}
+% =======================================================================
+
+\begin{appliesto}
+\S\ref{sec:timing} (``Runtime Analysis''), Table~\ref{tab:timing_full},
+Table~\ref{tab:timing_llm_routed_full}, and the top-of-paper runtime note.
+\textbf{Status: already incorporated} --- the main manuscript's current
+Table~\ref{tab:timing_full} is the direct output of this note. Reproduced
+here so the full by-seed evidence trail travels with the supplement
+rather than only living in the main file's edit history.
+\end{appliesto}
+
+\subsection{Table 1 (full) --- Runtime by Seed and by Split}
+
+Regenerated directly from the raw per-task result files by
+\texttt{generate\_table1.py}, with no hand-edited cells. Rows are grouped
+by split (aggressive 40/60 = v3c, PCA-directed 40/60), with one row per
+seed (42, 99, 123, 777, 2024) followed by the pooled 5-seed / 370-task
+total for that split (shaded). ``Speedup'' compares the neural MLP arm to
+the hybrid arm; values labeled SLOWER mean hybrid took \emph{longer}, not
+less.
+
+\begin{table}[h]
+\centering
+\rowcolors{2}{white}{white}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrrr}
+\toprule
+Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speedup, all \\
+    &     & mean/median  & mean/median    & mean/median      & count      & (mean) \\
+\midrule
+v3c seed42  & 74 & 8.85 / 7.75 & 0.36 / 0.36 & 2.54 / 1.49 & 69/74 & 7.05x SLOWER \\
+v3c seed99  & 74 & 8.56 / 7.62 & 0.37 / 0.37 & 2.52 / 1.48 & 69/74 & 6.83x SLOWER \\
+v3c seed123 & 74 & 8.46 / 7.30 & 0.36 / 0.36 & 2.53 / 1.58 & 68/74 & 7.06x SLOWER \\
+v3c seed777 & 74 & 8.66 / 7.67 & 0.25 / 0.25 & 2.32 / 1.42 & 69/74 & 9.33x SLOWER \\
+v3c seed2024 & 74 & 8.35 / 7.75 & 0.37 / 0.36 & 2.31 / 1.38 & 69/74 & 6.33x SLOWER \\
+\rowcolor{blue!8}
+\textbf{v3c ALL SEEDS (pooled)} & \textbf{370} & \textbf{8.57 / 7.65} & \textbf{0.34 / 0.36} & \textbf{2.44 / 1.46} & \textbf{344/370} & \textbf{7.18x SLOWER} \\
+\midrule
+PCA seed42  & 74 & 8.44 / 7.37 & 0.36 / 0.36 & 2.18 / 1.40 & 68/74 & 6.11x SLOWER \\
+PCA seed99  & 74 & 2.97 / 0.19 & 0.35 / 0.35 & 1.16 / 0.91 & 26/74 & 3.28x SLOWER \\
+PCA seed123 & 74 & 0.21 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74  & 2.52x SLOWER \\
+PCA seed777 & 74 & 0.19 / 0.17 & 0.36 / 0.35 & 0.91 / 0.88 & 0/74  & 2.55x SLOWER \\
+PCA seed2024 & 74 & 0.24 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74 & 2.54x SLOWER \\
+\rowcolor{blue!8}
+\textbf{PCA ALL SEEDS (pooled)} & \textbf{370} & \textbf{2.41 / 0.18} & \textbf{0.36 / 0.35} & \textbf{1.21 / 0.89} & \textbf{94/370} & \textbf{3.40x SLOWER} \\
+\bottomrule
+\end{tabular}}
+\caption{Wall-clock time per task (seconds), by seed and by split, plus
+pooled 5-seed totals. No timeouts were recorded on any arm, any seed,
+either split. This is the same table as the main manuscript's
+Table~\ref{tab:timing_full}.}
+\label{supp:tab:timing_full}
+\end{table}
+
+\subsection{Reading the by-seed breakdown}
+
+Within the v3c (aggressive) split, hybrid is slower than the neural
+network on \emph{every single seed} --- the slowdown ranges from about
+$6.3\times$ (seed 2024) to about $9.3\times$ (seed 777) on mean time, with
+no seed showing hybrid faster. This is not a pooling artifact: it is true
+seed-by-seed.
+
+Within the PCA-directed split, the picture splits into two regimes
+depending on the seed. Seeds 42 and 99 route a meaningful share of tasks
+to the LLM (68/74 and 26/74 respectively) and show correspondingly larger
+hybrid slowdowns ($6.1\times$ and $3.3\times$ on mean). Seeds 123, 777, and
+2024 route \emph{zero} tasks to the LLM under this router
+($n_{\text{llm\_routed}} = 0$), yet hybrid is still slower than the NN on
+those seeds too (about $2.5\times$ on mean) --- meaning the hybrid wrapper
+itself carries a fixed overhead beyond just the LLM call, since with zero
+LLM calls hybrid should be timing-equivalent to the NN and it is not.
+
+Comparing the two pooled split totals: PCA-directed routing produces a
+smaller hybrid slowdown overall ($3.40\times$ mean) than the aggressive
+split ($7.18\times$ mean), consistent with PCA calling the LLM far less
+often (94/370 vs.\ 344/370 tasks). But neither split shows hybrid
+outperforming the neural network at any level of aggregation --- by seed,
+pooled, or restricted to LLM-routed tasks only.
+
+\subsection{What the experiment is testing}
+
+The benchmark compares three ways of answering DeFi-related tasks: a pure
+LLM call, a lightweight neural network (MLP) classifier, and a ``hybrid''
+system that routes each task to either the NN or the LLM depending on a
+decision rule. Two routing strategies are tested --- an aggressive 40/60
+split (v3c) and a PCA-directed 40/60 split --- each run across five seeds
+(42, 99, 123, 777, 2024) with 74 tasks per seed, for 370 tasks total per
+split. The stated goal of the hybrid design is to capture most of the
+speed of the NN while keeping the LLM's judgment available for harder
+cases --- i.e., faster than pure LLM, and not much slower than pure NN.
+
+\subsection{Where this diverges from an earlier draft}
+
+An earlier draft of the manuscript reported the opposite pattern: hybrid
+faster than NN, by a claimed $1.73\times$ (mean) / $1.64\times$ (median),
+with NN itself reported around 3.0\,s mean / 2.7\,s median and hybrid
+around 6.8\,s mean / 1.7\,s median. Those absolute NN numbers are also
+$8$--$9\times$ larger than what appears in any raw file available here
+(raw NN times cluster around 0.34--0.42\,s). That gap is large enough to
+look less like a computation error and more like the reported numbers
+came from a different run entirely --- a heavier or older NN
+implementation, a different task set, or a stale draft of the table that
+was never updated after the current scripts were finalized. An even
+earlier draft additionally claimed that seed files other than seed~42
+were truncated to 5 of 74 tasks; that claim is also retracted --- all ten
+raw files (five seeds $\times$ two splits) contain the full 74 tasks
+each, correctly seed-labeled with no cross-contamination.
+
+\subsection{Net effect}
+
+The hybrid design does not deliver a speedup over the neural network in
+this data; it is slower, sometimes substantially so, and the size of
+that slowdown tracks cleanly with how often each router calls the LLM.
+The PCA router being meaningfully better than the aggressive router at
+limiting this overhead is a real and defensible finding worth reporting
+on its own terms --- ``PCA-directed routing reduces but does not
+eliminate hybrid's overhead relative to NN-only'' --- but it is a
+different, more modest claim than the $1.7\times$ speedup in the
+withdrawn earlier draft.
+
+\clearpage
+% =======================================================================
+\section{Core-15 Ablation (``Table 6''): Real-Data vs.\ Published Comparison}
+\label{supp:table6}
+% =======================================================================
+
+\begin{appliesto}
+\S\ref{sec:ablation_core15} (``Ablation: PySR-only vs.\ HypatiaX
+(Core-15)''), Table~\ref{tab:llm_ablation}. \textbf{Status: already
+incorporated} --- the main manuscript's Table~\ref{tab:llm_ablation} text
+states it ``has been rebuilt from the underlying \texttt{\_merged.json}
+data \ldots replacing the withdrawn version.'' This section is the
+cell-by-cell discrepancy evidence behind that rebuild, preserved here for
+audit trail. If Table~\ref{tab:llm_ablation} is ever re-edited, it should
+be checked against the \emph{Real} columns below, not against the
+\emph{Pub} columns, which are the withdrawn transcription.
+\end{appliesto}
+
+\begin{landscape}
+
+\subsection*{Table 6 (as Published) vs.\ Real \texttt{\_merged.json} Values --- Core-15 Ablation}
+
+\textbf{Legend:} \quad
+\legenditem{match}{published matches real data (within rounding)} \qquad
+\legenditem{minor}{notable numeric discrepancy} \qquad
+\legenditem{major}{major discrepancy (sign flip, order-of-magnitude gap, or fabricated/missing value)}
+
+\bigskip
+\noindent Coloring is applied to the \emph{Real} columns, relative to the
+corresponding \emph{Pub}(lished) value in the same row/metric. P~=~PySR-only;
+H~=~HypatiaX.
+
+\bigskip
+
+\begin{adjustbox}{width=\linewidth,center}
+\begin{tabular}{l l *{4}{r} *{4}{r} *{4}{r} *{4}{r}}
+\toprule
+& & \multicolumn{4}{c}{Train $R^2$} & \multicolumn{4}{c}{Near (1.2$\times$) $R^2$} & \multicolumn{4}{c}{Medium $R^2$} & \multicolumn{4}{c}{Far (5$\times$) $R^2$} \\
+\cmidrule(lr){3-6} \cmidrule(lr){7-10} \cmidrule(lr){11-14} \cmidrule(lr){15-18}
+Equation & Domain & Pub P & Pub H & Real P & Real H & Pub P & Pub H & Real P & Real H & Pub P & Pub H & Real P & Real H & Pub P & Pub H & Real P & Real H \\
+\midrule
+\textbf{Allometric Scaling} & Biology & 0.9977 & 0.9973 & \cellcolor{match}0.9977 & \cellcolor{match}0.9979 & 0.9996 & 0.9509 & \cellcolor{match}1.0000 & \cellcolor{minor}0.9824 & 1.0000 & 0.8602 & \cellcolor{match}1.0000 & \cellcolor{minor}0.9502 & 0.9996 & -2.1139 & \cellcolor{match}1.0000 & \cellcolor{major}-0.0644 \\
+\textbf{Arrhenius} & Chemistry & 0.9896 & 0.9971 & \cellcolor{match}0.9974 & \cellcolor{match}0.9979 & -0.9783 & -0.4012 & \cellcolor{major}0.9779 & \cellcolor{major}0.9977 & -0.6766 & -0.6624 & \cellcolor{major}0.4636 & \cellcolor{major}0.9957 & -12.5549 & -12.5553 & \cellcolor{match}-12.5552 & \cellcolor{major}0.9028 \\
+\textbf{Constant Product} & DeFi AMM & 0.9982 & 0.9982 & \cellcolor{match}0.9982 & \cellcolor{match}0.9985 & 0.9996 & 0.9996 & \cellcolor{match}0.9996 & \cellcolor{major}-18{,}071.5 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{major}-5.4$\times10^{34}$ & 0.9996 & 0.9996 & \cellcolor{match}0.9996 & \cellcolor{major}-1.9$\times10^{46}$ \\
+\textbf{Gravitational Force} & Physics & 0.9146 & 0.9544 & \cellcolor{minor}0.9976 & \cellcolor{minor}0.9889 & -4.2880 & -2.6752 & \cellcolor{major}0.9973 & \cellcolor{major}$-\infty$ & -0.0260 & -0.0016 & \cellcolor{major}0.9998 & \cellcolor{major}$-\infty$ & -9.0418 & -7.6360 & \cellcolor{major}0.9973 & \cellcolor{major}$-\infty$ \\
+\textbf{Henderson-Hasselbalch} & Chemistry & 0.9123 & 0.9338 & \cellcolor{minor}0.9339 & \cellcolor{minor}0.9986 & 0.2137 & 0.2172 & \cellcolor{major}0.8004 & \cellcolor{major}\textit{null} & 0.9633 & -3.6019 & \cellcolor{minor}0.9850 & \cellcolor{major}\textit{null} & 0.2137 & -4.9142 & \cellcolor{major}0.8004 & \cellcolor{major}\textit{null} \\
+\textbf{Ideal Gas Law} & Physics & 0.9976 & 0.9976 & \cellcolor{match}0.9976 & \cellcolor{match}0.9980 & 0.9999 & 0.9999 & \cellcolor{match}1.0000 & \cellcolor{match}0.9988 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}0.9999 & 0.9999 & 0.9999 & \cellcolor{match}1.0000 & \cellcolor{match}0.9993 \\
+\textbf{Impermanent Loss} & DeFi AMM & 0.9975 & 0.9975 & \cellcolor{match}0.9971 & \cellcolor{match}0.9977 & 0.9121 & 0.9113 & \cellcolor{minor}0.7703 & \cellcolor{minor}0.9639 & -0.3063 & -0.3091 & \cellcolor{major}-2.7832 & \cellcolor{major}-80.4327 & -62.4026 & -62.5166 & \cellcolor{major}-157.0776 & \cellcolor{major}-8{,}259.3 \\
+\textbf{Kinetic Energy} & Physics & 0.9968 & 0.9968 & \cellcolor{match}0.9968 & \cellcolor{match}0.9968 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 \\
+\textbf{Liquidation Price} & DeFi Risk & 0.9974 & 0.9974 & \cellcolor{match}0.9974 & \cellcolor{match}0.9977 & 0.9999 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}0.9998 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}0.9999 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}0.9993 \\
+\textbf{Logistic Growth} & Biology & 0.9974 & 0.9975 & \cellcolor{match}0.9975 & \cellcolor{match}0.9976 & 0.9795 & 0.9999 & \cellcolor{minor}0.9997 & \cellcolor{major}\textit{null} & 0.9947 & 1.0000 & \cellcolor{match}0.9998 & \cellcolor{major}\textit{null} & 0.9934 & 0.9999 & \cellcolor{match}0.9996 & \cellcolor{major}\textit{null} \\
+\textbf{Michaelis-Menten} & Biology & 0.9948 & 0.9968 & \cellcolor{match}0.9975 & \cellcolor{match}0.9979 & -68.5896 & -0.0979 & \cellcolor{major}0.9890 & \cellcolor{major}\textit{null} & -368.7928 & -2.4717 & \cellcolor{major}0.9951 & \cellcolor{major}\textit{null} & -83{,}899.5 & -634.5989 & \cellcolor{major}0.6471 & \cellcolor{major}\textit{null} \\
+\textbf{Portfolio Std Dev} & DeFi Risk & 0.9504 & 0.9975 & \cellcolor{minor}0.9975 & \cellcolor{match}0.9975 & 0.8865 & 1.0000 & \cellcolor{minor}1.0000 & \cellcolor{match}1.0000 & 0.9493 & 1.0000 & \cellcolor{minor}1.0000 & \cellcolor{match}1.0000 & -118.4482 & 1.0000 & \cellcolor{major}1.0000 & \cellcolor{match}1.0000 \\
+\textbf{Price Impact} & DeFi AMM & 0.9976 & 0.9976 & \cellcolor{match}0.9976 & \cellcolor{match}0.9976 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 \\
+\textbf{Rate Law} & Chemistry & 0.9977 & 0.9977 & \cellcolor{match}0.9977 & \cellcolor{match}0.9981 & 1.0000 & 0.9999 & \cellcolor{match}1.0000 & \cellcolor{major}\textit{null} & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{major}\textit{null} & 1.0000 & 0.9999 & \cellcolor{match}1.0000 & \cellcolor{major}\textit{null} \\
+\textbf{Value at Risk} & DeFi Risk & 0.9979 & 0.9979 & \cellcolor{match}0.9979 & \cellcolor{match}0.9979 & 0.9999 & 0.9999 & \cellcolor{match}0.9999 & \cellcolor{match}1.0000 & 1.0000 & 1.0000 & \cellcolor{match}1.0000 & \cellcolor{match}1.0000 & 0.9999 & 0.9999 & \cellcolor{match}0.9999 & \cellcolor{match}1.0000 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+
+\bigskip
+
+{\small
+\textbf{Sources.} \emph{Pub} columns transcribed verbatim from the
+withdrawn draft of Table~6 (formerly Supplementary~A \S10.6).
+\emph{Real} columns computed directly from \texttt{\_merged.json}
+(\texttt{hypatia} = H, \texttt{pysr\_only} = P fields), read
+programmatically with no intermediate transcription step.
+}
+
+\subsection*{Notes}
+
+\begin{enumerate}
+\item \textbf{Arrhenius} --- Published reports $H_{\text{far}} = -12.5553$, essentially copying P's real failure value. Real $H_{\text{far}} = +0.9028$ (a success). A discussion built on the withdrawn ``both PySR-only and HypatiaX collapse catastrophically \ldots identical failure mechanism'' framing does not match the underlying data for H.
+
+\item \textbf{Michaelis-Menten} --- The withdrawn draft's headline claims $P_{\text{far}} = -83{,}900$ and $H_{\text{far}} = -635$ (a ``132$\times$ reduction''). Real data: $P_{\text{far}} = +0.647$ (a clear success, not catastrophic), and $H$ is \textit{null} at near/med/far (evaluation never produced a value). Neither headline number appears in the raw data.
+
+\item \textbf{Rate Law \& Logistic Growth} --- Real $H$ is \textit{null} across near/med/far for both (evaluation failed). The withdrawn draft reports near-perfect $H$ values ($\approx 0.9999$--$1.0000$) that correspond to no recorded run, and are suspiciously close to the real $P$ values.
+
+\item \textbf{Gravitational Force} --- Real $H$ is $-\infty$ across near/med/far (a genuine crash); real $P$ is $\approx 0.997$--$0.9998$ (near-perfect). The withdrawn draft reports finite, moderate-negative numbers for \emph{both} columns --- neither the real $P$ success nor the real $H$ blow-up appear.
+
+\item \textbf{Constant Product} --- Real $H$ collapses to $-5.4\times10^{34}$ (medium) and $-1.9\times10^{46}$ (far), but the withdrawn draft shows $H$ tracking $P$ almost exactly at 0.9996 throughout.
+
+\item \textbf{The P (PySR-only) column is also affected} --- Several withdrawn $P$ values for near/medium ranges (Arrhenius near/med, Henderson-Hasselbalch near, Michaelis-Menten near/med) are substantially different from the real $P$ values, and in most cases the withdrawn number makes PySR-only look \emph{worse} than it really performed. Combined with the H-column errors, this widened HypatiaX's apparent margin from both directions at once in the withdrawn draft, rather than from a single column's errors.
+\end{enumerate}
+
+\end{landscape}
+
+\clearpage
+% =======================================================================
+\section{Feynman-30 Extrapolation Benchmark: Section 10.7 Update}
+\label{supp:feynman30}
+% =======================================================================
+
+\begin{appliesto}
+\S\ref{sec:feynman30} (``Feynman Extrapolation Benchmark''), \S
+\ref{sec:feynman30-defects}, Table~\ref{tab:randomsplit},
+Table~\ref{tab:pcasplit}. \textbf{Status: already incorporated} --- the
+main manuscript's Table~\ref{tab:randomsplit} and Table~\ref{tab:pcasplit}
+match this note's figures exactly (12/30 random-split, 13/30 PCA-split).
+Reproduced here for the run-provenance disclosure, which is not otherwise
+carried in the main text, and which directly resolves
+\hyperref[supp:edit-C]{Edit Item C} in \S\ref{supp:tracker} below: the
+Planck-blackbody near-miss/catastrophic divergence between splits is not
+an unexplained anomaly in isolated tables, but part of a fully disclosed,
+five-defect-catalogued run pair.
+\end{appliesto}
+
+\subsection*{Run provenance: which dates this section does, and does not, report on}
+
+An investigation into a residual ``9/30 vs.\ 106/180'' denominator
+question (\texttt{investigate\_section\_10\_7.py}) surfaced, in the
+course of checking for the script's own intended canonical files, that
+\textbf{at least four distinct PCA-split run dates} exist somewhere in
+this repository's history. Table~\ref{supp:tab:provenance} discloses all
+four explicitly, so that a reviewer encountering any of the other three
+elsewhere in the repository does not reasonably mistake them for the
+figures reported in this section.
+
+\begin{table}[h]
+\centering
+\caption{Every PCA-split run date identified to date, and its status
+with respect to Section~\ref{sec:feynman30}. Only the July~22/23 pair is
+the source of the figures reported below.}
+\label{supp:tab:provenance}
+\begin{tabular}{lp{9.5cm}}
+\toprule
+Run date & Status \\
+\midrule
+June~4, 2026 & \textbf{Discarded, pre-fix.} Located under a legacy
+\texttt{exp2/} directory rather than \texttt{exp2\_pca\_4060/}.
+\texttt{HybridDiscoverySystem v50\_2 (tools)} scores 0/30, with all 30
+equations flagged as environment/import failures (``not available''), not
+accuracy failures --- the method did not execute at all in this run. Not
+used anywhere in this section. \\
+June~29, 2026 & \textbf{Not located.} Named as the canonical/current
+batch by \texttt{investigate\_section\_10\_7.py}'s own configuration, but
+absent from every file set supplied to date, at its canonical path and
+under fallback search alike. Not used anywhere in this section; its
+absence does not affect the figures below, which are independently
+sourced from July~22/23. \\
+June~30, 2026 & \textbf{Unverified, not used.} Source of
+\texttt{exp2\_pca\_4060\_summary.json}'s pooled \texttt{n\_pass=142},
+\texttt{n\_total=180} figure, which that file's own metadata pairs
+explicitly with the already-withdrawn ``9/30 (random\_80\_20)'' claim.
+No per-method recount was ever performed against this specific date's
+protocol files (they were not among the dates checked), so 142/180
+should continue to be treated as unconfirmed --- consistent with the
+already-withdrawn 142/180 figure's known failure mode (arithmetic
+pooling of records describing one run as if two) --- pending a direct
+recount, which is out of scope for this update. Not used anywhere in
+this section. \\
+\textbf{July~22 / July~23, 2026} & \textbf{Canonical --- this is the run
+pair Section~\ref{sec:feynman30} reports on.} July~22 (\texttt{protocol\_core\_extrap\_
+20260722\_*.json}) is the random 80/20 split source; July~23
+(\texttt{protocol\_core\_noiseless\_pca\_20260723\_*.json}) is the
+PCA-directed 40/60 split source. Confirmed as canonical directly by the
+corresponding author. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{This distinction matters for citation hygiene, not just
+correctness.} A reader who independently opens
+\texttt{exp2\_pca\_4060\_summary.json} and sees 142/180, or who finds the
+June~4 batch and sees \texttt{HybridDiscoverySystem} crash on every
+equation, could otherwise reasonably conclude Section~\ref{sec:feynman30}
+is internally inconsistent with the repository. It is not: those two
+artifacts are from different, non-canonical dates, and neither has been
+used to produce any figure below.
+
+\subsection*{Headline figures (both gated on self-verification)}
+
+\textbf{12/30 (40.0\%)} under the random 80/20 split (run dated
+2026-07-22) and \textbf{13/30 (43.3\%)} under the PCA-directed 40/60
+split (run dated 2026-07-23) --- the latter superseding an 18/30 figure
+that had been carried unchecked through earlier drafts. Five confirmed
+evaluator defects account for every null or blocked score across both
+splits; one (a placeholder-token defect affecting 4 random-split
+equations) remains architecturally unfixable by evaluator patching and is
+disclosed as such below.
+
+\subsection*{Full per-equation results}
+
+\begin{longtable}{p{2.3cm}p{6.2cm}p{1.5cm}p{2.5cm}}
+\caption{Random 80/20 split, run dated 2026-07-22, all 30 equations, after
+patching three evaluator defects and gating on a 14/14 exact-reproduction
+self-check. Bold: pass ($R^2 \geq 0.999999$). Matches main-text
+Table~\ref{tab:randomsplit}.}
+\label{supp:tab:randomsplit}\\
+\toprule
+Domain & Equation & \rtwo & Status \\
+\midrule
+\endfirsthead
+\toprule
+Domain & Equation & \rtwo & Status \\
+\midrule
+\endhead
+Biology & Allometric scaling law & \textbf{1.0000} & pass \\
+Biology & Logistic growth rate & \textbf{1.0000} & pass \\
+Biology & Michaelis--Menten enzyme kinetics & \textbf{1.0000} & pass \\
+Chemistry & Arrhenius rate constant & $-2.368$ & fail (finite) \\
+Chemistry & Henderson--Hasselbalch buffer pH & \textbf{1.0000} & pass \\
+Electrochemistry & Nernst equation & --- & unresolvable$^\ddagger$ \\
+Electromagnetism & Clausius--Mossotti dielectric field & \textbf{1.0000} & pass \\
+Electromagnetism & Dielectric polarisation & $-2.2\times10^{45}$ & catastrophic \\
+Electromagnetism & Energy in a capacitor & $-1.240$ & fail (finite) \\
+Electromagnetism & Lorentz force & $-\infty$ & catastrophic \\
+Electromagnetism & Ohm's law & \textbf{1.0000} & pass \\
+Electrostatics & Coulomb force, 1D simplified & $-0.066$ & fail (finite) \\
+Electrostatics & Coulomb's law & $-0.253$ & fail (finite) \\
+Magnetism & Curie's law & --- & unresolvable$^\ddagger$ \\
+Mechanics & Kinetic energy (classical) & $-1.590$ & fail (finite) \\
+Mechanics & Newton's gravitational force & 0.6634 & fail (finite) \\
+Mechanics & Reduced mass, two-body system & \textbf{1.0000} & pass \\
+Mechanics & Total mechanical energy & \textbf{0.9999998} & pass (recovered) \\
+Optics & Double-slit interference intensity & \textbf{1.0000} & pass \\
+Optics & Snell's law & \textbf{1.0000} & pass (recovered) \\
+Probability & Gaussian probability density & 0.1340 & fail (finite) \\
+Quantum & Bose--Einstein occupation number & --- & unresolvable$^\ddagger$ \\
+Quantum & Fermi--Dirac occupation number & $-\infty$ & catastrophic \\
+Quantum & Photon energy & $-\infty$ & catastrophic \\
+Quantum & Rabi frequency & $-3.058$ & fail (finite) \\
+Quantum & Zeeman energy & \textbf{1.0000} & pass \\
+Thermodynamics & Fourier's law of heat conduction & $-0.2803$ & fail (finite) \\
+Thermodynamics & Ideal gas law & \textbf{1.0000} & pass \\
+Thermodynamics & Planck blackbody spectral radiance & 0.999994 & near-miss \\
+Thermodynamics & Stefan--Boltzmann law & --- & unresolvable$^\ddagger$ \\
+\midrule
+\multicolumn{4}{l}{Pass: 12/30 (40.0\%). Near-miss: 1/30. Genuine fail: 13/30. Unresolvable: 4/30.} \\
+\bottomrule
+\end{longtable}
+
+$\ddagger$ Placeholder-token defect (item~4 below): stored formula
+references a variable name that was never a real input.
+
+\bigskip
+
+\begin{longtable}{p{2.3cm}p{6.2cm}p{1.5cm}p{2.5cm}}
+\caption{PCA-directed 40/60 split, run dated 2026-07-23. The 17 rows
+below were originally null and are individually re-derived in this
+update, gated on a 13/13 exact-reproduction self-check against the 13
+already-scored equations. \gap: the 13 already-scored equations' names
+and individual \rtwo\ values were not captured at per-equation
+granularity during this update's rescoring run (only the aggregate
+10-pass / 3-fail split was recorded). Matches main-text
+Table~\ref{tab:pcasplit}.}
+\label{supp:tab:pcasplit}\\
+\toprule
+Equation & \rtwo & Status \\
+\midrule
+\endfirsthead
+\toprule
+Equation & \rtwo & Status \\
+\midrule
+\endhead
+Allometric scaling law & \textbf{0.9999995} & pass (recovered) \\
+Arrhenius rate constant & $-0.363$ & fail (finite) \\
+Henderson--Hasselbalch buffer pH & 0.9998196 & near-miss \\
+Nernst equation & 0.9999372 & near-miss \\
+Dielectric polarisation & $-1.068$ & fail (finite) \\
+Lorentz force & $-1.030$ & fail (finite) \\
+Coulomb force, 1D simplified & $-0.863$ & fail (finite) \\
+Coulomb's law & $-0.460$ & fail (finite) \\
+Snell's law & \textbf{1.0000} & pass (recovered) \\
+Gaussian probability density & $-1.192$ & fail (finite) \\
+Photon energy & $-13.592$ & catastrophic \\
+Bose--Einstein occupation number & $-1.051$ & fail (finite) \\
+Rabi frequency & $-13.117$ & catastrophic \\
+Planck blackbody spectral radiance & $-27.832$ & catastrophic \\
+Fourier's law of heat conduction & $-0.084$ & fail (finite) \\
+Stefan--Boltzmann law & $-0.889$ & fail (finite) \\
+Ideal gas law & \textbf{0.9999999933} & pass (recovered) \\
+\midrule
+\multicolumn{3}{l}{Of these 17: 3 pass, 2 near-miss, 12 genuine fail.} \\
+\bottomrule
+\end{longtable}
+
+\noindent\textbf{Remaining 13 equations (already-scored, not rescored
+this round):} 10 pass, 3 fail, per the aggregate self-verification count.
+\gap\ Individual equation names and \rtwo\ values for these 13 were not
+printed during this update's Phase~1 run and are not reconstructed here
+rather than guessed.
+
+\subsection*{Defect catalog (cumulative, both splits)}
+
+\begin{enumerate}
+\item \textbf{\texttt{\textasciicircum} parsed as bitwise XOR, not
+exponentiation.} Fixed by rewriting to \texttt{**} before evaluation.
+Random split only.
+\item \textbf{Unstripped bracketed annotation breaks the parser.} Fixed
+by stripping a leading \texttt{[\ldots]} segment before evaluation.
+Random split only.
+\item \textbf{Missing \texttt{safe\_asin}/\texttt{safe\_acos}.} Fixed by
+injecting clipped-inverse-trig definitions into the evaluator namespace.
+Both splits.
+\item \textbf{Placeholder-token variable names (e.g.\ \texttt{x0},
+\texttt{x1}) baked into stored formulas.} \open\ Architecturally
+distinct: no evaluator patch can recover a reference to a variable that
+was never real. Affects 4 random-split equations (Nernst, Curie's law,
+Bose--Einstein, Stefan--Boltzmann). Confirmed \emph{absent} from all 30
+PCA-split formula strings by direct pattern search. Root cause (an
+upstream formula-serialization step) not yet located.
+\item \textbf{Missing \texttt{asin\_of\_sin}.} Newly identified this
+round: 6 of 17 PCA-split null equations failed uniformly with
+\texttt{NameError: name 'asin\_of\_sin' is not defined}. Confirmed via
+five independent call sites in the production codebase as
+$\texttt{asin\_of\_sin}(x)=\arcsin(\mathrm{clip}(\sin(x),-1,1))$ and
+patched into the evaluator namespace. \open\ Patched only in the two
+rescoring-time diagnostic evaluator copies; whether the \emph{production}
+evaluator shares this gap has not been checked.
+\end{enumerate}
+
+\subsection*{Remaining open items}
+
+\begin{enumerate}
+\item \open\ Placeholder-token defect root cause (item~4 above) still
+unfixed at the source; 4 random-split equations remain permanently
+unevaluatable until the formula-serialization step is located.
+\item \open\ Whether \texttt{asin\_of\_sin} is missing from the
+production evaluator, not only the rescoring-time copies.
+\item \open\ Near-miss threshold policy undecided: at a looser
+convention, the random split reads 13/30 and the PCA split reads 15/30
+instead of 12/30 and 13/30. This update uses the strict
+$R^2\geq0.999999$ threshold throughout and reports near-misses
+separately; this should be confirmed as the intended final convention.
+\item \open\ June~30 run's 142/180 figure remains unverified (no direct
+per-method recount performed against that specific date); it is
+disclosed here as non-canonical rather than resolved.
+\item \gap\ Per-equation identity and \rtwo\ values for the 13
+already-scored PCA-split equations were not captured at the needed
+granularity this round (Table~\ref{supp:tab:pcasplit}, note).
+\end{enumerate}
+
+\clearpage
+% =======================================================================
+\section{Reproducibility Note: Unpinned LLM Model String in the Nguyen-12 Pipeline}
+\label{supp:nguyen12}
+% =======================================================================
+
+\begin{appliesto}
+\S\ref{sec:nguyen12} (``Nguyen-12 Benchmark (Standard SR Suite)'').
+\textbf{Status: not yet incorporated into main text} --- this note
+resolves which model and sampling settings actually produced the
+Nguyen-12 numbers (\texttt{claude-sonnet-5} at \texttt{temperature=0.25}
+via \texttt{hypatia.py}, not \texttt{claude-sonnet-4-6} via
+\texttt{LLMConfig} as previously assumed) and narrows, but does not
+close, the 91.7\%-vs-100\% seed-123 discrepancy. Recommend folding the
+``Revised recommendation'' paragraph below into
+\S\ref{sec:nguyen12} or an adjacent reproducibility subsection, and
+tracking the three action items as an explicit extension of issue
+\texttt{FIX-N3}.
+\end{appliesto}
+
+While investigating a seed-reproducibility discrepancy in the Nguyen-12
+extrapolation experiment (\S\ref{sec:nguyen12}, cf.\ FIX-N3 in the issue
+tracker), we traced the actual language model invoked by the pipeline
+across four source snapshots and found that it is not pinned to a dated
+model release, which has direct consequences for whether currently
+reported solve rates should be read as a reproduction of the originally
+benchmarked figure. A fourth snapshot, \texttt{hypatia.py} --- the file
+that turns out to sit directly on the Nguyen-12 benchmark's actual LLM
+call path --- was obtained after the first three were traced and
+resolves the model-identity question: see below.
+
+\paragraph{What was checked.} Three artifacts spanning the project's
+history were inspected for the model string actually compiled into the
+symbolic-regression pipeline: (i) an executed notebook from an earlier
+revision (\texttt{hybrid50v}); (ii) two Colab-exported scripts from a later
+revision, one per seed (\texttt{hybrid50v\_02}); and (iii) the current
+continuous-integration source, \texttt{symbolic\_engine.py}, as imported by
+\texttt{run\_all.sh}. Each snapshot hardcodes a different model string as
+the \texttt{LLMConfig} default (\texttt{claude-sonnet-4-6},
+\texttt{claude-sonnet-4-5}, and \texttt{claude-sonnet-4-20250514},
+respectively, the last of these appearing only in the CI configuration file
+\texttt{repro.yaml} and an accompanying SDK-version comment). Critically,
+none of the three code snapshots contains any mechanism to read an
+environment variable or the \texttt{repro.yaml} \texttt{llm\_model} field at
+runtime: \texttt{LLMConfig.model} is a plain dataclass default in each case,
+and \texttt{hybrid\_system\_v50\_2.py} instantiates \texttt{LLMConfig}
+without ever passing a \texttt{model} argument. The model that actually
+produced any given run therefore depends entirely on which hardcoded source
+revision happened to be present at execution time, not on the value
+documented in the CI configuration.
+
+\paragraph{Current live default, and a correction.} The presently shipping
+source, \texttt{symbolic\_engine.py}, sets the default to
+\texttt{claude-sonnet-4-6}. An earlier draft of this note hypothesized that
+this string behaves as an undated, evergreen alias that Anthropic could
+silently repoint to a different underlying model over time. Checking
+Anthropic's published model-versioning documentation shows this is
+incorrect: starting with the Claude 4.6 generation, dateless model IDs such
+as \texttt{claude-sonnet-4-6} are themselves pinned, fixed snapshots, not
+aliases --- Anthropic does not update the weights behind an existing model
+ID, and a new version ships under a new ID entirely. Only pre-4.6 dateless
+strings (for example \texttt{claude-sonnet-4-5}, which appears in the
+\texttt{hybrid50v\_02} Colab exports rather than in the current CI source)
+behave as convenience pointers that resolve to the latest dated snapshot
+and can therefore drift. We retract the alias-drift explanation for the
+currently-live code path and flag it explicitly so it is not repeated as
+settled fact elsewhere in the paper or its supplementary material.
+
+\paragraph{Resolved: the Nguyen-12 benchmark's actual live model is a
+fourth, different string.} \texttt{hypatia.py} has now been obtained and
+verified directly. \texttt{get\_llm\_prior()}'s own signature (lines
+80--82) sets \texttt{n\_candidates: int = 5}, \texttt{temperature: float =
+0.25}, and \texttt{model: str = "claude-sonnet-5"} --- a fourth distinct
+hardcoded model string, different from all three traced previously
+(\texttt{claude-sonnet-4-6} in \texttt{symbolic\_engine.py}'s
+\texttt{LLMConfig}, \texttt{claude-sonnet-4-5} in the
+\texttt{hybrid50v\_02}-era \texttt{LLMConfig} lineage, and
+\texttt{claude-sonnet-4-20250514} in \texttt{repro.yaml}).
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py}'s call site (lines 455--459)
+passes only \texttt{n\_candidates=8} and \texttt{verbose=False} --- no
+\texttt{model=} or \texttt{temperature=} argument --- so the call falls
+through to \texttt{hypatia.py}'s own defaults. The model that actually
+produced the Nguyen-12 results is therefore \texttt{claude-sonnet-5} at
+\texttt{temperature=0.25}, not \texttt{claude-sonnet-4-6} at
+\texttt{temperature=0.3} as \texttt{symbolic\_engine.py}'s
+\texttt{LLMConfig} would suggest; \texttt{n\_candidates=8} is a real,
+confirmed override, but of \texttt{hypatia.py}'s own default of 5, not of
+\texttt{LLMConfig}'s 3. There is a clear explanation for why
+\texttt{claude-sonnet-4-6} was previously believed to be live:
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py:263} executes
+\texttt{os.environ.setdefault('LLM\_MODEL', 'claude-sonnet-4-6')}, but
+\texttt{hypatia.py} contains no reference to an \texttt{LLM\_MODEL}
+environment variable anywhere --- the variable is set but nothing reads
+it, the same ``looks wired in but isn't'' pattern already identified for
+\texttt{repro.yaml}'s \texttt{llm\_model} field. \texttt{hypatia.py}'s
+\texttt{client.messages.create()} call (lines 150--156) also passes no
+seed parameter, independently confirming that no user-settable sampling
+seed exists on this code path either. With \texttt{hypatia.py} resolved,
+\texttt{run\_all.sh} --- to confirm which script CI actually invokes ---
+is now the sole remaining unverified link in the chain.
+
+\paragraph{Observed discrepancy (partially explained; timeline
+narrowed).} The \texttt{hybrid50v\_02} script documents its own
+validated target result in-line as 11/12 harmonic-rate solves (91.7\%),
+10/12 pointwise-rate solves (83.3\%), 0/12 for the neural baseline, with a
+Mann--Whitney comparison of $U{=}113$, $p{=}0.0097$. Recent reruns of the
+same seed and code instead land at 12/12 (100\%). A cross-seed comparison
+(seeds 99, 123, 777, 2024) run under confirmed identical full paper
+parameters ($n_{\text{tasks}}{=}12$, $\text{niterations}{=}1000$,
+$\text{populations}{=}30$, $\text{timeout}{=}1100\text{s}$) found 12/12
+for every seed, which rules out both ``seed=123 was an unlucky draw'' and
+``reduced sample size inflates the recovery rate'' as explanations. A
+within-seed comparison at seed=123 across three timestamps found May~22
+disagreeing with both July runs at the expression level on all 24
+task/system entries (max $|r^2\ \text{diff}|\approx 8.46\times10^{-5}$),
+while the two July runs (Jul~16, Jul~24) match each other exactly ---
+something changed between May and mid-July and has been stable since. A
+separately dated batch (filesystem-confirmed Apr~23, 2026, since none of
+the five filenames matched the analysis script's own timestamp parser)
+shows the pipeline was still running a reduced, single-task smoke-test
+configuration at that point, and had moved to the full paper-parameter
+configuration by May~22, 2026 --- narrowing the configuration-migration
+window to roughly four weeks and flagging it as a plausible window for
+the GCP/Kaggle~$\to$~GitHub~Actions infrastructure migration to have
+occurred as well, since that migration remains the leading unexplained
+variable once seed and sample size are ruled out. Sampling
+nondeterminism at the LLM layer remains a contributing, independently
+verified factor regardless of which code path (\texttt{LLMConfig} or
+\texttt{hypatia.py}) is in play: \texttt{symbolic\_engine.py}'s own
+module-level comment (lines 100--101) states outright that LLM
+temperature sampling is server-side and cannot be seeded there, and its
+\texttt{LLMConfig} default sets \texttt{temperature=0.3} (line 526) ---
+a non-zero value with no exposed sampling seed. The Claude API is not
+guaranteed to return bit-identical completions for identical prompts even
+at low temperature, so if \texttt{seed} in this pipeline constrains only
+the symbolic-regression search (PySR/NumPy) and not LLM sampling, two
+runs with the ``same seed'' can still produce different LLM-proposed
+candidate expressions, which PySR then refines into different final
+fits. This is independently confirmed behavior of the traced
+\texttt{LLMConfig} path; whether it also describes \texttt{hypatia.py}'s
+behavior is unknown pending that file.
+
+\paragraph{Corroborating billing evidence, re-read.} The API-key cost
+dashboard still shows a key created shortly before the earlier, disagreeing
+run with comparatively low cumulative cost, and a second key created about
+seven weeks later that had, by the same last-used date, already accrued
+roughly thirty times the cumulative cost of the first over a comparable
+usage window. This remains useful evidence of \emph{something} changing
+around that time --- additional retries, a higher candidate count, or a
+configuration change --- but should now be read as pointing at a
+configuration or usage-pattern change rather than at a model-version
+change, since the model string itself is confirmed pinned.
+
+\paragraph{Revised recommendation.} We no longer recommend ``pinning to a
+dated snapshot'' as a fix for \texttt{symbolic\_engine.py}'s
+\texttt{LLMConfig}, since \texttt{claude-sonnet-4-6} is already a fixed
+snapshot there --- but that dataclass is now confirmed \emph{not} to be
+what generated the Nguyen-12 numbers in the first place. The model that
+matters, \texttt{claude-sonnet-5} in \texttt{hypatia.py}, is itself
+already a dateless post-4.6-generation string and, by the same
+documentation cited above, should likewise be a pinned snapshot rather
+than a drifting alias, so model-identity drift remains an unlikely
+explanation for the 91.7\%-vs-100\% gap on this corrected code path too.
+The concrete action items are now: (1)~delete or actually wire up the
+dead \texttt{LLM\_MODEL} environment variable in
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py}, since it currently misleads
+readers of the code into believing \texttt{claude-sonnet-4-6} governs a
+call it has no effect on; (2)~treat \texttt{hypatia.py}'s
+\texttt{temperature=0.25} together with its unseeded
+\texttt{client.messages.create()} call as the confirmed source of
+run-to-run expression variability at fixed recovery rate, and record a
+distribution over repeated seed=123 runs rather than a single 91.7\%
+figure if that value is to be re-benchmarked; and (3)~obtain
+\texttt{run\_all.sh}, which remains the sole unverified link --- it alone
+can confirm whether CI invokes
+\texttt{exp3\_nguyen12\_hybrid50v\_02.py} directly (as analyzed here) or
+some other entry point that might call \texttt{get\_llm\_prior()} with
+different arguments. Independently of the code-tracing question,
+cross-seed and within-seed evidence from repeated
+\texttt{seed\_agreement.py} runs (see above) already rules out seed
+variance and reduced sample size as explanations for the
+91.7\%-vs-100\% gap, and narrows the likely configuration-migration
+window to Apr~23--May~22, 2026, which remains worth checking for an
+infrastructure diff (e.g., the suspected
+GCP/Kaggle~$\to$~GitHub~Actions migration) independent of the model
+question, which is now closed. This does not change any number
+currently printed in the paper text, which already states the
+33.3\%/91.7\% split directly in prose. It does mean a future seed-123
+result file should record \texttt{hypatia.py}'s sampling temperature and
+candidate count alongside the harmonic- and strict-rate fields, not a
+resolved model string from \texttt{symbolic\_engine.py}, so the
+automated gate can check for the parameters that actually matter here.
+Tracked as an extension of FIX-N3 pending the seed-123 result file and
+\texttt{run\_all.sh}.
+
+\clearpage
+% =======================================================================
+\section{CI Dashboard Status: Item 10.1}
+\label{supp:item10-1}
+% =======================================================================
+
+\begin{appliesto}
+\S\ref{sec:process_items} (``Outstanding Process/Credibility Items (Do Not
+Cite Until Resolved)''), and Supplementary Material A \S10.1.
+\textbf{Status: open, does not block submission} provided the CI
+dashboard's ``0 open issues'' claim continues to go uncited elsewhere in
+the paper. This section is the interim status note for that item.
+\end{appliesto}
+
+\noindent\textbf{Status: code fix confirmed; live re-run still pending.}
+Not yet closeable --- do not cite the CI dashboard or its ``0 open issues''
+claim until the checklist below is satisfied.
+
+\subsection*{What was found}
+Two notebooks were inspected directly:
+\begin{itemize}
+  \item \texttt{NB-06\_Code\_Quality\_Pipeline\_Integrity.ipynb} --- \textbf{0 of 10}
+    code cells have ever executed (\texttt{execution\_count} is \texttt{null}
+    throughout). This notebook has never actually run.
+  \item \texttt{NB-04\_Numerical\_Consistency\_Checker.ipynb} --- execution
+    stopped partway through (cells ran as \#1, \#3, \#4, \#5, then silently
+    stopped). The cells that never ran include the notebook's own final
+    \texttt{NB-04 STATUS} cell, which is the cell that declares
+    \texttt{FIX-N1}, \texttt{FIX-N2}, and \texttt{FIX-C3} ``RESOLVED.''
+    That declaration was never produced this cycle.
+\end{itemize}
+
+\noindent In \texttt{build\_report.py}, the dashboard's ``Open Issues''
+table and its ``0 open issues'' verdict are computed from
+\texttt{issue\_registry.json} via \texttt{load\_registry()} ---
+a code path entirely independent of whether the notebooks above
+existed or executed. A missing or never-run notebook only produced a
+soft warning \texttt{<div>} in its own display section; it never
+affected the findings table. So a stale or cached registry could
+assert ``0 open issues'' while the notebooks meant to verify that
+had not run at all.
+
+\subsection*{Fix applied}
+\texttt{build\_report.py} now checks every code cell's
+\texttt{execution\_count} for each of the six notebooks (not just
+whether the file exists), and \textbf{hard-fails the build}
+(\texttt{sys.exit(1)}) if any notebook is missing or incomplete,
+unless the run is an explicit fix-only pass (\texttt{NO\_NOTEBOOKS=true}).
+Verified against the two real notebooks above (build correctly exits~1)
+and against a synthetic fully-executed set (build correctly exits~0);
+the \texttt{NO\_NOTEBOOKS=true} bypass was also confirmed to still work
+as intended.
+
+\subsection*{What is still open}
+The code fix prevents a \emph{future} stale-green dashboard. It does not,
+by itself, tell us what the six notebooks' findings actually are right now.
+To close this item:
+\begin{enumerate}
+  \item Re-run \texttt{ci\_paper\_notebooks.yml} so all six notebooks
+    execute to completion.
+  \item Re-run \texttt{build\_report.py} (now patched) against that output.
+    If it exits~0, the dashboard it produces is live and citable.
+  \item Only then may the CI dashboard's conclusions --- including any
+    ``N open issues'' figure --- be cited in the paper or supplementary
+    material.
+\end{enumerate}
+
+\noindent Until that re-run happens, this item remains open per
+Supplementary Material A, \S10.1, and per \S\ref{sec:process_items}
+(``Outstanding Process/Credibility Items''). This does not block
+submission provided the dashboard and its ``0 open issues'' claim
+continue to go uncited elsewhere in the paper.
+
+\clearpage
+% =======================================================================
+\section{Consolidated Manuscript-Edit Tracker}
+\label{supp:tracker}
+% =======================================================================
+
+\begin{appliesto}
+Cross-cutting: indexes every open or historical edit item against the
+sections above and against the main manuscript. Confidence tiers: \textbf{A
+--- mechanical} (the paper already has the correct number somewhere else
+in the same file; safe to apply directly); \textbf{B --- needs judgment}
+(text drafted, framing decision required); \textbf{C --- can't draft}
+(flagged only; underlying fact not yet established).
+\end{appliesto}
+
+\subsection*{A. The \texttt{89.2\%} $\to$ \texttt{90.5\%} figure}
+
+\textbf{Tier A, mechanical. Status: \closed\ applied in
+\texttt{jmlr\_paper\_main\_3107919.tex}.} A prior
+\texttt{grep} against
+\texttt{jmlr\_paper\_main\_3007217.tex} confirmed \texttt{89.2\%} appeared
+at seven locations (abstract footnote, note near
+l.\,251, Contributions item~ii, Table~\ref{tab:main_results} caption and
+cells, prose near the ablation discussion, and the Conclusion), while
+Table~\ref{tab:difficulty} (l.\,1393) already reported the correct
+\textbf{90.5\%}. That internal inconsistency has since been resolved: all
+seven instances now read \textbf{90.5\%} in
+\texttt{jmlr\_paper\_main\_3107919.tex}, matching the already-correct
+Table~\ref{tab:difficulty} row, under the umbrella of
+\S\ref{sec:hybrid-attribution-bug}, where the corrected \textbf{60.8\%}
+figure lives alongside the uncorrected \texttt{90.5\%} figure it is
+contrasted with. Two dependent derived figures were also corrected as
+part of the same fix: the abstract's percentage-point gains (previously
+$+27$pp/$+83.8$pp off the stale 89.2\% base, now $+28.3$pp/$+85.1$pp off
+90.5\%). One instance was deliberately left unchanged: the
+``previously published \texttt{89.2\%}/66-of-74 figure'' paragraph
+reconciling a historical run against the recomputed 67/74, which
+correctly cites 89.2\% as a historical value under investigation, not as
+a current claim. No other number in these passages needed to
+change --- the 60.8\% corrected figure, the 62.2\% LLM baseline, the
+$-4.8$pp hard-tier figure, and the 22-masked-catastrophic count were
+already correct and independently verified against the raw file.
+
+\subsection*{B. Runtime / speedup section}
+
+\textbf{Tier B originally, now \closed\ superseded.} This item is fully
+resolved by \S\ref{supp:runtime} above and by main-text
+\S\ref{sec:timing}: the $1.73\times$/$1.64\times$ speedup claim and the
+73\% reduction claim are both withdrawn, and the complete
+5-seed$\times$74-task$\times$2-split sweep shows hybrid $2.5$--$9.3\times$
+\emph{slower} than the neural baseline on every seed and every split. Do
+not re-apply any draft of this item that still asserts a positive
+speedup, cites only a single seed, or treats the multi-seed sweep as
+incomplete --- all three conditions were true at an earlier stage of this
+audit and are no longer true.
+
+\subsection*{C. Planck blackbody cross-split divergence}
+\label{supp:edit-C}
+
+\textbf{Tier A, additive --- Status: \closed\ figures now fully disclosed,
+mechanism still \open.} Planck blackbody spectral radiance is a
+near-miss under the random 80/20 split ($\Rsq=0.999994$,
+Table~\ref{tab:randomsplit}) but catastrophic under the PCA-directed
+40/60 split ($\Rsq=-27.832$, Table~\ref{tab:pcasplit}). Both figures are
+now confirmed, provenance-disclosed, and defect-catalogued in
+\S\ref{supp:feynman30} above (Section~10.7 update) rather than resting on
+a single flagged footnote. We still do not have an explanation for
+\emph{why} the two splits diverge this sharply on this one equation ---
+one candidate mechanism worth checking is whether the PCA split's test
+region falls in the numerically unstable Wien-tail limit of the Planck
+function, per the original suggested footnote text --- but the
+observation itself is no longer merely flagged; it is fully reproducible
+from Table~\ref{supp:tab:randomsplit} and Table~\ref{supp:tab:pcasplit}
+above.
+
+\subsection*{D. PCA \texttt{random\_state} documentation}
+
+\textbf{Tier C --- nothing to draft yet.} Not investigated in this audit.
+No manuscript text is suggested because the underlying fact (whether the
+PCA split is currently seeded/deterministic) hasn't been checked. If this
+is to be closed out, the next step is to check
+\texttt{sklearn.decomposition.PCA(\ldots)} instantiations in the
+split-construction code for a fixed \texttt{random\_state}, then add one
+sentence to the reproducibility/methods section stating the value used.
+
+\subsection*{E. Second \texttt{exp2\_run.log}}
+
+\textbf{Tier C --- nothing to draft yet.} Same situation: the
+manuscript's own closing section already defers this to Supplementary
+Material A \S10, which was not available for this audit. No manuscript
+edit is suggested until that file is available to check.
+
+\subsection*{F. Nguyen-12 model versioning (new this round)}
+
+\textbf{Tier B --- \closed\ folded into
+\texttt{jmlr\_paper\_main\_3107919.tex}.} A reproducibility-note paragraph
+covering the \texttt{hypatia.py}/\texttt{claude-sonnet-5} finding, the dead
+\texttt{LLM\_MODEL} environment variable, and the 91.7\%-vs-100\%
+seed-123 discrepancy has been added to \S\ref{sec:nguyen12}, tracked
+there as an explicit extension of \texttt{FIX-N3} pending recovery of
+\texttt{run\_all.sh}, per the three action items recommended in
+\S\ref{supp:nguyen12} above.
+
+\subsection*{G. Table 6 / Core-15 ablation (already applied)}
+
+\textbf{Tier A --- \closed.} See \S\ref{supp:table6} above. The main
+manuscript's Table~\ref{tab:llm_ablation} already states it was rebuilt
+from \texttt{\_merged.json}. No further action needed unless
+Table~\ref{tab:llm_ablation} is re-edited from a source other than
+\texttt{\_merged.json}, in which case it should be re-checked against the
+\emph{Real} columns in \S\ref{supp:table6}.
+
+\subsection*{H. CI dashboard, Item 10.1 (already applied)}
+
+\textbf{Tier B --- \open, does not block submission.} See
+\S\ref{supp:item10-1} above and \S\ref{sec:process_items} in the main
+text. Remains open pending a completed re-run of
+\texttt{ci\_paper\_notebooks.yml} and \texttt{build\_report.py}; the
+``0 open issues'' claim must continue to go uncited elsewhere in the
+paper until then.
+
+\end{document}

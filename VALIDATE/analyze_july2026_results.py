@@ -36,7 +36,7 @@ import json
 import glob
 from pathlib import Path
 
-UPLOAD_DIR = Path("hypatiax/data/results/comparison_results/feynman-tests/noise-sweep/")
+UPLOAD_DIR = Path("/mnt/user-data/uploads")
 
 METHOD_NAMES = [
     "PureLLM Baseline (core)",
@@ -139,7 +139,7 @@ def main():
                   f"mean_r2={s['mean_r2']:.6f}  catastrophic={s['n_catastrophic']}")
 
     out = {"noiseless": result, "noise_sweep": sweep}
-    out_path = Path("hypatiax/data/results/comparison_results/feynman-tests/noise-sweep/july2026_results_summary.json")
+    out_path = Path("/mnt/user-data/outputs/july2026_results_summary.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2, default=str))
     print(f"\nWrote {out_path}")
