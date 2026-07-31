@@ -116,6 +116,7 @@ _CANONICAL_SUFFIXES = (
     "comparison_results/feynman-tests/sample-complexity",
     "comparison_results/feynman-tests/noise-sweep/noise-sweep",
     "comparison_results/feynman-tests/noise-sweep",
+    "ablation/exp1_ablation",
 )
 for _suffix in _CANONICAL_SUFFIXES:
     _parts = Path(_suffix).parts
@@ -142,7 +143,10 @@ GENERATED = 0
 #                  hybrid_llm_nn_all_domains_*.json
 #  instability   RESULTS_DIR/figures/                             "figures"  (CSV + JSON)
 #                  instability_analysis.csv / instability*.json
-#  exp1_ablation RESULTS_DIR/exp1_ablation/                       "exp1_ablation"  *.json  ✓
+#  exp1_ablation RESULTS_DIR/ablation/exp1_ablation/              "ablation/exp1_ablation"  *.json  ✓
+#                  (matches ci_postprocess.yml's SUB mapping: 'ablation/exp1_ablation';
+#                   previously read "exp1_ablation" here, which silently mismatched
+#                   the CI-resolved path and always fell through to fallback data)
 #  exp2_feynman  RESULTS_DIR/comparison_results/feynman-tests/    "comparison_results/feynman-tests/exp2"
 #                  exp2/exp2_results*.json                          *.json
 #  exp2          RESULTS_DIR/  exp2_run.log  (no dedicated JSON)  "comparison_results"  all_systems_merged.json
@@ -448,7 +452,7 @@ def gen_ablation() -> None:
     Per-equation rows with Train / Near / Med / Far R² for P and H, plus timing.
     Matches Table 6 in §10.6.
     """
-    data, src = load_best("exp1_ablation", "*.json")
+    data, src = load_best("ablation/exp1_ablation", "*.json")
 
     # Paper-verified values for all 15 equations (Table 6)
     PAPER_EQUATIONS = [
@@ -622,7 +626,7 @@ def gen_five_system() -> None:
     std=1842.0 supports ~[117.0, 2345.0], not the previously hand-typed
     [1087, 1456]).
     """
-    data, src = load_best("exp1_ablation", "*.json")
+    data, src = load_best("ablation/exp1_ablation", "*.json")
 
     # Paper-verified fallback (Table 1). Std for Neural Network filled in
     # from the disclosed Appendix G figure (1842.0) instead of "---", so the
@@ -1672,7 +1676,7 @@ def gen_repro_macros() -> None:
         acc = data.get("accuracy", data.get("success_rate", 0))
         macros["defiAccuracy"]   = f"{acc:.1%}"
         macros["defiTotalCases"] = str(data.get("total_cases", 74))
-    data, _ = load_best("exp1_ablation", "*.json")
+    data, _ = load_best("ablation/exp1_ablation", "*.json")
     if isinstance(data, dict):
         mw_p = data.get("mw_p", data.get("mann_whitney_p", ""))
         mw_u = data.get("mw_u", data.get("mann_whitney_u", ""))
@@ -2383,7 +2387,7 @@ def main() -> None:
          "", "hypatiax_defi_benchmark_v3*results*.json", "defi",
          ("exp1", "exp1_pca")),
         ("exp1_ablation Core-15 (Tab 5/6 + Fig F)",
-         "exp1_ablation", "*.json", "",
+         "ablation/exp1_ablation", "*.json", "",
          ("exp1_ablation",)),
         ("portfolio_variance seed-sweep (Tab 5 + Fig G)",
          "", "portfolio_variance*.json", "",
