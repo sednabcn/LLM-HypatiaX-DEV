@@ -571,18 +571,67 @@ def gen_ablation() -> None:
     write_table("ablation.tex", tex)
 
 
+# 95% two-tailed t critical values, df=1..30 (Student's t table). df>30 falls
+# back to the normal-approximation z=1.960. Avoids adding a scipy dependency
+# for a single-purpose lookup; values match standard published t-tables.
+_T_CRIT_95 = {
+    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+    8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
+    15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+    21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056,
+    27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042,
+}
+
+
+def _ci95(mean, std, n) -> str | None:
+    """
+    95% CI for a sample mean, computed from that sample's own mean/std/n via
+    the standard t-distribution formula: mean +/- t(0.975, n-1) * std/sqrt(n).
+
+    Returns None (never a fabricated number) unless mean, std, and n are all
+    present and numeric with n >= 2, so a table can never print a CI that
+    wasn't actually derived from its own std/n columns. This is what keeps
+    the CI and Std columns from being able to drift apart again: they are
+    now computed from the same row, in the same place, every regeneration.
+    """
+    try:
+        mean = float(mean)
+        std = float(std)
+        n = int(n)
+    except (TypeError, ValueError):
+        return None
+    if n < 2 or std < 0:
+        return None
+    df = n - 1
+    t_crit = _T_CRIT_95.get(df, 1.960)  # normal approx beyond the table
+    import math
+    margin = t_crit * std / math.sqrt(n)
+    return f"[{mean - margin:.1f}, {mean + margin:.1f}]"
+
+
 def gen_five_system() -> None:
     """
     Tab 1 — Five-System Comparison: Extrapolation Error vs. Interpolation R².
     Matches Table 1 in §10.1.
+
+    The 95% CI column is *derived* from each row's own n/mean/std at
+    generation time (see _ci95), rather than being a separately hand-typed
+    number elsewhere in the paper. Previously no code in this file computed
+    a CI at all -- the main-text CI was disconnected from this table's Std
+    column, which is how the two went out of sync (n=13, mean=1231.0,
+    std=1842.0 supports ~[117.0, 2345.0], not the previously hand-typed
+    [1087, 1456]).
     """
     data, src = load_best("exp1_ablation", "*.json")
 
-    # Paper-verified fallback (Table 1)
+    # Paper-verified fallback (Table 1). Std for Neural Network filled in
+    # from the disclosed Appendix G figure (1842.0) instead of "---", so the
+    # fallback path also yields a real, internally-consistent CI rather than
+    # silently omitting one.
     PAPER_ROWS = [
         # (system, n, extrap_median_pct, extrap_mean_pct, train_r2_mean, std, design_focus)
         ("Hybrid v40 (proposed)", 14, "0.0", "0.0",  "0.931", "---", "Extrapolation"),
-        ("Neural Network",        13, "86.7", "1231.0", "0.940", "---", "Baseline"),
+        ("Neural Network",        13, "86.7", "1231.0", "0.940", "1842.0", "Baseline"),
         ("Pure LLM",               0, "---",  "---",    "---",   "---", "Recognition"),
         ("System 2 Symbolic",      0, "---",  "---",    "---",   "---", "Validation"),
         ("System 3 LLM+Fallback",  0, "---",  "---",    "1.000", "0.0002", "Robustness"),
@@ -611,13 +660,17 @@ def gen_five_system() -> None:
     tex = header_comment(src) + r"""
 \begin{table}[t]
 \centering
-\caption{Five-System Comparison: Extrapolation Error vs.\ Interpolation $R^2$.}
-\label{tab:five_system}
-\begin{tabular}{lrrrrrr}
+\caption{Five-System Comparison: Extrapolation Error vs.\ Interpolation $R^2$.
+  95\% CI computed from each row's own Mean/Std/n
+  ($\mathrm{mean} \pm t_{0.975,\,n-1} \cdot \mathrm{std}/\sqrt{n}$); left
+  blank where Std or n is unavailable, never hand-entered.}
+\label{tab:five_systems_full}
+\begin{tabular}{lrrrrrrr}
 \toprule
 \textbf{System} & \textbf{n}
   & \textbf{Extrap.\ Median (\%)} & \textbf{Extrap.\ Mean (\%)}
-  & \textbf{Train $R^2$ Mean} & \textbf{Std} & \textbf{Design Focus} \\
+  & \textbf{Train $R^2$ Mean} & \textbf{Std} & \textbf{95\% CI (\%)}
+  & \textbf{Design Focus} \\
 \midrule
 """
     # separator between systems with/without extrapolation testing
@@ -625,9 +678,10 @@ def gen_five_system() -> None:
     for (name, n, emed, emean, tr2, std, focus) in rows:
         if not sep_done and n == 0:
             tex += r"\midrule" + "\n"
-            tex += r"\multicolumn{7}{l}{\textit{Systems Without Extrapolation Testing}} \\" + "\n"
+            tex += r"\multicolumn{8}{l}{\textit{Systems Without Extrapolation Testing}} \\" + "\n"
             sep_done = True
-        tex += f"{name} & {n} & {emed} & {emean} & {tr2} & {std} & {focus} \\\\\n"
+        ci = _ci95(emean, std, n) or "---"
+        tex += f"{name} & {n} & {emed} & {emean} & {tr2} & {std} & {ci} & {focus} \\\\\n"
 
     tex += r"""\bottomrule
 \end{tabular}
@@ -790,17 +844,12 @@ def gen_portfolio_seed_sweep() -> None:
     write_table("portfolio_sweep.tex", tex)
 
 
-def gen_feynman_results() -> None:
-    """
-    Tab 7 — Feynman Extrapolation Benchmark (n=30), Kaggle primary run.
-    Matches Table 7 in §10.7 (Appendix).
-    """
-    # run_all.sh (exp2_feynman) writes to RESULTS_DIR/comparison_results/feynman-tests/exp2/
-    data, src = load_best("comparison_results/feynman-tests/exp2", "*.json",
-                          extra_subdirs=["feynman"])
-
-    # Paper-verified fallback (Table 7, Kaggle 4-vCPU run)
-    PAPER_EQUATIONS = [
+# Paper-verified fallback (Table 7, Kaggle 4-vCPU run). Module-level so both
+# gen_feynman_results() (exp2_feynman) and the exp2 all-30 multi-domain
+# generators below (gen_all30_domain_summary / gen_multi_domain_rank_table)
+# can fall back to the same 30-equation set when fresh per-domain shards
+# aren't available yet.
+_PAPER_FEYNMAN_EQUATIONS = [
         ("Gaussian",             "Mechanics",      0.926,  -10.36,  -24.20),
         ("Coulomb Force",        "Mechanics",      0.869,   -7.43,  -999),
         ("Relativistic momentum","Mechanics",      0.997,   -0.25,   -4.76),
@@ -830,29 +879,87 @@ def gen_feynman_results() -> None:
         ("Lorentz factor",       "Relativity",      0.997,   0.711,  -0.54),
         ("Coulomb potential",    "Atomic",          0.063,  -999,   -4.66),
         ("Diffusion coefficient","Atomic",         -0.56,  -999,    0.034),
-        ("Larmor frequency",     "Nuclear",         0.998,   1.000,  -1.40),
-    ]
+    ("Larmor frequency",     "Nuclear",         0.998,   1.000,  -1.40),
+]
 
-    def _extract(d):
-        if not isinstance(d, dict):
-            return []
-        eqs = d.get("equations", d.get("results", []))
-        if not isinstance(eqs, list) or len(eqs) < 10:
-            return []
-        rows = []
-        for e in eqs:
-            rows.append((
-                e.get("name", "?"),
-                e.get("domain", "?"),
-                e.get("hyp_train_r2",  e.get("train_r2",  float("nan"))),
-                e.get("hyp_extrap_r2", e.get("extrap_r2", float("nan"))),
-                e.get("nn_extrap_r2",  e.get("nn_r2",     float("nan"))),
-            ))
-        return rows
 
-    equations = _extract(data) if data else []
+def _extract_equation_rows(d) -> list[tuple]:
+    """Pull (name, domain, train_r2, extrap_r2, nn_r2) rows out of a single
+    result JSON that follows the standard "equations"/"results" list shape
+    used across both exp2_feynman's single combined file and exp2's
+    per-domain shards. Shared by gen_feynman_results() and the exp2 all-30
+    multi-domain generators so both interpret result JSONs identically."""
+    if not isinstance(d, dict):
+        return []
+    eqs = d.get("equations", d.get("results", []))
+    if not isinstance(eqs, list) or not eqs:
+        return []
+    rows = []
+    for e in eqs:
+        if not isinstance(e, dict):
+            continue
+        rows.append((
+            e.get("name", "?"),
+            e.get("domain", "?"),
+            e.get("hyp_train_r2",  e.get("train_r2",  float("nan"))),
+            e.get("hyp_extrap_r2", e.get("extrap_r2", float("nan"))),
+            e.get("nn_extrap_r2",  e.get("nn_r2",     float("nan"))),
+        ))
+    return rows
+
+
+def _load_exp2_multi_domain_rows() -> tuple[list[tuple], list[Path]]:
+    """Load & merge every per-domain result shard for exp2 (all-30
+    multi-domain).
+
+    Unlike exp2_feynman (one combined JSON under a nested
+    comparison_results/feynman-tests/exp2/ subdir), exp2's --results-dir is
+    already resolved by ci_postprocess.yml to the canonical exp2_multi dir
+    (comparison_results/feynman-tests/exp2_multi), so shards are read
+    directly from PATCHED / RESULTS with subdir="" — mirroring how exp1
+    reads its root-level JSON. Passing a subdir here would double-nest the
+    path (RESULTS is already exp2_multi) and silently find nothing, which is
+    exactly the bug that made plain "exp2" fall back to exp2_feynman's
+    generator and its Table 7 fallback data instead of exp2's own results.
+
+    Each shard is expected to hold one domain's worth of equation rows (same
+    "equations"/"results" list shape as exp2_feynman's combined file — see
+    _extract_equation_rows). Rows from every shard found are flattened into
+    one list; duplicate equation names are resolved by taking the entry from
+    the last shard processed (PATCHED overrides RESULTS, matching the
+    override precedence load_best() uses elsewhere in this file).
+    """
+    by_name: dict[str, tuple] = {}
+    sources: list[Path] = []
+    for base in [RESULTS, PATCHED]:
+        if not base.exists():
+            continue
+        for f in sorted(_filtered_glob(base, "*.json")):
+            try:
+                data = json.loads(f.read_text())
+            except Exception:
+                continue
+            rows = _extract_equation_rows(data)
+            if not rows:
+                continue
+            sources.append(f)
+            for row in rows:
+                by_name[row[0]] = row
+    return list(by_name.values()), sources
+
+
+def gen_feynman_results() -> None:
+    """
+    Tab 7 — Feynman Extrapolation Benchmark (n=30), Kaggle primary run.
+    Matches Table 7 in §10.7 (Appendix).
+    """
+    # run_all.sh (exp2_feynman) writes to RESULTS_DIR/comparison_results/feynman-tests/exp2/
+    data, src = load_best("comparison_results/feynman-tests/exp2", "*.json",
+                          extra_subdirs=["feynman"])
+
+    equations = _extract_equation_rows(data) if data else []
     if not equations:
-        equations = PAPER_EQUATIONS
+        equations = _PAPER_FEYNMAN_EQUATIONS
 
     def _r(v, lo=-100):
         if not isinstance(v, (int, float)) or v != v: return "---"
@@ -900,6 +1007,382 @@ def gen_feynman_results() -> None:
 \end{table*}
 """
     write_table("feynman.tex", tex)
+
+
+def gen_all30_domain_summary() -> None:
+    """
+    exp2 — all-30 multi-domain: per-domain aggregate summary.
+
+    Source: per-domain result shards directly under RESULTS (exp2's
+    --results-dir is already comparison_results/feynman-tests/exp2_multi —
+    see _load_exp2_multi_domain_rows()). Groups the flattened 30 equation
+    rows by physics domain and reports, per domain: equation count, mean
+    train R², mean extrap R², and hybrid-success count (extrap R² >= 0.99).
+    """
+    rows, sources = _load_exp2_multi_domain_rows()
+    used_fallback = not rows
+    if used_fallback:
+        rows = _PAPER_FEYNMAN_EQUATIONS
+
+    src_label = sources[0] if sources else None
+
+    domains: dict[str, list[tuple]] = {}
+    for row in rows:
+        domains.setdefault(row[1], []).append(row)
+
+    def _mean(vals):
+        vals = [v for v in vals if isinstance(v, (int, float)) and v == v]
+        return sum(vals) / len(vals) if vals else float("nan")
+
+    def _r(v):
+        return f"{v:.3f}" if isinstance(v, float) and v == v else "---"
+
+    tex = header_comment(src_label) + r"""
+\begin{table}[t]
+\centering
+\caption{exp2 --- all-30 multi-domain benchmark, per-domain summary.}
+\label{tab:all30_domain_summary}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Domain} & \textbf{N} & \textbf{Mean Train $R^2$}
+  & \textbf{Mean Extrap $R^2$} & \textbf{Successes} \\
+\midrule
+"""
+    for domain in sorted(domains):
+        drows = domains[domain]
+        n = len(drows)
+        mean_train  = _mean(r[2] for r in drows)
+        mean_extrap = _mean(r[3] for r in drows)
+        n_succ = sum(1 for r in drows if isinstance(r[3], float) and r[3] >= 0.99)
+        tex += f"{domain} & {n} & {_r(mean_train)} & {_r(mean_extrap)} & {n_succ}/{n} \\\\\n"
+
+    n_total = len(rows)
+    n_succ_total = sum(1 for r in rows if isinstance(r[3], float) and r[3] >= 0.99)
+    tex += r"\midrule" + "\n"
+    tex += (f"\\textbf{{All domains}} & {n_total} & "
+            f"{_r(_mean(r[2] for r in rows))} & {_r(_mean(r[3] for r in rows))} & "
+            f"{n_succ_total}/{n_total} \\\\\n")
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("all30_domain_summary.tex", tex)
+
+
+def gen_multi_domain_rank_table() -> None:
+    """
+    exp2 — all-30 multi-domain: domain ranking by extrapolation R^2.
+
+    Source: same shards as gen_all30_domain_summary() (loaded independently
+    here since generators are called standalone from the dispatch table).
+    Ranks each domain by mean extrap R^2 descending, alongside the hybrid
+    vs. NN win margin, so the reader can see at a glance which domains the
+    hybrid method struggles or excels on relative to the pure NN baseline.
+    """
+    rows, sources = _load_exp2_multi_domain_rows()
+    used_fallback = not rows
+    if used_fallback:
+        rows = _PAPER_FEYNMAN_EQUATIONS
+
+    src_label = sources[0] if sources else None
+
+    domains: dict[str, list[tuple]] = {}
+    for row in rows:
+        domains.setdefault(row[1], []).append(row)
+
+    def _mean(vals):
+        vals = [v for v in vals if isinstance(v, (int, float)) and v == v]
+        return sum(vals) / len(vals) if vals else float("nan")
+
+    def _r(v):
+        return f"{v:.3f}" if isinstance(v, float) and v == v else "---"
+
+    ranked = sorted(
+        domains.items(),
+        key=lambda kv: _mean(r[3] for r in kv[1]),
+        reverse=True,
+    )
+
+    tex = header_comment(src_label) + r"""
+\begin{table}[t]
+\centering
+\caption{exp2 --- all-30 multi-domain benchmark, domains ranked by mean
+  Hybrid extrapolation $R^2$ (descending). Margin is Hybrid $-$ NN.}
+\label{tab:multi_domain_rank_table}
+\small
+\begin{tabular}{clrrr}
+\toprule
+\textbf{Rank} & \textbf{Domain} & \textbf{Hybrid Extrap $R^2$}
+  & \textbf{NN Extrap $R^2$} & \textbf{Margin} \\
+\midrule
+"""
+    for rank, (domain, drows) in enumerate(ranked, start=1):
+        mean_hyp = _mean(r[3] for r in drows)
+        mean_nn  = _mean(r[4] for r in drows)
+        margin = (mean_hyp - mean_nn) if mean_hyp == mean_hyp and mean_nn == mean_nn else float("nan")
+        tex += f"{rank} & {domain} & {_r(mean_hyp)} & {_r(mean_nn)} & {_r(margin)} \\\\\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("multi_domain_rank_table.tex", tex)
+
+
+def _extract_hybrid_domain_rows(d) -> list[tuple]:
+    """Pull (name, domain, hybrid_r2, llm_r2, nn_r2) rows out of a single
+    hybrid_all_domains result shard written by
+    hybrid_system_llm_nn_all_domains.py.
+
+    NOTE: the exact field names emitted by that script were not confirmed
+    against a live run (no sample JSON was available while writing this) —
+    several common spellings are tried per field, and a row with an
+    unrecognised shape contributes "?"/NaN for that field rather than being
+    dropped outright, so partial/renamed data still shows up instead of
+    silently vanishing. If real output uses different keys, update the
+    e.get(...) chains below rather than the overall structure.
+    """
+    if not isinstance(d, dict):
+        return []
+    eqs = d.get("equations", d.get("results", d.get("cases", [])))
+    if not isinstance(eqs, list) or not eqs:
+        return []
+    domain_fallback = d.get("domain", "?")
+    rows = []
+    for e in eqs:
+        if not isinstance(e, dict):
+            continue
+        rows.append((
+            e.get("name", e.get("equation", "?")),
+            e.get("domain", domain_fallback),
+            e.get("hybrid_r2", e.get("hyp_r2", e.get("hyp_extrap_r2", float("nan")))),
+            e.get("llm_r2",    e.get("pure_llm_r2", float("nan"))),
+            e.get("nn_r2",     e.get("neural_network_r2", e.get("nn_extrap_r2", float("nan")))),
+        ))
+    return rows
+
+
+def _load_hybrid_all_domains_rows() -> tuple[list[tuple], list[Path]]:
+    """Load & merge every per-domain shard for hybrid_all_domains.
+
+    ci_postprocess.yml resolves --results-dir to the canonical
+    hybrid_llm_nn/all_domains dir for this experiment, so shards are read
+    with subdir="" directly from PATCHED / RESULTS — same reasoning as
+    _load_exp2_multi_domain_rows(). Duplicate equation names are resolved by
+    taking the entry from the last shard processed (PATCHED overrides
+    RESULTS, matching load_best()'s override precedence elsewhere in this
+    file).
+    """
+    by_name: dict[str, tuple] = {}
+    sources: list[Path] = []
+    for base in [RESULTS, PATCHED]:
+        if not base.exists():
+            continue
+        for f in sorted(_filtered_glob(base, "*.json")):
+            try:
+                data = json.loads(f.read_text())
+            except Exception:
+                continue
+            rows = _extract_hybrid_domain_rows(data)
+            if not rows:
+                continue
+            sources.append(f)
+            for row in rows:
+                by_name[row[0]] = row
+    return list(by_name.values()), sources
+
+
+def gen_hybrid_all_domains_summary() -> None:
+    """
+    hybrid_all_domains — per-domain LLM+NN hybrid summary.
+    Produces: hybrid_all_domains_summary.tex
+
+    Previously this experiment had NO generator at all (_DISPATCH entry was
+    an unconditional empty list), so the "Tables: hybrid_all_domains" CI
+    step always failed with "wrote no .tex files" regardless of whether
+    source data existed.
+    """
+    rows, sources = _load_hybrid_all_domains_rows()
+    src_label = sources[0] if sources else None
+
+    domains: dict[str, list[tuple]] = {}
+    for row in rows:
+        domains.setdefault(row[1], []).append(row)
+
+    def _mean(vals):
+        vals = [v for v in vals if isinstance(v, (int, float)) and v == v]
+        return sum(vals) / len(vals) if vals else float("nan")
+
+    def _r(v):
+        return f"{v:.3f}" if isinstance(v, float) and v == v else "---"
+
+    tex = header_comment(src_label) + r"""
+\begin{table}[t]
+\centering
+\caption{hybrid\_all\_domains --- per-domain LLM+NN hybrid summary.}
+\label{tab:hybrid_all_domains_summary}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Domain} & \textbf{N} & \textbf{Hybrid $R^2$}
+  & \textbf{LLM $R^2$} & \textbf{NN $R^2$} \\
+\midrule
+"""
+    for domain in sorted(domains):
+        drows = domains[domain]
+        n = len(drows)
+        tex += (f"{domain} & {n} & {_r(_mean(r[2] for r in drows))} & "
+                f"{_r(_mean(r[3] for r in drows))} & {_r(_mean(r[4] for r in drows))} \\\\\n")
+    if not domains:
+        tex += r"\multicolumn{5}{c}{No hybrid\_all\_domains data available.} \\" + "\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("hybrid_all_domains_summary.tex", tex)
+
+
+def gen_domain_rank_table() -> None:
+    """
+    hybrid_all_domains — domains ranked by Hybrid R^2 (descending).
+    Produces: domain_rank_table.tex
+    """
+    rows, sources = _load_hybrid_all_domains_rows()
+    src_label = sources[0] if sources else None
+
+    domains: dict[str, list[tuple]] = {}
+    for row in rows:
+        domains.setdefault(row[1], []).append(row)
+
+    def _mean(vals):
+        vals = [v for v in vals if isinstance(v, (int, float)) and v == v]
+        return sum(vals) / len(vals) if vals else float("nan")
+
+    def _r(v):
+        return f"{v:.3f}" if isinstance(v, float) and v == v else "---"
+
+    ranked = sorted(domains.items(), key=lambda kv: _mean(r[2] for r in kv[1]), reverse=True)
+
+    tex = header_comment(src_label) + r"""
+\begin{table}[t]
+\centering
+\caption{hybrid\_all\_domains --- domains ranked by mean Hybrid $R^2$ (descending).}
+\label{tab:domain_rank_table}
+\small
+\begin{tabular}{clr}
+\toprule
+\textbf{Rank} & \textbf{Domain} & \textbf{Hybrid $R^2$} \\
+\midrule
+"""
+    for rank, (domain, drows) in enumerate(ranked, start=1):
+        tex += f"{rank} & {domain} & {_r(_mean(r[2] for r in drows))} \\\\\n"
+    if not ranked:
+        tex += r"\multicolumn{3}{c}{No hybrid\_all\_domains data available.} \\" + "\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("domain_rank_table.tex", tex)
+
+
+def _extract_extrap_rows(d) -> list[tuple]:
+    """Pull (name, domain, train_r2, ood_extrap_r2) rows out of a single
+    all_domains_extrap_v4_*.json shard. Reuses the hyp_train_r2/hyp_extrap_r2
+    field spelling shared with exp2_feynman/exp2 (extrap runs the same
+    protocol_core-style harness, just scored on an OOD split), with
+    ood_r2/extrap_r2 tried first since that's the field name implied by the
+    ci_postprocess.yml comment for this step ("extrap_r2 per method per
+    equation")."""
+    if not isinstance(d, dict):
+        return []
+    eqs = d.get("equations", d.get("results", []))
+    if not isinstance(eqs, list) or not eqs:
+        return []
+    domain_fallback = d.get("domain", "?")
+    rows = []
+    for e in eqs:
+        if not isinstance(e, dict):
+            continue
+        rows.append((
+            e.get("name", "?"),
+            e.get("domain", domain_fallback),
+            e.get("hyp_train_r2", e.get("train_r2", float("nan"))),
+            e.get("ood_r2", e.get("extrap_r2", e.get("hyp_extrap_r2", float("nan")))),
+        ))
+    return rows
+
+
+def _load_extrap_rows() -> tuple[list[tuple], list[Path]]:
+    """Load & merge every all_domains_extrap_v4_*.json shard for extrap.
+
+    Like hybrid_all_domains, --results-dir is already resolved to the
+    canonical comparison_results/extrapolation dir for this experiment, so
+    shards are read with subdir="" directly. Falls back to a generic
+    "*.json" glob if no all_domains_extrap_v4_*.json shard is found, in case
+    the shard naming has drifted.
+    """
+    by_name: dict[str, tuple] = {}
+    sources: list[Path] = []
+    for base in [RESULTS, PATCHED]:
+        if not base.exists():
+            continue
+        shards = _filtered_glob(base, "all_domains_extrap_v4_*.json")
+        if not shards:
+            shards = _filtered_glob(base, "*.json")
+        for f in sorted(shards):
+            try:
+                data = json.loads(f.read_text())
+            except Exception:
+                continue
+            rows = _extract_extrap_rows(data)
+            if not rows:
+                continue
+            sources.append(f)
+            for row in rows:
+                by_name[row[0]] = row
+    return list(by_name.values()), sources
+
+
+def gen_extrap_ood_table() -> None:
+    """
+    extrap — out-of-distribution extrapolation table (Tab 9 OOD columns).
+    Produces: extrap_ood_table.tex
+
+    Previously this experiment had NO generator at all (_DISPATCH entry was
+    an unconditional empty list), so the "Tables: extrap" CI step always
+    failed with "wrote no .tex files" regardless of whether source data
+    existed.
+    """
+    rows, sources = _load_extrap_rows()
+    src_label = sources[0] if sources else None
+
+    def _r(v):
+        return f"{v:.3f}" if isinstance(v, float) and v == v else "---"
+
+    tex = header_comment(src_label) + r"""
+\begin{table*}[t]
+\centering
+\caption{extrap --- out-of-distribution (OOD) extrapolation results, all domains.}
+\label{tab:extrap_ood_table}
+\small
+\begin{tabular}{llrr}
+\toprule
+\textbf{Equation} & \textbf{Domain} & \textbf{Train $R^2$} & \textbf{OOD Extrap $R^2$} \\
+\midrule
+"""
+    for (name, domain, train_r2, ood_r2) in sorted(rows, key=lambda r: (r[1], r[0])):
+        tex += f"{name} & {domain} & {_r(train_r2)} & {_r(ood_r2)} \\\\\n"
+    if not rows:
+        tex += r"\multicolumn{4}{c}{No extrap OOD data available.} \\" + "\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table*}
+"""
+    write_table("extrap_ood_table.tex", tex)
 
 
 def gen_nguyen12() -> None:
@@ -1197,6 +1680,27 @@ def gen_repro_macros() -> None:
             macros["coreAblationMWp"] = f"{mw_p:.4f}"
         if mw_u:
             macros["coreAblationMWu"] = f"{mw_u:.1f}"
+
+        # Neural Network extrapolation mean/std/CI, sourced from the same
+        # five_system/system_comparison entry that feeds tab:five_system, so
+        # the main-text CI (\nnExtrapCI) and the table's Std column can never
+        # go out of sync again -- both trace back to this one JSON field.
+        for entry in data.get("five_system", data.get("system_comparison", [])):
+            if entry.get("name") != "Neural Network":
+                continue
+            nn_mean = entry.get("extrap_mean_pct")
+            nn_std  = entry.get("std")
+            nn_n    = entry.get("n")
+            if nn_mean is not None:
+                macros["nnExtrapMean"] = f"{float(nn_mean):.1f}"
+            if nn_std is not None:
+                macros["nnExtrapStd"] = f"{float(nn_std):.1f}"
+            if nn_n is not None:
+                macros["nnExtrapN"] = str(int(nn_n))
+            ci = _ci95(nn_mean, nn_std, nn_n)
+            if ci:
+                macros["nnExtrapCI"] = ci
+            break
     lines = [
         "% Auto-generated reproducibility macros",
         "% Usage: \\repoVal{defiAccuracy}",
@@ -1886,16 +2390,40 @@ def main() -> None:
          ("exp1b", "exp1b_pca")),
         ("exp2_feynman results (Tab 7)",
          "comparison_results/feynman-tests/exp2", "*.json", "feynman",
-         ("exp2_feynman", "exp2", "exp2_feynman_extrap", "exp2_feynman_pca")),
+         ("exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca")),
+        # exp2 (all-30 multi-domain) is NOT the same source as exp2_feynman:
+        # its --results-dir is already resolved to the canonical exp2_multi
+        # dir by ci_postprocess.yml, so shards are read with subdir=""
+        # directly (see _load_exp2_multi_domain_rows()). Previously exp2 was
+        # aliased to exp2_feynman's audit/dispatch entries, which pointed at
+        # a subdir that doesn't exist relative to exp2_multi and always
+        # silently fell back to exp2_feynman's Table 7 paper-verified data.
+        ("exp2 all-30 multi-domain shards (all30_domain_summary / multi_domain_rank_table)",
+         "", "*.json", "",
+         ("exp2",)),
         ("exp3 Nguyen-12 results (Tab 8)",
          "", "exp3*nguyen12*.json", "nguyen12",
          ("exp3", "exp3b")),
         ("instability JSON or CSV (Tab 9 / §10.9)",
          "figures", "instability*.json", "instability",
          ("instability",)),
+        # hybrid_all_domains: --results-dir is already resolved by
+        # ci_postprocess.yml to the canonical hybrid_llm_nn/all_domains dir,
+        # so shards are read with subdir="" directly (see
+        # _load_hybrid_all_domains_rows()). The previous subdir value here —
+        # "hybrid_llm_nn/all_domains" — double-nested against an
+        # already-resolved --results-dir and always found nothing, the same
+        # class of bug that broke exp2's audit row.
         ("hybrid_all_domains JSON (§10.9 hybrid)",
-         "hybrid_llm_nn/all_domains", "*.json", "",
+         "", "*.json", "",
          ("hybrid_all_domains",)),
+        # extrap previously had NO audit row at all — a missing source JSON
+        # was never reported here; the only symptom was the tables step
+        # failing later with "wrote no .tex files" because _DISPATCH["extrap"]
+        # was an unconditional empty list (see gen_extrap_ood_table() below).
+        ("extrap OOD results (Tab 9 OOD columns)",
+         "", "all_domains_extrap_v4_*.json", "",
+         ("extrap",)),
         ("noise_sweep JSON (suppB Tab 28/29)",
          "comparison_results/feynman-tests/noise-sweep", "noise_sweep_*.json", "",
          ("suppb",)),
@@ -2052,10 +2580,19 @@ def main() -> None:
             lambda: gen_ablation(),
             lambda: gen_repro_macros(),
         ])],
-        # exp2 / exp2_feynman (+ extrap/pca variants) → comparison_results/
+        # exp2_feynman (+ extrap/pca variants) → comparison_results/
         # feynman-tests/exp2/*.json → feynman.tex (Tab 7) only.
         "exp2_feynman": [("── exp2_feynman: Feynman benchmark table ────────────────────", [
             lambda: gen_feynman_results(),
+        ])],
+        # exp2 (all-30 multi-domain) → comparison_results/feynman-tests/
+        # exp2_multi/*.json (per-domain shards, subdir="" — see
+        # _load_exp2_multi_domain_rows()) → all30_domain_summary.tex +
+        # multi_domain_rank_table.tex. NOT the same source as exp2_feynman —
+        # do not alias this to "exp2_feynman" again (that was the bug).
+        "exp2": [("── exp2: all-30 multi-domain tables ─────────────────────────", [
+            lambda: gen_all30_domain_summary(),
+            lambda: gen_multi_domain_rank_table(),
         ])],
         # exp3 / exp3b → nguyen12/*.json → nguyen12.tex (Tab 8) only.
         "exp3": [("── exp3: Nguyen-12 table ─────────────────────────────────────", [
@@ -2065,11 +2602,22 @@ def main() -> None:
         "instability": [("── instability: instability table ───────────────────────────", [
             lambda: gen_instability(),
         ])],
-        # No table in this script currently consumes hybrid_all_domains or
-        # extrap JSONs — the audit above still checks for them (useful for
-        # confirming the run wrote them), but there's nothing to generate.
-        "hybrid_all_domains": [("── hybrid_all_domains: no table currently sources this JSON ──", [])],
-        "extrap": [("── extrap: no table currently sources this JSON ────────────", [])],
+        # hybrid_all_domains → hybrid_llm_nn/all_domains/*.json (per-domain
+        # shards, subdir="" — see _load_hybrid_all_domains_rows()) →
+        # hybrid_all_domains_summary.tex + domain_rank_table.tex. Previously
+        # an unconditional empty list — that was the guaranteed hard-failure
+        # bug (0 tables written -> N_TABS==0 -> CI step always failed).
+        "hybrid_all_domains": [("── hybrid_all_domains: LLM+NN all-domain tables ──────────────", [
+            lambda: gen_hybrid_all_domains_summary(),
+            lambda: gen_domain_rank_table(),
+        ])],
+        # extrap → comparison_results/extrapolation/*.json (subdir="" — see
+        # _load_extrap_rows()) → extrap_ood_table.tex. Previously an
+        # unconditional empty list — same guaranteed hard-failure bug as
+        # hybrid_all_domains above.
+        "extrap": [("── extrap: OOD extrapolation table ───────────────────────────", [
+            lambda: gen_extrap_ood_table(),
+        ])],
         # suppB: noise-sweep + sample-complexity + win-rate only.
         "suppb": [_suppb_noise_section(), _suppb_sc_section(), _suppb_winrate_section()],
         "suppb_sc": [_suppb_sc_section(), _suppb_winrate_section()],
@@ -2078,11 +2626,12 @@ def main() -> None:
         "all": [_main_paper_section(), _suppb_noise_section(),
                 _suppb_sc_section(), _suppb_winrate_section()],
     }
-    # PCA/extrap variants and exp2 itself reuse their base experiment's
-    # generator set — same source JSON, just a different --results-dir.
+    # PCA/extrap variants reuse their base experiment's generator set — same
+    # source JSON, just a different --results-dir. exp2 (all-30
+    # multi-domain) has its own entry above and is intentionally NOT aliased
+    # here — it never shared exp2_feynman's source data in the first place.
     _DISPATCH["exp1_pca"] = _DISPATCH["exp1"]
     _DISPATCH["exp1b_pca"] = _DISPATCH["exp1b"]
-    _DISPATCH["exp2"] = _DISPATCH["exp2_feynman"]
     _DISPATCH["exp2_feynman_extrap"] = _DISPATCH["exp2_feynman"]
     _DISPATCH["exp2_feynman_pca"] = _DISPATCH["exp2_feynman"]
     _DISPATCH["exp3b"] = _DISPATCH["exp3"]
