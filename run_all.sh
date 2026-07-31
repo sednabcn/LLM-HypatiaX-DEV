@@ -586,7 +586,21 @@ run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" bash -c
     echo \"  [exp1b] SHARD_INDEX=\${SHARD_INDEX:-0} -> seeds for this shard: \${_SHARD_SEEDS}\"
   fi
 
-  DEFI_TASK_FILTER=portfolio \
+  # FIX-exp1b-CASEFILTER: DEFI_TASK_FILTER=portfolio used to be set here.
+  # run_benchmark() turns it into cases=["portfolio"], then keeps only
+  # test cases whose NAME contains the substring "portfolio" (see the
+  # `if cases:` substring filter in hypatiax_defi_benchmark_v3c.py). Only
+  # 5 of the 74 cases in the catalogue match that substring (Annualised
+  # Portfolio tracking error, Portfolio Sharpe Ratio, Portfolio VaR for
+  # two correlated, Correlated Portfolio VaR, Portfolio Expected
+  # Shortfall for correlated), so every shard silently ran a 5-case sweep
+  # instead of the full 74-case catalogue that Table 11 (DeFi routing) is
+  # built from -- 5 seeds x 5 cases instead of 5 seeds x 74 cases.
+  # portfolio_variance_v3c2.py (run right below) is the step that
+  # actually needs the portfolio-specific slice, and it reads that out of
+  # the full benchmark JSON itself -- the upstream benchmark run must NOT
+  # be pre-filtered. Removed here so each shard's seed runs the full
+  # 74-case catalogue.
   DEFI_SEEDS=\"\${_SHARD_SEEDS}\" \
     python3 '${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_v3c.py' \
       --resume \
@@ -968,7 +982,9 @@ run exp1b_pca "FIX-C3 DeFi seed sweep with PCA 40/60 split (mirrors exp1b with P
   # --force-fresh is passed to the script itself — guarantees fresh results
   # even when the script is invoked directly, bypassing this shell wrapper.
   echo '[exp1b_pca] Running hypatiax_defi_benchmark_pca.py (portfolio seed sweep, PCA 40/60 split)'
-  DEFI_TASK_FILTER=portfolio \\
+  # FIX-exp1b_pca-CASEFILTER: mirrors FIX-exp1b-CASEFILTER above -- removed
+  # DEFI_TASK_FILTER=portfolio so exp1b_pca also sweeps the full 74-case
+  # catalogue per seed instead of only the 5 "portfolio"-named cases.
   DEFI_SEEDS=\"\${_SHARD_SEEDS}\" \\
     python3 '${EXPERIMENTS_DIR}/hypatiax_defi_benchmark_pca.py' \\
       --output-dir \"\${_PCA15_DIR}\" \\

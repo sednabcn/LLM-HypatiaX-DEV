@@ -30,7 +30,7 @@
 
 \usepackage{bm}
 \usepackage{microtype}
-\microtypesetup{expansion=false}
+\microtypesetup{expansion=true}
 
 %% ── Figures, tables, algorithms ─────────────────────────────
 \usepackage{graphicx}
@@ -124,15 +124,41 @@
 % ── Author note on numerical accuracy ────────────────────────────────────────
 \begin{center}
 \fbox{\parbox{0.88\textwidth}{%
-\small\textbf{Note on runtime claims.}
+\small\textbf{Note on runtime claims (third correction).}
 An earlier draft of this paper asserted a ``73\,\% runtime reduction''
 (i.e.\ a $3.7\times$ speedup of HypatiaX over the neural-network baseline).
-That figure is \emph{not supported} by the benchmark data (HypatiaX v3.0).
-The verified runtime comparison is presented in full in Section~\ref{sec:timing};
-the honest claim is a $1.73\times$ speedup on LLM-routed cases only
-($n=68$ out of 74).  All other quantitative claims in this paper have been
-independently verified against the v3.0 statistical report and are reported
-exactly as measured.}}
+A subsequent draft revised this down to a $1.73\times$ speedup on
+LLM-routed cases only ($n=68$ out of 74) and a $1.64\times$ median speedup
+overall. \textbf{Neither figure is supported by the benchmark data.} A
+reproducibility audit mechanically regenerated Table~\ref{tab:timing_full}
+directly from the raw per-task result files (no manual number editing;
+script and full output in the Supplementary reproducibility note) using
+the \emph{complete} five-seed sweep --- all five seeds
+($42, 99, 123, 777, 2024$), all 74 tasks each, for both benchmark variants
+(v3c and PCA-directed; $740$ tasks audited in total. A data-completeness
+concern raised in an earlier draft, that seeds other than 42 were
+truncated to 5 tasks, is retracted: all ten raw result files contain the
+full 74 tasks each, correctly seed-labeled, with no cross-contamination
+between files. The hybrid arm is \emph{slower} than the pure
+neural-network baseline on \textbf{every single seed, in both splits, and
+in the pooled totals} --- by a factor of $2.5\times$ to $9.3\times$ on
+mean time, never faster, in either the ``all tasks'' or
+``LLM-routed-only'' framing (Table~\ref{tab:timing_full},
+\S\ref{sec:timing}). The absolute neural-network timings previously
+reported (3.0\,s mean / 2.7\,s median) also do not match any raw result
+file, which show NN times of 0.25--0.39\,s per task, roughly an order of
+magnitude faster. A further finding from the by-seed breakdown: on the
+three PCA-directed seeds that route zero tasks to the LLM (123, 777,
+2024), the hybrid arm is still $\approx\!2.5\times$ slower than the NN
+alone, indicating the hybrid wrapper carries fixed overhead independent
+of the LLM call itself (\S\ref{sec:timing}). The verified runtime
+comparison is presented in full in Section~\ref{sec:timing}; the
+supportable statement is now: \textbf{the hybrid system is slower than
+the pure neural baseline, by roughly $2.5$--$9.3\times$ depending on seed
+and split, across the complete, verified 5-seed$\times$74-task sweep.}
+All other quantitative claims in this paper have been independently
+verified against the v3.0 statistical report and are reported exactly as
+measured.}}
 \end{center}
 \vspace{0.5em}
 
@@ -193,8 +219,13 @@ transcendental tasks (76.2\,\% vs.\ 38.1\,\% for the LLM alone)
 gain; see \S\ref{sec:hybrid-attribution-bug}]}.
 On the standard Nguyen-12 suite, HypatiaX achieves 11/12 recovery (91.7\,\%)
 versus 10/12 for PySR-only and 0/12 for the neural baseline.
-When the LLM formula is trusted (68 of 74 cases, 92\,\%), HypatiaX delivers a
-$1.73\times$ median speedup over neural-network inference.
+A previously reported $1.73\times$ median speedup of HypatiaX over
+neural-network inference on LLM-routed cases (68 of 74) does
+\textbf{not} reproduce: mechanical regeneration of the runtime table
+directly from the raw per-task result files, across the complete,
+verified 5-seed$\times$74-task sweep, shows the hybrid system is
+$2.5$--$9.3\times$ \emph{slower} than the neural baseline on every seed
+and every split, never faster (see \S\ref{sec:timing}).
 On 30 Feynman equations spanning mechanics to quantum physics, HypatiaX
 achieves 12/30 near-perfect recovery under a random 80/20 split and 13/30
 under a PCA-directed 40\,\%/60\,\% split\footnote{Both figures use a single,
@@ -231,7 +262,10 @@ run) whose own \texttt{success} field is \texttt{False} for that same task
 of those 24 cases. Cross-checked against seeds
 42/99/123/777/2024 for the correlated-portfolio subset, the pattern is
 deterministic (5/5 seeds), confirming a code defect rather than a flaky
-result. See \S\ref{sec:hybrid-attribution-bug} for the full quantification
+result. This correction is reproducible independently of this paper's prose
+via the accompanying script \texttt{fix\_defi\_attribution\_bug.py}, run
+against the raw benchmark JSON (see \S\ref{sec:hybrid-attribution-bug}).
+See \S\ref{sec:hybrid-attribution-bug} for the full quantification
 and corrected figures; all affected passages are marked in place with a
 forward reference to that section.
 \end{quote}
@@ -303,12 +337,17 @@ This paper makes the following contributions:
     \textbf{[flagged: hybrid decision-attribution bug inflates this figure;
     corrected value 60.8\,\%, see \S\ref{sec:hybrid-attribution-bug}]}.
 
-  \item \textbf{Verified runtime analysis}: a rigorous decomposition of wall-clock
-    time showing that the $1.73\times$ speedup of HypatiaX over the neural baseline
-    applies specifically to the 68 LLM-routed cases, and that aggregate mean time
-    (6.8\,s) is higher than the neural baseline (3.0\,s) due to fallback costs.
-    This corrects a previously circulated 73\,\% reduction claim that was not
-    supported by the v3.0 benchmark data.
+  \item \textbf{Runtime reproducibility audit}: a mechanical, script-driven
+    regeneration of the wall-clock timing table directly from raw per-task
+    result files (Table~\ref{tab:timing_full}, Section~\ref{sec:timing})
+    that supersedes two earlier, unsupported runtime claims --- a
+    previously circulated 73\,\% reduction claim, and a subsequent
+    $1.73\times$/$1.64\times$ speedup claim. Across the complete, verified
+    5-seed$\times$74-task sweep ($740$ tasks audited across both benchmark
+    variants), the hybrid system is found to be $2.5$--$9.3\times$
+    \emph{slower} than the neural baseline on every seed and every split,
+    never faster, in either the ``all tasks'' or ``LLM-routed-only''
+    framing.
 
   \item \textbf{Difficulty-stratified analysis}: a breakdown of performance across
     easy (24 tasks), medium (29 tasks), and hard (21 tasks) cases, demonstrating
@@ -968,8 +1007,10 @@ $\Rsq$ values depending on the evaluation backend.
 
 Stage~1--2: data ingestion and preprocessing.
 Stage~3 (optional): LLM proposes candidate expressions; on the v3.0 DeFi
-benchmark, 68 of 74 tasks are routed to this path, delivering a $1.73\times$
-median speedup over the neural baseline on those cases
+benchmark, 68 of 74 tasks are routed to this path. A previously reported
+$1.73\times$ median speedup over the neural baseline on these cases does
+not reproduce from the raw result files; the mechanically regenerated
+figures show this path is slower than the neural baseline, not faster
 (Section~\ref{sec:timing}).
 Stage~4: PySR evolutionary search \citep{cranmer2023pysr}.
 Stage~5: four-stage validation cascade (Section~\ref{sec:validation_detail})
@@ -1511,6 +1552,24 @@ False} (\texttt{NaN} train/test $\Rsq$) while \texttt{hybrid.decision = "llm"}
 and \texttt{hybrid.test\_r2 = 1.0}, a deterministic pattern that rules out
 run-to-run noise as the explanation.
 
+\paragraph{Independent script-level verification.} The correction above is
+also implemented as a standalone, dependency-free script,
+\texttt{fix\_defi\_attribution\_bug.py}, which recomputes corrected pass/fail
+status directly from the raw per-task JSON --- redefining a hybrid success as
+requiring \texttt{test\_r2} $> 0.9$ \emph{for the sub-method named in}
+\texttt{hybrid.decision}, rather than trusting \texttt{hybrid.success}/
+\texttt{hybrid.test\_r2} --- without reference to any prose or narrative
+claim in this paper. Running it against
+\texttt{hypatiax\_defi\_benchmark\_v3\_results\_seed42.json} and diffing its
+output (\texttt{hypatix\_defi\_benchmark\_v3c\_corrected\_seed42.json}) against
+Table~\ref{tab:hybrid-bug-breakdown} and the figures quoted above confirms an
+exact match on every reported quantity: 22 masked/fabricated successes,
+corrected overall rate $45/74=60.8\,\%$, and the per-tier rates and
+fabricated-task lists given here, name for name. This script and its output
+file accompany this submission as supplementary artifacts, so reviewers can
+independently re-run the correction against the raw benchmark JSON rather
+than relying on the numbers reported in the text.
+
 \paragraph{What this does and does not affect.} The corrected figures leave
 one of this paper's central qualitative claims intact: HypatiaX's own
 reported output still shows no catastrophic failures ($\Rsq < -10$), since
@@ -1544,71 +1603,172 @@ the benchmark is rerun.
 \subsection{Runtime Analysis}\label{subsec:runtime-analysis}
 \label{sec:timing}
 
-Table~\ref{tab:timing} presents the full wall-clock timing data from the v3.0
-benchmark run.
+An earlier draft of this paper reported the runtime comparison as a single
+row per method (Pure LLM / Neural MLP / HypatiaX), with a
+\textbf{$1.73\times$ speedup on LLM-routed cases} and a
+\textbf{$1.64\times$ median speedup overall}. Those numbers could not be
+reproduced from the raw per-task result files supplied alongside this
+benchmark. A subsequent draft of this audit worked from an incomplete
+data pool and reported the seeds other than 42 as truncated to 5 tasks
+each; \textbf{that data-completeness concern is retracted here.} All ten
+raw result files (five seeds $\times$ two benchmark variants) were
+re-checked directly: each contains the full 74 tasks, and each task's
+internal \texttt{seed} field matches its source file with no
+cross-contamination. Table~\ref{tab:timing_full} below is the mechanically
+regenerated output of \texttt{generate\_table1.py} run against this
+complete, verified pool --- $5$ seeds $\times$ $74$ tasks $\times$ $2$
+splits $=$ $740$ tasks audited, with no manual number editing --- broken
+down by individual seed and by split, plus the pooled 5-seed / 370-task
+total for each split. It \textbf{replaces} both the originally reported
+single-row table and the six-reconstruction interim table from the
+previous audit.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
-\caption{Wall-clock time per task (seconds). HypatiaX timing includes full LLM
-inference plus any NN retraining cost. Speedups computed relative to Neural MLP.}
-\label{tab:timing}
-\begin{tabular}{lrrrr}
+\small
+\caption{Wall-clock time per task (seconds), mean / median, regenerated
+directly from the complete raw per-task result files by
+\texttt{generate\_table1.py} with no manual number editing. Rows are
+grouped by split (v3c = aggressive 40/60; PCA = PCA-directed 40/60), with
+one row per seed followed by the pooled 5-seed / 370-task total for that
+split (shaded). ``Speedup'' compares the neural MLP arm to the hybrid
+arm; every row shows the hybrid system slower, never faster. This table
+replaces both the originally reported single-row table
+($1.73\times$/$1.64\times$ speedup, opposite direction, unreproduced) and
+the interim six-reconstruction table from an earlier audit draft, which
+worked from a data pool later found to have been checked only partially.}
+\label{tab:timing_full}
+\begin{tabular}{lrrrrrl}
 \toprule
-Method & Mean (s) & Median (s) & $n$ & vs.\ NN (mean) \\
+Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speedup, all (mean) \\
+    &     & mean/median  & mean/median    & mean/median      & count      &  \\
 \midrule
-Pure LLM   & 11.4 & 10.3 & 74 & $3.80\times$ slower \\
-Neural MLP &  3.0 &  2.7 & 74 & --- (baseline) \\
-HypatiaX   &  6.8 &  1.7 & 74 & $2.30\times$ slower (mean) \\
-            &      &      &    & $1.64\times$ faster (median) \\
-\midrule
-HypatiaX (LLM-routed only) & --- & --- & 68 & $1.73\times$ faster \\
+v3c seed42  & 74 & 8.85 / 7.75 & 0.36 / 0.36 & 2.54 / 1.49 & 69/74 & 7.05$\times$ slower \\
+v3c seed99  & 74 & 8.56 / 7.62 & 0.37 / 0.37 & 2.52 / 1.48 & 69/74 & 6.83$\times$ slower \\
+v3c seed123 & 74 & 8.46 / 7.30 & 0.36 / 0.36 & 2.53 / 1.58 & 68/74 & 7.06$\times$ slower \\
+v3c seed777 & 74 & 8.66 / 7.67 & 0.25 / 0.25 & 2.32 / 1.42 & 69/74 & 9.33$\times$ slower \\
+v3c seed2024 & 74 & 8.35 / 7.75 & 0.37 / 0.36 & 2.31 / 1.38 & 69/74 & 6.33$\times$ slower \\
+\rowcolor{black!8}
+\textbf{v3c ALL SEEDS (pooled)} & \textbf{370} & \textbf{8.57 / 7.65} & \textbf{0.34 / 0.36} & \textbf{2.44 / 1.46} & \textbf{344/370} & \textbf{7.18$\times$ slower} \\
+PCA seed42  & 74 & 8.44 / 7.37 & 0.36 / 0.36 & 2.18 / 1.40 & 68/74 & 6.11$\times$ slower \\
+PCA seed99  & 74 & 2.97 / 0.19 & 0.35 / 0.35 & 1.16 / 0.91 & 26/74 & 3.28$\times$ slower \\
+PCA seed123 & 74 & 0.21 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74  & 2.52$\times$ slower \\
+PCA seed777 & 74 & 0.19 / 0.17 & 0.36 / 0.35 & 0.91 / 0.88 & 0/74  & 2.55$\times$ slower \\
+PCA seed2024 & 74 & 0.24 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74 & 2.54$\times$ slower \\
+\rowcolor{black!8}
+\textbf{PCA ALL SEEDS (pooled)} & \textbf{370} & \textbf{2.41 / 0.18} & \textbf{0.36 / 0.35} & \textbf{1.21 / 0.89} & \textbf{94/370} & \textbf{3.40$\times$ slower} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+No timeouts were flagged on any arm, in any seed, in either split
+(\texttt{timed\_out} is \texttt{false} throughout all $740$ audited
+tasks), so the discrepancy between these regenerated figures and the
+previously reported table is not an artifact of excluded failed runs, nor
+of pooling a partial data set.
+
+\paragraph{Data-completeness verification (defect retracted).}
+\label{sec:timing_data_defect}
+An earlier audit draft reported that every seed-suffixed result file for
+seeds other than 42, for both benchmark variants, contained only 5 of the
+74 tasks. That finding does not hold against the files currently
+available: each of the ten raw result files (v3c seeds 42/99/123/777/2024
+and PCA seeds 42/99/123/777/2024) was independently re-checked outside
+\texttt{generate\_table1.py} and confirmed to contain all 74 tasks, with
+every record's internal \texttt{seed} field matching its filename and no
+overlap between files. The complete $5\times74$ sweep therefore exists for
+both benchmark variants, and the pooled multi-seed rows in
+Table~\ref{tab:timing_full} should be read as representative, not
+provisional.
+
 \paragraph{Interpretation.}
-The timing data reveal a fundamental tension between reliability and computational
-efficiency.
+Every seed, in both splits, agrees on direction: the hybrid system is
+slower than the pure neural baseline, by $2.5\times$ to $9.3\times$ on
+mean time, in both the ``all tasks'' and ``LLM-routed-only'' framings
+(Table~\ref{tab:timing_llm_routed_full} below). This also means the
+absolute Neural MLP timings previously reported (3.0\,s mean / 2.7\,s
+median) do not match any raw result file audited, which instead show NN
+times of 0.25--0.39\,s per task, roughly an order of magnitude faster;
+this is consistent with the previously reported figures having come from a
+heavier, superseded NN implementation rather than the training code
+currently shipped with the benchmark. No defect was found in the current
+NN training code itself that would explain that residual gap.
 
-The hybrid method has a \textbf{median time of 1.7\,s}---substantially lower than
-both the pure LLM (10.3\,s) and the neural network (2.7\,s)---because 68 of 74 tasks
-are routed to pure LLM output or lightweight ensemble, avoiding NN training entirely.
-For these 68 LLM-routed cases, the median speedup over the neural network is
-$\mathbf{1.73\times}$.
+A further pattern is visible only at the by-seed level. Within the
+PCA-directed split, seeds 42 and 99 route a meaningful share of tasks to
+the LLM (68/74 and 26/74) and show the largest PCA slowdowns ($6.11\times$
+and $3.28\times$ on mean). Seeds 123, 777, and 2024 route \emph{zero}
+tasks to the LLM under this router, yet hybrid remains
+$\approx\!2.5\times$ slower than the NN on those seeds too --- indicating
+that the hybrid wrapper carries fixed overhead independent of the LLM
+call itself, since with zero LLM calls hybrid should be
+timing-equivalent to the NN alone and it is not. Comparing the two pooled
+split totals, PCA-directed routing produces a smaller overall slowdown
+($3.40\times$ mean) than the aggressive v3c split ($7.18\times$ mean),
+consistent with PCA calling the LLM far less often (94/370 vs.\ 344/370
+tasks) --- but this reflects calling the LLM less, not the hybrid path
+being cheaper per call.
 
-However, the remaining 6 tasks trigger full neural retraining (fallback cases).
-These are the hardest tasks, where NN training runs up to the 120-second time limit.
-The presence of these fallback cases causes the \textbf{mean time to rise to 6.8\,s},
-which is $2.30\times$ \emph{slower} than the neural baseline mean of 3.0\,s.
+\begin{table}[htbp]
+\centering
+\small
+\caption{As Table~\ref{tab:timing_full}, restricted to tasks where the
+hybrid system's own \texttt{decision} field routed to the LLM rather than
+the NN --- the framing used for the previously reported $1.73\times$
+claim. No row supports that claim; the LLM-routed subset is slower than
+the neural baseline in every case with a nonzero routed count. Seeds with
+zero LLM-routed tasks under the PCA split (123, 777, 2024) are omitted
+here (undefined) and are covered by the ``all tasks'' framing above.}
+\label{tab:timing_llm_routed_full}
+\begin{tabular}{lrrl}
+\toprule
+Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
+\midrule
+v3c seed42 (69/74)  & 0.36 / 0.36 & 2.35 / 1.44 & 6.55$\times$ / 4.02$\times$ slower \\
+v3c seed99 (69/74)  & 0.37 / 0.37 & 2.38 / 1.46 & 6.46$\times$ / 3.97$\times$ slower \\
+v3c seed123 (68/74) & 0.36 / 0.36 & 2.20 / 1.52 & 6.13$\times$ / 4.26$\times$ slower \\
+v3c seed777 (69/74) & 0.25 / 0.25 & 2.06 / 1.41 & 8.29$\times$ / 5.67$\times$ slower \\
+v3c seed2024 (69/74) & 0.37 / 0.37 & 2.08 / 1.35 & 5.69$\times$ / 3.70$\times$ slower \\
+\rowcolor{black!8}
+\textbf{v3c ALL SEEDS (344/370)} & \textbf{0.34 / 0.36} & \textbf{2.22 / 1.42} & \textbf{6.51$\times$ / 3.95$\times$ slower} \\
+PCA seed42 (68/74) & 0.36 / 0.36 & 1.86 / 1.38 & 5.23$\times$ / 3.88$\times$ slower \\
+PCA seed99 (26/74) & 0.35 / 0.35 & 1.64 / 1.35 & 4.63$\times$ / 3.81$\times$ slower \\
+\rowcolor{black!8}
+\textbf{PCA ALL SEEDS (94/370)} & \textbf{0.36 / 0.35} & \textbf{1.80 / 1.37} & \textbf{5.06$\times$ / 3.86$\times$ slower} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\paragraph{Correcting the 73\,\% reduction claim.}
+\paragraph{Correcting the runtime claims.}
 \label{sec:correction}
 
-An earlier draft of this paper reported a ``73\,\% runtime reduction'' over the
-neural baseline, corresponding to a $3.7\times$ speedup.  This claim
-is \textbf{not supported} by the v3.0 benchmark data.  The measured speedups are:
-\begin{itemize}
-  \item \emph{Mean-based}: HypatiaX is $2.30\times$ \textbf{slower} than NN
-    ($6.8$\,s vs.\ $3.0$\,s); this corresponds to a $-129.9$\,\% ``reduction'' (i.e.\ an increase).
-  \item \emph{Median-based}: HypatiaX is $1.64\times$ faster than NN
-    ($1.7$\,s vs.\ $2.7$\,s); this corresponds to a $39.0$\,\% reduction.
-  \item \emph{LLM-routed subset} ($n=68$): $1.73\times$ speedup over NN
-    --- the cleanest comparison isolating symbolic vs.\ learned computation.
-\end{itemize}
+An earlier draft of this paper reported a ``73\,\% runtime reduction'' over
+the neural baseline ($3.7\times$ speedup); a later draft revised this to a
+$1.73\times$ speedup on LLM-routed cases and a $1.64\times$ median speedup
+overall. \textbf{Neither claim is supported by the raw benchmark data.}
+Mechanical regeneration of the table against the complete, verified
+5-seed$\times$74-task sweep shows the opposite sign on every seed and
+every split: the hybrid system is $2.5\times$ to $9.3\times$
+\emph{slower} than the pure neural baseline, never faster, whether
+measured by mean or median, and whether restricted to LLM-routed cases or
+not.
 
-The correct claim for this paper is therefore: \textbf{when the LLM formula is
-trusted (68 of 74 cases, 92\,\%), HypatiaX achieves a $1.73\times$ speedup over
-the neural baseline, with a median wall-clock time of 1.7\,s per task.}  When full
-fallback cases are included, the aggregate mean time is higher than the neural
-baseline due to the cost of NN retraining, which can take up to 120\,s per case.
+The correct claim for this paper is therefore: \textbf{the hybrid system
+is slower than the pure neural baseline, by $2.5\times$ to $9.3\times$
+depending on seed and split, across the complete $5$-seed$\times$74-task
+sweep for both the v3c and PCA-directed variants.} Unlike in the previous
+audit draft, this is no longer a provisional figure pending a re-run: the
+sweep is complete, and every seed agrees on direction.
 
 \paragraph{Interpretation for deployment.}
-The practical implication is that HypatiaX is faster than the neural baseline on
-the vast majority of cases (92\,\%) but incurs a higher total computational budget
-when worst-case fallbacks are included.  For production deployment in a DeFi
-setting where task difficulty is known in advance (e.g.\ algebraic AMM formulas
-vs.\ Black--Scholes), the routing decision can be pre-computed, eliminating fallback
-overhead entirely and achieving the $1.73\times$ speedup universally.
+The practical implication is the reverse of what was previously claimed:
+routing to the LLM does not reduce wall-clock cost relative to the neural
+baseline, on any seed, in either split. The PCA-directed router limits
+--- but does not eliminate --- this cost by routing to the LLM less often
+than the aggressive router (94/370 vs.\ 344/370 tasks); it does not make
+the hybrid path itself cheaper. Any deployment decision that assumed a
+$1.73\times$ runtime advantage for LLM-routed cases should be revisited
+against the figures in Table~\ref{tab:timing_full}.
 
 \subsection{Portfolio Variance: Seed-Sweep Robustness Analysis}\label{subsec:portfolio-variance-seedsweep-robustness-}
 \label{sec:portfolio_seed_sweep}
@@ -2274,6 +2434,7 @@ Near-miss detail: $\Rsq\in[0.9998,0.9999)$ with perfect extrapolation
 ($\Rsq=1.0000$ on $2\times$ holdout). Strict recovery ($\ge 0.9999$) yields
 4/12 (33.3\%); the 91.7\,\% figure uses the 4-decimal rounding convention.}
 \label{tab:nguyen12}
+\begin{threeparttable}
 \begin{tabular}{llrrrrrr}
 \toprule
 Eq. & Formula &
@@ -2349,6 +2510,7 @@ MW $P>N$   & \multicolumn{7}{l}{$U=113.0$, $p=0.0097$ — significant} \\
     without invoking PySR. Wall-clock time: 7.4\,s vs.\ 301\,s for PySR-only ---
     the only equation where the LLM warm-start fully bypassed evolutionary search.
 \end{tablenotes}
+\end{threeparttable}
 \end{table}
 
 \paragraph{Statistical test.}
@@ -2618,9 +2780,13 @@ PCA-directed extrapolation split, HypatiaX achieves:
     HypatiaX ties the pure-LLM baseline on Easy and Medium and underperforms it
     on Hard once decision-attribution is corrected for; the difficulty-scaling
     trend does not survive correction, see \S\ref{sec:hybrid-attribution-bug}]}.
-  \item \textbf{$1.73\times$ speedup} over the neural baseline on LLM-routed cases
-    ($n=68$), with the caveat that aggregate mean time is higher when fallback NN
-    retraining is included.
+  \item \textbf{No runtime speedup.} A previously reported $1.73\times$ speedup
+    over the neural baseline on LLM-routed cases ($n=68$) does not reproduce
+    from the raw per-task result files. Mechanical regeneration of the timing
+    table against the complete, verified 5-seed$\times$74-task sweep
+    (Table~\ref{tab:timing_full}, \S\ref{sec:timing}) shows the hybrid
+    system is $2.5$--$9.3\times$ \emph{slower} than the neural baseline on
+    every seed and every split, never faster.
 \end{itemize}
 
 These results establish that hybrid symbolic--neural systems are not merely
@@ -2630,10 +2796,17 @@ of catastrophic failures, in particular, is a prerequisite for deployment in
 financial systems where a single incorrect formula can cause significant harm.
 
 Future work should explore: extending the benchmark to broader scientific domains;
-developing lighter fallback architectures to reduce mean wall-clock time;
+developing lighter fallback architectures to reduce mean wall-clock time and
+close the fixed hybrid-wrapper overhead identified in
+\S\ref{sec:timing} (present even on zero-LLM-routed seeds);
 integrating iterative LLM self-correction as an intermediate routing option between
 pure symbolic and neural fallback; and systematic evaluation across multiple LLM
-families.
+families. On the runtime question specifically, the 5-seed$\times$74-task
+sweep (all five seeds, all 74 tasks each, for both the v3c and
+PCA-directed splits) is now complete and verified
+(\S\ref{sec:timing_data_defect}); the open question is no longer data
+completeness but \emph{why} the hybrid wrapper adds overhead even when it
+routes no tasks to the LLM.
 
 % =============================================================================
 \section*{Reproducibility Statement}
@@ -2820,51 +2993,75 @@ v3.0 & 74 & Three hard cases added; trust gate raised to $\Rsq > 0.5$; data leak
 \end{tabular}
 \end{table}
 
-\section{Corrected Runtime Claim: Detailed Analysis}\label{sec:runtime_correction}
+\section{Runtime Reproducibility Audit: Detailed Analysis}\label{sec:runtime_correction}
 \label{app:timing}
 
-The following table supports the analysis in the runtime note on p.\,1 and the
-Contributions list (item iii).
+This appendix previously duplicated an interim, six-reconstruction version
+of the runtime table, built while task-count completeness across seed
+files was still in question. That interim table is superseded and
+removed here to avoid two copies of the timing analysis drifting out of
+sync; the authoritative, complete table is
+Table~\ref{tab:timing_full} in \S\ref{sec:timing} (main text), together
+with the LLM-routed-only view in Table~\ref{tab:timing_llm_routed_full}.
+Both are the direct, unmodified output of \texttt{generate\_table1.py}
+run against the complete pool --- all five seeds, all 74 tasks each, for
+both benchmark variants (v3c and PCA-directed) --- with no hand-editing
+of any number.
 
-\begin{table}[h]
-\centering
-\caption{Detailed timing comparison and speedup calculations (v3.0 benchmark).}
-\begin{tabular}{lcccc}
-\toprule
-Comparison & LLM time (s) & NN time (s) & Hybrid time (s) & Speedup \\
-\midrule
-Mean (all 74 cases)        & 11.4 & 3.0 & 6.8 & Hybrid $2.30\times$ \emph{slower} than NN \\
-Median (all 74 cases)      & 10.3 & 2.7 & 1.7 & Hybrid $1.64\times$ faster than NN \\
-LLM-routed only ($n=68$)   & ---  & 2.7 & 1.56\textsuperscript{*} & Hybrid $1.73\times$ faster than NN \\
-\midrule
-\multicolumn{5}{l}{\textsuperscript{*}Estimated from $1.73\times$ speedup vs.\ NN median of 2.7\,s.} \\
-\multicolumn{5}{l}{Previously claimed: $3.7\times$ speedup = 73\,\% reduction. \textbf{Not supported by data.}} \\
-\bottomrule
-\end{tabular}
-\end{table}
+Two prior claims are superseded by that analysis: a ``73\,\% runtime
+reduction'' ($3.7\times$ speedup) from an early draft, and a subsequently
+reported $1.73\times$/$1.64\times$ speedup. Neither reproduces from any
+raw file examined, under any seed or pooling. The source of the original
+73\,\% claim remains unclear and does not correspond to any measured
+value in any raw file audited; the most likely explanation is that it was
+carried forward from an earlier, unverified benchmark run without
+re-verification against the raw v3.0 result data.
 
-\noindent
-The source of the erroneous 73\,\% claim is unclear; it does not correspond to
-any of the measured speedup values.  The most likely explanation is that an
-earlier benchmark run with a different set of cases (fewer hard cases requiring
-NN fallback) produced a more favourable mean speedup, and this figure was
-carried forward without re-verification against v3.0 data.
+An interim draft of this appendix additionally reported that seeds
+99/123/777/2024 each contained only a 5-task truncated subset of the full
+74-task suite, for both benchmark variants, and treated pooled multi-seed
+statistics as provisional pending a re-run on that basis. \textbf{That
+report does not hold against the currently available raw files.} Each of
+the ten seed-suffixed result files was independently re-checked --- task
+count, and the internal \texttt{seed} field on every record against its
+source filename --- and all ten contain the full 74 tasks with no
+cross-file contamination (\S\ref{sec:timing_data_defect}). The pooled
+5-seed / 370-task rows in Table~\ref{tab:timing_full} are accordingly
+representative rather than provisional, and no further re-run is required
+to support the direction of the runtime claim (hybrid slower than NN,
+every seed, both splits).
 
 \section{Outstanding Process/Credibility Items (Do Not Cite Until Resolved)}\label{sec:process_items}
 
-Two pipeline-level issues remain open as of this revision. Neither is a
-claim made in the body of this paper, but both bear on the credibility of
-figures elsewhere in the reproducibility material. Full detail is
-maintained in a single place to avoid the two copies drifting out of sync:
-see Supplementary Material A, Section~``Remaining Open Issues''
-(items~6--7), which covers (i) the project's CI dashboard (July~9 run),
-which should not be cited because its own upstream notebooks report
-``not found'' for that run while its summary asserts ``0 open issues'',
-and (ii) the legacy exp2 baseline-lock threshold defect ($R^2 \geq 0.9999$
+One pipeline-level issue remains open as of this revision, and two further
+items are noted here as resolved. Neither is a claim made in the body of this
+paper, but both bear on the credibility of figures elsewhere in the
+reproducibility material. Full detail is maintained in a single place to
+avoid the two copies drifting out of sync: see Supplementary Material A,
+Section~10 (``Process/Credibility Items''). \textbf{Open:} the project's CI
+dashboard (July~9 run; Supplementary~A \S10.1), which should not be cited
+because its own upstream notebooks report ``not found'' for that run while
+its summary asserts ``0 open issues''. \textbf{Resolved since the previous
+revision:} the legacy exp2 baseline-lock threshold defect ($R^2 \geq 0.9999$
 used in place of the pipeline's stated $R^2 \geq 0.999999$, inflating the
-legacy baseline from 74/90 to 81/90), which is fixed in code but not yet
-confirmed against a live CI run. Both remain open; 74/90 and not 81/90
-should be treated as the current legacy figure until that confirmation
-exists.
+legacy baseline from 74/90 to 81/90; Supplementary~A \S10.2) is now
+live-confirmed at 74/90 against a fresh CI run and reproduced independently
+a second time via a patched Gate~C schema check (\S10.4); 74/90 should be
+cited, not 81/90. Also resolved: the \texttt{ablation\_paired.json}
+\texttt{n\_with\_extrap\_r2\_far} 21/30 vs.\ 20/30 discrepancy
+(Supplementary~A \S10.6) --- root cause confirmed as a single degenerate
+hypatia/pysr pair (Rabi frequency; the LLM-guidance step returned output
+identical to the PySR-only baseline) and fixed in
+\texttt{run\_analysis.py}, which now computes 20/30 automatically rather
+than by manual adoption. Also resolved: the Gate~C \texttt{source\_files}
+manifest (Supplementary~A \S10.5) --- the content-based domain filter
+correctly selects all 11 Feynman-protocol shard files and rejects
+non-protocol files sharing the same output directory, and the 74/90
+solve-rate reproduces exactly from the 11 correctly-selected files, so the
+underlying scoring was never at risk; the locked manifest itself listed
+one stale, pre-filter file that has been trimmed. The remaining
+Supplementary~A \S10 sub-items (the second unreconciled
+\texttt{exp2\_run.log} and the unaudited 1.73$\times$/89.2\%/62.2\% DeFi
+figures) are unaffected by this revision and remain as stated there.
 
 \end{document}

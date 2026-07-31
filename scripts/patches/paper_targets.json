@@ -7,13 +7,13 @@
     "result_glob": "extrapolation/exp3_nguyen12_seed*.json",
     "json_key": "summary.h_rate",
     "absolute": false,
-    "note": "11/12 = 91.7% (4-decimal rounding) §10.8 / abstract — CONFIRMED h_rate=0.917"
+    "note": "11/12 = 91.7% (4-decimal rounding), \u00a710.8 / abstract \u2014 CONFIRMED h_rate=0.917. Model/sampling identity behind this figure is now resolved (see FIX-N3 stub below): claude-sonnet-5 at temperature=0.25 via hypatia.py's get_llm_prior(), not claude-sonnet-4-6 via LLMConfig as previously assumed. This does not change the figure; it changes what a future re-run needs to hold constant to reproduce it."
   },
   {
-    "_EXCLUDED": "nguyen12_solve_rate_strict — the strict R²≥0.9999 rate (33.3%) is a paper transparency caveat but is NOT stored as a separate field in exp3_nguyen12_seed42.json. h_rate and p_rate both record the same 11/12 = 91.7% value. This claim cannot be automatically audited. To enable it, add a 'strict_rate' field to exp3_nguyen12_hybrid50v_02.py output."
+    "_EXCLUDED": "nguyen12_solve_rate_strict \u2014 the strict R\u00b2\u22650.9999 rate (33.3%) is a paper transparency caveat but is NOT stored as a separate field in exp3_nguyen12_seed42.json. h_rate and p_rate both record the same 11/12 = 91.7% value. This claim cannot be automatically audited. To enable it, add a 'strict_rate' field to exp3_nguyen12_hybrid50v_02.py output."
   },
   {
-    "_PENDING_FIX_N3": "nguyen12_dual_threshold_seed123 — NOT YET A LIVE GATE. exp_nguyen12_seed123_merged.json has not been run/committed, so there is no result file for this target to check. paper_value/tolerance below are intentionally null — do NOT fill them from memory or estimate. Once the seed=123 rerun is actually executed and exp_nguyen12_seed123_merged.json is committed with a real 'summary.strict_rate' field (per the _EXCLUDED note above), replace this stub with a real entry: exp='exp_nguyen12_seed123', metric='nguyen12_solve_rate_seed123_4dec' (json_key='summary.h_rate', expected ~0.917) plus a second check metric='nguyen12_solve_rate_strict_seed123' (json_key='summary.strict_rate', expected ~0.333), both with tolerance matching the exp3 entry above (0.02). Tracks issue_registry.json FIX-N3.",
+    "_PENDING_FIX_N3": "nguyen12_dual_threshold_seed123 \u2014 STILL NOT A LIVE GATE. exp_nguyen12_seed123_merged.json has not been run/committed, so there is no result file for this target to check. paper_value/tolerance below remain intentionally null \u2014 do NOT fill them from memory or estimate. UPDATED 2026-07-30 (model-versioning audit): the model-identity question that was previously an open variable in this discrepancy is now CLOSED \u2014 confirmed as claude-sonnet-5 at temperature=0.25 via hypatia.py's get_llm_prior() (n_candidates default 5, overridden to 8 at the exp3_nguyen12_hybrid50v_02.py call site), not claude-sonnet-4-6 via LLMConfig as earlier drafts of this note assumed. claude-sonnet-4-6 and claude-sonnet-5 are both confirmed-pinned snapshots (not drifting aliases) per current model-versioning docs, so model drift is ruled out as an explanation for the 91.7%-vs-100% gap on both the previously-assumed and the now-confirmed code path. Remaining open variable: hypatia.py's client.messages.create() call passes no sampling seed, so at temperature=0.25 run-to-run LLM completions are not guaranteed bit-identical \u2014 this is the leading confirmed contributor to variability at fixed recovery rate, independent of the seed=123 rerun. A within-seed, cross-timestamp check additionally narrows the likely configuration-migration window (distinct from the model question) to 2026-04-23\u20132026-05-22, worth checking against the suspected GCP/Kaggle\u2192GitHub Actions infrastructure migration. Once the seed=123 rerun is actually executed and exp_nguyen12_seed123_merged.json is committed with a real 'summary.strict_rate' field (per the _EXCLUDED note above), replace this stub with a real entry: exp='exp_nguyen12_seed123', metric='nguyen12_solve_rate_seed123_4dec' (json_key='summary.h_rate', expected ~0.917) plus a second check metric='nguyen12_solve_rate_strict_seed123' (json_key='summary.strict_rate', expected ~0.333), both tolerance 0.02 \u2014 and ALSO record hypatia.py's sampling temperature and candidate count alongside those fields, not a resolved model string from LLMConfig, so the gate checks the parameters that actually matter on the confirmed code path. Tracks issue_registry.json FIX-N3.",
     "exp": "exp_nguyen12_seed123",
     "metric": "nguyen12_dual_threshold_seed123",
     "paper_value": null,
@@ -22,7 +22,7 @@
     "json_key": "summary.h_rate",
     "absolute": false,
     "status": "awaiting_data",
-    "note": "STUB ONLY — not wired into the automated gate. See _PENDING_FIX_N3 above. STATUS UPDATE 2026-07-03: paper's own table note (line 2274-75) now states the 33.3%/91.7% dual-threshold split directly in prose, so the paper-facing claim is settled independent of this stub. This stub remains open ONLY for the narrower CI-gating purpose (no seed=123 result file committed yet). See issue_registry.json FIX-N3."
+    "note": "STUB ONLY \u2014 not wired into the automated gate. See _PENDING_FIX_N3 above. Paper's own table note (\u00a710.8, dual-threshold split) states 33.3%/91.7% directly in prose, so the paper-facing claim is settled independent of this stub; this stub remains open only for the narrower CI-gating purpose (no seed=123 result file committed yet), and now additionally for capturing hypatia.py's temperature/candidate-count alongside strict_rate once that file exists. See issue_registry.json FIX-N3."
   },
   {
     "exp": "exp2",
@@ -32,7 +32,7 @@
     "result_glob": "comparison_results/feynman-tests/exp2_random8020/exp2_random8020_summary.json",
     "json_key": "solve_rate",
     "absolute": false,
-    "note": "UPDATED 2026-07-03: 12/30=0.40 (random 80/20 split), from paper's current tab:provenance figure, self-verification-gated, strict R²≥0.999999, recomputed from raw per-equation JSON. Legacy '9/30' (0.300) and the interim '99.4%/156 items' figure previously here are both stale — 156 items does not correspond to any live 30-item Feynman run and was never traced to a source file. Retained-for-history 9/30 table entry in §10.7 is not a live claim; see FIX-N4 for the separate, still-open 9/30-vs-0.678 wording issue in that same paragraph."
+    "note": "12/30=0.40 (random 80/20 split, run dated 2026-07-22), self-verification-gated (14/14 exact-reproduction check), strict R\u00b2\u22650.999999, recomputed from raw per-equation JSON. UPDATED 2026-07-30: this run date is now formally confirmed canonical against three other, non-canonical PCA-split run dates found in repository history (2026-06-04 pre-fix crash batch, 2026-06-29 not located, 2026-06-30 unverified/paired with the withdrawn 9/30 figure) \u2014 see \u00a710.7 run-provenance table (tab:provenance). None of those three affects this specific random-split figure, which is independently sourced from 2026-07-22. Legacy '9/30' (0.300) and the interim '99.4%/156 items' figure are both confirmed stale; 156 items does not correspond to any live 30-item Feynman run and was never traced to a source file. OPEN, not gated by this entry: near-miss threshold policy is undecided \u2014 at a looser convention this run reads 13/30, not 12/30 (see near_miss_threshold_policy stub below). Retained-for-history 9/30 table entry in \u00a710.7 is not a live claim; see FIX-N4 for the separate, still-open 9/30-vs-0.678 wording issue in that same paragraph."
   },
   {
     "exp": "suppB",
@@ -44,7 +44,7 @@
     "compute_method": "HybridSystemLLMNN all-domains (core)",
     "compute_leaf": "recovery_rate",
     "absolute": false,
-    "note": "EHD 100% at all noise levels §SuppB"
+    "note": "EHD 100% at all noise levels, Supplementary B. No change this audit."
   },
   {
     "exp": "hybrid_all_domains",
@@ -55,7 +55,7 @@
     "compute": "list_distinct_count",
     "compute_field": "domain",
     "absolute": true,
-    "note": "10 domains must all complete §10.9"
+    "note": "10 domains must all complete, \u00a710.9. No change this audit."
   },
   {
     "exp": "exp2_pca_4060",
@@ -65,7 +65,7 @@
     "result_glob": "comparison_results/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json",
     "json_key": "solve_rate",
     "absolute": false,
-    "note": "UPDATED 2026-07-03 (second correction): the prior 71/90=0.7889 value stored here (itself a fix of an earlier stale 106/180=0.5889) is now ALSO stale. The paper's current tab:provenance entry discards the 71/90-equivalent 142/180 run as 'unconfirmed... shares the withdrawn 9/30 run's known failure mode' (duplicate-counting artifact), same root cause class as the original run_all.sh bug. True current figure, self-verification-gated: 13/30=0.4333 (PCA-directed 40/60 split). Do not treat any of 0.5889, 0.7889, or 106/180, 71/90, 142/180 as live going forward — only 13/30. Tracks FIX-C3 (now on its third re-open)."
+    "note": "13/30=0.4333 (PCA-directed 40/60 split, run dated 2026-07-23), self-verification-gated (13/13 exact-reproduction check against already-scored equations). UPDATED 2026-07-30: run-date confusion behind this metric's earlier revisions (0.5889, 0.7889, 106/180, 71/90, 142/180 \u2014 do not treat any of these as live) is now fully disclosed and closed out, not just corrected in isolation. Four distinct PCA-split run dates were traced: 2026-06-04 (discarded, pre-fix \u2014 HybridDiscoverySystem crashed on all 30 equations, environment/import failure not accuracy failure), 2026-06-29 (named canonical by the rescoring tool's own config but never located in any file set supplied), 2026-06-30 (source of the unverified, still-non-canonical 142/180 figure, paired in its own metadata with the withdrawn 9/30 random-split claim), and 2026-07-23 (canonical, confirmed directly by the corresponding author \u2014 source of the 13/30 figure here). See \u00a710.7 run-provenance table (tab:provenance). Tracks FIX-C3 (now on its third re-open; the run-date ambiguity itself is resolved, but see near_miss_threshold_policy stub below for the one remaining open variable on this figure)."
   },
   {
     "exp": "hypatix_defi",
@@ -75,7 +75,7 @@
     "result_glob": "defi/hypatix_defi_benchmark_v3c_corrected_*.json",
     "json_key": "summary.corrected_success_rate",
     "absolute": false,
-    "note": "NEW 2026-07-03: paper's §hybrid-attribution-bug discloses a decision-attribution bug (hybrid.success=True recorded even when the cited sub-method itself failed). Corrected overall rate is 60.8% (45/74), down from the uncorrected 89.2%/90.5% still printed in the abstract. Both figures now legitimately co-occur in the paper text (uncorrected number + inline correction footnote); NB-04's substring-only abstract checker cannot tell them apart and will falsely report [OK]. Was not tracked anywhere prior to this audit. See issue_registry.json FIX-D1."
+    "note": "Paper's \u00a7hybrid-attribution-bug discloses a decision-attribution bug (hybrid.success=True recorded even when the cited sub-method itself failed). Corrected overall rate is 60.8% (45/74), down from the uncorrected 89.2%/90.5% still printed in several places in the abstract/body (see manuscript-edit tracker item A: 89.2% \u2192 90.5% \u2014 still an open internal inconsistency as of 2026-07-30, independent of this corrected-vs-uncorrected distinction). This entry resolves fixing-jmlr-style.txt item 4 (\u201cget the DeFi hybrid success-field bug's actual magnitude\u201d) \u2014 magnitude is quantified and gated here. See issue_registry.json FIX-D1."
   },
   {
     "exp": "hypatix_defi",
@@ -85,7 +85,7 @@
     "result_glob": "defi/hypatix_defi_benchmark_v3c_corrected_*.json",
     "json_key": "summary.hard_tier_gain_pp_corrected",
     "absolute": true,
-    "note": "NEW 2026-07-03: corrected hard-tier delta vs baseline is −4.8pp (an actual loss), replacing the uncorrected +38.1pp still printed in the abstract. See FIX-D1."
+    "note": "Corrected hard-tier delta vs baseline is \u22124.8pp (an actual loss), replacing the uncorrected +38.1pp still printed in the abstract. Part of the FIX-D1 magnitude quantification (fixing-jmlr-style.txt item 4). No change this audit."
   },
   {
     "exp": "hypatix_defi",
@@ -95,6 +95,30 @@
     "result_glob": "defi/hypatix_defi_benchmark_v3c_corrected_*.json",
     "json_key": "summary.catastrophic_masked_count",
     "absolute": true,
-    "note": "NEW 2026-07-03: 'zero catastrophic failures' claim is disclosed by the paper as masked, not eliminated — 22/74 tasks actually route through a sub-method that failed catastrophically. TRUTH dict's hypatix_catastrophic=0 reflects only the pre-bug/masked reading. See FIX-D1."
+    "note": "'Zero catastrophic failures' claim is disclosed by the paper as masked, not eliminated \u2014 22/74 tasks actually route through a sub-method that failed catastrophically. TRUTH dict's hypatix_catastrophic=0 reflects only the pre-bug/masked reading. Part of the FIX-D1 magnitude quantification. No change this audit."
+  },
+  {
+    "_NEW_2026_07_30": "feynman30_near_miss_threshold_policy \u2014 NOT A FILLABLE GATE, policy decision only. fixing-jmlr-style.txt item 5: the headline Feynman-30 figures depend on which near-miss convention is used. At the strict convention (R\u00b2\u22650.999999, used throughout \u00a710.7 as currently drafted) the random split reads 12/30 and the PCA split reads 13/30 \u2014 the figures gated by feynman30_solve_rate and feynman_pca_4060_solve_rate above. At a looser convention the random split reads 13/30 and the PCA split reads 15/30 instead. The paper cannot state either headline number without explicitly committing to which rule produced it; this has not yet been done as an explicit, named policy statement (only implicitly, by which threshold the current tables happen to use). No result file to check against \u2014 this is a drafting decision, not a re-derivable number. Resolve by adding one sentence to \u00a710.7 stating the adopted threshold explicitly, then this stub can be removed.",
+    "status": "open_policy_decision"
+  },
+  {
+    "_NEW_2026_07_30": "asin_of_sin_production_evaluator_check \u2014 NOT A FILLABLE GATE, code-audit item. fixing-jmlr-style.txt item 6: a missing asin_of_sin definition was newly identified in the two rescoring-time diagnostic evaluator copies during the \u00a710.7 update (6 of 17 PCA-split null equations failed uniformly with NameError before patching). Patched only in those two diagnostic copies. Whether the PRODUCTION evaluator shares this gap has not been checked. If it does, some already-published benchmark number computed by the production path (not just this diagnostic rescoring pass) is silently wrong, not merely this one diagnostic table. No result file exists to check this automatically; requires a source-code audit of the production evaluator's namespace injection, analogous to how safe_asin/safe_acos were confirmed present/absent. Blocking for correctness if the gap exists; status unknown.",
+    "status": "open_code_audit"
+  },
+  {
+    "_NEW_2026_07_30": "ci_dashboard_zero_open_issues \u2014 NOT CITABLE, do not fill from the dashboard's own output. Per note_item_10_1_status.tex / \u00a7process_items, Supplementary A \u00a710.1: build_report.py's 'Open Issues' table and '0 open issues' verdict are computed from issue_registry.json independently of whether the six underlying audit notebooks ever executed. Two notebooks were directly inspected and found not to have run to completion this cycle (NB-06: 0/10 cells ever executed; NB-04: stopped before its own STATUS cell, which is what declares FIX-N1/FIX-N2/FIX-C3 'RESOLVED'). A code fix now hard-fails the build if any notebook is incomplete, but that only prevents a FUTURE stale-green dashboard \u2014 it does not retroactively validate the current one. This item does not block submission provided the dashboard and its '0 open issues' claim continue to go uncited elsewhere in the paper. Also covers the related 74/90-vs-81/90 baseline-lock figure (fixing-jmlr-style.txt item 10): same status, same condition.",
+    "status": "open_do_not_cite"
+  },
+  {
+    "_NEW_2026_07_30": "ablation_paired_21_vs_20_discrepancy \u2014 non-blocking, informational only. fixing-jmlr-style.txt item 11: ablation_paired.json showed a 21-vs-20 count discrepancy; the correct value (20) has already been adopted in the paper. Root-cause identification is nice-to-have, not required for submission. No result file check needed unless root cause is later investigated and changes the adopted value.",
+    "status": "resolved_low_priority"
+  },
+  {
+    "_NEW_2026_07_30": "hardware_variant_numbers_check \u2014 conditional, document-scan item not a numeric gate. fixing-jmlr-style.txt item 9: Celeron 14/30 and Colab 8/30 hardware-variant figures are only urgent if either is still printed anywhere in the current paper text. Not checked in this audit (requires a full-text grep of the current manuscript for both figures, not a result-file comparison). If either is found still printed, it needs to be recomputed or removed.",
+    "status": "unchecked"
+  },
+  {
+    "_NEW_2026_07_30": "document_consistency_items_not_json_checkable \u2014 informational only; these are cross-referencing/figure-consistency issues in the manuscript itself, not numeric results that a JSON gate can check, and are tracked instead in the consolidated audit supplement (supplementary_consolidated_audit_3007217.tex) and the fixing-jmlr-style.txt checklist directly: (1) fixing-jmlr-style.txt item 2 \u2014 the main paper's per-equation Feynman table (tab:feynman30) reportedly uses a different equation set than the corrected \u00a710.7 runs; a reviewer could mistake it for the source of the 12/30 or 18/30 headline. (2) fixing-jmlr-style.txt item 3 \u2014 two published figures (routing-cascade vs. architecture) label System 1/2/3 differently; internal contradiction. (3) fixing-jmlr-style.txt item 8 \u2014 unconfirmed_paper_claims.tex needs updating to reflect the corrected \u00a710.7 figures and the two new defects (placeholder-token, asin_of_sin) so it remains an accurate canonical reference for other errata. None of these three could be resolved as part of this JSON-cleaning pass \u2014 they require the actual manuscript figure files and unconfirmed_paper_claims.tex, which were not available in this session.",
+    "status": "open_needs_source_files"
   }
 ]
