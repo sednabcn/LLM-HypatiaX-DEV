@@ -153,6 +153,24 @@ _EXPERIMENTS_WITHOUT_ABLATION = {
     "exp1b_pca",
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure-group ↔ experiment membership.
+#
+# Several figure groups below (the big exp1-ablation/cosmetic/RF09/instability-
+# per-case block, and the Supp-B sweep block) are only gated on "does the data
+# file exist?", NOT on "was this experiment actually requested?". That means a
+# leftover exp1_ablation_results.json (or noise_sweep_*.json) sitting in a
+# shared --results-dir would cause unrelated figures to be (re)generated on
+# every run, regardless of --experiment.
+#
+# When _EXPERIMENT is None (legacy/no --experiment invocation) every group
+# with data still runs, matching the original script's behaviour. Once
+# --experiment IS given, each figure group below is restricted to the
+# experiment(s) it actually belongs to.
+# ══════════════════════════════════════════════════════════════════════════════
+_EXP1_ABLATION_GROUP = {"exp1_ablation", "exp1", "exp1b"}
+_SUPPB_GROUP = {"suppB", "suppB_sc"}
+
 # ── Helper: resolve a filename relative to --results-dir ─────────────────────
 def _rpath(filename):
     """Return filename resolved under _RESULTS_DIR (absolute path)."""
@@ -330,20 +348,32 @@ if _EXPERIMENT in ("exp2_feynman_extrap", "exp2_feyman_extrap"):
 # Only abort when the experiment explicitly requires ablation data (exp1_ablation,
 # or a legacy/manual invocation without --experiment where it was always required).
 # ══════════════════════════════════════════════════════════════════════════════
-RAW = _load_json(DATA_MAIN, "exp1_ablation_results.json")
-if RAW is None:
-    _ablation_required = (
-        _EXPERIMENT is None                          # legacy invocation — preserve old behaviour
-        or _EXPERIMENT == "exp1_ablation"            # the one experiment that genuinely needs it
-        or _EXPERIMENT in ("exp1", "exp1b")          # cosmetic figures need it
-    )
-    if _ablation_required:
-        print(f"ERROR: primary data file '{DATA_MAIN}' is required for experiment "
-              f"'{_EXPERIMENT}'. Aborting.")
-        sys.exit(1)
-    else:
-        print(f"  [INFO] exp1_ablation_results.json not present for experiment "
-              f"'{_EXPERIMENT}' — cosmetic/RF02/RF09 figure groups will be skipped.")
+_EXP1_SELECTED = _EXPERIMENT is None or _EXPERIMENT in _EXP1_ABLATION_GROUP
+
+if not _EXP1_SELECTED:
+    # A different --experiment was explicitly requested: don't even load
+    # exp1_ablation_results.json, so a leftover/stale copy of it in
+    # --results-dir can't cause the exp1-only cosmetic/RF02/RF09/
+    # instability-per-case figures to be (re)generated for this run.
+    RAW = None
+    print(f"  [INFO] --experiment '{_EXPERIMENT}' does not use "
+          f"exp1_ablation_results.json — cosmetic/RF02/RF09 figure groups "
+          f"will be skipped (generating only figures for '{_EXPERIMENT}').")
+else:
+    RAW = _load_json(DATA_MAIN, "exp1_ablation_results.json")
+    if RAW is None:
+        _ablation_required = (
+            _EXPERIMENT is None                          # legacy invocation — preserve old behaviour
+            or _EXPERIMENT == "exp1_ablation"            # the one experiment that genuinely needs it
+            or _EXPERIMENT in ("exp1", "exp1b")          # cosmetic figures need it
+        )
+        if _ablation_required:
+            print(f"ERROR: primary data file '{DATA_MAIN}' is required for experiment "
+                  f"'{_EXPERIMENT}'. Aborting.")
+            sys.exit(1)
+        else:
+            print(f"  [INFO] exp1_ablation_results.json not present for experiment "
+                  f"'{_EXPERIMENT}' — cosmetic/RF02/RF09 figure groups will be skipped.")
 
 # Ensure the figures output directory exists.
 os.makedirs(_FIGURES_DIR, exist_ok=True)
@@ -1699,9 +1729,23 @@ if RAW is not None:
 # ══════════════════════════════════════════════════════════════════════════════
 # SUPP-B SWEEP FIGURES
 # Sources: noise_sweep_*.json  +  sample_complexity_*.json  (latest matched by glob)
+#
+# Restricted to _SUPPB_GROUP once --experiment is given, for the same reason
+# the exp1-ablation block above is restricted: a noise_sweep_*.json /
+# sample_complexity_*.json left over from a prior suppB run under a shared
+# --results-dir should not cause these figures to be regenerated when a
+# different --experiment was explicitly requested.
 # ══════════════════════════════════════════════════════════════════════════════
-_noise_raw  = _load_json(DATA_NOISE_SWEEP,  DATA_NOISE_SWEEP)
-_sample_raw = _load_json(DATA_SAMPLE_SWEEP, DATA_SAMPLE_SWEEP)
+_SUPPB_SELECTED = _EXPERIMENT is None or _EXPERIMENT in _SUPPB_GROUP
+
+if not _SUPPB_SELECTED:
+    _noise_raw, _sample_raw = None, None
+    print(f"  [INFO] --experiment '{_EXPERIMENT}' is not a Supp-B sweep experiment "
+          f"— Supp-B figure group will be skipped (generating only figures for "
+          f"'{_EXPERIMENT}').")
+else:
+    _noise_raw  = _load_json(DATA_NOISE_SWEEP,  DATA_NOISE_SWEEP)
+    _sample_raw = _load_json(DATA_SAMPLE_SWEEP, DATA_SAMPLE_SWEEP)
 
 
 def _sweep_rows(raw, key_field=None):

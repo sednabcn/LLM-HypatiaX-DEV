@@ -1853,38 +1853,69 @@ def main() -> None:
         print(f"  Experiment  : {_ARGS.experiment}")
     print()
 
+    # ── Experiment scoping ────────────────────────────────────────────────────
+    # Computed up front so both the missing-JSON audit below and the
+    # generator dispatch at the end of main() can be restricted to only the
+    # JSON(s)/table(s) that the selected experiment actually produces,
+    # instead of checking/generating the full main-paper set every time.
+    # "all", "suppa", or an unrecognised tag fall back to the full audit +
+    # full dispatch (previous behaviour) since their table ownership isn't
+    # cleanly single-sourced.
+    _EXP = (_ARGS.experiment or "all").lower()
+    _SCOPED_EXPERIMENTS = {
+        "exp1", "exp1_pca", "exp1b", "exp1b_pca", "exp1_ablation",
+        "exp2_feynman", "exp2", "exp2_feynman_extrap", "exp2_feynman_pca",
+        "exp3", "exp3b", "instability", "hybrid_all_domains", "extrap",
+        "suppb", "suppb_sc",
+    }
+
     # ── Missing JSON audit ────────────────────────────────────────────────────
     # Check every expected JSON before running generators so the user gets a
     # complete picture of what will fall back to paper-verified numbers.
     print("  ── Missing JSON audit ──────────────────────────────────────")
-    _AUDIT: list[tuple[str, str, str, str]] = [
-        # (label,  subdir,  glob,  extra_subdirs_csv)
+    _AUDIT: list[tuple[str, str, str, str, tuple[str, ...]]] = [
+        # (label,  subdir,  glob,  extra_subdirs_csv,  owner_experiments)
         ("exp1 benchmark (Tab 2/3/4/11)",
-         "", "hypatiax_defi_benchmark_v3*results*.json", "defi"),
+         "", "hypatiax_defi_benchmark_v3*results*.json", "defi",
+         ("exp1", "exp1_pca")),
         ("exp1_ablation Core-15 (Tab 5/6 + Fig F)",
-         "exp1_ablation", "*.json", ""),
+         "exp1_ablation", "*.json", "",
+         ("exp1_ablation",)),
         ("portfolio_variance seed-sweep (Tab 5 + Fig G)",
-         "", "portfolio_variance*.json", ""),
+         "", "portfolio_variance*.json", "",
+         ("exp1b", "exp1b_pca")),
         ("exp2_feynman results (Tab 7)",
-         "comparison_results/feynman-tests/exp2", "*.json", "feynman"),
+         "comparison_results/feynman-tests/exp2", "*.json", "feynman",
+         ("exp2_feynman", "exp2", "exp2_feynman_extrap", "exp2_feynman_pca")),
         ("exp3 Nguyen-12 results (Tab 8)",
-         "", "exp3*nguyen12*.json", "nguyen12"),
+         "", "exp3*nguyen12*.json", "nguyen12",
+         ("exp3", "exp3b")),
         ("instability JSON or CSV (Tab 9 / §10.9)",
-         "figures", "instability*.json", "instability"),
+         "figures", "instability*.json", "instability",
+         ("instability",)),
         ("hybrid_all_domains JSON (§10.9 hybrid)",
-         "hybrid_llm_nn/all_domains", "*.json", ""),
+         "hybrid_llm_nn/all_domains", "*.json", "",
+         ("hybrid_all_domains",)),
         ("noise_sweep JSON (suppB Tab 28/29)",
-         "comparison_results/feynman-tests/noise-sweep", "noise_sweep_*.json", ""),
+         "comparison_results/feynman-tests/noise-sweep", "noise_sweep_*.json", "",
+         ("suppb",)),
         ("sample_complexity JSON (suppB Tab 29)",
          "comparison_results/feynman-tests/sample-complexity",
-         "sample_complexity_*.json", ""),
+         "sample_complexity_*.json", "",
+         ("suppb", "suppb_sc")),
         ("noiseless protocol JSON (suppB tab:overall)",
          "comparison_results/noise-noiseless/noiseless",
-         "protocol_core_noiseless_*.json", ""),
+         "protocol_core_noiseless_*.json", "",
+         ("suppb",)),
     ]
+
+    if _EXP in _SCOPED_EXPERIMENTS:
+        _AUDIT = [row for row in _AUDIT if _EXP in row[4]]
+        print(f"  (scoped to --experiment {_EXP}: {len(_AUDIT)} relevant JSON source(s))\n")
+
     _missing: list[str] = []
     _found:   list[str] = []
-    for label, subdir, glob_pat, extra_csv in _AUDIT:
+    for label, subdir, glob_pat, extra_csv, _owners in _AUDIT:
         extras = [e.strip() for e in extra_csv.split(",") if e.strip()]
         _, path = load_best(subdir, glob_pat, extra_subdirs=extras or None)
         if path:
@@ -1945,16 +1976,19 @@ def main() -> None:
     print()
 
     # ── Dispatch: which generators to run ────────────────────────────────────
-    # When --experiment is supplied, only the tables that belong to that
-    # experiment are generated.  This prevents:
+    # When --experiment is supplied, ONLY the table(s) whose source JSON that
+    # experiment actually writes are generated (see the JSON location map in
+    # the module docstring / comment block near the top of this file — this
+    # dispatch mirrors it 1:1). This prevents:
+    #   - unrelated tables silently falling back to paper-verified numbers
+    #     (and failing the run) for JSONs the selected experiment never
+    #     produces in the first place
     #   - suppB tables being written into every other experiment's output dir
-    #   - main-paper tables being overwritten by a pca/extrap/suppB run
     #   - cross-experiment JSON searches failing because --results-dir points
     #     at a subdir that doesn't contain sibling experiment data
     #
-    # Mapping: experiment id -> list of (section_label, [callables])
-    # "all" (or None) keeps the original behaviour of running everything.
-    _EXP = (_ARGS.experiment or "all").lower()
+    # "all" (or an unrecognised tag) keeps the original behaviour of running
+    # everything. (_EXP is computed earlier, alongside the audit scoping.)
 
     def _main_paper_section():
         return ("── Main paper tables ───────────────────────────────────────", [
@@ -1992,38 +2026,74 @@ def main() -> None:
             lambda: gen_suppb_winrate(noise_data, sc_data),
         ])
 
-    # Per-experiment gate: maps experiment id -> sections to run.
-    # Main-paper experiments only get main-paper tables.
-    # suppB variants only get their own suppB sections.
+    # Single-JSON experiments: each maps to only the generator(s) that
+    # actually consume that experiment's JSON, per the location-map comment.
     _DISPATCH = {
-        "exp1":                [_main_paper_section()],
-        "exp1b":               [_main_paper_section()],
-        "exp1_pca":            [_main_paper_section()],
-        "exp1b_pca":           [_main_paper_section()],
-        "exp1_ablation":       [_main_paper_section()],
-        "exp2_feynman":        [_main_paper_section()],
-        "exp2_feynman_extrap": [_main_paper_section()],
-        # exp2_feynman_pca: --results-dir is set to the repo root in ci_postprocess.yml
-        # B5 so cross-experiment JSONs resolve correctly; main-paper tables only.
-        "exp2_feynman_pca":    [_main_paper_section()],
-        "exp2":                [_main_paper_section()],
-        "exp3":                [_main_paper_section()],
-        "exp3b":               [_main_paper_section()],
-        "suppa":               [_main_paper_section()],
-        "hybrid_all_domains":  [_main_paper_section()],
-        "instability":         [_main_paper_section()],
-        "extrap":              [_main_paper_section()],
+        # exp1 → hypatiax_defi_benchmark_v3*results*.json → defi_main,
+        # defi_tiers, runtime, timing_detail (Tab 2/3/4/11) + defi half of
+        # repro_macros. version_history has no JSON dependency (hardcoded,
+        # stable) so it's cheap to regenerate alongside exp1.
+        "exp1": [("── exp1: DeFi benchmark tables ─────────────────────────────", [
+            lambda: gen_defi_main(),
+            lambda: gen_defi_tiers(),
+            lambda: gen_runtime(),
+            lambda: gen_timing_detail(),
+            lambda: gen_version_history(),
+            lambda: gen_repro_macros(),
+        ])],
+        # exp1b → portfolio_variance_seed_sweep.json → portfolio_sweep (Tab 5 / Fig G)
+        "exp1b": [("── exp1b: portfolio variance seed sweep ────────────────────", [
+            lambda: gen_portfolio_seed_sweep(),
+        ])],
+        # exp1_ablation → exp1_ablation/*.json → five_system, ablation
+        # (Tab 5/6 + Fig F) + ablation half of repro_macros.
+        "exp1_ablation": [("── exp1_ablation: five-system + ablation tables ────────────", [
+            lambda: gen_five_system(),
+            lambda: gen_ablation(),
+            lambda: gen_repro_macros(),
+        ])],
+        # exp2 / exp2_feynman (+ extrap/pca variants) → comparison_results/
+        # feynman-tests/exp2/*.json → feynman.tex (Tab 7) only.
+        "exp2_feynman": [("── exp2_feynman: Feynman benchmark table ────────────────────", [
+            lambda: gen_feynman_results(),
+        ])],
+        # exp3 / exp3b → nguyen12/*.json → nguyen12.tex (Tab 8) only.
+        "exp3": [("── exp3: Nguyen-12 table ─────────────────────────────────────", [
+            lambda: gen_nguyen12(),
+        ])],
+        # instability → figures/instability*.{json,csv} → instability.tex (Tab 9) only.
+        "instability": [("── instability: instability table ───────────────────────────", [
+            lambda: gen_instability(),
+        ])],
+        # No table in this script currently consumes hybrid_all_domains or
+        # extrap JSONs — the audit above still checks for them (useful for
+        # confirming the run wrote them), but there's nothing to generate.
+        "hybrid_all_domains": [("── hybrid_all_domains: no table currently sources this JSON ──", [])],
+        "extrap": [("── extrap: no table currently sources this JSON ────────────", [])],
         # suppB: noise-sweep + sample-complexity + win-rate only.
-        "suppb":               [_suppb_noise_section(), _suppb_sc_section(), _suppb_winrate_section()],
-        "suppb_sc":            [_suppb_sc_section(), _suppb_winrate_section()],
-        # "all" / unknown: run everything (original behaviour).
-        "all":                 [_main_paper_section(), _suppb_noise_section(),
-                                _suppb_sc_section(), _suppb_winrate_section()],
+        "suppb": [_suppb_noise_section(), _suppb_sc_section(), _suppb_winrate_section()],
+        "suppb_sc": [_suppb_sc_section(), _suppb_winrate_section()],
+        # "all" / unknown / suppa (ambiguous ownership): run everything,
+        # matching the original behaviour.
+        "all": [_main_paper_section(), _suppb_noise_section(),
+                _suppb_sc_section(), _suppb_winrate_section()],
     }
+    # PCA/extrap variants and exp2 itself reuse their base experiment's
+    # generator set — same source JSON, just a different --results-dir.
+    _DISPATCH["exp1_pca"] = _DISPATCH["exp1"]
+    _DISPATCH["exp1b_pca"] = _DISPATCH["exp1b"]
+    _DISPATCH["exp2"] = _DISPATCH["exp2_feynman"]
+    _DISPATCH["exp2_feynman_extrap"] = _DISPATCH["exp2_feynman"]
+    _DISPATCH["exp2_feynman_pca"] = _DISPATCH["exp2_feynman"]
+    _DISPATCH["exp3b"] = _DISPATCH["exp3"]
+    _DISPATCH["suppa"] = _DISPATCH["all"]
 
     sections = _DISPATCH.get(_EXP, _DISPATCH["all"])
     if _EXP not in _DISPATCH:
         print(f"  \u26a0  Unknown --experiment '{_EXP}' — running all table generators.")
+    elif not sections or all(not gens for _, gens in sections):
+        print(f"  \u2139  --experiment '{_EXP}': audited its JSON above, but no "
+              f"table generator currently sources that data — nothing to write.")
 
     for section_label, generators in sections:
         print(f"\n  {section_label}")
