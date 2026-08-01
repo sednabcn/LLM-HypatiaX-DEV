@@ -1018,7 +1018,21 @@ def run_experiment():
     print(f"Resuming    : {len(all_results)} checkpointed entries")
     print("=" * 65)
 
-    for eq_idx, eq in enumerate(_CORE_15_RUN):
+    for eq in _CORE_15_RUN:
+        # FIX-SHARDKEY: use the equation's true global CORE_15 index (via the
+        # existing EQ_ID map), not its position within the shard-filtered
+        # _CORE_15_RUN list. The previous `enumerate(_CORE_15_RUN)` produced
+        # a 0-based LOCAL index that restarts at 0 for every shard -- e.g.
+        # the "chemistry" shard's Arrhenius (local idx 0) and the
+        # "defi_amm" shard's Impermanent Loss (local idx 0) both wrote to
+        # checkpoint key "0", so merging shards silently overwrote one
+        # equation's results with another's under the wrong name. This is
+        # the root cause of the Arrhenius/Impermanent Loss, Henderson-
+        # Hasselbalch/Price Impact, and Rate Law/Constant Product value
+        # swaps found in exp1_rf01_mannwhitney.json (see discrepancy
+        # addendum, Issue 14). Global indices are stable and collision-free
+        # across shards by construction.
+        eq_idx = EQ_ID[eq["name"]]
         eq_key = str(eq_idx)   # string key for JSON compatibility (FIX-KEY)
         all_results.setdefault(eq_key, {"name": eq["name"], "domain": eq["domain"]})
         entry  = all_results[eq_key]

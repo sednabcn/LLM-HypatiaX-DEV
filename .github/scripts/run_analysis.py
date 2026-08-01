@@ -688,7 +688,13 @@ def analyse_ablation(records: list[dict], experiment: str,
     all_rows:         list[dict]                = []
 
     for r in records:
-        eq_name  = r.get("equation_name", r.get("equation_id", "?"))
+        # FIX-EQNAME: the real per-equation record schema (see _merged.json)
+        # uses "name" and "task_id" -- "equation_name"/"equation_id" never
+        # existed in any produced record, so this previously always fell
+        # through to the "?" placeholder for every row (see discrepancy
+        # addendum, Issue 16). "name" is preferred since it's the
+        # human-readable display name used everywhere else (tables, CORE_15).
+        eq_name  = r.get("name", r.get("task_id", "?"))
         domain   = r.get("domain", "?")
         pysr     = r.get("pysr_only", {}) or {}
         hyp      = r.get("hypatia",   {}) or {}
