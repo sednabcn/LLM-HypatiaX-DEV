@@ -7,18 +7,12 @@ These are \\input{}-ed by the main paper and supplements so NO manual numbers
 appear in the LaTeX source.
 
 Tables generated  (main paper)
-  five_system.tex     tab:five_system    §10.1   ← results/ablation/exp1_ablation/
-                                                    (UNCONFIRMED as real source — repo-wide
-                                                    grep for "five_system"/"system_comparison"
-                                                    found NO matches, so as of now this table
-                                                    is always paper-verified fallback data,
-                                                    not live results. See Issue 4 follow-up
-                                                    comment below, ~line 234.)
+  five_system.tex     tab:five_system    §10.1   ← results/exp1_ablation/
   defi_main.tex       tab:main_results   §10.2   ← results/defi/
   defi_tiers.tex      tab:difficulty     §10.3   ← results/defi/
   runtime.tex         tab:runtime        §10.4   ← results/defi/
   portfolio_sweep.tex tab:portfolio_seed §10.5   ← portfolio_variance_seed_sweep.json
-  ablation.tex        tab:llm_ablation   §10.6   ← results/ablation/exp1_ablation/
+  ablation.tex        tab:llm_ablation   §10.6   ← results/exp1_ablation/
   feynman.tex         tab:feynman        §10.7   ← results/feynman/
   nguyen12.tex        tab:nguyen12       §10.8   ← results/nguyen12/
   instability.tex     tab:instability    §10.9   ← results/instability/
@@ -237,24 +231,104 @@ def load_best(subdir: str, glob_pat: str,
     return None, None
 
 
-# ── Five-system table source resolution (superseded guess-based approach) ──
+# ── Issue 4 (CI/SD incompatibility) follow-up: locate the real Table 1 source ──
 #
-# Formerly this file searched an unconfirmed list of candidate directories
-# (_FIVE_SYSTEM_CANDIDATES: ablation/exp1_ablation, comparison_results/
-# five_system, comparison_results/system_comparison, etc.) for a JSON with a
-# "five_system"/"system_comparison" key, and fell back to hardcoded
-# FIVE_SYSTEM_PAPER_ROWS when none was found -- which was always, since that
-# key was never confirmed to exist anywhere in the tree (see Issue 4).
+# STILL OPEN, unconfirmed either way: whether ablation/exp1_ablation is
+# actually the right directory for five-system data was raised as a
+# question, not settled. The Issue 4 report's own investigation found
+# exp1_ablation's real output (_merged.json, per-equation pysr_only/hypatia
+# records -- see gen_ablation()/_load_merged() above) has no "five_system"/
+# "system_comparison" key, and concluded that data hasn't been located
+# anywhere in the tree yet. That finding stands until someone actually
+# confirms otherwise (e.g. `grep -r '"five_system"\|"system_comparison"'
+# hypatiax/` on the real repo).
 #
-# Both the guessing and the hardcoded fallback are gone. The two real
-# sources are now named explicitly:
-#   1. exp1_five_system.py → RESULTS_DIR/five_systems/exp1_five/exp1_five_results.json
-#      (_load_exp1_five_rows(), below _load_exp2_five_system_rows())
-#   2. exp2/exp2_extrap (Feynman suite) → _load_exp2_five_system_rows()
-#      (previously written but never wired into gen_five_system() -- dead
-#      code until now)
-# See _load_five_system_rows_real() for the combined loader gen_five_system()
-# and the repro_macros nnExtrap* block actually call.
+# Separately, and true regardless of where the data turns out to live: even
+# if it IS somewhere under ablation/exp1_ablation, load_best()'s newest-
+# mtime-wins selection would be the wrong tool to find it -- per the
+# _load_merged()/_load_mannwhitney() comments above, several files in that
+# directory share identical mtimes, so mtime-sorting can silently pick a
+# file without the key while a sibling file has it. _load_five_system_data()
+# below scans every *.json in a candidate directory (not just the
+# mtime-newest one) for exactly that reason -- a no-regret fix independent
+# of whether exp1_ablation is confirmed to be the right directory.
+_FIVE_SYSTEM_CANDIDATES: list[tuple[str, str]] = [
+    ("ablation/exp1_ablation", "*.json"),           # unconfirmed -- see note above
+    ("comparison_results/five_system", "*.json"),
+    ("comparison_results/system_comparison", "*.json"),
+    ("five_system", "*.json"),
+    ("system_comparison", "*.json"),
+    ("", "five_system*.json"),
+    ("", "system_comparison*.json"),
+]
+
+
+def _rows_from_data(data: dict) -> list[tuple] | None:
+    """Extract five_system/system_comparison rows from a loaded JSON dict,
+    or None if this particular file doesn't have that key."""
+    raw = data.get("five_system", data.get("system_comparison"))
+    if not raw:
+        return None
+
+    def _s(v, default="---"):
+        # entry.get(key, default) only uses `default` when the key is
+        # absent -- a field present with an explicit JSON null (e.g.
+        # "std": null, common for systems where std wasn't computed) still
+        # comes back as None and str()'s to the literal text "None" in the
+        # table unless handled here.
+        return default if v is None else str(v)
+
+    rows = []
+    for entry in raw:
+        rows.append((
+            entry.get("name", "?"),
+            entry.get("n", 0),
+            _s(entry.get("extrap_median_pct")),
+            _s(entry.get("extrap_mean_pct")),
+            _s(entry.get("train_r2_mean")),
+            _s(entry.get("std")),
+            entry.get("design_focus") or "---",
+        ))
+    return rows if len(rows) >= 2 else None
+
+
+def _load_five_system_data() -> tuple[list[tuple] | None, Path | None]:
+    """Search all candidate locations for a JSON containing a
+    "five_system"/"system_comparison" key (system-level n/mean/std rows for
+    Table 1), independently of whatever exp1_ablation JSON happens to be
+    found for the (unrelated) per-equation ablation table.
+
+    Unlike load_best(), this scans *every* matching file in a candidate
+    directory (not just the newest by mtime) before moving to the next
+    candidate, since exp1_ablation's files are known to share identical
+    mtimes -- see the comment above _FIVE_SYSTEM_CANDIDATES.
+
+    Returns (rows, path) on success, where each row is
+    (name, n, extrap_median_pct, extrap_mean_pct, train_r2_mean, std, design_focus).
+    Returns (None, None) if no file in any candidate location has the key —
+    callers should fall back to PAPER_VERIFIED data and flag it via
+    FALLBACK_TABLES, not silently treat "found a JSON" as "found the data".
+    """
+    for subdir, glob_pat in _FIVE_SYSTEM_CANDIDATES:
+        search_dirs = [base / subdir if subdir else base for base in (PATCHED, RESULTS)]
+        candidates: list[Path] = []
+        for d in search_dirs:
+            if d.exists():
+                candidates.extend(_filtered_glob(d, glob_pat))
+        # Newest first, purely as a tie-break for reporting which file was
+        # used when more than one has the key -- every file is still checked.
+        candidates.sort(key=os.path.getmtime, reverse=True)
+        for path in candidates:
+            try:
+                data = json.loads(path.read_text())
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            rows = _rows_from_data(data)
+            if rows:
+                return rows, path
+    return None, None
 
 
 def load_sweep_json(explicit: Path | None, subdir: str, glob_pat: str) -> dict | None:
@@ -715,14 +789,25 @@ def _ci95(mean, std, n) -> str | None:
     return f"[{mean - margin:.1f}, {mean + margin:.1f}]"
 
 
-# Paper-verified fallback (Table 1) — REMOVED. Two real, named data sources
-# now exist (_load_exp1_five_rows(), _load_exp2_five_system_rows(), combined
-# via _load_five_system_rows_real()); a hardcoded numeric substitute is no
-# longer needed and its presence was exactly the kind of silent-substitution
-# risk this whole cleanup pass exists to eliminate. If both real sources are
-# ever unavailable, gen_five_system() and gen_repro_macros() now write a
-# clearly-marked "NO DATA" placeholder and hard-fail via FALLBACK_TABLES
-# instead of emitting numbers that look real but aren't sourced from any run.
+# Paper-verified fallback (Table 1) — module level so gen_five_system() and
+# gen_repro_macros() use the exact same numbers if a live five-system source
+# still can't be located (Issue 4, item 3/4: this stays fallback data, not
+# "verified", until the real producing script is found and re-run — see
+# _load_five_system_data() above). Std for Neural Network filled in from the
+# disclosed Appendix G figure (1842.0) instead of "---", so the fallback path
+# also yields a real, internally-consistent CI rather than silently omitting
+# one. Std is still "---" for every other row (Issue 4, item 2): that has
+# never been confirmed as "not computed upstream" vs. "computed but not
+# located by this generator" -- treat those as open, same as the row source
+# itself.
+FIVE_SYSTEM_PAPER_ROWS = [
+    # (system, n, extrap_median_pct, extrap_mean_pct, train_r2_mean, std, design_focus)
+    ("Hybrid v50\\_2", 14, "0.0", "0.0",  "0.931", "---", "Extrapolation"),
+    ("Neural Network",        13, "86.7", "1231.0", "0.940", "1842.0", "Baseline"),
+    ("Pure LLM",               0, "---",  "---",    "---",   "---", "Recognition"),
+    ("System 2 Symbolic",      0, "---",  "---",    "---",   "---", "Validation"),
+    ("System 3 LLM+Fallback",  0, "---",  "---",    "1.000", "0.0002", "Robustness"),
+]
 
 
 # ── Live exp2/exp2_extrap five-system aggregation (second-tier source) ────────
@@ -746,14 +831,12 @@ def _ci95(mean, std, n) -> str | None:
 #      loader. Their rows below will legitimately show n=0 for the
 #      extrapolation columns while still having real train_r2_mean data.
 #
-# IMPORTANT: rows from this loader are a different, live, traceable dataset
-# on the actual exp2 (Feynman-suite) problem set, distinct from
-# _load_exp1_five_rows()'s Core-15 dataset above it in the loader chain. In
-# particular:
-#   - Hybrid v50_2's n happens to match the old (now-removed) fallback's 14
-#     but its extrapolation error % differs by two to three orders of
-#     magnitude (old fallback: "0.0", live: ~120%) — a reminder that the two
-#     numbers were never actually the same measurement.
+# IMPORTANT: rows from this loader do NOT reproduce FIVE_SYSTEM_PAPER_ROWS.
+# They are a different, live, traceable dataset on the actual exp2 problem
+# set — not a "fix" that recovers the old published numbers. In particular:
+#   - Hybrid v50_2's n happens to match the old fallback (14) but its
+#     extrapolation error % differs by two to three orders of magnitude
+#     (old: "0.0", live: ~120%).
 #   - Neural Network's old fallback shows n=13 extrapolation records, which
 #     is structurally impossible for this script to produce (see finding 2
 #     above) — the old number almost certainly came from a different,
@@ -916,240 +999,46 @@ def _load_exp2_five_system_rows() -> tuple[list[tuple] | None, Path | None]:
     return rows, (train_src or extrap_src)
 
 
-# ── exp1_five_system.py (primary source, added once that experiment existed) ──
-#
-# Reads exp1_five_results.json directly: {eq_idx: {"name":..., "domain":...,
-# method_name: {...train_r2, train_rmse, extrap_rmse_far, success, design_focus...}}}.
-# method_name keys are already the five row names verbatim (exp1_five_system.py
-# writes them that way), so no name-mapping table is needed here the way
-# _EXP2_METHOD_TO_ROW is needed for the exp2-based loader below.
-#
-# extrap_error_pct is computed the same way compute_extrap_r2_far()/
-# _load_exp2_five_system_rows() define it — (extrap_rmse_far / train_rmse) * 100
-# — so numbers from this loader and the exp2-based one are on the same scale
-# and comparable, even though they're measuring different equation suites
-# (Core-15 vs. the 10-domain Feynman set).
-def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
-    src = None
-    for base in (PATCHED, RESULTS):
-        candidate = base / "five_systems/exp1_five/exp1_five_results.json"
-        if candidate.exists():
-            src = candidate
-            break
-    if src is None:
-        return None, None
-    try:
-        data = json.loads(src.read_text())
-    except Exception:
-        return None, None
-    if not isinstance(data, dict):
-        return None, None
-
-    r2_by_method: dict[str, list[float]] = {m: [] for m in _EXP2_ROW_ORDER}
-    err_by_method: dict[str, list[float]] = {m: [] for m in _EXP2_ROW_ORDER}
-    focus_by_method: dict[str, str] = {}
-    for eq_entry in data.values():
-        if not isinstance(eq_entry, dict):
-            continue
-        for method_name, res in eq_entry.items():
-            if method_name not in r2_by_method or not isinstance(res, dict):
-                continue
-            if not res.get("success"):
-                continue
-            if "design_focus" in res:
-                focus_by_method.setdefault(method_name, res["design_focus"])
-            r2 = _finite_or_none(res.get("train_r2"))
-            if r2 is not None:
-                r2_by_method[method_name].append(r2)
-            train_rmse = _finite_or_none(res.get("train_rmse"))
-            far_rmse   = _finite_or_none(res.get("extrap_rmse_far"))
-            if train_rmse and train_rmse > 0 and far_rmse is not None:
-                err_by_method[method_name].append((far_rmse / train_rmse) * 100.0)
-
-    rows_by_name: dict[str, tuple] = {}
-    for mname in _EXP2_ROW_ORDER:
-        tr_vals = r2_by_method.get(mname, [])
-        tr_mean = sum(tr_vals) / len(tr_vals) if tr_vals else None
-        tr_std = None
-        if tr_mean is not None and len(tr_vals) >= 2:
-            tr_std = (sum((x - tr_mean) ** 2 for x in tr_vals) / (len(tr_vals) - 1)) ** 0.5
-        err_vals = err_by_method.get(mname, [])
-        median, clipped_mean = _robust_median_clipped_mean(err_vals)
-        rows_by_name[mname] = (
-            mname, len(err_vals),
-            f"{median:.1f}" if median is not None else "---",
-            f"{clipped_mean:.1f}" if clipped_mean is not None else "---",
-            f"{tr_mean:.3f}" if tr_mean is not None else "---",
-            f"{tr_std:.4f}" if tr_std is not None else "---",
-            focus_by_method.get(mname, _EXP2_DESIGN_FOCUS.get(mname, "---")),
-        )
-    rows = [rows_by_name[m] for m in _EXP2_ROW_ORDER if m in rows_by_name]
-    return (rows, src) if len(rows) >= 2 else (None, None)
-
-
-def _load_exp1_five_subtable_json(filename: str) -> tuple[dict | None, Path | None]:
-    for base in (PATCHED, RESULTS):
-        candidate = base / "five_systems/exp1_five" / filename
-        if candidate.exists():
-            try:
-                return json.loads(candidate.read_text()), candidate
-            except Exception:
-                continue
-    return None, None
-
-
-def gen_five_system_performance() -> None:
-    """
-    Sub-table 1 of 2 (metric item 4): performance -- train R^2 / train RMSE
-    per method, Core-15 equations. Reads exp1_five_performance.json, which
-    exp1_five_system.py itself already computed (n/mean/median/sd/se/CI via
-    the same t-based convention as evaluator.txt) -- this function only
-    formats it, it does not re-derive any statistic.
-    """
-    data, src = _load_exp1_five_subtable_json("exp1_five_performance.json")
-    no_data = data is None
-    if no_data:
-        FALLBACK_TABLES.append(
-            "five_system_performance.tex -- exp1_five_performance.json not "
-            "found under five_systems/exp1_five/ in patched/ or results/. "
-            "No fallback; run exp1_five_system.py."
-        )
-
-    tex = header_comment(src) + r"""
-\begin{table}[t]
-\centering
-\caption{Five-System Comparison -- Performance (Core-15, interpolation).
-  95\% CI computed from raw per-equation train $R^2$/RMSE at generation time.}
-\label{tab:five_systems_performance}
-\begin{tabular}{lrrrrr}
-\toprule
-\textbf{System} & \textbf{n} & \textbf{Train $R^2$ Mean}
-  & \textbf{Train $R^2$ 95\% CI} & \textbf{Train RMSE Mean}
-  & \textbf{Design Focus} \\
-\midrule
-"""
-    if no_data:
-        tex += r"\multicolumn{6}{c}{\textit{NO DATA -- run exp1\_five\_system.py}} \\" + "\n"
-    else:
-        for method_name, row in data.items():
-            r2 = row.get("train_r2") or {}
-            rmse = row.get("train_rmse") or {}
-            n = r2.get("n", rmse.get("n", 0))
-            r2_mean = f"{r2['mean']:.3f}" if r2.get("mean") is not None else "---"
-            r2_ci = (
-                f"[{r2['ci_low']:.3f}, {r2['ci_high']:.3f}]"
-                if r2.get("ci_low") is not None else "---"
-            )
-            rmse_mean = f"{rmse['mean']:.4f}" if rmse.get("mean") is not None else "---"
-            focus = row.get("design_focus", "---")
-            tex += f"{method_name} & {n} & {r2_mean} & {r2_ci} & {rmse_mean} & {focus} \\\\\n"
-
-    tex += r"""\bottomrule
-\end{tabular}
-\end{table}
-"""
-    write_table("five_system_performance.tex", tex)
-
-
-def gen_five_system_extrapolation() -> None:
-    """
-    Sub-table 2 of 2 (metric item 4): extrapolation -- R^2/RMSE per method
-    for near/medium/far regimes, Core-15 equations. Same source-of-truth
-    convention as gen_five_system_performance(): reads
-    exp1_five_extrapolation.json, formats only, no re-derivation.
-    """
-    data, src = _load_exp1_five_subtable_json("exp1_five_extrapolation.json")
-    no_data = data is None
-    if no_data:
-        FALLBACK_TABLES.append(
-            "five_system_extrapolation.tex -- exp1_five_extrapolation.json "
-            "not found under five_systems/exp1_five/ in patched/ or results/. "
-            "No fallback; run exp1_five_system.py."
-        )
-
-    tex = header_comment(src) + r"""
-\begin{table}[t]
-\centering
-\caption{Five-System Comparison -- Extrapolation (Core-15, near/medium/far
-  regimes as defined in exp1\_ablation.py's EXTRAP\_REGIMES).
-  95\% CI computed from raw per-equation extrapolation $R^2$/RMSE at
-  generation time.}
-\label{tab:five_systems_extrapolation}
-\begin{tabular}{llrrr}
-\toprule
-\textbf{System} & \textbf{Regime} & \textbf{n}
-  & \textbf{Extrap $R^2$ Mean} & \textbf{Extrap RMSE Mean} \\
-\midrule
-"""
-    if no_data:
-        tex += r"\multicolumn{5}{c}{\textit{NO DATA -- run exp1\_five\_system.py}} \\" + "\n"
-    else:
-        for method_name, row in data.items():
-            for regime in ("near", "medium", "far"):
-                cell = row.get(regime, {})
-                r2 = cell.get("extrap_r2") or {}
-                rmse = cell.get("extrap_rmse") or {}
-                n = r2.get("n", rmse.get("n", 0))
-                r2_mean = f"{r2['mean']:.3f}" if r2.get("mean") is not None else "---"
-                rmse_mean = f"{rmse['mean']:.4f}" if rmse.get("mean") is not None else "---"
-                tex += f"{method_name} & {regime} & {n} & {r2_mean} & {rmse_mean} \\\\\n"
-
-    tex += r"""\bottomrule
-\end{tabular}
-\end{table}
-"""
-    write_table("five_system_extrapolation.tex", tex)
-
-
-
-    """Combined real-data loader for the five-system table/macros. Tries, in
-    order:
-      1. exp1_five_system.py's own output (Core-15 suite) — the dedicated
-         experiment for this table.
-      2. _load_exp2_five_system_rows() (exp2/exp2_extrap, Feynman suite) —
-         supplementary, kept as a second real source rather than removed,
-         since it's genuine live data on a different equation set.
-    Returns (rows, path, tier_label) or (None, None, None). There is
-    deliberately no further fallback after these two -- no hardcoded rows
-    exist in this file anymore. Callers must treat (None, None, None) as
-    "no live data available" and fail loudly (FALLBACK_TABLES), not
-    substitute anything."""
-    rows, path = _load_exp1_five_rows()
-    if rows:
-        return rows, path, "exp1_five (Core-15)"
-    rows, path = _load_exp2_five_system_rows()
-    if rows:
-        return rows, path, "exp2/exp2_extrap (Feynman suite)"
-    return None, None, None
-
-
 def gen_five_system() -> None:
     """
-    Tab 1 -- Five-System Comparison: Extrapolation Error vs. Interpolation R^2.
-    Matches Table 1 in Sec 10.1.
+    Tab 1 — Five-System Comparison: Extrapolation Error vs. Interpolation R².
+    Matches Table 1 in §10.1.
 
     The 95% CI column is *derived* from each row's own n/mean/std at
     generation time (see _ci95), rather than being a separately hand-typed
-    number elsewhere in the paper.
+    number elsewhere in the paper. Previously no code in this file computed
+    a CI at all -- the main-text CI was disconnected from this table's Std
+    column, which is how the two went out of sync (n=13, mean=1231.0,
+    std=1842.0 supports ~[117.0, 2345.0], not the previously hand-typed
+    [1087, 1456]). That part is fixed and verified (see _ci95 docstring).
 
-    Source resolution (_load_five_system_rows_real(), no hardcoded fallback
-    exists anymore):
-      1. exp1_five_system.py's own output (Core-15 suite; the dedicated
-         experiment for this table).
-      2. exp2/exp2_extrap (Feynman suite) as a second, supplementary real
-         source, via the previously-dead _load_exp2_five_system_rows().
-    If neither source has data, this writes a table containing an explicit
-    "NO DATA" placeholder (not fabricated numbers) and registers a
-    FALLBACK_TABLES entry so the CI build still fails loudly.
+    Issue 4 follow-up (still open, unconfirmed): whether exp1_ablation is
+    even the right source directory for this table was raised as a
+    question, not established. The Issue 4 report's own investigation found
+    exp1_ablation's real output (_merged.json) is per-equation data with no
+    "five_system"/"system_comparison" key, and concluded that key hasn't
+    been located anywhere in the tree yet -- that finding stands until
+    someone actually confirms otherwise. Separately, and true either way:
+    _load_five_system_data() now scans every *.json in a candidate
+    directory (not just the mtime-newest one, which the sibling
+    _load_merged()/_load_mannwhitney() comments show is unreliable in this
+    tree) instead of trusting load_best()'s mtime pick, so if the data does
+    turn out to live in exp1_ablation under a different filename, this will
+    find it. If this still falls back to FIVE_SYSTEM_PAPER_ROWS, that's
+    consistent with the report's finding, not evidence the directory guess
+    is wrong -- both remain open until someone checks the real repo.
     """
-    rows, src, tier = _load_five_system_rows_real()
-    no_data = rows is None
-    if no_data:
+    rows, src = _load_five_system_data()
+    used_fallback = rows is None
+    if used_fallback:
+        rows = FIVE_SYSTEM_PAPER_ROWS
+        src = "FIVE_SYSTEM_PAPER_ROWS (hardcoded fallback — see Issue 4)"
         FALLBACK_TABLES.append(
-            "five_system.tex (tab:five_systems_full) -- neither exp1_five "
-            "(five_systems/exp1_five/exp1_five_results.json) nor "
-            "exp2/exp2_extrap had usable five-system rows. No hardcoded "
-            "fallback exists; wrote a NO DATA placeholder table instead."
+            "five_system.tex (tab:five_systems_full) — scanned every JSON "
+            "under ablation/exp1_ablation (unconfirmed whether this is even "
+            "the right source dir — see Issue 4) and other candidate "
+            "locations, but none contained a \"five_system\"/"
+            "\"system_comparison\" key; used FIVE_SYSTEM_PAPER_ROWS."
         )
 
     tex = header_comment(src) + r"""
@@ -1168,32 +1057,35 @@ def gen_five_system() -> None:
   & \textbf{Design Focus} \\
 \midrule
 """
-    if no_data:
-        tex += r"\multicolumn{8}{c}{\textit{NO DATA -- run exp1\_five\_system.py or exp2/exp2\_extrap}} \\" + "\n"
-    else:
-        sep_done = False
-        for (name, n, emed, emean, tr2, std, focus) in rows:
-            if not sep_done and n == 0:
-                tex += r"\midrule" + "\n"
-                tex += r"\multicolumn{8}{l}{\textit{Systems Without Extrapolation Testing}} \\" + "\n"
-                sep_done = True
-            ci = _ci95(emean, std, n) or "---"
-            tex += f"{name} & {n} & {emed} & {emean} & {tr2} & {std} & {ci} & {focus} \\\\\n"
+    # separator between systems with/without extrapolation testing
+    sep_done = False
+    for (name, n, emed, emean, tr2, std, focus) in rows:
+        if not sep_done and n == 0:
+            tex += r"\midrule" + "\n"
+            tex += r"\multicolumn{8}{l}{\textit{Systems Without Extrapolation Testing}} \\" + "\n"
+            sep_done = True
+        ci = _ci95(emean, std, n) or "---"
+        tex += f"{name} & {n} & {emed} & {emean} & {tr2} & {std} & {ci} & {focus} \\\\\n"
 
     tex += r"""\bottomrule
 \end{tabular}
 \end{table}
 """
-    if no_data:
+    if used_fallback:
         tex += (
-            "% NO DATA -- neither exp1_five nor exp2/exp2_extrap produced\n"
-            "% usable five-system rows. Run exp1_five_system.py (preferred,\n"
-            "% Core-15) or exp2_five/exp2 (Feynman suite) and re-generate.\n"
+            "% ⚠ FALLBACK DATA — see Issue 4 (CI/SD Statistical Incompatibility).\n"
+            "% This table used FIVE_SYSTEM_PAPER_ROWS, not a live experiment run.\n"
+            "% Whether ablation/exp1_ablation is even the right source directory\n"
+            "% is unconfirmed (open question, not established) -- every *.json\n"
+            "% file in it (not just the newest by mtime) was checked anyway, plus\n"
+            "% other candidate locations, but none currently contained a\n"
+            "% \"five_system\"/\"system_comparison\" key (checked: " +
+            ", ".join(f"{s or '.'}/{g}" for s, g in _FIVE_SYSTEM_CANDIDATES) +
+            "). The 95% CI above is correctly *computed* from these rows'\n"
+            "% own std/n, but the rows themselves are still paper-verified\n"
+            "% fallback, not fresh data. Do not cite this as re-run-verified.\n"
         )
-    else:
-        tex += f"% Source: {tier}\n"
     write_table("five_system.tex", tex)
-
 
 
 def gen_runtime() -> None:
@@ -2187,43 +2079,52 @@ def gen_repro_macros() -> None:
         if mw_u:
             macros["coreAblationMWu"] = f"{mw_u:.1f}"
 
-    # Neural Network extrapolation mean/std/CI. Sourced from the same
-    # _load_five_system_rows_real() combined loader gen_five_system() uses
-    # (exp1_five primary, exp2/exp2_extrap secondary; no hardcoded fallback),
-    # so these macros always match the table's Std/CI columns exactly and
-    # are left undefined (not silently wrong) if neither real source exists.
-    five_rows, _fs_src, _fs_tier = _load_five_system_rows_real()
-    fs_no_data = five_rows is None
-    if not fs_no_data:
-        for (name, n, _emed, emean, _tr2, std, _focus) in five_rows:
-            if name not in ("Neural Network",):
-                continue
-            try:
-                nn_mean = float(emean)
-            except (TypeError, ValueError):
-                nn_mean = None
-            try:
-                nn_std = float(std)
-            except (TypeError, ValueError):
-                nn_std = None
-            nn_n = n
-            if nn_mean is not None:
-                macros["nnExtrapMean"] = f"{nn_mean:.1f}"
-            if nn_std is not None:
-                macros["nnExtrapStd"] = f"{nn_std:.1f}"
-            if nn_n:
-                macros["nnExtrapN"] = str(int(nn_n))
-            ci = _ci95(nn_mean, nn_std, nn_n)
-            if ci:
-                macros["nnExtrapCI"] = ci
-            break
-    if fs_no_data:
+    # Neural Network extrapolation mean/std/CI. Previously read from the same
+    # load_best("ablation/exp1_ablation", ...) call as the Mann-Whitney
+    # numbers above, on the theory that it's "the same five_system/
+    # system_comparison entry that feeds tab:five_system" -- but that JSON
+    # has no five_system/system_comparison key (see gen_five_system() /
+    # Issue 4), so that loop body never ran and these four macros were
+    # silently never written to repro_macros.tex at all. If
+    # jmlr_paper_main.tex references \nnExtrapCI (per the Issue 4 fix
+    # writeup, replacing the old hand-typed CI text), an undefined macro is
+    # worse than the original bug -- it breaks the LaTeX build outright
+    # instead of just being wrong. Now sourced from the same dedicated
+    # _load_five_system_data() lookup gen_five_system() uses, with the same
+    # FIVE_SYSTEM_PAPER_ROWS fallback, so the macros are always defined and
+    # always match the table's Std/CI columns exactly.
+    five_rows, _fs_src = _load_five_system_data()
+    fs_fallback = five_rows is None
+    if fs_fallback:
+        five_rows = FIVE_SYSTEM_PAPER_ROWS
+    for (name, n, _emed, emean, _tr2, std, _focus) in five_rows:
+        if name not in ("Neural Network",):
+            continue
+        try:
+            nn_mean = float(emean)
+        except (TypeError, ValueError):
+            nn_mean = None
+        try:
+            nn_std = float(std)
+        except (TypeError, ValueError):
+            nn_std = None
+        nn_n = n
+        if nn_mean is not None:
+            macros["nnExtrapMean"] = f"{nn_mean:.1f}"
+        if nn_std is not None:
+            macros["nnExtrapStd"] = f"{nn_std:.1f}"
+        if nn_n:
+            macros["nnExtrapN"] = str(int(nn_n))
+        ci = _ci95(nn_mean, nn_std, nn_n)
+        if ci:
+            macros["nnExtrapCI"] = ci
+        break
+    if fs_fallback and "nnExtrapCI" in macros:
         FALLBACK_TABLES.append(
-            "repro_macros.tex (nnExtrapMean/nnExtrapStd/nnExtrapN/nnExtrapCI) "
-            "-- same missing exp1_five/exp2 source as five_system.tex; macros "
-            "left undefined rather than filled with fallback numbers."
+            "repro_macros.tex (\\nnExtrapMean/\\nnExtrapStd/\\nnExtrapN/\\nnExtrapCI) "
+            "— same missing five_system/system_comparison source as five_system.tex; "
+            "see Issue 4."
         )
-
 
     lines = [
         "% Auto-generated reproducibility macros",
@@ -2912,20 +2813,32 @@ def main() -> None:
          "", "hypatiax_defi_benchmark_v3*results*.json", "defi",
          ("exp1", "exp1_pca")),
         ("exp1_ablation Core-15 per-equation data (Tab 6 + Fig F — the newest "
-         "*.json in this dir by mtime)",
+         "*.json in this dir by mtime, which may not be the file with "
+         "five_system data; see next row)",
          "ablation/exp1_ablation", "*.json", "",
          ("exp1_ablation",)),
-        # Sentinel subdir "__FIVE_SYSTEM__" is handled specially below via
-        # _load_five_system_rows_real() (exp1_five primary, exp2/exp2_extrap
-        # secondary), which scans real, named source directories rather than
-        # load_best()'s single-newest-file pick — the (subdir, glob,
+        # Issue 4 item 1 (still open, unconfirmed): whether exp1_ablation is
+        # even the right source dir for five-system data was raised as a
+        # question in this conversation, not established. The Issue 4
+        # report's own investigation found exp1_ablation's real output has
+        # no five_system/system_comparison key and concluded that data
+        # hasn't been located anywhere yet -- that finding stands. What's
+        # true regardless: load_best()'s newest-mtime selection would be
+        # unreliable even if the data does live in exp1_ablation, since
+        # several files there share identical mtimes (see comments above
+        # _load_merged()/_load_mannwhitney()). Sentinel subdir
+        # "__FIVE_SYSTEM__" is handled specially below via
+        # _load_five_system_data(), which scans every file in each candidate
+        # directory instead of just the newest -- the (subdir, glob,
         # extra_csv) tuple shape used by every other row can't express
-        # "check two separate real experiments in priority order", so this
-        # can't just reuse load_best() the way the others do.
-        ("five-system JSON (Tab 1 — tab:five_systems_full; exp1_five "
-         "primary, exp2/exp2_extrap secondary)",
+        # "check all files, not just load_best()'s pick", so this can't just
+        # reuse load_best() the way the others do.
+        ("five_system / system_comparison JSON (Tab 1 — tab:five_systems_full, "
+         "checked under ablation/exp1_ablation first — unconfirmed whether "
+         "that's the right dir, see Issue 4 — then other candidates, "
+         "file-by-file rather than by mtime)",
          "__FIVE_SYSTEM__", "", "",
-         ("exp1_five", "exp2_five", "exp2")),
+         ("exp1_ablation",)),
         ("portfolio_variance seed-sweep (Tab 5 + Fig G)",
          "", "portfolio_variance*.json", "",
          ("exp1b", "exp1b_pca")),
@@ -2986,7 +2899,7 @@ def main() -> None:
     _found:   list[str] = []
     for label, subdir, glob_pat, extra_csv, _owners in _AUDIT:
         if subdir == "__FIVE_SYSTEM__":
-            _, path, _tier = _load_five_system_rows_real()
+            _, path = _load_five_system_data()
         else:
             extras = [e.strip() for e in extra_csv.split(",") if e.strip()]
             _, path = load_best(subdir, glob_pat, extra_subdirs=extras or None)
@@ -2995,12 +2908,15 @@ def main() -> None:
         else:
             _missing.append(f"    ❌ {label}")
             if subdir == "__FIVE_SYSTEM__":
+                candidate_desc = ", ".join(
+                    str((PATCHED / s if s else PATCHED)) + f" [{g}]"
+                    for s, g in _FIVE_SYSTEM_CANDIDATES
+                )
                 _missing[-1] += (
-                    "\n       Searched: five_systems/exp1_five/exp1_five_results.json "
-                    "(primary), then exp2/exp2_extrap (secondary)."
-                    "\n       → NO hardcoded fallback exists; five_system.tex will be "
-                    "a NO-DATA placeholder and repro_macros.tex's nnExtrap* macros "
-                    "will be left undefined."
+                    f"\n       Searched (each under both patched/ and results/): "
+                    + candidate_desc +
+                    "\n       → WILL USE FIVE_SYSTEM_PAPER_ROWS fallback "
+                    "(five_system.tex AND repro_macros.tex nnExtrap* macros)"
                 )
             else:
                 # Describe where the generator will look so the user can debug.
@@ -3127,23 +3043,12 @@ def main() -> None:
         "exp1b": [("── exp1b: portfolio variance seed sweep ────────────────────", [
             lambda: gen_portfolio_seed_sweep(),
         ])],
-        # exp1_ablation → exp1_ablation/*.json → ablation (Tab 6 + Fig F)
-        # + ablation half of repro_macros. five_system.tex moved OUT of this
-        # dispatch entry -- it no longer sources from exp1_ablation at all
-        # (see gen_five_system() docstring); it's driven by "exp1_five" below.
-        "exp1_ablation": [("── exp1_ablation: ablation table ────────────────────────────", [
+        # exp1_ablation → exp1_ablation/*.json → five_system, ablation
+        # (Tab 5/6 + Fig F) + ablation half of repro_macros.
+        "exp1_ablation": [("── exp1_ablation: five-system + ablation tables ────────────", [
+            lambda: gen_five_system(),
             lambda: gen_ablation(),
             lambda: gen_repro_macros(),
-        ])],
-        # exp1_five → five_systems/exp1_five/*.json → five_system.tex (Tab 1)
-        # + the two sub-tables (performance, extrapolation) defined for the
-        # metric/evaluator item. exp2 also feeds five_system.tex as a
-        # secondary source (_load_exp2_five_system_rows()), so re-running
-        # this step after an exp2 run picks up whichever source is available.
-        "exp1_five": [("── exp1_five: five-system comparison + sub-tables ───────────", [
-            lambda: gen_five_system(),
-            lambda: gen_five_system_performance(),
-            lambda: gen_five_system_extrapolation(),
         ])],
         # exp2_feynman (+ extrap/pca variants) → comparison_results/
         # feynman-tests/exp2/*.json → feynman.tex (Tab 7) only.
@@ -3158,17 +3063,6 @@ def main() -> None:
         "exp2": [("── exp2: all-30 multi-domain tables ─────────────────────────", [
             lambda: gen_all30_domain_summary(),
             lambda: gen_multi_domain_rank_table(),
-            lambda: gen_five_system(),  # exp2/exp2_extrap is the secondary source
-        ])],
-        # exp2_five reuses exp2's script (run_comparative_suite_benchmark_v2.py,
-        # --methods 1 2 4 5 6) but writes to its own directory
-        # (five_systems/exp2_five/) — no dedicated loader for that dir exists
-        # yet (only exp1_five and exp2/exp2_extrap are wired into
-        # _load_five_system_rows_real()). Re-generating here just re-runs the
-        # same combined loader; add an exp2_five-specific loader if/when its
-        # output format under five_systems/exp2_five/ is confirmed.
-        "exp2_five": [("── exp2_five: five-system comparison (Feynman, 5-method) ────", [
-            lambda: gen_five_system(),
         ])],
         # exp3 / exp3b → nguyen12/*.json → nguyen12.tex (Tab 8) only.
         "exp3": [("── exp3: Nguyen-12 table ─────────────────────────────────────", [
@@ -3242,8 +3136,6 @@ def main() -> None:
 
   LaTeX usage in main paper:
     \\input{tables/five_system.tex}      % Tab 1  §10.1
-    \\input{tables/five_system_performance.tex}    % Tab 1a §10.1 (performance sub-table)
-    \\input{tables/five_system_extrapolation.tex}  % Tab 1b §10.1 (extrapolation sub-table)
     \\input{tables/defi_main.tex}        % Tab 2  §10.2
     \\input{tables/defi_tiers.tex}       % Tab 3  §10.3
     \\input{tables/runtime.tex}          % Tab 4  §10.4

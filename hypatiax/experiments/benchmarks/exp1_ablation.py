@@ -1484,8 +1484,8 @@ def make_latex_table(all_results: dict) -> str:
         r"\item Near/Med/Far $R^2$ at 1.2$\times$, canonical, and 5$\times$ training range.",
         r"\item[$\dag$] Wall-clock cap triggered; excluded from timing averages.",
         r"\item[$\ddag$] Arrhenius failure mode: correct LLM prior constrained PySR search "
-        r"space → premature convergence. See \S\ref{sec:arrhenius}.",
-        + f" All runs: populations={POPULATIONS}, seed={SEED}, engine v5.1.",
+        r"space → premature convergence. See \S\ref{sec:arrhenius}."
+        f" All runs: populations={POPULATIONS}, seed={SEED}, engine v5.1.",
         r"\end{tablenotes}",
         r"\end{table*}",
     ]

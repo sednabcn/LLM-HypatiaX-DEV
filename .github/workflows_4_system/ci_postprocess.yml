@@ -110,12 +110,10 @@ on:
           - exp1_pca
           - exp1b_pca
           - exp1_ablation
-          - exp1_five
           - exp2_feynman
           - exp2_feynman_extrap
           - exp2_feynman_pca
           - exp2
-          - exp2_five
           - exp3
           - exp3b
           - suppA
@@ -236,8 +234,6 @@ jobs:
                 *noise-noiseless/15_pca/*)          echo exp1b_pca;   return ;;
                 *noise-noiseless/15/*)              echo exp1b;       return ;;
                 *ablation/exp1_ablation/*)          echo exp1_ablation; return ;;
-                *five_systems/exp1_five/*)          echo exp1_five;    return ;;
-                *five_systems/exp2_five/*)          echo exp2_five;    return ;;
                 *extrapolation/multi_seed/*)        echo exp3b;       return ;;
                 *extrapolation/*)                   echo exp3;        return ;;
                 *comparison_results/extrapolation/*) echo extrap;     return ;;
@@ -294,14 +290,12 @@ jobs:
               'exp1_pca':            'comparison_results/noise-noiseless/noiseless/defi_pca',
               'exp1b_pca':           'comparison_results/noise-noiseless/15_pca',
               'exp1_ablation':       'ablation/exp1_ablation',
-              'exp1_five':           'five_systems/exp1_five',
               'exp2_feynman':        'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
               'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
               'exp2_feyman_pca':     'comparison_results/feynman-tests/exp2_pca_4060',    # typo alias (missing 'n')
               'exp2_feyman_extrap':  'comparison_results/feynman-tests/exp2_extrap',      # typo alias (missing 'n')
               'exp2':                'comparison_results/feynman-tests/exp2_multi',
-              'exp2_five':           'five_systems/exp2_five',
               'exp3':                'extrapolation',
               'exp3b':               'extrapolation/multi_seed',
               'suppA':               'hybrid_pysr/defi',
@@ -487,14 +481,6 @@ jobs:
           FIG_ALLOWLIST[exp1]="fig1_seed_sweep fig09_r2_heatmap_regimes fig18_r2_heatmap_improved"
           FIG_ALLOWLIST[exp1b]="fig1_seed_sweep fig_seed_sweep_comparison fig_paper_*"
           FIG_ALLOWLIST[exp1_ablation]="fig_ablation_*"
-          # FIG_ALLOWLIST[exp1_five]: no entry — exp1_five_system.py does not
-          # generate any figures (only JSON + .tex tables). Leave unset so
-          # the purge step's "no allowlist defined" warning fires loudly if
-          # someone later adds a figure generator without updating this list,
-          # rather than silently allowing/purging under a guessed pattern.
-          # FIG_ALLOWLIST[exp2_five]: same — no figure generator exists for
-          # the 5-method-filtered run_comparative_suite_benchmark_v2.py path
-          # distinct from exp2's own (also currently unconfirmed) figures.
           FIG_ALLOWLIST[exp1_pca]="fig_pca_* fig1_pca_*"
           FIG_ALLOWLIST[exp1b_pca]="fig_pca_* fig1b_pca_*"
           FIG_ALLOWLIST[exp2_feynman]="fig_feynman_* fig2_* fig_benchmark_*"

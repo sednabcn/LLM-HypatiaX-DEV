@@ -62,14 +62,12 @@ on:
           - all
           - exp1
           - exp1b
-          - exp1_five
           - exp1_pca
           - exp1b_pca
           - exp2_feynman
           - exp2_feynman_extrap
           - exp2_feynman_pca
           - exp2
-          - exp2_five
           - exp3
           - exp3b
           - suppA
@@ -149,16 +147,8 @@ jobs:
               # missing from this pipeline's ALL/SUBDIR/RESULT_GLOBS/REGISTRY —
               # "experiment: all" silently skipped both. Added here, immediately
               # after their non-PCA counterparts.
-              # NOTE: this pipeline has never covered exp1_ablation (absent from
-              # ALL/SUBDIR/RESULT_GLOBS/REGISTRY here even though ci_pipeline_repro.yml
-              # / ci_pipeline_validate.yml include it) — exp1_five is added below
-              # despite its prerequisite protocol (exp1_ablation) still being out of
-              # scope for this particular pipeline file; flagging in case that gap
-              # should also be closed.
               "exp1", "exp1_pca", "exp1b", "exp1b_pca",
-              "exp1_five",
               "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca", "exp2",
-              "exp2_five",
               "exp3", "exp3b", "suppA", "suppB", "suppB_sc",
               "hybrid_all_domains", "instability", "extrap",
           ]
@@ -711,14 +701,12 @@ jobs:
               "exp1_pca":           "comparison_results/noise-noiseless/noiseless/defi_pca",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
-              "exp1_five":          "five_systems/exp1_five",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
               # FIX 4: exp2_feynman_extrap missing from check SUBDIR — caused
               # the check job to report it as MISSING even when results were present.
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
-              "exp2_five":          "five_systems/exp2_five",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
               "suppA":              "hybrid_pysr/defi",
@@ -734,15 +722,11 @@ jobs:
               "exp1_pca":           ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
               "exp1b_pca":          ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
-              "exp1_five":          ["exp1_five_results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
               # FIX 4 (continued): exp2_feynman_extrap missing from RESULT_GLOBS.
               "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json", "protocol_core_*.json"],
               "exp2_feynman_pca":   ["protocol_core_*.json", "benchmark_results.json", "exp2_pca_comparison.tex"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
-              # exp2_five: same script/output format as exp2 (run_comparative_suite_benchmark_v2.py
-              # with --methods 1 2 4 5 6), just a narrower method filter and its own output dir.
-              "exp2_five":          ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "exp3b":              ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json", "extrapolation_73cases*.json", "*73cases*.json"],
@@ -879,12 +863,10 @@ jobs:
               "exp1_pca":           ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
               "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
               "exp1b_pca":          ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
-              "exp1_five":          ["exp1_five_results*.json"],
               "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
               "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json", "protocol_core_*.json"],
               "exp2_feynman_pca":   ["protocol_core_*.json", "benchmark_results.json", "exp2_pca_comparison.tex"],
               "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
-              "exp2_five":          ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "exp3b":              ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
               "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json", "extrapolation_73cases*.json", "*73cases*.json"],
@@ -900,16 +882,12 @@ jobs:
               "exp1_pca":           ["hypatiax_defi_benchmark_v3_results"],
               "exp1b":              ["hypatiax_defi_benchmark_v3_results"],
               "exp1b_pca":          ["hypatiax_defi_benchmark_v3_results"],
-              "exp1_five":          ["exp1_five_results"],
               "exp2_feynman":       FEYNMAN_DOMAINS,
               "exp2_feynman_extrap": FEYNMAN_DOMAINS,
               # FIX: exp2_feynman_pca missing — REGISTRY lookup returned []
               # so completion always showed 0/0 for this experiment.
               "exp2_feynman_pca":   FEYNMAN_DOMAINS,
               "exp2":               EXP2_DOMAINS,
-              # exp2_five shards by the same EXP2_DOMAINS loop as exp2 (run_all.sh
-              # STEP 6b loops the identical 10-domain list with --methods 1 2 4 5 6).
-              "exp2_five":          EXP2_DOMAINS,
               "exp3":               ["nguyen12_seed42"],
               "exp3b":              [f"nguyen12_seed{s}" for s in SEEDS if s != "42"],
               "suppA":              ["73cases_enhanced"],
@@ -1108,14 +1086,12 @@ jobs:
               "exp1_pca":           "comparison_results/noise-noiseless/noiseless/defi_pca",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
-              "exp1_five":          "five_systems/exp1_five",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               # FIX: exp2_feynman_pca was missing — qualify iterated only over
               # SUBDIR keys so it was silently skipped on every run.
               "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
-              "exp2_five":          "five_systems/exp2_five",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
               "suppA":              "hybrid_pysr/defi",
