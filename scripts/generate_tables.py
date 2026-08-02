@@ -7,13 +7,6 @@ These are \\input{}-ed by the main paper and supplements so NO manual numbers
 appear in the LaTeX source.
 
 Tables generated  (main paper)
-  five_system.tex     tab:five_system    §10.1   ← results/ablation/exp1_ablation/
-                                                    (UNCONFIRMED as real source — repo-wide
-                                                    grep for "five_system"/"system_comparison"
-                                                    found NO matches, so as of now this table
-                                                    is always paper-verified fallback data,
-                                                    not live results. See Issue 4 follow-up
-                                                    comment below, ~line 234.)
   defi_main.tex       tab:main_results   §10.2   ← results/defi/
   defi_tiers.tex      tab:difficulty     §10.3   ← results/defi/
   runtime.tex         tab:runtime        §10.4   ← results/defi/
@@ -27,6 +20,26 @@ Tables generated  (main paper)
   repro_macros.tex    \\newcommand macros for inline numbers
 
 Tables generated  (Supplement B — suppB / STEP 10 outputs)
+  five_system.tex             tab:five_systems_full     App    ← five_systems/exp1_five/
+                                                                  exp1_five_results.json
+                                                                  (falls back to exp2/exp2_extrap
+                                                                  Feynman aggregation if absent —
+                                                                  see _load_five_system_rows_real())
+  five_system_performance.tex tab:five_systems_perf     App    ← exp1_five_performance.json
+  five_system_extrapolation.tex tab:five_systems_extrap App    ← exp1_five_extrapolation.json
+  five_system_stat_tests.tex  app:statistical_tests     App D  ← exp1_five_results.json
+                                                                  (Mann-Whitney U / Cohen's d /
+                                                                  Glass's Delta — see Issue 4,
+                                                                  04_ci_sd_incompatibility.tex)
+  five_system_exp2five.tex             tab:five_systems_full_exp2five      App
+                                        ← five_systems/exp2_five/ (own dedicated
+                                          reader — see gen_five_system_exp2five())
+  five_system_exp2five_performance.tex tab:five_systems_performance_exp2five App
+  five_system_exp2five_extrapolation.tex tab:five_systems_extrapolation_exp2five App
+  five_system_exp2five_stat_tests.tex  Appendix (exp2_five stats)          App
+                                        ← same Mann-Whitney/Cohen's-d pipeline as
+                                          five_system_stat_tests.tex, exp2_five's
+                                          own data, never mixed with exp1_five's
   suppb_r2_noise.tex      tab:r2_noise    §noise  ← noise_sweep_*.json
   suppb_rr_noise.tex      tab:rr_noise    §noise  ← noise_sweep_*.json
   suppb_time_noise.tex    tab:time_noise  §noise  ← noise_sweep_*.json
@@ -46,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -332,19 +346,98 @@ def gen_defi_main() -> None:
     Three methods: Pure LLM, Neural MLP, HypatiaX.
     Source JSON is expected to have a top-level key per method name (or a list under
     "methods") with the aggregate scalar stats. Falls back to paper-verified values.
+
+    FIX ISSUE-9 (masked-failure / uncorrected Mean R²):
+    The real on-disk file written by hypatiax_defi_benchmark_v3c.py /
+    hypatiax_defi_benchmark_pca.py is a flat LIST of 74 per-case dicts
+    (each `{"results": {"pure_llm": {...}, "neural_network": {...},
+    "hybrid": {"test_r2":, "decision":, "success":}}}`) — see those files'
+    _save_final(). It is NOT a dict with a "methods" list or named
+    "pure_llm"/"neural_mlp"/"hypatiax" sub-dicts (Shapes 1/2 below), which
+    no generator in this codebase actually produces. _extract_rows()
+    therefore always fell through to the hardcoded PAPER_ROWS fallback —
+    which is where the uncorrected Mean R² = +0.8721 in the paper actually
+    comes from, not from a live computation. Shape 3 below fixes the
+    parsing AND applies the decision-attribution correction described in
+    the abstract's masking-disclosure footnote: HypatiaX's own hybrid.test_r2
+    is not trusted at face value — for cases routed to "llm"/"nn"/
+    "nn_fallback", the actual independently-computed sub-method result
+    (pure_llm.test_r2 / neural_network.test_r2) is used instead, since that
+    is the sub-method the routing decision actually names.
     """
     # run_all.sh (exp1) writes hypatiax_defi_benchmark_v3*results*.json to RESULTS_DIR root.
     # Also check legacy defi/ subdir for backwards compatibility.
     data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
                           extra_subdirs=["defi"])
+    # NOTE: these are the pre-Issue-9 UNCORRECTED paper values — kept only as
+    # an absolute last resort when no result file can be parsed at all, and
+    # NEVER silently: see the ::warning:: below whenever this path is hit.
+    # Do not treat this as a source of truth for Mean R² / success rates.
     PAPER_ROWS = [
         ("Pure LLM",   1.0000, -0.7571, 62.2, 62.2, 6),
         ("Neural MLP", -0.4675, -0.9482,  5.4, 12.2, 0),
-        ("HypatiaX",   1.0000, +0.8721, 89.2, 89.2, 0),
+        ("HypatiaX",   1.0000, +0.8721, 90.5, 90.5, 0),
     ]
+
+    # decision -> which independently-computed sub-method result actually
+    # backs that routing decision. "ensemble" has no separate baseline arm
+    # (it's unique to the hybrid pipeline), so it keeps hybrid's own value.
+    _DECISION_TO_BASELINE = {
+        "llm":         "pure_llm",
+        "nn":          "neural_network",
+        "nn_fallback": "neural_network",
+    }
+
+    def _is_num(v) -> bool:
+        return isinstance(v, (int, float)) and v == v  # excludes NaN
+
+    def _corrected_hybrid_r2(case_results: dict) -> float:
+        """Cross-check hybrid's routing decision against the actual
+        sub-method it names, instead of trusting hybrid's own self-reported
+        test_r2 (Issue 9 — this is what masks e.g. pure_llm.test_r2 ≈
+        -141,000 behind a hybrid.test_r2 ≈ 1.0 for the same case)."""
+        hybrid   = case_results.get("hybrid", {}) or {}
+        decision = hybrid.get("decision", "")
+        baseline_key = _DECISION_TO_BASELINE.get(decision)
+        if baseline_key:
+            baseline_r2 = (case_results.get(baseline_key, {}) or {}).get("test_r2")
+            if _is_num(baseline_r2):
+                return float(baseline_r2)
+        return hybrid.get("test_r2", float("nan"))
+
+    def _clip(v):
+        return max(-10.0, min(1.0, v)) if _is_num(v) else float("nan")
+
+    def _method_stats(r2_values: list) -> tuple:
+        """(median_r2, mean_r2) clipped to [-10,1], pct>0.99, pct>0.9 (raw),
+        n_catastrophic (raw R² < -10), over a fixed denominator of 74."""
+        raw = [v for v in r2_values if _is_num(v)]
+        n   = len(r2_values) or 1   # fixed denominator, matches table caption
+        clipped = [_clip(v) for v in raw]
+        median_r2 = statistics.median(clipped) if clipped else float("nan")
+        mean_r2   = (sum(clipped) / len(clipped)) if clipped else float("nan")
+        pct99 = 100.0 * sum(1 for v in raw if v > 0.99) / n
+        pct90 = 100.0 * sum(1 for v in raw if v > 0.9)  / n
+        n_cat = sum(1 for v in raw if v < -10)
+        return median_r2, mean_r2, pct99, pct90, n_cat
 
     def _extract_rows(d) -> list[tuple]:
         """Try to read 3-method rows from various JSON shapes."""
+        # Shape 3: the ACTUAL on-disk format — flat list of per-case dicts.
+        if isinstance(d, list) and d and isinstance(d[0], dict) and "results" in d[0]:
+            pure_llm_r2, nn_r2, hybrid_r2 = [], [], []
+            for rec in d:
+                cr = rec.get("results", {}) or {}
+                pure_llm_r2.append((cr.get("pure_llm", {}) or {}).get("test_r2", float("nan")))
+                nn_r2.append((cr.get("neural_network", {}) or {}).get("test_r2", float("nan")))
+                hybrid_r2.append(_corrected_hybrid_r2(cr))
+            rows = []
+            for name, values in [("Pure LLM", pure_llm_r2), ("Neural MLP", nn_r2),
+                                  ("HypatiaX", hybrid_r2)]:
+                med, mean, p99, p90, ncat = _method_stats(values)
+                rows.append((name, med, mean, p99, p90, ncat))
+            return rows
+
         if not isinstance(d, dict):
             return []
         rows = []
@@ -380,7 +473,12 @@ def gen_defi_main() -> None:
 
     rows = _extract_rows(data) if data else []
     if not rows:
-        rows = PAPER_ROWS   # use verified paper values
+        print("  ::warning:: gen_defi_main: could not parse live results "
+              f"(src={src}) — falling back to hardcoded PAPER_ROWS. These "
+              "are the UNCORRECTED pre-Issue-9 paper values and do NOT "
+              "reflect the decision-attribution fix; do not cite Mean R² "
+              "from this table run without checking this warning.")
+        rows = PAPER_ROWS   # last-resort fallback — see warning above
 
     def _r2(v): return f"{v:.4f}" if isinstance(v, float) and not (v != v) else "---"
     def _pct(v): return f"{v:.1f}" if isinstance(v, float) and not (v != v) else "---"
@@ -391,7 +489,8 @@ def gen_defi_main() -> None:
 \centering
 \caption{Aggregate extrapolation performance on the HypatiaX DeFi Benchmark
   (74 tasks). All $R^2$ values clipped to $[-10, 1]$; fixed denominator of 74.
-  Catastrophic: $R^2 < -10$.}
+  Catastrophic: $R^2 < -10$. HypatiaX's Mean $R^2$ and success-rate columns
+  are decision-attribution-corrected --- see \S\ref{sec:hybrid-attribution-bug}.}
 \label{tab:main_results}
 \begin{tabular}{lrrrrr}
 \toprule
@@ -916,6 +1015,112 @@ def _load_exp2_five_system_rows() -> tuple[list[tuple] | None, Path | None]:
     return rows, (train_src or extrap_src)
 
 
+# ── exp2_five's OWN dedicated output (five_systems/exp2_five/) ────────────────
+#
+# Previously exp2_five had no reader at all: gen_five_system()'s "secondary"
+# fallback (_load_exp2_five_system_rows() above) actually reads exp2's own
+# regular full run (comparison_results/feynman-tests/exp2_multi/exp2_extrap),
+# re-filtered down to the same 5 methods -- NOT five_systems/exp2_five/,
+# which is where exp2_five (run_comparative_suite_benchmark_v2.py
+# --methods 1 2 4 5 6) actually writes its results. So exp2_five's own run
+# was silently unused by every table.
+#
+# This is a genuinely separate data source from exp1_five, not another
+# fallback tier for the same table: different equation suite (10-domain
+# Feynman vs. Core-15 DeFi/physics), different sample sizes per method, same
+# script/JSON schema as exp2 (protocol_core_noiseless_*.json for train R²,
+# benchmark_results_extrap.json for extrapolation error), same method-name
+# keys, so _EXP2_METHOD_TO_ROW / _EXP2_DESIGN_FOCUS / _EXP2_ROW_ORDER are
+# reused as-is -- only the directory changes.
+def _load_exp2_five_own_raw(method_name: str) -> tuple[list[float], list[float], Path | None]:
+    """Raw per-record (train_r2 values, extrap_error_pct values, src) for one
+    JSON method-name key (an _EXP2_METHOD_TO_ROW key, e.g.
+    "HybridDiscoverySystem v50_2 (tools)"), read directly from exp2_five's
+    own output under five_systems/exp2_five/. Shared by both the aggregated
+    row loader below and the raw-sample loader gen_five_system_exp2five_stat_tests()
+    needs for its Mann-Whitney test."""
+    train_dirs = [base / "five_systems/exp2_five" for base in (PATCHED, RESULTS)]
+    latest_test: dict[tuple, dict] = {}
+    train_src: Path | None = None
+    for d in train_dirs:
+        if not d.exists():
+            continue
+        for f in sorted(_filtered_glob(d, "protocol_core_noiseless_*.json")):
+            try:
+                data = json.loads(f.read_text())
+            except Exception:
+                continue
+            train_src = train_src or f
+            for rec in data.get("tests", []):
+                key = (rec.get("domain"), rec.get("description"))
+                latest_test[key] = rec
+
+    r2_vals: list[float] = []
+    for rec in latest_test.values():
+        mres = rec.get("results", {}).get(method_name)
+        if not isinstance(mres, dict) or not mres.get("success"):
+            continue
+        v = _finite_or_none(mres.get("r2"))
+        if v is not None:
+            r2_vals.append(v)
+
+    extrap_dirs = [base / "five_systems/exp2_five" for base in (PATCHED, RESULTS)]
+    err_vals: list[float] = []
+    extrap_src: Path | None = None
+    for d in extrap_dirs:
+        if not d.exists() or extrap_src is not None:
+            continue
+        canonical = d / "benchmark_results_extrap.json"
+        if not canonical.exists():
+            continue
+        try:
+            data = json.loads(canonical.read_text())
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        extrap_src = canonical
+        for rec in data:
+            if rec.get("method") != method_name:
+                continue
+            v = _finite_or_none(rec.get("extrap_error_pct"))
+            if v is not None:
+                err_vals.append(v)
+
+    return r2_vals, err_vals, (train_src or extrap_src)
+
+
+def _load_exp2_five_own_rows() -> tuple[list[tuple] | None, Path | None]:
+    """Aggregated (median, clipped-mean, tr_mean, tr_std) rows from
+    exp2_five's OWN output -- same shape _load_exp2_five_system_rows()
+    returns, but sourced from five_systems/exp2_five/ instead of exp2's
+    regular directory. See module comment above for why these two loaders
+    are deliberately kept separate rather than merged."""
+    rows_by_name: dict[str, tuple] = {}
+    src: Path | None = None
+    for mname, row_name in _EXP2_METHOD_TO_ROW.items():
+        tr_vals, err_vals, this_src = _load_exp2_five_own_raw(mname)
+        src = src or this_src
+        tr_mean = sum(tr_vals) / len(tr_vals) if tr_vals else None
+        tr_std = None
+        if tr_mean is not None and len(tr_vals) >= 2:
+            tr_std = (sum((x - tr_mean) ** 2 for x in tr_vals) / (len(tr_vals) - 1)) ** 0.5
+        median, clipped_mean = _robust_median_clipped_mean(err_vals)
+        rows_by_name[row_name] = (
+            row_name,
+            len(err_vals),
+            f"{median:.1f}" if median is not None else "---",
+            f"{clipped_mean:.1f}" if clipped_mean is not None else "---",
+            f"{tr_mean:.3f}" if tr_mean is not None else "---",
+            f"{tr_std:.4f}" if tr_std is not None else "---",
+            _EXP2_DESIGN_FOCUS[row_name],
+        )
+    rows = [rows_by_name[name] for name in _EXP2_ROW_ORDER if name in rows_by_name]
+    if len(rows) < 2 or src is None:
+        return None, None
+    return rows, src
+
+
 # ── exp1_five_system.py (primary source, added once that experiment existed) ──
 #
 # Reads exp1_five_results.json directly: {eq_idx: {"name":..., "domain":...,
@@ -987,6 +1192,523 @@ def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
     return (rows, src) if len(rows) >= 2 else (None, None)
 
 
+# ── Raw per-equation extrapolation errors + Mann-Whitney/effect-size stats ────
+#
+# Added to close Issue 4 ("CI/SD Statistical Incompatibility", see
+# 04_ci_sd_incompatibility.tex): Source A (jmlr_paper_main.tex, Table 1 /
+# tab:five_systems_full) prints a blank Std column, while Source B
+# (supp_benchmark_report.tex, app:statistical_tests) separately hand-types a
+# Mann-Whitney U test, descriptive stats, and Cohen's d/Glass's Delta for the
+# Hybrid-v50_2-vs-Neural-Network extrapolation comparison -- with no generator
+# anywhere in this file computing those numbers from exp1_five_results.json,
+# so the two .tex sources could (and did) drift apart. _load_exp1_five_rows()
+# above only returns aggregated (median, clipped-mean, std) per method, which
+# is enough for Table 1 but NOT for a Mann-Whitney test, which needs the raw
+# per-equation sample -- hence this separate loader.
+def _load_exp1_five_raw_extrap_errors(method_name: str) -> tuple[list[float], Path | None]:
+    """Raw per-equation extrapolation-error-percent values for one method_name
+    (e.g. _EXP2_ROW_ORDER[0] == "Hybrid v50\\_2"), read directly from
+    exp1_five_results.json. Same file/parsing convention and same
+    (extrap_rmse_far / train_rmse) * 100 error definition as
+    _load_exp1_five_rows(), just returning the un-aggregated list."""
+    src = None
+    for base in (PATCHED, RESULTS):
+        candidate = base / "five_systems/exp1_five/exp1_five_results.json"
+        if candidate.exists():
+            src = candidate
+            break
+    if src is None:
+        return [], None
+    try:
+        data = json.loads(src.read_text())
+    except Exception:
+        return [], None
+    if not isinstance(data, dict):
+        return [], None
+
+    errs: list[float] = []
+    for eq_entry in data.values():
+        if not isinstance(eq_entry, dict):
+            continue
+        res = eq_entry.get(method_name)
+        if not isinstance(res, dict) or not res.get("success"):
+            continue
+        train_rmse = _finite_or_none(res.get("train_rmse"))
+        far_rmse   = _finite_or_none(res.get("extrap_rmse_far"))
+        if train_rmse and train_rmse > 0 and far_rmse is not None:
+            errs.append((far_rmse / train_rmse) * 100.0)
+    return errs, src
+
+
+def _norm_cdf(z: float) -> float:
+    import math
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _mann_whitney_one_tailed(sample_a: list[float], sample_b: list[float]) -> dict | None:
+    """One-tailed Mann-Whitney U test, H1: sample_a is stochastically LESS
+    than sample_b.
+
+    Implemented from scratch (rank-sum -> U -> normal approximation with tie
+    correction and continuity correction), not via scipy, to match this
+    file's existing stdlib-only convention (see the local
+    `import statistics as _st` pattern used elsewhere instead of numpy/scipy
+    -- see the module's import block). This is the standard Mann & Whitney
+    (1947) asymptotic normal approximation, appropriate for n >= ~8 per
+    group; it will not bit-for-bit match a previously hand-computed exact
+    permutation p-value, which is expected -- see gen_five_system_stat_tests()
+    docstring for why that's the point, not a bug.
+    """
+    n1, n2 = len(sample_a), len(sample_b)
+    if n1 == 0 or n2 == 0:
+        return None
+    combined = sorted([(v, 0) for v in sample_a] + [(v, 1) for v in sample_b])
+    ranks = [0.0] * len(combined)
+    i = 0
+    while i < len(combined):
+        j = i
+        while j < len(combined) and combined[j][0] == combined[i][0]:
+            j += 1
+        avg_rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            ranks[k] = avg_rank
+        i = j
+    R_a = sum(r for (v, grp), r in zip(combined, ranks) if grp == 0)
+    U_a = R_a - n1 * (n1 + 1) / 2.0
+    U_b = n1 * n2 - U_a
+    N = n1 + n2
+    from collections import Counter
+    tie_counts = Counter(v for v, _ in combined)
+    tie_term = sum(t ** 3 - t for t in tie_counts.values())
+    sigma_U = (((n1 * n2 / 12.0) * ((N + 1) - tie_term / (N * (N - 1)))) ** 0.5) if N > 1 else 0.0
+    mu_U = n1 * n2 / 2.0
+    if sigma_U == 0:
+        return {"U": U_a, "U_other": U_b, "z": float("nan"), "p_one_tailed": float("nan"),
+                "n1": n1, "n2": n2}
+    # Continuity correction toward mu_U; H1 expects U_a to be SMALL (sample_a
+    # ranks low), so the one-tailed p we want is the left-tail probability.
+    z = (U_a - mu_U + 0.5) / sigma_U
+    return {"U": U_a, "U_other": U_b, "z": z, "p_one_tailed": _norm_cdf(z),
+            "n1": n1, "n2": n2, "sigma_U": sigma_U, "mu_U": mu_U}
+
+
+def _cohens_d_pooled(mean_a, mean_b, sd_a, sd_b) -> float | None:
+    try:
+        s_pooled = ((sd_a ** 2 + sd_b ** 2) / 2.0) ** 0.5
+        if s_pooled == 0:
+            return None
+        return (mean_b - mean_a) / s_pooled
+    except TypeError:
+        return None
+
+
+def _glass_delta(mean_a, mean_b, sd_control) -> float | None:
+    try:
+        if not sd_control:
+            return None
+        return (mean_b - mean_a) / sd_control
+    except TypeError:
+        return None
+
+
+def gen_five_system_stat_tests() -> None:
+    """
+    Appendix D -- Statistical Test Details (app:statistical_tests): Mann-
+    Whitney U test + effect size (Cohen's d, Glass's Delta) comparing Hybrid
+    v50_2 vs. Neural Network extrapolation error at the medium (2x training
+    range) regime -- the exact comparison Source B (supp_benchmark_report.tex,
+    app:statistical_tests) previously reported ONLY as hand-typed numbers,
+    with no generator anywhere in this file and no traceable link back to
+    exp1_five_results.json. See 04_ci_sd_incompatibility.tex ("Issue 4: CI/SD
+    Statistical Incompatibility", category Open) for the discrepancy this
+    closes: every number below is now computed live from the same
+    exp1_five_results.json that feeds gen_five_system() (Table 1), so the two
+    can no longer silently drift apart the way they already had.
+
+    NOTE: the Mann-Whitney p-value is the standard normal approximation (see
+    _mann_whitney_one_tailed docstring), not an exact permutation test, so it
+    will not necessarily match a previously hand-computed p-value exactly --
+    that's expected: this number is reproducible and re-derivable from data
+    going forward, rather than a fixed constant that can drift from the data
+    silently.
+    """
+    hybrid_key = _EXP2_ROW_ORDER[0]   # "Hybrid v50\_2"
+    nn_key = _EXP2_ROW_ORDER[1]       # "Neural Network"
+    errs_hybrid, src = _load_exp1_five_raw_extrap_errors(hybrid_key)
+    errs_nn, src2 = _load_exp1_five_raw_extrap_errors(nn_key)
+    src = src or src2
+
+    no_data = not errs_hybrid or not errs_nn
+    if no_data:
+        FALLBACK_TABLES.append(
+            "five_system_stat_tests.tex (app:statistical_tests) -- "
+            "exp1_five_results.json not found, or missing a 'Hybrid v50_2' "
+            "or 'Neural Network' row with >=1 successful finite "
+            "extrapolation-error measurement. No hardcoded fallback exists; "
+            "wrote a NO DATA placeholder instead."
+        )
+        tex = header_comment(src)
+        tex += (
+            "% NO DATA -- run exp1_five_system.py; needs both a\n"
+            "% 'Hybrid v50\\_2' and a 'Neural Network' row with >=1 successful,\n"
+            "% finite extrapolation-error measurement each.\n"
+        )
+        write_table("five_system_stat_tests.tex", tex)
+        return
+
+    tex = _render_stat_test_tex(
+        errs_hybrid, errs_nn, "Hybrid v50\\_2", "Neural Network", src,
+        "Appendix D -- Statistical Test Details (app:statistical_tests). "
+        "Auto-derived from exp1_five_results.json -- see "
+        "gen_five_system_stat_tests() docstring and 04_ci_sd_incompatibility.tex "
+        "(Issue 4) for why this generator exists.",
+    )
+    tex += f"\n% Source: exp1_five_results.json ({src})\n"
+    write_table("five_system_stat_tests.tex", tex)
+
+
+def _render_stat_test_tex(errs_a: list[float], errs_b: list[float], label_a: str,
+                           label_b: str, src, source_note: str) -> str:
+    """Shared Mann-Whitney U + Cohen's d / Glass's Delta LaTeX renderer, used
+    by both gen_five_system_stat_tests() (exp1_five, Core-15) and
+    gen_five_system_exp2five_stat_tests() (exp2_five, Feynman) so the two
+    genuinely-separate data sources produce structurally identical Appendix
+    output without duplicating this ~60-line formatting block. label_a is
+    the "should be better" group (H1: label_a < label_b)."""
+    import statistics as _st
+    n1, n2 = len(errs_a), len(errs_b)
+    mean_a, mean_b = _st.mean(errs_a), _st.mean(errs_b)
+    med_a, med_b = _st.median(errs_a), _st.median(errs_b)
+    sd_a = _st.stdev(errs_a) if n1 >= 2 else 0.0
+    sd_b = _st.stdev(errs_b) if n2 >= 2 else 0.0
+    range_a = (min(errs_a), max(errs_a))
+    range_b = (min(errs_b), max(errs_b))
+
+    mw = _mann_whitney_one_tailed(errs_a, errs_b)
+    d_pooled = _cohens_d_pooled(mean_a, mean_b, sd_a, sd_b)
+    d_cons = (mean_b - mean_a) / sd_b if sd_b else None
+    glass_d = _glass_delta(mean_a, mean_b, sd_b)
+
+    def _f(v, nd=1):
+        return f"{v:.{nd}f}" if isinstance(v, (int, float)) and v == v else "---"
+
+    tex = header_comment(src)
+    tex += (
+        f"% {source_note}\n"
+        "% Auto-derived -- see _render_stat_test_tex() in generate_tables.py\n\n"
+    )
+    tex += r"""\subsection{Mann-Whitney U Test for Extrapolation Performance}
+
+For medium extrapolation regime (2$\times$ training range):
+
+\paragraph{Test Setup:}
+\begin{itemize}
+"""
+    tex += f"\\item \\textbf{{Sample sizes}}: $n_{{\\text{{{label_a}}}}} = {n1}$, $n_{{\\text{{{label_b}}}}} = {n2}$\n"
+    tex += (
+        f"\\item \\textbf{{Null hypothesis}}: $H_0: E_{{\\text{{{label_a}}}}} \\geq E_{{\\text{{{label_b}}}}}$ "
+        f"({label_a} is not better)\n"
+        f"\\item \\textbf{{Alternative hypothesis}}: $H_1: E_{{\\text{{{label_a}}}}} < E_{{\\text{{{label_b}}}}}$ "
+        f"({label_a} is better)\n"
+        r"\item \textbf{Significance level}: $\alpha = 0.05$ (one-tailed test)" "\n"
+        "\\end{itemize}\n\n\\paragraph{Descriptive Statistics:}\n\\begin{itemize}\n"
+    )
+    tex += (f"\\item \\textbf{{{label_a}}}: Mean = {_f(mean_a)}\\%, "
+            f"Median = {_f(med_a)}\\%, SD = {_f(sd_a)}\\%, "
+            f"Range = [{_f(range_a[0])}, {_f(range_a[1])}]\n")
+    tex += (f"\\item \\textbf{{{label_b}}}: Mean = {_f(mean_b)}\\%, "
+            f"Median = {_f(med_b)}\\%, SD = {_f(sd_b)}\\%, "
+            f"Range = [{_f(range_b[0])}, {_f(range_b[1])}]\n")
+    tex += "\\end{itemize}\n\n\\paragraph{Test Results:}\n\\begin{itemize}\n"
+
+    if mw and mw["p_one_tailed"] == mw["p_one_tailed"]:
+        tex += f"\\item \\textbf{{Test statistic}}: $U = {_f(mw['U'], 1)}$\n"
+        tex += (f"\\item \\textbf{{P-value}}: $p = {mw['p_one_tailed']:.2e}$ "
+                "(one-tailed, normal approximation with tie correction -- "
+                "see \\texttt{\\_render\\_stat\\_test\\_tex()} in "
+                "\\texttt{generate\\_tables.py})\n")
+        rejects = mw["p_one_tailed"] < 0.05
+        verdict = "Reject" if rejects else "Fail to reject"
+        cmp_sym = "<" if rejects else r"\geq"
+        tex += (f"\\item \\textbf{{Conclusion}}: $p {cmp_sym} 0.05 "
+                f"\\Rightarrow$ {verdict} $H_0$ at $\\alpha = 0.05$\n")
+        if mw["U"] == 0:
+            tex += (
+                r"\item \textbf{Interpretation}: Complete rank separation "
+                f"--- on every tested case, {label_a} extrapolation error is "
+                f"strictly less than {label_b} error "
+                f"($U = 0$, $p = {mw['p_one_tailed']:.2e}$).\n"
+            )
+    else:
+        tex += (
+            "\\item Mann-Whitney statistic unavailable "
+            "(degenerate sample -- zero variance in the combined pool).\n"
+        )
+    tex += "\\end{itemize}\n\n"
+
+    tex += r"\subsection{Effect Size Calculation (Cohen's $d$)}" + "\n\n\\begin{align}\n"
+    tex += (f"\\mu_{{\\text{{{label_b}}}}} &= {_f(mean_b)}\\%, \\quad "
+            f"\\sigma_{{\\text{{{label_b}}}}} = {_f(sd_b)}\\% \\\\\n")
+    tex += (f"\\mu_{{\\text{{{label_a}}}}} &= {_f(mean_a)}\\%, \\quad "
+            f"\\sigma_{{\\text{{{label_a}}}}} = {_f(sd_a)}\\% \\\\\n")
+    if d_pooled is not None:
+        s_pooled = ((sd_a ** 2 + sd_b ** 2) / 2.0) ** 0.5
+        tex += (r"s_{\text{pooled}} &= \sqrt{\frac{\sigma_{\text{" + label_b + r"}}^2 + "
+                r"\sigma_{\text{" + label_a + r"}}^2}{2}} = " f"{_f(s_pooled)}\\% \\\\\n")
+        tex += f"d &= \\frac{{{_f(mean_b)} - {_f(mean_a)}}}{{{_f(s_pooled)}}} = {_f(d_pooled, 2)}\n"
+    else:
+        tex += r"d &= \text{undefined (pooled SD = 0)}" + "\n"
+    tex += "\\end{align}\n\n"
+
+    tex += (
+        f"\\paragraph{{Conservative Estimate:}}\nUsing only {label_b} standard "
+        "deviation (most conservative approach):\n\\begin{equation}\n"
+    )
+    if d_cons is not None:
+        tex += f"d_{{\\text{{conservative}}}} = \\frac{{{_f(mean_b)}}}{{{_f(sd_b)}}} = {_f(d_cons, 2)}"
+        tex += " \\quad \\text{(interpret magnitude per Cohen 1988 conventions)}\n"
+    else:
+        tex += r"d_{\text{conservative}} = \text{undefined (" + label_b + " SD = 0)}" + "\n"
+    tex += "\\end{equation}\n\n"
+
+    tex += (
+        r"\paragraph{Alternative Calculation (Glass's $\Delta$):}"
+        f"\nUsing only the control group ({label_b}) standard deviation:\n\\begin{{equation}}\n"
+    )
+    if glass_d is not None:
+        tex += f"\\Delta = \\frac{{{_f(mean_b)} - {_f(mean_a)}}}{{{_f(sd_b)}}} = {_f(glass_d, 2)}\n"
+    else:
+        tex += r"\Delta = \text{undefined (" + label_b + " SD = 0)}" + "\n"
+    tex += "\\end{equation}\n"
+    return tex
+
+
+# ── exp2_five: genuinely separate five-system pipeline (Feynman suite) ────────
+#
+# Same four-table structure as exp1_five's pipeline above (main comparison +
+# performance sub-table + extrapolation sub-table + Mann-Whitney/effect-size
+# stat tests), but sourced ONLY from exp2_five's own output
+# (five_systems/exp2_five/ via _load_exp2_five_own_rows() /
+# _load_exp2_five_own_raw() above) -- never falls back to exp1_five or to
+# exp2's regular directory. This is intentionally a second, independent set
+# of tables on a different equation suite (10-domain Feynman, method subset
+# 1/2/4/5/6) and different sample sizes per method, not another tier of the
+# same table. See the "exp2_five: genuinely separate" comment on
+# _load_exp2_five_own_raw() for why a dedicated reader was needed at all.
+def gen_five_system_exp2five() -> None:
+    """
+    Five-System Comparison (exp2_five / Feynman suite): Extrapolation Error
+    vs. Interpolation R^2. Structurally the same table as gen_five_system()
+    (tab:five_systems_full, exp1_five/Core-15), but a separate table
+    (tab:five_systems_full_exp2five) built only from exp2_five's own data --
+    see the module comment above this function for why the two are kept
+    apart rather than merged/averaged.
+    """
+    rows, src = _load_exp2_five_own_rows()
+    no_data = rows is None
+    if no_data:
+        FALLBACK_TABLES.append(
+            "five_system_exp2five.tex (tab:five_systems_full_exp2five) -- "
+            "no usable rows under five_systems/exp2_five/ in patched/ or "
+            "results/. No fallback to exp1_five or exp2's own directory "
+            "(deliberate -- see module comment above gen_five_system_exp2five()). "
+            "Wrote a NO DATA placeholder instead."
+        )
+
+    tex = header_comment(src) + r"""
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison (exp2\_five, Feynman 10-domain suite,
+  methods 1/2/4/5/6): Extrapolation Error vs.\ Interpolation $R^2$.
+  Same 95\% CI convention as Table~\ref{tab:five_systems_full}
+  ($\mathrm{mean} \pm t_{0.975,\,n-1} \cdot \mathrm{std}/\sqrt{n}$); a
+  separate table from tab:five\_systems\_full -- different equation suite
+  and sample sizes, not another view of the same data.}
+\label{tab:five_systems_full_exp2five}
+\begin{tabular}{lrrrrrrr}
+\toprule
+\textbf{System} & \textbf{n}
+  & \textbf{Extrap.\ Median (\%)} & \textbf{Extrap.\ Mean (\%)}
+  & \textbf{Train $R^2$ Mean} & \textbf{Std} & \textbf{95\% CI (\%)}
+  & \textbf{Design Focus} \\
+\midrule
+"""
+    if no_data:
+        tex += r"\multicolumn{8}{c}{\textit{NO DATA -- run exp2\_five}} \\" + "\n"
+    else:
+        sep_done = False
+        for (name, n, emed, emean, tr2, std, focus) in rows:
+            if not sep_done and n == 0:
+                tex += r"\midrule" + "\n"
+                tex += r"\multicolumn{8}{l}{\textit{Systems Without Extrapolation Testing}} \\" + "\n"
+                sep_done = True
+            ci = _ci95(emean, std, n) or "---"
+            tex += f"{name} & {n} & {emed} & {emean} & {tr2} & {std} & {ci} & {focus} \\\\\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    if no_data:
+        tex += (
+            "% NO DATA -- five_systems/exp2_five/ produced no usable rows.\n"
+            "% Run exp2_five (run_comparative_suite_benchmark_v2.py\n"
+            "% --methods 1 2 4 5 6) and re-generate.\n"
+        )
+    else:
+        tex += f"% Source: exp2_five own output ({src})\n"
+    write_table("five_system_exp2five.tex", tex)
+
+
+def gen_five_system_exp2five_performance() -> None:
+    """
+    Performance sub-table for exp2_five's own data: Train R^2/RMSE per
+    method, computed directly from exp2_five's raw protocol_core_noiseless
+    records (unlike exp1_five_performance.json, exp2_five's script doesn't
+    pre-aggregate a summary file, so the n/mean/CI here are derived in this
+    function rather than just formatted from a pre-computed JSON).
+    """
+    rows_data: dict[str, dict] = {}
+    src = None
+    for mname, row_name in _EXP2_METHOD_TO_ROW.items():
+        tr_vals, _err_vals, this_src = _load_exp2_five_own_raw(mname)
+        src = src or this_src
+        n = len(tr_vals)
+        mean = sum(tr_vals) / n if n else None
+        std = None
+        if mean is not None and n >= 2:
+            std = (sum((x - mean) ** 2 for x in tr_vals) / (n - 1)) ** 0.5
+        rows_data[row_name] = {"n": n, "mean": mean, "std": std}
+
+    no_data = src is None
+    if no_data:
+        FALLBACK_TABLES.append(
+            "five_system_exp2five_performance.tex -- no usable rows under "
+            "five_systems/exp2_five/. Run exp2_five and re-generate."
+        )
+
+    tex = header_comment(src) + r"""
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison (exp2\_five) -- Performance (Feynman suite,
+  interpolation). 95\% CI computed from raw per-domain train $R^2$ at
+  generation time.}
+\label{tab:five_systems_performance_exp2five}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{System} & \textbf{n} & \textbf{Train $R^2$ Mean}
+  & \textbf{Train $R^2$ 95\% CI} & \textbf{Design Focus} \\
+\midrule
+"""
+    if no_data:
+        tex += r"\multicolumn{5}{c}{\textit{NO DATA -- run exp2\_five}} \\" + "\n"
+    else:
+        for row_name in _EXP2_ROW_ORDER:
+            d = rows_data.get(row_name, {"n": 0, "mean": None, "std": None})
+            mean_s = f"{d['mean']:.3f}" if d["mean"] is not None else "---"
+            ci = _ci95(d["mean"], d["std"], d["n"]) if d["mean"] is not None else None
+            ci_s = ci or "---"
+            focus = _EXP2_DESIGN_FOCUS.get(row_name, "---")
+            tex += f"{row_name} & {d['n']} & {mean_s} & {ci_s} & {focus} \\\\\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("five_system_exp2five_performance.tex", tex)
+
+
+def gen_five_system_exp2five_extrapolation() -> None:
+    """
+    Extrapolation sub-table for exp2_five's own data: extrapolation error %
+    per method, derived directly from exp2_five's benchmark_results_extrap.json.
+    exp2_five's harness doesn't tag near/medium/far regimes the way
+    exp1_ablation.py's EXTRAP_REGIMES does, so this is a single aggregate
+    per method rather than three regime rows.
+    """
+    rows_data: dict[str, dict] = {}
+    src = None
+    for mname, row_name in _EXP2_METHOD_TO_ROW.items():
+        _tr_vals, err_vals, this_src = _load_exp2_five_own_raw(mname)
+        src = src or this_src
+        median, clipped_mean = _robust_median_clipped_mean(err_vals)
+        rows_data[row_name] = {"n": len(err_vals), "median": median, "mean": clipped_mean}
+
+    no_data = src is None
+    if no_data:
+        FALLBACK_TABLES.append(
+            "five_system_exp2five_extrapolation.tex -- no usable rows under "
+            "five_systems/exp2_five/. Run exp2_five and re-generate."
+        )
+
+    tex = header_comment(src) + r"""
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison (exp2\_five) -- Extrapolation (Feynman
+  suite). Median and IQR-clipped mean of per-domain extrapolation error \%.}
+\label{tab:five_systems_extrapolation_exp2five}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{System} & \textbf{n}
+  & \textbf{Extrap.\ Median (\%)} & \textbf{Extrap.\ Mean (\%)} \\
+\midrule
+"""
+    if no_data:
+        tex += r"\multicolumn{4}{c}{\textit{NO DATA -- run exp2\_five}} \\" + "\n"
+    else:
+        for row_name in _EXP2_ROW_ORDER:
+            d = rows_data.get(row_name, {"n": 0, "median": None, "mean": None})
+            med_s = f"{d['median']:.1f}" if d["median"] is not None else "---"
+            mean_s = f"{d['mean']:.1f}" if d["mean"] is not None else "---"
+            tex += f"{row_name} & {d['n']} & {med_s} & {mean_s} \\\\\n"
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("five_system_exp2five_extrapolation.tex", tex)
+
+
+def gen_five_system_exp2five_stat_tests() -> None:
+    """
+    Appendix statistical test details for exp2_five's own Hybrid-v50_2-vs-
+    Neural-Network extrapolation comparison -- structurally the same test as
+    gen_five_system_stat_tests() (exp1_five/Core-15), reusing
+    _render_stat_test_tex(), but computed from exp2_five's own raw data
+    (five_systems/exp2_five/), never mixed with exp1_five's numbers.
+    """
+    hybrid_json_key = "HybridDiscoverySystem v50_2 (tools)"
+    nn_json_key = "ImprovedNN (core)"
+    _tr_h, errs_hybrid, src = _load_exp2_five_own_raw(hybrid_json_key)
+    _tr_n, errs_nn, src2 = _load_exp2_five_own_raw(nn_json_key)
+    src = src or src2
+
+    no_data = not errs_hybrid or not errs_nn
+    if no_data:
+        FALLBACK_TABLES.append(
+            "five_system_exp2five_stat_tests.tex -- five_systems/exp2_five/ "
+            "not found or missing Hybrid v50_2 / Neural Network records with "
+            ">=1 successful finite extrapolation-error measurement each. "
+            "No fallback; wrote a NO DATA placeholder instead."
+        )
+        tex = header_comment(src)
+        tex += (
+            "% NO DATA -- run exp2_five; needs both Hybrid v50\\_2 and\n"
+            "% Neural Network records with >=1 successful, finite\n"
+            "% extrapolation-error measurement each.\n"
+        )
+        write_table("five_system_exp2five_stat_tests.tex", tex)
+        return
+
+    tex = _render_stat_test_tex(
+        errs_hybrid, errs_nn, "Hybrid v50\\_2", "Neural Network", src,
+        "Appendix -- Statistical Test Details (exp2_five / Feynman suite). "
+        "See gen_five_system_exp2five_stat_tests() and 04_ci_sd_incompatibility.tex.",
+    )
+    tex += f"\n% Source: exp2_five own output ({src})\n"
+    write_table("five_system_exp2five_stat_tests.tex", tex)
+
+
 def _load_exp1_five_subtable_json(filename: str) -> tuple[dict | None, Path | None]:
     for base in (PATCHED, RESULTS):
         candidate = base / "five_systems/exp1_five" / filename
@@ -996,6 +1718,31 @@ def _load_exp1_five_subtable_json(filename: str) -> tuple[dict | None, Path | No
             except Exception:
                 continue
     return None, None
+
+
+# PRE-EXISTING BUG FOUND WHILE TESTING gen_five_system_stat_tests(): this
+# function is referenced from gen_five_system(), gen_repro_macros(), and the
+# audit path (search for "_load_five_system_rows_real" across this file) as
+# "the combined loader", but was never actually defined anywhere -- every one
+# of those call sites raised NameError at runtime. Reconstructed here from
+# the two real sources documented at the top of this section
+# (_load_exp1_five_rows() primary / Core-15, _load_exp2_five_system_rows()
+# secondary / Feynman) and the "tier" string those call sites expect back
+# (used only for the "% Source:" comment / FALLBACK_TABLES bookkeeping).
+def _load_five_system_rows_real() -> tuple[list[tuple] | None, Path | None, str]:
+    """Combined five-system row loader: try exp1_five_system.py's own
+    Core-15 output first (the dedicated experiment for this table), then
+    fall back to the exp2/exp2_extrap Feynman-suite aggregation if exp1_five
+    has no usable data. Returns (rows, src, tier) where tier is
+    "exp1_five" or "exp2_five" identifying which source won, or
+    (None, None, "none") if neither has usable rows."""
+    rows, src = _load_exp1_five_rows()
+    if rows is not None:
+        return rows, src, "exp1_five"
+    rows, src = _load_exp2_five_system_rows()
+    if rows is not None:
+        return rows, src, "exp2_five"
+    return None, None, "none"
 
 
 def gen_five_system_performance() -> None:
@@ -1101,32 +1848,11 @@ def gen_five_system_extrapolation() -> None:
     write_table("five_system_extrapolation.tex", tex)
 
 
-
-    """Combined real-data loader for the five-system table/macros. Tries, in
-    order:
-      1. exp1_five_system.py's own output (Core-15 suite) — the dedicated
-         experiment for this table.
-      2. _load_exp2_five_system_rows() (exp2/exp2_extrap, Feynman suite) —
-         supplementary, kept as a second real source rather than removed,
-         since it's genuine live data on a different equation set.
-    Returns (rows, path, tier_label) or (None, None, None). There is
-    deliberately no further fallback after these two -- no hardcoded rows
-    exist in this file anymore. Callers must treat (None, None, None) as
-    "no live data available" and fail loudly (FALLBACK_TABLES), not
-    substitute anything."""
-    rows, path = _load_exp1_five_rows()
-    if rows:
-        return rows, path, "exp1_five (Core-15)"
-    rows, path = _load_exp2_five_system_rows()
-    if rows:
-        return rows, path, "exp2/exp2_extrap (Feynman suite)"
-    return None, None, None
-
-
 def gen_five_system() -> None:
     """
-    Tab 1 -- Five-System Comparison: Extrapolation Error vs. Interpolation R^2.
-    Matches Table 1 in Sec 10.1.
+    Five-System Comparison: Extrapolation Error vs. Interpolation R^2.
+    Matches tab:five_systems_full in supp_benchmark_report.tex (Appendix,
+    not the main paper — see 04_ci_sd_incompatibility.tex Source A).
 
     The 95% CI column is *derived* from each row's own n/mean/std at
     generation time (see _ci95), rather than being a separately hand-typed
@@ -2230,7 +2956,7 @@ def gen_repro_macros() -> None:
         "% Usage: \\repoVal{defiAccuracy}",
         f"% Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
     ]
-    if fs_fallback:
+    if fs_no_data:
         lines.append(
             "% ⚠ nnExtrap* macros below are FALLBACK DATA (Issue 4) — no "
             "five_system/system_comparison JSON located yet."
@@ -2839,39 +3565,75 @@ def gen_suppb_noiseless() -> None:
         write_table("suppb_noiseless.tex", "% suppB noiseless data not available\n")
         return
 
-    # Extract aggregate stats per method from "tests" list
-    tests = data.get("tests", [])
-    method_r2: dict[str, list[float]] = {}
-    for test in tests:
+    # Extract aggregate stats per method from "tests" list.
+    # FIX ISSUE-3 (EHSDeFi runtime 20.2s vs 841.4s): this loop previously
+    # only read res["r2"], silently discarding res["time_s"] even though
+    # every benchmark script in this codebase (see e.g.
+    # hypatiax_defi_benchmark_v3c.py's case_results[...]["time_s"]) stores
+    # per-test wall-clock time in that exact key, right next to "r2", in
+    # this exact per-method results dict shape. That means tab:overall's
+    # "Avg Runtime" column was never actually computed by this generator —
+    # whatever "20.2 s" appears in the paper did not come from this code
+    # path. This now computes it for real, from the same source JSON.
+    method_r2:   dict[str, list[float]] = {}
+    method_time: dict[str, list[float]] = {}
+    for test in data.get("tests", []):
         for mname, res in test.get("results", {}).items():
             r2 = res.get("r2")
             if isinstance(r2, (int, float)):
                 method_r2.setdefault(mname, []).append(float(r2))
+            t = res.get("time_s")
+            if isinstance(t, (int, float)):
+                method_time.setdefault(mname, []).append(float(t))
 
     import statistics as _st
+
+    # Cross-check note: EHSDeFi's own noise-sweep run reports σ=0% runtime
+    # separately (tab:time_noise, gen_suppb_time_noise() above). If both are
+    # available, surface the discrepancy directly instead of letting two
+    # contradictory numbers sit unremarked in two different tables (Issue 3).
+    _m3_key = _pick_method_key(method_r2, _M3_FRAG)
 
     tex = header_comment(src) + r"""
 \begin{table}[H]
 \centering
 \caption{Six-method aggregate performance, noiseless protocol
-  ($\sigma=0$, $n=200$, $R^2 \ge 0.999999$ threshold, 30 equations).}
+  ($\sigma=0$, $n=200$, $R^2 \ge 0.999999$ threshold, 30 equations).
+  Avg Runtime is the mean wall-clock time per equation, this run
+  (\texttt{protocol\_core\_noiseless\_*.json}); compare against
+  tab:time\_noise's $\sigma=0\%$ row, sourced from the separate
+  noise-sweep run --- see \S\ref{sec:ehsdefi-runtime} if they disagree.}
 \label{tab:overall}
 \small
 \begin{tabular}{lrrrr}
 \toprule
-\textbf{Method} & \textbf{Median $R^2$} & \textbf{Recovery Rate} & \textbf{n} \\
+\textbf{Method} & \textbf{Median $R^2$} & \textbf{Recovery Rate} & \textbf{Avg Runtime} & \textbf{n} \\
 \midrule
 """
     for mname, vals in sorted(method_r2.items()):
         med = _st.median(vals)
         rr  = sum(1 for v in vals if v >= 0.999999) / len(vals)
-        tex += f"{mname[:38]} & {med:.6f} & {rr*100:.1f}\\% & {len(vals)} \\\\\n"
+        tvals = method_time.get(mname, [])
+        t_str = f"{_st.mean(tvals):.1f}\\,s" if tvals else "---"
+        tex += f"{mname[:38]} & {med:.6f} & {rr*100:.1f}\\% & {t_str} & {len(vals)} \\\\\n"
 
     tex += r"""\bottomrule
 \end{tabular}
 \end{table}
 """
     write_table("suppb_noiseless.tex", tex)
+
+    # Print a direct numeric comparison to the console/CI log so the
+    # discrepancy (or its resolution) is visible without opening both .tex
+    # files — this is exactly the trace Issue 3 asks for.
+    if _m3_key and method_time.get(_m3_key):
+        m3_noiseless_avg = _st.mean(method_time[_m3_key])
+        print(f"  [tab:overall] {_m3_key} avg runtime (noiseless protocol run): "
+              f"{m3_noiseless_avg:.1f}s — compare tab:time_noise σ=0% row.")
+    elif _m3_key:
+        print(f"  ::warning:: [tab:overall] {_m3_key} found in noiseless protocol "
+              "JSON but no per-test 'time_s' field present — Avg Runtime column "
+              "will show '---' for this method until the source JSON includes it.")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -2922,8 +3684,8 @@ def main() -> None:
         # extra_csv) tuple shape used by every other row can't express
         # "check two separate real experiments in priority order", so this
         # can't just reuse load_best() the way the others do.
-        ("five-system JSON (Tab 1 — tab:five_systems_full; exp1_five "
-         "primary, exp2/exp2_extrap secondary)",
+        ("five-system JSON (App — tab:five_systems_full, supp_benchmark_report.tex; "
+         "exp1_five primary, exp2/exp2_extrap secondary)",
          "__FIVE_SYSTEM__", "", "",
          ("exp1_five", "exp2_five", "exp2")),
         ("portfolio_variance seed-sweep (Tab 5 + Fig G)",
@@ -3073,8 +3835,20 @@ def main() -> None:
     # everything. (_EXP is computed earlier, alongside the audit scoping.)
 
     def _main_paper_section():
+        # NOTE: despite the name, this list already included the five_system*
+        # (exp1_five) generators even after they were moved to
+        # supp_benchmark_report.tex -- kept that way so "all" still generates
+        # every table in one pass; adding exp2_five's four generators here
+        # for the same reason.
         return ("── Main paper tables ───────────────────────────────────────", [
             lambda: gen_five_system(),
+            lambda: gen_five_system_stat_tests(),
+            lambda: gen_five_system_performance(),
+            lambda: gen_five_system_extrapolation(),
+            lambda: gen_five_system_exp2five(),
+            lambda: gen_five_system_exp2five_stat_tests(),
+            lambda: gen_five_system_exp2five_performance(),
+            lambda: gen_five_system_exp2five_extrapolation(),
             lambda: gen_defi_main(),
             lambda: gen_defi_tiers(),
             lambda: gen_runtime(),
@@ -3135,13 +3909,15 @@ def main() -> None:
             lambda: gen_ablation(),
             lambda: gen_repro_macros(),
         ])],
-        # exp1_five → five_systems/exp1_five/*.json → five_system.tex (Tab 1)
+        # exp1_five → five_systems/exp1_five/*.json → five_system.tex (App,
+        # supp_benchmark_report.tex — not the main paper; see 04_ci_sd_incompatibility.tex)
         # + the two sub-tables (performance, extrapolation) defined for the
         # metric/evaluator item. exp2 also feeds five_system.tex as a
         # secondary source (_load_exp2_five_system_rows()), so re-running
         # this step after an exp2 run picks up whichever source is available.
         "exp1_five": [("── exp1_five: five-system comparison + sub-tables ───────────", [
             lambda: gen_five_system(),
+            lambda: gen_five_system_stat_tests(),
             lambda: gen_five_system_performance(),
             lambda: gen_five_system_extrapolation(),
         ])],
@@ -3162,13 +3938,15 @@ def main() -> None:
         ])],
         # exp2_five reuses exp2's script (run_comparative_suite_benchmark_v2.py,
         # --methods 1 2 4 5 6) but writes to its own directory
-        # (five_systems/exp2_five/) — no dedicated loader for that dir exists
-        # yet (only exp1_five and exp2/exp2_extrap are wired into
-        # _load_five_system_rows_real()). Re-generating here just re-runs the
-        # same combined loader; add an exp2_five-specific loader if/when its
-        # output format under five_systems/exp2_five/ is confirmed.
+        # (five_systems/exp2_five/). Now has its own dedicated loader
+        # (_load_exp2_five_own_rows() / _load_exp2_five_own_raw()) and its own
+        # four-table pipeline, genuinely separate from exp1_five's tables --
+        # see the module comment above gen_five_system_exp2five().
         "exp2_five": [("── exp2_five: five-system comparison (Feynman, 5-method) ────", [
-            lambda: gen_five_system(),
+            lambda: gen_five_system_exp2five(),
+            lambda: gen_five_system_exp2five_stat_tests(),
+            lambda: gen_five_system_exp2five_performance(),
+            lambda: gen_five_system_exp2five_extrapolation(),
         ])],
         # exp3 / exp3b → nguyen12/*.json → nguyen12.tex (Tab 8) only.
         "exp3": [("── exp3: Nguyen-12 table ─────────────────────────────────────", [
@@ -3239,11 +4017,16 @@ def main() -> None:
     \\input{tables/suppb_sc_by_sample.tex}
     \\input{tables/suppb_winrate.tex}
     \\input{tables/suppb_noiseless.tex}
+    \\input{tables/five_system.tex}      % Appendix — tab:five_systems_full (exp1_five/exp2_five)
+    \\input{tables/five_system_performance.tex}    % Appendix — performance sub-table
+    \\input{tables/five_system_extrapolation.tex}  % Appendix — extrapolation sub-table
+    \\input{tables/five_system_stat_tests.tex}  % Appendix D  app:statistical_tests
+    \\input{tables/five_system_exp2five.tex}      % Appendix — exp2_five's own table (separate data)
+    \\input{tables/five_system_exp2five_performance.tex}    % exp2_five performance sub-table
+    \\input{tables/five_system_exp2five_extrapolation.tex}  % exp2_five extrapolation sub-table
+    \\input{tables/five_system_exp2five_stat_tests.tex}     % exp2_five stat-test appendix
 
   LaTeX usage in main paper:
-    \\input{tables/five_system.tex}      % Tab 1  §10.1
-    \\input{tables/five_system_performance.tex}    % Tab 1a §10.1 (performance sub-table)
-    \\input{tables/five_system_extrapolation.tex}  % Tab 1b §10.1 (extrapolation sub-table)
     \\input{tables/defi_main.tex}        % Tab 2  §10.2
     \\input{tables/defi_tiers.tex}       % Tab 3  §10.3
     \\input{tables/runtime.tex}          % Tab 4  §10.4
