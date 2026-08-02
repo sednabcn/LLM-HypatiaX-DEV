@@ -122,12 +122,14 @@ on:
           - exp1
           - exp1b
           - exp1_ablation
+          - exp1_five
           - exp1_pca
           - exp1b_pca
           - exp2_feynman
           - exp2_feynman_extrap
           - exp2_feynman_pca
           - exp2
+          - exp2_five
           - exp3
           - exp3b
           - suppA
@@ -215,12 +217,14 @@ jobs:
               "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
               "exp1_ablation":     "ablation/exp1_ablation",
+              "exp1_five":         "five_systems/exp1_five",
               "exp1_pca":          "comparison_results/noise-noiseless/noiseless/defi_pca",
               "exp1b_pca":         "comparison_results/noise-noiseless/15_pca",
               "exp2_feynman":      "comparison_results/feynman-tests/exp2",
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2":              "comparison_results/feynman-tests/exp2_multi",
+              "exp2_five":         "five_systems/exp2_five",
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
               "suppA":             "hybrid_pysr/defi",
@@ -259,12 +263,19 @@ jobs:
               "exp1b":             ["comparison_FIXED_*.json", "defi_v3_*.json",
                                     "*portfolio*variance*.json",
                                     "hypatiax_defi_benchmark_v3*results*.json"],
+              # FIX-exp1_five/exp2_five-GLOBS: both were previously absent from this
+              # dict, silently falling back to RESULT_GLOBS.get(exp_id, ["*.json"]).
+              # exp1_five commits exp1_five_results*.json (see exp1_five_system.py's
+              # RESULTS_PATH); exp2_five reuses run_comparative_suite_benchmark_v2.py
+              # (same script/output format as exp2), so it shares exp2's globs.
+              "exp1_five":         ["exp1_five_results*.json"],
               "exp2_feynman":      ["protocol_core_*.json", "benchmark_results.json"],
               "exp2_feynman_extrap": ["merged_extrap_*.json", "protocol_core_extrap_*.json",
                                       "ablation_paired.json"],
               "exp2_feynman_pca":   ["fixc3_baseline.json", "exp2_pca_4060_summary.json",
                                     "protocol_core_*.json", "benchmark_results.json"],
               "exp2":              ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_five":         ["protocol_core_*.json", "benchmark_results.json"],
               "exp3":              ["full_run_*.json", "report_hybrid_*.json",
                                     "hybrid_defi_*.json",
                                     "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
@@ -429,9 +440,9 @@ jobs:
           # When EXPERIMENT is a known single experiment, iterate only that.
           # When EXPERIMENT is "all" or blank, iterate everything in CHECK_REPORT.
           _KNOWN_EXPS = [
-              "exp1", "exp1b", "exp1_ablation", "exp1_pca", "exp1b_pca",
+              "exp1", "exp1b", "exp1_ablation", "exp1_five", "exp1_pca", "exp1b_pca",
               "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca",
-              "exp2", "exp3", "exp3b",
+              "exp2", "exp2_five", "exp3", "exp3b",
               "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "instability", "extrap",
           ]
           _exp_input = os.environ.get("EXPERIMENT", "all").strip()
@@ -494,10 +505,21 @@ jobs:
               # 42,99,123,777,2024) — revisit if a future seed list violates
               # that (e.g. adding both 42 and 420).
               "exp1b":             [f"results_seed{s}" for s in SEEDS],
+              # FIX-exp1_five/exp2_five-REGISTRY: both were previously absent from
+              # this dict, so exp_id not in REGISTRY was true for both — total=0
+              # and the ::warning:: below fired, silently reporting "0/0 done"
+              # instead of actually verifying completion (same class of gap as
+              # exp1_pca/exp1_ablation noted in the comment above this loop).
+              # exp1_five commits a single exp1_five_results.json (no per-task
+              # split — mirrors exp1's sentinel pattern). exp2_five shards by the
+              # same EXP2_DOMAINS loop as exp2 (run_all.sh STEP 6b), so it shares
+              # exp2's registry.
+              "exp1_five":         ["exp1_five_results"],
               "exp2_feynman":      FEYNMAN_DOMAINS,
               "exp2_feynman_extrap": FEYNMAN_DOMAINS,
               "exp2_feynman_pca":  FEYNMAN_DOMAINS,
               "exp2":              EXP2_DOMAINS,
+              "exp2_five":         EXP2_DOMAINS,
               # exp3 committed a single exp3_nguyen12_seed42.json covering all 12 Nguyen eqs.
               "exp3":              ["nguyen12_seed42"],
               # exp3b committed per-seed files: exp3_nguyen12_seed{s}.json.
@@ -736,12 +758,14 @@ jobs:
               "exp1":              "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":             "comparison_results/noise-noiseless/15",
               "exp1_ablation":     "ablation/exp1_ablation",
+              "exp1_five":         "five_systems/exp1_five",
               "exp1_pca":          "comparison_results/noise-noiseless/noiseless/defi_pca",
               "exp1b_pca":         "comparison_results/noise-noiseless/15_pca",
               "exp2_feynman":      "comparison_results/feynman-tests/exp2",
               "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
               "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2":              "comparison_results/feynman-tests/exp2_multi",
+              "exp2_five":         "five_systems/exp2_five",
               "exp3":              "extrapolation",
               "exp3b":             "extrapolation/multi_seed",
               "suppA":             "hybrid_pysr/defi",
@@ -1159,8 +1183,10 @@ jobs:
           SKIP = {"instability"}
 
           # Dispatch order matters for dependency: exp1 before instability.
-          ORDER = ["exp1", "exp1b", "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca",
-                   "exp2", "exp3", "exp3b",
+          # exp1_five/exp2_five added (previously absent — never auto-dispatched
+          # even when 0 done tasks were reported for them).
+          ORDER = ["exp1", "exp1b", "exp1_five", "exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca",
+                   "exp2", "exp2_five", "exp3", "exp3b",
                    "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "extrap"]
 
           dispatched = []

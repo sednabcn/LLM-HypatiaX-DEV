@@ -8,13 +8,13 @@
 #    C2 → ci_postprocess.yml      — figures + tables
 #    C3 → ci_pipeline_check.yml   — qualification + paper audit gate
 #    C4 → ci_paper_audit.yml      — cross-experiment numerical verify + paper claim audit
-#                                   (slot 15 only: fires after final experiment completes)
+#                                   (slot 13 only: fires after final experiment completes)
 #    C5 → ci_paper_notebooks.yml  — NB-01…NB-06 notebook audit chain (mandatory gate)
-#                                   (slot 15 only: fires after C4 passes)
+#                                   (slot 13 only: fires after C4 passes)
 #    C5b→ ci_report.yml           — build combined audit report + deploy GitHub Pages
-#                                   (slot 15 only: fires after C5c passes; non-blocking)
+#                                   (slot 13 only: fires after C5c passes; non-blocking)
 #    C5c→ ci_runner_disclosure.yml — FIX-C3 split-protocol gates A/B/C
-#                                   (slot 15 only: fires after C5 passes; blocks C5b)
+#                                   (slot 13 only: fires after C5 passes; blocks C5b)
 #    C6 → self-dispatch            — next experiment slot (if multi-slot run)
 #
 #  Manual modes (experiment_index suffix):
@@ -174,18 +174,10 @@ jobs:
           QUEUE = [
               "exp1",
               "exp1b",
-              # exp1_five extends exp1_ablation's Core-15 protocol to the five-system
-              # comparison (see ci_runner.yml's exp1_five case entry) — slotted right
-              # after exp1b since it reuses exp1/exp1b's equation suite / method classes.
-              "exp1_five",               # slot 2 (NEW)
               "exp2_feynman",
-              "exp2_feynman_pca",        # FIX-C3: PCA-directed 40/60 split (slot 4)
+              "exp2_feynman_pca",        # FIX-C3: PCA-directed 40/60 split (slot 3)
               "exp2_feynman_extrap",
               "exp2",
-              # exp2_five shards by the same EXP2_DOMAINS loop as exp2 (run_all.sh
-              # STEP 6b) with 5 methods only, excl. HybridDeFiMethod — slotted right
-              # after exp2 since it's the same protocol/domain set.
-              "exp2_five",               # slot 7 (NEW)
               "exp3",
               "exp3b",
               "suppA",
@@ -1144,9 +1136,9 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: run-paper-audit  —  C4: dispatch ci_paper_audit.yml (slot 15 only)
+  #  JOB: run-paper-audit  —  C4: dispatch ci_paper_audit.yml (slot 13 only)
   #
-  #  Only runs when slot == 15 AND run_full == 'true' AND run-checkpoint passed.
+  #  Only runs when slot == 12 AND run_full == 'true' AND run-checkpoint passed.
   #  Dispatches ci_paper_audit.yml and polls until it completes.
   #  Failure here halts the pipeline (paper audit is a mandatory gate).
   #
@@ -1154,14 +1146,14 @@ jobs:
   #                            figures-tables 10 + polling buffer 5)
   # ============================================================================
   run-paper-audit:
-    name: "C4 · Paper audit (slot 15)"
+    name: "C4 · Paper audit (slot 13)"
     needs: [resolve, run-checkpoint]
     runs-on: ubuntu-latest
     timeout-minutes: 50
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '15' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-checkpoint.result == 'success'
 
     steps:
@@ -1173,7 +1165,7 @@ jobs:
           set -euo pipefail
 
           BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "Dispatching ci_paper_audit.yml (slot 15 — extrap complete)"
+          echo "Dispatching ci_paper_audit.yml (slot 13 — extrap complete)"
 
           gh workflow run ci_paper_audit.yml \
             --repo "${REPO}" \
@@ -1218,7 +1210,7 @@ jobs:
             if [[ "${READ_STATUS}" == "completed" ]]; then
               if [[ "${CONCLUSION}" != "success" ]]; then
                 echo "::error::ci_paper_audit.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
-                echo "  Fix paper audit issues, then re-trigger ci_pipeline.yml for slot 15."
+                echo "  Fix paper audit issues, then re-trigger ci_pipeline.yml for slot 13."
                 exit 1
               fi
               echo "ci_paper_audit.yml passed (run ${DISPATCHED_ID})."; break
@@ -1229,7 +1221,7 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: run-paper-notebooks  —  C5: dispatch ci_paper_notebooks.yml (slot 15 only)
+  #  JOB: run-paper-notebooks  —  C5: dispatch ci_paper_notebooks.yml (slot 13 only)
   #
   #  Runs after run-paper-audit passes. Mandatory — notebook audit chain
   #  (NB-01 through NB-06) is the final paper-readiness gate.
@@ -1237,14 +1229,14 @@ jobs:
   #  TIMEOUT CONTRACT: 60 min (6 notebooks × ~8 min each + polling buffer)
   # ============================================================================
   run-paper-notebooks:
-    name: "C5 · Paper notebooks (slot 15)"
+    name: "C5 · Paper notebooks (slot 13)"
     needs: [resolve, run-paper-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 65
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '15' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-paper-audit.result == 'success'
 
     steps:
@@ -1313,7 +1305,7 @@ jobs:
 
   # ============================================================================
   #  JOB: run-pca-gates  —  C5c: dispatch ci_runner.yml with exp2_feynman_pca
-  #                                (slot 15 only, before ci_report)
+  #                                (slot 13 only, before ci_report)
   #
   #  Fires after run-paper-notebooks passes.  Dispatches ci_runner.yml with
   #  experiment=exp2_feynman_pca, which runs the three FIX-C3 PCA jobs
@@ -1331,14 +1323,14 @@ jobs:
   #                             up to 340 min each; then 3 gate scripts ~15 min each)
   # ============================================================================
   run-pca-gates:
-    name: "C5c · FIX-C3 PCA gates via ci_runner (slot 15)"
+    name: "C5c · FIX-C3 PCA gates via ci_runner (slot 13)"
     needs: [resolve, run-paper-notebooks]
     runs-on: ubuntu-latest
     timeout-minutes: 720
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '15' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-paper-notebooks.result == 'success'
 
     steps:
@@ -1407,7 +1399,7 @@ jobs:
           done
 
   # ============================================================================
-  #  JOB: run-ci-report  —  C5b: dispatch ci_report.yml (slot 15 only)
+  #  JOB: run-ci-report  —  C5b: dispatch ci_report.yml (slot 13 only)
   #
   #  Fires after run-ci-runner-disclosure passes.  ci_report.yml downloads the
   #  already-executed NB-01…NB-06 artifacts, converts them to HTML, and
@@ -1420,14 +1412,14 @@ jobs:
   #  TIMEOUT CONTRACT: 15 min (nbconvert on stored outputs + Pages deploy)
   # ============================================================================
   run-ci-report:
-    name: "C5b · CI report & Pages (slot 15)"
+    name: "C5b · CI report & Pages (slot 13)"
     needs: [resolve, run-paper-notebooks, run-pca-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: |
       always() &&
       needs.resolve.outputs.run_full == 'true' &&
-      needs.resolve.outputs.slot == '15' &&
+      needs.resolve.outputs.slot == '13' &&
       needs.run-paper-notebooks.result == 'success' &&
       needs.run-pca-gates.result == 'success'
 
@@ -1501,10 +1493,10 @@ jobs:
   #
   #  Only runs in full-pipeline mode (not Na/Nf/Nc manual phases).
   #  Only runs when run-checkpoint passes — qualification failure aborts chain.
-  #  On slot 15, also waits for run-paper-notebooks (the terminal paper gate).
+  #  On slot 13, also waits for run-paper-notebooks (the terminal paper gate).
   #  run-ci-report is non-blocking so next-slot does NOT depend on it.
-  #  Slots 0-14: next-slot fires immediately after run-checkpoint.
-  #  Slot 15: next-slot is a no-op (QUEUE_SIZE guard exits 0) but is still
+  #  Slots 0-11: next-slot fires immediately after run-checkpoint.
+  #  Slot 12: next-slot is a no-op (QUEUE_SIZE guard exits 0) but is still
   #           listed in needs so the workflow conclusion reflects the full chain.
   # ============================================================================
   next-slot:
@@ -1537,8 +1529,8 @@ jobs:
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
 
           # Keep in sync with len(QUEUE) in the resolve job.
-          # Slot 15 (extrap) is the last slot; next-slot exits 0 (no-op) for it.
-          QUEUE_SIZE=16
+          # Slot 13 (extrap) is the last slot; next-slot exits 0 (no-op) for it.
+          QUEUE_SIZE=14
 
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
             echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."

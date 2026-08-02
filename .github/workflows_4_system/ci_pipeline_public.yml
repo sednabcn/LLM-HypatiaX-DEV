@@ -185,12 +185,10 @@ jobs:
           QUEUE = [
               "exp1",
               "exp1b",
-              "exp1_five",                # slot 2 (NEW) — extends exp1b's protocol
               "exp2_feynman",
               "exp2_feynman_pca",
               "exp2_feynman_extrap",
               "exp2",
-              "exp2_five",                # slot 7 (NEW) — same EXP2_DOMAINS as exp2
               "exp3",
               "exp3b",
               "suppA",
@@ -298,12 +296,10 @@ jobs:
               "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
               "exp1b":              "comparison_results/noise-noiseless/15",
               "exp1_ablation":      "ablation/exp1_ablation",
-              "exp1_five":          "five_systems/exp1_five",
               "exp2_feynman":       "comparison_results/feynman-tests/exp2",
               "exp2_feynman_pca":   "comparison_results/feynman-tests/exp2_pca_4060",
               "exp2_feynman_extrap":"comparison_results/feynman-tests/exp2_extrap",
               "exp2":               "comparison_results/feynman-tests/exp2_multi",
-              "exp2_five":          "five_systems/exp2_five",
               "exp3":               "extrapolation",
               "exp3b":              "extrapolation/multi_seed",
               "suppA":              "hybrid_pysr/defi",
@@ -353,8 +349,8 @@ jobs:
               return figs, tabs
 
           MIN_TASKS = {
-              "exp1": 1, "exp1b": 5, "exp1_five": 1, "exp2_feynman": 10, "exp2_feynman_pca": 5,
-              "exp2_feynman_extrap": 5, "exp2": 5, "exp2_five": 5, "exp3": 5, "exp3b": 5,
+              "exp1": 1, "exp1b": 5, "exp2_feynman": 10, "exp2_feynman_pca": 5,
+              "exp2_feynman_extrap": 5, "exp2": 5, "exp3": 5, "exp3b": 5,
               "suppA": 1, "suppB": 5, "suppB_sc": 5, "hybrid_all_domains": 1,
               "instability": 1, "extrap": 5,
           }
@@ -840,7 +836,7 @@ jobs:
   #  JOB: next-slot  —  C6: self-dispatch next experiment in the queue
   #
   #  NOTE: In the public pipeline, next-slot depends only on run-checkpoint
-  #  (C4/C5/C5b/C5c are removed). The slot 15 special-case waits are also
+  #  (C4/C5/C5b/C5c are removed). The slot 13 special-case waits are also
   #  removed since the paper-audit gate no longer exists.
   #
   #  REQUIRES SECRET: PAT_TOKEN (repo + workflow scopes)
@@ -868,7 +864,7 @@ jobs:
         run: |
           set -euo pipefail
           NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
-          QUEUE_SIZE=16
+          QUEUE_SIZE=14
           if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
             echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."
             exit 0
