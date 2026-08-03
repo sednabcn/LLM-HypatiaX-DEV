@@ -122,6 +122,19 @@ RESULTS    = _ARGS.results_dir  or (_ROOT / "hypatiax" / "data" / "results")
 TABLES_DIR = _ARGS.output_dir   or (_ROOT / "paper" / "tables")
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
 
+# BUG FOUND WHILE TESTING exp1_five END-TO-END: gen_five_system() (a
+# module-level function) reads `_EXP` to decide whether to skip itself for
+# other experiments, but `_EXP` was only ever assigned inside main() as a
+# local variable ("_EXP = (_ARGS.experiment or 'all').lower()"). Python
+# does not share a caller's locals with the functions it calls, so every
+# invocation of gen_five_system() raised NameError: name '_EXP' is not
+# defined -- confirmed by running this script against synthetic exp1_five
+# data. Promoted to a module-level global here (same pattern as RESULTS/
+# PATCHED/TABLES_DIR above), computed as early as possible since it only
+# depends on _ARGS. main() below now reuses this global instead of
+# redefining a same-named local that shadowed it.
+_EXP = (_ARGS.experiment or "all").lower()
+
 # ── Normalise RESULTS against known suppB/suppB_sc canonical subdirs ──────────
 # load_sweep_json() and load_best() always append a hardcoded subdir such as
 # "comparison_results/feynman-tests/sample-complexity" to RESULTS.  When CI
@@ -1136,12 +1149,33 @@ def _load_exp2_five_own_rows() -> tuple[list[tuple] | None, Path | None]:
 # writes them that way), so no name-mapping table is needed here the way
 # _EXP2_METHOD_TO_ROW is needed for the exp2-based loader below.
 #
-# extrap_error_pct is computed the same way compute_extrap_r2_far()/
-# _load_exp2_five_system_rows() define it — (extrap_rmse_far / train_rmse) * 100
-# — so numbers from this loader and the exp2-based one are on the same scale
-# and comparable, even though they're measuring different equation suites
-# (Core-15 vs. the 10-domain Feynman set).
+# BUG FOUND WHILE DIAGNOSING A CI FAILURE ("used paper-verified fallback"):
+# "verbatim" above is true for four of the five rows, but _EXP2_ROW_ORDER
+# stores "Hybrid v50\\_2" -- LaTeX-escaped (backslash before the underscore)
+# for direct use in table text. exp1_five_system.py's raw JSON key has no
+# such backslash ("Hybrid v50_2"), so `method_name not in r2_by_method`
+# below silently never matched that one method: r2_by_method/err_by_method
+# for "Hybrid v50\_2" stayed permanently empty regardless of the actual
+# data, which in turn starved gen_five_system_stat_tests() (needs >=1
+# successful measurement for BOTH Hybrid v50_2 and Neural Network) and
+# forced it into its FALLBACK_TABLES/NO-DATA path every run -- exactly the
+# single fallback-flagged table the CI log reported. _RAW_TO_ROW_NAME below
+# undoes the escaping before the lookup so the raw JSON key matches.
+_RAW_TO_ROW_NAME: dict[str, str] = {m.replace("\\_", "_"): m for m in _EXP2_ROW_ORDER}
+
+def _delatex(s: str) -> str:
+    """Strip a LaTeX underscore-escape ('\\_' -> '_') so a display-name
+    constant (e.g. from _EXP2_ROW_ORDER) can be compared against a raw JSON
+    key written verbatim by exp1_five_system.py."""
+    return s.replace("\\_", "_")
+
+
 def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
+    """extrap_error_pct is computed the same way compute_extrap_r2_far()/
+    _load_exp2_five_system_rows() define it — (extrap_rmse_far / train_rmse)
+    * 100 — so numbers from this loader and the exp2-based one are on the
+    same scale and comparable, even though they're measuring different
+    equation suites (Core-15 vs. the 10-domain Feynman set)."""
     src = None
     for base in (PATCHED, RESULTS):
         candidate = base / "five_systems/exp1_five/exp1_five_results.json"
@@ -1164,19 +1198,20 @@ def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
         if not isinstance(eq_entry, dict):
             continue
         for method_name, res in eq_entry.items():
-            if method_name not in r2_by_method or not isinstance(res, dict):
+            row_name = _RAW_TO_ROW_NAME.get(method_name)
+            if row_name is None or not isinstance(res, dict):
                 continue
             if not res.get("success"):
                 continue
             if "design_focus" in res:
-                focus_by_method.setdefault(method_name, res["design_focus"])
+                focus_by_method.setdefault(row_name, res["design_focus"])
             r2 = _finite_or_none(res.get("train_r2"))
             if r2 is not None:
-                r2_by_method[method_name].append(r2)
+                r2_by_method[row_name].append(r2)
             train_rmse = _finite_or_none(res.get("train_rmse"))
             far_rmse   = _finite_or_none(res.get("extrap_rmse_far"))
             if train_rmse and train_rmse > 0 and far_rmse is not None:
-                err_by_method[method_name].append((far_rmse / train_rmse) * 100.0)
+                err_by_method[row_name].append((far_rmse / train_rmse) * 100.0)
 
     rows_by_name: dict[str, tuple] = {}
     for mname in _EXP2_ROW_ORDER:
@@ -1214,10 +1249,12 @@ def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
 # per-equation sample -- hence this separate loader.
 def _load_exp1_five_raw_extrap_errors(method_name: str) -> tuple[list[float], Path | None]:
     """Raw per-equation extrapolation-error-percent values for one method_name
-    (e.g. _EXP2_ROW_ORDER[0] == "Hybrid v50\\_2"), read directly from
-    exp1_five_results.json. Same file/parsing convention and same
-    (extrap_rmse_far / train_rmse) * 100 error definition as
-    _load_exp1_five_rows(), just returning the un-aggregated list."""
+    (e.g. _EXP2_ROW_ORDER[0] == "Hybrid v50\\_2" -- LaTeX-escaped; de-escaped
+    via _delatex() before lookup since exp1_five_system.py's raw JSON key has
+    no backslash), read directly from exp1_five_results.json. Same
+    file/parsing convention and same (extrap_rmse_far / train_rmse) * 100
+    error definition as _load_exp1_five_rows(), just returning the
+    un-aggregated list."""
     src = None
     for base in (PATCHED, RESULTS):
         candidate = base / "five_systems/exp1_five/exp1_five_results.json"
@@ -1234,10 +1271,11 @@ def _load_exp1_five_raw_extrap_errors(method_name: str) -> tuple[list[float], Pa
         return [], None
 
     errs: list[float] = []
+    raw_key = _delatex(method_name)
     for eq_entry in data.values():
         if not isinstance(eq_entry, dict):
             continue
-        res = eq_entry.get(method_name)
+        res = eq_entry.get(raw_key)
         if not isinstance(res, dict) or not res.get("success"):
             continue
         train_rmse = _finite_or_none(res.get("train_rmse"))
@@ -3660,14 +3698,14 @@ def main() -> None:
     print()
 
     # ── Experiment scoping ────────────────────────────────────────────────────
-    # Computed up front so both the missing-JSON audit below and the
-    # generator dispatch at the end of main() can be restricted to only the
+    # Computed up front (module level, see _EXP above _parse_args()/RESULTS/
+    # PATCHED) so both the missing-JSON audit below and the generator
+    # dispatch at the end of main() can be restricted to only the
     # JSON(s)/table(s) that the selected experiment actually produces,
     # instead of checking/generating the full main-paper set every time.
     # "all", "suppa", or an unrecognised tag fall back to the full audit +
     # full dispatch (previous behaviour) since their table ownership isn't
     # cleanly single-sourced.
-    _EXP = (_ARGS.experiment or "all").lower()
     _SCOPED_EXPERIMENTS = {
         "exp1", "exp1_pca", "exp1b", "exp1b_pca", "exp1_ablation",
         "exp1_five", "exp2_five",
