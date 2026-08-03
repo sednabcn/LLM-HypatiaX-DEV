@@ -148,6 +148,17 @@ def _fmt(v, was_inf):
 # ------------------------------------------------------------------
 CASES = []
 for eq_name, entry in RAW.items():
+    # The raw JSON also contains domain-rollup entries (e.g. "Biology",
+    # "Chemistry", "Physics", "DeFi AMM", "DeFi Risk") interleaved with the
+    # real per-equation entries at the same top level. These rollups carry
+    # an "equation" key pointing at the real case name and an empty
+    # "hypatia": {} (not None, so the old `h is None` check let them
+    # through) -- without this filter they show up as 5 bogus extra rows
+    # in Fig. 4 with blank "—" cells, making it look like there are 20
+    # Core equations instead of the documented 15.
+    if "equation" in entry:
+        continue
+
     h = entry["hypatia"]
     p = entry.get("pysr_only")  # Some experiment outputs are Hypatia-only.
 
@@ -198,13 +209,13 @@ for ax, (method_key, label) in zip(axes, panels):
             if not isinstance(method, dict):
                 method = {}
 
-            raw = method.get(metric_name)
+            raw = method.get(k)
             v, was_inf = _safe(raw)
             
             mat_isinf[i, j] = was_inf
             mat_val[i, j] = v if v is not None else np.nan
             mat_txt[i][j] = _fmt(v, was_inf)
-            diff_report_fig4.append((c["name"], method_key, k, raw_v, v))
+            diff_report_fig4.append((c["name"], method_key, k, raw, v))
 
     mat_color = np.array([[_clip_for_color(v) for v in row] for row in mat_val])
     im = ax.imshow(mat_color, vmin=-1.5, vmax=1.0, cmap="RdYlGn", aspect="auto")
@@ -261,12 +272,21 @@ fig, axes = plt.subplots(1, 2, figsize=(11, 5.5), sharey=True)
 panel_cfg = [("pysr_only", "PySR-only"), ("hypatia", "HypatiaX Hybrid")]
 diff_report_fig3 = []
 
+# Figure 3 is the far-extrap heatmap, so it always reads this one key.
+# (Previously this relied on `k` leaking out of Figure 4's
+# `for j, k in enumerate(col_keys)` loop still holding "extrap_r2_far" —
+# correct by accident, and silently wrong the moment col_keys is reordered
+# or the Figure 4 block above is refactored. Set it explicitly instead.)
+FAR_KEY = "extrap_r2_far"
+
 for ax, (method_key, label) in zip(axes, panel_cfg):
     mat_val = np.full((len(domains), len(diffs)), np.nan)
     mat_n = np.zeros((len(domains), len(diffs)), dtype=int)
+    mat_isinf = np.zeros((len(domains), len(diffs)), dtype=bool)
     for i, dom in enumerate(domains):
         for j, dif in enumerate(diffs):
             vals = []
+            any_inf = False
             for c in CASES:
                 if c["domain"] != dom or c["difficulty"] != dif:
                     continue
@@ -274,13 +294,20 @@ for ax, (method_key, label) in zip(axes, panel_cfg):
                 if not isinstance(method, dict):
                     method = {}
 
-                raw = method.get(metric_name)
+                raw = method.get(FAR_KEY)
                 v, was_inf = _safe(raw)
                 if v is not None:
                     vals.append(v)
+                    any_inf = any_inf or was_inf
             if vals:
                 mat_val[i, j] = float(np.mean(vals))
                 mat_n[i, j] = len(vals)
+                # A cell is flagged the same way Fig. 4 flags a single cell:
+                # if ANY contributing case was a capped sentinel/inf value,
+                # the cell is not a trustworthy finite average, so it gets
+                # the same ±INF/purple treatment rather than a misleading
+                # plain number like "-15000".
+                mat_isinf[i, j] = any_inf
             diff_report_fig3.append((dom, dif, method_key, vals))
 
     mat_color = np.array([[_clip_for_color(v) for v in row] for row in mat_val])
@@ -293,8 +320,16 @@ for ax, (method_key, label) in zip(axes, panel_cfg):
     for i in range(len(domains)):
         for j in range(len(diffs)):
             v = mat_val[i, j]
-            txt = "—" if math.isnan(v) else (f"{v:.2f}" if abs(v) < 10 else f"{v:.0f}")
+            if math.isnan(v):
+                txt = "—"
+            elif mat_isinf[i, j]:
+                sign = "+" if v > 0 else "-"
+                txt = f"{sign}INF"
+            else:
+                txt = f"{v:.2f}" if abs(v) < 10 else f"{v:.0f}"
             col = "white" if mat_color[i, j] < -0.4 else "black"
+            if mat_isinf[i, j]:
+                col = "#7C3AED"  # matches Fig. 4's capped/inf flag color
             n = mat_n[i, j]
             if n > 1:
                 txt += f"\n(n={n})"
@@ -318,8 +353,11 @@ all_ok = True
 for name in SPOT:
     entry = RAW[name]
     for method_key, mlabel in [("pysr_only", "P"), ("hypatia", "H")]:
+        method_entry = entry.get(method_key)
+        if not isinstance(method_entry, dict):
+            method_entry = {}  # e.g. "pysr_only": null for Hypatia-only cases
         for k, klabel in zip(col_keys, ["train", "near", "med", "far"]):
-            table6_v = entry[method_key][k]
+            table6_v = method_entry.get(k)
             rendered_v, was_capped = _safe(table6_v)
             exact_match = (rendered_v == table6_v) or (
                 rendered_v is not None and table6_v is not None
