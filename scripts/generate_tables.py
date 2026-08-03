@@ -22,9 +22,8 @@ Tables generated  (main paper)
 Tables generated  (Supplement B — suppB / STEP 10 outputs)
   five_system.tex             tab:five_systems_full     App    ← five_systems/exp1_five/
                                                                   exp1_five_results.json
-                                                                  (falls back to exp2/exp2_extrap
-                                                                  Feynman aggregation if absent —
-                                                                  see _load_five_system_rows_real())
+                                                                  (no fallback; only the launched
+                                                                  experiment's results are used)
   five_system_performance.tex tab:five_systems_perf     App    ← exp1_five_performance.json
   five_system_extrapolation.tex tab:five_systems_extrap App    ← exp1_five_extrapolation.json
   five_system_stat_tests.tex  app:statistical_tests     App D  ← exp1_five_results.json
@@ -1738,18 +1737,15 @@ def _load_exp1_five_subtable_json(filename: str) -> tuple[dict | None, Path | No
 # secondary / Feynman) and the "tier" string those call sites expect back
 # (used only for the "% Source:" comment / FALLBACK_TABLES bookkeeping).
 def _load_five_system_rows_real() -> tuple[list[tuple] | None, Path | None, str]:
-    """Combined five-system row loader: try exp1_five_system.py's own
-    Core-15 output first (the dedicated experiment for this table), then
-    fall back to the exp2/exp2_extrap Feynman-suite aggregation if exp1_five
-    has no usable data. Returns (rows, src, tier) where tier is
-    "exp1_five" or "exp2_five" identifying which source won, or
-    (None, None, "none") if neither has usable rows."""
+    """Load five-system rows from the launched experiment only.
+
+    No fallback to results from other experiments is performed.
+    """
+
     rows, src = _load_exp1_five_rows()
     if rows is not None:
         return rows, src, "exp1_five"
-    rows, src = _load_exp2_five_system_rows()
-    if rows is not None:
-        return rows, src, "exp2_five"
+
     return None, None, "none"
 
 
@@ -1920,7 +1916,7 @@ def gen_five_system() -> None:
 """
     if no_data:
         tex += (
-            "% NO DATA -- neither exp1_five nor exp2/exp2_extrap produced\n"
+            "% NO DATA -- neither exp1_five n produced\n"
             "% usable five-system rows. Run exp1_five_system.py (preferred,\n"
             "% Core-15) or exp2_five/exp2 (Feynman suite) and re-generate.\n"
         )
