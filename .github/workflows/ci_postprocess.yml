@@ -515,6 +515,8 @@ jobs:
           TAB_ALLOWLIST[exp1]="main_comparison_noiseless method_summary"
           TAB_ALLOWLIST[exp1b]="noise_robust_comparison seed_variance_table"
           TAB_ALLOWLIST[exp1_ablation]="ablation_comparison"
+          TAB_ALLOWLIST[exp1_five]="five_system five_system_stat_tests five_system_performance five_system_extrapolation"
+          TAB_ALLOWLIST[exp2_five]="five_system_exp2five five_system_exp2five_stat_tests five_system_exp2five_performance five_system_exp2five_extrapolation"
           TAB_ALLOWLIST[exp1_pca]="pca_defi_comparison"
           TAB_ALLOWLIST[exp1b_pca]="pca_portfolio_sweep"
           TAB_ALLOWLIST[exp2_feynman]="feynman_benchmark_main method_rank_table"
@@ -1511,6 +1513,43 @@ jobs:
           fi
           echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
 
+      # ── B2b: exp1_five — five-system comparison + sub-tables ────────────────
+      # Produces: five_system.tex, five_system_stat_tests.tex,
+      #           five_system_performance.tex, five_system_extrapolation.tex
+      # Source: five_systems/exp1_five/exp1_five_{results,performance,extrapolation}.json
+      #
+      # NOTE ON --results-dir: unlike exp1_ablation above, generate_tables.py's
+      # exp1_five loaders (_load_five_system_rows_real() /
+      # _load_exp1_five_subtable_json()) join "five_systems/exp1_five" onto
+      # --results-dir THEMSELVES. Passing "${OUT_BASE}/${SUB}" (SUB is already
+      # "five_systems/exp1_five") would self-nest the path the same way the
+      # old suppB/suppC/exp1_ablation doubled-path bug did (see
+      # _CANONICAL_SUFFIXES comment at the top of generate_tables.py — that
+      # fix list does not cover five_systems/*, so we avoid the doubling here
+      # by passing the results ROOT instead).
+      - name: "Tables: exp1_five — five-system comparison"
+        if: env.EFFECTIVE_EXPERIMENT == 'exp1_five'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULTS_JSON="${OUT_BASE}/${SUB}/exp1_five_results.json"
+          if [[ ! -f "$RESULTS_JSON" ]]; then
+            echo "::error::${RESULTS_JSON} not found. Run ci_runner.yml for exp1_five first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  exp1_five \
+            --results-dir "${OUT_BASE}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
+          if [[ $N_TABS -eq 0 ]]; then
+            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
+            exit 1
+          fi
+          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
+
       # ── B3: exp2_feynman — Feynman benchmark (Tab 4 / Tab 5, random 80/20) ─
       - name: "Tables: exp2_feynman — Feynman benchmark"
         if: env.EFFECTIVE_EXPERIMENT == 'exp2_feynman'
@@ -1610,6 +1649,40 @@ jobs:
           python scripts/generate_tables.py \
             --experiment  exp2 \
             --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
+          if [[ $N_TABS -eq 0 ]]; then
+            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
+            exit 1
+          fi
+          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
+
+      # ── B6b: exp2_five — five-system comparison (own dedicated loader) ──────
+      # Produces: five_system_exp2five.tex, five_system_exp2five_stat_tests.tex,
+      #           five_system_exp2five_performance.tex,
+      #           five_system_exp2five_extrapolation.tex
+      # Source: five_systems/exp2_five/exp2_five_{results,performance,extrapolation}.json
+      # via _load_exp2_five_own_rows() / _load_exp2_five_own_raw() — genuinely
+      # separate from exp1_five's tables, never mixed.
+      #
+      # Same --results-dir-root rationale as exp1_five above: the exp2_five
+      # loaders join "five_systems/exp2_five" onto --results-dir themselves,
+      # so pass ${OUT_BASE} (root), not ${OUT_BASE}/${SUB}.
+      - name: "Tables: exp2_five — five-system comparison (exp2_five own data)"
+        if: env.EFFECTIVE_EXPERIMENT == 'exp2_five'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULTS_JSON="${OUT_BASE}/${SUB}/exp2_five_results.json"
+          if [[ ! -f "$RESULTS_JSON" ]]; then
+            echo "::error::${RESULTS_JSON} not found. Run ci_runner.yml for exp2_five first."
+            exit 1
+          fi
+          python scripts/generate_tables.py \
+            --experiment  exp2_five \
+            --results-dir "${OUT_BASE}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
           if [[ $N_TABS -eq 0 ]]; then
