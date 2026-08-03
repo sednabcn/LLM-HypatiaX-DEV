@@ -270,7 +270,13 @@ for ax, (method_key, label) in zip(axes, panel_cfg):
             for c in CASES:
                 if c["domain"] != dom or c["difficulty"] != dif:
                     continue
-                v, was_inf = _safe(c[method_key].get("extrap_r2_far"))
+                method = c.get(method_key)
+                v, was_inf = _safe(
+                    None if method is None else method.get("extrap_r2_far")
+                )
+                if v is not None:
+                    vals.append(v)
+                #v, was_inf = _safe(c[method_key].get("extrap_r2_far"))
                 if v is not None:
                     vals.append(v)
             if vals:
