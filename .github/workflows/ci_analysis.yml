@@ -471,6 +471,48 @@ jobs:
           echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
+      # Rename merged JSON to canonical result filename
+      # -----------------------------------------------------------------------
+      # _merged.json is the generic name merge_shards.py always writes. Copy
+      # (not move — later steps such as the suppB/suppB_sc point checks and
+      # any re-run of this step still expect _merged.json on disk) it to an
+      # experiment-specific filename so downstream consumers (run_analysis.py,
+      # ci_postprocess.yml, manual inspection of the repo) get a self-describing
+      # name instead of a generic one.
+      #
+      # Only runs when INPUT_MODE=merged (i.e. this experiment actually went
+      # through the merge step above); DIRECT/SHARDS experiments never produce
+      # _merged.json so this step would otherwise fail on a missing file.
+      #
+      # suppB / suppB_sc are merge-required too (see MERGE_REQUIRED_EXPERIMENTS
+      # in merge_shards.py) and fall through to the default case below,
+      # producing suppB_results.json / suppB_sc_results.json.
+      - name: Rename merged JSON to canonical name
+        if: env.INPUT_MODE == 'merged'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$EXPERIMENT" in
+            exp1_ablation)
+              OUTPUT_JSON="exp1_ablation_results.json"
+              ;;
+            exp1b)
+              OUTPUT_JSON="exp1b_results.json"
+              ;;
+            exp3b)
+              OUTPUT_JSON="exp3b_results.json"
+              ;;
+            *)
+              OUTPUT_JSON="${EXPERIMENT}_results.json"
+              ;;
+          esac
+
+          cp "$RESULT_DIR/_merged.json" "$RESULT_DIR/$OUTPUT_JSON"
+          echo "INPUT_JSON=$RESULT_DIR/$OUTPUT_JSON" >> "$GITHUB_ENV"
+          echo "Copied _merged.json -> $OUTPUT_JSON"
+
+      # -----------------------------------------------------------------------
       # Symbolic equivalence check (exp3 / exp3b only)
       # -----------------------------------------------------------------------
       # Runs check_symbolic_equivalence.py against all exp3_nguyen12_seed*.json
@@ -911,6 +953,18 @@ jobs:
           ")
           if [[ "$NEEDS_MERGE" == "true" && -f "$RESULT_DIR/_merged.json" ]]; then
             git add -f "$RESULT_DIR/_merged.json"
+          fi
+
+          # Also commit the canonical-named copy produced by "Rename merged
+          # JSON to canonical name" (e.g. exp1_ablation_results.json), if present.
+          case "$EXPERIMENT" in
+            exp1_ablation) CANONICAL_JSON="exp1_ablation_results.json" ;;
+            exp1b)         CANONICAL_JSON="exp1b_results.json" ;;
+            exp3b)         CANONICAL_JSON="exp3b_results.json" ;;
+            *)             CANONICAL_JSON="${EXPERIMENT}_results.json" ;;
+          esac
+          if [[ -f "$RESULT_DIR/$CANONICAL_JSON" ]]; then
+            git add -f "$RESULT_DIR/$CANONICAL_JSON"
           fi
 
           if git diff --cached --quiet; then

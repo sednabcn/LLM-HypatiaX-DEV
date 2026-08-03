@@ -148,13 +148,20 @@ def _fmt(v, was_inf):
 # ------------------------------------------------------------------
 CASES = []
 for eq_name, entry in RAW.items():
-    p, h = entry["pysr_only"], entry["hypatia"]
+    h = entry["hypatia"]
+    p = entry.get("pysr_only")  # Some experiment outputs are Hypatia-only.
+
+    # Skip entries that don't contain the required Hypatia result.
+    if h is None:
+        continue
+
     CASES.append({
         "name": eq_name,
-        "domain": entry["domain"],
+        "domain": entry.get("domain"),
         "pysr_only": p,
         "hypatia": h,
     })
+ 
 CASES.sort(key=lambda c: c["name"])  # alphabetical, matches original Fig. 4 row order
 
 C_HYB = "#2563EB"
@@ -166,9 +173,18 @@ DIFF_COLORS = {"easy": "#059669", "medium": "#D97706", "hard": "#DC2626"}
 # ==================================================================
 col_keys = ["train_r2", "extrap_r2_near", "extrap_r2_medium", "extrap_r2_far"]
 col_names = ["Train $R^2$", "Near", "Medium", "Far"]
-panels = [("hypatia", "HypatiaX Hybrid"), ("pysr_only", "PySR-only")]
+panels = [("hypatia", "HypatiaX Hybrid")]
 
-fig, axes = plt.subplots(1, 2, figsize=(13, 8), sharey=True)
+# Only add the PySR panel if at least one case contains baseline results.
+if any(c["pysr_only"] is not None for c in CASES):
+    panels.append(("pysr_only", "PySR-only"))
+
+fig, axes = plt.subplots(1, len(panels), figsize=(6.5 * len(panels), 8), sharey=True)
+
+# When only one panel exists, make axes iterable.
+if len(panels) == 1:
+    axes = [axes]
+
 diff_report_fig4 = []
 
 for ax, (method_key, label) in zip(axes, panels):
@@ -178,7 +194,12 @@ for ax, (method_key, label) in zip(axes, panels):
 
     for i, c in enumerate(CASES):
         for j, k in enumerate(col_keys):
-            raw_v = c[method_key].get(k)
+            method = c.get(method_key)
+
+            if method is None:
+                raw_v = None
+            else:
+                raw_v = method.get(k)
             v, was_inf = _safe(raw_v)
             mat_isinf[i, j] = was_inf
             mat_val[i, j] = v if v is not None else np.nan

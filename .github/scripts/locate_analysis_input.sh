@@ -19,6 +19,13 @@
 #    SHARD_MANIFEST  path to manifest file       (shards mode)
 #
 #  Architecture:
+#    NOTE (FIX-CANONICAL-FALLBACK): the merged-mode fast path below also
+#    accepts the experiment-specific canonical-named file written by
+#    ci_analysis.yml's "Rename merged JSON to canonical name" step (e.g.
+#    exp1_ablation_results.json) as a fallback when _merged.json itself is
+#    absent. _merged.json remains the source of truth and is always tried
+#    first.
+#
 #    MERGE_REQUIRED_EXPERIMENTS (merge_shards.py) — dynamically detected:
 #      Fast path  — committed _merged.json exists AND contains ≥1 record → INPUT_MODE=merged
 #                   (FIX-EMPTY-MERGED-FASTPATH: a _merged.json with 0 records is rejected
@@ -181,6 +188,38 @@ if [[ "$REQUIRE_MERGE" == "true" ]]; then
       2>/dev/null \
       | sort
   )
+
+  # FIX-CANONICAL-FALLBACK: if no _merged.json is found, also look for the
+  # experiment-specific canonical-named copy written by ci_analysis.yml's
+  # "Rename merged JSON to canonical name" step (e.g. exp1_ablation_results.json,
+  # falls back to ${EXPERIMENT}_results.json for suppB/suppB_sc). This is a
+  # FALLBACK only — _merged.json remains the source of truth and is always
+  # preferred when it exists and is non-empty. The canonical file has the
+  # same JSON shape as _merged.json (it's a plain `cp`), so the record-count
+  # check and everything downstream works unchanged regardless of which one
+  # was selected.
+  if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
+    case "$EXPERIMENT" in
+      exp1_ablation) _canonical_name="exp1_ablation_results.json" ;;
+      exp1b)         _canonical_name="exp1b_results.json" ;;
+      exp3b)         _canonical_name="exp3b_results.json" ;;
+      *)             _canonical_name="${EXPERIMENT}_results.json" ;;
+    esac
+
+    while IFS= read -r path; do
+      CANDIDATES+=("$path")
+    done < <(
+      find consolidated_artifact "$RESULT_DIR" \
+        -type f \
+        -name "$_canonical_name" \
+        2>/dev/null \
+        | sort
+    )
+
+    if [[ ${#CANDIDATES[@]} -gt 0 ]]; then
+      echo "::warning::No _merged.json found — falling back to canonical-named file '${_canonical_name}': ${CANDIDATES[0]}"
+    fi
+  fi
 
   # FIX-EMPTY-MERGED-FASTPATH: reject a _merged.json that was committed with
   # zero records (e.g. every upstream benchmark run failed/timed out, leaving
