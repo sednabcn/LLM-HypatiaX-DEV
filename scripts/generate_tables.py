@@ -3671,6 +3671,7 @@ def main() -> None:
     _EXP = (_ARGS.experiment or "all").lower()
     _SCOPED_EXPERIMENTS = {
         "exp1", "exp1_pca", "exp1b", "exp1b_pca", "exp1_ablation",
+        "exp1_five", "exp2_five",
         "exp2_feynman", "exp2", "exp2_feynman_extrap", "exp2_feynman_pca",
         "exp3", "exp3b", "instability", "hybrid_all_domains", "extrap",
         "suppb", "suppb_sc",
