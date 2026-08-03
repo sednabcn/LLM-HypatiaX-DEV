@@ -110,12 +110,10 @@ on:
           - exp1_pca
           - exp1b_pca
           - exp1_ablation
-          - exp1_five
           - exp2_feynman
           - exp2_feynman_extrap
           - exp2_feynman_pca
           - exp2
-          - exp2_five
           - exp3
           - exp3b
           - suppA
@@ -236,8 +234,6 @@ jobs:
                 *noise-noiseless/15_pca/*)          echo exp1b_pca;   return ;;
                 *noise-noiseless/15/*)              echo exp1b;       return ;;
                 *ablation/exp1_ablation/*)          echo exp1_ablation; return ;;
-                *five_systems/exp1_five/*)          echo exp1_five;    return ;;
-                *five_systems/exp2_five/*)          echo exp2_five;    return ;;
                 *extrapolation/multi_seed/*)        echo exp3b;       return ;;
                 *extrapolation/*)                   echo exp3;        return ;;
                 *comparison_results/extrapolation/*) echo extrap;     return ;;
@@ -294,14 +290,12 @@ jobs:
               'exp1_pca':            'comparison_results/noise-noiseless/noiseless/defi_pca',
               'exp1b_pca':           'comparison_results/noise-noiseless/15_pca',
               'exp1_ablation':       'ablation/exp1_ablation',
-              'exp1_five':           'five_systems/exp1_five',
               'exp2_feynman':        'comparison_results/feynman-tests/exp2',
               'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
               'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
               'exp2_feyman_pca':     'comparison_results/feynman-tests/exp2_pca_4060',    # typo alias (missing 'n')
               'exp2_feyman_extrap':  'comparison_results/feynman-tests/exp2_extrap',      # typo alias (missing 'n')
               'exp2':                'comparison_results/feynman-tests/exp2_multi',
-              'exp2_five':           'five_systems/exp2_five',
               'exp3':                'extrapolation',
               'exp3b':               'extrapolation/multi_seed',
               'suppA':               'hybrid_pysr/defi',
@@ -487,14 +481,6 @@ jobs:
           FIG_ALLOWLIST[exp1]="fig1_seed_sweep fig09_r2_heatmap_regimes fig18_r2_heatmap_improved"
           FIG_ALLOWLIST[exp1b]="fig1_seed_sweep fig_seed_sweep_comparison fig_paper_*"
           FIG_ALLOWLIST[exp1_ablation]="fig_ablation_*"
-          # FIG_ALLOWLIST[exp1_five]: no entry — exp1_five_system.py does not
-          # generate any figures (only JSON + .tex tables). Leave unset so
-          # the purge step's "no allowlist defined" warning fires loudly if
-          # someone later adds a figure generator without updating this list,
-          # rather than silently allowing/purging under a guessed pattern.
-          # FIG_ALLOWLIST[exp2_five]: same — no figure generator exists for
-          # the 5-method-filtered run_comparative_suite_benchmark_v2.py path
-          # distinct from exp2's own (also currently unconfirmed) figures.
           FIG_ALLOWLIST[exp1_pca]="fig_pca_* fig1_pca_*"
           FIG_ALLOWLIST[exp1b_pca]="fig_pca_* fig1b_pca_*"
           FIG_ALLOWLIST[exp2_feynman]="fig_feynman_* fig2_* fig_benchmark_*"
@@ -515,8 +501,6 @@ jobs:
           TAB_ALLOWLIST[exp1]="main_comparison_noiseless method_summary"
           TAB_ALLOWLIST[exp1b]="noise_robust_comparison seed_variance_table"
           TAB_ALLOWLIST[exp1_ablation]="ablation_comparison"
-          TAB_ALLOWLIST[exp1_five]="five_system five_system_stat_tests five_system_performance five_system_extrapolation"
-          TAB_ALLOWLIST[exp2_five]="five_system_exp2five five_system_exp2five_stat_tests five_system_exp2five_performance five_system_exp2five_extrapolation"
           TAB_ALLOWLIST[exp1_pca]="pca_defi_comparison"
           TAB_ALLOWLIST[exp1b_pca]="pca_portfolio_sweep"
           TAB_ALLOWLIST[exp2_feynman]="feynman_benchmark_main method_rank_table"
@@ -638,48 +622,6 @@ jobs:
             --figures-dir "${OUT_BASE}/${SUB}/figures" \
             --source      auto \
             || echo "::warning::exp1b figure generation failed — exp1b — _merged.json may be absent. Run ci_analysis.yml for exp1b first."
-
-      # ── A2a: exp1_ablation — prep canonical input + regen Fig 3/4 ───────────
-      # Drop-in copy of the merged ablation results into the flat working dir,
-      # then run the regen script directly. No reshaping — schema matches
-      # as-is (extra keys task_id/name/nn are harmless).
-      #
-      # PATH NOTE: regen_fig3_fig4.py resolves its DEFAULT input path relative
-      # to the script's own location (.github/scripts/exp1_ablation/...), not
-      # relative to $GITHUB_WORKSPACE / the step's cwd. A bare `mkdir -p
-      # exp1_ablation` at repo root therefore silently misses it — pass
-      # --data-path explicitly instead of relying on the default resolution.
-      #
-      # DATA-SOURCE NOTE: the script's own help text describes its default
-      # input as "a hand-transcribed Table-6 JSON, not raw CI pipeline
-      # output." We are deliberately overriding that here and pointing it at
-      # the real _merged.json via --data-path, so the regenerated figures
-      # reflect actual pipeline output rather than a hand-transcribed file
-      # that may not match it.
-      #
-      # NOTE: regen_fig3_fig4.py's own diff-check at the end only compares its
-      # OUTPUT against the RAW file it just loaded (i.e. against itself) — it
-      # will pass trivially regardless of whether exp1_ablation_results.json
-      # matches the manuscript's Table 6. It confirms the script transcribed
-      # its input correctly, NOT that the regenerated figures match published
-      # claims. Treat a green run here as "figures reflect _merged.json", not
-      # as "figures reflect Table 6" — those are different claims.
-      - name: "Prep + regen: exp1_ablation Fig 3/4 from canonical _merged.json"
-        if: env.EFFECTIVE_EXPERIMENT == 'exp1_ablation'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          MERGED="${OUT_BASE}/${SUB}/_merged.json"
-          if [[ ! -f "$MERGED" ]]; then
-            echo "::error::${MERGED} not found. Run ci_analysis.yml for exp1_ablation first."
-            exit 1
-          fi
-          mkdir -p exp1_ablation
-          cp "$MERGED" exp1_ablation/exp1_ablation_results.json
-          python3 .github/scripts/regen_fig3_fig4.py \
-            --data-path "$(pwd)/exp1_ablation/exp1_ablation_results.json"
 
       # ── A2b: exp1_ablation ──────────────────────────────────────────────────
       - name: "Figures: exp1_ablation — Core-15 ablation (PySR-only vs HypatiaX)"
@@ -925,18 +867,9 @@ jobs:
           SUB: ${{ steps.meta.outputs.result_subdir }}
         shell: bash
         run: |
-          # Guarded like the sibling clean_figures_dir.py call above: this is a
-          # best-effort cleanup step, not a gate. A missing script or any
-          # internal failure here must never hard-fail the postprocess job —
-          # it previously did ("can't open file ... No such file or directory",
-          # exit code 2) because there was no fallback on this call.
-          if [[ -f .github/scripts/clean_stale_checkpoints.py ]]; then
-            python3 .github/scripts/clean_stale_checkpoints.py \
-              "${OUT_BASE}/${SUB}" \
-              --apply || echo "::warning::clean_stale_checkpoints.py failed — stale checkpoint(s), if any, were left in place."
-          else
-            echo "::warning::.github/scripts/clean_stale_checkpoints.py not found — skipping stale-checkpoint cleanup."
-          fi
+          python3 .github/scripts/clean_stale_checkpoints.py \
+            "${OUT_BASE}/${SUB}" \
+            --apply
 
       # ── A14: extrap ───────────────────────────────────────────────────────────
       - name: "Figures: extrap — OOD extrapolation"
@@ -1513,43 +1446,6 @@ jobs:
           fi
           echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
 
-      # ── B2b: exp1_five — five-system comparison + sub-tables ────────────────
-      # Produces: five_system.tex, five_system_stat_tests.tex,
-      #           five_system_performance.tex, five_system_extrapolation.tex
-      # Source: five_systems/exp1_five/exp1_five_{results,performance,extrapolation}.json
-      #
-      # NOTE ON --results-dir: unlike exp1_ablation above, generate_tables.py's
-      # exp1_five loaders (_load_five_system_rows_real() /
-      # _load_exp1_five_subtable_json()) join "five_systems/exp1_five" onto
-      # --results-dir THEMSELVES. Passing "${OUT_BASE}/${SUB}" (SUB is already
-      # "five_systems/exp1_five") would self-nest the path the same way the
-      # old suppB/suppC/exp1_ablation doubled-path bug did (see
-      # _CANONICAL_SUFFIXES comment at the top of generate_tables.py — that
-      # fix list does not cover five_systems/*, so we avoid the doubling here
-      # by passing the results ROOT instead).
-      - name: "Tables: exp1_five — five-system comparison"
-        if: env.EFFECTIVE_EXPERIMENT == 'exp1_five'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          RESULTS_JSON="${OUT_BASE}/${SUB}/exp1_five_results.json"
-          if [[ ! -f "$RESULTS_JSON" ]]; then
-            echo "::error::${RESULTS_JSON} not found. Run ci_runner.yml for exp1_five first."
-            exit 1
-          fi
-          python scripts/generate_tables.py \
-            --experiment  exp1_five \
-            --results-dir "${OUT_BASE}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
-          if [[ $N_TABS -eq 0 ]]; then
-            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
-            exit 1
-          fi
-          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
-
       # ── B3: exp2_feynman — Feynman benchmark (Tab 4 / Tab 5, random 80/20) ─
       - name: "Tables: exp2_feynman — Feynman benchmark"
         if: env.EFFECTIVE_EXPERIMENT == 'exp2_feynman'
@@ -1649,40 +1545,6 @@ jobs:
           python scripts/generate_tables.py \
             --experiment  exp2 \
             --results-dir "${OUT_BASE}/${SUB}" \
-            --output-dir  "${OUT_BASE}/${SUB}/tables"
-          N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
-          if [[ $N_TABS -eq 0 ]]; then
-            echo "::error::generate_tables.py exited 0 but wrote no .tex files to ${OUT_BASE}/${SUB}/tables"
-            exit 1
-          fi
-          echo "Tables OK: ${N_TABS} .tex file(s) written to ${OUT_BASE}/${SUB}/tables"
-
-      # ── B6b: exp2_five — five-system comparison (own dedicated loader) ──────
-      # Produces: five_system_exp2five.tex, five_system_exp2five_stat_tests.tex,
-      #           five_system_exp2five_performance.tex,
-      #           five_system_exp2five_extrapolation.tex
-      # Source: five_systems/exp2_five/exp2_five_{results,performance,extrapolation}.json
-      # via _load_exp2_five_own_rows() / _load_exp2_five_own_raw() — genuinely
-      # separate from exp1_five's tables, never mixed.
-      #
-      # Same --results-dir-root rationale as exp1_five above: the exp2_five
-      # loaders join "five_systems/exp2_five" onto --results-dir themselves,
-      # so pass ${OUT_BASE} (root), not ${OUT_BASE}/${SUB}.
-      - name: "Tables: exp2_five — five-system comparison (exp2_five own data)"
-        if: env.EFFECTIVE_EXPERIMENT == 'exp2_five'
-        env:
-          SUB: ${{ steps.meta.outputs.result_subdir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          RESULTS_JSON="${OUT_BASE}/${SUB}/exp2_five_results.json"
-          if [[ ! -f "$RESULTS_JSON" ]]; then
-            echo "::error::${RESULTS_JSON} not found. Run ci_runner.yml for exp2_five first."
-            exit 1
-          fi
-          python scripts/generate_tables.py \
-            --experiment  exp2_five \
-            --results-dir "${OUT_BASE}" \
             --output-dir  "${OUT_BASE}/${SUB}/tables"
           N_TABS=$(find "${OUT_BASE}/${SUB}/tables" -maxdepth 1 -name "*.tex" 2>/dev/null | wc -l)
           if [[ $N_TABS -eq 0 ]]; then
