@@ -137,6 +137,14 @@ _CANONICAL_SUFFIXES = (
     "comparison_results/feynman-tests/noise-sweep/noise-sweep",
     "comparison_results/feynman-tests/noise-sweep",
     "ablation/exp1_ablation",
+    # _load_five_system_rows_real() / _load_exp1_five_subtable_json() /
+    # _load_exp2_five_own_rows() all join "five_systems/exp1_five" or
+    # "five_systems/exp2_five" onto RESULTS themselves (same convention as
+    # the suppB/suppC/exp1_ablation cases above). Guard against the same
+    # doubled-path mistake if a future CI edit passes the already-resolved
+    # subdir (e.g. "${OUT_BASE}/${SUB}") instead of the results root.
+    "five_systems/exp1_five",
+    "five_systems/exp2_five",
 )
 for _suffix in _CANONICAL_SUFFIXES:
     _parts = Path(_suffix).parts
@@ -3548,7 +3556,11 @@ def gen_suppb_winrate(noise_data: dict | None, sc_data: dict | None) -> None:
 def gen_suppb_noiseless() -> None:
     """tab:overall — Six-method noiseless aggregate performance."""
     # Source: protocol_core_noiseless_*.json
-    noiseless_dir = RESULTS / "comparison_results" / "noise-noiseless" / "noiseless"
+    # NOTE: exp1's canonical output dir has a trailing "defi" segment — see
+    # EXP1_SUBDIR="comparison_results/noise-noiseless/noiseless/defi" in
+    # ci_postprocess.yml. Without it this glob searches one level too
+    # shallow and never finds the file, even after exp1 has run.
+    noiseless_dir = RESULTS / "comparison_results" / "noise-noiseless" / "noiseless" / "defi"
     candidates = sorted(noiseless_dir.glob("protocol_core_noiseless_*.json"),
                         key=os.path.getmtime, reverse=True) if noiseless_dir.exists() else []
     data = None
@@ -3735,7 +3747,7 @@ def main() -> None:
          "sample_complexity_*.json", "",
          ("suppb", "suppb_sc")),
         ("noiseless protocol JSON (suppB tab:overall)",
-         "comparison_results/noise-noiseless/noiseless",
+         "comparison_results/noise-noiseless/noiseless/defi",
          "protocol_core_noiseless_*.json", "",
          ("suppb",)),
     ]

@@ -1853,31 +1853,48 @@ class ImprovedNNMethod(BaseMethod):
             # mismatch: R² looks poor while NRMSE looks excellent.
             # Solution: predict on the full X and evaluate against all y, matching
             # the convention used by baseline_neural_network_defi_improved.py.
-            try:
+            # _predict_new() replicates whichever branch above ended up
+            # winning (main NN / log-OLS fallback / linear-space NN
+            # fallback) so it can be replayed on ANY new X — the full
+            # 200-row training set here, and later arbitrary extrapolation
+            # inputs (near/medium/far regimes) via the ._predict_fn hook
+            # attached to the returned MethodResult below.
+            #
+            # NOTE: unlike the symbolic methods, this model has no
+            # evaluable formula string — "ImprovedNN(...)" in `formula` is
+            # a human-readable architecture label only, never meant to be
+            # parsed by _runner_eval_formula. Downstream callers that need
+            # to re-evaluate this method on new inputs (e.g. extrapolation
+            # scoring) MUST use ._predict_fn instead of formula_full; they
+            # will always get None/NaN if they try to eval the label string.
+            def _predict_new(X_new: np.ndarray) -> np.ndarray:
+                X_new = np.asarray(X_new, dtype=float)
                 if space_tag == "log-OLS" and _ols_coeffs is not None:
-                    # OLS was the best predictor — replay on all 200 rows
-                    A_all      = np.column_stack([X_all_t, np.ones(len(X_all_t))])
-                    y_pred_all = _y_sign * np.exp(np.clip(A_all @ _ols_coeffs, -500, 500))
+                    X_new_t = _transform_X(X_new)
+                    A_new = np.column_stack([X_new_t, np.ones(len(X_new_t))])
+                    return _y_sign * np.exp(np.clip(A_new @ _ols_coeffs, -500, 500))
                 elif space_tag == "lin-fallback" and _lin_model is not None:
-                    # Linear-space NN was the best predictor — replay on all 200 rows
                     _lin_model.eval()
-                    _X_all_lin_s = _lin_scaler_X.transform(X.astype(float))
+                    X_new_s = _lin_scaler_X.transform(X_new)
                     with torch.no_grad():
-                        _yp_lin = _lin_scaler_y.inverse_transform(
-                            _lin_model(torch.FloatTensor(_X_all_lin_s)
-                            ).numpy().reshape(-1, 1)
+                        yp = _lin_scaler_y.inverse_transform(
+                            _lin_model(torch.FloatTensor(X_new_s)).numpy().reshape(-1, 1)
                         ).flatten()
-                    y_pred_all = _yp_lin
+                    return yp
                 else:
-                    # Main log/linear NN — replay on all 200 rows using X_all_s
                     model.eval()
+                    X_new_t = _transform_X(X_new)
+                    X_new_s = scaler_X.transform(X_new_t)
                     with torch.no_grad():
-                        _yp_s = model(torch.FloatTensor(X_all_s)).numpy().flatten()
-                    _yp_t = scaler_y.inverse_transform(_yp_s.reshape(-1, 1)).flatten()
-                    y_pred_all = (
-                        _y_sign * np.exp(np.clip(_yp_t, -500, 500))
-                        if _use_log_y else _yp_t
+                        yp_s = model(torch.FloatTensor(X_new_s)).numpy().flatten()
+                    yp_t = scaler_y.inverse_transform(yp_s.reshape(-1, 1)).flatten()
+                    return (
+                        _y_sign * np.exp(np.clip(yp_t, -500, 500))
+                        if _use_log_y else yp_t
                     )
+
+            try:
+                y_pred_all = _predict_new(X)
                 r2_final   = self._safe_r2(y, y_pred_all)
                 rmse_final = self._safe_rmse(y, y_pred_all)
             except Exception as _eval_exc:
@@ -1895,6 +1912,12 @@ class ImprovedNNMethod(BaseMethod):
                 rmse=rmse_final,
                 formula=f"ImprovedNN({X.shape[1]}→{'→'.join(str(h) for h in hidden)}→1,{space_tag})",
             )
+            # Non-dataclass-field attribute: callers that know to look for
+            # it (exp1_five_system.py's extrapolation step) can call this
+            # directly on new X instead of trying to eval `formula` as an
+            # expression. Absent for every other method, so existing
+            # formula-string-based callers are unaffected.
+            single_result._predict_fn = _predict_new
             return single_result
 
         except Exception as exc:
