@@ -351,6 +351,27 @@ _TIER2_EXTRACTORS = [
         ),
         lambda d: [],   # no per-record data to validate
     ),
+    # Build-provenance metadata file (e.g. provenance_map_exp1_five.json),
+    # written by *_system.py runners alongside their result/performance/
+    # extrapolation JSONs. Records engine, seed, reused_from, outputs paths,
+    # paper_sections, known_caveat, etc. — not experiment result data, so it
+    # legitimately has 0 records, same as experiment_summary_dict above.
+    # Guard: top-level dict with the canonical provenance-map keys and no
+    # results/tests/per_noise/per_n payload (so it can never shadow a real
+    # data extractor above it).
+    (
+        "provenance_map",
+        lambda d: (
+            isinstance(d, dict)
+            and {"family", "engine", "reused_from", "seed", "outputs"}.issubset(d.keys())
+            and isinstance(d.get("outputs"), dict)
+            and not isinstance(d.get("results"), (list, dict))
+            and not isinstance(d.get("tests"), list)
+            and not isinstance(d.get("per_noise"), dict)
+            and not isinstance(d.get("per_n"), dict)
+        ),
+        lambda d: [],   # no per-record data to validate
+    ),
     # Top-level dict, no "results" wrapper, equation->generic dict (merge_shards.py output)
     (
         "toplevel_generic_dicts",
@@ -745,6 +766,37 @@ _SELF_TEST_CASES = [
             "source_files": ["benchmark_results_extrap.json"],
         },
         expected_n=0, expected_fmt="experiment_summary_dict", tier=2,
+    ),
+    dict(
+        name="tier2 / provenance_map  (provenance_map_exp1_five.json)",
+        payload={
+            "family": "five_systems_exp1_five",
+            "engine": "exp1_five_system.py",
+            "reused_from": {
+                "equation_suite_and_data_generators": "exp1_ablation.py (CORE_15, generate_data, generate_extrap_data)",
+                "method_classes": "run_comparative_suite_benchmark_v2.py (METHOD_REGISTRY indices 1,2,4,5,6)",
+                "extrapolation_evaluator": "run_comparative_suite_benchmark_v2.py (_runner_eval_formula, _far_r2, _far_rmse)",
+            },
+            "excluded_method": {
+                "index": 3,
+                "class": "HybridDeFiMethod",
+                "reason": "DeFi-domain-scoped; not one of the five paper row names",
+            },
+            "seed": 42,
+            "populations": 30,
+            "method_timeout": 900,
+            "pysr_timeout": 1100,
+            "timestamp": "2026-08-02T13:33:34.126995",
+            "outputs": {
+                "results_json": "hypatiax/data/results/five_systems/exp1_five/exp1_five_results.json",
+                "checkpoint_json": "hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json",
+                "performance_json": "hypatiax/data/results/five_systems/exp1_five/exp1_five_performance.json",
+                "extrapolation_json": "hypatiax/data/results/five_systems/exp1_five/exp1_five_extrapolation.json",
+            },
+            "paper_sections": ["\u00a710.1"],
+            "known_caveat": "The 'Hybrid v50_2' row here is NOT expected to reproduce exp1_ablation's 'hypatia' row.",
+        },
+        expected_n=0, expected_fmt="provenance_map", tier=2,
     ),
     # ------------------------------------------------------------------
     # Error / no-match
