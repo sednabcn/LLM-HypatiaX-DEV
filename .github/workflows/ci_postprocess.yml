@@ -4,13 +4,13 @@ name: "HypatiaX - post-process (figures + tables)"
 # ci_postprocess.yml — generic, config-driven figures + tables generation.
 #
 # Every experiment's source dir, output dirs, and which generators apply to
-# it lives in experiments.yml — NOT in this file. To add, remove, or move an
-# experiment, edit experiments.yml only; nothing here should need to change.
+# it lives in ci_experiments.yml — NOT in this file. To add, remove, or move an
+# experiment, edit ci_experiments.yml only; nothing here should need to change.
 #
 # GitHub Actions limitation: workflow_dispatch `options:` and push `paths:`
 # must be static YAML — Actions evaluates triggers before running any code,
-# so it can't read experiments.yml to build them. Both lists below are
-# therefore mirrored by hand from experiments.yml. The "Validate config
+# so it can't read ci_experiments.yml to build them. Both lists below are
+# therefore mirrored by hand from ci_experiments.yml. The "Validate config
 # sync" step fails the run loudly the moment they drift apart, instead of
 # silently misrouting a run the way the old three-file-duplicated mapping
 # did.
@@ -20,7 +20,7 @@ name: "HypatiaX - post-process (figures + tables)"
   push:
     branches: ["main", "master"]
     paths:
-      - "experiments.yml"
+      - "ci_experiments.yml"
       - "scripts/generate_figures.py"
       - "scripts/generate_tables.py"
       - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/**/*.json"
@@ -45,7 +45,7 @@ name: "HypatiaX - post-process (figures + tables)"
   workflow_dispatch:
     inputs:
       experiment:
-        description: "Experiment ID — must be a key (or alias) in experiments.yml"
+        description: "Experiment ID — must be a key (or alias) in ci_experiments.yml"
         required: true
         type: choice
         options:
@@ -74,7 +74,7 @@ permissions:
   contents: write
 
 env:
-  CONFIG_FILE: "experiments.yml"
+  CONFIG_FILE: "ci_experiments.yml"
 
 jobs:
   postprocess:
@@ -102,7 +102,7 @@ jobs:
 
       # ------------------------------------------------------------------
       # Step 0 — fail loudly if this workflow's static dispatch/push lists
-      # have drifted out of sync with experiments.yml, rather than silently
+      # have drifted out of sync with ci_experiments.yml, rather than silently
       # misrouting or refusing a valid run.
       # ------------------------------------------------------------------
       - name: Validate config sync
@@ -127,25 +127,25 @@ jobs:
           missing_from_config   = dispatch_options - config_ids
           if missing_from_dispatch or missing_from_config:
               print("::error::ci_postprocess.yml's workflow_dispatch options "
-                    "have drifted from experiments.yml.")
+                    "have drifted from ci_experiments.yml.")
               if missing_from_dispatch:
-                  print(f"  In experiments.yml but NOT in this workflow's "
+                  print(f"  In ci_experiments.yml but NOT in this workflow's "
                         f"dispatch options: {sorted(missing_from_dispatch)}")
               if missing_from_config:
                   print(f"  In this workflow's dispatch options but NOT in "
-                        f"experiments.yml: {sorted(missing_from_config)}")
+                        f"ci_experiments.yml: {sorted(missing_from_config)}")
               print("Fix: update the workflow_dispatch.inputs.experiment.options "
                     "list (and the push.paths list, if a source_dir changed) "
-                    "in ci_postprocess.yml to match experiments.yml.")
+                    "in ci_postprocess.yml to match ci_experiments.yml.")
               sys.exit(1)
 
           print(f"OK — {len(config_ids)} experiment/aggregate IDs in sync "
-                f"between experiments.yml and ci_postprocess.yml.")
+                f"between ci_experiments.yml and ci_postprocess.yml.")
           PY
 
       # ------------------------------------------------------------------
       # Step 1 — resolve which experiment this run is for, and every path
-      # it needs, purely by reading experiments.yml. Nothing below this
+      # it needs, purely by reading ci_experiments.yml. Nothing below this
       # step contains a hardcoded experiment name or directory.
       # ------------------------------------------------------------------
       - name: Resolve experiment from config
@@ -154,7 +154,7 @@ jobs:
         env:
           DISPATCH_INPUT: ${{ github.event.inputs.experiment }}
           EVENT_NAME: ${{ github.event_name }}
-          CHANGED_FILES: ${{ github.event_name == 'push' && join(github.event.head_commit.modified, github.event.head_commit.added, github.event.head_commit.removed, '\n') || '' }}
+          CHANGED_FILES: ${{ github.event_name == 'push' && format('{0}\n{1}\n{2}', join(github.event.head_commit.modified, '\n'), join(github.event.head_commit.added, '\n'), join(github.event.head_commit.removed, '\n')) || '' }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import os, re, sys, json, yaml
@@ -207,7 +207,7 @@ jobs:
                       break
               if exp_id is None:
                   print("::error::No changed file matched any experiment's "
-                        "trigger_paths in experiments.yml — cannot determine "
+                        "trigger_paths in ci_experiments.yml — cannot determine "
                         "which experiment this push run is for.")
                   sys.exit(1)
 
@@ -248,7 +248,7 @@ jobs:
           fi
 
       # ------------------------------------------------------------------
-      # Step 2 — cross-experiment write guards (experiments.yml: guards:).
+      # Step 2 — cross-experiment write guards (ci_experiments.yml: guards:).
       # Snapshot every directory this run does NOT own, before generation.
       # ------------------------------------------------------------------
       - name: Snapshot guarded directories
@@ -285,7 +285,7 @@ jobs:
 
       # ------------------------------------------------------------------
       # Step 3 — generate. Both scripts already warn-and-skip on missing
-      # data (experiments.yml: on_missing_data) and always exit 0; no
+      # data (ci_experiments.yml: on_missing_data) and always exit 0; no
       # hardcoded/paper-verified value is ever substituted by either.
       # ------------------------------------------------------------------
       - name: "Generate tables"
@@ -389,7 +389,7 @@ jobs:
               print("::error::This run wrote into a directory it does not own:")
               for v in violations:
                   print(f"  {v}")
-              print("See experiments.yml's guards: section for the owning experiment(s).")
+              print("See ci_experiments.yml's guards: section for the owning experiment(s).")
               sys.exit(1)
           print("OK — no guarded directory was touched by this run.")
           PY
