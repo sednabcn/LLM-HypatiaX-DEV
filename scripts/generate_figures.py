@@ -328,16 +328,16 @@ if _EXPERIMENT in ("exp2_feynman_extrap", "exp2_feyman_extrap"):
     if not _preflight_ok:
         print()
         print("=" * 70)
-        print(f"PREFLIGHT FAILED for experiment '{_EXPERIMENT}'")
-        print("The following required files are missing:")
+        print(f"PREFLIGHT WARNING for experiment '{_EXPERIMENT}'")
+        print("The following files are missing — figures that depend on them")
+        print("will be skipped, but this run continues (warn_and_skip):")
         for msg in _preflight_msgs:
             print(msg)
         print()
         print("Action: ensure ci_analysis.yml has run successfully for")
         print(f"  exp2_feynman_extrap (results-dir: {_RESULTS_DIR})")
-        print("before running ci_postprocess.yml.")
+        print("to get the skipped figures on a future run.")
         print("=" * 70)
-        sys.exit(1)
     else:
         print(f"  [PREFLIGHT OK] All required files present for '{_EXPERIMENT}'.")
 
@@ -362,15 +362,15 @@ if not _EXP1_SELECTED:
 else:
     RAW = _load_json(DATA_MAIN, "exp1_ablation_results.json")
     if RAW is None:
-        _ablation_required = (
+        _ablation_wanted = (
             _EXPERIMENT is None                          # legacy invocation — preserve old behaviour
             or _EXPERIMENT == "exp1_ablation"            # the one experiment that genuinely needs it
             or _EXPERIMENT in ("exp1", "exp1b")          # cosmetic figures need it
         )
-        if _ablation_required:
-            print(f"ERROR: primary data file '{DATA_MAIN}' is required for experiment "
-                  f"'{_EXPERIMENT}'. Aborting.")
-            sys.exit(1)
+        if _ablation_wanted:
+            print(f"  [WARN] primary data file '{DATA_MAIN}' is missing for "
+                  f"experiment '{_EXPERIMENT}'. Figure groups that need it "
+                  f"will be skipped (warn_and_skip) — this run continues.")
         else:
             print(f"  [INFO] exp1_ablation_results.json not present for experiment "
                   f"'{_EXPERIMENT}' — cosmetic/RF02/RF09 figure groups will be skipped.")
