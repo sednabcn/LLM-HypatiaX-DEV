@@ -1,0 +1,191 @@
+name: "HypatiaX - sync figures + tables to global dirs"
+
+# ==============================================================================
+# ci_fig_tables.yml — scans every figures/ and tables/ directory that exists
+# anywhere under results_root (config/experiments.yml: results_root), and for
+# each one found:
+#
+#   1. writes a timestamp marker file into that directory
+#        - figures/  -> figures_timestamp
+#        - tables/   -> tables_timestamp
+#   2. copies every file in that directory into the corresponding GLOBAL
+#      directory at the root of results_root (results_root/figures,
+#      results_root/tables) — same "same name/same content -> skip,
+#      same name/different content -> warn and leave untouched" rule used by
+#      figures_deploy in ci_postprocess.yml, so this never silently
+#      overwrites a real conflict.
+#
+# This is a pure filesystem scan — it does NOT read experiments.yml's
+# experiments:/aggregates: entries, so it needs no maintenance when an
+# experiment is added, removed, or renamed. It only reads results_root from
+# config/experiments.yml so the two workflows never disagree on where
+# results live.
+#
+# The global results_root/figures and results_root/tables directories are
+# themselves skipped as scan targets (a directory can't sync into itself).
+# ==============================================================================
+
+"on":
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "hypatiax/data/results/**/figures/**"
+      - "hypatiax/data/results/**/tables/**"
+      - "config/experiments.yml"
+
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  CONFIG_FILE: "config/experiments.yml"
+
+jobs:
+  sync-fig-tables:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install "PyYAML>=6.0"
+
+      # ------------------------------------------------------------------
+      # Step 1 & 2 — timestamp every figures/ and tables/ dir, then sync
+      # their contents into the global results_root/figures and
+      # results_root/tables directories.
+      # ------------------------------------------------------------------
+      - name: Timestamp and sync figures/tables
+        id: sync
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import os
+          import shutil
+          import sys
+          import yaml
+
+          with open(os.environ["CONFIG_FILE"]) as f:
+              cfg = yaml.safe_load(f)
+          results_root = cfg["results_root"]
+
+          if not os.path.isdir(results_root):
+              print(f"::error::results_root '{results_root}' does not exist.")
+              sys.exit(1)
+
+          global_dirs = {
+              "figures": os.path.join(results_root, "figures"),
+              "tables":  os.path.join(results_root, "tables"),
+          }
+          for d in global_dirs.values():
+              os.makedirs(d, exist_ok=True)
+
+          timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          def sha256(path: str) -> str:
+              with open(path, "rb") as f:
+                  return hashlib.sha256(f.read()).hexdigest()
+
+          stamped = {"figures": 0, "tables": 0}
+          copied = {"figures": 0, "tables": 0}
+          unchanged = {"figures": 0, "tables": 0}
+          conflicts = []
+
+          for kind, global_dir in global_dirs.items():
+              global_dir_abs = os.path.abspath(global_dir)
+              marker_name = f"{kind}_timestamp"
+
+              for dirpath, dirnames, filenames in os.walk(results_root):
+                  if os.path.basename(dirpath) != kind:
+                      continue
+                  if os.path.abspath(dirpath) == global_dir_abs:
+                      continue  # never timestamp/sync a global dir into itself
+
+                  # 1) timestamp marker
+                  with open(os.path.join(dirpath, marker_name), "w") as f:
+                      f.write(timestamp + "\n")
+                  stamped[kind] += 1
+
+                  # 2) sync files into the global dir
+                  for fn in filenames:
+                      if fn == marker_name:
+                          continue
+                      src = os.path.join(dirpath, fn)
+                      dst = os.path.join(global_dir, fn)
+                      if os.path.exists(dst):
+                          if sha256(src) == sha256(dst):
+                              unchanged[kind] += 1
+                              continue
+                          conflicts.append((kind, fn, dirpath))
+                          continue
+                      shutil.copy2(src, dst)
+                      copied[kind] += 1
+
+          for kind in ("figures", "tables"):
+              print(f"{kind}: stamped {stamped[kind]} dir(s), "
+                    f"copied {copied[kind]}, already up to date {unchanged[kind]}, "
+                    f"{sum(1 for c in conflicts if c[0] == kind)} conflict(s).")
+
+          if conflicts:
+              print("::warning::Filename conflicts (same name, different content) "
+                    "left untouched — resolve manually:")
+              for kind, fn, src_dir in conflicts:
+                  print(f"  [{kind}] {fn} (from {src_dir})")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"stamped_figures={stamped['figures']}\n")
+              f.write(f"stamped_tables={stamped['tables']}\n")
+              f.write(f"copied_figures={copied['figures']}\n")
+              f.write(f"copied_tables={copied['tables']}\n")
+              f.write(f"conflicts={len(conflicts)}\n")
+          PY
+
+      # ------------------------------------------------------------------
+      # Step 3 — commit whatever changed (new/updated timestamp markers,
+      # newly synced files). Nothing to commit is not an error.
+      # ------------------------------------------------------------------
+      - name: Commit synced figures/tables
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "hypatiax/data/results"
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — figures/tables already in sync."
+          else
+            git commit -m "sync(fig+tables): timestamp and sync figures/tables to global dirs [skip ci]"
+            git push
+          fi
+
+      - name: Step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Figures/tables sync"
+            echo ""
+            echo "| | figures | tables |"
+            echo "|---|---|---|"
+            echo "| Directories timestamped | ${{ steps.sync.outputs.stamped_figures }} | ${{ steps.sync.outputs.stamped_tables }} |"
+            echo "| Files copied to global dir | ${{ steps.sync.outputs.copied_figures }} | ${{ steps.sync.outputs.copied_tables }} |"
+            echo ""
+            echo "Conflicts left untouched: ${{ steps.sync.outputs.conflicts }}"
+          } >> "$GITHUB_STEP_SUMMARY"
