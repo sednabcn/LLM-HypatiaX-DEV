@@ -1,0 +1,113 @@
+# ci_pca_split_test.yml  —  HypatiaX · PCA split scale regression test
+#
+# Runs test_pca_split_scale.py to verify that:
+#   - new pca_directed_split(scale=False) is identical to the old implementation
+#   - new pca_directed_split(scale=True)  diverges correctly on unscaled features
+#   - rounding change (floor→round) is safe for n=30 and n=180 (Feynman sizes)
+#   - univariate inputs are unaffected by the scale flag
+#
+# Triggers:
+#   - push / PR touching pca_split_utils.py or this workflow
+#   - workflow_dispatch (manual)
+#
+# Requires:
+#   secrets.ANTHROPIC_API_KEY  — injected into env for parity with other CI
+#                                jobs; the test itself does not call the API
+#                                but downstream callers of pca_directed_split
+#                                may need it.
+# ==============================================================================
+
+name: "HypatiaX - PCA split scale test"
+run-name: >-
+  PCA split scale test — ${{ github.ref_name }} — run ${{ github.run_id }}
+
+on:
+  push:
+    paths:
+      - "hypatiax/utils/pca_split_utils.py"
+      - "scripts/tests/test_pca_split_scale.py"
+      - ".github/workflows/ci_pca_split_test.yml"
+  pull_request:
+    paths:
+      - "hypatiax/utils/pca_split_utils.py"
+      - "scripts/tests/test_pca_split_scale.py"
+      - ".github/workflows/ci_pca_split_test.yml"
+  workflow_dispatch:
+    inputs:
+      fail_on_warn:
+        description: "Treat WARN as FAIL (true/false)"
+        required: false
+        default: "false"
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+
+  pca-split-scale-test:
+    name: "PCA split scale regression test"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4.2.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-pca-split-${{ hashFiles('scripts/tests/test_pca_split_scale.py') }}
+          restore-keys: |
+            pip-${{ env.PYTHON_VERSION }}-pca-split-
+            pip-${{ env.PYTHON_VERSION }}-
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install --no-cache-dir \
+            numpy \
+            pandas \
+            scikit-learn
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Run PCA split scale test
+        id: pca_split_test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "=== PCA split scale regression test ==="
+          python scripts/tests/test_pca_split_scale.py 2>&1 | tee logs/pca_split_test.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "pca_split_exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit ${EXIT_CODE}
+
+      - name: Annotate failure
+        if: failure() && steps.pca_split_test.outcome == 'failure'
+        run: |
+          echo "::error file=hypatiax/utils/pca_split_utils.py::PCA split scale test failed. \
+          Check logs/pca_split_test.log for which case(s) failed. \
+          Likely causes: (1) scale=False no longer matches old implementation, \
+          (2) scale=True not diverging on unscaled features, \
+          (3) rounding change broke n=30 or n=180 train size."
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name:              pca-split-test-${{ github.run_id }}
+          path:              logs/pca_split_test.log
+          if-no-files-found: warn
+          retention-days:    30

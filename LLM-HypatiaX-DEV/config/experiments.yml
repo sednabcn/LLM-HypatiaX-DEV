@@ -1,0 +1,231 @@
+# ==============================================================================
+#  experiments.yml — single source of truth for HypatiaX post-processing
+#
+#  Every experiment's source data location, output locations, and which
+#  generators apply to it are defined ONCE, here. ci_postprocess.yml,
+#  ci_runner_repro.yml, ci_analysis.yml, run_all.sh, generate_tables.py, and
+#  generate_figures.py all read this file instead of hardcoding their own
+#  copies of this mapping.
+#
+#  To add a new experiment: add one entry below. No workflow YAML edits,
+#  no script edits, no allowlist edits required.
+# ==============================================================================
+
+# Root that every *_dir below is relative to.
+results_root: "hypatiax/data/results"
+
+# Root that every experiment's generated LaTeX tables are relative to.
+# (generate_tables.py --output-dir)
+tables_root: "paper/tables"
+
+# ------------------------------------------------------------------------------
+# Standard experiments — each has its own source data dir and its own
+# figures/tables output dirs (nested under source_dir unless overridden).
+# ------------------------------------------------------------------------------
+experiments:
+
+  exp1:
+    description: "noiseless DeFi"
+    source_dir: "comparison_results/noise-noiseless/noiseless/defi"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/**/*.json"
+
+  exp1b:
+    description: "noise-robust DeFi (multi-seed)"
+    source_dir: "comparison_results/noise-noiseless/15"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/noise-noiseless/15/**/*.json"
+
+  exp1_pca:
+    description: "DeFi noiseless PCA 40/60"
+    source_dir: "comparison_results/noise-noiseless/noiseless/defi_pca"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi_pca/**/*.json"
+
+  exp1b_pca:
+    description: "DeFi portfolio seed sweep PCA 40/60"
+    source_dir: "comparison_results/noise-noiseless/15_pca"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/noise-noiseless/15_pca/**/*.json"
+
+  exp1_ablation:
+    description: "Core-15 ablation (PySR-only vs HypatiaX)"
+    source_dir: "ablation/exp1_ablation"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/ablation/exp1_ablation/**/*.json"
+
+  exp1_five:
+    description: "five-system comparison (exp1 data)"
+    source_dir: "five_systems/exp1_five"
+    generates_tables: true
+    generates_figures: false   # no figure generator exists for this experiment
+    trigger_paths:
+      - "hypatiax/data/results/five_systems/exp1_five/**/*.json"
+
+  exp2_feynman:
+    description: "Feynman benchmark"
+    source_dir: "comparison_results/feynman-tests/exp2"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/feynman-tests/exp2/**/*.json"
+
+  exp2_feynman_extrap:
+    description: "extrapolation comparison"
+    source_dir: "comparison_results/feynman-tests/exp2_extrap"
+    generates_tables: true
+    generates_figures: true
+    aliases: ["exp2_feyman_extrap"]   # legacy typo (missing 'n') — kept for back-compat
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/feynman-tests/exp2_extrap/**/*.json"
+
+  exp2_feynman_pca:
+    description: "PCA 40/60 vs random 80/20"
+    source_dir: "comparison_results/feynman-tests/exp2_pca_4060"
+    generates_tables: true
+    generates_figures: true
+    aliases: ["exp2_feyman_pca"]      # legacy typo (missing 'n') — kept for back-compat
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060/**/*.json"
+    extra_stage_files:                # additional files Commit must stage beyond figures/+tables/
+      - "exp2_pca_comparison.tex"
+      - "exp2_pca_comparison.csv"
+      - "exp2_pca_comparison.md"
+
+  exp2:
+    description: "all-30 multi-domain"
+    source_dir: "comparison_results/feynman-tests/exp2_multi"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/feynman-tests/exp2_multi/**/*.json"
+
+  exp2_five:
+    description: "five-system comparison (exp2 data)"
+    source_dir: "five_systems/exp2_five"
+    generates_tables: true
+    generates_figures: false   # no figure generator exists for this experiment
+    trigger_paths:
+      - "hypatiax/data/results/five_systems/exp2_five/**/*.json"
+
+  exp3:
+    description: "Nguyen-12 symbolic equivalence"
+    source_dir: "extrapolation"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/extrapolation/**/*.json"
+      - "!hypatiax/data/results/extrapolation/multi_seed/**"   # exp3b owns this subpath
+
+  exp3b:
+    description: "multi-seed Nguyen-12"
+    source_dir: "extrapolation/multi_seed"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/extrapolation/multi_seed/**/*.json"
+
+  suppA:
+    description: "hybrid PySR + DeFi"
+    source_dir: "hybrid_pysr/defi"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/hybrid_pysr/**/*.json"
+
+  suppB:
+    description: "noise-sweep (canonical source)"
+    source_dir: "comparison_results/feynman-tests/noise-sweep"
+    generates_tables: true
+    generates_figures: true
+    protected: true   # only suppB's own run may write here — see 'guards' below
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/feynman-tests/noise-sweep/**/*.json"
+
+  suppB_sc:
+    description: "sample-complexity (canonical source)"
+    source_dir: "comparison_results/feynman-tests/sample-complexity"
+    generates_tables: true
+    generates_figures: true
+    protected: true   # only suppB_sc's own run may write here — see 'guards' below
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/feynman-tests/sample-complexity/**/*.json"
+
+  hybrid_all_domains:
+    description: "LLM+NN all-domain"
+    source_dir: "hybrid_llm_nn/all_domains"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/hybrid_llm_nn/**/*.json"
+
+  extrap:
+    description: "OOD extrapolation"
+    source_dir: "comparison_results/extrapolation"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/comparison_results/extrapolation/**/*.json"
+
+# ------------------------------------------------------------------------------
+# Aggregate entries — these don't own a single experiment's source data.
+# They read across multiple experiments' canonical output dirs and either
+# (a) regenerate the broadest figure set (instability), or
+# (b) assemble the final LaTeX-ready figures/ directory (figures_deploy).
+# Both write straight to `results_root/figures_dir` — no nested subfolder.
+# ------------------------------------------------------------------------------
+aggregates:
+
+  instability:
+    description: "Instability Index (S10.9) — broadest figure set"
+    figures_dir: "figures"          # == results_root/figures, not nested
+    tables_dir: "figures/tables"
+    generates_tables: true
+    generates_figures: true
+    trigger_paths:
+      - "hypatiax/data/results/figures/**/*.json"
+      - "scripts/generate_figures.py"   # script changes re-run the broadest figure set
+      - "generate_figures.py"
+
+  figures_deploy:
+    description: "Assemble final figures/ dir for the LaTeX build"
+    figures_dir: "figures"          # == results_root/figures, LaTeX \graphicspath target
+    # Reads scripts/figures_manifest.yml for the full stem -> source-experiment
+    # mapping (hand-crafted "no generator" stems + generated stems per
+    # experiment). Not a --experiment value passed to either script; this is
+    # a copy/assemble step run by .github/scripts/deploy_figures.py.
+    depends_on: ["suppB", "suppB_sc"]   # re-synced into figures/ on every deploy
+
+# ------------------------------------------------------------------------------
+# Cross-experiment write guards. Any experiment run OTHER than the ones
+# listed as owners is forbidden from touching these directories. Enforced by
+# a single generic guard step (snapshot before / diff after) in the CI
+# workflow — see ci_postprocess.yml.
+# ------------------------------------------------------------------------------
+guards:
+  - dirs: ["comparison_results/feynman-tests/noise-sweep/figures",
+           "comparison_results/feynman-tests/noise-sweep/tables"]
+    owners: ["suppB"]
+  - dirs: ["comparison_results/feynman-tests/sample-complexity/figures",
+           "comparison_results/feynman-tests/sample-complexity/tables"]
+    owners: ["suppB_sc"]
+  - dirs: ["figures"]
+    owners: ["instability", "figures_deploy"]
+
+# ------------------------------------------------------------------------------
+# On missing result data: warn and skip only the affected table/figure,
+# never substitute a hardcoded/paper-verified value, and never fail the
+# whole job for one missing input. (See generate_tables.py / generate_figures.py
+# for the shared "skip with warning" implementation.)
+# ------------------------------------------------------------------------------
+on_missing_data: warn_and_skip

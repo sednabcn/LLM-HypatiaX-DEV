@@ -1,0 +1,1273 @@
+# ==============================================================================
+#  ci_pipeline_analysis.yml
+#  HypatiaX · Analysis → Post-process → Check
+#
+#  PURPOSE
+#  -------
+#  Runs the full post-experiment pipeline for every experiment in sequence:
+#
+#    For each experiment (in canonical order):
+#      1. ci_analysis    — statistical analysis; writes _analysis.json + _report.md
+#      2. ci_postprocess — figures + tables; writes figures/ + tables/
+#
+#    After all experiments complete:
+#      3. ci_check       — 4-phase gate (check / complete / qualify / audit)
+#                          Prints consolidated pipeline health table and exits
+#                          non-zero if any hard gate fails.
+#
+#  This workflow does NOT re-run expensive experiment workers.  It operates
+#  entirely on committed result files already in the repo.
+#
+#  TRIGGER STRATEGY
+#  ----------------
+#  Manual:   workflow_dispatch — choose a single experiment or "all".
+#            "all" runs the full sequence for every experiment in canonical order.
+#
+#  AUTO TRIGGER:
+#  Add a workflow_run trigger (commented out below) once the upstream worker
+#  workflow name is confirmed.
+#
+#  CANONICAL EXPERIMENT ORDER
+#  --------------------------
+#  exp1 → exp1b → exp2_feynman → exp2 → exp3 → exp3b →
+#  suppA → suppB → suppB_sc → hybrid_all_domains → instability → extrap
+#
+#  exp1b and exp3b are the only experiments that require a _merged.json
+#  (produced by ci_consolidate_experiment.yml).  All others use per-shard
+#  committed files directly.  The EMPTY_DATASET fatal fires only for those two;
+#  all others emit WARN_EMPTY_DATASET and continue.
+#
+#  PERMISSIONS
+#  -----------
+#  contents: write  — ci_analysis and ci_postprocess commit outputs to master.
+#  actions:  read   — ci_check reads artifact store.
+# ==============================================================================
+
+name: "HypatiaX - pipeline (analysis + postprocess + check)"
+run-name: >-
+  HypatiaX pipeline —
+  ${{ github.event.inputs.experiment || 'all' }}
+  · run ${{ github.run_id }}
+
+on:
+  # ── Manual trigger ────────────────────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: "Experiment to run (or 'all' for every experiment in order)"
+        required: false
+        type: choice
+        options:
+          - all
+          - exp1
+          - exp1b
+          - exp2_feynman
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
+        default: all
+
+      seeds:
+        description: "Seeds (required for exp1b, exp3b; comma-separated)"
+        required: false
+        default: "42,99,123,777,2024"
+
+      noise_levels:
+        description: "Noise levels (required for suppB; comma-separated)"
+        required: false
+        default: "0.0,0.5,1.0,5.0,10.0"
+
+      fail_on_incomplete:
+        description: "Fail the check job if any experiment has missing tasks"
+        required: false
+        default: "false"
+
+  # ── Uncomment to auto-trigger after ci_experiment.yml completes ───────────
+  # workflow_run:
+  #   workflows: ["HypatiaX - experiment runner"]
+  #   types: [completed]
+
+permissions:
+  contents: write
+  actions:  read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  OUT_BASE: "hypatiax/data/results"
+  SEEDS:        ${{ github.event.inputs.seeds        || '42,99,123,777,2024' }}
+  NOISE_LEVELS: ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+  PYSR_FIT_WALL_TIMEOUT: ${{ vars.PYSR_FIT_WALL_TIMEOUT }}
+  PYSR_FIT_GRACE_SECS:   ${{ vars.PYSR_FIT_GRACE_SECS }}
+
+# Canonical result_subdir mapping — shared across all jobs via this helper.
+# Mirrors ci_analysis.yml, ci_postprocess.yml, and ci_all_checkpoint.yml exactly.
+
+# ==============================================================================
+#  PHASE 1 — ANALYSIS
+#  Runs ci_analysis logic for every selected experiment.
+#  instability is short-circuited (stub outputs written inline, no run_analysis.py).
+#  exp1b and exp3b are hard-fatal on EMPTY_DATASET; all others emit WARN only.
+# ==============================================================================
+
+jobs:
+
+  # ── Resolve which experiments to run ────────────────────────────────────────
+  setup:
+    name: "Resolve experiment list"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      experiments: ${{ steps.resolve.outputs.experiments }}
+
+    steps:
+      - name: Resolve experiment list
+        id: resolve
+        env:
+          EXPERIMENT: ${{ github.event.inputs.experiment || 'all' }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          ALL = [
+              "exp1", "exp1b", "exp2_feynman", "exp2", "exp3", "exp3b",
+              "suppA", "suppB", "suppB_sc", "hybrid_all_domains", "instability", "extrap",
+          ]
+          exp = os.environ["EXPERIMENT"]
+          selected = ALL if (exp == "all" or not exp) else [exp]
+          print(f"Selected experiments: {selected}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"experiments={json.dumps(selected)}\n")
+          PYEOF
+
+  # ── Install shared pip deps once; reused by analysis and postprocess ─────────
+  # (Each job installs its own deps; this job exists for clarity in the graph.)
+
+  # ── Analysis: one matrix job per experiment ──────────────────────────────────
+  analysis:
+    name: "Analysis · ${{ matrix.experiment }}"
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 1          # serial — each job commits to master; avoid rebase conflicts
+      matrix:
+        experiment: ${{ fromJson(needs.setup.outputs.experiments) }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: analysis-pip-${{ runner.os }}-numpy-scipy-pandas
+          restore-keys: analysis-pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0"
+
+      # ── instability: short-circuit (no _merged.json, no run_analysis.py) ────
+      - name: Short-circuit for instability experiment
+        if: matrix.experiment == 'instability'
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="${OUT_BASE}/figures"
+          mkdir -p "${OUT_DIR}"
+          python3 -c "
+          import json, os
+          out = os.environ['OUT_BASE'] + '/figures'
+          stub = {
+              'experiment':      'instability',
+              'experiment_mode': 'instability',
+              'n_total':         0,
+              'fatal_conditions': [
+                  'WARN_INSTABILITY_NO_MERGED_JSON: instability outputs are CSVs/figures only; '
+                  'statistical method analysis was skipped.'
+              ],
+          }
+          open(out + '/_analysis.json', 'w').write(json.dumps(stub, indent=2))
+          open(out + '/_report.md',     'w').write(
+              '# HypatiaX Analysis Report -- instability\n\n'
+              'Instability experiment: method comparison analysis not applicable.\n'
+              'See figures/instability_analysis.csv for results.\n'
+          )
+          print('Stub outputs written — instability short-circuit done.')
+          "
+
+      # ── All other experiments: resolve result_subdir and locate _merged.json ─
+      - name: Resolve result_subdir
+        if: matrix.experiment != 'instability'
+        id: meta
+        env:
+          EXP: ${{ matrix.experiment }}
+        run: |
+          set -euo pipefail
+          SUB=$(EXP_ID="${EXP}" python3 -c "
+          import os
+          mapping = {
+              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp2':               'comparison_results/feynman-tests/exp2_multi',
+              'exp3':               'extrapolation',
+              'exp3b':              'extrapolation/multi_seed',
+              'suppA':              'hybrid_pysr/defi',
+              'suppB':              'comparison_results/feynman-tests/noise-sweep',
+              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+              'instability':        'figures',
+              'extrap':             'comparison_results/extrapolation',
+          }
+          print(mapping.get(os.environ['EXP_ID'], os.environ['EXP_ID']))
+          ")
+          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
+          echo "Resolved: exp=${EXP}  subdir=${SUB}"
+
+      - name: Locate _merged.json
+        if: matrix.experiment != 'instability'
+        id: locate
+        env:
+          EXP: ${{ matrix.experiment }}
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          COMMITTED_JSON="${OUT_BASE}/${SUB}/_merged.json"
+
+          if [[ -f "$COMMITTED_JSON" ]]; then
+            MERGED_JSON="$COMMITTED_JSON"
+            echo "Using committed _merged.json: $MERGED_JSON"
+          else
+            # Fall back to first non-meta shard result file
+            SHARD_JSON=$(find "${OUT_BASE}/${SUB}" -maxdepth 1 -type f -name "*.json" \
+              ! -name "_*.json" 2>/dev/null | sort | head -1 || true)
+            if [[ -n "$SHARD_JSON" && -f "$SHARD_JSON" ]]; then
+              MERGED_JSON="$SHARD_JSON"
+              echo "No _merged.json — using shard file: $MERGED_JSON"
+            else
+              echo "::error::No input JSON found for ${EXP} in ${OUT_BASE}/${SUB}."
+              exit 1
+            fi
+          fi
+
+          # Sanity-check: valid JSON with records.
+          # EMPTY_DATASET is fatal only for exp1b and exp3b.
+          python3 - <<PYEOF
+          import json, sys, os
+          path = "$MERGED_JSON"
+          exp  = "$EXP"
+          try:
+              data = json.load(open(path))
+          except Exception as e:
+              print(f"::error::_merged.json is not valid JSON: {e}")
+              sys.exit(1)
+
+          if isinstance(data, dict) and isinstance(data.get("results"), dict):
+              n = len(data["results"])
+          elif isinstance(data, dict):
+              n = sum(1 for k, v in data.items()
+                      if isinstance(v, dict) and not k.startswith("_") and k != "stats")
+          elif isinstance(data, list):
+              n = len(data)
+          else:
+              print(f"::error::Unexpected _merged.json top-level type: {type(data).__name__}")
+              sys.exit(1)
+
+          if n == 0:
+              if exp in ("exp1b", "exp3b"):
+                  print(f"::error::_merged.json contains 0 task records for {exp}.")
+                  sys.exit(1)
+              else:
+                  print(f"::warning::_merged.json contains 0 task records for {exp} — non-fatal, continuing.")
+          else:
+              print(f"_merged.json OK — {n} record(s).")
+          PYEOF
+
+          echo "merged_json=${MERGED_JSON}" >> "$GITHUB_OUTPUT"
+
+      - name: Run statistical analysis
+        if: matrix.experiment != 'instability'
+        env:
+          EXP:         ${{ matrix.experiment }}
+          SUB:         ${{ steps.meta.outputs.result_subdir }}
+          MERGED_JSON: ${{ steps.locate.outputs.merged_json }}
+          PYSR_FIT_WALL_TIMEOUT: ${{ env.PYSR_FIT_WALL_TIMEOUT }}
+          PYSR_FIT_GRACE_SECS:   ${{ env.PYSR_FIT_GRACE_SECS }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="${OUT_BASE}/${SUB}"
+          mkdir -p "${OUT_DIR}"
+          echo "=== Analysis: ${EXP} → ${OUT_DIR} ==="
+          python .github/scripts/run_analysis.py \
+            --experiment  "${EXP}"         \
+            --merged-json "${MERGED_JSON}" \
+            --output-dir  "${OUT_DIR}"
+
+      - name: Verify analysis outputs
+        if: matrix.experiment != 'instability'
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="${OUT_BASE}/${SUB}"
+          test -f "${OUT_DIR}/_report.md"    || { echo "::error::_report.md missing";    exit 1; }
+          test -f "${OUT_DIR}/_analysis.json" || { echo "::error::_analysis.json missing"; exit 1; }
+
+          python3 -c "
+          import json, sys
+          path = '${OUT_DIR}/_analysis.json'
+          d    = json.load(open(path))
+          required = ('experiment', 'experiment_mode', 'n_total', 'fatal_conditions')
+          missing  = [k for k in required if k not in d]
+          if missing:
+              print(f'::error::_analysis.json missing keys: {missing}')
+              sys.exit(1)
+          hard = [c for c in d['fatal_conditions']
+                  if not (c.startswith('INFO_') or c.startswith('WARN_'))]
+          soft = len(d['fatal_conditions']) - len(hard)
+          print(f'_analysis.json OK: n_total={d[\"n_total\"]}  hard={len(hard)}  soft={soft}')
+          "
+
+      - name: Commit analysis outputs
+        env:
+          EXP: ${{ matrix.experiment }}
+          SUB: ${{ steps.meta.outputs.result_subdir || 'figures' }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+          git add "${OUT_BASE}/${SUB}/_report.md" \
+                  "${OUT_BASE}/${SUB}/_analysis.json" 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No changes — outputs unchanged."
+          else
+            git commit -m "ci: ${EXP} analysis — pipeline run ${{ github.run_id }}"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed analysis outputs for ${EXP}."
+          fi
+
+      # ── Abort on hard fatal conditions (after commit so report is always saved) ─
+      - name: Abort on fatal conditions
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir || 'figures' }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+
+          sub      = os.environ["SUB"]
+          out_base = os.environ.get("OUT_BASE", "hypatiax/data/results")
+          path     = f"{out_base}/{sub}/_analysis.json"
+
+          if not os.path.exists(path):
+              print("No _analysis.json found; skipping fatal-condition check.")
+              sys.exit(0)
+
+          analysis = json.load(open(path))
+          fatal    = analysis.get("fatal_conditions", [])
+
+          # Hard fatals: not prefixed INFO_ or WARN_
+          hard = [c for c in fatal if not (c.startswith("INFO_") or c.startswith("WARN_"))]
+          soft = [c for c in fatal if c.startswith("INFO_") or c.startswith("WARN_")]
+
+          if soft:
+              print(f"ℹ  {len(soft)} soft condition(s):")
+              for c in soft:
+                  print(f"  - {c}")
+
+          if not hard:
+              print("No fatal conditions. Analysis complete.")
+              sys.exit(0)
+
+          print(f"::error::Fatal conditions detected ({len(hard)}):")
+          for i, c in enumerate(hard, 1):
+              print(f"  {i}. {c}")
+          print()
+          print("Review _report.md for full diagnostic details.")
+          print("To re-run: use workflow_dispatch with the same experiment.")
+          sys.exit(1)
+          PYEOF
+
+      - name: Upload analysis artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-${{ matrix.experiment }}-${{ github.run_id }}
+          path: |
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir || 'figures' }}/_report.md
+            ${{ env.OUT_BASE }}/${{ steps.meta.outputs.result_subdir || 'figures' }}/_analysis.json
+          if-no-files-found: warn
+          retention-days: 30
+
+
+# ==============================================================================
+#  PHASE 2 — POST-PROCESS (figures + tables)
+#  Runs after all analysis jobs complete (any outcome).
+#  instability is intentionally included — its figures/ dir may already exist
+#  from the worker; postprocess regenerates/extends it.
+# ==============================================================================
+
+  postprocess:
+    name: "Postprocess · ${{ matrix.experiment }}"
+    needs: [setup, analysis]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: always()
+    strategy:
+      fail-fast: false
+      max-parallel: 1          # serial commits — avoid rebase conflicts
+      matrix:
+        experiment: ${{ fromJson(needs.setup.outputs.experiments) }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn
+
+      - name: Resolve result_subdir
+        id: meta
+        env:
+          EXP: ${{ matrix.experiment }}
+        run: |
+          set -euo pipefail
+          SUB=$(EXP_ID="${EXP}" python3 -c "
+          import os
+          mapping = {
+              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp2':               'comparison_results/feynman-tests/exp2_multi',
+              'exp3':               'extrapolation',
+              'exp3b':              'extrapolation/multi_seed',
+              'suppA':              'hybrid_pysr/defi',
+              'suppB':              'comparison_results/feynman-tests/noise-sweep',
+              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+              'instability':        'figures',
+              'extrap':             'comparison_results/extrapolation',
+          }
+          print(mapping.get(os.environ['EXP_ID'], os.environ['EXP_ID']))
+          ")
+          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate figures
+        env:
+          EXP: ${{ matrix.experiment }}
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          mkdir -p "${OUT_BASE}/${SUB}/figures"
+          python figures/generate_figures.py \
+            --repo-root   "${OUT_BASE}/${SUB}" \
+            --figures-dir "${OUT_BASE}/${SUB}/figures" \
+            --source auto
+
+      - name: Generate tables
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          python tables/generate_tables.py \
+            --results-dir "${OUT_BASE}/${SUB}" \
+            --output-dir  "${OUT_BASE}/${SUB}/tables"
+
+      - name: Commit postprocess outputs
+        env:
+          EXP: ${{ matrix.experiment }}
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+
+          FIGS="${OUT_BASE}/${SUB}/figures"
+          TABS="${OUT_BASE}/${SUB}/tables"
+
+          if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
+            echo "::warning::figures directory empty or missing: ${FIGS}"
+          fi
+          if [[ ! -d "$TABS" ]] || [[ -z "$(ls -A "$TABS" 2>/dev/null)" ]]; then
+            echo "::warning::tables directory empty or missing: ${TABS}"
+          fi
+
+          git add "${FIGS}/" "${TABS}/" 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No changes — outputs unchanged."
+          else
+            git commit -m "ci: ${EXP} figures+tables — pipeline run ${{ github.run_id }}"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed figures+tables for ${EXP}."
+          fi
+
+
+# ==============================================================================
+#  PHASE 3 — CHECK (ci_all_checkpoint logic)
+#  Runs after all postprocess jobs complete.
+#  4-phase gate: check → complete → qualify → audit → summary
+# ==============================================================================
+
+  # ── Gate 1: verify committed outputs exist and are valid JSON ────────────────
+  check:
+    name: "Check committed outputs"
+    needs: [setup, postprocess]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+
+    outputs:
+      check_report: ${{ steps.check.outputs.check_report }}
+      all_present:  ${{ steps.check.outputs.all_present }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Check committed outputs for every experiment
+        id: check
+        env:
+          EXPERIMENT:   ${{ github.event.inputs.experiment || 'all' }}
+          SEEDS:        ${{ env.SEEDS }}
+          NOISE_LEVELS: ${{ env.NOISE_LEVELS }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, glob as _glob
+          from pathlib import Path
+
+          OUT_BASE     = Path(os.environ["OUT_BASE"])
+          SEEDS        = [s.strip() for s in os.environ["SEEDS"].split(",") if s.strip()]
+          NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
+
+          SUBDIR = {
+              "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2":               "comparison_results/feynman-tests/exp2_multi",
+              "exp3":               "extrapolation",
+              "exp3b":              "extrapolation/multi_seed",
+              "suppA":              "hybrid_pysr/defi",
+              "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+              "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+              "instability":        "figures",
+              "extrap":             "comparison_results/extrapolation",
+          }
+
+          RESULT_GLOBS = {
+              "exp1":               ["hypatiax_defi_benchmark_v3*results*.json", "protocol_core_noiseless_*.json"],
+              "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json", "*portfolio*variance*.json", "hypatiax_defi_benchmark_v3*results*.json"],
+              "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
+              "exp3":               ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "exp3b":              ["full_run_*.json", "report_hybrid_*.json", "hybrid_defi_*.json", "exp3_nguyen12_*.json", "*nguyen*seed*.json"],
+              "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json", "extrapolation_73cases*.json", "*73cases*.json"],
+              "suppB":              ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              "suppB_sc":           ["sample_complexity_*.json", "sample_complexity_*.csv"],
+              "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
+              "instability":        ["instability_analysis.csv", "*.pdf", "*.png"],
+              "extrap":             ["all_domains_extrap_v4_*.json", "protocol_core_*.json"],
+          }
+
+          EXPERIMENT   = os.environ["EXPERIMENT"]
+          target_exps  = list(SUBDIR.keys()) if EXPERIMENT in ("all", "") else [EXPERIMENT]
+
+          report      = {}
+          all_present = True
+
+          print(f"{'Experiment':<25} {'Subdir':<50} {'Result files':>14} {'_merged.json':>14}")
+          print("-" * 110)
+
+          for exp_id in target_exps:
+              subdir     = SUBDIR[exp_id]
+              result_dir = OUT_BASE / subdir
+              globs      = RESULT_GLOBS.get(exp_id, ["*.json"])
+
+              data_files = []
+              if result_dir.exists():
+                  for pattern in globs:
+                      data_files.extend(f for f in result_dir.glob(pattern)
+                                        if not f.name.startswith("_"))
+              data_files = list(set(data_files))
+              present    = len(data_files) > 0
+              n_tasks    = len(data_files)
+
+              merged_json = result_dir / "_merged.json"
+              merged_ok   = False
+              if merged_json.exists():
+                  try:
+                      mdata     = json.loads(merged_json.read_text())
+                      merged_ok = True
+                      n_tasks   = len([k for k in mdata if not k.startswith("_")])
+                  except Exception as e:
+                      print(f"  !! {exp_id}: _merged.json parse error: {e}")
+
+              status_r = f"✓ {n_tasks} file(s)" if present else "✗ MISSING"
+              status_m = "✓" if merged_ok else "— (not consolidated)"
+              print(f"  {exp_id:<23} {subdir:<50} {status_r:>14} {status_m:>14}")
+
+              report[exp_id] = {
+                  "present": present, "valid": present, "n_tasks": n_tasks,
+                  "subdir": subdir, "has_csv": (result_dir / "_merged.csv").exists(),
+                  "has_ckpt": (result_dir / "_checkpoint.json").exists(),
+                  "has_merged": merged_ok,
+              }
+              if not present:
+                  all_present = False
+
+          print()
+          n_ok      = sum(1 for v in report.values() if v["present"])
+          n_missing = sum(1 for v in report.values() if not v["present"])
+          print(f"  {n_ok}/{len(report)} experiments have committed result files")
+          if n_missing:
+              print(f"  ⚠  {n_missing} missing: " + ", ".join(e for e, v in report.items() if not v["present"]))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"check_report={json.dumps(report)}\n")
+              fh.write(f"all_present={'true' if all_present else 'false'}\n")
+          PYEOF
+
+  # ── Gate 2: task completion diff ────────────────────────────────────────────
+  complete:
+    name: "Complete — identify remaining tasks"
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+
+    outputs:
+      completion_report: ${{ steps.complete.outputs.completion_report }}
+      all_complete:      ${{ steps.complete.outputs.all_complete }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Compute completion gaps
+        id: complete
+        env:
+          CHECK_REPORT:       ${{ needs.check.outputs.check_report }}
+          EXPERIMENT:         ${{ github.event.inputs.experiment || 'all' }}
+          SEEDS:              ${{ env.SEEDS }}
+          NOISE_LEVELS:       ${{ env.NOISE_LEVELS }}
+          FAIL_ON_INCOMPLETE: ${{ github.event.inputs.fail_on_incomplete || 'false' }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          OUT_BASE     = Path(os.environ["OUT_BASE"])
+          SEEDS        = [s.strip() for s in os.environ["SEEDS"].split(",") if s.strip()]
+          NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
+          CHECK_REPORT = json.loads(os.environ["CHECK_REPORT"])
+          FAIL         = os.environ.get("FAIL_ON_INCOMPLETE", "false").lower() == "true"
+
+          FEYNMAN_DOMAINS = [
+              "feynman_biology", "feynman_chemistry", "feynman_electrochemistry",
+              "feynman_electromagnetism", "feynman_electrostatics", "feynman_magnetism",
+              "feynman_mechanics", "feynman_optics", "feynman_probability",
+              "feynman_quantum", "feynman_thermodynamics",
+          ]
+          EXP2_DOMAINS = [
+              "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
+              "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
+          ]
+          REGISTRY = {
+              "exp1":               ["hypatiax_defi_benchmark_v3_results"],
+              "exp1b":              ["hypatiax_defi_benchmark_v3_results"],
+              "exp2_feynman":       FEYNMAN_DOMAINS,
+              "exp2":               EXP2_DOMAINS,
+              "exp3":               ["nguyen12_seed42"],
+              "exp3b":              [f"nguyen12_seed{s}" for s in SEEDS if s != "42"],
+              "suppA":              ["73cases_enhanced"],
+              "suppB":              ["sig0000", "sig0050", "sig0100", "sig0500", "sig1000"],
+              "suppB_sc":           [f"n{int(n):04d}" for n in ["50","100","200","500","750","1000"]],
+              "hybrid_all_domains": ["all_domains"],
+              "instability":        ["instability_analysis"],
+              "extrap":             FEYNMAN_DOMAINS,
+          }
+
+          def _done_set_from_files(result_dir, all_ids):
+              done = set()
+              files = [f.name for f in result_dir.glob("*")
+                       if f.is_file() and not f.name.startswith("_")]
+              for tid in all_ids:
+                  safe = tid.replace("/", "_").replace(".", "_")
+                  if any(safe in fname for fname in files):
+                      done.add(tid)
+              return done
+
+          completion     = {}
+          any_incomplete = False
+
+          print(f"\n{'Experiment':<25} {'Total':>7} {'Done':>7} {'Missing':>9}")
+          print("-" * 55)
+
+          for exp_id, info in CHECK_REPORT.items():
+              all_ids = REGISTRY.get(exp_id, [])
+              total   = len(all_ids)
+              if not info["present"]:
+                  missing, done = all_ids, 0
+              else:
+                  result_dir = OUT_BASE / info["subdir"]
+                  done_set   = _done_set_from_files(result_dir, all_ids)
+                  for path_name, key in [("_merged.json", None), ("_checkpoint.json", "completed")]:
+                      fp = result_dir / path_name
+                      if fp.exists():
+                          try:
+                              cd = json.loads(fp.read_text())
+                              if key:
+                                  done_set |= set(cd.get(key, []))
+                              else:
+                                  done_set |= {k for k in cd if not k.startswith("_")}
+                          except Exception:
+                              pass
+                  missing = [t for t in all_ids if t not in done_set]
+                  done    = total - len(missing)
+
+              if missing:
+                  any_incomplete = True
+              icon = "✓" if not missing else "⚠"
+              print(f"  {icon} {exp_id:<23} {total:>7} {done:>7} {len(missing):>9}")
+              if missing:
+                  shown = missing[:10]
+                  print(f"      Missing: {shown}" + (f" ... +{len(missing)-10} more" if len(missing) > 10 else ""))
+              completion[exp_id] = {"total": total, "done": done, "missing": missing}
+
+          print()
+          if not any_incomplete:
+              print("  ✅  All experiments complete.")
+          else:
+              incomplete = [e for e, v in completion.items() if v["missing"]]
+              print(f"  ⚠  {len(incomplete)} experiment(s) with missing tasks: {', '.join(incomplete)}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"completion_report={json.dumps(completion)}\n")
+              fh.write(f"all_complete={'true' if not any_incomplete else 'false'}\n")
+
+          if FAIL and any_incomplete:
+              sys.exit(1)
+          PYEOF
+
+  # ── Gate 3: 7-dimension qualification ───────────────────────────────────────
+  qualify:
+    name: "Qualify all experiments"
+    needs: [check, complete]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+
+    outputs:
+      qualify_report: ${{ steps.qualify.outputs.qualify_report }}
+      all_qualified:  ${{ steps.qualify.outputs.all_qualified }}
+      qualified_exps: ${{ steps.qualify.outputs.qualified_exps }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Qualify experiments (7-dimension gate)
+        id: qualify
+        env:
+          COMPLETION_REPORT: ${{ needs.complete.outputs.completion_report }}
+          CHECK_REPORT:      ${{ needs.check.outputs.check_report }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          REPO_ROOT  = Path(".")
+          OUT_BASE   = Path(os.environ["OUT_BASE"])
+          COMPLETION = json.loads(os.environ.get("COMPLETION_REPORT") or "{}")
+          CHECK      = json.loads(os.environ.get("CHECK_REPORT")      or "{}")
+
+          SUBDIR = {
+              "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2":               "comparison_results/feynman-tests/exp2_multi",
+              "exp3":               "extrapolation",
+              "exp3b":              "extrapolation/multi_seed",
+              "suppA":              "hybrid_pysr/defi",
+              "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+              "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+              "instability":        "figures",
+              "extrap":             "comparison_results/extrapolation",
+          }
+
+          def qualify_experiment(exp_id):
+              checks     = []
+              result_dir = OUT_BASE / SUBDIR.get(exp_id, "")
+
+              # 1. Checkpoint
+              ckpt_path = result_dir / "_checkpoint.json"
+              ckpt_ok, ckpt_detail = False, "missing"
+              if ckpt_path.exists():
+                  try:
+                      cd = json.loads(ckpt_path.read_text())
+                      ckpt_ok = (cd.get("status") in ("success", "merged", "ok")
+                                 or bool(cd.get("completed")) or bool(cd.get("run_id")))
+                      ckpt_detail = f"status={cd.get('status','?')} completed={len(cd.get('completed',[]))}"
+                  except Exception as e:
+                      ckpt_detail = f"parse error: {e}"
+              checks.append(["checkpoint=pass", ckpt_ok, ckpt_detail])
+
+              # 2. Result files
+              data_files = []
+              if result_dir.exists():
+                  all_files  = list(result_dir.glob("*.json")) + list(result_dir.glob("*.csv"))
+                  data_files = [f for f in all_files if not f.name.startswith("_")]
+              checks.append(["result_files", len(data_files) > 0,
+                              f"{len(data_files)} data file(s) in {SUBDIR.get(exp_id,'')}"])
+
+              # 3. Result JSON valid (or _merged.json present)
+              merged_json = result_dir / "_merged.json"
+              if merged_json.exists():
+                  merged_ok, merged_detail = True, str(merged_json)
+              else:
+                  json_files = [f for f in result_dir.glob("*.json")
+                                if not f.name.startswith("_")] if result_dir.exists() else []
+                  csv_files  = [f for f in result_dir.glob("*.csv")
+                                if not f.name.startswith("_")] if result_dir.exists() else []
+                  valid_json = False
+                  for jf in json_files[:3]:
+                      try:
+                          json.loads(jf.read_text()); valid_json = True; break
+                      except Exception:
+                          pass
+                  if not valid_json and csv_files:
+                      valid_json = True
+                  merged_ok = valid_json
+                  merged_detail = (f"{len(json_files)} result JSON(s) — per-shard commit mode"
+                                   if json_files else (f"{len(csv_files)} CSV(s) — instability mode"
+                                   if csv_files else "no result files found"))
+              checks.append(["result_json_valid", merged_ok, merged_detail])
+
+              # 4. CSV present
+              csv_files = list(result_dir.glob("*.csv")) if result_dir.exists() else []
+              csv_ok    = (result_dir / "_merged.csv").exists() or len(csv_files) > 0
+              csv_detail = (f"{len(csv_files)} CSV(s)" if csv_ok
+                            else f"no CSV files in {SUBDIR.get(exp_id,'')}")
+              checks.append(["csv_or_tables", csv_ok, csv_detail])
+
+              # 5. Committed to git
+              git_ok, git_detail = False, "git unavailable"
+              probe_file = merged_json if merged_json.exists() else next(
+                  (f for f in (result_dir.glob("*.json") if result_dir.exists() else [])
+                   if not f.name.startswith("_")),
+                  next((f for f in (result_dir.glob("*.csv") if result_dir.exists() else [])
+                        if not f.name.startswith("_")), None)
+              )
+              if probe_file:
+                  rel = str(probe_file)
+                  try:
+                      r1 = subprocess.run(["git", "ls-files", "--error-unmatch", rel],
+                                          capture_output=True, text=True, cwd=REPO_ROOT)
+                      if r1.returncode == 0:
+                          r2 = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", rel],
+                                              capture_output=True, text=True, cwd=REPO_ROOT)
+                          git_ok     = r2.returncode == 0 and r2.stdout.strip() == ""
+                          git_detail = "clean in HEAD" if git_ok else "modified/not committed"
+                      else:
+                          git_detail = "not tracked by git"
+                  except FileNotFoundError:
+                      git_detail = "git not found"
+              else:
+                  git_detail = "no result file to probe"
+              checks.append(["committed_to_git", git_ok, git_detail])
+
+              # 6. Figures
+              figs_dir  = OUT_BASE / "figures"
+              fig_files = (list(figs_dir.glob("*.pdf")) + list(figs_dir.glob("*.png"))
+                           if figs_dir.exists() else [])
+              checks.append(["figures_present", len(fig_files) > 0,
+                              f"{len(fig_files)} figure(s) in results/figures/"])
+
+              # 7. Tables
+              tables_dir = OUT_BASE / "tables"
+              if not tables_dir.exists() or not any(tables_dir.glob("*.tex")):
+                  tables_dir = REPO_ROOT / "paper" / "tables"
+              tex_files = list(tables_dir.glob("*.tex")) if tables_dir.exists() else []
+              checks.append(["tables_present", len(tex_files) > 0,
+                              f"{len(tex_files)} table(s) in {tables_dir}"])
+
+              core_gates = {"result_files", "result_json_valid", "committed_to_git"}
+              passed = all(ok for name, ok, _ in checks if name in core_gates)
+              return {"passed": passed, "checks": checks}
+
+          print(f"\n{'Experiment':<25} Status")
+          print("-" * 80)
+
+          report, all_qualified, qualified_exps = {}, True, []
+          for exp_id in SUBDIR:
+              qr   = qualify_experiment(exp_id)
+              report[exp_id] = qr
+              icon = "✅" if qr["passed"] else "❌"
+              tail = "" if qr["passed"] else f"  FAILED: {', '.join(c[0] for c in qr['checks'] if not c[1])}"
+              print(f"  {icon}  {exp_id:<23}{tail}")
+              for name, ok, detail in qr["checks"]:
+                  print(f"      {'✓' if ok else '✗'}  {name:<25}  {detail}")
+              if qr["passed"]:
+                  qualified_exps.append(exp_id)
+              else:
+                  all_qualified = False
+
+          n_pass = len(qualified_exps)
+          print(f"\n  Qualification: {n_pass}/{len(SUBDIR)} experiments qualified")
+          if not all_qualified:
+              print(f"  ❌  Unqualified: {', '.join(e for e in SUBDIR if not report[e]['passed'])}")
+          else:
+              print("  ✅  All qualified — proceeding to audit.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"qualify_report={json.dumps(report)}\n")
+              fh.write(f"all_qualified={'true' if all_qualified else 'false'}\n")
+              fh.write(f"qualified_exps={json.dumps(qualified_exps)}\n")
+          PYEOF
+
+  # ── Gate 4: paper audit ──────────────────────────────────────────────────────
+  audit:
+    name: "Audit results against paper"
+    needs: [check, complete, qualify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+
+    outputs:
+      audit_pass: ${{ steps.audit.outputs.audit_pass }}
+      n_pass:     ${{ steps.audit.outputs.n_pass }}
+      n_warn:     ${{ steps.audit.outputs.n_warn }}
+      n_fail:     ${{ steps.audit.outputs.n_fail }}
+      n_missing:  ${{ steps.audit.outputs.n_missing }}
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Audit results against paper claims
+        id: audit
+        env:
+          QUALIFY_REPORT: ${{ needs.qualify.outputs.qualify_report }}
+          QUALIFIED_EXPS: ${{ needs.qualify.outputs.qualified_exps }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, glob as _glob
+          from pathlib import Path
+
+          OUT_BASE       = Path(os.environ["OUT_BASE"])
+          QUALIFY_REPORT = json.loads(os.environ.get("QUALIFY_REPORT") or "{}")
+          QUALIFIED_EXPS = set(json.loads(os.environ.get("QUALIFIED_EXPS") or "[]"))
+
+          PAPER_TARGETS = Path("scripts/patches/paper_targets.json")
+
+          def load_claims():
+              if PAPER_TARGETS.exists():
+                  try:
+                      raw = json.loads(PAPER_TARGETS.read_text())
+                      print(f"  Loaded {len(raw)} claim(s) from {PAPER_TARGETS}")
+                      return raw
+                  except Exception as e:
+                      print(f"  ⚠  Failed to load paper_targets.json: {e}")
+              print("  ⚠  scripts/patches/paper_targets.json not found.")
+              return []
+
+          def resolve_result_file(claim):
+              rpath = claim.get("result_path", "")
+              if rpath:
+                  p = OUT_BASE / rpath
+                  if p.exists(): return p
+                  alt = p.parent / "_stats.json"
+                  if alt.exists(): return alt
+              for key in ("result_glob", "result_glob_alt"):
+                  pattern = claim.get(key, "")
+                  if not pattern: continue
+                  matches = sorted(_glob.glob(str(OUT_BASE / pattern)))
+                  if matches: return Path(matches[0])
+              return None
+
+          def resolve_key(data, dot_key):
+              if not dot_key: return None
+              node = data
+              for p in dot_key.split("."):
+                  if isinstance(node, dict):    node = node.get(p)
+                  elif isinstance(node, list):
+                      try:                       node = node[int(p)]
+                      except (ValueError, IndexError): return None
+                  else: return None
+                  if node is None: return None
+              return node
+
+          claims   = load_claims()
+          findings = []
+
+          print(f"\n  {'Exp':<25} {'Metric':<35} {'Status':<8}  Detail")
+          print("  " + "─" * 100)
+
+          for claim in claims:
+              if "_EXCLUDED" in claim or "exp" not in claim: continue
+              exp    = claim["exp"]
+              metric = claim["metric"]
+              pv     = float(claim["paper_value"])
+              tol    = float(claim.get("tolerance", 0.01))
+              jkey   = claim.get("json_key", "")
+              absol  = bool(claim.get("absolute", False))
+              note   = claim.get("note", "")
+
+              if exp not in QUALIFIED_EXPS:
+                  findings.append({"exp": exp, "metric": metric, "status": "SKIP",
+                                   "paper_value": pv, "actual": None, "detail": f"{exp} not qualified"})
+                  print(f"  ↩  {exp:<23} {metric:<35} {'SKIP':<8}  {exp} not qualified")
+                  continue
+
+              result_file = resolve_result_file(claim)
+              if result_file is None:
+                  rpath_disp = claim.get("result_path") or claim.get("result_glob") or "?"
+                  findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                                   "paper_value": pv, "actual": None, "detail": f"no result file ({rpath_disp})"})
+                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {rpath_disp}")
+                  continue
+
+              try:
+                  data = json.loads(result_file.read_text())
+              except Exception as e:
+                  findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                                   "paper_value": pv, "actual": None, "detail": f"JSON parse error: {e}"})
+                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  parse error: {e}")
+                  continue
+
+              raw = resolve_key(data, jkey)
+              if raw is None and isinstance(data, dict):
+                  raw = data.get(jkey.split(".")[-1])
+              if raw is None:
+                  detail = f"key '{jkey}' not found in {result_file.name}"
+                  findings.append({"exp": exp, "metric": metric, "status": "MISSING",
+                                   "paper_value": pv, "actual": None, "detail": detail})
+                  print(f"  🔍 {exp:<23} {metric:<35} {'MISSING':<8}  {detail}")
+                  continue
+
+              actual = float(raw)
+              base   = abs(pv) if pv != 0 else 1.0
+              diff   = abs(actual - pv)
+              tol1, tol3 = (tol, tol * 3) if absol else (tol * base, tol * 3 * base)
+              if diff <= tol1:   status = "PASS"
+              elif diff <= tol3: status = "WARN"
+              else:              status = "FAIL"
+
+              detail = (f"paper={pv}  actual={actual:.4f}  diff={diff:.4f}  tol={tol1:.4f}"
+                        + (f"  [{note}]" if note else ""))
+              icons = {"PASS": "✅", "WARN": "⚠ ", "FAIL": "❌"}
+              print(f"  {icons.get(status,'?')} {exp:<23} {metric:<35} {status:<8}  {detail}")
+              findings.append({"exp": exp, "metric": metric, "status": status,
+                               "paper_value": pv, "actual": actual, "detail": detail})
+
+          n_pass    = sum(1 for f in findings if f["status"] == "PASS")
+          n_warn    = sum(1 for f in findings if f["status"] == "WARN")
+          n_fail    = sum(1 for f in findings if f["status"] == "FAIL")
+          n_missing = sum(1 for f in findings if f["status"] == "MISSING")
+          n_skip    = sum(1 for f in findings if f["status"] == "SKIP")
+
+          print(f"\n  Audit: {n_pass} PASS  {n_warn} WARN  {n_fail} FAIL  {n_missing} MISSING  {n_skip} SKIP")
+
+          audit_pass = (n_fail == 0 and n_missing == 0 and len(findings) > 0)
+
+          out = Path("logs/paper_audit_findings.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(findings, indent=2))
+          print(f"  Audit findings → {out}")
+
+          if audit_pass:
+              print("  ✅  Audit PASSED.")
+          elif len(findings) == 0:
+              print("  ⚠   Audit SKIPPED — commit scripts/patches/paper_targets.json.")
+          else:
+              fails = [f for f in findings if f["status"] in ("FAIL", "MISSING")]
+              print(f"  ❌  {len(fails)} FAIL/MISSING claim(s).")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"audit_pass={'true' if audit_pass else 'false'}\n")
+              fh.write(f"n_pass={n_pass}\n")
+              fh.write(f"n_warn={n_warn}\n")
+              fh.write(f"n_fail={n_fail}\n")
+              fh.write(f"n_missing={n_missing}\n")
+          PYEOF
+
+      - name: Upload audit findings artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: paper-audit-findings-${{ github.run_id }}
+          path: logs/paper_audit_findings.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ── Gate 5: consolidated health summary ─────────────────────────────────────
+  summary:
+    name: "Pipeline health summary"
+    needs: [check, complete, qualify, audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Print consolidated summary and set exit code
+        env:
+          ALL_PRESENT:       ${{ needs.check.outputs.all_present }}
+          ALL_COMPLETE:      ${{ needs.complete.outputs.all_complete }}
+          ALL_QUAL:          ${{ needs.qualify.outputs.all_qualified }}
+          AUDIT_PASS:        ${{ needs.audit.outputs.audit_pass }}
+          N_PASS:            ${{ needs.audit.outputs.n_pass }}
+          N_WARN:            ${{ needs.audit.outputs.n_warn }}
+          N_FAIL:            ${{ needs.audit.outputs.n_fail }}
+          N_MISSING:         ${{ needs.audit.outputs.n_missing }}
+          COMPLETION_REPORT: ${{ needs.complete.outputs.completion_report }}
+          QUALIFY_REPORT:    ${{ needs.qualify.outputs.qualify_report }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          from pathlib import Path
+
+          def b(v): return v == "true" or v is True
+
+          present  = b(os.environ.get("ALL_PRESENT",  "false"))
+          complete = b(os.environ.get("ALL_COMPLETE", "false"))
+          qual     = b(os.environ.get("ALL_QUAL",     "false"))
+          audit    = b(os.environ.get("AUDIT_PASS",   "false"))
+          n_pass   = int(os.environ.get("N_PASS",    "0") or 0)
+          n_warn   = int(os.environ.get("N_WARN",    "0") or 0)
+          n_fail   = int(os.environ.get("N_FAIL",    "0") or 0)
+          n_miss   = int(os.environ.get("N_MISSING", "0") or 0)
+
+          SEP = "=" * 70
+          print(f"\n{SEP}")
+          print(f"  HypatiaX Pipeline Health")
+          print(SEP)
+          print(f"  {'Gate':<30}  {'Status'}")
+          print(f"  {'-'*30}  {'------'}")
+          print(f"  {'1. Outputs committed':<30}  {'✅ ALL PRESENT'    if present  else '❌ SOME MISSING'}")
+          print(f"  {'2. Task completion':<30}  {'✅ ALL COMPLETE'   if complete else '⚠  GAPS EXIST'}")
+          print(f"  {'3. Qualification (7-dim)':<30}  {'✅ ALL QUALIFIED'  if qual    else '❌ UNQUALIFIED EXPS'}")
+
+          if audit:
+              gate4 = "✅ ALL PASS"
+          elif n_fail == 0 and n_miss == 0 and n_pass == 0 and n_warn == 0:
+              gate4 = "⚠  NO CLAIMS (paper_targets.json missing or empty)"
+          else:
+              gate4 = f"❌ {n_fail} FAIL  {n_miss} MISSING  {n_warn} WARN"
+          print(f"  {'4. Paper audit':<30}  {gate4}")
+          print(SEP)
+
+          completion = json.loads(os.environ.get("COMPLETION_REPORT") or "{}")
+          if not complete:
+              print("\n  Experiments with missing tasks:")
+              for exp, info in completion.items():
+                  if info.get("missing"):
+                      n_m = len(info["missing"])
+                      print(f"    {exp:<25} {info.get('done','?')}/{info.get('total','?')} done  ({n_m} missing)")
+                      print(f"      First: {info['missing'][:5]}" + ("  ..." if n_m > 5 else ""))
+
+          qreport = json.loads(os.environ.get("QUALIFY_REPORT") or "{}")
+          if not qual:
+              print("\n  Unqualified experiments:")
+              for exp, qr in qreport.items():
+                  if not qr.get("passed"):
+                      fails = [c[0] for c in qr.get("checks", []) if not c[1]]
+                      print(f"    {exp:<25} FAILED: {', '.join(fails)}")
+
+          audit_findings_path = Path("logs/paper_audit_findings.json")
+          if not (n_fail == 0 and n_miss == 0):
+              print("\n  Audit FAIL/MISSING details:")
+              if audit_findings_path.exists():
+                  try:
+                      findings_data = json.loads(audit_findings_path.read_text())
+                      for f in findings_data:
+                          if f.get("status") in ("FAIL", "MISSING"):
+                              print(f"    ❌  exp={f['exp']}  metric={f['metric']}")
+                              print(f"        {f['detail']}")
+                  except Exception as e:
+                      print(f"    (could not read audit findings: {e})")
+              else:
+                  print("    (logs/paper_audit_findings.json not found — check audit job artifact)")
+
+          print()
+          overall_ok = present and qual and (audit or (n_fail == 0 and n_miss == 0 and n_pass == 0))
+          if overall_ok:
+              print("  ✅  Overall: PIPELINE HEALTHY — ready for submission.")
+          else:
+              print("  ❌  Overall: PIPELINE NEEDS ATTENTION (see above).")
+          print(SEP)
+
+          sys.exit(0 if overall_ok else 1)
+          PYEOF

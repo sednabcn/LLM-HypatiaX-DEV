@@ -1,0 +1,472 @@
+{
+  "timestamp": "2026-07-14T14:08:16.031509",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "noiseless",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 3,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Price Elasticity: Ed = (\u0394Q/Q)/(\u0394P/P)": {
+        "truncated": false,
+        "r2": 0.9999999999999973,
+        "success": true,
+        "formula": "def formula(Q, delta_Q, P, delta_P):\n    percent_change_quantity = delta_Q / Q\n "
+      },
+      "Cobb-Douglas: Y = A*K^0.3*L^0.7": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(A, K, L):\n    # Cobb-Douglas production function\n    # A = Total Fac"
+      },
+      "Break-Even Point: BEP = FC/(P-VC)": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(FC, P, VC):\n    # FC: Fixed Costs\n    # P: Price per unit\n    # VC: "
+      }
+    }
+  },
+  "total_tests": 3,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "EnhancedHybridSystemDeFi (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Price Elasticity: Ed = (\u0394Q/Q)/(\u0394P/P)",
+      "domain": "economics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 0.9999999999999973,
+          "rmse": 6.508224141236193e-07,
+          "formula": "def formula(Q, delta_Q, P, delta_P):\n    percent_change_quantity = delta_Q / Q\n    percent_change_price = delta_P / P\n    Ed = percent_change_quantity / percent_change_price\n    return Ed",
+          "formula_hash": "b016fd6859855da6d16809d3f175142b4cbb7fb4bb518fc2e6878e23304420f5",
+          "error": null,
+          "time": 11.179500818252563,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.996701933776742,
+          "rmse": 0.7219576779979093,
+          "formula": "ImprovedNN(4\u2192256\u2192128\u219264\u219232\u21921,lin)",
+          "formula_hash": "",
+          "error": null,
+          "time": 2.2889726161956787,
+          "metadata": {}
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999999998782456,
+          "rmse": 0.0001387152808815885,
+          "formula": "def formula(Q, delta_Q, P, delta_P):\n    # Price Elasticity of Demand\n    # Ed = (\u0394Q/Q) / (\u0394P/P)\n    percent_change_Q = delta_Q / Q\n    percent_change_P = delta_P / P\n    Ed = percent_change_Q / percent_change_P\n    return Ed",
+          "formula_hash": "c760280f5eed5d76c2c65c2221c7c3008a74be4108b14109f5bc439e4c9d8f0e",
+          "error": null,
+          "time": 14.160313606262207,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.720101539036343e-09,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 13.614624738693237,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999999973,
+          "rmse": 6.508224147104615e-07,
+          "formula": "(delta_Q / (delta_P / P)) / Qr",
+          "formula_hash": "6a260290f7fb41b45e4a708e1793acba45bc270b0c6635b8f4cf89cfd1707c8b",
+          "error": null,
+          "time": 49.19698882102966,
+          "metadata": {
+            "iterations": 152
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9719562402697091,
+          "rmse": 7.998520666117364,
+          "formula": "sin(sin(sin(sin(sin(sin(sin(sin(sin(sin((((P * delta_Q) / delta_P) * 0.029715415) / (Qr + P)) / 0.67962635) / 0.6862387)))) / 0.5284666)))) * 2.1518648",
+          "formula_hash": "98d3cba7e19042fffceb23f581aac246fc186957fb650b443903fbf9c325e22e",
+          "error": null,
+          "time": 193.54975962638855,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "HybridSystemLLMNN all-domains (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 0.9999999999999973,
+          "ImprovedNN (core)": 0.996701933776742,
+          "EnhancedHybridSystemDeFi (core)": 0.9999999998782456,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999999973,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9719562402697091
+        },
+        "rankings": {
+          "HybridSystemLLMNN all-domains (core)": 1,
+          "PureLLM Baseline (core)": 2,
+          "EnhancedHybridSystemDeFi (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "ImprovedNN (core)": 5,
+          "HybridDiscoverySystem v50_2 (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "PureLLM Baseline (core)",
+            "diff": 2.6645352591003757e-15,
+            "pct": 2.664535259100383e-13
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 2.6645352591003757e-15,
+            "pct": 2.664535259100383e-13
+          },
+          {
+            "method": "EnhancedHybridSystemDeFi (core)",
+            "diff": 1.217543843523572e-10,
+            "pct": 1.2175438436718133e-08
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0032980662232580116,
+            "pct": 0.3308979456637402
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.02804375973029094,
+            "pct": 2.885290362713145
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 12.571353930674624,
+          "mean": 4.239076870052387,
+          "range": 188.2643712596557,
+          "max": 110.16151140000336,
+          "denom": 12.571353930674624
+        }
+      },
+      "winner": "HybridSystemLLMNN all-domains (core)",
+      "timestamp": "2026-07-14T14:03:41.697878"
+    },
+    {
+      "description": "Cobb-Douglas: Y = A*K^0.3*L^0.7",
+      "domain": "economics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(A, K, L):\n    # Cobb-Douglas production function\n    # A = Total Factor Productivity (TFP)\n    # K = Capital input\n    # L = Labor input\n    # Exponents sum to 1.0, indicating constant returns to scale\n    return A * np.power(K, 0.3) * np.power(L, 0.7)",
+          "formula_hash": "cde95bd936e37cce034da8d6a2c923ca69ea33ce39f6951b16234e30cd6c0091",
+          "error": null,
+          "time": 10.573163986206055,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999925621507159,
+          "rmse": 0.4929593557411401,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.1227374076843262,
+          "metadata": {}
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999999997177649,
+          "rmse": 0.0030366374365887487,
+          "formula": "def formula(A, K, L):\n    # Cobb-Douglas production function\n    # A = total factor productivity\n    # K = capital input\n    # L = labor input\n    # Exponents sum to 1.0 (constant returns to scale)\n    return A * np.power(K, 0.3) * np.power(L, 0.7)",
+          "formula_hash": "934d08c1373c6e40b2da5d49d38098930fb9ff764b9f9381cee2e9c2d5d705d4",
+          "error": null,
+          "time": 13.282960891723633,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 8.946492089634707e-14,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 18.069400310516357,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9994375765342747,
+          "rmse": 4.286661027896659,
+          "formula": "(A * (((((((-26.265324 / (K / -35.29945)) + 6.625759) * L) - (K + 3337.5708)) * (-33.095646 - L)) * 0.00053790887) - 53.346626)) + -1.6353537",
+          "formula_hash": "634f854cae74a7d6e7d23074f62f66614265604c52b1e49e63e9274f957b768c",
+          "error": null,
+          "time": 43.8273241519928,
+          "metadata": {
+            "iterations": 121
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9999999982423016,
+          "rmse": 0.007578087373870251,
+          "formula": "(((L * A) + 0.0058028623) / sqrt((K / L) ^ -0.5999727)) - 0.0072693117",
+          "formula_hash": "046e3fc2e45ff0bacf752fccc0b651623bb99973adf9d89b33ee2ea5c5bf606d",
+          "error": null,
+          "time": 64.40294885635376,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999925621507159,
+          "EnhancedHybridSystemDeFi (core)": 0.9999999997177649,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9994375765342747,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9999999982423016
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "EnhancedHybridSystemDeFi (core)": 3,
+          "ImprovedNN (core)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5,
+          "SymbolicEngineWithLLM (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "EnhancedHybridSystemDeFi (core)",
+            "diff": 2.8223512416047924e-10,
+            "pct": 2.822351242401359e-08
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 1.7576984312484e-09,
+            "pct": 1.757698434337904e-07
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 7.43784928414204e-06,
+            "pct": 0.000743790460615549
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0005624234657253258,
+            "pct": 0.05627399638861167
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 180.75379591976767,
+          "mean": 303.21802077658253,
+          "range": 802.8826649587618,
+          "max": 852.2547448130852,
+          "denom": 180.75379591976767
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-07-14T14:06:12.977948"
+    },
+    {
+      "description": "Break-Even Point: BEP = FC/(P-VC)",
+      "domain": "economics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 2.0198525479250238e-06,
+          "formula": "def formula(FC, P, VC):\n    # FC: Fixed Costs\n    # P: Price per unit\n    # VC: Variable Cost per unit\n    contribution_margin = P - VC\n    bep = FC / contribution_margin\n    return bep",
+          "formula_hash": "74cbe4b9a304fa73bc185352e51114a2327dbd7727ec6b2b6420f041d56d3b82",
+          "error": null,
+          "time": 9.589521408081055,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9848604597646613,
+          "rmse": 1512.2174241143266,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,lin)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.1153688430786133,
+          "metadata": {}
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999999996647991,
+          "rmse": 0.2250144884922356,
+          "formula": "def formula(FC, P, VC):\n    # Break-Even Point calculation\n    # BEP = FC / (P - VC)\n    contribution_margin = P - VC\n    bep = FC / contribution_margin\n    return bep",
+          "formula_hash": "7ddc67e03682fc53359d0b98b7d432ada91a42e9cd3e27269742f12be3308fc1",
+          "error": null,
+          "time": 13.388041019439697,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 7.651639934294907e-09,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 10.178930044174194,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999801195,
+          "rmse": 0.05479890606840863,
+          "formula": "1.229017e+04 * ((FC * 8.13662e-5) / (P - VC))",
+          "formula_hash": "cecb16d320bee310db339e07e89a54f36580e714f343812249a379f84b3aaf62",
+          "error": null,
+          "time": 40.22990870475769,
+          "metadata": {
+            "iterations": 110
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9999999999748531,
+          "rmse": 0.061507078004281464,
+          "formula": "1.229017e+04 * (VC * ((((-1.660142e-7 / P) / 0.09006039) * -0.18282102) - ((FC / ((VC * (P - VC)) / 0.015832718)) / -194.58583)))",
+          "formula_hash": "a3b0c0ef6bb34c456ab64039e57fa8c1e6461c33902150986b5fc40e475d55e0",
+          "error": null,
+          "time": 48.54685354232788,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9848604597646613,
+          "EnhancedHybridSystemDeFi (core)": 0.9999999996647991,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999801195,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9999999999748531
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "EnhancedHybridSystemDeFi (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5,
+          "ImprovedNN (core)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 1.9880541657357753e-11,
+            "pct": 1.988054165775299e-09
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 2.5146884574667183e-11,
+            "pct": 2.514688457529955e-09
+          },
+          {
+            "method": "EnhancedHybridSystemDeFi (core)",
+            "diff": 3.35200867063179e-10,
+            "pct": 3.3520086717553856e-08
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0151395402353387,
+            "pct": 1.5372269325297505
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 12290.170123648915,
+          "mean": 3023.099906217527,
+          "range": 198223.57742694882,
+          "max": 158269.69239152697,
+          "denom": 12290.170123648915
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-07-14T14:08:16.028856"
+    }
+  ]
+}

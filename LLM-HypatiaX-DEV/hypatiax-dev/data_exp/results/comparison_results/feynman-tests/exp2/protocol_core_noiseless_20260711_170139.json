@@ -1,0 +1,176 @@
+{
+  "timestamp": "2026-07-11T17:01:39.582125",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "noiseless",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 1,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Nernst equation for electrode potential \u2014 cross-benchmark co": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(T, ox, red):\n    E0 = 0.76        # standard potential (V)\n    R  = "
+      }
+    }
+  },
+  "total_tests": 1,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "EnhancedHybridSystemDeFi (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Nernst equation for electrode potential \u2014 cross-benchmark consistency check",
+      "domain": "feynman_electrochemistry",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 7.376039953378908e-14,
+          "formula": "def formula(T, ox, red):\n    E0 = 0.76        # standard potential (V)\n    R  = 8.314       # J/(mol\u00b7K)\n    n  = 2           # electrons transferred\n    F  = 96485.0     # C/mol\n    return E0 - (R * T / (n * F)) * np.log(np.clip(ox, 1e-300, None) / np.clip(red, 1e-300, None))\n",
+          "formula_hash": "5b3bff59ed64f0868788c9ca52e43bf555b89909010940a97009f1893446f7e2",
+          "error": null,
+          "time": 0.0008778572082519531,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": true
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999947273598515,
+          "rmse": 4.6975661710464366e-05,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 2.027101755142212,
+          "metadata": {}
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999999751965839,
+          "rmse": 3.2219187945375146e-06,
+          "formula": "def formula(T, ox, red):\n    E0 = 0.76        # standard potential (V)\n    R  = 8.314       # J/(mol\u00b7K)\n    n  = 2           # electrons transferred\n    F  = 96485.0     # C/mol\n    return E0 - (R * T / (n * F)) * np.log(np.clip(ox, 1e-300, None) / np.clip(red, 1e-300, None))\n",
+          "formula_hash": "5b3bff59ed64f0868788c9ca52e43bf555b89909010940a97009f1893446f7e2",
+          "error": null,
+          "time": 0.9723646640777588,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 4.451980485545497e-16,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 0.9687747955322266,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999346165386342,
+          "rmse": 0.00016542181986709624,
+          "formula": "sqrt(((((2.1061833 / T) + -0.013598901) * (((log(ratio_ox_red) * 2.925073) * ((2.1061342 / T) + -0.01534112)) + 3.0164235)) * log(ratio_ox_red)) - -0.5776709)",
+          "formula_hash": "58befcf744c6be5b5dc8ecd3cd1d437fec0e4d43293813b8397bf5c67f7cd3d6",
+          "error": null,
+          "time": 48.227055072784424,
+          "metadata": {
+            "iterations": 179
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9992054281058348,
+          "rmse": 0.0005766674518812801,
+          "formula": "(ratio_ox_red ^ ((1.0694025 - ratio_ox_x0) / (T ^ (((ratio_ox_red ^ 0.00065164967) ^ -4.266648) + -0.35498214)))) - (((ratio_ox_red ^ -0.009317803) ^ -4.2666593) + -0.7601522)",
+          "formula_hash": "cc486e56865bd3ac280304ff549cd84ff6b48938d4b6d6f5a745e3b9151be3c4",
+          "error": null,
+          "time": 164.89284539222717,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999947273598515,
+          "EnhancedHybridSystemDeFi (core)": 0.9999999751965839,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9999346165386342,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9992054281058348
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "EnhancedHybridSystemDeFi (core)": 3,
+          "ImprovedNN (core)": 4,
+          "SymbolicEngineWithLLM (tools)": 5,
+          "HybridDiscoverySystem v50_2 (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "EnhancedHybridSystemDeFi (core)",
+            "diff": 2.4803416098784226e-08,
+            "pct": 2.480341671399369e-06
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 5.272640148490382e-06,
+            "pct": 0.0005272667949371101
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 6.538346136575335e-05,
+            "pct": 0.00653877366423059
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.000794571894165208,
+            "pct": 0.07952037407077095
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 0.020457795842012773,
+          "mean": 0.7604906619523197,
+          "range": 0.1228469295376381,
+          "max": 0.824621982657384,
+          "denom": 0.020457795842012773
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-07-11T17:01:39.580279"
+    }
+  ]
+}

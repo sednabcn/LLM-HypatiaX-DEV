@@ -1,0 +1,20 @@
+# .github/dependabot.yml
+# Dependabot version update configuration.
+# This file belongs at .github/dependabot.yml — NOT inside .github/workflows/.
+# Dependabot runs automatically on GitHub's infrastructure; no Actions workflow needed.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    target-branch: "master"
+    ignore:
+      - dependency-name: "torch"     # installed via custom --index-url; Dependabot can't resolve it
+      - dependency-name: "pandas"    # pinned to 2.2.3 — only cp312 wheel-compatible release <3.0
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: weekly
+    target-branch: "master"   # must match your default branch exactly

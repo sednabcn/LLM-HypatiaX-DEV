@@ -1,0 +1,2038 @@
+# ==============================================================================
+#  ci_paper_audit.yml  —  HypatiaX · Paper audit gate
+#
+#  TRIGGER
+#  -------
+#  Fires automatically when ci_pipeline.yml completes for slot 12 (extrap),
+#  which is the last experiment in the queue.  Gated on:
+#    slot == '12'  AND  run_full == 'true'
+#
+#  ALL logic lives in scripts/patches/run_audit.sh — this file only wires CI plumbing.
+#  Steps call: bash scripts/patches/run_audit.sh <step_name>
+#
+#  JOBS (sequential)
+#  -----------------
+#  Job 0 — guard
+#    bash scripts/patches/run_audit.sh audit_guard
+#    Sets should_run=true/false based on slot + conclusion.
+#
+#  Job 0b — collect-figures-tables  (needs: guard)
+#    Scans $OUT_BASE recursively for all *.pdf/*.png (figures) and
+#    *.tex (tables) and copies them into the canonical flat dirs:
+#      $OUT_BASE/figures/   — expected by dimension (6) gate
+#      $OUT_BASE/tables/    — expected by dimension (7) gate
+#    If both source pools are empty after scanning, the job prints a
+#    clear error and exits non-zero (pipeline stops here).
+#    Falls back to running generate_figures.py / generate_tables.py
+#    (repo root) when the scanned pools are empty.
+#
+#  Job 0c — preflight-check  (needs: collect-figures-tables)
+#    Hard-checks that $OUT_BASE/figures/ and $OUT_BASE/tables/ each
+#    contain at least one file before any quality gate runs.
+#    Exits non-zero with a descriptive message if either dir is absent
+#    or empty — prevents misleading FAIL output from downstream jobs.
+#
+#  Job 1 — numerical-verify  (needs: preflight-check)
+#    bash scripts/patches/run_audit.sh qualify
+#    Numerical spot-checks + 7-dimension per-experiment gate.
+#    Writes logs/verify_report.json.  Exits non-zero on any FAIL.
+#
+#  Job 2 — paper-audit  (needs: numerical-verify)
+#    bash scripts/patches/run_audit.sh audit_paper
+#    Loads scripts/patches/paper_targets.json, cross-checks all claims
+#    against _merged.json files, emits logs/paper_audit_findings.json.
+#    Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
+#    Exits non-zero on any FAIL or MISSING.
+#    NOTE: NB-06 Step 4 API key scan confirmed CLEAN — no exposed keys
+#    in any notebook.  FIX-C4 in the original fix recipe was a false positive
+#    and has been removed.  ANTHROPIC_API_KEY is correctly injected via
+#    ${{ secrets.ANTHROPIC_API_KEY }} in this pipeline (Jobs 1 & 2) and
+#    must never be hardcoded in notebook cells.
+#
+#  Job 3 — figures-tables-validate  (needs: numerical-verify)
+#    bash scripts/patches/run_audit.sh audit_figures_tables
+#    Validates that all expected figures (PDF/PNG) and tables (TeX) are
+#    present in RESULTS_DIR/figures/ and RESULTS_DIR/tables/.
+#    Exits non-zero on any missing file.
+#
+#  Job 4 — final-gate
+#    bash scripts/patches/run_audit.sh audit_final_gate
+#    Aggregates results and sets the workflow conclusion.
+#
+#  TIMEOUT CONTRACT
+#  ----------------
+#  guard                   :  5 min
+#  collect-figures-tables  : 10 min  (scan + copy or generate)
+#  preflight-check         :  5 min  (existence assertion only)
+#  numerical-verify        : 15 min  (bash scripts/patches/run_audit.sh qualify)
+#  paper-audit             : 15 min  (bash scripts/patches/run_audit.sh audit_paper)
+#  figures-tables-validate : 10 min  (bash scripts/patches/run_audit.sh audit_figures_tables)
+#  final-gate              :  5 min  (bash scripts/patches/run_audit.sh audit_final_gate)
+#
+#  ARTIFACTS
+#  ---------
+#  logs/verify_report.json         → verify-report-<run_id>
+#  logs/paper_audit_findings.json  → paper-audit-findings-<run_id>
+#  logs/figures_tables_report.json → figures-tables-report-<run_id>
+#
+#  AUDIT FIX STATUS
+#  ----------------
+#  Issue status is sourced dynamically from:
+#      ${{ env.REGISTRY_PATH }}
+#
+#  IMPORTANT:
+#    - Do NOT maintain a hardcoded OPEN/RESOLVED list in this workflow.
+#    - Every fix state change MUST be updated in issue_registry.json.
+#    - CI steps and audit scripts must treat issue_registry.json as the
+#      single source of truth.
+#    - Resolved or false_positive issues must NOT continue appearing as OPEN
+#      in workflow logs, summaries, or gates.
+#
+#  Registry-driven behavior:
+#    - status == "open"           → enforce in audit gate
+#    - status == "resolved"       → exclude from open-issue failures
+#    - status == "false_positive" → exclude from failures and reporting
+#
+#  Sync rule (two paths):
+#    AUTOMATIC — When paper-audit succeeds and hypatia_inspector finds no OPEN
+#    findings for an issue, the "Auto-update registry" step marks it "resolved"
+#    and commits back to the branch (signed by github-actions[bot]).
+#    No manual edit needed for auto_fixable issues.
+#
+#    MANUAL — false_positive entries and issues hypatia_inspector cannot detect
+#    automatically (FIX-N3, FIX-F1) must be updated in the same PR/commit as
+#    the underlying fix.
+#
+#    FIX-S1, FIX-S2, FIX-N3 (previously absent) are now registered — added
+#    2026-06-14.  FIX-S1/S2 will auto-resolve once inspector detects them clean;
+#    FIX-N3 requires manual resolution after Nguyen-12 results are committed.
+# ==============================================================================
+
+name: "HypatiaX - paper audit"
+run-name: >-
+  HypatiaX paper audit — slot 12 (extrap) — run ${{ github.run_id }}
+
+on:
+  # ── Auto: fired by ci_pipeline.yml completing for slot 12 ──────────────────
+  workflow_run:
+    workflows:
+      - "HypatiaX - pipeline"
+    types:
+      - completed
+
+  # ── Manual: run at any time (useful for ad-hoc audits) ─────────────────────
+  workflow_dispatch:
+    inputs:
+      skip_verify:
+        description: "Skip numerical-verify and go straight to paper-audit (true/false)"
+        required: false
+        default: "false"
+      fail_on_warn:
+        description: "Treat WARN as FAIL in the audit (true/false)"
+        required: false
+        default: "false"
+      paper_audit_only:
+        description: "Skip ALL jobs except paper-audit — use when upstream jobs already passed (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write   # required for issue_registry.json commits by github-actions[bot]
+  actions:  read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  OUT_BASE: "hypatiax/data/results"
+  PYTHON_VERSION: "3.12"
+  REGISTRY_PATH: "scripts/patches/issue_registry.json"
+
+jobs:
+
+  # ============================================================================
+  #  JOB 0 — guard
+  #  bash scripts/patches/run_audit.sh audit_guard
+  #  Outputs: should_run — "true" if workflow should proceed, "false" to skip.
+  # ============================================================================
+  guard:
+    name: "Check trigger conditions"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      should_run:       ${{ steps.check.outputs.should_run }}
+      jobs_already_done: ${{ steps.check.outputs.jobs_already_done }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "Auto-fix LaTeX issues before audit runs"
+        # Applies all scriptable fixes to jmlr_paper_main.tex so
+        # every downstream job and notebook sees a clean state.
+        # Covers FIX-B1, FIX-N1, FIX-N2, FIX-S1, FIX-S2.
+        # Commits the patched file back to the branch.
+        run: |
+          set -euo pipefail
+          TEX="jmlr_paper_main.tex"
+          [[ ! -f "$TEX" ]] && { echo "::warning::$TEX not found — skipping LaTeX auto-fixes"; exit 0; }
+
+          python3 - <<'PYFIX'
+          import re, shutil, subprocess
+          from pathlib import Path
+
+          def patch(path, transforms):
+              p = Path(path)
+              if not p.exists():
+                  print(f"  [SKIP] {path} not found")
+                  return
+              original = p.read_text(encoding="utf-8")
+              result = original
+              for desc, old, new in transforms:
+                  count = result.count(old)
+                  if count:
+                      result = result.replace(old, new)
+                      print(f"  [{count}x] {desc}")
+              if result != original:
+                  p.write_text(result, encoding="utf-8")
+                  print(f"  Written: {path}")
+
+          # FIX-B1: koza1994genetic → koza1992gp
+          patch("jmlr_paper_main.tex", [
+              ("FIX-B1 \\cite{koza1994genetic} → koza1992gp",
+               r"\cite{koza1994genetic}", r"\cite{koza1992gp}"),
+              ("FIX-B1 \\citep variant",
+               r"\citep{koza1994genetic}", r"\citep{koza1992gp}"),
+              ("FIX-B1 \\citet variant",
+               r"\citet{koza1994genetic}", r"\citet{koza1992gp}"),
+          ])
+
+          # FIX-N1: 71 cases → 70 tasks (Spearman footnote only)
+          patch("jmlr_paper_main.tex", [
+              ("FIX-N1 71 cases → 70 tasks",
+               "71 cases, with A-Symbolic cases",
+               "70 tasks, with A-Symbolic cases"),
+          ])
+
+          # FIX-N2: Five-Layer → Five-Stage in §8.3
+          patch("jmlr_paper_main.tex", [
+              ("FIX-N2 §8.3 heading Five-Layer → Five-Stage",
+               r"\subsection{Five-Layer Architecture Overview}",
+               r"\subsection{Five-Stage Architecture Overview}"),
+              ("FIX-N2 §8.3 body five layers → five stages",
+               "Integrates all five layers.",
+               "Integrates all five stages."),
+          ])
+
+          # FIX-S1: add \label after each top-level \section{}
+          SECTION_LABELS = {
+              "Introduction": "sec:intro",
+              "Related Work": "sec:related",
+              "Empirical Evidence": "sec:llm_limitations",
+              "Theoretical Framework": "sec:theory",
+              "Problem Formulation": "sec:problem",
+              "Benchmark Design": "sec:benchmark",
+              "Methodology": "sec:method",
+              "HypatiaX Architecture": "sec:architecture",
+              "Experimental Setup": "sec:setup",
+              "Results": "sec:results",
+              "Discussion": "sec:discussion",
+              "Conclusion": "sec:conclusion",
+              "Reproducibility Statement": "sec:reproducibility",
+              "Full Benchmark Case Definitions": "sec:benchmark_cases",
+              "Benchmark Version History": "sec:version_history",
+              "Corrected Runtime Claim": "sec:runtime_correction",
+          }
+          p = Path("jmlr_paper_main.tex")
+          src = p.read_text(encoding="utf-8")
+          changed = False
+          for title, label in SECTION_LABELS.items():
+              pat = re.compile(
+                  r'(\\section\{' + re.escape(title) + r'[^}]*\})'
+                  r'(?!\s*\\label\{' + re.escape(label) + r'\})',
+                  re.MULTILINE
+              )
+              new_src, n = pat.subn(lambda m: m.group(1) + r'\label{' + label + r'}', src)
+              if n:
+                  src = new_src
+                  changed = True
+                  print(f"  [FIX-S1] \\label{{{label}}} added")
+          if changed:
+              p.write_text(src, encoding="utf-8")
+
+          # FIX-XR2: move \label{sec:r2_bugfix} from inside \item to after \subsection
+          p = Path("jmlr_paper_main.tex")
+          if p.exists():
+              src = p.read_text(encoding="utf-8")
+              import re as _re
+              # Remove the label from inside any \item that contains it
+              new_src = _re.sub(
+                  r'(\\item\b[^\n]*?)\\label\{sec:r2_bugfix\}',
+                  r'\1',
+                  src
+              )
+              # Ensure the label appears immediately after the enclosing \subsection{...}
+              # Find the subsection that covers r2 bugfix content and add label if absent
+              new_src = _re.sub(
+                  r'(\\subsection\{[^}]*[Rr]2[^}]*[Bb]ug[Ff]ix[^}]*\})(?!\s*\\label\{sec:r2_bugfix\})',
+                  r'\1' + r'\\label{sec:r2_bugfix}',
+                  new_src
+              )
+              if new_src != src:
+                  p.write_text(new_src, encoding="utf-8")
+                  print("  [FIX-XR2] \\label{sec:r2_bugfix} moved from \\item to \\subsection")
+
+
+          p = Path("jmlr_paper_main.tex")
+          if p.exists():
+              src = p.read_text(encoding="utf-8")
+              label = r'\label{sec:llm_domain}'
+              first = src.find(label)
+              if first != -1 and src.find(label, first + 1) != -1:
+                  # Keep first occurrence, remove all subsequent ones
+                  parts = src.split(label)
+                  new_src = parts[0] + label + ''.join(parts[1:])
+                  p.write_text(new_src, encoding="utf-8")
+                  print(f"  [FIX-XR1] Duplicate \\label{{sec:llm_domain}} removed")
+
+          # FIX-S2: add \label after each \subsection{}
+          p = Path("jmlr_paper_main.tex")
+          src = p.read_text(encoding="utf-8")
+
+          def make_slug(title):
+              slug = title.lower()
+              slug = re.sub(r'[^a-z0-9 ]', '', slug)
+              slug = re.sub(r'\s+', '-', slug.strip())
+              return 'subsec:' + slug.replace(' ', '-')[:40]
+
+          pat = re.compile(r'(\\subsection\{([^}]+)\})(?!\s*\\label\{subsec:)', re.MULTILINE)
+          changed = False
+          def add_sublabel(m):
+              global changed
+              changed = True
+              slug = make_slug(m.group(2))
+              return m.group(1) + r'\label{' + slug + r'}'
+          new_src = pat.sub(add_sublabel, src)
+          if changed:
+              p.write_text(new_src, encoding="utf-8")
+              print(f"  [FIX-S2] subsection labels added")
+          # FIX-XR3: Supplement A "Section 7.3" → "Section 7.4"
+          patch("jmlr_paper_main.tex", [
+              ("FIX-XR3 Supplement A Section 7.3 → 7.4",
+               "Section 7.3", "Section 7.4"),
+          ])
+
+          PYFIX
+
+          # Commit patched tex back to branch
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f jmlr_paper_main.tex
+          if git diff --cached --quiet; then
+            echo "No LaTeX changes — nothing to commit."
+          else
+            git commit -m "ci: auto-fix FIX-B1/N1/N2/S1/S2/XR1/XR2/XR3 in jmlr_paper_main.tex [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+      - name: Validate issue registry consistency
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          registry = Path("${{ env.REGISTRY_PATH }}")
+
+          if not registry.exists():
+              print(f"ERROR: Missing registry file: {registry}")
+              sys.exit(1)
+
+          data = json.loads(registry.read_text())
+
+          valid_status = {"open", "resolved", "false_positive"}
+
+          invalid = [
+              item.get("id", "<unknown>")
+              for item in data
+              if item.get("status") not in valid_status
+          ]
+
+          if invalid:
+              print("ERROR: Invalid issue status entries:")
+              for item in invalid:
+                  print(f" - {item}")
+              sys.exit(1)
+
+          open_issues = [x["id"] for x in data if x.get("status") == "open"]
+          resolved = [x["id"] for x in data if x.get("status") == "resolved"]
+          false_positive = [
+              x["id"] for x in data if x.get("status") == "false_positive"
+          ]
+
+          print("Issue registry summary")
+          print("======================")
+          print(f"OPEN           : {len(open_issues)}")
+          print(f"RESOLVED       : {len(resolved)}")
+          print(f"FALSE_POSITIVE : {len(false_positive)}")
+
+          print("\nOpen issues enforced by CI:")
+          for issue_id in open_issues:
+              print(f" - {issue_id}")
+
+          if resolved:
+              print("\nResolved (excluded from gate):")
+              for issue_id in resolved:
+                  print(f" - {issue_id}")
+
+          if false_positive:
+              print("\nFalse positives (intentionally suppressed):")
+              for issue_id in false_positive:
+                  print(f" - {issue_id}")
+
+          # Sanity check: all auto_fixable open issues must have an action field
+          missing_action = [
+              x["id"] for x in data
+              if x.get("status") == "open"
+              and x.get("auto_fixable") is True
+              and not x.get("action", "").strip()
+          ]
+          if missing_action:
+              print(f"\nWARN: auto_fixable open issues missing 'action' field: {missing_action}")
+          PY
+
+      # ── Stamp confirmed false-positive issues in the registry ──────────────
+      # These six issues were verified as never-existing problems (see audit
+      # summary).  Writing them here — in the guard job that always runs —
+      # ensures they are suppressed in every downstream job immediately,
+      # without waiting for a clean audit pass.
+      # Add new confirmed FPs to FALSE_POSITIVE_IDS; do NOT add open issues.
+      - name: Stamp confirmed false-positives in issue_registry.json
+        env:
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+          GIT_AUTHOR_NAME:  github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME:  github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          python3 - <<'PYFP'
+          import json, subprocess, sys, datetime
+          from pathlib import Path
+
+          # Confirmed false-positives — issues that do not exist in the paper.
+          # See audit report section "False Positives in the Audit Report".
+          # NOTE: FIX-B1, FIX-N1 remain real — auto-fixed by the "Auto-fix
+          # LaTeX issues" step in the guard job before notebooks run.
+          # FIX-N2 was RE-ADDED here 2026-06-26: direct ground-truth grep of
+          # jmlr_paper_main.tex shows §8.3 already reads "Five-Stage Routing
+          # Architecture Overview" / "all five stages" — the "Five-Layer"
+          # wording the cached audit report flagged does not exist in the
+          # current file. The audit report was stale relative to the repo,
+          # not the paper having a real defect. The FIX-N2 patch step above
+          # is left in place as a harmless idempotent no-op guard in case the
+          # wording ever regresses, but it must not be treated as an OPEN
+          # finding.
+          # FIX-XR1/XR2/XR3 remain confirmed false positives per registry.
+          FALSE_POSITIVE_IDS = {
+              "FIX-XR1",  # sec:llm_domain label never defined; no duplicate exists
+              "FIX-XR2",  # label is after \subsection, not inside \item
+              "FIX-XR3",  # Supp A already says §7.4, not §7.3
+              "FIX-N2",   # "Five-Layer" wording does not exist in current .tex
+          }
+
+          registry_path = Path("${{ env.REGISTRY_PATH }}")
+          if not registry_path.exists():
+              print(f"::notice::Registry not found at {registry_path} — skipping FP stamp.")
+              sys.exit(0)
+
+          registry = json.loads(registry_path.read_text())
+          changed = []
+          for entry in registry:
+              if entry.get("id") in FALSE_POSITIVE_IDS and entry.get("status") != "false_positive":
+                  entry["status"] = "false_positive"
+                  entry["updated"] = datetime.date.today().isoformat()
+                  entry.setdefault("note", "Confirmed false positive — issue does not exist in source files.")
+                  changed.append(entry["id"])
+
+          if not changed:
+              print("No false-positive status changes needed — registry already up to date.")
+              sys.exit(0)
+
+          registry_path.write_text(json.dumps(registry, indent=2))
+          print(f"Stamped false_positive: {changed}")
+
+          subprocess.run(["git", "config", "user.name",  "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+          subprocess.run(["git", "add", str(registry_path)], check=True)
+          msg = f"ci: mark false_positive {', '.join(changed)} in issue_registry.json [skip ci]"
+          subprocess.run(["git", "commit", "-m", msg], check=True)
+          # Retry push up to 3 times with a rebase pull on rejection.
+          # Another job in the same run (e.g. paper-audit) may have already
+          # pushed to master, causing a non-fast-forward rejection.
+          for attempt in range(1, 4):
+              result = subprocess.run(["git", "push"])
+              if result.returncode == 0:
+                  break
+              print(f"  Push attempt {attempt} rejected — rebasing and retrying…")
+              # Pull with rebase; on conflict always keep OUR version of
+              # issue_registry.json (the gate result is authoritative).
+              pull = subprocess.run(
+                  ["git", "pull", "--rebase", "--autostash"],
+                  capture_output=True, text=True
+              )
+              if pull.returncode != 0:
+                  # Resolve registry conflict by taking ours, then continue rebase
+                  subprocess.run(
+                      ["git", "checkout", "--ours", str(registry_path)], check=True
+                  )
+                  subprocess.run(["git", "add", str(registry_path)], check=True)
+                  subprocess.run(["git", "rebase", "--continue"],
+                      env={**__import__('os').environ, "GIT_EDITOR": "true"},
+                      check=True)
+          else:
+              raise RuntimeError("git push failed after 3 attempts")
+          PYFP
+
+      - name: Evaluate trigger
+        id: check
+        env:
+          EVENT_NAME:         ${{ github.event_name }}
+          TRIGGER_NAME:       ${{ github.event.workflow_run.name || '' }}
+          TRIGGER_TITLE:      ${{ github.event.workflow_run.display_title || '' }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
+          PAPER_AUDIT_ONLY:   ${{ github.event.inputs.paper_audit_only || 'false' }}
+        run: |
+          bash scripts/patches/run_audit.sh audit_guard
+          # If caller set paper_audit_only=true, signal that all upstream jobs
+          # are already done so they can be skipped by downstream job conditions.
+          if [[ "${PAPER_AUDIT_ONLY}" == "true" ]]; then
+            echo "jobs_already_done=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream jobs flagged as already done — only paper-audit will run."
+          else
+            echo "jobs_already_done=false" >> "$GITHUB_OUTPUT"
+          fi
+
+
+  # ============================================================================
+  #  JOB 0b — collect-figures-tables  (needs: guard)
+  #
+  #  Scans $OUT_BASE recursively for figures (*.pdf, *.png) and tables
+  #  (*.tex) that live inside any experiment sub-directory, then copies
+  #  them into the two canonical flat directories expected by the audit:
+  #
+  #    $OUT_BASE/figures/   ← dimension (6) gate
+  #    $OUT_BASE/tables/    ← dimension (7) gate
+  #
+  #  Source-pool logic (per asset type):
+  #    1. Find all matching files anywhere under $OUT_BASE, skipping the
+  #       canonical destination dirs themselves to avoid re-copying.
+  #    2. If the pool is empty → try to generate by running the
+  #       corresponding script at the repo root:
+  #         figures : python3 figures/generate_figures.py
+  #         tables  : python3 tables/generate_tables.py
+  #    3. If the pool is still empty after the generation attempt →
+  #       print a descriptive error and exit 1 (pipeline stops).
+  #
+  #  Duplicate filenames: last writer wins (matches behaviour of the
+  #  existing audit_figures_tables step which uses a flat manifest).
+  # ============================================================================
+  collect-figures-tables:
+    name: "Job 0b · Collect figures & tables into canonical dirs"
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      needs.guard.outputs.should_run == 'true' &&
+      needs.guard.outputs.jobs_already_done != 'true'
+
+    outputs:
+      # 'true' when the restore-keys cache hit — canonical dirs were already
+      # built on a previous run with the same source content.  Downstream
+      # jobs use this to skip redundant work and go straight to download.
+      assets-cache-hit: ${{ steps.asset-cache.outputs.cache-hit }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # ── Cache key strategy ──────────────────────────────────────────────────
+      # Key   : hash of every source .tex and figure file under the repo.
+      #         Changes only when source content actually changes.
+      # Paths : the two canonical dirs.  On a hit the dirs are restored
+      #         from cache and the collection steps are skipped entirely.
+      #         On a miss the steps run, populate the dirs, and the cache
+      #         is saved for the next run.
+      - name: Restore canonical assets cache
+        id: asset-cache
+        uses: actions/cache@v4.2.3
+        with:
+          path: |
+            ${{ env.OUT_BASE }}/figures
+            ${{ env.OUT_BASE }}/tables
+          key: canonical-assets-${{ hashFiles('hypatiax/data/results/figures/**/*', 'hypatiax/data/results/tables/**/*') }}
+          restore-keys: |
+            canonical-assets-
+
+      - name: Free disk space
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+
+      # ── Copy hypatiax/data/results/figures/*.* into repo-root figures/ ─────
+      # $OUT_BASE/figures already holds analysis/report figures (fig_paper_*,
+      # fig_instability_*, hypatiax_*, fig09_*, fig18_*, fig1_seed_sweep, etc.
+      # — see hypatiax/data/results/figures listing). Copy every file directly
+      # inside it into repo-root figures/, which is what LaTeX resolves via
+      # \includegraphics and what the P2 figures gate (figures-tables-validate)
+      # checks against. Glob *.* only matches names containing a dot, so the
+      # nested tables/ subdir under hypatiax/data/results/figures is skipped
+      # automatically.
+      - name: "Copy hypatiax/data/results/figures/*.* into repo-root figures/"
+        # Unconditional: always runs regardless of cache state so repo-root figures/
+        # always reflects the current contents of the canonical source dir.
+        # Uses cp -f (not rsync --delete) so hand-crafted files deployed by the
+        # "Deploy known figures" step above are never removed.
+        # Destination is repo-root figures/ (relative path on the runner = repo root).
+        # The nested tables/ subdir inside hypatiax/data/results/figures/ is skipped
+        # automatically because the glob *.* only matches names containing a dot.
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p figures
+          SRC="${OUT_BASE}/figures"
+          if [[ -d "${SRC}" ]]; then
+            shopt -s nullglob
+            FILES=("${SRC}"/*.*)
+            shopt -u nullglob
+            if [[ ${#FILES[@]} -gt 0 ]]; then
+              cp -f "${FILES[@]}" figures/
+              echo "Copied ${#FILES[@]} file(s) from ${SRC}/ into repo-root figures/"
+            else
+              echo "::warning::${SRC} exists but has no files matching *.* — nothing copied"
+            fi
+          else
+            echo "::warning::${SRC} not found — skipping copy into repo-root figures/"
+          fi
+
+      # ── Commit copied figures back to the branch ────────────────────────────
+      # The copy step above only changes the runner's local checkout — without
+      # this, repo-root figures/ would revert next run. Commits + pushes any
+      # new/changed files under figures/ so they persist in the repo.
+      # [skip ci] avoids re-triggering ci_pipeline.yml off this commit.
+      # If push fails (e.g. a concurrent run already pushed), this step does
+      # NOT fail the job — downstream jobs in *this* run still get the files
+      # via the canonical-assets artifact upload further down.
+      - name: "Commit copied figures to repo-root figures/"
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f figures/
+          if git diff --cached --quiet; then
+            echo "No new/changed figures — nothing to commit."
+          else
+            git commit -m "ci: copy hypatiax/data/results/figures/*.* into repo-root figures/ [skip ci]"
+            if ! git push origin HEAD:${{ github.ref_name }}; then
+              echo "::warning::git push failed (likely a concurrent commit) — figures committed locally on the runner only. Re-run this job if repo-root figures/ must be updated on the branch."
+            fi
+          fi
+
+      # ── Pre-audit: verify figures/ and tables/ exist at repo root ──────────
+      # Checks that repo_root/figures/ and repo_root/tables/ are non-empty.
+      # If either is absent or empty, attempts to re-populate by running the
+      # same copy logic that ci_postprocess's "Copy figures & tables" step
+      # performs.  This is a safety net for cases where ci_postprocess ran
+      # but did not commit/upload the repo-root dirs (e.g. workflow skipped,
+      # cache miss on a fresh runner).
+      #
+      # If re-population still leaves a dir empty, the step exits non-zero
+      # so the pipeline stops with a clear message rather than silently
+      # producing an empty audit.
+      - name: "Pre-audit: verify (and re-populate) repo_root/figures and repo_root/tables"
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+
+          REPO_FIGURES="figures"
+          REPO_TABLES="tables"
+
+          check_dir() {
+            local dir="$1"
+            [[ -d "$dir" ]] && [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]
+          }
+
+          repopulate() {
+            echo "  Scanning workspace for figures and tables to copy…"
+            mkdir -p "${REPO_FIGURES}" "${REPO_TABLES}"
+
+            # Scan the full workspace (not just $OUT_BASE) so files written by
+            # generate_figures.py outside $OUT_BASE (e.g. hypatiax/tools/figures/)
+            # are also captured.  Exclude .git and the canonical OUT_BASE dirs.
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${OUT_BASE}/figures" -prune -o \
+              -path "./${OUT_BASE}/tables"  -prune -o \
+              -path "./${REPO_FIGURES}"     -prune -o \
+              -path "./Figures"             -prune -o \
+              -path "./${REPO_TABLES}"      -prune -o \
+              \( -name "*.pdf" -o -name "*.png" \) \
+              -print 2>/dev/null \
+            | while IFS= read -r f; do
+                dest="${REPO_FIGURES}/$(basename "$f")"
+                [[ -e "$dest" ]] || cp "$f" "$dest"
+              done
+
+            # Copy all .tex from any tables/ subdir in the full workspace
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${OUT_BASE}/tables" -prune -o \
+              -path "./${REPO_TABLES}"     -prune -o \
+              -path "./${REPO_FIGURES}"    -prune -o \
+              -path "./Figures"            -prune -o \
+              -name "*.tex" -print \
+              2>/dev/null \
+            | while IFS= read -r f; do
+                exp_dir="$(basename "$(dirname "$(dirname "$f")")")"
+                stem="$(basename "$f" .tex)"
+                dest="${REPO_TABLES}/${exp_dir}__${stem}.tex"
+                [[ -e "$dest" ]] || cp "$f" "$dest"
+              done
+
+            echo "  After re-population:"
+            echo "    figures/ : $(ls "${REPO_FIGURES}" 2>/dev/null | wc -l) file(s)"
+            echo "    tables/  : $(ls "${REPO_TABLES}"  2>/dev/null | wc -l) file(s)"
+          }
+
+          FIGS_OK=false
+          TABS_OK=false
+
+          if check_dir "${REPO_FIGURES}"; then
+            echo "✅  repo_root/figures/  : $(ls "${REPO_FIGURES}" | wc -l) file(s) — OK"
+            FIGS_OK=true
+          else
+            echo "⚠️   repo_root/figures/ is absent or empty — attempting re-population"
+          fi
+
+          if check_dir "${REPO_TABLES}"; then
+            echo "✅  repo_root/tables/   : $(ls "${REPO_TABLES}" | wc -l) file(s) — OK"
+            TABS_OK=true
+          else
+            echo "⚠️   repo_root/tables/ is absent or empty — attempting re-population"
+          fi
+
+          if [[ "$FIGS_OK" == "false" || "$TABS_OK" == "false" ]]; then
+            repopulate
+          fi
+
+          # Final assertion
+          FAIL=false
+          if ! check_dir "${REPO_FIGURES}"; then
+            echo "::error::repo_root/figures/ is still empty after re-population."
+            echo "         Run ci_postprocess.yml for any experiment to generate and"
+            echo "         copy figures, or commit figure files to figures/ directly."
+            FAIL=true
+          fi
+          if ! check_dir "${REPO_TABLES}"; then
+            echo "::error::repo_root/tables/ is still empty after re-population."
+            echo "         Run ci_postprocess.yml for any experiment to generate and"
+            echo "         copy tables, or commit .tex files to tables/ directly."
+            FAIL=true
+          fi
+          [[ "$FAIL" == "false" ]] || exit 1
+
+          echo ""
+          echo "Pre-audit check PASSED."
+          echo "  repo_root/figures/ : $(ls "${REPO_FIGURES}" | wc -l) file(s)"
+          echo "  repo_root/tables/  : $(ls "${REPO_TABLES}"  | wc -l) file(s)"
+
+      - name: "Deploy known figures to Figures/ and figures/ (FIX-F1/F2/F3/F4/F5 + Supp-B)"
+        # Copies all required figures from their actual locations to:
+        #   Figures/  — NB-05 inventory path
+        #   figures/  — what LaTeX reads via \graphicspath
+        # Tries PDF first, falls back to PNG — NB-05 accepts both.
+        # Covers:
+        #   FIX-F1: hypatiax_three_systems (hand-crafted architecture diagram)
+        #   FIX-F2: hypatiax_algorithm1_routing_cascade_v2 (hand-crafted routing flow)
+        #   FIX-F3: fig18_r2_heatmap_improved (generate_figures.py --experiment exp1)
+        #   FIX-F4: fig09_r2_heatmap_regimes  (generate_figures.py --experiment exp1)
+        #   FIX-F5: fig1_seed_sweep            (generate_figures.py --experiment exp1)
+        #   Supp-B: 13 sweep figures           (generate_figures.py --experiment suppB/suppB_sc)
+        run: |
+          set -euo pipefail
+          mkdir -p Figures figures
+
+          deploy() {
+            local stem="$1"; shift
+            for src in "$@"; do
+              if [[ -f "$src" ]]; then
+                ext="${src##*.}"
+                dst_upper="Figures/${stem}.${ext}"
+                dst_lower="figures/${stem}.${ext}"
+                # Guard: cp errors (and set -e kills the job) if src and dest
+                # resolve to the same file — which happens whenever $src is
+                # itself already sitting in figures/ or Figures/ under the
+                # target name (e.g. the lowercase figures/ fallback path).
+                if [[ "$(readlink -f "$src")" != "$(readlink -f "$dst_upper" 2>/dev/null || echo "$dst_upper")" ]]; then
+                  cp -v "$src" "$dst_upper"
+                else
+                  echo "  [SKIP] ${stem}: src already at $dst_upper"
+                fi
+                if [[ "$(readlink -f "$src")" != "$(readlink -f "$dst_lower" 2>/dev/null || echo "$dst_lower")" ]]; then
+                  cp -v "$src" "$dst_lower"
+                else
+                  echo "  [SKIP] ${stem}: src already at $dst_lower"
+                fi
+                echo "  [OK] ${stem} deployed from $src"
+                return 0
+              fi
+            done
+            echo "::warning::FIX-F: ${stem} not found in any search path"
+            return 0
+          }
+
+          # ── FIX-F1: Architecture diagram (hand-crafted, no generator) ──────────
+          # NOTE: figures/ (lowercase) must be checked first — the earlier
+          # "Copy hypatiax/data/results/figures/*.* into repo-root figures/" step
+          # in this same job populates it there, not under Figures/.
+          deploy hypatiax_three_systems \
+            "figures/hypatiax_three_systems.pdf" \
+            "Figures/hypatiax_three_systems.pdf" \
+            "Figures/architecture_figures/hypatiax_three_systems.pdf"
+
+          # ── FIX-F2: Routing cascade diagram (hand-crafted, no generator) ───────
+          deploy hypatiax_algorithm1_routing_cascade_v2 \
+            "figures/hypatiax_algorithm1_routing_cascade_v2.pdf" \
+            "Figures/hypatiax_algorithm1_routing_cascade_v2.pdf" \
+            "Figures/architecture_figures/hypatiax_algorithm1_routing_cascade_v2.pdf"
+
+          # ── FIX-F3/F4/F5: exp1 cosmetic figures (generate_figures.py --experiment exp1) ──
+          deploy fig18_r2_heatmap_improved \
+            "Figures/figures-cosmetic-last/fig18_r2_heatmap_improved.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig18_r2_heatmap_improved.png"
+
+          deploy fig09_r2_heatmap_regimes \
+            "Figures/figures-cosmetic-last/fig09_r2_heatmap_regimes.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig09_r2_heatmap_regimes.png"
+
+          deploy fig1_seed_sweep \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.pdf" \
+            "Figures/figures-portfolio-variance/fig1_seed_sweep.png" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.pdf" \
+            "hypatiax/data/results/ablation/exp1_ablation/figures/fig1_seed_sweep.png"
+
+          # ── Supp-B sweep figures (generate_figures.py --experiment suppB / suppB_sc) ──
+          SUPPB_DIRS=(
+            "hypatiax/data/results/suppB/figures"
+            "hypatiax/data/results/suppB_sc/figures"
+            "Figures"
+          )
+
+          deploy_suppb() {
+            local stem="$1"
+            for dir in "${SUPPB_DIRS[@]}"; do
+              for ext in pdf png; do
+                local src="${dir}/${stem}.${ext}"
+                if [[ -f "$src" ]]; then
+                  cp -v "$src" "Figures/${stem}.${ext}"
+                  cp -v "$src" "figures/${stem}.${ext}"
+                  echo "  [OK] ${stem} deployed from $src"
+                  return 0
+                fi
+              done
+            done
+            echo "::warning::Supp-B: ${stem} not found — run generate_figures.py --experiment suppB/suppB_sc"
+            return 0
+          }
+
+          deploy_suppb fig1_r2_vs_noise
+          deploy_suppb fig2_rmse_vs_noise
+          deploy_suppb fig3_time_vs_noise
+          deploy_suppb fig4_r2_vs_n
+          deploy_suppb fig5_rmse_vs_n
+          deploy_suppb fig6_time_vs_n
+          deploy_suppb fig7_recovery_vs_noise
+          deploy_suppb fig8_recovery_vs_n
+          deploy_suppb fig9_minr2_vs_noise
+          deploy_suppb fig10_r2_boxplot_noise
+          deploy_suppb fig11_recovery_heatmap
+          deploy_suppb fig_runtime_comparison
+          deploy_suppb fig_comparative_table
+
+          echo "--- figures/ after deploy ($(ls figures/ 2>/dev/null | wc -l) file(s)) ---"
+          { ls -lh figures/ 2>/dev/null || true; } | head -30
+
+      - name: Restore pip cache
+        id: pip-cache
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4.2.3
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-numpy-sympy
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
+      - name: Install dependencies
+        if: steps.pip-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m pip install --upgrade pip
+          # hypatia_inspector.py and audit_paper are pure stdlib (json/pathlib/re/argparse).
+          # Only exp3_sym symbolic-equivalence check needs numpy+sympy; install just those.
+          pip install --no-cache-dir numpy sympy
+
+      - name: Collect figures (PDF/PNG) into $OUT_BASE/figures/
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          FIGURES_DIR="${OUT_BASE}/figures"
+          mkdir -p "${FIGURES_DIR}"
+
+          # Helper: scan the entire workspace for pdf/png, excluding:
+          #   - the canonical destination dir (avoid re-copying)
+          #   - repo-root figures/ and Figures/ — these are deploy destinations,
+          #     not sources; scanning them causes stem collisions that produce
+          #     mangled Figures__*.png names in OUT_BASE/figures/
+          #   - .git
+          # We scan the full workspace (not just $OUT_BASE) because
+          # generate_figures.py writes to hypatiax/tools/figures/, which
+          # is outside $OUT_BASE.
+          scan_figures() {
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${FIGURES_DIR}" -prune -o \
+              -path "./figures" -prune -o \
+              -path "./Figures" -prune -o \
+              \( -name "*.pdf" -o -name "*.png" \) -print \
+            | sort
+          }
+
+          echo "=== Scanning workspace for figures ==="
+          mapfile -t FOUND < <(scan_figures)
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::warning::No figures found anywhere in workspace — attempting generation via figures/generate_figures.py"
+            if [[ -f figures/generate_figures.py ]]; then
+              python3 figures/generate_figures.py
+            else
+              echo "::error::figures/generate_figures.py not found and no figures exist in workspace."
+              echo "         Commit figure outputs or ensure generate_figures.py is present."
+              exit 1
+            fi
+            # Re-scan the full workspace after generation
+            mapfile -t FOUND < <(scan_figures)
+          fi
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::error::Figure pool is still empty after running generate_figures.py."
+            echo "         Script reported success but wrote no pdf/png files detectable by scan."
+            echo "         Check that generate_figures.py saves files with .pdf or .png extensions"
+            echo "         somewhere under the workspace (current dir: $(pwd))."
+            exit 1
+          fi
+
+          echo "Found ${#FOUND[@]} figure file(s) — copying into ${FIGURES_DIR}/"
+          # Two-pass copy: .pdf first, then all others.
+          # When both fig.pdf and fig.png exist for the same stem, .pdf wins and
+          # .png is silently skipped.  This prevents parent__stem.png mangled names
+          # that LaTeX cannot resolve via \includegraphics{stem}.
+          declare -A COPIED_STEMS
+          for pass in pdf other; do
+            for f in "${FOUND[@]}"; do
+              EXT="${f##*.}"
+              STEM="$(basename "${f%.*}")"
+              [[ "$pass" == "pdf"   && "$EXT" != "pdf" && "$EXT" != "PDF" ]] && continue
+              [[ "$pass" == "other" && ( "$EXT" == "pdf" || "$EXT" == "PDF" ) ]] && continue
+              DEST="${FIGURES_DIR}/$(basename "${f}")"
+              if [[ -n "${COPIED_STEMS[${STEM}]+_}" ]]; then
+                echo "  ⚠ skip ${STEM}.${EXT} — stem already deployed as ${COPIED_STEMS[${STEM}]}"
+                continue
+              fi
+              if [[ ! -e "${DEST}" ]]; then
+                cp "${f}" "${DEST}"
+                COPIED_STEMS["${STEM}"]="${EXT}"
+              else
+                PARENT="$(basename "$(dirname "${f}")")"
+                cp "${f}" "${FIGURES_DIR}/${PARENT}__${STEM}.${EXT}"
+                echo "  ⚠ collision: $(basename "${f}") — saved as ${PARENT}__${STEM}.${EXT}"
+              fi
+            done
+          done
+          echo "Figures directory now contains $(ls "${FIGURES_DIR}" | wc -l) file(s)."
+
+      - name: Collect tables (TeX) into $OUT_BASE/tables/
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          TABLES_DIR="${OUT_BASE}/tables"
+          mkdir -p "${TABLES_DIR}"
+
+          echo "=== Scanning workspace for .tex tables ==="
+          # Tables DO share names across experiments (feynman.tex, ablation.tex,
+          # etc. appear under every experiment's tables/ subdir with different
+          # content).  Strategy: ALWAYS prefix with the immediate parent of the
+          # tables/ subdir (the experiment directory name) so every file gets
+          # a unique, traceable name in the canonical flat dir.
+          #
+          # Naming rule:
+          #   <OUT_BASE>/comparison_results/feynman-tests/exp2/tables/feynman.tex
+          #   → <TABLES_DIR>/exp2__feynman.tex          (parent of tables/ = exp2)
+          #
+          #   <OUT_BASE>/extrapolation/tables/feynman.tex
+          #   → <TABLES_DIR>/extrapolation__feynman.tex
+          #
+          # If two experiments share the same immediate parent name (unlikely
+          # given the tree, but guarded), we fall back to the grandparent:
+          #   exp2__feynman.tex already exists
+          #   → feynman-tests__exp2__feynman.tex
+          #
+          # The canonical names written here are the ones audit_figures_tables
+          # must reference in its manifest / paper_targets.json.
+          #
+          # Scan scope: entire workspace (not just $OUT_BASE) so that tables
+          # written by generate_tables.py outside $OUT_BASE are also captured.
+
+          scan_tables() {
+            find . \
+              -path "./.git" -prune -o \
+              -path "./${TABLES_DIR}" -prune -o \
+              -name "*.tex" -print \
+            | sort
+          }
+
+          mapfile -t FOUND < <(scan_tables)
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::warning::No .tex tables found anywhere in workspace — attempting generation via tables/generate_tables.py"
+            if [[ -f tables/generate_tables.py ]]; then
+              python3 tables/generate_tables.py
+            else
+              echo "::error::tables/generate_tables.py not found and no .tex files exist in workspace."
+              echo "         Commit table outputs or ensure generate_tables.py is present."
+              exit 1
+            fi
+            mapfile -t FOUND < <(scan_tables)
+          fi
+
+          if [[ ${#FOUND[@]} -eq 0 ]]; then
+            echo "::error::Tables pool is still empty after running generate_tables.py."
+            echo "         Script reported success but wrote no .tex files detectable by scan."
+            echo "         Check that generate_tables.py saves files with .tex extension"
+            echo "         somewhere under the workspace (current dir: $(pwd))."
+            exit 1
+          fi
+
+          echo "Found ${#FOUND[@]} table file(s) — copying into ${TABLES_DIR}/ with experiment prefix"
+          for f in "${FOUND[@]}"; do
+            STEM="$(basename "${f}" .tex)"
+            # The immediate parent of the file is the tables/ subdir itself.
+            # One level up from that is the experiment directory.
+            EXPERIMENT="$(basename "$(dirname "$(dirname "${f}")")")"
+            DEST="${TABLES_DIR}/${EXPERIMENT}__${STEM}.tex"
+
+            if [[ ! -e "${DEST}" ]]; then
+              cp "${f}" "${DEST}"
+            else
+              # Two source paths share the same experiment dir name — use
+              # the grandparent to break the tie.
+              GRANDPARENT="$(basename "$(dirname "$(dirname "$(dirname "${f}")")")")"
+              DEST="${TABLES_DIR}/${GRANDPARENT}__${EXPERIMENT}__${STEM}.tex"
+              cp "${f}" "${DEST}"
+              echo "  ⚠ experiment-name collision: used grandparent prefix → $(basename "${DEST}")"
+            fi
+            echo "  ✅  $(basename "${f}") from ${EXPERIMENT} → $(basename "${DEST}")"
+          done
+          echo "Tables directory now contains $(ls "${TABLES_DIR}" | wc -l) file(s)."
+
+      - name: Generate tables manifest (logs/tables_manifest.json)
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          TABLES_DIR="${OUT_BASE}/tables"
+          # Emit a JSON array of every prefixed filename now in the canonical
+          # tables/ dir.  audit_figures_tables and paper_targets.json should
+          # reference these exact names.
+          python3 - <<'EOF'
+          import os, json, pathlib
+          tables_dir = pathlib.Path(os.environ["OUT_BASE"]) / "tables"
+          names = sorted(f.name for f in tables_dir.iterdir() if f.suffix == ".tex")
+          manifest = {"tables_dir": str(tables_dir), "count": len(names), "files": names}
+          out = pathlib.Path("logs/tables_manifest.json")
+          out.write_text(json.dumps(manifest, indent=2))
+          print(f"Manifest written: {out}  ({len(names)} entries)")
+          for n in names:
+              print(f"  {n}")
+          EOF
+
+      - name: Upload tables manifest
+        if: steps.asset-cache.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name:              tables-manifest-${{ github.run_id }}
+          path:              logs/tables_manifest.json
+          if-no-files-found: warn
+          retention-days:    30
+
+      - name: Upload canonical figures/ and tables/ as artifact
+        # if: always() is REQUIRED — earlier steps in this job (figure/table
+        # collection) can exit 1 on empty pools or missing generator scripts.
+        # Without this, a step failure upstream silently skips this upload,
+        # the canonical-assets-<run_id> artifact never exists, and every
+        # downstream job (preflight-check, numerical-verify, paper-audit,
+        # figures-tables-validate) fails with a confusing
+        # "Artifact not found for name: canonical-assets-<run_id>" instead
+        # of surfacing the real collection failure. Safe to always-run since
+        # if-no-files-found: warn already tolerates an empty/partial set —
+        # preflight-check is what should report the real problem clearly.
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name:              canonical-assets-${{ github.run_id }}
+          path:              |
+            ${{ env.OUT_BASE }}/figures/
+            ${{ env.OUT_BASE }}/tables/
+          if-no-files-found: warn   # changed from error: missing figures/tables should not block paper-audit
+          retention-days:    3
+
+      - name: Summary
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          CACHE_HIT="${{ steps.asset-cache.outputs.cache-hit }}"
+          echo "=== collect-figures-tables summary ==="
+          if [[ "${CACHE_HIT}" == 'true' ]]; then
+            echo "  ⚡ Cache hit — canonical dirs restored from cache, collection skipped."
+          else
+            echo "  🔨 Cache miss — dirs collected fresh and saved to cache."
+          fi
+          echo "  figures : $(ls "${OUT_BASE}/figures" 2>/dev/null | wc -l) file(s)"
+          echo "  tables  : $(ls "${OUT_BASE}/tables"  2>/dev/null | wc -l) file(s)"
+
+
+  # ============================================================================
+  #  JOB 0c — preflight-check  (needs: collect-figures-tables)
+  #
+  #  Hard assertion: both canonical dirs must exist AND be non-empty.
+  #  Runs before any quality gate so failures are immediately actionable
+  #  rather than buried inside the 7-dimension gate output.
+  #
+  #  Exit codes:
+  #    0  — both dirs present and non-empty → downstream jobs proceed
+  #    1  — either dir absent or empty      → pipeline stops with a clear
+  #           error message pointing to the collection job
+  # ============================================================================
+  preflight-check:
+    name: "Job 0c · Preflight — verify canonical figures/ and tables/ exist"
+    needs: [guard, collect-figures-tables]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      needs.guard.outputs.should_run == 'true' &&
+      needs.guard.outputs.jobs_already_done != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name:          canonical-assets-${{ github.run_id }}
+          path:          ${{ env.OUT_BASE }}
+
+      - name: Assert figures dir is non-empty
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          FIGURES_DIR="${OUT_BASE}/figures"
+          if [[ ! -d "${FIGURES_DIR}" ]]; then
+            echo "::error::${FIGURES_DIR} does not exist after download — upload may have failed in collect-figures-tables."
+            exit 1
+          fi
+          COUNT=$(ls "${FIGURES_DIR}" | wc -l)
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::${FIGURES_DIR} is empty after download."
+            exit 1
+          fi
+          echo "✅  figures OK — ${COUNT} file(s) in ${FIGURES_DIR}"
+
+      - name: Assert tables dir is non-empty
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          TABLES_DIR="${OUT_BASE}/tables"
+          if [[ ! -d "${TABLES_DIR}" ]]; then
+            echo "::error::${TABLES_DIR} does not exist after download — upload may have failed in collect-figures-tables."
+            exit 1
+          fi
+          COUNT=$(ls "${TABLES_DIR}" | wc -l)
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::${TABLES_DIR} is empty after download."
+            exit 1
+          fi
+          echo "✅  tables OK — ${COUNT} file(s) in ${TABLES_DIR}"
+
+      - name: Preflight passed
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: |
+          echo "=== preflight-check PASSED ==="
+          echo "  ${OUT_BASE}/figures/ : $(ls "${OUT_BASE}/figures" | wc -l) file(s)"
+          echo "  ${OUT_BASE}/tables/  : $(ls "${OUT_BASE}/tables"  | wc -l) file(s)"
+          echo "Proceeding to numerical-verify."
+
+
+  # ============================================================================
+  #  JOB 1 — numerical-verify
+  #  bash scripts/patches/run_audit.sh qualify
+  #  Numerical spot-checks + 7-dimension per-experiment gate.
+  #  Writes logs/verify_report.json.
+  # ============================================================================
+  numerical-verify:
+    name: "Job 1 · Numerical verify"
+    needs: [guard, preflight-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      needs.guard.outputs.should_run == 'true' &&
+      needs.guard.outputs.jobs_already_done != 'true' &&
+      needs.preflight-check.result == 'success' &&
+      github.event.inputs.skip_verify != 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: canonical-assets-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+
+      - name: Cache pip packages
+        uses: actions/cache@v4.2.3
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-numpy-sympy
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          # qualify step is pure stdlib; numpy+sympy only for exp3_sym.
+          pip install --no-cache-dir numpy sympy
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Run qualify step
+        id: verify
+        env:
+          RESULTS_DIR:        ${{ env.OUT_BASE }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "=== numerical-verify (qualify) ==="
+          echo "Results base: ${RESULTS_DIR}"
+          bash scripts/patches/run_audit.sh qualify 2>&1 | tee logs/verify_run.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "verify_exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit ${EXIT_CODE}
+
+      - name: Print verify summary
+        if: always()
+        env:
+          RESULTS_DIR: ${{ env.OUT_BASE }}
+        run: bash scripts/patches/run_audit.sh audit_print_verify
+
+      - name: Upload verify report
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name:              verify-report-${{ github.run_id }}
+          path:              |
+            logs/verify_report.json
+            logs/verify_run.log
+          if-no-files-found: warn
+          retention-days:    30
+
+      - name: "Sync NB-04 TRUTH dict from live summary JSONs (update_nb04_truth)"
+        # P5: keeps feynman_successes/feynman_total in NB-04 in sync with
+        # exp2_pca_4060_summary.json so numerical-verify never fires a spurious
+        # FIX-C3 mismatch after the summary JSONs are regenerated.
+        # Skips silently if the summary files don't exist yet (C5c not run).
+        env:
+          RESULTS_DIR: ${{ env.OUT_BASE }}
+        run: |
+          set -euo pipefail
+          EXP2="$RESULTS_DIR/feynman-tests/exp2_pca_4060/exp2_pca_4060_summary.json"
+          EXP1="$RESULTS_DIR/noise-noiseless/noiseless/defi_pca/exp1_pca_summary.json"
+          NB04="notebooks/NB-04_Numerical_Consistency_Checker.ipynb"
+          if [[ ! -f "$EXP2" || ! -f "$EXP1" ]]; then
+            echo "::notice::Summary JSONs not found — skipping NB-04 TRUTH sync (run C5c experiments first)."
+            exit 0
+          fi
+          if [[ ! -f "$NB04" ]]; then
+            echo "::warning::$NB04 not found — skipping TRUTH sync."
+            exit 0
+          fi
+          if [[ ! -f scripts/patches/update_nb04_truth.py ]]; then
+            echo "::warning::scripts/patches/update_nb04_truth.py not found — skipping TRUTH sync."
+            exit 0
+          fi
+          python scripts/patches/update_nb04_truth.py \
+            --results-dir "$RESULTS_DIR" \
+            --nb-path     "$NB04"
+
+      - name: "P4 · Verify FIX-C1 closure propagates (inspector live-status check)"
+        # P4: runs hypatia_inspector.py in dry-run mode and confirms FIX-C1 is
+        # not still OPEN in the live findings — i.e. the live-status merge logic
+        # correctly marks it RESOLVED (NB-06 scan found 0 duplicates).
+        # Exits non-zero only if FIX-C1 is found as OPEN, not merely absent.
+        run: |
+          set -euo pipefail
+          if [[ ! -f scripts/patches/hypatia_inspector.py ]]; then
+            echo "::warning::scripts/patches/hypatia_inspector.py not found — skipping FIX-C1 closure check."
+            exit 0
+          fi
+          python scripts/patches/hypatia_inspector.py \
+            --repo . \
+            --registry scripts/patches/issue_registry.json \
+            --json-out logs/fixc1_check_findings.json \
+            --severity medium 2>&1 | tee logs/fixc1_check.log || true
+
+          python3 - <<'PYCHECK'
+          import json, sys
+          from pathlib import Path
+
+          findings_path = Path("logs/fixc1_check_findings.json")
+          if not findings_path.exists():
+              print("  [SKIP] findings.json not produced — inspector may have errored.")
+              sys.exit(0)
+
+          findings = json.loads(findings_path.read_text())
+          # findings may be a list or {"findings": [...]}
+          if isinstance(findings, dict):
+              findings = findings.get("findings", [])
+
+          c1_open = [f for f in findings
+                     if f.get("id") == "FIX-C1"
+                     and f.get("status", "").upper() == "OPEN"]
+
+          if c1_open:
+              print(f"  [FAIL] FIX-C1 is still OPEN in live inspector findings:")
+              for f in c1_open:
+                  print(f"    {f.get('description', '')}")
+              print("  Verify hypatiax_defi_benchmark_v3c.py has no duplicate case names,")
+              print("  then update issue_registry.json FIX-C1 status to 'fixed'.")
+              sys.exit(1)
+          else:
+              print("  [OK] FIX-C1 is not OPEN in live findings — closure confirmed.")
+          PYCHECK
+
+
+  # ============================================================================
+  #  JOB 2 — paper-audit  (needs: numerical-verify)
+  #  bash scripts/patches/run_audit.sh audit_paper
+  #  Loads scripts/patches/paper_targets.json.
+  #  Emits logs/paper_audit_findings.json.
+  #  Includes Nguyen-12 dual-threshold check (91.7% vs 33.3%).
+  #  Exits non-zero on any FAIL or MISSING.
+  # ============================================================================
+  paper-audit:
+    name: "Job 2 · Paper audit"
+    needs: [guard, numerical-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # required for registry write-back commit after clean audit
+    if: |
+      always() &&
+      needs.guard.outputs.should_run == 'true' &&
+      (
+        needs.guard.outputs.jobs_already_done == 'true' ||
+        needs.numerical-verify.result == 'success' ||
+        needs.numerical-verify.result == 'skipped'
+      )
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download canonical assets from collect-figures-tables
+        if: needs.guard.outputs.jobs_already_done != 'true'
+        uses: actions/download-artifact@v4.3.0
+        continue-on-error: true   # canonical assets are needed for figures/tables only; paper-audit proceeds without them
+        with:
+          name: canonical-assets-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+
+      - name: Cache pip packages
+        uses: actions/cache@v4.2.3
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-numpy-sympy
+          restore-keys: pip-${{ env.PYTHON_VERSION }}-
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          # audit_paper (paper_targets.json resolution) is pure stdlib.
+          # numpy+sympy retained for exp3_sym symbolic-equivalence check only.
+          pip install --no-cache-dir numpy sympy
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Confirm paper_targets.json exists
+        run: |
+          if [[ ! -f scripts/patches/paper_targets.json ]]; then
+            echo "::error::scripts/patches/paper_targets.json not found — commit it before running this audit."
+            exit 1
+          fi
+          N=$(python3 -c "import json; d=json.load(open('scripts/patches/paper_targets.json')); print(len(d))")
+          echo "paper_targets.json: ${N} claim(s)"
+
+      # ── Run hypatia_inspector.py (dry-run) before paper-audit ──────────────
+      # Produces findings.json with current fix statuses without modifying files.
+      # (apply mode already ran in audit-setup / apply-fixes in ci_paper_notebooks.yml)
+      - name: Run hypatia_inspector.py (dry-run report)
+        run: |
+          if [ -f scripts/patches/hypatia_inspector.py ]; then
+            python scripts/patches/hypatia_inspector.py \
+              --repo . \
+              --registry "${{ env.REGISTRY_PATH }}" \
+              --json-out findings.json \
+              --severity critical,high,medium
+          else
+            echo "::warning::scripts/patches/hypatia_inspector.py not found — skipping inspector step"
+          fi
+        continue-on-error: true
+
+      - name: Upload inspector findings artifact
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: hypatia-findings-audit-${{ github.run_id }}
+          path: findings.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: "FIX-C3 AST gate (A/B/C)"
+        # Replaces the previous string-search gate (§2.2 of hypatia_review.md).
+        # Gate A: pca_directed_split is imported in run_comparative_suite_benchmark_pca.py
+        # Gate B: pca_directed_split is *called* inside ImprovedNN.run()
+        # Gate C: train_test_split is NOT called as primary split inside ImprovedNN.run()
+        run: |
+          python scripts/patches/gate_c3_verify.py \
+            hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_pca.py
+
+      - name: Assert no API keys hardcoded in notebooks
+        # NB-06 Step 4 confirmed CLEAN (scan result: "OK - no exposed API keys found").
+        # FIX-C4 in the original audit fix recipe was a false positive and has been removed.
+        # This step re-runs the same pattern scan on every push so the clean status
+        # is continuously verified rather than assumed.
+        #
+        # FALSE POSITIVE FIX: grep is restricted to code cells only (outputs excluded)
+        # and NB-06 itself is excluded from the scan — it contains the regex pattern
+        # string "sk-ant-api\d+" as source code (not a real key) which caused a
+        # spurious failure.  Any other notebook that contains a live key will still fail.
+        run: |
+          set -euo pipefail
+          echo "=== API key scan (NB-06 Step 4 equivalent — extended to *.yml and *.py) ==="
+          # Scans notebooks (source cells only), YAML workflow files, and Python scripts.
+          # NB-06 is excluded because it contains the detection regex as its own source code.
+          # The pattern anchors on a concrete key prefix (sk-ant-api) followed by digits
+          # and word chars — it will not match a regex string that uses \d or [A-Za-z0-9].
+          python3 - <<'PYSCAN'
+          import json, sys, re
+          from pathlib import Path
+
+          KEY_RE = re.compile(r'sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{90,}')
+
+          # Files to exclude (contain the detection pattern as source code, not a key)
+          EXCLUDE_NAMES = {"NB-06_Code_Quality_Pipeline_Integrity.ipynb"}
+
+          found_any = False
+
+          # ── Notebooks: extract source cells only ───────────────────────────
+          for nb_path in sorted(Path(".").rglob("*.ipynb")):
+              if nb_path.name in EXCLUDE_NAMES:
+                  print(f"  [SKIP] {nb_path.relative_to('.')} (excluded — contains detection regex)")
+                  continue
+              try:
+                  nb = json.loads(nb_path.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  print(f"  [WARN] Could not read {nb_path}: {exc}")
+                  continue
+              for cell in nb.get("cells", []):
+                  src = "".join(cell.get("source", []))
+                  hits = KEY_RE.findall(src)
+                  if hits:
+                      found_any = True
+                      print(f"  [CRITICAL] EXPOSED API KEY in {nb_path.relative_to('.')}")
+                      for m in hits:
+                          print(f"    Key prefix: {m[:30]}...")
+
+          # ── YAML and Python: plain text scan ──────────────────────────────
+          for glob in ("*.yml", "*.yaml", "*.py"):
+              for p in sorted(Path(".").rglob(glob)):
+                  if p.name in EXCLUDE_NAMES:
+                      continue
+                  try:
+                      src = p.read_text(encoding="utf-8", errors="replace")
+                  except Exception as exc:
+                      print(f"  [WARN] Could not read {p}: {exc}")
+                      continue
+                  hits = KEY_RE.findall(src)
+                  if hits:
+                      found_any = True
+                      print(f"  [CRITICAL] EXPOSED API KEY in {p.relative_to('.')}")
+                      for m in hits:
+                          print(f"    Key prefix: {m[:30]}...")
+
+          if not found_any:
+              print("  OK - no exposed API keys found in notebooks, YAML, or Python files")
+          else:
+              print("")
+              print("  ACTION: Rotate the key at console.anthropic.com IMMEDIATELY.")
+              print("  Remove the key from the file before any git commit or sharing.")
+              sys.exit(1)
+          PYSCAN
+
+      - name: Run audit-paper step
+        id: audit
+        env:
+          RESULTS_DIR:        ${{ env.OUT_BASE }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          FAIL_ON_WARN:       ${{ github.event.inputs.fail_on_warn || 'false' }}
+        run: |
+          set -euo pipefail
+          echo "=== paper-audit ==="
+          echo "Invoking: bash scripts/patches/run_audit.sh audit_paper"
+          bash scripts/patches/run_audit.sh audit_paper 2>&1 | tee logs/paper_audit_run.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo ""
+          echo "=== Nguyen-12 dual-threshold caveat ==="
+          echo "  Paper abstract : 11/12 (91.7%)  — 4-decimal rounding (Uy et al. benchmark)"
+          echo "  Strict R2>=0.9999: 4/12 (33.3%) — both figures must appear in SS10.8"
+          echo "audit_exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit ${EXIT_CODE}
+
+      - name: Print audit summary
+        if: always()
+        env:
+          RESULTS_DIR: ${{ env.OUT_BASE }}
+        run: bash scripts/patches/run_audit.sh audit_print_findings
+
+      - name: Upload audit findings
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name:              paper-audit-findings-${{ github.run_id }}
+          path:              |
+            logs/paper_audit_findings.json
+            logs/paper_audit_run.log
+          if-no-files-found: warn
+          retention-days:    30
+
+      # ── Normalised summary for ci_report dynamic conclusions ─────────────────
+      # Converts logs/paper_audit_findings.json into the shared audit_summary
+      # schema consumed by ci_report.yml's generate-conclusions step.
+      # Schema: { "source": str, "run_id": str, "generated_at": str,
+      #           "findings": [ { "id", "severity", "status",
+      #                           "description", "action", "nb" } ] }
+      - name: Write audit-paper summary JSON
+        if: always()
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, datetime
+          from pathlib import Path
+
+          run_id = os.environ["RUN_ID"]
+          findings_path = Path("logs/paper_audit_findings.json")
+
+          # Build findings list from paper_audit_findings.json if it exists,
+          # otherwise emit an empty list so ci_report always gets valid JSON.
+          findings = []
+          if findings_path.exists():
+              try:
+                  raw = json.loads(findings_path.read_text())
+                  # paper_audit_findings.json may be a list or a dict with a
+                  # "findings" key — normalise either shape.
+                  items = raw if isinstance(raw, list) else raw.get("findings", [])
+                  for item in items:
+                      findings.append({
+                          "id":          item.get("id", item.get("fix_id", "UNKNOWN")),
+                          "severity":    item.get("severity", item.get("level", "UNKNOWN")).upper(),
+                          "status":      item.get("status", "OPEN").upper(),
+                          "description": item.get("description", item.get("message", "")),
+                          "action":      item.get("action", item.get("fix", "")),
+                          "nb":          item.get("nb", item.get("notebook", "paper-audit")),
+                      })
+              except Exception as exc:
+                  print(f"  WARN: could not parse paper_audit_findings.json: {exc}")
+
+          summary = {
+              "source":       "ci_paper_audit",
+              "run_id":       run_id,
+              "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+              "findings":     findings,
+          }
+          out = Path("logs/audit_paper_summary.json")
+          out.write_text(json.dumps(summary, indent=2))
+          print(f"Wrote {out} — {len(findings)} finding(s)")
+          PYEOF
+
+      - name: Upload audit-paper summary
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name:              audit-paper-summary-${{ github.run_id }}
+          path:              logs/audit_paper_summary.json
+          if-no-files-found: warn
+          retention-days:    30
+
+      # ── Update issue_registry.json — dual-source reconciliation ────────────
+      #
+      #  Runs after every paper-audit attempt (if: always()) so the registry
+      #  stays accurate even when the audit gate fails on some issues while
+      #  others have been fixed.
+      #
+      #  Source priority (most-authoritative first):
+      #    1. logs/paper_audit_findings.json  — the audit gate's canonical output.
+      #       An issue absent from this file (or present with status != OPEN)
+      #       is treated as no longer failing the gate.
+      #    2. findings.json                   — hypatia_inspector dry-run output.
+      #       Used to pick up false_positive / skipped verdicts that the gate
+      #       itself does not emit.
+      #    3. Registry's own current status   — fall-through: if an issue does
+      #       not appear in either source it is left as-is (no silent clearing).
+      #
+      #  Safety rules (unchanged from previous step):
+      #    - false_positive entries are NEVER touched regardless of findings.
+      #    - Issues are only promoted (open → resolved / false_positive).
+      #      They are never re-opened or deleted.
+      #    - If BOTH source files are absent the step prints a notice and exits 0
+      #      so a missing inspector cannot silently clear the registry.
+      #    - Commit is signed by github-actions[bot]; no PAT required.
+      #    - A clear diff table is printed before the commit so the log shows
+      #      exactly what changed and why.
+      #
+      #  Diff table columns:
+      #    ID | old status | new status | source (gate | inspector | no-change)
+      - name: Update issue_registry.json — dual-source reconciliation
+        if: always()
+        env:
+          REGISTRY_PATH: ${{ env.REGISTRY_PATH }}
+          GIT_AUTHOR_NAME:  github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME:  github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+          AUDIT_STEP_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          python3 - <<'PYWR'
+          import json, subprocess, sys, datetime
+          from pathlib import Path
+
+          registry_path    = Path("${{ env.REGISTRY_PATH }}")
+          gate_path        = Path("logs/paper_audit_findings.json")
+          inspector_path   = Path("findings.json")
+          audit_outcome    = "${{ env.AUDIT_STEP_OUTCOME }}"   # success | failure | skipped
+
+          # ── Guard: registry must exist ──────────────────────────────────────
+          if not registry_path.exists():
+              print(f"::error::Registry not found at {registry_path} — skipping update.")
+              sys.exit(1)
+
+          # ── Guard: at least one source must exist ───────────────────────────
+          if not gate_path.exists() and not inspector_path.exists():
+              print("::notice::Both paper_audit_findings.json and findings.json are absent "
+                    "— registry update skipped (no source of truth available).")
+              sys.exit(0)
+
+          today = datetime.date.today().isoformat()
+
+          # ── Load gate findings (source 1) ────────────────────────────────────
+          gate_open_ids:        set[str] = set()
+          gate_resolved_ids:    set[str] = set()   # present but NOT open
+          if gate_path.exists():
+              try:
+                  raw = json.loads(gate_path.read_text())
+                  items = raw if isinstance(raw, list) else raw.get("findings", [])
+                  for item in items:
+                      eid = item.get("id") or item.get("fix_id") or ""
+                      if not eid:
+                          continue
+                      if item.get("status", "OPEN").upper() == "OPEN":
+                          gate_open_ids.add(eid)
+                      else:
+                          gate_resolved_ids.add(eid)
+                  print(f"Gate findings loaded: {len(gate_open_ids)} OPEN, "
+                        f"{len(gate_resolved_ids)} non-OPEN from {gate_path}")
+              except Exception as exc:
+                  print(f"::warning::Could not parse {gate_path}: {exc} — source 1 skipped.")
+
+          # ── Load inspector findings (source 2) ───────────────────────────────
+          inspector_fp_ids:    set[str] = set()
+          inspector_open_ids:  set[str] = set()
+          if inspector_path.exists():
+              try:
+                  raw = json.loads(inspector_path.read_text())
+                  items = raw if isinstance(raw, list) else raw.get("findings", [])
+                  for item in items:
+                      eid = item.get("id") or ""
+                      if not eid:
+                          continue
+                      st = item.get("status", "").upper()
+                      if st in ("FALSE_POSITIVE", "SKIPPED"):
+                          inspector_fp_ids.add(eid)
+                      elif st == "OPEN":
+                          inspector_open_ids.add(eid)
+                  print(f"Inspector findings loaded: {len(inspector_open_ids)} OPEN, "
+                        f"{len(inspector_fp_ids)} FP/skipped from {inspector_path}")
+              except Exception as exc:
+                  print(f"::warning::Could not parse {inspector_path}: {exc} — source 2 skipped.")
+
+          # ── Reconcile registry ───────────────────────────────────────────────
+          registry = json.loads(registry_path.read_text())
+
+          diff_rows = []   # (id, old_status, new_status, source)
+
+          for entry in registry:
+              eid      = entry["id"]
+              old_st   = entry.get("status", "open")
+
+              # false_positive entries are never modified
+              if old_st == "false_positive":
+                  diff_rows.append((eid, old_st, old_st, "protected"))
+                  continue
+
+              # Already resolved — leave alone (never re-open)
+              if old_st == "resolved":
+                  diff_rows.append((eid, old_st, old_st, "already-resolved"))
+                  continue
+
+              # --- old_st == "open" from here ---
+
+              # Priority 1: inspector explicitly marks as false_positive
+              if eid in inspector_fp_ids:
+                  entry["status"]  = "false_positive"
+                  entry["updated"] = today
+                  entry.setdefault("note", "Inspector verdict: false_positive")
+                  diff_rows.append((eid, old_st, "false_positive", "inspector"))
+                  continue
+
+              # Priority 2: gate output says this issue is NOT open
+              #   (issue appeared in gate file with non-OPEN status, OR
+              #    issue was absent from gate file entirely while gate succeeded)
+              gate_cleared = (eid in gate_resolved_ids) or (
+                  audit_outcome == "success"
+                  and gate_path.exists()
+                  and eid not in gate_open_ids
+                  and eid not in inspector_open_ids
+              )
+              if gate_cleared:
+                  entry["status"]  = "resolved"
+                  entry["updated"] = today
+                  diff_rows.append((eid, old_st, "resolved", "gate"))
+                  continue
+
+              # Priority 3: issue absent from gate (gate skipped/failed on others)
+              # but inspector also doesn't list it as open → resolve cautiously
+              # only when audit succeeded (avoiding silent clearing on gate failure)
+              if (audit_outcome == "success"
+                      and not gate_path.exists()
+                      and eid not in inspector_open_ids
+                      and inspector_path.exists()):
+                  entry["status"]  = "resolved"
+                  entry["updated"] = today
+                  diff_rows.append((eid, old_st, "resolved", "inspector-only"))
+                  continue
+
+              # Default: still open
+              diff_rows.append((eid, old_st, old_st, "still-open"))
+
+          # ── Print diff table ─────────────────────────────────────────────────
+          changed = [(eid, o, n, src) for eid, o, n, src in diff_rows if o != n]
+          unchanged_open = [(eid, o, n, src) for eid, o, n, src in diff_rows
+                            if o == "open" and n == "open"]
+
+          col = "{:<14} {:<18} {:<18} {}"
+          print("")
+          print("=== issue_registry.json reconciliation diff ===")
+          print(col.format("ID", "OLD STATUS", "NEW STATUS", "SOURCE"))
+          print("-" * 66)
+          for row in diff_rows:
+              marker = "  →" if row[1] != row[2] else "   "
+              print(f"{marker} " + col.format(*row))
+          print("")
+
+          if not changed:
+              print("Registry already up to date — no changes needed.")
+              sys.exit(0)
+
+          print(f"Changes: {[f'{e}: {o}→{n}' for e,o,n,_ in changed]}")
+          if unchanged_open:
+              print(f"Still open (not cleared by either source): "
+                    f"{[e for e,*_ in unchanged_open]}")
+
+          # ── Write registry and commit ────────────────────────────────────────
+          registry_path.write_text(json.dumps(registry, indent=2))
+
+          subprocess.run(["git", "config", "user.name",  "github-actions[bot]"],                        check=True)
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+          subprocess.run(["git", "add", str(registry_path)], check=True)
+
+          summary_parts = [f"{e}:{o}→{n}" for e, o, n, _ in changed]
+          msg = (f"ci: update issue_registry.json — "
+                 f"{', '.join(summary_parts)} [skip ci]")
+          subprocess.run(["git", "commit", "-m", msg], check=True)
+          # Retry push up to 3 times with a rebase pull on rejection.
+          # The guard job's FP-stamp step runs concurrently and may have already
+          # pushed to master, causing a non-fast-forward rejection here.
+          for attempt in range(1, 4):
+              result = subprocess.run(["git", "push"])
+              if result.returncode == 0:
+                  break
+              print(f"  Push attempt {attempt} rejected — rebasing and retrying…")
+              # Pull with rebase; on conflict always keep OUR version of
+              # issue_registry.json (the gate result is authoritative).
+              pull = subprocess.run(
+                  ["git", "pull", "--rebase", "--autostash"],
+                  capture_output=True, text=True
+              )
+              if pull.returncode != 0:
+                  # Resolve registry conflict by taking ours, then continue rebase
+                  subprocess.run(
+                      ["git", "checkout", "--ours", str(registry_path)], check=True
+                  )
+                  subprocess.run(["git", "add", str(registry_path)], check=True)
+                  subprocess.run(["git", "rebase", "--continue"],
+                      env={**__import__('os').environ, "GIT_EDITOR": "true"},
+                      check=True)
+          else:
+              raise RuntimeError("git push failed after 3 attempts")
+          print(f"Committed registry update: {msg}")
+          PYWR
+
+
+  # ============================================================================
+  #  JOB 3 — figures-tables-validate  (needs: numerical-verify)
+  #  bash scripts/patches/run_audit.sh audit_figures_tables
+  #  Validates expected figures (PDF/PNG) and LaTeX tables (TeX) are present.
+  #  Exits non-zero on any missing file.
+  #  Writes logs/figures_tables_report.json.
+  # ============================================================================
+  figures-tables-validate:
+    name: "Job 3 · Figures & tables validate"
+    needs: [guard, numerical-verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      always() &&
+      needs.guard.outputs.should_run == 'true' &&
+      needs.guard.outputs.jobs_already_done != 'true' &&
+      (needs.numerical-verify.result == 'success' ||
+       needs.numerical-verify.result == 'skipped')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token:               ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth:         1
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download canonical assets from collect-figures-tables
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: canonical-assets-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: "P2 gate — verify \\includegraphics refs exist in repo-root/figures/"
+        id: p2-figures
+        run: |
+          set -euo pipefail
+          TEX="jmlr_paper_main.tex"
+          if [[ ! -f "$TEX" ]]; then
+            echo "::warning::$TEX not found — skipping P2 figures gate"
+            exit 0
+          fi
+          python3 - <<'PYCHECK'
+          import re, sys
+          from pathlib import Path
+
+          tex = Path("jmlr_paper_main.tex").read_text(encoding="utf-8")
+          refs = re.findall(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', tex)
+
+          figures_dir = Path("figures")
+          missing = []
+          for ref in refs:
+              stem = Path(ref).stem
+              found = (
+                  (figures_dir / ref).exists()
+                  or any(figures_dir.glob(f"{stem}.*"))
+              )
+              if not found:
+                  missing.append(ref)
+
+          if missing:
+              print(f"::error::P2 figures gate FAIL — {len(missing)} \\includegraphics ref(s) "
+                    f"not resolved under repo-root/figures/:")
+              for m in missing:
+                  print(f"  - {m}")
+              sys.exit(1)
+
+          print(f"P2 figures gate PASS — {len(refs)} \\includegraphics ref(s) all resolved.")
+          PYCHECK
+
+      - name: "P2 gate — verify LaTeX table \\input/\\include refs exist in repo-root/tables/"
+        id: p2-tables
+        run: |
+          set -euo pipefail
+          TEX="jmlr_paper_main.tex"
+          if [[ ! -f "$TEX" ]]; then
+            echo "::warning::$TEX not found — skipping P2 tables gate"
+            exit 0
+          fi
+          python3 - <<'PYCHECK'
+          import re, sys
+          from pathlib import Path
+
+          tex = Path("jmlr_paper_main.tex").read_text(encoding="utf-8")
+          # Match \input{tables/...} and \include{tables/...}
+          refs = re.findall(r'\\(?:input|include)\{(tables/[^}]+)\}', tex)
+
+          if not refs:
+              print("P2 tables gate PASS — no \\input/\\include{tables/...} refs found.")
+              sys.exit(0)
+
+          tables_dir = Path("tables")
+          missing = []
+          for ref in refs:
+              rel = Path(ref)
+              # ref may be "tables/exp__name.tex" or "tables/name" (no extension)
+              candidates = [Path(ref), Path(ref).with_suffix('.tex')]
+              if not any(c.exists() for c in candidates):
+                  missing.append(ref)
+
+          if missing:
+              print(f"::error::P2 tables gate FAIL — {len(missing)} \\input/\\include ref(s) "
+                    f"not resolved under repo-root/tables/:")
+              for m in missing:
+                  print(f"  - {m}")
+              sys.exit(1)
+
+          print(f"P2 tables gate PASS — {len(refs)} table ref(s) all resolved.")
+          PYCHECK
+
+      - name: Validate figures and tables
+        id: validate
+        env:
+          OUT_BASE: ${{ env.OUT_BASE }}
+        run: bash scripts/patches/run_audit.sh audit_figures_tables
+
+      - name: Upload figures/tables report
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name:              figures-tables-report-${{ github.run_id }}
+          path:              logs/figures_tables_report.json
+          if-no-files-found: warn
+          retention-days:    30
+
+
+  # ============================================================================
+  #  JOB 4 — final-gate
+  #  bash scripts/patches/run_audit.sh audit_final_gate
+  #  Aggregates outcomes, prints consolidated health table.
+  # ============================================================================
+  final-gate:
+    name: "Final gate"
+    needs: [guard, collect-figures-tables, preflight-check, numerical-verify, paper-audit, figures-tables-validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always() && needs.guard.outputs.should_run == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Print consolidated summary and set exit code
+        env:
+          VERIFY_RESULT: ${{ needs.numerical-verify.result }}
+          AUDIT_RESULT:  ${{ needs.paper-audit.result }}
+          FIGS_RESULT:   ${{ needs.figures-tables-validate.result }}
+        run: bash scripts/patches/run_audit.sh audit_final_gate

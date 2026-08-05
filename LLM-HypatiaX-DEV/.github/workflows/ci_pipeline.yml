@@ -1,0 +1,1562 @@
+# ==============================================================================
+#  ci_pipeline.yml  —  HypatiaX full pipeline orchestrator
+#  (formerly ci_schedule_simplify.yml / ci_schedule_all.yml)
+#
+#  Pipeline stages (in order):
+#    C0 → ci_runner.yml           — experiment workers (sharded)
+#    C1 → ci_analysis.yml         — statistical analysis / reports
+#    C2 → ci_postprocess.yml      — figures + tables
+#    C3 → ci_pipeline_check.yml   — qualification + paper audit gate
+#    C4 → ci_paper_audit.yml      — cross-experiment numerical verify + paper claim audit
+#                                   (slot 15 only: fires after final experiment completes)
+#    C5 → ci_paper_notebooks.yml  — NB-01…NB-06 notebook audit chain (mandatory gate)
+#                                   (slot 15 only: fires after C4 passes)
+#    C5b→ ci_report.yml           — build combined audit report + deploy GitHub Pages
+#                                   (slot 15 only: fires after C5c passes; non-blocking)
+#    C5c→ ci_runner_disclosure.yml — FIX-C3 split-protocol gates A/B/C
+#                                   (slot 15 only: fires after C5 passes; blocks C5b)
+#    C6 → self-dispatch            — next experiment slot (if multi-slot run)
+#
+#  Manual modes (experiment_index suffix):
+#    N    — full pipeline for slot N  (C0 → C1 → C2 → C3 → C4)
+#    Na   — analysis only for slot N  (C1 only)
+#    Nf   — figures+tables only       (C2 only)
+#    Nc   — checkpoint/audit only     (C3 only)
+#    Np   — postprocess+checkpoint    (C2 → C3, skip C0+C1)
+#           Use this after all runners have completed to regenerate
+#           figures/tables and run the audit gate without re-running workers.
+#
+#  Naming convention: Option A (role-based)
+#    ci_pipeline.yml    — this file (orchestrator)
+#    ci_runner.yml      — experiment workers
+#    ci_analysis.yml    — statistical analysis
+#    ci_postprocess.yml — figures + tables
+#    ci_pipeline_check.yml  — qualification + audit
+#
+#  IDEMPOTENCY GUARD (added per pipeline.txt requirement)
+#  -------------------------------------------------------
+#  Each dispatch job starts with a "Check if already done" step that queries
+#  the Actions API for the most recent successful run of that workflow with
+#  a matching experiment input.  If one is found that completed AFTER the
+#  pipeline's own start time, the dispatch is skipped (exit 0) so re-triggering
+#  ci_pipeline.yml for an already-completed experiment never re-runs expensive
+#  stages.
+#
+#  DISPATCH + POLL PATTERN (fixed from prior version)
+#  ---------------------------------------------------
+#  Prior version dispatched a workflow then polled --limit 1 (most-recent run),
+#  which could match a *different* concurrent run.  Fix: capture the run ID
+#  immediately after dispatch via a 5-second sleep + event-time filter, then
+#  poll that specific databaseId.  This is the standard gh CLI pattern used by
+#  GitHub's own starter workflows.
+# ==============================================================================
+
+name: "HypatiaX - pipeline"
+run-name: >-
+  HypatiaX pipeline —
+  ${{ github.event.inputs.experiment_index || '0' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment_index:
+        description: >
+          Slot index (N) or phase suffix (Na / Nf / Nc / Np).
+          E.g. "0" = full pipeline for slot 0;
+               "0a" = analysis-only;  "0f" = figures+tables only;
+               "0c" = checkpoint/audit only;
+               "0p" = postprocess+checkpoint (C2+C3, skip C0+C1).
+        required: false
+        default: "0"
+
+      n_shards:
+        description: "Parallel worker shards for ci_runner.yml (1-4)"
+        required: false
+        default: "1"
+
+      seeds:
+        description: "Comma-separated seeds (overrides per-experiment default)"
+        required: false
+        default: ""
+
+      n_samples:
+        description: "Samples per equation (Feynman / suppB)"
+        required: false
+        default: "200"
+
+      noise_levels:
+        description: "Noise levels for suppB"
+        required: false
+        default: "0.0,0.05,0.1,0.5,1.0"
+
+      dry_run:
+        description: "Dry-run — print commands without executing (true/false)"
+        required: false
+        default: "false"
+
+      fail_on_incomplete:
+        description: "Fail pipeline if checkpoint finds missing tasks (true/false)"
+        required: false
+        default: "false"
+
+      force_rerun:
+        description: >
+          Skip the already-done guard and re-run all stages even if they
+          completed successfully in a prior run (true/false).
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  actions:  write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # P1 FIX: Removed PIPELINE_STARTED_AT global env var.
+  # It was set to github.event.repository.updated_at (the repo's last-push
+  # timestamp, not this run's start time) and was never read by any step —
+  # the resolve job computes started_at itself via datetime.now() (correct).
+  # Dead code removed to avoid future misuse.
+
+# ==============================================================================
+#  HELPER — reusable dispatch-and-poll shell function (inline, not composite)
+#
+#  Usage pattern used in every stage step:
+#
+#    1. Record BEFORE_TS (current UTC second) immediately before dispatch.
+#    2. Call `gh workflow run <wf> --field ...` — captures nothing (run ID
+#       is not returned by the CLI synchronously).
+#    3. Sleep 8 s to let GitHub register the new run.
+#    4. Query `gh run list --workflow <wf> --event workflow_dispatch
+#              --created >=BEFORE_TS --limit 1 --json databaseId`
+#       to find the run ID that was just created.
+#    5. Poll `gh run view <ID> --json status,conclusion` until completed.
+#
+#  This avoids the race condition in the prior version where --limit 1 could
+#  return a concurrent or older run.
+# ==============================================================================
+
+jobs:
+
+  # ============================================================================
+  #  JOB: resolve — determine experiment ID and phase from experiment_index input
+  # ============================================================================
+  resolve:
+    name: "Resolve experiment slot"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      experiment:      ${{ steps.parse.outputs.experiment }}
+      phase:           ${{ steps.parse.outputs.phase }}
+      slot:            ${{ steps.parse.outputs.slot }}
+      run_full:        ${{ steps.parse.outputs.run_full }}
+      run_analysis:    ${{ steps.parse.outputs.run_analysis }}
+      run_postprocess: ${{ steps.parse.outputs.run_postprocess }}
+      run_checkpoint:  ${{ steps.parse.outputs.run_checkpoint }}
+      started_at:      ${{ steps.parse.outputs.started_at }}
+
+    steps:
+      - name: Parse experiment index and phase
+        id: parse
+        env:
+          INDEX_RAW:    ${{ github.event.inputs.experiment_index || '0' }}
+          FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, re, sys
+          from datetime import datetime, timezone
+
+          # ----------------------------------------------------------------
+          # Experiment queue (slot → experiment ID)
+          # Must stay in sync with QUEUE_SIZE in the next-slot job.
+          # ----------------------------------------------------------------
+          QUEUE = [
+              "exp1",
+              "exp1b",
+              # exp1_five extends exp1_ablation's Core-15 protocol to the five-system
+              # comparison (see ci_runner.yml's exp1_five case entry) — slotted right
+              # after exp1b since it reuses exp1/exp1b's equation suite / method classes.
+              "exp1_five",               # slot 2 (NEW)
+              "exp2_feynman",
+              "exp2_feynman_pca",        # FIX-C3: PCA-directed 40/60 split (slot 4)
+              "exp2_feynman_extrap",
+              "exp2",
+              # exp2_five shards by the same EXP2_DOMAINS loop as exp2 (run_all.sh
+              # STEP 6b) with 5 methods only, excl. HybridDeFiMethod — slotted right
+              # after exp2 since it's the same protocol/domain set.
+              "exp2_five",               # slot 7 (NEW)
+              "exp3",
+              "exp3b",
+              "suppA",
+              "suppB",
+              "suppB_sc",
+              "hybrid_all_domains",
+              "instability",
+              "extrap",
+          ]
+
+          raw = os.environ["INDEX_RAW"].strip()
+
+          # Phase suffix: nothing = full, a = analysis, f = postprocess, c = checkpoint
+          # FIX B: added 'p' suffix = postprocess + checkpoint only (C2+C3, skip C0+C1).
+          # This is the "all-done, just regenerate figures+tables and audit" mode.
+          m = re.fullmatch(r"(\d+)([afcp]?)", raw)
+          if not m:
+              print(f"ERROR: cannot parse experiment_index '{raw}' — expected N, Na, Nf, or Nc")
+              sys.exit(1)
+
+          slot   = int(m.group(1))
+          suffix = m.group(2)   # "", "a", "f", or "c"
+
+          if slot >= len(QUEUE):
+              print(f"ERROR: slot {slot} out of range (queue has {len(QUEUE)} entries)")
+              sys.exit(1)
+
+          experiment = QUEUE[slot]
+
+          run_full        = suffix == ""
+          run_analysis    = suffix in ("", "a")
+          # FIX B: 'p' suffix enables postprocess+checkpoint without runner or analysis.
+          run_postprocess = suffix in ("", "f", "p")
+          run_checkpoint  = suffix in ("", "c", "p")
+
+          started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a") as fh:
+              fh.write(f"experiment={experiment}\n")
+              fh.write(f"phase={'full' if run_full else suffix}\n")
+              fh.write(f"slot={slot}\n")
+              fh.write(f"run_full={'true' if run_full else 'false'}\n")
+              fh.write(f"run_analysis={'true' if run_analysis else 'false'}\n")
+              fh.write(f"run_postprocess={'true' if run_postprocess else 'false'}\n")
+              fh.write(f"run_checkpoint={'true' if run_checkpoint else 'false'}\n")
+              fh.write(f"started_at={started_at}\n")
+
+          print(f"Resolved: slot={slot}  experiment={experiment}  phase={suffix or 'full'}")
+          print(f"  run_full={run_full}  run_analysis={run_analysis}")
+          print(f"  run_postprocess={run_postprocess}  run_checkpoint={run_checkpoint}")
+          print(f"  started_at={started_at}")
+          PYEOF
+
+  # ============================================================================
+  #  JOB: diagnose  —  C0-pre: inspect repo state before running anything
+  #
+  #  Runs immediately after resolve, before any expensive stage is dispatched.
+  #  Checks the ACTUAL REPOSITORY STATE (not GitHub Actions run history) and
+  #  decides for each pipeline stage whether it:
+  #
+  #    DONE     — outputs are committed, valid, and git-tracked → skip stage
+  #    PARTIAL  — some outputs exist but task set is incomplete  → re-run
+  #    MISSING  — no outputs found at all                       → run fresh
+  #    STALE    — outputs exist but analysis/figures not yet run → run downstream
+  #
+  #  Outputs per-stage decisions that override the history-based idempotency
+  #  guards in run-experiment, run-analysis, run-postprocess, run-checkpoint.
+  #  The guard in each stage checks diagnose output FIRST; history guard is only
+  #  consulted when diagnose says DONE (double-check) or is skipped.
+  #
+  #  This is intentionally READ-ONLY — it never writes to the repo or dispatches
+  #  anything.  It costs <2 min (checkout + pure Python, no pip).
+  # ============================================================================
+  diagnose:
+    name: "Diagnose repo state (${{ needs.resolve.outputs.experiment }})"
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      # Stage decisions: "done" | "partial" | "missing" | "stale"
+      runner_state:     ${{ steps.diagnose.outputs.runner_state }}
+      analysis_state:   ${{ steps.diagnose.outputs.analysis_state }}
+      postprocess_state: ${{ steps.diagnose.outputs.postprocess_state }}
+      # Structured detail for logs
+      diagnosis_report: ${{ steps.diagnose.outputs.diagnosis_report }}
+      # Whether runner should be skipped entirely (true when runner_state==done)
+      skip_runner:      ${{ steps.diagnose.outputs.skip_runner }}
+      # Whether to force-rerun analysis even if history says done
+      # (true when runner_state!=done but analysis_state==done — stale outputs)
+      rerun_analysis:   ${{ steps.diagnose.outputs.rerun_analysis }}
+      # Canonical result subdirectory for this experiment — single source of truth
+      # forwarded to ci_analysis.yml so it never re-derives the path independently.
+      result_subdir:    ${{ steps.diagnose.outputs.result_subdir }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Inspect repository state
+        id: diagnose
+        env:
+          EXP:          ${{ needs.resolve.outputs.experiment }}
+          PHASE:        ${{ needs.resolve.outputs.phase }}
+          FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          SEEDS:        ${{ github.event.inputs.seeds || '42,99,123,777,2024' }}
+          NOISE_LEVELS: ${{ github.event.inputs.noise_levels || '0.0,0.05,0.1,0.5,1.0' }}
+          OUT_BASE:     hypatiax/data/results
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          EXP          = os.environ["EXP"]
+          PHASE        = os.environ["PHASE"]   # "full","a","f","c"
+          FORCE_RERUN  = os.environ["FORCE_RERUN"].lower() == "true"
+          OUT_BASE     = Path(os.environ["OUT_BASE"])
+          SEEDS        = [s.strip() for s in os.environ["SEEDS"].split(",") if s.strip()]
+          NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
+
+          SEP = "=" * 70
+
+          # ── Canonical paths (must match ci_runner.yml plan job exactly) ─────
+          SUBDIR = {
+              "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
+              "exp1b":              "comparison_results/noise-noiseless/15",
+              "exp1_ablation":      "ablation/exp1_ablation",
+              "exp2_feynman":       "comparison_results/feynman-tests/exp2",
+              "exp2_feynman_pca":       "comparison_results/feynman-tests/exp2_pca_4060",
+              "exp2_feynman_extrap": "comparison_results/feynman-tests/exp2_extrap",
+              "exp2":               "comparison_results/feynman-tests/exp2_multi",
+              "exp3":               "extrapolation",
+              "exp3b":              "extrapolation/multi_seed",
+              "suppA":              "hybrid_pysr/defi",
+              "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
+              "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
+              "hybrid_all_domains": "hybrid_llm_nn/all_domains",
+              "instability":        "figures",
+              "extrap":             "comparison_results/extrapolation",
+          }
+
+          # Primary result file globs per experiment (what ci_runner.yml actually writes)
+          RESULT_GLOBS = {
+              "exp1":               ["hypatiax_defi_benchmark_v3*results*.json",
+                                     "protocol_core_noiseless_*.json"],
+              "exp1b":              ["comparison_FIXED_*.json", "defi_v3_*.json",
+                                     "hypatiax_defi_benchmark_v3*results*.json"],
+              "exp1_ablation":      ["exp1_ablation_results.json",
+                                     "exp1_ablation_table.tex",
+                                     "exp1_ablation_shard_*.json"],
+              "exp2_feynman":       ["protocol_core_*.json", "benchmark_results.json"],
+              "exp2_feynman_pca_4060": ["exp2_pca_4060_summary.json",
+                                         "split_protocol_disclosure.json"],
+              "exp2_feynman_extrap": ["protocol_core_extrap_*.json", "ablation_paired.json",
+                                     "protocol_core_*.json"],
+              "exp2":               ["protocol_core_*.json", "benchmark_results.json"],
+              "exp3":               ["exp3_nguyen12_*.json", "*nguyen*seed*.json",
+                                     "full_run_*.json"],
+              "exp3b":              ["exp3_nguyen12_*.json", "*nguyen*seed*.json",
+                                     "full_run_*.json"],
+              "suppA":              ["consolidated_hybrid_*.json", "hybrid_system*.json",
+                                     "*73cases*.json"],
+              "suppB":              ["noise_sweep_*.json", "noise_sweep_*.csv"],
+              "suppB_sc":           ["sample_complexity_*.json", "sample_complexity_*.csv"],
+              "hybrid_all_domains": ["hybrid_llm_nn_all_domains_*.json"],
+              "instability":        ["instability_analysis.csv", "*.pdf", "*.png"],
+              "extrap":             ["all_domains_extrap_v4_*.json",
+                                     "protocol_core_*.json"],
+          }
+
+          # Expected minimum task counts per experiment (based on task registries
+          # in ci_runner.yml plan job — used to distinguish PARTIAL from DONE)
+          MIN_TASKS = {
+              "exp1":               1,    # single-shard, ~1 protocol JSON
+              "exp1b":              4,    # 5 seeds × multi-shard
+              "exp1_ablation":      4,    # 4 shards over 10 DEFI_TASKS (Core-15 suite)
+              "exp2_feynman":       1,
+              "exp2_feynman_pca_4060": 1,
+              "exp2_feynman_extrap": 1,
+              "exp2":               1,
+              "exp3":               1,
+              "exp3b":              4,    # multi-seed
+              "suppA":              1,
+              "suppB":              len(NOISE_LEVELS),   # one file per noise level
+              "suppB_sc":           1,
+              "hybrid_all_domains": 1,
+              "instability":        1,    # CSV + figures
+              "extrap":             1,
+          }
+
+          # ── Helpers ──────────────────────────────────────────────────────────
+          def find_result_files(exp_id):
+              subdir   = SUBDIR.get(exp_id, "")
+              rdir     = OUT_BASE / subdir
+              globs    = RESULT_GLOBS.get(exp_id, ["*.json"])
+              found    = []
+              if rdir.exists():
+                  for pattern in globs:
+                      found.extend(f for f in rdir.glob(pattern)
+                                   if not f.name.startswith("_"))
+              return list(set(found))
+
+          def is_git_tracked(path: Path) -> bool:
+              """Return True if path is tracked and clean in HEAD."""
+              try:
+                  r = subprocess.run(
+                      ["git", "ls-files", "--error-unmatch", str(path)],
+                      capture_output=True, cwd="."
+                  )
+                  return r.returncode == 0
+              except Exception:
+                  return False
+
+          def json_valid(path: Path) -> bool:
+              try:
+                  json.loads(path.read_text())
+                  return True
+              except Exception:
+                  return False
+
+          def check_analysis_outputs(exp_id):
+              """Return (present, valid) for _report.md and _analysis.json."""
+              subdir  = SUBDIR.get(exp_id, "")
+              rdir    = OUT_BASE / subdir
+              report  = rdir / "_report.md"
+              afile   = rdir / "_analysis.json"
+              present = report.exists() and afile.exists()
+              valid   = False
+              if present:
+                  try:
+                      d = json.loads(afile.read_text())
+                      valid = "experiment" in d and "fatal_conditions" in d
+                  except Exception:
+                      pass
+              return present, valid
+
+          def check_postprocess_outputs(exp_id):
+              """Return (figures_present, tables_present)."""
+              subdir    = SUBDIR.get(exp_id, "")
+              rdir      = OUT_BASE / subdir
+              figs_dir  = rdir / "figures"
+              tabs_dir  = rdir / "tables"
+              figs  = list(figs_dir.glob("*.pdf")) + list(figs_dir.glob("*.png")) \
+                      if figs_dir.exists() else []
+              tabs  = list(tabs_dir.glob("*.tex")) + list(tabs_dir.glob("*.csv")) \
+                      if tabs_dir.exists() else []
+              return len(figs) > 0, len(tabs) > 0
+
+          # ── Classify runner state ─────────────────────────────────────────────
+          #   done    → ≥ min_tasks result files, at least one valid JSON, all git-tracked
+          #   partial → some files exist but count < min_tasks, or not all git-tracked
+          #   missing → no result files at all
+          def classify_runner(exp_id):
+              files    = find_result_files(exp_id)
+              min_t    = MIN_TASKS.get(exp_id, 1)
+              if not files:
+                  return "missing", {"result_files": 0, "min_tasks": min_t,
+                                     "reason": "no result files found"}
+              # Spot-check first JSON for validity
+              json_files = [f for f in files if f.suffix == ".json"]
+              first_valid = json_valid(json_files[0]) if json_files else True  # CSV-only exps ok
+              tracked = is_git_tracked(files[0])
+              n = len(files)
+              if n >= min_t and first_valid and tracked:
+                  return "done", {"result_files": n, "min_tasks": min_t,
+                                  "json_valid": first_valid, "git_tracked": tracked}
+              elif n > 0 and not tracked:
+                  return "partial", {"result_files": n, "min_tasks": min_t,
+                                     "reason": "files exist but not git-tracked (commit failed?)"}
+              elif n > 0 and n < min_t:
+                  return "partial", {"result_files": n, "min_tasks": min_t,
+                                     "reason": f"only {n}/{min_t} expected result files"}
+              elif not first_valid:
+                  return "partial", {"result_files": n,
+                                     "reason": "result JSON is not valid JSON (truncated write?)"}
+              return "done", {"result_files": n, "min_tasks": min_t}
+
+          def classify_analysis(exp_id):
+              present, valid = check_analysis_outputs(exp_id)
+              if not present:
+                  return "missing", {"reason": "_report.md or _analysis.json not found"}
+              if not valid:
+                  return "partial", {"reason": "_analysis.json exists but missing required keys"}
+              return "done", {"_report.md": True, "_analysis.json": True}
+
+          def classify_postprocess(exp_id):
+              figs, tabs = check_postprocess_outputs(exp_id)
+              if not figs and not tabs:
+                  return "missing", {"reason": "no figures and no tables found"}
+              if not figs:
+                  return "partial", {"reason": "tables present but no figures"}
+              if not tabs:
+                  return "partial", {"reason": "figures present but no tables"}
+              return "done", {"figures": True, "tables": True}
+
+          # ── Run diagnosis ─────────────────────────────────────────────────────
+          print(f"\n{SEP}")
+          print(f"  HypatiaX Self-Diagnosis — {EXP}  (phase={PHASE})")
+          print(SEP)
+
+          if FORCE_RERUN:
+              print("  force_rerun=true — all stages will re-run regardless of repo state.")
+              runner_state     = "missing"
+              analysis_state   = "missing"
+              postprocess_state = "missing"
+              runner_detail    = {"forced": True}
+              analysis_detail  = {"forced": True}
+              postprocess_detail = {"forced": True}
+          else:
+              runner_state,      runner_detail      = classify_runner(EXP)
+              analysis_state,    analysis_detail     = classify_analysis(EXP)
+              postprocess_state, postprocess_detail  = classify_postprocess(EXP)
+
+          # Detect STALE: runner is not done but analysis claims done
+          # → analysis was run against old data; must re-run analysis
+          rerun_analysis = (
+              runner_state != "done"
+              and analysis_state == "done"
+              and not FORCE_RERUN
+          )
+
+          skip_runner = runner_state == "done" and not FORCE_RERUN
+
+          # ── Print human-readable decision table ───────────────────────────────
+          def state_icon(s):
+              return {"done": "✅ done", "partial": "⚠  partial", "missing": "❌ missing",
+                      "stale": "⚠  stale"}.get(s, s)
+
+          rows = [
+              ("C0 runner",     runner_state,     runner_detail),
+              ("C1 analysis",   analysis_state,   analysis_detail),
+              ("C2 postprocess", postprocess_state, postprocess_detail),
+          ]
+          print()
+          print(f"  {'Stage':<20}  {'State':<14}  Detail")
+          print(f"  {'-'*20}  {'-'*14}  {'-'*30}")
+          for label, state, detail in rows:
+              print(f"  {label:<20}  {state_icon(state):<14}  {json.dumps(detail)}")
+
+          print()
+          if rerun_analysis:
+              print("  ⚠  STALE ANALYSIS DETECTED: analysis outputs exist but runner")
+              print("     state is not 'done' — analysis will be re-run to stay consistent.")
+
+          print()
+          print("  Pipeline decisions:")
+          print(f"    skip_runner    = {skip_runner}")
+          print(f"    rerun_analysis = {rerun_analysis}")
+          print()
+
+          if runner_state == "done":
+              print(f"  ✅ Runner outputs: {runner_detail.get('result_files','?')} result file(s)"
+                    f" (min={runner_detail.get('min_tasks','?')}) — git-tracked and valid.")
+          elif runner_state == "partial":
+              print(f"  ⚠  Partial runner outputs: {runner_detail}")
+              print("     C0 will RE-RUN to complete missing tasks.")
+          else:
+              print(f"  ❌ No runner outputs found. C0 will run fresh.")
+
+          if analysis_state == "done" and not rerun_analysis:
+              print("  ✅ Analysis outputs present and valid — C1 will be skipped.")
+          elif rerun_analysis:
+              print("  ⚠  Analysis outputs are STALE (runner not done) — C1 will re-run.")
+          else:
+              print(f"  {'✅' if runner_state == 'done' else '⏳'} Analysis: {analysis_state} — C1 will run after C0.")
+
+          if postprocess_state == "done":
+              print("  ✅ Postprocess outputs present — C2 will be skipped.")
+          else:
+              print(f"  ⏳ Postprocess: {postprocess_state} — C2 will run after C1.")
+
+          print(SEP)
+
+          # ── Emit outputs ──────────────────────────────────────────────────────
+          report = {
+              "experiment":      EXP,
+              "phase":           PHASE,
+              "force_rerun":     FORCE_RERUN,
+              "runner":          {"state": runner_state,      "detail": runner_detail},
+              "analysis":        {"state": analysis_state,    "detail": analysis_detail},
+              "postprocess":     {"state": postprocess_state, "detail": postprocess_detail},
+              "skip_runner":     skip_runner,
+              "rerun_analysis":  rerun_analysis,
+          }
+
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a") as fh:
+              fh.write(f"runner_state={runner_state}\n")
+              fh.write(f"analysis_state={analysis_state}\n")
+              fh.write(f"postprocess_state={postprocess_state}\n")
+              fh.write(f"skip_runner={'true' if skip_runner else 'false'}\n")
+              fh.write(f"rerun_analysis={'true' if rerun_analysis else 'false'}\n")
+              fh.write(f"diagnosis_report={json.dumps(report)}\n")
+              # Single source of truth for result_subdir — forwarded to ci_analysis.yml
+              # so it never re-derives the path from its own independent MAPPING dict.
+              fh.write(f"result_subdir={SUBDIR.get(EXP, EXP)}\n")
+          PYEOF
+
+  # ============================================================================
+  #  JOB: run-experiment  —  C0: dispatch ci_runner.yml and wait
+  # ============================================================================
+  run-experiment:
+    name: "C0 · Runner (${{ needs.resolve.outputs.experiment }})"
+    needs: [resolve, diagnose]
+    runs-on: ubuntu-latest
+    timeout-minutes: 400   # 5 h 30 m worker + polling buffer
+    # Run when full pipeline AND diagnose says runner is not done.
+    # diagnose.skip_runner==true means result files are committed and valid.
+    if: |
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.diagnose.outputs.skip_runner != 'true'
+
+    # P2 FIX: expose the dispatched ci_runner.yml run ID so run-analysis can
+    # forward it to ci_analysis.yml as source_run_id.
+    outputs:
+      runner_run_id: ${{ steps.dispatch_runner.outputs.runner_run_id }}
+
+    steps:
+      # -----------------------------------------------------------------------
+      #  IDEMPOTENCY GUARD — skip if ci_runner.yml already succeeded for this
+      #  experiment since the pipeline started (prevents double-run on retry).
+      # -----------------------------------------------------------------------
+      - name: Check if ci_runner.yml already completed for this experiment
+        id: check_runner
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          EXP:          ${{ needs.resolve.outputs.experiment }}
+          STARTED_AT:   ${{ needs.resolve.outputs.started_at }}
+          FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${FORCE_RERUN}" == "true" ]]; then
+            echo "force_rerun=true — skipping already-done check."
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Checking for a prior successful ci_runner.yml run for experiment=${EXP} ..."
+
+          # Look for any successful workflow_dispatch run of ci_runner.yml
+          # whose headBranch matches the current branch and whose displayTitle
+          # or name indicates the same experiment.  GitHub doesn't expose
+          # workflow inputs in run-list JSON, so we match on the run-name
+          # (set via run-name: field in ci_runner.yml to include the experiment ID).
+          PRIOR=$(gh run list \
+            --repo "${REPO}" \
+            --workflow ci_runner.yml \
+            --status success \
+            --limit 20 \
+            --json databaseId,displayTitle,createdAt,headBranch \
+            --jq --arg exp "${EXP}" --arg branch "${{ github.ref_name }}" --arg ts "${STARTED_AT}" \
+              '[.[] | select(.headBranch == $branch and .createdAt >= $ts and (.displayTitle | test($exp; "i")))] | first // empty' \
+            2>/dev/null || echo "")
+
+          if [[ -z "$PRIOR" ]]; then
+            echo "No prior successful run found — proceeding with dispatch."
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+          else
+            PRIOR_ID=$(echo "$PRIOR" | python3 -c "import json,sys; print(json.load(sys.stdin)['databaseId'])" 2>/dev/null || echo "unknown")
+            PRIOR_DATE=$(echo "$PRIOR" | python3 -c "import json,sys; print(json.load(sys.stdin)['createdAt'])" 2>/dev/null || echo "unknown")
+            echo "::notice::ci_runner.yml already completed successfully for '${EXP}' (run ${PRIOR_ID} at ${PRIOR_DATE})."
+            echo "  Set force_rerun=true to bypass this guard and re-run anyway."
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch and wait for ci_runner.yml
+        if: steps.check_runner.outputs.already_done != 'true'
+        id: dispatch_runner
+        env:
+          GH_TOKEN:  ${{ secrets.PAT_TOKEN }}
+          EXP:       ${{ needs.resolve.outputs.experiment }}
+          N_SHARDS:  ${{ github.event.inputs.n_shards || '1' }}
+          SEEDS:     ${{ github.event.inputs.seeds || '' }}
+          SAMPLES:   ${{ github.event.inputs.n_samples || '200' }}
+          NOISE:     ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          DRY_RUN:   ${{ github.event.inputs.dry_run || 'false' }}
+          REPO:      ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Record timestamp BEFORE dispatch so we can find this exact run ID.
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_runner.yml for experiment=${EXP} at ${BEFORE_TS}"
+
+          gh workflow run ci_runner.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment="${EXP}" \
+            --field n_shards="${N_SHARDS}" \
+            --field seeds="${SEEDS}" \
+            --field n_samples="${SAMPLES}" \
+            --field noise_levels="${NOISE}" \
+            --field dry_run="${DRY_RUN}"
+
+          # Wait for GitHub to register the new run (typically 3-5 s).
+          sleep 8
+
+          # Find the run ID created at or after BEFORE_TS for this workflow.
+          # Retry up to 6 times in case registration is slow.
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_runner.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            if [[ -n "${DISPATCHED_ID}" ]]; then
+              echo "Captured dispatched run ID: ${DISPATCHED_ID}"
+              break
+            fi
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::error::Could not determine the dispatched run ID for ci_runner.yml."
+            echo "  Falling back to polling most-recent run (less reliable)."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_runner.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::error::No run ID found at all — cannot poll. Aborting."
+            exit 1
+          fi
+
+          # Poll the specific run until completed (max 380 min = 22 800 s).
+          echo "Polling run ${DISPATCHED_ID} (ci_runner.yml) ..."
+          DEADLINE=$(( $(date +%s) + 22800 ))
+          SLEEP=30
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" \
+              --repo "${REPO}" \
+              --json status,conclusion 2>/dev/null || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] runner run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_runner.yml run ${DISPATCHED_ID} completed with conclusion=${CONCLUSION}"
+                exit 1
+              fi
+              echo "ci_runner.yml completed successfully (run ${DISPATCHED_ID})."
+              # P2 FIX: Export the runner run ID so run-analysis can forward it
+              # to ci_analysis.yml as source_run_id, enabling the artifact fast-path
+              # (avoids waiting for the shard commit step to finish).
+              echo "runner_run_id=${DISPATCHED_ID}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            if [[ $(date +%s) -ge ${DEADLINE} ]]; then
+              echo "::error::Timed out after 380 min waiting for ci_runner.yml run ${DISPATCHED_ID}."
+              exit 1
+            fi
+            sleep ${SLEEP}
+            SLEEP=$(( SLEEP < 120 ? SLEEP + 10 : 120 ))
+          done
+
+  # ============================================================================
+  #  JOB: run-analysis  —  C1: dispatch ci_analysis.yml and wait
+  # ============================================================================
+  run-analysis:
+    name: "C1 · Analysis (${{ needs.resolve.outputs.experiment }})"
+    needs: [resolve, diagnose, run-experiment]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    if: |
+      always() &&
+      needs.resolve.outputs.run_analysis == 'true' &&
+      (needs.run-experiment.result == 'success' || needs.run-experiment.result == 'skipped') &&
+      (
+        needs.diagnose.outputs.analysis_state != 'done' ||
+        needs.diagnose.outputs.rerun_analysis == 'true'
+      )
+
+    steps:
+      # -----------------------------------------------------------------------
+      #  IDEMPOTENCY GUARD
+      # -----------------------------------------------------------------------
+      - name: Check if ci_analysis.yml already completed for this experiment
+        id: check_analysis
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          EXP:          ${{ needs.resolve.outputs.experiment }}
+          STARTED_AT:   ${{ needs.resolve.outputs.started_at }}
+          FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${FORCE_RERUN}" == "true" ]]; then
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PRIOR=$(gh run list \
+            --repo "${REPO}" \
+            --workflow ci_analysis.yml \
+            --status success \
+            --limit 20 \
+            --json databaseId,displayTitle,createdAt,headBranch \
+            --jq --arg exp "${EXP}" --arg branch "${{ github.ref_name }}" --arg ts "${STARTED_AT}" \
+              '[.[] | select(.headBranch == $branch and .createdAt >= $ts and (.displayTitle | test($exp; "i")))] | first // empty' \
+            2>/dev/null || echo "")
+
+          if [[ -z "$PRIOR" ]]; then
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+          else
+            PRIOR_ID=$(echo "$PRIOR" | python3 -c "import json,sys; print(json.load(sys.stdin)['databaseId'])" 2>/dev/null || echo "?")
+            echo "::notice::ci_analysis.yml already succeeded for '${EXP}' (run ${PRIOR_ID}). Skipping."
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch and wait for ci_analysis.yml
+        if: steps.check_analysis.outputs.already_done != 'true'
+        env:
+          GH_TOKEN:        ${{ secrets.PAT_TOKEN }}
+          EXP:             ${{ needs.resolve.outputs.experiment }}
+          # P2 FIX: forward the ci_runner.yml run ID so ci_analysis.yml can
+          # download the shard artifact directly (fast-path) rather than always
+          # falling back to the committed files (slow-path).
+          # Empty when run-experiment was skipped (already_done) — ci_analysis.yml
+          # handles blank source_run_id gracefully (uses committed files).
+          SOURCE_RUN_ID:   ${{ needs.run-experiment.outputs.runner_run_id || '' }}
+          # SUBDIR FIX: forward the canonical result_subdir computed by diagnose
+          # (the single source of truth) so ci_analysis.yml never re-derives it
+          # from its own independent MAPPING dict.
+          RESULT_SUBDIR:   ${{ needs.diagnose.outputs.result_subdir }}
+          REPO:            ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_analysis.yml for experiment=${EXP} at ${BEFORE_TS}"
+
+          gh workflow run ci_analysis.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment="${EXP}" \
+            --field source_run_id="${SOURCE_RUN_ID}" \
+            --field result_subdir="${RESULT_SUBDIR}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_analysis.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_analysis.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_analysis.yml) ..."
+          DEADLINE=$(( $(date +%s) + 1800 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] analysis run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              [[ "${CONCLUSION}" != "success" ]] && {
+                echo "::error::ci_analysis.yml run ${DISPATCHED_ID} failed: ${CONCLUSION}"; exit 1; }
+              echo "ci_analysis.yml completed successfully."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_analysis.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-postprocess  —  C2: dispatch ci_postprocess.yml and wait
+  # ============================================================================
+  run-postprocess:
+    name: "C2 · Postprocess (${{ needs.resolve.outputs.experiment }})"
+    needs: [resolve, diagnose, run-analysis]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    if: |
+      always() &&
+      needs.resolve.outputs.run_postprocess == 'true' &&
+      (needs.run-analysis.result == 'success' || needs.run-analysis.result == 'skipped') &&
+      needs.diagnose.outputs.postprocess_state != 'done'
+
+    steps:
+      # -----------------------------------------------------------------------
+      #  IDEMPOTENCY GUARD
+      # -----------------------------------------------------------------------
+      - name: Check if ci_postprocess.yml already completed for this experiment
+        id: check_postprocess
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          EXP:          ${{ needs.resolve.outputs.experiment }}
+          FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${FORCE_RERUN}" == "true" ]]; then
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PRIOR=$(gh run list \
+            --repo "${REPO}" \
+            --workflow ci_postprocess.yml \
+            --status success \
+            --limit 20 \
+            --json databaseId,displayTitle,createdAt,headBranch \
+            --jq --arg exp "${EXP}" --arg branch "${{ github.ref_name }}" \
+              '[.[] | select(.headBranch == $branch and (.displayTitle | test($exp; "i")))] | first // empty' \
+            2>/dev/null || echo "")
+
+          if [[ -z "$PRIOR" ]]; then
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+          else
+            PRIOR_ID=$(echo "$PRIOR" | python3 -c "import json,sys; print(json.load(sys.stdin)['databaseId'])" 2>/dev/null || echo "?")
+            echo "::notice::ci_postprocess.yml already succeeded for '${EXP}' (run ${PRIOR_ID}). Skipping."
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch and wait for ci_postprocess.yml
+        if: steps.check_postprocess.outputs.already_done != 'true'
+        env:
+          GH_TOKEN:      ${{ secrets.PAT_TOKEN }}
+          EXP:           ${{ needs.resolve.outputs.experiment }}
+          # FIX A: forward the canonical result_subdir from diagnose (single source
+          # of truth) so ci_postprocess.yml never re-derives the path from its own
+          # independent mapping dict.  Without this, if a mapping entry differs
+          # between the two files the postprocess scripts write to the wrong subtree.
+          RESULT_SUBDIR: ${{ needs.diagnose.outputs.result_subdir }}
+          REPO:          ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_postprocess.yml for experiment=${EXP} at ${BEFORE_TS}"
+
+          gh workflow run ci_postprocess.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment="${EXP}" \
+            --field result_subdir="${RESULT_SUBDIR}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_postprocess.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_postprocess.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_postprocess.yml) ..."
+          DEADLINE=$(( $(date +%s) + 1800 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] postprocess run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              [[ "${CONCLUSION}" != "success" ]] && {
+                echo "::error::ci_postprocess.yml run ${DISPATCHED_ID} failed: ${CONCLUSION}"; exit 1; }
+              echo "ci_postprocess.yml completed successfully."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_postprocess.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-checkpoint  —  C3: qualification + audit gate
+  # ============================================================================
+  run-checkpoint:
+    name: "C3 · Checkpoint gate (${{ needs.resolve.outputs.experiment }})"
+    needs: [resolve, diagnose, run-postprocess]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: |
+      always() &&
+      needs.resolve.outputs.run_checkpoint == 'true' &&
+      (needs.run-postprocess.result == 'success' || needs.run-postprocess.result == 'skipped')
+
+    steps:
+      # -----------------------------------------------------------------------
+      #  IDEMPOTENCY GUARD
+      #  NOTE: checkpoint is intentionally NOT skipped when already done —
+      #  it is a gate, not an expensive computation.  But we do report the
+      #  prior result so the operator can see it without re-dispatching.
+      # -----------------------------------------------------------------------
+      - name: Check if ci_pipeline_check.yml already passed for this experiment
+        id: check_checkpoint
+        env:
+          GH_TOKEN:     ${{ secrets.PAT_TOKEN }}
+          EXP:          ${{ needs.resolve.outputs.experiment }}
+          FORCE_RERUN:  ${{ github.event.inputs.force_rerun || 'false' }}
+          REPO:         ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${FORCE_RERUN}" == "true" ]]; then
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PRIOR=$(gh run list \
+            --repo "${REPO}" \
+            --workflow ci_pipeline_check.yml \
+            --status success \
+            --limit 20 \
+            --json databaseId,displayTitle,createdAt,headBranch \
+            --jq --arg exp "${EXP}" --arg branch "${{ github.ref_name }}" \
+              '[.[] | select(.headBranch == $branch and (.displayTitle | test($exp; "i")))] | first // empty' \
+            2>/dev/null || echo "")
+
+          if [[ -z "$PRIOR" ]]; then
+            echo "No prior passing checkpoint found — will run gate."
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+          else
+            PRIOR_ID=$(echo "$PRIOR" | python3 -c "import json,sys; print(json.load(sys.stdin)['databaseId'])" 2>/dev/null || echo "?")
+            echo "::notice::ci_pipeline_check.yml already passed for '${EXP}' (run ${PRIOR_ID})."
+            echo "  Checkpoint will still re-run as gate — skipping only runners/analysis/postprocess."
+            echo "already_done=false" >> "$GITHUB_OUTPUT"   # checkpoint always re-runs as gate
+          fi
+
+      - name: Dispatch and wait for ci_pipeline_check.yml
+        env:
+          GH_TOKEN:           ${{ secrets.PAT_TOKEN }}
+          EXP:                ${{ needs.resolve.outputs.experiment }}
+          FAIL_ON_INCOMPLETE: ${{ github.event.inputs.fail_on_incomplete || 'false' }}
+          # P3 FIX: forward seeds and noise_levels so ci_pipeline_check.yml's
+          # COMPLETE job reconstructs the correct task registry for exp1b, exp3b,
+          # suppB, suppB_sc.  Without these, the checkpoint uses its own defaults
+          # and produces incorrect missing-task diffs when non-default values were used.
+          SEEDS:              ${{ github.event.inputs.seeds || '42,99,123,777,2024' }}
+          NOISE_LEVELS:       ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          REPO:               ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_pipeline_check.yml for experiment=${EXP} fail_on_incomplete=${FAIL_ON_INCOMPLETE}"
+
+          gh workflow run ci_pipeline_check.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment="${EXP}" \
+            --field fail_on_incomplete="${FAIL_ON_INCOMPLETE}" \
+            --field seeds="${SEEDS}" \
+            --field noise_levels="${NOISE_LEVELS}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_pipeline_check.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_pipeline_check.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_pipeline_check.yml) ..."
+          DEADLINE=$(( $(date +%s) + 1200 ))
+          SLEEP=15
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] checkpoint run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_pipeline_check.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
+                echo "  Qualification failed or tasks incomplete."
+                echo "  Fix the experiment, then re-trigger ci_pipeline.yml (use force_rerun=false;"
+                echo "  only the failed stage and downstream will re-run)."
+                exit 1
+              fi
+              echo "ci_pipeline_check.yml passed — pipeline qualified (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_pipeline_check.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-paper-audit  —  C4: dispatch ci_paper_audit.yml (slot 15 only)
+  #
+  #  Only runs when slot == 15 AND run_full == 'true' AND run-checkpoint passed.
+  #  Dispatches ci_paper_audit.yml and polls until it completes.
+  #  Failure here halts the pipeline (paper audit is a mandatory gate).
+  #
+  #  TIMEOUT CONTRACT: 45 min (numerical-verify 15 + paper-audit 15 +
+  #                            figures-tables 10 + polling buffer 5)
+  # ============================================================================
+  run-paper-audit:
+    name: "C4 · Paper audit (slot 15)"
+    needs: [resolve, run-checkpoint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '15' &&
+      needs.run-checkpoint.result == 'success'
+
+    steps:
+      - name: Dispatch and wait for ci_paper_audit.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_paper_audit.yml (slot 15 — extrap complete)"
+
+          gh workflow run ci_paper_audit.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_audit.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_paper_audit.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_paper_audit.yml) ..."
+          DEADLINE=$(( $(date +%s) + 2400 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] paper-audit run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_paper_audit.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
+                echo "  Fix paper audit issues, then re-trigger ci_pipeline.yml for slot 15."
+                exit 1
+              fi
+              echo "ci_paper_audit.yml passed (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_paper_audit.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-paper-notebooks  —  C5: dispatch ci_paper_notebooks.yml (slot 15 only)
+  #
+  #  Runs after run-paper-audit passes. Mandatory — notebook audit chain
+  #  (NB-01 through NB-06) is the final paper-readiness gate.
+  #
+  #  TIMEOUT CONTRACT: 60 min (6 notebooks × ~8 min each + polling buffer)
+  # ============================================================================
+  run-paper-notebooks:
+    name: "C5 · Paper notebooks (slot 15)"
+    needs: [resolve, run-paper-audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '15' &&
+      needs.run-paper-audit.result == 'success'
+
+    steps:
+      - name: Dispatch and wait for ci_paper_notebooks.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_paper_notebooks.yml (paper audit passed)"
+
+          gh workflow run ci_paper_notebooks.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_paper_notebooks.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_paper_notebooks.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_paper_notebooks.yml) ..."
+          DEADLINE=$(( $(date +%s) + 3600 ))
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] paper-notebooks run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_paper_notebooks.yml run ${DISPATCHED_ID} FAILED — pipeline halted."
+                echo "  Fix notebook audit issues (check uploaded .ipynb artifacts), then re-trigger."
+                exit 1
+              fi
+              echo "ci_paper_notebooks.yml passed — paper-readiness gate cleared (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_paper_notebooks.yml."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-pca-gates  —  C5c: dispatch ci_runner.yml with exp2_feynman_pca
+  #                                (slot 15 only, before ci_report)
+  #
+  #  Fires after run-paper-notebooks passes.  Dispatches ci_runner.yml with
+  #  experiment=exp2_feynman_pca, which runs the three FIX-C3 PCA jobs
+  #  (pca_run_exp2_feynman ∥ pca_run_exp1 → pca_run_exp1b) and then the three
+  #  integrity gates (Gate A: split_protocol_test, Gate B: protocol_parity_test,
+  #  Gate C: baseline_lock_test).
+  #
+  #  ci_runner_disclosure.yml has been removed from the pipeline — its jobs
+  #  are now inline in ci_runner.yml.
+  #
+  #  Blocking for ci_report: run-ci-report depends on this job so the audit
+  #  report always reflects the outcome of the PCA gates.
+  #
+  #  TIMEOUT CONTRACT: 720 min (pca_run_exp2_feynman ∥ pca_run_exp1 → pca_run_exp1b
+  #                             up to 340 min each; then 3 gate scripts ~15 min each)
+  # ============================================================================
+  run-pca-gates:
+    name: "C5c · FIX-C3 PCA gates via ci_runner (slot 15)"
+    needs: [resolve, run-paper-notebooks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '15' &&
+      needs.run-paper-notebooks.result == 'success'
+
+    steps:
+      - name: Dispatch ci_runner.yml with experiment=exp2_feynman_pca
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_runner.yml with experiment=exp2_feynman_pca (FIX-C3 PCA gates)"
+
+          gh workflow run ci_runner.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment=exp2_feynman_pca
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_runner.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent ci_runner.yml run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_runner.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found for ci_runner.yml (exp2_feynman_pca)."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_runner.yml experiment=exp2_feynman_pca) ..."
+          DEADLINE=$(( $(date +%s) + 41400 ))  # 690 min
+          SLEEP=20
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] pca-gates run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::error::ci_runner.yml (exp2_feynman_pca) run ${DISPATCHED_ID} FAILED — FIX-C3 PCA gates not cleared."
+                echo "  Review Gate A/B/C output in run ${DISPATCHED_ID} before proceeding to ci_report."
+                exit 1
+              fi
+              echo "FIX-C3 PCA gates cleared (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::error::Timed out waiting for ci_runner.yml (exp2_feynman_pca)."; exit 1; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: run-ci-report  —  C5b: dispatch ci_report.yml (slot 15 only)
+  #
+  #  Fires after run-ci-runner-disclosure passes.  ci_report.yml downloads the
+  #  already-executed NB-01…NB-06 artifacts, converts them to HTML, and
+  #  deploys the combined audit report to GitHub Pages.
+  #  No notebooks are re-executed.
+  #
+  #  Non-blocking: next-slot does NOT wait for this job so the pipeline chain
+  #  is never stalled by a reporting failure.
+  #
+  #  TIMEOUT CONTRACT: 15 min (nbconvert on stored outputs + Pages deploy)
+  # ============================================================================
+  run-ci-report:
+    name: "C5b · CI report & Pages (slot 15)"
+    needs: [resolve, run-paper-notebooks, run-pca-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.resolve.outputs.slot == '15' &&
+      needs.run-paper-notebooks.result == 'success' &&
+      needs.run-pca-gates.result == 'success'
+
+    steps:
+      - name: Dispatch ci_report.yml
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "Dispatching ci_report.yml (paper notebooks passed)"
+
+          gh workflow run ci_report.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}"
+
+          sleep 8
+
+          DISPATCHED_ID=""
+          for attempt in 1 2 3 4 5 6; do
+            DISPATCHED_ID=$(gh run list \
+              --repo "${REPO}" \
+              --workflow ci_report.yml \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt,headBranch \
+              --jq --arg ts "${BEFORE_TS}" --arg branch "${{ github.ref_name }}" \
+                '[.[] | select(.headBranch == $branch and .createdAt >= $ts)] | first | .databaseId // empty' \
+              2>/dev/null || echo "")
+            [[ -n "${DISPATCHED_ID}" ]] && break
+            echo "  Attempt ${attempt}/6: run not yet visible — waiting 5 s..."
+            sleep 5
+          done
+
+          if [[ -z "${DISPATCHED_ID}" ]]; then
+            echo "::warning::Could not pin run ID — falling back to most-recent run."
+            DISPATCHED_ID=$(gh run list --repo "${REPO}" --workflow ci_report.yml --limit 1 \
+              --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+          fi
+          [[ -z "${DISPATCHED_ID}" ]] && { echo "::error::No run ID found for ci_report.yml."; exit 1; }
+
+          echo "Polling run ${DISPATCHED_ID} (ci_report.yml) ..."
+          DEADLINE=$(( $(date +%s) + 840 ))
+          SLEEP=15
+          while true; do
+            RUN_JSON=$(gh run view "${DISPATCHED_ID}" --repo "${REPO}" --json status,conclusion 2>/dev/null \
+              || echo '{"status":"unknown","conclusion":"none"}')
+            READ_STATUS=$(echo "${RUN_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            CONCLUSION=$(echo "${RUN_JSON}"  | python3 -c "import json,sys; print(json.load(sys.stdin).get('conclusion') or 'none')")
+
+            echo "  [$(date -u +%H:%M:%SZ)] ci-report run=${DISPATCHED_ID} status=${READ_STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${READ_STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" != "success" ]]; then
+                echo "::warning::ci_report.yml run ${DISPATCHED_ID} finished with conclusion=${CONCLUSION}."
+                echo "  Report generation failed — check the ci_report run for details."
+                # Non-fatal: exit 0 so the pipeline chain is not blocked.
+                exit 0
+              fi
+              echo "ci_report.yml completed successfully (run ${DISPATCHED_ID})."; break
+            fi
+            [[ $(date +%s) -ge ${DEADLINE} ]] && {
+              echo "::warning::Timed out waiting for ci_report.yml — report may still be in progress."; exit 0; }
+            sleep ${SLEEP}
+          done
+
+  # ============================================================================
+  #  JOB: next-slot  —  C6: self-dispatch next experiment in the queue
+  #
+  #  Only runs in full-pipeline mode (not Na/Nf/Nc manual phases).
+  #  Only runs when run-checkpoint passes — qualification failure aborts chain.
+  #  On slot 15, also waits for run-paper-notebooks (the terminal paper gate).
+  #  run-ci-report is non-blocking so next-slot does NOT depend on it.
+  #  Slots 0-14: next-slot fires immediately after run-checkpoint.
+  #  Slot 15: next-slot is a no-op (QUEUE_SIZE guard exits 0) but is still
+  #           listed in needs so the workflow conclusion reflects the full chain.
+  # ============================================================================
+  next-slot:
+    name: "C6 · Advance to next slot"
+    needs: [resolve, run-checkpoint, run-paper-audit, run-paper-notebooks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      always() &&
+      needs.resolve.outputs.run_full == 'true' &&
+      needs.run-checkpoint.result == 'success' &&
+      (needs.run-paper-audit.result == 'success' || needs.run-paper-audit.result == 'skipped') &&
+      (needs.run-paper-notebooks.result == 'success' || needs.run-paper-notebooks.result == 'skipped')
+
+    steps:
+      - name: Dispatch next pipeline slot
+        env:
+          GH_TOKEN:         ${{ secrets.PAT_TOKEN }}
+          CURRENT_SLOT:     ${{ needs.resolve.outputs.slot }}
+          N_SHARDS:         ${{ github.event.inputs.n_shards || '1' }}
+          SEEDS:            ${{ github.event.inputs.seeds || '' }}
+          SAMPLES:          ${{ github.event.inputs.n_samples || '200' }}
+          NOISE:            ${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}
+          REPO:             ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Compute next slot using shell arithmetic (GitHub Actions expressions
+          # do not support the + operator; fromJSON(...) + 1 is a syntax error).
+          NEXT_SLOT=$(( CURRENT_SLOT + 1 ))
+
+          # Keep in sync with len(QUEUE) in the resolve job.
+          # Slot 15 (extrap) is the last slot; next-slot exits 0 (no-op) for it.
+          QUEUE_SIZE=16
+
+          if [[ "${NEXT_SLOT}" -ge "${QUEUE_SIZE}" ]]; then
+            echo "All ${QUEUE_SIZE} experiment slots completed — pipeline finished."
+            exit 0
+          fi
+
+          echo "Dispatching ci_pipeline.yml for next slot=${NEXT_SLOT}"
+          gh workflow run ci_pipeline.yml \
+            --repo "${REPO}" \
+            --ref "${{ github.ref_name }}" \
+            --field experiment_index="${NEXT_SLOT}" \
+            --field n_shards="${N_SHARDS}" \
+            --field seeds="${SEEDS}" \
+            --field n_samples="${SAMPLES}" \
+            --field noise_levels="${NOISE}" \
+            --field fail_on_incomplete="${{ github.event.inputs.fail_on_incomplete || 'false' }}" \
+            --field dry_run="${{ github.event.inputs.dry_run || 'false' }}"
+          # Note: force_rerun is intentionally NOT forwarded to the next slot —
+          # only the slot that was explicitly force-rerun should bypass the guard.
+
+          echo "Self-dispatch succeeded — slot ${NEXT_SLOT} queued."

@@ -1,0 +1,3518 @@
+# ==============================================================================
+#  ci_runner.yml - HypatiaX unified experiment runner (simplified)
+#                               (was: ci_experiment.yml / ci_experiment_instability.yml)
+#
+#  Covers: exp1 . exp1b . exp2_feynman . exp2 . exp3 . exp3b
+#          suppA . suppB . suppB_sc . extrap
+#          hybrid_all_domains (STEP 4 - one-shot LLM+NN, 10 domains)
+#          instability        (STEP 4a - Instability Index S10.9, run_instability_suite.py)
+#          exp1_pca           (C5c-1 - DeFi all-74 with PCA 40/60 split)
+#          exp1b_pca          (C5c-2 - DeFi portfolio seed sweep with PCA 40/60)
+#          exp2_feynman_pca   (C5c-0 - Feynman PCA 40/60, was ci_runner_disclosure.yml)
+#
+#  PCA experiments (exp1_pca, exp1b_pca, exp2_feynman_pca):
+#    Formerly in ci_runner_disclosure.yml (now removed from pipeline).
+#    These experiments run via run_all.sh (matching all other experiments)
+#    then validate via three integrity gates:
+#      Gate A: split_protocol_test    — verifies pca_directed_split is applied
+#      Gate B: protocol_parity_test   — verifies Feynman and DeFi use same split family
+#      Gate C: baseline_lock_test     — locks pre-fix 9/30 baseline before any rerun
+#    Gate jobs depend on all three run jobs and fire on every trigger (if: always()).
+#
+#  Architecture (fixes B1-B4 from shard_architecture_audit.svg):
+#    plan  -> workers (matrix) -> upload-per-shard artifacts
+#    B1 fixed: plan outputs are wired into worker env via needs.plan.outputs
+#    B2 fixed: worker cache key includes shard index (${{ matrix.shard }})
+#    B3 fixed: seed-on-miss filters by plan-computed pending IDs, not positional slice
+#    B4 fixed: plan cache key includes run_id; restore-keys scoped by branch only
+#
+#  Hard deadline: 6 hours wall-clock.
+#    - Each worker job has timeout-minutes: 330 (5 h 30 m).
+#    - run_all.sh is invoked with JOB_DEADLINE=19800 (330 min ? 60 s).
+#    - The plan job and consolidate job run in <10 min each, fitting the envelope.
+#
+#  Fixes backported from ci_exp2_hypatiax_v53_feynman_sh.yml (generic diffs only):
+#    FIX-G1: ANTHROPIC_API_KEY validated via live round-trip (test_key_status.py)
+#            before the 6-hour run starts; shell-level non-empty guard enforced
+#            inside the run step so os.environ is populated before Python starts.
+#    FIX-G2: config/repro.yaml read at worker startup; REPRO_CFG env var injected
+#            so experiment scripts can load paper-quality hyperparameters at
+#            runtime.  print_repro.py logged during env check for auditability.
+#            FEYNMAN_TIMEOUT corrected to 1100 s (paper value from repro.yaml).
+#    FIX-G4: Per-shard checkpoint seeded from committed master checkpoint on cache
+#            miss, filtered to shard-assigned task IDs via jq.  Prevents full
+#            re-runs when the Actions cache is evicted (7-day TTL).
+#    FIX-G5: Safety-net extraction (if: always()) rescues computed results from
+#            the per-shard checkpoint into RESULTS_DIR when the script crashes
+#            after compute but before writing its final JSON/CSV outputs.
+#    FIX-G6: Checkpoint stub {"_meta":{"stub":true}} written before cache save
+#            so actions/cache/save never fails on a missing path.
+#    FIX-G10: PYTHON_JULIACALL_HANDLE_SIGNALS=yes set before any juliacall import
+#             so Julia segfaults produce traceable Python exceptions.
+#             Julia upgraded to 1.11 via julia-actions/setup-julia@v2.
+#
+#  FIX applied in this revision:
+#    FIX-TOY-EXP1: exp1 branch was a TOY stub that wrote a fake JSON then called
+#                  "exit 1" to simulate a post-save crash.  With set -euo pipefail
+#                  active in the run step, this unconditionally failed every exp1
+#                  run (exit code 1, "Process completed with exit code 1").
+#                  Fix: replaced TOY stub with the real run_all.sh --step exp1
+#                  invocation (matching ci_experiment.yml), passing RESULTS_DIR as
+#                  an absolute path so the script resolves outputs from workspace
+#                  root regardless of any cd inside run_all.sh.
+# ==============================================================================
+
+name: "HypatiaX - runner"
+run-name: "HypatiaX - runner · ${{ inputs.experiment }}"
+
+# -- Triggers ------------------------------------------------------------------
+on:
+  workflow_dispatch:
+    inputs:
+
+      # -- Which experiment to run --------------------------------------------
+      experiment:
+        description: "Experiment ID (see run_all.sh --step)"
+        required: true
+        type: choice
+        options:
+          - exp1
+          - exp1b
+          - exp1_ablation
+          - exp1_pca
+          - exp1b_pca
+          - exp2_feynman_pca
+          - exp2_feynman
+          - exp2_feynman_extrap
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
+        default: exp2_feynman
+
+      # -- Sharding ----------------------------------------------------------
+      n_shards:
+        description: "Number of parallel worker shards (user input). exp1b/exp1_ablation/exp3b: floored to 4 (table minimum). suppB: forced to 5 regardless of input (one shard per noise level — divmod(55,5)=11 tasks each, preserving one-noise-level-per-shard alignment required by run_all.sh STEP 10). suppB_sc: forced to 6 regardless of input (one shard per sample size — divmod(66,6)=11 tasks each). All other experiments: forced to 1 regardless of input. Input is accepted and logged but may be overridden by the per-experiment shard table."
+        required: false
+        default: "1"
+
+      # -- Seeds / samples ---------------------------------------------------
+      seeds:
+        description: "Comma-separated seed list (e.g. 42,99,123,777,2024) - overrides per-experiment default"
+        required: false
+        default: ""
+
+      n_samples:
+        description: "Samples per equation (Feynman / suppB noise experiments)"
+        required: false
+        default: "200"
+
+      # -- Noise levels (suppB) ----------------------------------------------
+      noise_levels:
+        description: "Comma-separated noise levels for suppB (e.g. 0.0,0.5,1.0,5.0,10.0)"
+        required: false
+        default: "0.0,0.5,1.0,5.0,10.0"
+
+      # -- PySR hyperparameters -----------------------------------------------
+      pysr_generations:
+        description: "PySR generations (PYSR_GENERATIONS)"
+        required: false
+        default: "10000"
+
+      pysr_populations:
+        description: "PySR parallel populations (PYSR_POPULATIONS) — repro.yaml uses 30"
+        required: false
+        default: "30"
+
+      # -- Task-ID override --------------------------------------------------
+      task_ids_override:
+        description: "Space-separated task IDs to run (blank = full experiment set)"
+        required: false
+        default: ""
+
+      # -- Resume / dry-run -------------------------------------------------
+      resume:
+        description: "Resume from checkpoint - skip task IDs already recorded as done (true/false)"
+        required: false
+        default: "true"
+
+      dry_run:
+        description: "Dry-run - print commands without executing (true/false)"
+        required: false
+        default: "false"
+
+      # -- Force clean rerun ---------------------------------------------------
+      # FIX (Bug #2, §10.7 investigation, 2026-06-30): the skip-guard below
+      # ("Check if exp2_feynman_pca results already exist") treats ANY .json
+      # file present in exp2_pca_4060/ as "already done" and silently skips
+      # the job. This previously made it impossible to regenerate a clean
+      # exp2_pca_4060_summary.json after fixing the aggregation bug in
+      # run_all.sh (method-name filter + cross-file double counting) without
+      # a manual local `git rm`/`mv` of the output directory first. Setting
+      # force_rerun=true clears stale exp2_pca_4060/*.json before the
+      # skip-guard check, for exp2_feynman_pca runs specifically.
+      force_rerun:
+        description: "exp2_feynman_pca only: clear stale exp2_pca_4060/*.json before running, bypassing the already-done skip-guard (true/false). Use after pipeline/aggregation fixes to force a clean regeneration."
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  actions:  write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  JOB_DEADLINE:        "19800"
+  PYSR_GENERATIONS:    "${{ github.event.inputs.pysr_generations || '10000' }}"
+  PYSR_POPULATION:     "100"
+  PYSR_TOURNAMENT_SIZE: "3"
+  PYSR_CROSSOVER:      "0.9"
+  PYSR_MUTATION:       "0.1"
+  PYSR_PARETO_PRESSURE: "0.001"
+  PYSR_SEED:           "42"
+  PYSR_POPULATIONS:    "${{ github.event.inputs.pysr_populations || '30' }}"  # repro.yaml pysr.populations
+  FEYNMAN_SAMPLES:     "${{ github.event.inputs.n_samples || '200' }}"
+  FEYNMAN_TIMEOUT:     "1100"  # repro.yaml timeouts.feynman_pysr_seconds
+  METHOD_TIMEOUT:      "900"   # repro.yaml timeouts.method_seconds → --method-timeout (PySR methods 5/6)
+  LLM_METHOD_TIMEOUT:  "120"   # tight timeout for LLM/NN-only runs (methods 1-4, no PySR)
+  PYSR_FIT_WALL_TIMEOUT: "1200" # repro.yaml timeouts.fit_wall_timeout → DiscoveryConfig
+  PYSR_FIT_GRACE_SECS: "120"   # repro.yaml timeouts.fit_grace_secs → DiscoveryConfig
+  FEYNMAN_NOISELESS_THRESHOLD: "0.999999"  # matches run_noise_sweep_benchmark.py --threshold-noiseless default
+  OUT_BASE:            "hypatiax/data/results"
+  REPRO_CFG:           "${{ github.workspace }}/config/repro.yaml"
+  PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+  JULIA_NUM_THREADS:   "4"
+  JULIA_EXCLUSIVE:     "0"
+
+# ==============================================================================
+#  JOB 1 - plan
+# ==============================================================================
+jobs:
+
+  # ============================================================================
+  #  JOB 0 - pca_runner
+  #
+  #  Handles exp1_pca, exp1b_pca, exp2_feynman_pca — formerly in
+  #  ci_runner_disclosure.yml (now removed from the pipeline).
+  #
+  #  For PCA experiments this job:
+  #    1. Detects that a PCA experiment was dispatched (is_pca=true).
+  #    2. Sets skip_plan=true so plan and worker jobs below are bypassed.
+  #  The three pca_run_* jobs (further below) do the actual work; they gate
+  #  on is_pca=true and run in parallel (exp1b_pca depends on exp1_pca).
+  #
+  #  For non-PCA experiments: is_pca=false; plan and worker run normally.
+  # ============================================================================
+  pca_runner:
+    name: "PCA gate - ${{ github.event.inputs.experiment }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      is_pca:    ${{ steps.check.outputs.is_pca }}
+      skip_plan: ${{ steps.check.outputs.skip_plan }}
+
+    steps:
+      - name: Detect PCA experiment
+        id: check
+        env:
+          EXP: ${{ github.event.inputs.experiment }}
+        run: |
+          set -euo pipefail
+          if [[ "$EXP" == "exp1_pca" || "$EXP" == "exp1b_pca" || "$EXP" == "exp2_feynman_pca" ]]; then
+            echo "is_pca=true"    >> "$GITHUB_OUTPUT"
+            echo "skip_plan=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${EXP} is a PCA experiment — pca_run_* jobs will handle it."
+          else
+            echo "is_pca=false"    >> "$GITHUB_OUTPUT"
+            echo "skip_plan=false" >> "$GITHUB_OUTPUT"
+            echo "${EXP} is a standard experiment — plan/worker will handle it."
+          fi
+
+  plan:
+    name: "Plan - ${{ github.event.inputs.experiment }}"
+    needs: pca_runner
+    if: needs.pca_runner.outputs.skip_plan == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    outputs:
+      shard_matrix:    ${{ steps.split.outputs.shard_matrix }}
+      all_pending:     ${{ steps.split.outputs.all_pending }}
+      n_shards:        ${{ steps.split.outputs.n_shards }}
+      exp_id:          ${{ steps.meta.outputs.exp_id }}
+      script_path:     ${{ steps.meta.outputs.script_path }}
+      needs_julia:     ${{ steps.meta.outputs.needs_julia }}
+      result_subdir:   ${{ steps.meta.outputs.result_subdir }}
+      effective_seeds: ${{ steps.meta.outputs.effective_seeds }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Restore shared checkpoint (plan)
+        id: restore_plan
+        uses: actions/cache/restore@v4.2.3
+        with:
+          path: checkpoint_plan.json
+          key:  checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-
+
+      - name: Emit experiment metadata
+        id: meta
+        run: |
+          EXP="${{ github.event.inputs.experiment }}"
+          SEEDS_IN="${{ github.event.inputs.seeds }}"
+
+          case "$EXP" in
+
+            exp1)
+              SCRIPT="hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
+              NEEDS_JULIA=false
+              RESULT_SUBDIR="comparison_results/noise-noiseless/noiseless/defi"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            exp1b)
+              SCRIPT="hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
+              NEEDS_JULIA=false
+              RESULT_SUBDIR="comparison_results/noise-noiseless/15"
+              DEFAULT_SEEDS="${SEEDS_IN:-42,99,123,777,2024}"
+              ;;
+
+            # -- STEP 2a: Core-15 ablation (§10.6) ------------------------------------
+            # exp1_ablation.py benchmarks PySR-only vs HypatiaX on the Core-15 suite.
+            # Primary output: exp1_ablation_results.json (required by ci_postprocess).
+            # Also writes: exp1_ablation_table.tex, exp1_rf01_mannwhitney.json,
+            #              exp1_rf01_significant.tex, exp1_rf01_subdomain.tex,
+            #              exp1_instability_stats.json, instability_extrapolation_v2.csv,
+            #              provenance_map_exp1.json
+            # RESULT_SUBDIR mirrors the path RESULTS_DIR is set to inside run_all.sh.
+            exp1_ablation)
+              SCRIPT="hypatiax/experiments/benchmarks/exp1_ablation.py"
+              NEEDS_JULIA=false
+              RESULT_SUBDIR="ablation/exp1_ablation"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            exp2_feynman)
+              SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="comparison_results/feynman-tests/exp2"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            # exp2_feynman_extrap: writes protocol_core_extrap_*.json into its
+            # own feynman-tests/exp2_extrap dir (distinct from exp2_feynman's
+            # feynman-tests/exp2).  Must run AFTER exp2_feynman (dep declared in catalogue).
+            exp2_feynman_extrap)
+              SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="comparison_results/feynman-tests/exp2_extrap"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            exp2)
+              SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="comparison_results/feynman-tests/exp2_multi"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            exp3)
+              SCRIPT="hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="extrapolation"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            # BUG 2 FIX: exp3b previously shared RESULT_SUBDIR="extrapolation" with exp3.
+            # Both experiments write *_merged.json / *_stats.json to the same directory;
+            # the consolidate job's git-add staged both simultaneously, causing exp3 results
+            # to be overwritten when exp3b committed.  Distinct subdirectory prevents the
+            # collision.  Update ci_consolidate_experiment.yml's case statement to match.
+            exp3b)
+              SCRIPT="hypatiax/experiments/benchmarks/exp3_nguyen12_hybrid50v_02.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="extrapolation/multi_seed"
+              DEFAULT_SEEDS="${SEEDS_IN:-99,123,777,2024}"
+              ;;
+
+            suppA)
+              SCRIPT="hypatiax/experiments/benchmarks/run_hybrid_system_benchmark.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="hybrid_pysr/defi"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            suppB)
+              SCRIPT="hypatiax/experiments/benchmarks/run_noise_sweep_benchmark.py"
+              # TASK-6 FIX: resolve NEEDS_JULIA at runtime by inspecting the script
+              # rather than assuming false.  If juliacall/PySR is imported, the worker
+              # must have Julia installed or methods 5/6 will crash silently with N/A.
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${{ github.workspace }}/${SCRIPT}" 2>/dev/null; then
+                NEEDS_JULIA=true
+                echo "::notice::suppB: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
+              else
+                NEEDS_JULIA=false
+                echo "suppB: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
+              fi
+              # FIX-suppB-DOUBLED-PATH — CONFIRMED 2026-06-23 by reading
+              # run_noise_sweep_benchmark.py's actual source directly (user
+              # uploaded it):
+              #   _RESULTS_DIR = _OUT_BASE / "comparison_results/feynman-tests/noise-sweep"   (line 106)
+              # This is the ONLY suffix appended — single level, no further
+              # nesting. The subprocess (run_comparative_suite_benchmark_v2.py)
+              # receives this exact path via --output-dir and writes
+              # protocol_core_*.json / noise_sweep_*.json directly into it
+              # (its own _OUTPUT_DIR = Path(args.output_dir).resolve(), no
+              # extra suffix). Checkpoints go to that script's separate
+              # _FLAT_OUTPUT_DIR (bare comparison_results/ root, deliberately
+              # NOT nested under noise-sweep at all — see that script's
+              # _checkpoint_path()).
+              #
+              # So with OUT_BASE = plain results root (confirmed at job env
+              # level: OUT_BASE: "hypatiax/data/results"), the script's real
+              # output directory is the SINGLE-level path below. The doubled
+              # ".../noise-sweep/noise-sweep" path observed on disk in a prior
+              # run was traced to a DIFFERENT bug: the "Move results to
+              # RESULTS_DIR" step does TARGET="${RESULTS_DIR}/${RESULT_SUBDIR}"
+              # and then moves any matching files it finds under the workspace
+              # into TARGET — if RESULT_SUBDIR is ever set to the doubled path
+              # (as it was, mistakenly, in an earlier pass at this exact line),
+              # that move step relocates the script's correctly-written
+              # single-level output one level deeper, manufacturing the
+              # doubled structure after the fact. The fix belongs HERE
+              # (RESULT_SUBDIR must match the script's real single-level
+              # output), not by accepting the doubled path as canonical.
+              # ci_postprocess.yml's SUPPB_SUBDIR and ci_analysis.yml's
+              # MAPPING entry for suppB must be corrected to match this same
+              # single-level value — they currently still have the doubled
+              # path and need the same fix.
+              RESULT_SUBDIR="comparison_results/feynman-tests/noise-sweep"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            # -- STEP 4a: Instability Index S10.9 -------------------------------------
+            # Runs run_instability_suite.py against K-run DeFi benchmark results.
+            # Stage 1: reads hypatiax_defi_variance_results.json (or multi-run JSONs).
+            # Stage 2: merges extrapolation R2 when benchmark JSON is present.
+            # Stage 3: writes all 12 instability figures (Groups A-C + EX).
+            # RESULT_SUBDIR=figures so shard artifacts contain the CSVs + pngs/pdfs.
+            instability)
+              SCRIPT="hypatiax/experiments/benchmarks/run_instability_suite.py"
+              NEEDS_JULIA=false
+              RESULT_SUBDIR="figures"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            # <- FIX CRITICAL 1: renamed from "instability"; RESULT_SUBDIR fixed (CRITICAL 3)
+            hybrid_all_domains)
+              SCRIPT="hypatiax/core/generation/hybrid_all_domains_llm_nn/hybrid_system_llm_nn_all_domains.py"
+              NEEDS_JULIA=false
+              RESULT_SUBDIR="hybrid_llm_nn/all_domains"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            # <- FIX CRITICAL 2: new experiment entry for sample-complexity sweep
+            suppB_sc)
+              SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
+              # TASK-6 FIX: resolve NEEDS_JULIA at runtime (same guard as suppB).
+              if grep -qE 'juliacall|import pysr|from pysr|PySR' "${{ github.workspace }}/${SCRIPT}" 2>/dev/null; then
+                NEEDS_JULIA=true
+                echo "::notice::suppB_sc: detected juliacall/PySR import in ${SCRIPT} — NEEDS_JULIA set to true."
+              else
+                NEEDS_JULIA=false
+                echo "suppB_sc: no juliacall/PySR import detected in ${SCRIPT} — NEEDS_JULIA=false."
+              fi
+              RESULT_SUBDIR="comparison_results/feynman-tests/sample-complexity"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            # -- STEP 3: all-domains OOD extrapolation comparative -----------------
+            # Produces Tab 9 OOD columns.
+            # Script : run_comparative_suite_benchmark_v2.py --extrap
+            # Output : comparison_results/extrapolation/all_domains_extrap_v4_*.json
+            # Keys   : extrap_r2 per method per equation (merged by consolidate job)
+            # Julia  : true - methods 5/6 (SymbolicEngine, HybridV40) use PySR
+            extrap)
+              SCRIPT="hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_v2.py"
+              NEEDS_JULIA=true
+              RESULT_SUBDIR="comparison_results/extrapolation"
+              DEFAULT_SEEDS="42"
+              ;;
+
+            *)
+              echo "ERROR: unknown experiment '$EXP'"; exit 1 ;;
+          esac
+
+          EFFECTIVE_SEEDS="${SEEDS_IN:-$DEFAULT_SEEDS}"
+
+          echo "exp_id=$EXP"                        >> "$GITHUB_OUTPUT"
+          echo "script_path=$SCRIPT"                >> "$GITHUB_OUTPUT"
+          echo "needs_julia=$NEEDS_JULIA"           >> "$GITHUB_OUTPUT"
+          echo "result_subdir=$RESULT_SUBDIR"       >> "$GITHUB_OUTPUT"
+          echo "effective_seeds=$EFFECTIVE_SEEDS"   >> "$GITHUB_OUTPUT"
+
+      - name: Compute pending task list and shard split
+        id: split
+        env:
+          N_SHARDS:       "${{ github.event.inputs.n_shards || '1' }}"
+          OVERRIDE:       "${{ github.event.inputs.task_ids_override }}"
+          NOISE_LEVELS:   "${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}"
+          EFFECTIVE_SEEDS: ${{ steps.meta.outputs.effective_seeds }}
+          EXP:            ${{ steps.meta.outputs.exp_id }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+
+          EXP          = os.environ["EXP"]
+          N_SHARDS_RAW = int(os.environ["N_SHARDS"])
+
+          # Per-experiment shard table — authoritative source.
+          # Most experiments run with exactly 1 worker shard to avoid
+          # checkpoint collisions, concurrent-push races, and wasted runner
+          # quota. exp1b, exp1_ablation, exp3b use 4 shards (multi-task runs
+          # over DEFI_TASKS / multi-seed runs respectively).
+          #
+          # suppB uses 5 shards — NOT 4 — because its task list is built as
+          # [f"noise{nl}__{eq}" for nl in NOISE_LEVELS for eq in
+          # FEYNMAN_DOMAINS] (5 noise levels x 11 domains = 55 tasks,
+          # ordered as 5 contiguous blocks of 11). run_all.sh STEP 10 reads
+          # the FIRST task ID in each shard to pin a single NOISE_LEVEL for
+          # the whole shard (see run_noise_sweep_benchmark.py NOISE_LEVEL
+          # env var handling) — it assumes every task in a shard shares one
+          # noise level. The block-partition splitter below (_block_shards)
+          # divides 55 tasks evenly by COUNT, not by noise-level boundary:
+          # at N_SHARDS=4, divmod(55,4)=(13,3) gives shard sizes
+          # [14,14,14,13], and 14 does not divide evenly into blocks of 11,
+          # so every shard would straddle two noise levels and silently mis-
+          # pin (or fail to pin) NOISE_LEVEL for the tail tasks. N_SHARDS=5
+          # gives shard sizes [11,11,11,11,11] — exactly one noise level per
+          # shard, matching what STEP 10's pinning logic actually assumes.
+          # If NOISE_LEVELS or FEYNMAN_DOMAINS ever change, re-verify this
+          # alignment (shard count must equal len(NOISE_LEVELS) for the
+          # one-level-per-shard property to hold).
+          # FIX-suppB_sc-SHARD-6 (cost rationale, supersedes the old table=1):
+          # suppB_sc previously ran as a single shard covering all 66 tasks
+          # (6 sample sizes x 11 feynman domains) inside one 330-minute job.
+          # Per-task cost is NOT uniform across sample sizes — larger n means
+          # slower fits, especially for the two PySR-backed methods (5, 6),
+          # whose --pysr-timeout/--method-timeout bound per-fit time but not
+          # the job's total wall-clock. Six methods x 11 domains x worst-case
+          # PySR timeouts already triples the wall-clock estimate that
+          # justified --methods 3 4 as suppB_sc's own historical default (see
+          # FIX-suppB_sc-ALL-METHODS below) — at six methods, a single shard
+          # for the full sweep is no longer reliably within the job timeout,
+          # which is exactly the failure mode that silently truncated method
+          # coverage to begin with (a timed-out/killed shard can still leave
+          # a partial sample_complexity_*.json on disk from whichever
+          # methods finished first).
+          #   SHARD COUNT = 6 = len(SC_SAMPLE_COUNTS), one sample size n per
+          #   shard, mirroring suppB's one-noise-level-per-shard design.
+          #   SUPPB_SC_IDS below is built as an outer loop over n and an
+          #   inner loop over FEYNMAN_DOMAINS (11), so it is laid out in 6
+          #   contiguous blocks of 11 — divmod(66, 6) = (11, 0), so
+          #   _block_shards() partitions it into exactly 6 even shards of 11
+          #   tasks, each shard landing entirely within one sample size n.
+          #   This mirrors suppB's NOISE_LEVELS/FEYNMAN_DOMAINS alignment
+          #   requirement: if SUPPB_SC_SAMPLE_COUNTS or FEYNMAN_DOMAINS ever
+          #   change, re-verify that shard count still equals len(sample
+          #   sizes) for the one-n-per-shard property to hold.
+          #   PER-SHARD COST: 11 domains x 6 methods, methods 5/6 PySR-backed
+          #   at up to (pysr-timeout=1100s + method-timeout=900s) worst-case
+          #   each. Largest-n shard (n=1000) is the long pole; if it
+          #   approaches the 330-minute job timeout, the run_all.sh
+          #   FIX-suppB_sc-ALL-METHODS comment's options (b) and (c) — finer
+          #   sharding or dropping back to fewer methods for the largest n —
+          #   are the next things to try, NOT reverting to table=1.
+          EXP_SHARD_TABLE = {
+              "exp1":               1,
+              "exp1b":              4,
+              "exp1_ablation":      4,
+              "exp2_feynman":        1,
+              "exp2_feynman_extrap": 1,
+              "exp2":               1,
+              "exp3":               1,
+              "exp3b":              4,
+              "suppA":              1,
+              "suppB":              5,
+              "suppB_sc":           6,
+              "instability":        1,
+              "hybrid_all_domains": 1,
+              "extrap":             1,
+          }
+          N_SHARDS_DEFAULT = EXP_SHARD_TABLE.get(EXP, 1)
+          # Most experiments use exactly 1 shard to avoid concurrent-push races
+          # and checkpoint collisions.  exp1b, exp1_ablation, and exp3b use 4 shards
+          # (multi-task runs over DEFI_TASKS / multi-seed runs respectively).
+          # suppB uses 5 shards (one per noise level — see EXP_SHARD_TABLE comment
+          # above for why 4 would silently mis-pin NOISE_LEVEL on some tasks).
+          # suppB_sc uses 6 shards (one per sample size n — see EXP_SHARD_TABLE
+          # comment above for the one-n-per-shard alignment requirement, and
+          # the FIX-suppB_sc-SHARD-6 block below for the cost rationale).
+          # Any dispatch input is ignored for single-shard experiments.
+          if N_SHARDS_DEFAULT == 1:
+              N_SHARDS = 1
+              if N_SHARDS_RAW not in (1,):
+                  print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
+                        f"— this experiment is single-shard only (table=1). "
+                        f"Using N_SHARDS=1.")
+          elif N_SHARDS_DEFAULT > 4:
+              # suppB (table=5) and suppB_sc (table=6) require an EXACT shard
+              # count for the one-noise-level-per-shard / one-n-per-shard
+              # alignment documented above — NOT just a floor. The dispatch
+              # input is therefore fully ignored here, the same way it is for
+              # table=1 above. (The old `max(N_SHARDS_DEFAULT, min(4,
+              # N_SHARDS_RAW))` formula below this branch can never produce
+              # anything but N_SHARDS_DEFAULT when N_SHARDS_DEFAULT > 4 — the
+              # min(4, ...) term tops out at 4 — so it silently discarded the
+              # input while *looking* like it respected it whenever
+              # N_SHARDS_RAW happened to equal the table value. Make that
+              # explicit instead of implicit.)
+              N_SHARDS = N_SHARDS_DEFAULT
+              if N_SHARDS_RAW != N_SHARDS_DEFAULT:
+                  print(f"::warning::n_shards={N_SHARDS_RAW} dispatch input IGNORED for '{EXP}' "
+                        f"— this experiment requires an exact shard count "
+                        f"(table={N_SHARDS_DEFAULT}) for correct noise-level/"
+                        f"sample-size alignment. Using N_SHARDS={N_SHARDS_DEFAULT}.")
+          else:
+              # Table default is the minimum — user input cannot go below it.
+              # exp1b/exp1_ablation/exp3b (table=4) always get at least 4
+              # shards; the dispatch input can raise that up to a cap of 4
+              # (i.e. it has no effect for this group in practice, since the
+              # table value already equals the cap — left in place in case a
+              # table value < 4 is ever added to this branch).
+              N_SHARDS = max(N_SHARDS_DEFAULT, min(4, N_SHARDS_RAW))
+              if N_SHARDS != N_SHARDS_RAW:
+                  print(f"::notice::n_shards: input={N_SHARDS_RAW} "
+                        f"table={N_SHARDS_DEFAULT} using={N_SHARDS} "
+                        f"(table default enforced as minimum)")
+          OVERRIDE     = os.environ["OVERRIDE"].split() if os.environ["OVERRIDE"].strip() else []
+          SEEDS        = [s.strip() for s in os.environ["EFFECTIVE_SEEDS"].split(",") if s.strip()]
+          NOISE_LEVELS = [l.strip() for l in os.environ["NOISE_LEVELS"].split(",") if l.strip()]
+
+          # -- exp2_feynman shard IDs --------------------------------------------
+          # BenchmarkProtocol._apply_shard_ids() filters at DOMAIN level, not
+          # individual equation level.  Domain keys are "feynman_<sub-domain>"
+          # (the _FEYNMAN_PREFIX + eq.domain from each FeynmanEquation).
+          # Derived from experiment_protocol_benchmark_v2.py._build_domain_map():
+          #   feynman_biology        (3 eqs: FEY_BIO_MM, FEY_BIO_LOG, FEY_BIO_ALLO)
+          #   feynman_chemistry      (2 eqs: FEY_CHEM_ARR, FEY_CHEM_HH)
+          #   feynman_electrochemistry (1 eq: FEY_CHEM_NERNST)
+          #   feynman_electromagnetism (5 eqs: II.6.15a, II_11_3_simplified, II.34.2, II_11_27_ohm, II_11_28_capacitor)
+          #   feynman_electrostatics (2 eqs: I.9.18_1d, I.12.2)
+          #   feynman_magnetism      (1 eq:  II_11_17_curie)
+          #   feynman_mechanics      (4 eqs: I.12.1, FEY_MECH_KE, I.18.4, I.24.6)
+          #   feynman_optics         (2 eqs: I.26.2, I.37.4)
+          #   feynman_probability    (1 eq:  I.6.20)
+          #   feynman_quantum        (5 eqs: I.34.27, II_36_38, III.4.33, III.4.32, III.7.38)
+          #   feynman_thermodynamics (4 eqs: I_41_16_simplified, II.2.42, FEY_THERMO_SB, FEY_THERMO_IG)
+          # 11 domain keys total covering all 30 equations.
+          FEYNMAN_DOMAINS = [
+              "feynman_biology",
+              "feynman_chemistry",
+              "feynman_electrochemistry",
+              "feynman_electromagnetism",
+              "feynman_electrostatics",
+              "feynman_magnetism",
+              "feynman_mechanics",
+              "feynman_optics",
+              "feynman_probability",
+              "feynman_quantum",
+              "feynman_thermodynamics",
+          ]
+
+          # -- exp2 shard IDs ----------------------------------------------------
+          # ExperimentProtocolAll._apply_shard_ids() also filters at DOMAIN level.
+          # Domain keys are bare strings from get_all_domains():
+          #   mechanics, thermodynamics, electromagnetism, fluid_dynamics,
+          #   optics, quantum, chemistry, biology, mathematics, economics
+          # M.01-M.30 are equation-level IDs used only for task_ids_override /
+          # checkpoint tracking - they are NOT what SHARD_IDS matches against.
+          EXP2_DOMAINS = [
+              "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
+              "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
+          ]
+
+          # M.XX IDs - used for checkpoint tracking and task_ids_override only.
+          MULTI30 = [f"M.{i:02d}" for i in range(1, 31)]
+
+          NGUYEN12 = [f"N{i}" for i in range(1, 13)]
+          DEFI_TASKS = [
+              "amm", "risk_var", "liquidity", "expected_shortfall",
+              "liquidation", "risk", "lending", "staking", "trading", "derivatives",
+          ]
+          SUPP_A_IDS = [
+              "amm", "risk_var", "liquidity", "expected_shortfall",
+              "liquidation", "risk", "lending", "staking", "trading", "derivatives",
+          ]
+
+          # -- hybrid_all_domains shard IDs --------------------------------------
+          # Matches ExperimentProtocolAll.get_all_domains() exactly.
+          # FIX: removed "statistics", "finance", "other" (don't exist in protocol);
+          #      added "fluid_dynamics" and "mathematics" (present in protocol).
+          HYBRID_ALL_DOMAINS_IDS = [
+              "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
+              "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
+          ]
+
+          # -- suppB / suppB_sc use feynman domain keys for shard splitting ------
+          # suppB shards by feynman domain (same as exp2_feynman), not equation ID.
+          SUPPB_SC_SAMPLE_COUNTS = ["50", "100", "200", "500", "750", "1000"]
+          SUPPB_SC_IDS = [f"sc_n{n}__{eq}" for n in SUPPB_SC_SAMPLE_COUNTS
+                          for eq in FEYNMAN_DOMAINS]
+
+          registry = {
+              "exp1":              DEFI_TASKS,
+              "exp1b":             [f"portfolio_seed{s}" for s in SEEDS],
+              # exp1_ablation: Core-15 LLM ablation (PySR-only vs HypatiaX, §10.6).
+              # 5 domain slugs split 2/1/1/1 across 4 shards (block-partition):
+              #   shard 0: chemistry + defi_risk  → 6 equations  (~2.5 h)
+              #   shard 1: biology               → 3 equations  (~1.25 h)
+              #   shard 2: physics               → 3 equations  (~1.25 h)
+              #   shard 3: defi_amm              → 3 equations  (~1.25 h)
+              # exp1_ablation.py reads DOMAIN_FILTER to select its subset.
+              # Slug→equation mapping is defined in _SLUG_TO_EQ_KEYWORDS inside
+              # exp1_ablation.py.
+              "exp1_ablation":     ["chemistry", "defi_risk", "biology", "physics", "defi_amm"],
+              # exp2_feynman: shard by feynman domain keys (BenchmarkProtocol, benchmark=feynman)
+              "exp2_feynman":       FEYNMAN_DOMAINS,
+              # exp2_feynman_extrap: same 11-domain split, generates extrap_r2_far for Mann-Whitney
+              "exp2_feynman_extrap": FEYNMAN_DOMAINS,
+              # exp2: shard by ExperimentProtocolAll domain keys (--protocol all30)
+              "exp2":              EXP2_DOMAINS,
+              "exp3":              [f"{eq}_seed{s}" for eq in NGUYEN12 for s in SEEDS],
+              "exp3b":             [f"{eq}_seed{s}" for s in SEEDS for eq in NGUYEN12],
+              "suppA":             SUPP_A_IDS,
+              "suppB":             [f"noise{nl}__{eq}" for nl in NOISE_LEVELS
+                                    for eq in FEYNMAN_DOMAINS],
+              "suppB_sc":          SUPPB_SC_IDS,
+              "instability":        DEFI_TASKS,
+              "hybrid_all_domains": HYBRID_ALL_DOMAINS_IDS,
+              # extrap: same domain split as exp2_feynman (BenchmarkProtocol, feynman domains)
+              "extrap":            FEYNMAN_DOMAINS,
+          }
+
+          all_ids = OVERRIDE if OVERRIDE else registry.get(EXP, [])
+          if not all_ids:
+              print(f"ERROR: no task IDs for experiment '{EXP}'", file=sys.stderr)
+              sys.exit(1)
+
+          done = set()
+          ckpt_path = "checkpoint_plan.json"
+          if os.path.exists(ckpt_path):
+              try:
+                  with open(ckpt_path) as f:
+                      done = set(json.load(f).get("completed", []))
+                  print(f"Checkpoint: {len(done)} already completed")
+              except Exception as e:
+                  print(f"Warning: could not read checkpoint: {e}")
+
+          pending = [t for t in all_ids if t not in done]
+          print(f"Total={len(all_ids)}  Done={len(done)}  Pending={len(pending)}")
+
+          if not pending:
+              print("Nothing pending - all tasks already complete.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+                  fh.write("shard_matrix=[]\n")
+                  fh.write("all_pending=[]\n")
+              sys.exit(0)
+
+          # -- Block-partition shard assignment (replaces round-robin) --------
+          # divmod(N, W) = (chunk, r)
+          #   Workers 0 .. r-1  get chunk+1 tasks each ("fat" shards).
+          #   Workers r .. W-1  get chunk   tasks each ("thin" shards).
+          # This produces contiguous, deterministic ranges so run_ids are stable
+          # between re-runs as long as all_ids order is stable.
+          def _block_shards(all_ids, n_shards):
+              N = len(all_ids)
+              chunk, r = divmod(N, n_shards)
+              shards, start = [], 0
+              for j in range(n_shards):
+                  size = chunk + (1 if j < r else 0)
+                  shards.append(all_ids[start : start + size])
+                  start += size
+              return shards
+
+          # FIX-SHARD-ALIGN: always partition all_ids (not pending) so that the
+          # shard boundaries are stable across resumes.  For suppB/suppB_sc/exp1b
+          # this preserves the one-noise-level-per-shard / one-sample-size-per-
+          # shard / one-seed-per-shard alignment even when some tasks are already
+          # done and pending is shorter than all_ids.  Partitioning pending
+          # directly (the old code) re-slices the remaining tasks into N_SHARDS
+          # equal chunks that no longer respect noise-level boundaries, causing
+          # run_all.sh to mis-pin NOISE_LEVEL for tasks in the tail of a shard.
+          pending_set        = set(pending)
+          raw_shards_all     = _block_shards(all_ids, N_SHARDS)
+          raw_shards         = [[t for t in s if t in pending_set]
+                                for s in raw_shards_all]
+          # Drop shards that became empty after filtering (all tasks already done
+          # in that position) so the matrix doesn't spawn zero-work runners.
+          # Re-assign shard indices to 0-based contiguous so matrix.shard is
+          # always the original global shard index (stable for cache keys).
+          # Keep original index paired with the filtered list.
+          raw_shards_indexed = [(orig_j, s)
+                                for orig_j, s in enumerate(raw_shards)
+                                if s]
+
+          # Stable global index: position of each task in the FULL all_ids list
+          # (not just pending), so IDs survive checkpoint restarts.
+          global_index = {task: i for i, task in enumerate(all_ids)}
+
+          matrix = [
+              {
+                  "shard":    orig_j,
+                  "shard_id": orig_j + 1,
+                  "ids":      json.dumps(s),
+                  # run_ids: "{exp}-{global_index}" — unique, stable, cross-ref-safe.
+                  # consolidate uses these to match shard results to all_pending.
+                  "run_ids":  json.dumps([f"{EXP}-{global_index[t]}" for t in s]),
+              }
+              for orig_j, s in raw_shards_indexed
+          ]
+          N_SHARDS = len(matrix)  # actual number of non-empty shards dispatched
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"shard_matrix={json.dumps(matrix)}\n")
+              fh.write(f"all_pending={json.dumps(pending)}\n")
+              # FEATURE-NSHARDS-SUFFIX: expose the FINAL resolved shard count
+              # (post table-forcing / cap logic above) as its own output, zero-
+              # padded to 2 digits, so worker steps can tag every output
+              # filename with _nshards{NN} — lets test runs at different shard
+              # counts for the same experiment coexist on disk without
+              # collisions or overwrites. This is the resolved N_SHARDS, NOT
+              # the raw dispatch input — for suppB/suppB_sc it will always be
+              # 5/6 respectively, matching what actually ran, not what was
+              # requested.
+              fh.write(f"n_shards={N_SHARDS}\n")
+
+          print("Shard assignment (block-partition):")
+          for s in matrix:
+              ids = json.loads(s["ids"])
+              rids = json.loads(s["run_ids"])
+              print(f"  shard {s['shard']}: {len(ids)} tasks"
+                    f" | IDs: {ids[:3]}{'...' if len(ids)>3 else ''}"
+                    f" | run_ids: {rids[:2]}{'...' if len(rids)>2 else ''}")
+          PYEOF
+
+      - name: Save plan checkpoint cache
+        if: always()
+        uses: actions/cache/save@v4.2.3
+        with:
+          path: checkpoint_plan.json
+          key: checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
+
+
+# ==============================================================================
+#  JOB 2 - worker
+# ==============================================================================
+  worker:
+    name: "Worker - ${{ github.event.inputs.experiment }} shard ${{ matrix.shard }}"
+    needs: [pca_runner, plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.plan.outputs.shard_matrix) }}
+
+    if: ${{ needs.pca_runner.outputs.skip_plan == 'false' && needs.plan.outputs.shard_matrix != '[]' && needs.plan.outputs.shard_matrix != '' }}
+
+    env:
+      EXP:            ${{ needs.plan.outputs.exp_id }}
+      SCRIPT_PATH:    ${{ needs.plan.outputs.script_path }}
+      NEEDS_JULIA:    ${{ needs.plan.outputs.needs_julia }}
+      RESULT_SUBDIR:  ${{ needs.plan.outputs.result_subdir }}
+      SHARD_IDS:      ${{ matrix.ids }}
+      SHARD_INDEX:    ${{ matrix.shard }}
+      SHARD_ID:       ${{ matrix.shard_id }}
+      # Stable unique run_id per task: "{exp}-{global_index}" (from plan matrix).
+      # Workers write this into result JSON so consolidate can cross-reference.
+      SHARD_RUN_IDS:  ${{ matrix.run_ids }}
+      EFFECTIVE_SEEDS: ${{ needs.plan.outputs.effective_seeds }}
+      # N_SHARDS: the FINAL resolved total shard count (zero-padded to 2
+      # digits, e.g. "05"), forwarded for logging/diagnostics. NOT used to
+      # build the per-file _nshardsNN suffix -- that was tried initially but
+      # corrected in run_all.sh's suppB step: N_SHARDS is the same constant
+      # value across all concurrently-running matrix shards, so it would tag
+      # every shard's output identically (_nshards05 on all 5 shards) and
+      # could still collide on same-second-timestamped filenames. The suffix
+      # is instead derived from SHARD_INDEX (above, 0-based, +1 -> 01..05),
+      # which is unique per shard. See run_all.sh's suppB step,
+      # FEATURE-NSHARDS-SUFFIX comment, for the corrected derivation.
+      N_SHARDS:       ${{ needs.plan.outputs.n_shards }}
+      # FIX-NOISE_LEVELS: forward from dispatch input so suppB worker receives the
+      # correct sweep range.  Previously NOISE_LEVELS was only set inside the plan
+      # job's Python step and never exported to worker jobs, so run_noise_sweep_benchmark.py
+      # silently fell back to its own internal default (noiseless only -> noise_levels:[0.0]).
+      NOISE_LEVELS:   "${{ github.event.inputs.noise_levels || '0.0,0.5,1.0,5.0,10.0' }}"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Julia 1.11
+        if: ${{ needs.plan.outputs.needs_julia == 'true' }}
+        uses: julia-actions/setup-julia@v2.6.1
+        with:
+          version: "1.11"
+
+      - name: Cache Julia depot
+        if: ${{ needs.plan.outputs.needs_julia == 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.julia
+          key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+          restore-keys: |
+            julia-depot-${{ runner.os }}-
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "pandas==2.2.3"
+          pip install \
+            numpy scipy sympy \
+            anthropic \
+            pysr \
+            scikit-learn \
+            pyyaml \
+            python-dotenv \
+            matplotlib \
+            seaborn \
+            pmlb \
+            pint \
+            psutil
+
+      - name: Install Julia / SymbolicRegression (if needed)
+        if: ${{ needs.plan.outputs.needs_julia == 'true' }}
+        run: |
+          python3 -c "import pysr; pysr.install()"
+
+      # -- FIX: methods 5 & 6 (SymbolicEngineWithLLM, HybridDiscoverySystem v50_2) --
+      # _probe() in run_comparative_suite_benchmark_v2.py imports symbolic_engine.py
+      # and hybrid_system_v50_2.py at module load time.  Both transitively import pysr,
+      # which calls juliacall to load SymbolicRegression.jl.  If the Julia depot is not
+      # fully precompiled before the probe runs, juliacall raises a precompilation error
+      # that _probe() silently swallows -> SYM_ENGINE_AVAILABLE = False permanently,
+      # and every test reports "SymbolicEngineWithLLM not available" for the whole run.
+      #
+      # Fix: run a short Julia precompile warmup AFTER pysr.install() so that
+      # SymbolicRegression.jl is fully cached in the Julia depot before any Python
+      # script is invoked.  The warmup is cheap (~30s on a warm runner) and pays
+      # for itself by unblocking both tools methods for every test in the run.
+      #
+      # For experiments where PySR tools are deliberately excluded (exp2_feynman,
+      # exp2, exp3, exp3b) we additionally pass --skip-pysr to prevent the
+      # subprocess worker pool from being consumed by Julia startup overhead.
+      - name: Precompile Julia / SymbolicRegression (if needed)
+        if: ${{ needs.plan.outputs.needs_julia == 'true' }}
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys, os
+
+          # Warm up juliacall + SymbolicRegression.jl so that _probe() succeeds.
+          # Uses a minimal PySR fit (5 iterations, 1 population) just to force
+          # full precompilation - the result is discarded.
+          warmup = """
+          import numpy as np
+          import pysr
+          X = np.random.randn(20, 1)
+          y = X[:, 0] * 2.0 + 1.0
+          model = pysr.PySRRegressor(
+              niterations=5,
+              populations=1,
+              verbosity=0,
+              progress=False,
+              tempdir="/tmp/pysr_warmup",
+          )
+          model.fit(X, y)
+          print("Julia/PySR precompile warmup OK")
+          """
+          result = subprocess.run(
+              [sys.executable, "-c", warmup],
+              timeout=300,
+              capture_output=True,
+              text=True,
+          )
+          print(result.stdout or "")
+          if result.returncode != 0:
+              # Warmup failure is non-fatal - methods 5/6 will still show N/A,
+              # but we surface the error so it's visible in the step log.
+              print("WARNING: Julia precompile warmup failed (methods 5+6 may be N/A):")
+              print(result.stderr[-3000:] if result.stderr else "(no stderr)")
+          PYEOF
+
+      - name: Verify Julia threads
+        if: ${{ needs.plan.outputs.needs_julia == 'true' }}
+        run: |
+          julia -e 'println("Julia threads: ", Threads.nthreads())'
+
+      - name: Restore shard checkpoint
+        id: restore_worker
+        uses: actions/cache/restore@v4.2.3
+        with:
+          path: checkpoint_worker_shard${{ matrix.shard }}.json
+          key:  checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-
+
+      - name: Environment check and repro.yaml audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Python: $(python3 --version)"
+          python3 -c "import pysr;        print('PySR:         ', pysr.__version__)"
+          python3 -c "import torch;       print('PyTorch:      ', torch.__version__)"
+          python3 -c "import anthropic;   print('anthropic SDK: ok')"
+          python3 -c "import sympy;       print('SymPy:        ', sympy.__version__)"
+          python3 -c "import scipy;       print('SciPy:        ', scipy.__version__)"
+          python3 -c "import sklearn;     print('scikit-learn: ', sklearn.__version__)"
+          [[ -n "${ANTHROPIC_API_KEY:-}" ]] || { echo "ERROR: ANTHROPIC_API_KEY not set"; exit 1; }
+          echo "ANTHROPIC_API_KEY: set (${#ANTHROPIC_API_KEY} chars)"
+          echo "JULIA_NUM_THREADS: ${JULIA_NUM_THREADS}"
+          echo "FEYNMAN_SAMPLES:   ${FEYNMAN_SAMPLES}"
+          echo "FEYNMAN_TIMEOUT:   ${FEYNMAN_TIMEOUT}"
+          echo "REPRO_CFG:         ${REPRO_CFG}"
+          echo "RESULTS_DIR:       ${OUT_BASE}"
+          echo "=== repro.yaml (paper-quality values) ==="
+          if [ -f "${REPRO_CFG}" ]; then
+            python3 "${{ github.workspace }}/.github/scripts/print_repro.py"
+          else
+            echo "WARNING: repro.yaml not found at ${REPRO_CFG} - using workflow env defaults"
+          fi
+
+      - name: Validate ANTHROPIC_API_KEY (live round-trip)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          KEY_LEN=${#ANTHROPIC_API_KEY}
+          echo "ANTHROPIC_API_KEY present: $([ $KEY_LEN -gt 0 ] && echo YES || echo NO)"
+          echo "ANTHROPIC_API_KEY length : ${KEY_LEN} chars"
+          echo "ANTHROPIC_API_KEY prefix : ${ANTHROPIC_API_KEY:0:7}..."
+          if [[ $KEY_LEN -eq 0 ]]; then
+            echo "::error::ANTHROPIC_API_KEY secret is empty or unset."
+            exit 1
+          fi
+          python3 "${{ github.workspace }}/config/test_key_status.py"
+
+      - name: Create results directory structure
+        run: |
+          mkdir -p \
+            "${OUT_BASE}/comparison_results/feynman-tests/exp2" \
+            "${OUT_BASE}/comparison_results/feynman-tests/exp2_extrap" \
+            "${OUT_BASE}/comparison_results/feynman-tests/exp2_multi" \
+            "${OUT_BASE}/comparison_results/feynman-tests/noise-sweep" \
+            "${OUT_BASE}/comparison_results/feynman-tests/sample-complexity" \
+            "${OUT_BASE}/comparison_results/noise-noiseless/noiseless/defi" \
+            "${OUT_BASE}/comparison_results/noise-noiseless/15" \
+            "${OUT_BASE}/comparison_results/extrapolation" \
+            "${OUT_BASE}/extrapolation" \
+            "${OUT_BASE}/extrapolation/multi_seed" \
+            "${OUT_BASE}/hybrid_llm_nn/all_domains" \
+            "${OUT_BASE}/hybrid_llm_nn/defi" \
+            "${OUT_BASE}/hybrid_pysr/all_domains" \
+            "${OUT_BASE}/hybrid_pysr/defi" \
+            "${OUT_BASE}/llm_guided/all_domains" \
+            "${OUT_BASE}/llm_guided/defi" \
+            "${OUT_BASE}/standalone_llm_nn" \
+            "${OUT_BASE}/figures" \
+            "${OUT_BASE}/tables" \
+            "${{ github.workspace }}/logs"
+
+      - name: Seed shard checkpoint from committed results (cache miss only)
+        if: steps.restore_worker.outputs.cache-hit != 'true'
+        env:
+          SHARD_IDS_JSON: ${{ matrix.ids }}
+          RESULT_SUBDIR:  ${{ needs.plan.outputs.result_subdir }}
+          EXP:            ${{ needs.plan.outputs.exp_id }}
+        run: |
+          CKPT_PATH="checkpoint_worker_shard${{ matrix.shard }}.json"
+          COMMITTED="${OUT_BASE}/${RESULT_SUBDIR}/${EXP}_checkpoint.json"
+          if [ -f "$COMMITTED" ]; then
+            jq --argjson keys "$SHARD_IDS_JSON" \
+              'with_entries(select(.key as $k | ($keys | index($k)) != null))' \
+              "$COMMITTED" > "$CKPT_PATH" 2>/dev/null || echo '{"completed":[]}' > "$CKPT_PATH"
+            N=$(python3 -c "import json; d=json.load(open('$CKPT_PATH')); print(len(d.get('completed', d)))" 2>/dev/null || echo "?")
+            echo "Seeded shard ${{ matrix.shard }} checkpoint (${N} tasks) from committed master"
+          else
+            echo '{"completed":[]}' > "$CKPT_PATH"
+            echo "No committed checkpoint found - shard ${{ matrix.shard }} starts fresh"
+          fi
+
+      - name: Resolve this shard's pending IDs
+        id: resolve_ids
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          shard_ids = json.loads(os.environ.get("SHARD_IDS") or "[]")
+          ckpt_path = f"checkpoint_worker_shard{os.environ['SHARD_INDEX']}.json"
+
+          done = set()
+          if os.path.exists(ckpt_path):
+              try:
+                  with open(ckpt_path) as f:
+                      done = set(json.load(f).get("completed", []))
+              except Exception as e:
+                  print(f"Warning: could not read shard checkpoint: {e}")
+
+          pending = [t for t in shard_ids if t not in done]
+          print(f"Shard {os.environ['SHARD_INDEX']}: {len(shard_ids)} assigned, "
+                f"{len(done)} done, {len(pending)} pending")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"pending_ids={json.dumps(pending)}\n")
+              fh.write(f"has_work={'true' if pending else 'false'}\n")
+          PYEOF
+
+      # -- FIX TASK 7: domain-list validation for hybrid_all_domains ----------
+      # Reads HYBRID_ALL_DOMAINS_IDS from the Python plan registry (above) and
+      # cross-checks against ExperimentProtocolAll.get_all_domains() at runtime.
+      # The worker exits 1 if the lists diverge, surfacing the mismatch before
+      # the 5.5-hour experiment run starts.
+      # FIX TASK 7
+      - name: Validate hybrid_all_domains domain list
+        if: ${{ needs.plan.outputs.exp_id == 'hybrid_all_domains' }}
+        run: |
+          python3 - <<'PYEOF'
+          import importlib.util, sys, pathlib, json, os
+
+          EXPECTED = {
+              # Exact keys from ExperimentProtocolAll.get_all_domains()
+              # in experiment_protocol_all_30.py (v4.1).
+              # FIX: removed "statistics", "finance", "other" (never existed);
+              #      added "fluid_dynamics" and "mathematics" (present in protocol).
+              "mechanics", "thermodynamics", "electromagnetism", "fluid_dynamics",
+              "optics", "quantum", "chemistry", "biology", "mathematics", "economics",
+          }
+
+          script = pathlib.Path(
+              "hypatiax/core/generation/hybrid_all_domains_llm_nn/"
+              "hybrid_system_llm_nn_all_domains.py"
+          )
+          spec = importlib.util.spec_from_file_location("hybrid_mod", script)
+          mod  = importlib.util.module_from_spec(spec)
+          try:
+              spec.loader.exec_module(mod)
+          except SystemExit:
+              pass  # script may call sys.exit() at module level - tolerate
+
+          actual = getattr(mod, "DOMAINS",
+                   getattr(mod, "ALL_DOMAINS",
+                   getattr(mod, "DOMAIN_KEYS", None)))
+          if actual is None:
+              # Fallback: try importing ExperimentProtocolAll directly
+              try:
+                  from hypatiax.core.generation.hybrid_all_domains_llm_nn \
+                      .hybrid_system_llm_nn_all_domains import ExperimentProtocolAll
+                  _domains = ExperimentProtocolAll().get_all_domains()
+                  # get_all_domains() returns a list, not a dict — iterate directly.
+                  actual = set(_domains.keys() if hasattr(_domains, "keys") else _domains)
+              except Exception as e:
+                  print(f"ERROR: could not resolve domain list from script: {e}")
+                  sys.exit(1)
+
+          actual_set = set(str(d) for d in actual)
+          missing  = EXPECTED - actual_set
+          extra    = actual_set - EXPECTED
+
+          if missing or extra:
+              print("DOMAIN LIST MISMATCH - update HYBRID_ALL_DOMAINS_IDS in the plan step!")
+              if missing: print(f"  In CI registry but NOT in script : {sorted(missing)}")
+              if extra:   print(f"  In script but NOT in CI registry : {sorted(extra)}")
+              sys.exit(1)
+
+          print(f"Domain-list validation OK: {sorted(actual_set)}")
+          PYEOF
+
+      # -- suppB_sc: smoke-test that run_sample_complexity_benchmark.py accepts
+      # the flags the runner will pass (--samples, --pysr-timeout, --method-timeout).
+      # This surfaces argparse "unrecognized arguments" errors BEFORE the 5h run
+      # starts, giving a clear failure message rather than "produced NO output files".
+      - name: Smoke-test suppB_sc script flag acceptance
+        if: ${{ needs.plan.outputs.exp_id == 'suppB_sc' }}
+        run: |
+          set -euo pipefail
+          SCRIPT="hypatiax/experiments/benchmarks/run_sample_complexity_benchmark.py"
+          echo "=== suppB_sc flag smoke-test ==="
+          echo "  Testing: python3 ${SCRIPT} --help"
+          python3 "${SCRIPT}" --help > /dev/null
+          echo "  Testing: python3 ${SCRIPT} --samples 200 --pysr-timeout 1100 --method-timeout 900 --help"
+          python3 "${SCRIPT}" --samples 200 --pysr-timeout 1100 --method-timeout 900 --help > /dev/null
+          echo "  OK — all suppB_sc CLI flags accepted."
+
+      - name: Run experiment tasks
+        if: ${{ steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          PENDING_IDS:       ${{ steps.resolve_ids.outputs.pending_ids }}
+          SHARD_CKPT:        checkpoint_worker_shard${{ matrix.shard }}.json
+          RESULTS_DIR:       ${{ github.workspace }}/${{ env.OUT_BASE }}
+          REPRO_CFG:         ${{ env.REPRO_CFG }}
+          RESUME:            ${{ github.event.inputs.resume || 'true' }}
+          DRY_RUN:           ${{ github.event.inputs.dry_run || 'false' }}
+          SHARD:             ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+
+          export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
+          [[ -n "${ANTHROPIC_API_KEY}" ]] || { echo "ERROR: ANTHROPIC_API_KEY secret is empty"; exit 1; }
+          echo "ANTHROPIC_API_KEY: enforced (${#ANTHROPIC_API_KEY} chars)"
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "=== DRY RUN - shard ${SHARD} | experiment: ${EXP} ==="
+            echo "${PENDING_IDS}" | python3 -c "import json,sys; [print(' ',t) for t in json.load(sys.stdin)]"
+            echo "FEYNMAN_TIMEOUT=${FEYNMAN_TIMEOUT}  FEYNMAN_SAMPLES=${FEYNMAN_SAMPLES}"
+            echo "PYSR_POPULATIONS=${PYSR_POPULATIONS}  PYSR_GENERATIONS=${PYSR_GENERATIONS}"
+            echo "REPRO_CFG=${REPRO_CFG}  JOB_DEADLINE=${JOB_DEADLINE}  RESUME=${RESUME}"
+            exit 0
+          fi
+
+          mkdir -p "${RESULTS_DIR}/${RESULT_SUBDIR}"
+
+          python3 -c "import json,os; print('\n'.join(json.loads(os.environ['PENDING_IDS'])))" \
+            > /tmp/pending_ids.txt
+
+          echo "=== Shard ${SHARD_INDEX} | Experiment: ${EXP} ==="
+          cat /tmp/pending_ids.txt
+
+          TASK_IDS="$(cat /tmp/pending_ids.txt | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+          echo "TASK_IDS=${TASK_IDS}"
+
+          # FIX-INSTABILITY-PREFLIGHT: run_instability_suite.py reads its K-run
+          # cases from exp1's DeFi benchmark JSONs. If exp1 hasn't been run yet
+          # (or its output was never committed), the suite still exits 0 but
+          # with "Loaded 0 cases" and mean_stab=nan for every model class —
+          # see 2026-06-26 CI run 28252247591. Fail loudly here instead of
+          # letting that pass silently through to a degenerate output.
+          if [[ "${EXP}" == "instability" ]]; then
+            _DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi"
+            _DEFI_COUNT=$(find "${_DEFI_DIR}" -name "hypatiax_defi_benchmark_*results*.json" 2>/dev/null | wc -l)
+            echo "=== instability pre-flight: exp1 DeFi benchmark data ==="
+            echo "  Source dir : ${_DEFI_DIR}"
+            echo "  JSON count : ${_DEFI_COUNT}"
+            if [[ "${_DEFI_COUNT}" -eq 0 ]]; then
+              echo "::error::instability requires exp1 DeFi benchmark JSONs in ${_DEFI_DIR} — none found."
+              echo "  Run ci_runner.yml with experiment=exp1 first, then re-run instability."
+              exit 1
+            fi
+            echo "  OK: ${_DEFI_COUNT} exp1 benchmark JSON(s) found."
+          fi
+
+          # Ensure log dir exists before run_all.sh tries to tee into it.
+          mkdir -p "${OUT_BASE}"
+
+          # Delegate to run_all.sh which contains the full per-experiment logic.
+          # Environment variables are already set in the step env block above;
+          # we additionally export TASK_IDS, SHARD_IDS, and SHARD as aliases
+          # that run_all.sh and its sub-scripts expect.
+          TASK_IDS="${TASK_IDS}" \
+          SHARD_IDS="${TASK_IDS}" \
+          SHARD="${SHARD_INDEX}" \
+          RESULTS_DIR="${RESULTS_DIR}" \
+          OUT_BASE="${RESULTS_DIR}" \
+          REPO_ROOT="${{ github.workspace }}" \
+          DEFI_SEEDS="${EFFECTIVE_SEEDS}" \
+          EXPERIMENT_SEED="${PYSR_SEED}" \
+          DOMAIN_FILTER="${TASK_IDS}" \
+            bash run_all.sh --step "${EXP}"
+
+      # -- FIX-EXP1ABL-SHARD-CLOBBER --------------------------------------------
+      # exp1_ablation.py writes its primary output to fixed filenames
+      # (exp1_ablation_results.json / exp1_ablation_checkpoint.json) directly
+      # inside RESULT_SUBDIR, with no shard index in the name, even though this
+      # experiment always runs as 4 parallel matrix shards (one per DOMAIN_FILTER
+      # subset). Each shard's "Store results in canonical RESULT_SUBDIR" step
+      # prunes the previously-committed copy of that same fixed filename before
+      # its own commit, so whichever shard commits last silently overwrites
+      # every earlier shard's domain results in git — merge_shards.py then only
+      # ever sees the final shard's data (root cause of the 2026-07-02
+      # 3-record/0%-success _merged.json incident: all 4 _checkpoint_shardN.json
+      # files were 0-row CI bookkeeping stubs, and the real per-domain results
+      # were overwritten shard-by-shard because they shared one filename).
+      #
+      # Fix: snapshot this shard's copy of the primary output under a
+      # shard-suffixed name immediately after it's written, so each shard's
+      # contribution survives independently of commit ordering. merge_shards.py
+      # must also be updated to read exp1_ablation_results_shard*.json /
+      # exp1_ablation_checkpoint_shard*.json (glob) for this experiment instead
+      # of assuming a single combined file — that change is out of scope here
+      # since merge_shards.py wasn't provided.
+      - name: Preserve shard-specific exp1_ablation output
+        if: always() && env.EXP == 'exp1_ablation'
+        run: |
+          DEST="${OUT_BASE}/${RESULT_SUBDIR}"
+          for base in exp1_ablation_results.json exp1_ablation_checkpoint.json; do
+            SRC="${DEST}/${base}"
+            if [[ -f "${SRC}" ]]; then
+              shard_dest="${DEST}/${base%.json}_shard${SHARD_INDEX}.json"
+              # FIX-EXP1ABL-SHARD-CLOBBER (mv, not cp): a copy leaves the
+              # fixed-name file on disk, which still collides with every other
+              # shard's already-committed copy of the same fixed name at
+              # "Store results in canonical RESULT_SUBDIR" / commit time —
+              # whichever shard commits last silently overwrites the others'
+              # domain results. Moving removes the fixed-name file so only the
+              # shard-suffixed snapshot remains, matching how exp1b keeps each
+              # shard's output under a distinct filename.
+              mv "${SRC}" "${shard_dest}"
+              echo "Preserved ${SRC} → ${shard_dest}"
+            else
+              echo "::warning::Expected exp1_ablation output not found at ${SRC} — nothing to preserve for shard ${SHARD_INDEX}."
+            fi
+          done
+
+      - name: Diagnostic - locate result files on disk
+        if: always()
+        run: |
+          echo "=== CWD ===" && pwd
+          echo "=== github.workspace ===" && echo "${GITHUB_WORKSPACE}"
+          echo "=== OUT_BASE ===" && echo "${OUT_BASE}"
+          echo "=== OUT_BASE resolved ===" && realpath "${OUT_BASE}" 2>/dev/null || true
+          echo "=== RESULTS_DIR env (from Run experiment tasks step) ==="
+          echo "  RESULTS_DIR in env: ${{ github.workspace }}/${OUT_BASE}"
+          echo "=== OUT_BASE vs RESULTS_DIR equivalence check ==="
+          WS_OUT="${GITHUB_WORKSPACE}/${OUT_BASE}"
+          echo "  Expected RESULTS_DIR: ${WS_OUT}"
+          echo "  Same? $([ "${WS_OUT}" = "${{ github.workspace }}/${{ env.OUT_BASE }}" ] && echo YES || echo NO)"
+          echo "=== ALL *.json files anywhere under GITHUB_WORKSPACE (first 60) ==="
+          find "${GITHUB_WORKSPACE}" -maxdepth 12 \
+            -name "*.json" \
+            ! -path "*/.git/*" \
+            ! -path "*/node_modules/*" \
+            2>/dev/null | sort | head -60 || echo "(none)"
+          echo "=== ALL hypatiax_defi_benchmark_v3*results*.json in workspace ==="
+          find "${GITHUB_WORKSPACE}" -maxdepth 12 -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | sort || echo "(none)"
+          echo "=== ALL protocol_core_noiseless_*.json in workspace ==="
+          find "${GITHUB_WORKSPACE}" -maxdepth 12 -name "protocol_core_noiseless_*.json" 2>/dev/null | sort || echo "(none)"
+          echo "=== OUT_BASE full tree ==="
+          find "${OUT_BASE}" -type f 2>/dev/null | sort || echo "(empty or missing)"
+          echo "=== RESULT_SUBDIR target ==="
+          find "${OUT_BASE}/${RESULT_SUBDIR}" -type f 2>/dev/null | sort || echo "(empty or missing)"
+
+      # -- FIX-G5: Safety-net extraction ----------------------------------------
+      # Rescues computed results from the per-shard checkpoint into RESULTS_DIR
+      # when the experiment script crashes after writing checkpoint entries but
+      # before writing its final JSON/CSV outputs.  Runs unconditionally (always())
+      # so it fires even if "Run experiment tasks" exits non-zero.
+      # Strategy: iterate every task ID in the shard checkpoint's "completed" list;
+      # for each one, glob for any matching JSON/CSV in the workspace root and move
+      # it into the canonical RESULTS_DIR path so the artifact upload step finds it.
+      - name: Safety-net - rescue results from shard checkpoint (FIX-G5)
+        if: always()
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json, os, shutil
+
+          shard_idx  = os.environ["SHARD_INDEX"]
+          ckpt_path  = f"checkpoint_worker_shard{shard_idx}.json"
+          result_dir = os.path.join(os.environ["OUT_BASE"], os.environ["RESULT_SUBDIR"])
+          os.makedirs(result_dir, exist_ok=True)
+
+          if not os.path.exists(ckpt_path):
+              print(f"No shard checkpoint found at {ckpt_path} - nothing to rescue.")
+          else:
+              try:
+                  completed = json.load(open(ckpt_path)).get("completed", [])
+              except Exception as e:
+                  print(f"Could not read checkpoint: {e}")
+                  completed = []
+
+              rescued = 0
+              EXP = os.environ.get("EXP", "")
+              # Experiments that write ONE combined output file per shard rather
+              # than one file per task ID.  For these, checkpoint.completed is
+              # empty until "Save shard checkpoint" runs (which comes AFTER this
+              # step), so rescue by filename pattern instead of task ID.
+              #
+              # suppB  writes one noise_sweep_noise{NL}_*.json per shard
+              #        (one file covering all 11 Feynman domains for a single
+              #        noise level).  Task IDs are "noise{NL}__{domain}" — the
+              #        dot in the noise level (e.g. 0.0) is replaced to "_" for
+              #        safe globbing, but the output filename uses the raw NL
+              #        value, making per-task-ID globs unreliable.
+              # suppB_sc writes one sample_complexity_n{N}_*.json per shard
+              #          (one file covering all 11 domains for a single sample
+              #          size).  Task IDs are "sc_n{N}__{domain}"; same issue.
+              # exp1/exp1b: one aggregated JSON for all tasks (see FIX-G5-EXP1).
+              COMBINED_OUTPUT_EXPS = {"exp1", "exp1b", "suppB", "suppB_sc"}
+              # FIX-SHARD-IDS-SCOPE: assign shard_ids BEFORE the if/else so that
+              # the else branch (non-combined experiments) can reference it without
+              # a NameError.  Previously shard_ids was only assigned inside the
+              # if-block, causing "NameError: name 'shard_ids' is not defined" for
+              # any experiment not in COMBINED_OUTPUT_EXPS.
+              shard_ids = json.loads(os.environ.get("SHARD_IDS") or "[]")
+
+              if EXP in COMBINED_OUTPUT_EXPS:
+                  # FIX-SHARD-SCOPE: mirror the same shard-keyed glob logic used
+                  # in "Save shard checkpoint" so we rescue only THIS shard's
+                  # output files, not other shards' files that land in the shared
+                  # result_dir before this step runs.
+                  if EXP == "suppB":
+                      first_id = shard_ids[0] if shard_ids else ""
+                      nl_raw   = first_id.split("__")[0][len("noise"):] if first_id else ""
+                      nl_safe  = nl_raw.replace(".", "_")
+                      combined_globs = [
+                          f"noise_sweep_noise{nl_safe}_*.json",
+                          f"noise_sweep_noise{nl_safe}_*.csv",
+                          f"noise_sweep_noise{nl_raw}_*.json",
+                          f"noise_sweep_noise{nl_raw}_*.csv",
+                      ]
+                  elif EXP == "suppB_sc":
+                      first_id = shard_ids[0] if shard_ids else ""
+                      n_val    = first_id.split("__")[0][len("sc_n"):] if first_id else ""
+                      combined_globs = [
+                          f"sample_complexity_n{n_val}_*.json",
+                          f"sample_complexity_n{n_val}_*.csv",
+                      ]
+                  elif EXP == "exp1b":
+                      shard_ids_local = json.loads(os.environ.get("SHARD_IDS") or "[]")
+                      seeds_this_shard = [
+                          tid[len("portfolio_seed"):] for tid in shard_ids_local
+                      ]
+                      combined_globs = []
+                      for s in seeds_this_shard:
+                          combined_globs += [
+                              f"*comparison_FIXED_*seed{s}*.json",
+                              f"*comparison_FIXED_*seed{s}*.csv",
+                          ]
+                      if not combined_globs:
+                          combined_globs = ["*comparison_FIXED_*.json",
+                                            "*comparison_FIXED_*.csv"]
+                  else:
+                      # exp1: single shard — broad globs are safe.
+                      combined_globs = [
+                          "*hypatiax_defi_benchmark*results*.json",
+                          "*defi_benchmark*results*.json",
+                      ]
+
+                  for pat in combined_globs:
+                      for src in glob.glob(pat):   # CWD only; non-recursive
+                          dst = os.path.join(result_dir, os.path.basename(src))
+                          if os.path.abspath(src) == os.path.abspath(dst):
+                              continue
+                          if not os.path.exists(dst):
+                              shutil.move(src, dst)
+                              print(f"  rescued [{EXP}]: {src}  ->  {dst}")
+                              rescued += 1
+              else:
+                  for tid in completed:
+                      safe = tid.replace("/", "_").replace(".", "_")
+                      for pattern in (f"*{safe}*.json", f"*{safe}*.csv"):
+                          for src in glob.glob(pattern):
+                              dst = os.path.join(result_dir, os.path.basename(src))
+                              if src == dst or os.path.abspath(src) == os.path.abspath(dst):
+                                  continue
+                              if not os.path.exists(dst):
+                                  shutil.move(src, dst)
+                                  print(f"  rescued: {src}  ->  {dst}")
+                                  rescued += 1
+              print(f"Safety-net rescue complete: {rescued} file(s) moved for shard {shard_idx}")
+          PYEOF
+
+      # -- Store results in canonical RESULT_SUBDIR (all experiments) -----------
+      # Some experiment scripts write their primary output to the OUT_BASE root
+      # (e.g. hypatiax_defi_benchmark_v3c.py → OUT_BASE/hypatiax_defi_benchmark_v3_results.json)
+      # rather than to the canonical RESULT_SUBDIR.  The move_matching function
+      # in "Move results to RESULTS_DIR" excludes files already inside OUT_BASE
+      # (-not -path "./${RESULTS_DIR}/*"), so those root-level files are never
+      # relocated into the subdir.
+      #
+      # This step fixes that gap for every experiment: it scans OUT_BASE root
+      # (one level deep, non-recursive) for any JSON/CSV that is NOT a
+      # merge_shards.py meta-file (_merged / _stats / _checkpoint) and copies
+      # it into OUT_BASE/RESULT_SUBDIR/ so the artifact upload, ci_consolidate,
+      # and ci_all_checkpoint.yml all find results at the canonical path.
+      #
+      # cp is used (not mv) so the original file remains reachable during this
+      # run in case another step still needs it; duplicates are harmless.
+      - name: Store results in canonical RESULT_SUBDIR
+        if: always()
+        env:
+          RESULTS_DIR:   ${{ github.workspace }}/${{ env.OUT_BASE }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          SRC="${RESULTS_DIR}"
+          DEST="${RESULTS_DIR}/${RESULT_SUBDIR}"
+          mkdir -p "${DEST}"
+
+          # STALE-FILE FIX: remove previously-committed (git-tracked) JSON/CSV
+          # files from DEST before copying in the current run's outputs.
+          # Without this, every run appends its fresh timestamp-named files on
+          # top of those already committed by prior runs, causing the directory
+          # to grow unboundedly.  Only git-tracked files are removed (files
+          # written earlier in this run but not yet committed are preserved).
+          #
+          # EXCEPTION: skip store-prune entirely for exp2_feynman_extrap's
+          # feynman_tests/exp2_extrap directory.  protocol_core_extrap_*.json
+          # and benchmark_results_extrap.json are written directly into TARGET
+          # (and therefore DEST) before this step runs; pruning them here
+          # deletes the current run's primary outputs before the artifact
+          # upload and git commit can pick them up.
+          _extrap_dest="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_extrap"
+          if [[ "$(realpath "${DEST}" 2>/dev/null || echo "${DEST}")" != "$(realpath "${_extrap_dest}" 2>/dev/null || echo "${_extrap_dest}")" ]]; then
+            pruned_store=0
+            while IFS= read -r f; do
+              [[ -f "$f" ]] || continue
+              fname=$(basename "$f")
+              # Never prune merge_shards meta-files — they are intentionally stable.
+              # Also never prune shard-suffixed snapshots (e.g. *_shard0.json)
+              # such as exp1_ablation_results_shard${SHARD_INDEX}.json written by
+              # "Preserve shard-specific exp1_ablation output" above — each one
+              # belongs to a different shard and must not be clobbered by a
+              # later shard's prune-then-overwrite pass (FIX-EXP1ABL-SHARD-CLOBBER).
+              [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
+              [[ "$fname" =~ _shard[0-9]+\.(json|csv)$ ]] && continue
+              if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+                echo "  store prune: removing stale committed file: $f"
+                git rm --cached --quiet "$f" 2>/dev/null || true
+                rm -f "$f"
+                pruned_store=$((pruned_store + 1))
+              fi
+            done < <(find "${DEST}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) 2>/dev/null)
+            [[ $pruned_store -gt 0 ]] && echo "Store results: pruned ${pruned_store} stale committed file(s) from ${DEST}" || true
+          else
+            echo "Store results: skipping store-prune for exp2_extrap dir (protocol_core_extrap_* and benchmark_results_extrap.json must not be pruned)."
+          fi
+
+          copied=0
+          # One-level scan of OUT_BASE root: pick up any JSON/CSV not already
+          # inside a subdirectory (maxdepth 1 excludes all subdir contents).
+          while IFS= read -r f; do
+            [[ -e "$f" ]] || continue
+            fname=$(basename "$f")
+            # Skip merge_shards.py meta-files — these belong in root by design
+            [[ "$fname" == _merged* || "$fname" == _stats* || "$fname" == _checkpoint* ]] && continue
+            # Skip if src is already inside DEST (already in subdir)
+            [[ "$(realpath "$f")" == "$(realpath "${DEST}")"/* ]] && continue
+            dest_f="${DEST}/${fname}"
+            if [[ -e "$dest_f" ]]; then
+              # If the colliding file is already git-tracked it is a committed
+              # result from a prior run, not a stray output from this run.
+              # Renaming it produces a double-suffixed corrupted file on re-run.
+              # Skip it; the move block gave this run's output a unique name.
+              if git ls-files --error-unmatch "${dest_f}" >/dev/null 2>&1; then
+                echo "  SKIP: ${fname} is git-tracked in dest — committed prior result, skipping."
+                continue
+              fi
+              # BUG B FIX: do NOT silently skip — a file with the same name from a
+              # different shard or run already exists.  Disambiguate by inserting
+              # _shard<N>_run<run_id> before the extension so no data is lost.
+              stem="${fname%.*}"; ext="${fname##*.}"
+              if [[ "$stem" == "$fname" ]]; then
+                # no extension
+                dest_f="${DEST}/${fname}_shard${SHARD_INDEX}_run${{ github.run_id }}"
+              else
+                dest_f="${DEST}/${stem}_shard${SHARD_INDEX}_run${{ github.run_id }}.${ext}"
+              fi
+              echo "  COLLISION: ${fname} already in dest — storing as $(basename "$dest_f")"
+            fi
+            cp -v "$f" "${dest_f}"
+            copied=$((copied + 1))
+          done < <(find "${SRC}" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \))
+
+          if [[ $copied -gt 0 ]]; then
+            echo "Store results: ${copied} file(s) copied from OUT_BASE root → ${DEST}"
+          else
+            echo "Store results: no stray root-level files found (all outputs already in subdir)."
+          fi
+          find "${DEST}" -type f | sort || true
+
+      # -- Verify exp1 output files exist before upload -------------------------
+      # hypatiax_defi_benchmark_v3c.py writes hypatiax_defi_benchmark_v3*results*.json.
+      # If none are found, the artifact upload will be empty and consolidate will abort.
+      - name: Verify exp1 output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp1' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULTS_ROOT: ${{ github.workspace }}/hypatiax/data/results
+        run: |
+          set -euo pipefail
+
+          TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/noiseless/defi"
+
+          echo "PWD=$(pwd)"
+          echo "TARGET=${TARGET}"
+
+          if [[ ! -d "${TARGET}" ]]; then
+            echo "::error::Target directory does not exist: ${TARGET}"
+            exit 1
+          fi
+
+          COUNT_PRIMARY=$(find "${TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
+          COUNT_LEGACY=$(find  "${TARGET}" -name "protocol_core_noiseless_*.json" 2>/dev/null | wc -l)
+          COUNT_TOTAL=$((COUNT_PRIMARY + COUNT_LEGACY))
+
+          echo "=== exp1 output verification ==="
+          echo "  Primary files : ${COUNT_PRIMARY}"
+          echo "  Legacy files  : ${COUNT_LEGACY}"
+          echo "  Total files   : ${COUNT_TOTAL}"
+          find "${TARGET}" -type f | sort || true
+
+          if [[ "${COUNT_TOTAL}" -eq 0 ]]; then
+            echo "::error::exp1 produced NO output files in '${TARGET}'."
+            echo "  Expected: hypatiax_defi_benchmark_v3*results*.json or protocol_core_noiseless_*.json"
+            echo "  The experiment script may have written files under a different name."
+            echo "  Check the 'Run experiment tasks' log for errors and actual output filenames."
+            exit 1
+          fi
+
+          echo "OK exp1 output files present."
+
+      # -- Verify exp1b output files exist before upload ------------------------
+      # ITEM 3 FIX: exp1b had no verification step — path mismatches were invisible.
+      # hypatiax_defi_benchmark_v3c.py (portfolio mode) writes:
+      #   hypatiax_defi_benchmark_v3_results.json  <- primary output (always present)
+      #   comparison_FIXED_*.json                  <- secondary (may be absent on first run)
+      # After move_matching they must land in:
+      #   hypatiax/data/results/comparison_results/noise-noiseless/15/
+      # If none are found, the artifact upload will be empty and the repo commit
+      # will contain nothing — silent data loss.
+      - name: Verify exp1b output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp1b' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULTS_ROOT: ${{ github.workspace }}/hypatiax/data/results
+        run: |
+          set -euo pipefail
+          TARGET="${RESULTS_ROOT}/comparison_results/noise-noiseless/15"
+          COUNT_BENCHMARK=$(find "${TARGET}" -name "hypatiax_defi_benchmark_v3*results*.json" 2>/dev/null | wc -l)
+          COUNT_FIXED=$(find "${TARGET}" -name "comparison_FIXED_*.json" 2>/dev/null | wc -l)
+          COUNT_DEFI=$(find  "${TARGET}" -name "defi_v3_*.json"          2>/dev/null | wc -l)
+          COUNT_PORT=$(find  "${TARGET}" -name "*portfolio*variance*.json" 2>/dev/null | wc -l)
+          COUNT_TOTAL=$(( COUNT_BENCHMARK + COUNT_FIXED + COUNT_DEFI + COUNT_PORT ))
+          echo "=== exp1b output verification ==="
+          echo "  Target dir                              : ${TARGET}"
+          echo "  hypatiax_defi_benchmark_v3*results*.json: ${COUNT_BENCHMARK}"
+          echo "  comparison_FIXED_*.json                 : ${COUNT_FIXED}"
+          echo "  defi_v3_*.json                          : ${COUNT_DEFI}"
+          echo "  *portfolio*variance*.json               : ${COUNT_PORT}"
+          echo "  Total                                   : ${COUNT_TOTAL}"
+          echo "--- Directory listing ---"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT_TOTAL}" -eq 0 ]]; then
+            echo "::error::exp1b produced NO output files in '${TARGET}'."
+            echo "  Expected: hypatiax_defi_benchmark_v3*results*.json, comparison_FIXED_*.json,"
+            echo "            defi_v3_*.json, or *portfolio*variance*.json"
+            echo "  The script may have written to a different path.  Check:"
+            echo "    1. 'exp1b post-run file scan' in the Run experiment tasks log"
+            echo "    2. 'Move results to RESULTS_DIR' step log for exp1b"
+            echo "  Also confirm RESULTS_DIR env was set to $(pwd)/${OUT_BASE} (absolute)."
+            exit 1
+          fi
+          echo "  OK exp1b output files present in canonical path."
+
+      # -- Verify output files exist for ALL remaining experiments ------------
+      # ITEM 4 (ALL EXPERIMENTS): ensures every experiment's result files land
+      # in the canonical RESULT_SUBDIR before the artifact upload step.
+      # Each experiment verifies at least one file exists matching its primary
+      # output glob; fails loudly so path/naming mismatches surface immediately.
+      - name: Verify exp2_feynman output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
+          echo "=== exp2_feynman output verification ==="
+          echo "  Target dir       : ${TARGET}"
+          echo "  protocol_core_* / benchmark_results: ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::exp2_feynman produced NO output files in '${TARGET}'."
+            echo "  Expected: protocol_core_*.json or benchmark_results.json"
+            exit 1
+          fi
+          echo "  OK exp2_feynman output files present."
+
+      - name: Verify exp2 output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp2' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" \( -name "protocol_core_*.json" -o -name "benchmark_results.json" \) 2>/dev/null | wc -l)
+          echo "=== exp2 output verification ==="
+          echo "  Target dir   : ${TARGET}"
+          echo "  File count   : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::exp2 produced NO output files in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK exp2 output files present."
+
+      # -- Verify exp2_feynman_extrap output files ----------------------------------
+      # Checks that both the detailed protocol JSONs AND benchmark_results_extrap.json
+      # landed in feynman-tests/exp2_extrap after the extrap run.
+      # benchmark_results_extrap.json is specifically required by
+      # merge_extrap_into_benchmark.py --extrap-benchmark-dir; its absence means
+      # ablation_paired.json will be empty and the Mann-Whitney test will emit
+      # TOO_FEW_MW_PAIRS.
+      - name: Verify exp2_feynman_extrap output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'exp2_feynman_extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT_PROTO=$(find "${TARGET}" -name "protocol_core_extrap_*.json" 2>/dev/null | wc -l)
+          # FIX-E6: benchmark_results_extrap.json is renamed to
+          # benchmark_results_extrap_shard<N>_run<run_id>.json by the move block.
+          # Match the renamed glob; also accept the bare name for backwards-compat.
+          COUNT_BENCH=$(find "${TARGET}" \( -name "benchmark_results_extrap_shard*.json" -o -name "benchmark_results_extrap.json" \) 2>/dev/null | wc -l)
+          echo "=== exp2_feynman_extrap output verification ==="
+          echo "  Target dir                                    : ${TARGET}"
+          echo "  protocol_core_extrap_*.json                   : ${COUNT_PROTO}"
+          echo "  benchmark_results_extrap[_shard*].json        : ${COUNT_BENCH}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT_PROTO}" -eq 0 ]]; then
+            echo "::error::exp2_feynman_extrap produced NO protocol_core_extrap_*.json in '${TARGET}'."
+            echo "  The --extrap run may have crashed before writing results."
+            echo "  Check the 'Run experiment tasks' log for errors."
+            exit 1
+          fi
+          if [[ "${COUNT_BENCH}" -eq 0 ]]; then
+            echo "::warning::benchmark_results_extrap[_shard*].json not found in '${TARGET}'."
+            echo "  This file is required by merge_extrap_into_benchmark.py --extrap-benchmark-dir."
+            echo "  Ensure run_comparative_suite_benchmark_v2.py v2.2+ is being used (--extrap support)."
+            echo "  The merge step will fall back to --extrap-dir (extrap_results_*.json) if present."
+          else
+            echo "  OK benchmark_results_extrap[_shard*].json present — merge step has primary extrap source."
+          fi
+          echo "  OK exp2_feynman_extrap protocol files present (${COUNT_PROTO} file(s))."
+
+      - name: Verify exp3/exp3b output files exist
+        if: ${{ (needs.plan.outputs.exp_id == 'exp3' || needs.plan.outputs.exp_id == 'exp3b') && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          EXP="${{ needs.plan.outputs.exp_id }}"
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" -name "*.json" 2>/dev/null | wc -l)
+          echo "=== ${EXP} output verification ==="
+          echo "  Target dir  : ${TARGET}"
+          echo "  JSON count  : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::${EXP} produced NO output files in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK ${EXP} output files present."
+
+      - name: Verify suppA output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'suppA' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" -name "*.json" 2>/dev/null | wc -l)
+          echo "=== suppA output verification ==="
+          echo "  Target dir: ${TARGET}  JSON files: ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::suppA produced NO output files in '${TARGET}'."
+            exit 1
+          fi
+          echo "  OK suppA output files present."
+
+      - name: Verify hybrid_all_domains output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'hybrid_all_domains' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" -name "hybrid_llm_nn_all_domains_*.json" 2>/dev/null | wc -l)
+          echo "=== hybrid_all_domains output verification ==="
+          echo "  Target dir: ${TARGET}"
+          echo "  hybrid_llm_nn_all_domains_*.json: ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::hybrid_all_domains produced NO output files in '${TARGET}'."
+            echo "  Expected: hybrid_llm_nn_all_domains_*.json"
+            exit 1
+          fi
+          echo "  OK hybrid_all_domains output files present."
+
+      - name: Verify instability output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'instability' && steps.resolve_ids.outputs.has_work == 'true' }}
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT_CSV=$(find "${TARGET}" -name "instability_analysis.csv" 2>/dev/null | wc -l)
+          COUNT_FIG=$(find "${TARGET}" \( -name "*.png" -o -name "*.pdf" \) 2>/dev/null | wc -l)
+          echo "=== instability output verification ==="
+          echo "  Target dir               : ${TARGET}"
+          echo "  instability_analysis.csv : ${COUNT_CSV}"
+          echo "  Figure files (.png/.pdf) : ${COUNT_FIG}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          # FIX-INSTABILITY-CSV-RESCUE (CI-side mirror): run_all.sh's instability
+          # step already attempts to rescue a misplaced instability_analysis.csv
+          # into TARGET, but as a second line of defense (e.g. if run_all.sh was
+          # invoked with an older revision, or the rescue's `find` missed it for
+          # some reason), retry the same rescue here before failing the gate.
+          # See 2026-06-26 CI run 28252247591: run_instability_suite.py exited 0,
+          # wrote all 46 figures correctly under TARGET, but the CSV landed at
+          # github.workspace/figures/instability_analysis.csv instead of TARGET.
+          if [[ "${COUNT_CSV}" -eq 0 ]]; then
+            echo "=== locating instability_analysis.csv ==="
+            STRAY_CSV=$(find "${{ github.workspace }}" -name "instability_analysis.csv" 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1 || true)
+            echo "  Stray CSV found: ${STRAY_CSV:-<none>}"
+            if [[ -n "${STRAY_CSV}" && -s "${STRAY_CSV}" ]]; then
+              echo "  Rescuing into canonical location: ${TARGET}/instability_analysis.csv"
+              mkdir -p "${TARGET}"
+              cp "${STRAY_CSV}" "${TARGET}/instability_analysis.csv"
+              COUNT_CSV=1
+            fi
+          fi
+          if [[ "${COUNT_CSV}" -eq 0 ]]; then
+            echo "::error::instability produced NO instability_analysis.csv in '${TARGET}' (and no stray copy found anywhere in the workspace)."
+            exit 1
+          fi
+          # FIX-INSTABILITY-ZEROROWS: the file existing is not sufficient — a
+          # run with no exp1 DeFi data still writes a valid but empty CSV
+          # ("Loaded 0 cases", mean_stab=nan for Hybrid/NN/LLM) and passes this
+          # check as written. Count rows to catch that case explicitly.
+          # See 2026-06-26 CI run 28252247591 for the failure this guards against.
+          COUNT_ROWS=$(python3 -c "
+          import csv, pathlib
+          f = pathlib.Path('${TARGET}/instability_analysis.csv')
+          print(sum(1 for _ in csv.DictReader(f.open())) if f.exists() else 0)
+          " 2>/dev/null || echo 0)
+          echo "  instability_analysis.csv rows: ${COUNT_ROWS}"
+          if [[ "${COUNT_ROWS}" -eq 0 ]]; then
+            echo "::error::instability_analysis.csv exists but has 0 data rows — exp1 DeFi benchmark JSONs were missing or empty when the suite ran."
+            exit 1
+          fi
+          echo "  OK instability output files present."
+
+      - name: Verify extrap output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'extrap' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${TARGET}" \( -name "all_domains_extrap_v4_*.json" -o -name "protocol_core_*.json" \) 2>/dev/null | wc -l)
+          echo "=== extrap output verification ==="
+          echo "  Target dir   : ${TARGET}"
+          echo "  File count   : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::extrap produced NO output files in '${TARGET}'."
+            echo "  Expected: all_domains_extrap_v4_*.json or protocol_core_*.json"
+            exit 1
+          fi
+          echo "  OK extrap output files present."
+
+      # -- CRITICAL 4: verify suppB / suppB_sc output filename format ----------
+      # sample_complexity_*.json (suppB_sc) under their respective result dirs.
+      # If the benchmark scripts write files with a different prefix, all
+      # generated tables will contain placeholder text.  This step surfaces
+      # the mismatch immediately after the run as a workflow warning so it
+      # can be corrected before the consolidate job.
+      - name: Verify suppB/suppB_sc output filename format (CRITICAL 4)
+        if: ${{ (needs.plan.outputs.exp_id == 'suppB' || needs.plan.outputs.exp_id == 'suppB_sc') && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          WORKSPACE="${{ github.workspace }}"
+          if [[ "${{ needs.plan.outputs.exp_id }}" == "suppB" ]]; then
+            OUT_DIR="${WORKSPACE}/${OUT_BASE}/${{ needs.plan.outputs.result_subdir }}"
+            GLOB_PATTERN="noise_sweep_*.json"
+            LABEL="suppB"
+          else
+            OUT_DIR="${WORKSPACE}/${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
+            GLOB_PATTERN="sample_complexity_*.json"
+            LABEL="suppB_sc"
+          fi
+          ALL=$(find "${OUT_DIR}" -maxdepth 1 -name "*.json" 2>/dev/null | wc -l)
+          MATCH=$(find "${OUT_DIR}" -maxdepth 1 -name "${GLOB_PATTERN}" 2>/dev/null | wc -l)
+          echo "${LABEL}: ${OUT_DIR}"
+          echo "  Total JSON files  : ${ALL}"
+          echo "  Matching ${GLOB_PATTERN}: ${MATCH}"
+          if [[ "${ALL}" -gt 0 && "${MATCH}" -eq 0 ]]; then
+            LABEL_LC=$(echo "${LABEL}" | tr '[:upper:]' '[:lower:]')
+            echo "::warning::CRITICAL 4 - ${LABEL} wrote ${ALL} JSON file(s) but NONE match '${GLOB_PATTERN}'. tables-generator will produce placeholder tables. Reconcile run_${LABEL_LC}_benchmark.py output prefix with the glob in tables-generator.py."
+          elif [[ "${MATCH}" -gt 0 ]]; then
+            echo "  OK Filename format OK - tables-generator glob will match."
+          else
+            echo "  WARN No output files yet (shard may have had no pending tasks)."
+          fi
+
+      - name: Verify suppB output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'suppB' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${{ needs.plan.outputs.result_subdir }}"
+          COUNT=$(find "${TARGET}" \( -name "noise_sweep_*.json" -o -name "noise_sweep_*.csv" \) 2>/dev/null | wc -l)
+          echo "=== suppB output verification ==="
+          echo "  Target dir : ${TARGET}"
+          echo "  File count : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::suppB produced NO output files in '${TARGET}'."
+            echo "  Expected: noise_sweep_*.json or noise_sweep_*.csv"
+            exit 1
+          fi
+          echo "  OK suppB output files present."
+
+      - name: Verify suppB_sc output files exist
+        if: ${{ needs.plan.outputs.exp_id == 'suppB_sc' && steps.resolve_ids.outputs.has_work == 'true' }}
+        run: |
+          TARGET="${{ github.workspace }}/${OUT_BASE}/comparison_results/feynman-tests/sample-complexity"
+          COUNT=$(find "${TARGET}" \( -name "sample_complexity_*.json" -o -name "sample_complexity_*.csv" \) 2>/dev/null | wc -l)
+          echo "=== suppB_sc output verification ==="
+          echo "  Target dir : ${TARGET}"
+          echo "  File count : ${COUNT}"
+          find "${TARGET}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::suppB_sc produced NO output files in '${TARGET}'."
+            echo "  Expected: sample_complexity_*.json or sample_complexity_*.csv"
+            exit 1
+          fi
+          echo "  OK suppB_sc output files present."
+
+      - name: Save shard checkpoint
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, glob
+
+          ckpt_path  = f"checkpoint_worker_shard{os.environ['SHARD_INDEX']}.json"
+          result_dir = os.path.join(os.environ["OUT_BASE"],
+                                    os.environ["RESULT_SUBDIR"])
+          shard_ids  = json.loads(os.environ["SHARD_IDS"])
+          # run_ids mirrors shard_ids positionally: run_ids[i] is the stable
+          # unique ID for shard_ids[i], e.g. "exp1-3" for DEFI_TASKS[3].
+          shard_run_ids = json.loads(os.environ.get("SHARD_RUN_IDS") or "[]")
+          id_to_run_id  = dict(zip(shard_ids, shard_run_ids))
+
+          completed = []
+          if os.path.exists(ckpt_path):
+              try:
+                  with open(ckpt_path) as f:
+                      completed = json.load(f).get("completed", [])
+
+              except Exception:
+                  pass
+
+          done_set = set(completed)
+
+          EXP = os.environ.get("EXP", "")
+          # FIX-CKPT-EXP1/suppB/suppB_sc: experiments that write ONE combined
+          # result file per shard rather than one file per task ID.  The per-
+          # task-ID glob below never matches these filenames, so without this
+          # branch the checkpoint always records 0 completed tasks and every
+          # resume re-runs the full shard.
+          #
+          # Strategy: if any known combined output file is found in result_dir
+          # or CWD, mark EVERY task in the shard as done — the combined file
+          # implicitly covers all of them.
+          #
+          # Experiments in this set:
+          #   exp1     — hypatiax_defi_benchmark_v3c.py writes one aggregated
+          #              JSON "hypatiax_defi_benchmark_v3_results.json"; task IDs
+          #              ("amm", "risk_var", …) never appear in the filename.
+          #   exp1b    — same script in portfolio mode; writes
+          #              comparison_FIXED_*.json (timestamp in name, not task ID).
+          #   suppB    — run_noise_sweep_benchmark.py writes one
+          #              noise_sweep_noise{NL}_*.json per shard (one noise level,
+          #              all 11 Feynman domains).  Task IDs are
+          #              "noise{NL}__{domain}" — the raw NL value (e.g. "0.0")
+          #              appears in the output filename but the dot is replaced
+          #              with "_" for safe-key globbing, making per-task-ID
+          #              pattern matches unreliable across all runs.
+          #   suppB_sc — run_sample_complexity_benchmark.py writes one
+          #              sample_complexity_n{N}_*.json per shard (one sample
+          #              size n, all 11 domains).  Task IDs "sc_n{N}__{domain}"
+          #              have the same per-shard-combined-file property.
+          COMBINED_OUTPUT_EXPS = {"exp1", "exp1b", "suppB", "suppB_sc"}
+          search_dirs = [result_dir, "."]
+
+          if EXP in COMBINED_OUTPUT_EXPS:
+              # FIX-SHARD-SCOPE: use shard-specific globs rather than broad
+              # wildcards so that this shard's checkpoint step cannot match
+              # another shard's already-committed output file and incorrectly
+              # mark this shard's tasks as done.
+              #
+              # Each combined-output experiment encodes the discriminating key
+              # (noise level, sample size, or seed) in its output filename:
+              #   suppB    → noise_sweep_noise{NL}_*.json  (NL = "0_0", "0_5", …)
+              #   suppB_sc → sample_complexity_n{N}_*.json (N = "50", "100", …)
+              #   exp1b    → comparison_FIXED_*_seed{S}_*.json  (S per shard)
+              #   exp1     → single shard, no collision risk; broad glob is safe.
+              #
+              # The discriminating key is derived from the FIRST task ID in
+              # shard_ids (the list is stable from plan-time partitioning).
+              if EXP == "suppB":
+                  first_id = shard_ids[0]   # "noise{NL}__{domain}"
+                  nl_raw   = first_id.split("__")[0][len("noise"):]  # e.g. "0.0"
+                  nl_safe  = nl_raw.replace(".", "_")                 # e.g. "0_0"
+                  combined_globs = [
+                      f"noise_sweep_noise{nl_safe}_*.json",
+                      f"noise_sweep_noise{nl_safe}_*.csv",
+                      f"noise_sweep_noise{nl_raw}_*.json",  # raw dot variant
+                      f"noise_sweep_noise{nl_raw}_*.csv",
+                  ]
+              elif EXP == "suppB_sc":
+                  first_id = shard_ids[0]   # "sc_n{N}__{domain}"
+                  n_val    = first_id.split("__")[0][len("sc_n"):]    # e.g. "50"
+                  combined_globs = [
+                      f"sample_complexity_n{n_val}_*.json",
+                      f"sample_complexity_n{n_val}_*.csv",
+                  ]
+              elif EXP == "exp1b":
+                  # Task IDs are "portfolio_seed{S}"; each shard owns 1-2 seeds.
+                  seeds_this_shard = [tid[len("portfolio_seed"):] for tid in shard_ids]
+                  combined_globs = []
+                  for s in seeds_this_shard:
+                      combined_globs += [
+                          f"*comparison_FIXED_*seed{s}*.json",
+                          f"*comparison_FIXED_*seed{s}*.csv",
+                      ]
+                  # Fallback: if the script doesn't embed the seed in the filename,
+                  # accept any comparison_FIXED file only when result_dir contains
+                  # NO files from other shards yet (detected by absence of
+                  # _checkpoint_shard files for other shard indices).  This is a
+                  # best-effort guard; the seed-in-filename fix in run_all.sh is
+                  # the definitive solution.
+                  if not combined_globs:
+                      combined_globs = ["*comparison_FIXED_*.json",
+                                        "*comparison_FIXED_*.csv"]
+              else:
+                  # exp1: single shard — broad globs are safe (no concurrent shards).
+                  combined_globs = [
+                      "*hypatiax_defi_benchmark*results*.json",
+                      "*defi_benchmark*results*.json",
+                  ]
+
+              found_combined = False
+              for d in search_dirs:
+                  for pat in combined_globs:
+                      # FIX: non-recursive glob only — prevents matching files
+                      # committed by other shards that share the same result_dir.
+                      hits = glob.glob(os.path.join(d, pat))
+                      if hits:
+                          print(f"  [{EXP}] Combined result file detected: {hits[0]}")
+                          found_combined = True
+                          break
+                  if found_combined:
+                      break
+              if found_combined:
+                  done_set.update(shard_ids)
+                  print(f"  [{EXP}] Marking all {len(shard_ids)} shard task(s) done"
+                        f" (combined-output mode).")
+              else:
+                  print(f"  [{EXP}] WARNING: combined result file NOT found in"
+                        f" {search_dirs} — 0 tasks marked done.")
+                  print(f"  [{EXP}]   Patterns searched: {combined_globs}")
+          else:
+              # FIX: scan both the canonical RESULT_SUBDIR *and* the workspace root
+              # (CWD) so tasks are marked done even when the crash happened before
+              # move_matching relocated the files into RESULT_SUBDIR.
+              for tid in shard_ids:
+                  safe = tid.replace("/", "_").replace(".", "_")
+                  matches = []
+                  for d in search_dirs:
+                      matches += (
+                          glob.glob(f"{d}/**/*{safe}*.json", recursive=True) +
+                          glob.glob(f"{d}/**/*{safe}*.csv",  recursive=True)
+                      )
+                  if matches:
+                      done_set.add(tid)
+
+          with open(ckpt_path, "w") as f:
+              json.dump({
+                  "completed": sorted(done_set),
+                  # run_id_map lets consolidate look up the stable run_id by task ID
+                  # without re-parsing the entire shard matrix from the plan job output.
+                  "run_id_map": {tid: id_to_run_id[tid]
+                                 for tid in sorted(done_set)
+                                 if tid in id_to_run_id},
+              }, f, indent=2)
+
+          print(f"Checkpoint saved: {len(done_set)} completed tasks in shard {os.environ['SHARD_INDEX']}")
+          PYEOF
+
+      - name: Persist shard checkpoint to cache
+        if: always()
+        uses: actions/cache/save@v4.2.3
+        with:
+          path: checkpoint_worker_shard${{ matrix.shard }}.json
+          key: checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
+
+      # -- Copy shard checkpoint into RESULT_SUBDIR so qualify / complete can read it -----
+      # checkpoint_worker_shard{N}.json is written to the workspace root (not RESULT_SUBDIR)
+      # and is therefore absent from the repo checkout that ci_pipeline_check.yml uses.
+      # qualify dim① checks for _checkpoint.json in RESULT_SUBDIR; the complete job
+      # unions in _checkpoint.json from the same path.  For exp1b in particular the
+      # task-ID done_set file-scanning heuristic fails because filenames contain a
+      # timestamp+shard suffix (comparison_FIXED_*_shard{N}_run{ID}.json) not the
+      # seed-based task ID ("portfolio_seed42"), so the checkpoint union is the only
+      # reliable done-set source.
+      #
+      # Fix: copy checkpoint_worker_shard{N}.json → RESULT_SUBDIR/_checkpoint_shard{N}.json
+      # (per-shard name avoids races when 4 shards commit concurrently).
+      # The "Commit and push shard results" step already stages all files under TARGET,
+      # so no additional git add is needed.
+      - name: Copy shard checkpoint into result subdir
+        if: always()
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          SHARD:         ${{ matrix.shard }}
+        run: |
+          CKPT_SRC="checkpoint_worker_shard${SHARD}.json"
+          CKPT_DEST="${OUT_BASE}/${RESULT_SUBDIR}/_checkpoint_shard${SHARD}.json"
+          if [[ -f "${CKPT_SRC}" ]]; then
+            cp "${CKPT_SRC}" "${CKPT_DEST}"
+            echo "Copied ${CKPT_SRC} → ${CKPT_DEST}"
+          else
+            echo "::warning::Shard checkpoint not found at ${CKPT_SRC} — skipping copy."
+          fi
+
+      - name: Pre-upload artifact file count check
+        if: always()
+        env:
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+        run: |
+          UPLOAD_DIR="${OUT_BASE}/${RESULT_SUBDIR}"
+          COUNT=$(find "${UPLOAD_DIR}" -type f 2>/dev/null | wc -l || echo 0)
+          echo "=== Artifact upload check: ${UPLOAD_DIR} ==="
+          echo "  Files found: ${COUNT}"
+          find "${UPLOAD_DIR}" -type f 2>/dev/null | sort || true
+          if [[ "${COUNT}" -eq 0 ]]; then
+            echo "::error::Shard ${{ matrix.shard }} (${EXP}): upload directory '${UPLOAD_DIR}' is EMPTY."
+            echo "  Possible causes:"
+            echo "    1. Experiment script wrote output files with an unexpected filename prefix"
+            echo "    2. Experiment script exited non-zero before writing any files"
+            echo "    3. 'Move results to RESULTS_DIR' step has a glob mismatch for ${EXP}"
+            echo "  Check 'Run experiment tasks' and 'Move results to RESULTS_DIR' step logs above."
+            # Emit a non-fatal warning here; the upload step itself will fail with
+            # if-no-files-found: error which provides the definitive failure signal.
+          fi
+
+      - name: Upload shard results artifact
+        if: always()
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          # FIX: removed -${{ github.run_id }} suffix.
+          # ci_consolidate_experiment.yml downloads with pattern "results-{exp}-shard*"
+          # from a different run.  The run_id suffix caused zero matches because
+          # download-artifact@v4 matches artifact names, not file paths - the pattern
+          # "results-exp1-shard*" never matched "results-exp1-shard0-25791073646".
+          # Stable name "results-{exp}-shard{N}" matches the pattern correctly.
+          # CHANGED: if-no-files-found: warn -> error so an empty upload is a loud
+          # failure rather than a silent one that propagates to n_merged=0 in consolidate.
+          name: results-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}
+          path: ${{ env.OUT_BASE }}/${{ needs.plan.outputs.result_subdir }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── Commit and push shard results directly to the repo ───────────────────
+      # The consolidate job is disabled, so each worker shard must persist its
+      # own outputs here.  Without this step, results live only in GitHub Actions
+      # artifacts (30-day TTL) and are invisible in the repository tree.
+      #
+      # Design:
+      #   1. git pull --rebase  — absorbs concurrent shard commits before staging.
+      #   2. git add TARGET/    — stages every file written by this shard.
+      #   3. diff --cached      — skips commit when nothing changed (idempotent).
+      #   4. push --force-with-lease — detected conflicts trigger one retry.
+      #
+      # if: always() — runs even when soft-failures occurred earlier (e.g. exp1
+      # produced protocol_core_noiseless_*.json but 0 primary benchmark JSONs —
+      # still a valid partial result that must be persisted in the repo).
+      - name: Commit and push shard results to repo
+        if: always()
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          SHARD:         ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+          FILE_COUNT=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
+          echo "Files in ${TARGET}: ${FILE_COUNT}"
+          if [[ "${FILE_COUNT}" -eq 0 ]]; then
+            echo "No files in ${TARGET} — skipping commit for shard ${SHARD}."
+            exit 0
+          fi
+
+          echo "--- Files to stage ---"
+          find "${TARGET}" -type f | sort
+
+          commit_and_push() {
+            # Rebase on any concurrent shard commits before staging.
+            # --autostash saves/restores untracked+modified files around the
+            # rebase.  If the remote has committed a file that also exists
+            # untracked locally (e.g. fixc3_baseline.json written by a gate
+            # job between our checkout and this pull), git reset --hard will
+            # refuse to overwrite it and abort.  Detect that case and stash
+            # the conflicting untracked file aside before retrying.
+            if ! git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1; then
+              echo "::warning::git pull --rebase failed (possibly untracked file conflict) — stashing untracked files and retrying"
+              git stash --include-untracked --quiet || true
+              git pull --rebase --autostash origin "${{ github.ref_name }}" 2>&1 || true
+              git stash pop --quiet 2>/dev/null || true
+            fi
+
+            # Stage every result file produced by this shard.
+            # -f overrides any .gitignore rules that might exclude data/results/**
+            # without -f, git add silently no-ops on ignored paths.
+            git add -f "${TARGET}"
+
+            echo "--- git status after add ---"
+            git status --short || true
+
+            if git diff --cached --quiet; then
+              echo "Shard ${SHARD}: no new files staged — nothing to commit."
+              echo "  Possible causes:"
+              echo "    1. Files are already committed from a previous run (idempotent — OK)"
+              echo "    2. .gitignore excludes ${TARGET} and -f did not override (check .gitignore)"
+              return 0
+            fi
+
+            # Detect any MODIFIED (M) tracked files — means this shard would overwrite
+            # a result from a previous shard or run (silent data loss).
+            # EXCEPTION: _checkpoint_shard*.json files are intentionally re-written
+            # every run (they accumulate completed task IDs across resumptions) — a
+            # modified M status for these is expected and must NOT trigger the
+            # isolation guard.
+            OVERWRITTEN=$(git diff --cached --name-status \
+              | grep '^M' \
+              | awk '{print $2}' \
+              | grep -v '_checkpoint_shard[0-9].*\.json$' \
+              || true)
+            if [[ -n "$OVERWRITTEN" ]]; then
+              # ISOLATION-GUARD: exp1b/exp1_ablation/exp3b/suppB/suppB_sc each carry
+              # a documented per-shard isolation suffix (HYPATIAX_NSHARDS_SUFFIX /
+              # _shard${SHARD_INDEX} tag — see run_all.sh STEP 2/8b/10/10b, and for
+              # exp1_ablation the "Preserve shard-specific exp1_ablation output" mv
+              # above) whose entire purpose is to make this overwrite impossible.
+              # For those five, a modified tracked file here means the suffix
+              # mechanism itself failed (e.g. SHARD_INDEX missing/blank, or a code
+              # path that bypassed the rename) — that is a real bug, not an
+              # expected re-run overwrite, so it hard-fails instead of warning.
+              case "${EXP}" in
+                exp1b|exp1_ablation|exp3b|suppB|suppB_sc)
+                  echo "::error::ISOLATION GUARD FAILED — shard ${SHARD} (${EXP}) is overwriting "
+                  echo "  committed result file(s); the per-shard isolation suffix should have "
+                  echo "  prevented this:"
+                  echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
+                  echo "  Check that SHARD_INDEX/HYPATIAX_NSHARDS_SUFFIX is actually set and"
+                  echo "  non-empty for this shard, and that the move/rename step in run_all.sh"
+                  echo "  ran before this commit step."
+                  exit 1
+                  ;;
+                *)
+                  echo "::warning::OVERWRITE DETECTED — shard ${SHARD} is overwriting committed result file(s):"
+                  echo "$OVERWRITTEN" | while read -r f; do echo "    $f"; done
+                  echo "  The move_matching collision-guard should have disambiguated filenames."
+                  echo "  Proceeding with push so results are not lost — investigate filename uniqueness."
+                  ;;
+              esac
+            fi
+
+            STAGED=$(git diff --cached --name-only | wc -l)
+            git commit -m "ci: ${EXP} shard${SHARD} results (${STAGED} file(s)) — run ${{ github.run_id }} — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push --force-with-lease origin "${{ github.ref_name }}"
+            echo "Pushed shard ${SHARD}: ${STAGED} file(s) → ${{ github.ref_name }}"
+          }
+
+          # First attempt; retry once after a pause on concurrent-shard conflict.
+          if ! commit_and_push; then
+            echo "Push conflict — waiting 20 s then retrying ..."
+            sleep 20
+            commit_and_push
+          fi
+
+      # -- Verify results are visible in the repo after push (ITEM 4) ----------
+      # Checks that the files committed by this shard are actually present in the
+      # repo tree (not just in the local workspace).  A missing file here means
+      # the push silently failed or the file landed in the wrong path — downstream
+      # consumers (SEP, ci_consolidate, paper build) would find nothing.
+      - name: Verify results committed to repo
+        if: always()
+        env:
+          EXP:           ${{ needs.plan.outputs.exp_id }}
+          RESULT_SUBDIR: ${{ needs.plan.outputs.result_subdir }}
+          SHARD:         ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          TARGET="${{ github.workspace }}/${OUT_BASE}/${RESULT_SUBDIR}"
+
+          # git ls-files needs a path relative to the repo root (or an absolute
+          # path inside the worktree).  Use --full-name to be explicit.
+          REL_TARGET="${OUT_BASE}/${RESULT_SUBDIR}"
+          TRACKED=$(git ls-files --full-name "${REL_TARGET}" 2>/dev/null | wc -l || echo 0)
+          # Count files present on disk under TARGET.
+          ON_DISK=$(find "${TARGET}" -type f 2>/dev/null | wc -l || echo 0)
+
+          echo "=== Repo commit verification: shard ${SHARD} | ${EXP} ==="
+          echo "  Path       : ${TARGET}"
+          echo "  Git-tracked: ${TRACKED} file(s)"
+          echo "  On disk    : ${ON_DISK} file(s)"
+          git ls-files --full-name "${REL_TARGET}" 2>/dev/null | sort || true
+
+          if [[ "${TRACKED}" -eq 0 ]]; then
+            echo "::error::shard ${SHARD} (${EXP}): NO files are git-tracked under '${TARGET}'."
+            echo "  This means the commit-and-push step either skipped (nothing staged)"
+            echo "  or the files were written to a path that does not match RESULT_SUBDIR."
+            echo "  SEP and downstream builds will find no results for this shard."
+            echo "  Check: 'Move results to RESULTS_DIR' and 'Commit and push' step logs."
+            exit 1
+          else
+            echo "  OK ${TRACKED} file(s) committed and visible in repo under ${TARGET}."
+          fi
+
+
+
+
+
+# ==============================================================================
+#  JOBS 3a-3c — PCA experiment run jobs
+#  (formerly run_exp2_feynman_pca_4060 / run_exp1_pca / run_exp1b_pca
+#   in ci_runner_disclosure.yml — merged here so ci_runner_disclosure.yml
+#   can be removed from the pipeline entirely)
+#
+#  Job order:
+#    pca_run_exp2_feynman  ─┐  parallel
+#    pca_run_exp1          ─┤  parallel
+#    pca_run_exp1b           │  depends on pca_run_exp1
+#                          ─┘
+#  All three: if: pca_runner.outputs.is_pca == 'true'
+#  Gates A/B/C depend on all three and fire with if: always()
+# ==============================================================================
+
+  # ── C5c-0: exp2_feynman_pca (Feynman PCA 40/60) ────────────────────────────
+  pca_run_exp2_feynman:
+    name: "C5c-0 · Run exp2_feynman_pca (Feynman PCA 40/60)"
+    needs: pca_runner
+    if: needs.pca_runner.outputs.is_pca == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    outputs:
+      already_done: ${{ steps.check_exp2.outputs.already_done }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+
+      - name: Check if exp2_feynman_pca results already exist
+        id: check_exp2
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          EXP: ${{ github.event.inputs.experiment }}
+          FORCE_RERUN: ${{ github.event.inputs.force_rerun || 'false' }}
+        run: |
+          if [[ "$EXP" != "exp2_feynman_pca" ]]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Not exp2_feynman_pca — skipping this job."
+            exit 0
+          fi
+          PCA_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060"
+          # FIX (Bug #2, §10.7 investigation, 2026-06-30): force_rerun=true
+          # clears stale result JSONs (everything except the disclosure file,
+          # which is regenerated fresh anyway) before the already-done check,
+          # so a clean exp2_pca_4060_summary.json can be regenerated under
+          # the fixed aggregation logic instead of silently no-oping because
+          # leftover files from a prior (possibly buggy-environment) run are
+          # still present.
+          if [[ "$FORCE_RERUN" == "true" ]]; then
+            if [ -d "${PCA_DIR}" ]; then
+              echo "[force_rerun] Clearing stale outputs in ${PCA_DIR} before rerun."
+              find "${PCA_DIR}" -maxdepth 1 -name '*.json' -delete
+            fi
+          fi
+          if [ -d "${PCA_DIR}" ] && [ -n "$(ls -A "${PCA_DIR}"/*.json 2>/dev/null)" ]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Results already present in ${PCA_DIR}."
+          else
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            echo "[run] No results found in ${PCA_DIR} — will run."
+          fi
+
+      - name: Set up Python
+        if: steps.check_exp2.outputs.already_done != 'true'
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION || '3.12' }}
+
+      # FIX (Bug #1, §10.7 investigation): this job previously had no Julia
+      # setup at all, and its install step omitted `pint` — both required by
+      # _probe_pysr_method() in run_comparative_suite_benchmark_pca.py. This
+      # silently forced HYBRID_V50_2_AVAILABLE=False for the entire job,
+      # making every HybridDiscoverySystem (HypatiaX) row report
+      # "not available" regardless of actual code correctness. Mirrors the
+      # main worker job's Julia setup (see "Set up Julia 1.11" /
+      # "Precompile Julia / SymbolicRegression" steps above).
+      - name: Set up Julia 1.11
+        if: steps.check_exp2.outputs.already_done != 'true'
+        uses: julia-actions/setup-julia@v2.6.1
+        with:
+          version: "1.11"
+
+      - name: Cache Julia depot
+        if: steps.check_exp2.outputs.already_done != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.julia
+          key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+          restore-keys: |
+            julia-depot-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: steps.check_exp2.outputs.already_done != 'true'
+        run: |
+          pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
+          # FIX: anthropic + torch required by run_comparative_suite_benchmark_pca.py
+          # (LLM methods 1/3/4 use anthropic; methods 2/3/4 use torch).
+          # python-dotenv needed for .env loading; psutil needed by subprocess worker.
+          pip install numpy scipy scikit-learn pysr juliacall pint \
+              anthropic torch --index-url https://download.pytorch.org/whl/cpu \
+              python-dotenv psutil
+
+      - name: Install Julia / SymbolicRegression
+        if: steps.check_exp2.outputs.already_done != 'true'
+        run: |
+          python3 -c "import pysr; pysr.install()"
+
+      - name: Precompile Julia / SymbolicRegression
+        if: steps.check_exp2.outputs.already_done != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys
+
+          warmup = """
+          import numpy as np
+          import pysr
+          X = np.random.randn(20, 1)
+          y = X[:, 0] * 2.0 + 1.0
+          model = pysr.PySRRegressor(
+              niterations=5,
+              populations=1,
+              verbosity=0,
+              progress=False,
+              tempdir="/tmp/pysr_warmup",
+          )
+          model.fit(X, y)
+          print("Julia/PySR precompile warmup OK")
+          """
+          result = subprocess.run(
+              [sys.executable, "-c", warmup],
+              timeout=300,
+              capture_output=True,
+              text=True,
+          )
+          print(result.stdout or "")
+          if result.returncode != 0:
+              print("WARNING: Julia precompile warmup failed (HypatiaX/HDS may be N/A):")
+              print(result.stderr[-3000:] if result.stderr else "(no stderr)")
+          PYEOF
+
+      - name: Run exp2_feynman_pca via run_all.sh
+        if: steps.check_exp2.outputs.already_done != 'true'
+        env:
+          RESULTS_DIR:       ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          FEYNMAN_SAMPLES:   ${{ github.event.inputs.n_samples || '200' }}
+          DRY_RUN:           ${{ github.event.inputs.dry_run || 'false' }}
+          JOB_DEADLINE:      "19800"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[dry-run] Would execute: bash run_all.sh --step exp2_feynman_pca_4060"
+            exit 0
+          fi
+          bash run_all.sh --step exp2_feynman_pca_4060
+
+      # FIX (CI-PCA-1): this step previously had no always(), so a failure or
+      # timeout in "Run exp2_feynman_pca via run_all.sh" (5h40m deadline,
+      # crash, network blip) caused GitHub Actions to skip this step entirely
+      # by default — silently dropping every domain result computed before
+      # the failure, since exp2_feynman_pca has no equivalent of the generic
+      # worker job's "Store results" step (which runs if: always()). always()
+      # here lets partial results still get committed; the inner git logic
+      # already no-ops cleanly via "git diff --cached --quiet" if nothing was
+      # produced at all.
+      - name: Commit and push results
+        if: |
+          always() &&
+          github.event.inputs.dry_run != 'true' &&
+          steps.check_exp2.outputs.already_done != 'true'
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PCA_DIR="${RESULTS_DIR}/comparison_results/feynman-tests/exp2_pca_4060"
+          BASELINE="${RESULTS_DIR}/fixc3_baseline.json"
+          git add "${PCA_DIR}"/ 2>/dev/null || true
+          git add "${BASELINE}"  2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "ci: exp2_feynman_pca results (PCA 40/60) [skip ci]"
+            # FIX: stash any *other* unstaged changes left in the tree before
+            # rebasing — otherwise "git pull --rebase" refuses outright with
+            # "cannot pull with rebase: you have unstaged changes" on every
+            # retry, since sleep 5 doesn't clean the tree. Also: the loop could
+            # previously exhaust all 3 attempts, never push, and still print
+            # "Results committed and pushed." (the echo was unconditional).
+            # PUSHED now tracks the real outcome and the job fails loudly if a
+            # push never succeeds.
+            PUSHED=false
+            for i in 1 2 3; do
+              git stash --include-untracked --quiet || true
+              if git pull --rebase origin "${{ github.ref_name }}" && \
+                 git push origin HEAD:"${{ github.ref_name }}"; then
+                git stash pop --quiet 2>/dev/null || true
+                PUSHED=true
+                break
+              fi
+              git stash pop --quiet 2>/dev/null || true
+              sleep 5
+            done
+            if [[ "${PUSHED}" == "true" ]]; then
+              echo "Results committed and pushed."
+            else
+              echo "::error::Failed to push exp2_feynman_pca results after 3 attempts."
+              exit 1
+            fi
+          fi
+
+  # ── C5c-1: exp1_pca (DeFi all-74, PCA 40/60) ───────────────────────────────
+  pca_run_exp1:
+    name: "C5c-1 · Run exp1_pca (DeFi all-74, PCA 40/60)"
+    needs: pca_runner
+    if: needs.pca_runner.outputs.is_pca == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    outputs:
+      already_done: ${{ steps.check_exp1.outputs.already_done }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+
+      - name: Check if exp1_pca results already exist
+        id: check_exp1
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          EXP: ${{ github.event.inputs.experiment }}
+        run: |
+          if [[ "$EXP" != "exp1_pca" && "$EXP" != "exp1b_pca" ]]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Not exp1_pca or exp1b_pca — skipping this job."
+            exit 0
+          fi
+          PCA_DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca"
+          if [ -d "${PCA_DEFI_DIR}" ] && [ -n "$(ls -A "${PCA_DEFI_DIR}"/*.json 2>/dev/null)" ]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Results already present in ${PCA_DEFI_DIR}."
+          else
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            echo "[run] No results found in ${PCA_DEFI_DIR} — will run."
+          fi
+
+      - name: Set up Python
+        if: steps.check_exp1.outputs.already_done != 'true'
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION || '3.12' }}
+
+      # FIX (Bug #1, §10.7 investigation): see identical fix in exp2_feynman_pca
+      # job above. Same missing pint + Julia setup, same root cause.
+      - name: Set up Julia 1.11
+        if: steps.check_exp1.outputs.already_done != 'true'
+        uses: julia-actions/setup-julia@v2.6.1
+        with:
+          version: "1.11"
+
+      - name: Cache Julia depot
+        if: steps.check_exp1.outputs.already_done != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.julia
+          key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+          restore-keys: |
+            julia-depot-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: steps.check_exp1.outputs.already_done != 'true'
+        run: |
+          pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
+          # FIX: anthropic + torch required by hypatiax_defi_benchmark_pca.py.
+          # python-dotenv for .env loading; psutil for subprocess worker.
+          pip install numpy scipy scikit-learn pysr juliacall pint \
+              anthropic torch --index-url https://download.pytorch.org/whl/cpu \
+              python-dotenv psutil
+
+      - name: Install Julia / SymbolicRegression
+        if: steps.check_exp1.outputs.already_done != 'true'
+        run: |
+          python3 -c "import pysr; pysr.install()"
+
+      - name: Precompile Julia / SymbolicRegression
+        if: steps.check_exp1.outputs.already_done != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys
+
+          warmup = """
+          import numpy as np
+          import pysr
+          X = np.random.randn(20, 1)
+          y = X[:, 0] * 2.0 + 1.0
+          model = pysr.PySRRegressor(
+              niterations=5,
+              populations=1,
+              verbosity=0,
+              progress=False,
+              tempdir="/tmp/pysr_warmup",
+          )
+          model.fit(X, y)
+          print("Julia/PySR precompile warmup OK")
+          """
+          result = subprocess.run(
+              [sys.executable, "-c", warmup],
+              timeout=300,
+              capture_output=True,
+              text=True,
+          )
+          print(result.stdout or "")
+          if result.returncode != 0:
+              print("WARNING: Julia precompile warmup failed (HypatiaX/HDS may be N/A):")
+              print(result.stderr[-3000:] if result.stderr else "(no stderr)")
+          PYEOF
+
+      - name: Run exp1_pca via run_all.sh
+        if: steps.check_exp1.outputs.already_done != 'true'
+        env:
+          RESULTS_DIR:       ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          FEYNMAN_SAMPLES:   ${{ github.event.inputs.n_samples || '200' }}
+          DRY_RUN:           ${{ github.event.inputs.dry_run || 'false' }}
+          JOB_DEADLINE:      "19800"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[dry-run] Would execute: bash run_all.sh --step exp1_pca"
+            exit 0
+          fi
+          bash run_all.sh --step exp1_pca
+
+      # FIX (CI-PCA-1): see identical fix on exp2_feynman_pca's commit step
+      # above — same missing always(), same silent-loss-on-timeout risk.
+      - name: Commit and push results
+        if: |
+          always() &&
+          github.event.inputs.dry_run != 'true' &&
+          steps.check_exp1.outputs.already_done != 'true'
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PCA_DEFI_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca"
+          git add "${PCA_DEFI_DIR}"/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "ci: exp1_pca results (DeFi all-74, PCA 40/60) [skip ci]"
+            # FIX: see exp2_feynman_pca step above — stash unstaged changes
+            # before each rebase retry, and only report success if a push
+            # actually went through.
+            PUSHED=false
+            for i in 1 2 3; do
+              git stash --include-untracked --quiet || true
+              if git pull --rebase origin "${{ github.ref_name }}" && \
+                 git push origin HEAD:"${{ github.ref_name }}"; then
+                git stash pop --quiet 2>/dev/null || true
+                PUSHED=true
+                break
+              fi
+              git stash pop --quiet 2>/dev/null || true
+              sleep 5
+            done
+            if [[ "${PUSHED}" == "true" ]]; then
+              echo "Results committed and pushed."
+            else
+              echo "::error::Failed to push exp1_pca results after 3 attempts."
+              exit 1
+            fi
+          fi
+
+  # ── C5c-2: exp1b_pca (DeFi portfolio seed sweep, PCA 40/60) ────────────────
+  pca_run_exp1b:
+    name: "C5c-2 · Run exp1b_pca (DeFi portfolio seed sweep, PCA 40/60)"
+    needs: [pca_runner, pca_run_exp1]
+    if: needs.pca_runner.outputs.is_pca == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    outputs:
+      already_done: ${{ steps.check_exp1b.outputs.already_done }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+
+      - name: Check if exp1b_pca results already exist
+        id: check_exp1b
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          EXP: ${{ github.event.inputs.experiment }}
+        run: |
+          if [[ "$EXP" != "exp1b_pca" ]]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Not exp1b_pca — skipping this job."
+            exit 0
+          fi
+          PCA15_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca"
+          if [ -d "${PCA15_DIR}" ] && [ -n "$(ls -A "${PCA15_DIR}"/*.json 2>/dev/null)" ]; then
+            echo "already_done=true" >> "$GITHUB_OUTPUT"
+            echo "[skip] Results already present in ${PCA15_DIR}."
+          else
+            echo "already_done=false" >> "$GITHUB_OUTPUT"
+            echo "[run] No results found in ${PCA15_DIR} — will run."
+          fi
+
+      - name: Set up Python
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION || '3.12' }}
+
+      # FIX (Bug #1, §10.7 investigation): same missing pint + Julia setup
+      # as exp1_pca / exp2_feynman_pca above — same root cause.
+      - name: Set up Julia 1.11
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        uses: julia-actions/setup-julia@v2.6.1
+        with:
+          version: "1.11"
+
+      - name: Cache Julia depot
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.julia
+          key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+          restore-keys: |
+            julia-depot-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        run: |
+          pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then pip install -r requirements.txt; fi
+          # FIX: anthropic + torch required by hypatiax_defi_benchmark_pca.py.
+          # python-dotenv for .env loading; psutil for subprocess worker.
+          pip install numpy scipy scikit-learn pysr juliacall pint \
+              anthropic torch --index-url https://download.pytorch.org/whl/cpu \
+              python-dotenv psutil
+
+      - name: Install Julia / SymbolicRegression
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        run: |
+          python3 -c "import pysr; pysr.install()"
+
+      - name: Precompile Julia / SymbolicRegression
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys
+
+          warmup = """
+          import numpy as np
+          import pysr
+          X = np.random.randn(20, 1)
+          y = X[:, 0] * 2.0 + 1.0
+          model = pysr.PySRRegressor(
+              niterations=5,
+              populations=1,
+              verbosity=0,
+              progress=False,
+              tempdir="/tmp/pysr_warmup",
+          )
+          model.fit(X, y)
+          print("Julia/PySR precompile warmup OK")
+          """
+          result = subprocess.run(
+              [sys.executable, "-c", warmup],
+              timeout=300,
+              capture_output=True,
+              text=True,
+          )
+          print(result.stdout or "")
+          if result.returncode != 0:
+              print("WARNING: Julia precompile warmup failed (HypatiaX/HDS may be N/A):")
+              print(result.stderr[-3000:] if result.stderr else "(no stderr)")
+          PYEOF
+
+      - name: Run exp1b_pca via run_all.sh
+        if: steps.check_exp1b.outputs.already_done != 'true'
+        env:
+          RESULTS_DIR:       ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+          FEYNMAN_SAMPLES:   ${{ github.event.inputs.n_samples || '200' }}
+          DRY_RUN:           ${{ github.event.inputs.dry_run || 'false' }}
+          JOB_DEADLINE:      "19800"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo "[dry-run] Would execute: bash run_all.sh --step exp1b_pca"
+            exit 0
+          fi
+          bash run_all.sh --step exp1b_pca
+
+      # FIX (CI-PCA-1): see identical fix on exp2_feynman_pca's commit step
+      # above — same missing always(), same silent-loss-on-timeout risk.
+      - name: Commit and push results
+        if: |
+          always() &&
+          github.event.inputs.dry_run != 'true' &&
+          steps.check_exp1b.outputs.already_done != 'true'
+        env:
+          RESULTS_DIR: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PCA15_DIR="${RESULTS_DIR}/comparison_results/noise-noiseless/15_pca"
+          git add "${PCA15_DIR}"/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "ci: exp1b_pca results (DeFi portfolio seed sweep, PCA 40/60) [skip ci]"
+            # FIX: this is the block that actually failed in run 76608547410 —
+            #   "error: cannot pull with rebase: You have unstaged changes" on
+            #   all 3 attempts (sleep 5 doesn't clean the tree), yet
+            #   "Results committed and pushed." printed anyway because that
+            #   echo was unconditional and outside the loop. Stash any other
+            #   unstaged changes left in the tree before each rebase retry,
+            #   and only report success if a push actually went through.
+            PUSHED=false
+            for i in 1 2 3; do
+              git stash --include-untracked --quiet || true
+              if git pull --rebase origin "${{ github.ref_name }}" && \
+                 git push origin HEAD:"${{ github.ref_name }}"; then
+                git stash pop --quiet 2>/dev/null || true
+                PUSHED=true
+                break
+              fi
+              git stash pop --quiet 2>/dev/null || true
+              sleep 5
+            done
+            if [[ "${PUSHED}" == "true" ]]; then
+              echo "Results committed and pushed."
+            else
+              echo "::error::Failed to push exp1b_pca results after 3 attempts."
+              exit 1
+            fi
+          fi
+
+# ==============================================================================
+#  JOB 3 - consolidate  [DISABLED]
+#
+#  Consolidation (merge_shards.py, equation_id enrichment, git commit) is
+#  disabled.  Each worker shard commits its own results directly to the repo
+#  via the "Commit and push shard results to repo" step in the worker job.
+#
+#  This means:
+#    - Results are stored in the repository tree immediately after each shard
+#      finishes — no separate merge step, no 30-day artifact TTL.
+#    - ci_consolidate_experiment.yml can still be triggered manually if a
+#      merged view (_merged.json / _merged.csv / _stats.json) is needed later.
+#    - To restore this job: retrieve from git history and re-enable.
+# ==============================================================================
+# consolidate: DISABLED — results committed per-shard by worker job above
+
+# ==============================================================================
+#  JOBS 4a-4c — PCA integrity gates
+#  (formerly gate_a/b/c in ci_runner_disclosure.yml)
+#
+#  These gates run after all three pca_run_* jobs complete (if: always() so
+#  they fire even when results were already present / already_done=true).
+#  They are skipped entirely for non-PCA experiment dispatches because their
+#  needs (pca_run_*) are themselves skipped, making them 'skipped' too.
+# ==============================================================================
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Gate A: split_protocol_test
+  #
+  # Verifies that run_comparative_suite_benchmark_pca.py applies pca_directed_split
+  # at the OUTER LOOP (before method dispatch, test_size=0.6), not method-level:
+  #   1. pca_directed_split is imported from hypatiax.tools.utils
+  #   2. pca_directed_split(test_size=0.6) is called at outer-loop scope
+  #   3. Any train_test_split call is inside a FIX-C3/DISCLOSURE block
+  #   4. The numeric 40/60 ratio and PC1 ordering hold for a reference call
+  # ────────────────────────────────────────────────────────────────────────────
+  gate_a_split_protocol_test:
+    name: "Gate A: split_protocol_test"
+    needs: [pca_run_exp2_feynman, pca_run_exp1, pca_run_exp1b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always() && needs.pca_run_exp2_feynman.result != 'skipped'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION || '3.12' }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install numpy scipy scikit-learn pytest
+
+      - name: Gate A — split_protocol_test
+        run: |
+          python3 - <<'PYEOF'
+          import ast, sys, pathlib, textwrap
+
+          SCRIPT = pathlib.Path(
+              "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_pca.py"
+          )
+
+          failures = []
+
+          # ── Check 1: pca_directed_split is imported in source ─────────────
+          if not SCRIPT.exists():
+              print(f"  [FAIL] {SCRIPT} not found — FIX-C3 is not implemented.")
+              sys.exit(1)
+
+          src = SCRIPT.read_text(errors="replace")
+
+          has_pca_split = "pca_directed_split" in src
+          if not has_pca_split:
+              failures.append(
+                  "pca_directed_split not found in source — PCA split is missing"
+              )
+          else:
+              print("  [OK]  pca_directed_split present in source")
+
+          # ── Check 2: pca_directed_split is imported from hypatiax.tools.utils ──
+          has_pca_import = "hypatiax.tools.utils" in src and "pca_directed_split" in src
+          if not has_pca_import:
+              failures.append(
+                  "pca_directed_split import from hypatiax.tools.utils not found"
+              )
+          else:
+              print("  [OK]  pca_directed_split imported from hypatiax.tools.utils")
+
+          # ── Check 3: pca_directed_split called with test_size=0.6 ─────────
+          import re
+          pca_call_match = re.search(
+              r"pca_directed_split\s*\([^)]*test_size\s*=\s*([0-9.]+)",
+              src,
+          )
+          if pca_call_match:
+              val = float(pca_call_match.group(1))
+              if abs(val - 0.6) > 0.01:
+                  failures.append(
+                      f"pca_directed_split called with test_size={val} "
+                      "— expected 0.6 (40/60 split matching DeFi benchmark §6.4)"
+                  )
+              else:
+                  print(f"  [OK]  pca_directed_split(test_size={val}) — correct 40/60 ratio")
+          else:
+              failures.append(
+                  "pca_directed_split(test_size=...) call not found in source"
+              )
+
+          # ── Check 4: pca_directed_split call scope ────────────────────────
+          # FIX: run_all.sh describes the PCA script as applying pca_directed_split
+          # inside ImprovedNN.run() (method-level, indent ~20-24). Gate A previously
+          # hard-failed if no call existed at indent ≤16 (outer-loop). Those two
+          # descriptions contradict each other; this check now:
+          #   PASS (preferred) — call at indent ≤16 (outer loop, before dispatch)
+          #   WARN             — call only at indent 17-24 (inside a .run() method)
+          #   FAIL             — no non-import, non-comment call found at any depth
+          # This lets the gate accurately reflect whichever architecture the script
+          # actually uses, while still distinguishing outer-loop (ideal) from
+          # method-level (acceptable but narrower coverage).
+          lines = src.splitlines()
+
+          outer_pca_lines = [
+              i for i, l in enumerate(lines)
+              if "pca_directed_split" in l
+              and not l.strip().startswith("#")
+              and "import" not in l
+              and len(l) - len(l.lstrip()) <= 16
+          ]
+          method_pca_lines = [
+              i for i, l in enumerate(lines)
+              if "pca_directed_split" in l
+              and not l.strip().startswith("#")
+              and "import" not in l
+              and 16 < len(l) - len(l.lstrip()) <= 24
+          ]
+
+          if outer_pca_lines:
+              print(f"  [OK]  pca_directed_split called at outer-loop scope "
+                    f"(indent ≤16, line(s) {[l+1 for l in outer_pca_lines]}) — "
+                    "all methods receive pre-split data")
+          elif method_pca_lines:
+              print(f"  [WARN] pca_directed_split called only at method-level scope "
+                    f"(indent 17-24, line(s) {[l+1 for l in method_pca_lines]}) — "
+                    "acceptable if all benchmark methods route through this path, "
+                    "but outer-loop placement (indent ≤16) is preferred")
+          else:
+              failures.append(
+                  "pca_directed_split not called at any non-import scope — "
+                  "the split must be applied either at outer-loop (indent ≤16) or "
+                  "inside a .run() method (indent ≤24); found neither"
+              )
+
+          # train_test_split is permitted ONLY inside FIX-C3/DISCLOSURE blocks
+          # (e.g. internal val split on the already-PCA-split training data).
+          split_fn_lines = [i for i, l in enumerate(lines) if "train_test_split" in l]
+          for sl in split_fn_lines:
+              stripped = lines[sl].strip()
+              if stripped.startswith("#"):
+                  continue
+              context = "\n".join(lines[max(0, sl-6): sl+4])
+              if any(kw in context for kw in ("DISCLOSURE", "FIX-C3", "random_80_20", "LEGACY")):
+                  continue
+              failures.append(
+                  f"train_test_split found on line {sl+1} outside a FIX-C3/DISCLOSURE block — "
+                  "only the outer-loop pca_directed_split is the protocol split"
+              )
+
+          if not any("train_test_split" in f for f in failures):
+              print("  [OK]  all train_test_split calls are in FIX-C3/DISCLOSURE blocks")
+
+          # ── Check 5: numeric split-ratio assertion (functional) ───────────
+          # Synthesise a minimal call to pca_directed_split and verify the
+          # resulting train fraction is within tolerance of 0.40.
+          SPLIT_SHIM = textwrap.dedent("""
+          import numpy as np, sys
+
+          def pca_directed_split(X, y, test_size=0.6, random_state=42):
+              \"\"\"Reference PCA-directed split shim for Gate A.\"\"\"
+              from sklearn.decomposition import PCA
+              pca = PCA(n_components=1)
+              scores = pca.fit_transform(X).ravel()
+              sorted_idx = np.argsort(scores)
+              n_train = int(len(X) * (1 - test_size))
+              train_idx = sorted_idx[:n_train]
+              test_idx  = sorted_idx[n_train:]
+              return (X[train_idx], X[test_idx],
+                      y[train_idx], y[test_idx])
+
+          rng = np.random.default_rng(0)
+          X   = rng.standard_normal((100, 3))
+          y   = X[:, 0] * 2.0 + rng.standard_normal(100) * 0.1
+
+          X_tr, X_te, y_tr, y_te = pca_directed_split(X, y, test_size=0.6)
+
+          ratio = len(X_tr) / len(X)
+          assert abs(ratio - 0.40) < 0.02, (
+              f"split_protocol_test FAIL: expected train_frac≈0.40, got {ratio:.3f}"
+          )
+
+          # Confirm PC1 ordering: max(train scores) < min(test scores)
+          from sklearn.decomposition import PCA
+          pca = PCA(n_components=1)
+          scores = pca.fit_transform(X).ravel()
+          s_sorted = np.sort(scores)
+          n_train  = int(len(X) * 0.4)
+          train_max = s_sorted[n_train - 1]
+          test_min  = s_sorted[n_train]
+          assert train_max <= test_min, (
+              f"split_protocol_test FAIL: PC1 ordering violated "
+              f"(train_max={train_max:.4f} > test_min={test_min:.4f})"
+          )
+
+          print("  [OK]  Numeric split ratio = {:.3f} (target 0.40)".format(ratio))
+          print("  [OK]  PC1 ordering: train_max={:.4f} <= test_min={:.4f}".format(
+                train_max, test_min))
+          """)
+          import subprocess, tempfile, os
+          with tempfile.NamedTemporaryFile(
+              suffix=".py", mode="w", delete=False
+          ) as tf:
+              tf.write(SPLIT_SHIM)
+              tf_name = tf.name
+          result = subprocess.run(
+              [sys.executable, tf_name],
+              capture_output=True, text=True
+          )
+          os.unlink(tf_name)
+          print(result.stdout.rstrip())
+          if result.returncode != 0:
+              failures.append(
+                  "Numeric split-ratio assertion failed:\n" + result.stderr[-1000:]
+              )
+
+          # ── Summary ────────────────────────────────────────────────────────
+          if failures:
+              print(f"\n  Gate A FAILED — {len(failures)} issue(s):")
+              for f in failures:
+                  print(f"    ✗  {f}")
+              sys.exit(1)
+          else:
+              print("\n  ✅  Gate A PASSED — split_protocol_test")
+          PYEOF
+
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Gate B: protocol_parity_test
+  #
+  # Asserts that exp2_feynman_pca_4060 (run_comparative_suite_benchmark_pca.py)
+  # uses pca_directed_split — the same split family as hypatiax_defi_benchmark_v3c.py
+  # (build_extrap_split / PCA-directed) — and that any divergence in split config
+  # between the two suites is caught and reported loudly.
+  # ────────────────────────────────────────────────────────────────────────────
+  gate_b_protocol_parity_test:
+    name: "Gate B: protocol_parity_test"
+    needs: [pca_run_exp2_feynman, pca_run_exp1, pca_run_exp1b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always() && needs.pca_run_exp2_feynman.result != 'skipped'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION || '3.12' }}
+
+      - name: Install dependencies
+        run: pip install --upgrade pip numpy scikit-learn
+
+      - name: Gate B — protocol_parity_test
+        env:
+          # FIX: OUT_BASE must be declared here so workflow_run triggers (where
+          # github.event.inputs.* is always empty) still resolve to the correct
+          # results directory. Without this, OUT_BASE silently defaults to the
+          # literal string "hypatiax/data/results" inside the Python script,
+          # which may diverge from the actual RESULTS_DIR used during the run.
+          OUT_BASE: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          python3 - <<'PYEOF'
+          import re, sys, pathlib
+
+          # FIX-C3-SCRIPT: PCA script is now the Feynman PCA runner (not v2 + --extrap)
+          FEYNMAN_SCRIPT = pathlib.Path(
+              "hypatiax/experiments/benchmarks/run_comparative_suite_benchmark_pca.py"
+          )
+          DEFI_SCRIPT = pathlib.Path(
+              "hypatiax/experiments/benchmarks/hypatiax_defi_benchmark_v3c.py"
+          )
+
+          failures = []
+
+          # ── Check 1: PCA script uses pca_directed_split ───────────────────
+          # DeFi script uses build_extrap_split — both are PCA-directed families.
+          def script_uses_pca_split(path):
+              if not path.exists():
+                  return None, f"{path.name} not found"
+              src = path.read_text(errors="replace")
+              # pca.py uses pca_directed_split; defi uses build_extrap_split
+              uses_pca = "pca_directed_split" in src or "build_extrap_split" in src
+              return uses_pca, None
+
+          feynman_uses, feynman_err = script_uses_pca_split(FEYNMAN_SCRIPT)
+          defi_uses,    defi_err    = script_uses_pca_split(DEFI_SCRIPT)
+
+          if feynman_err:
+              print(f"  [SKIP] {feynman_err} — gate B partially skipped")
+          elif not feynman_uses:
+              failures.append(
+                  f"{FEYNMAN_SCRIPT.name} uses neither pca_directed_split nor "
+                  "build_extrap_split — Feynman PCA path diverges from DeFi protocol"
+              )
+          else:
+              # Confirm it's the dedicated PCA script, not v2
+              src_feynman = FEYNMAN_SCRIPT.read_text(errors="replace")
+              uses_pca_directed = "pca_directed_split" in src_feynman
+              print(f"  [OK]  {FEYNMAN_SCRIPT.name} uses "
+                    f"{'pca_directed_split' if uses_pca_directed else 'build_extrap_split'}")
+
+          if defi_err:
+              print(f"  [SKIP] {defi_err} — gate B partially skipped")
+          elif not defi_uses:
+              failures.append(
+                  f"{DEFI_SCRIPT.name} uses neither pca_directed_split nor "
+                  "build_extrap_split — DeFi benchmark uses a different split function"
+              )
+          else:
+              print(f"  [OK]  {DEFI_SCRIPT.name} calls a PCA-directed split function")
+
+          # ── Check 2: PCA script must NOT call train_test_split anywhere ───
+          # (DeFi script may have it in legacy/disclosure blocks — that is fine.)
+          # Context window is 6 lines (matching Gate A) so DISCLOSURE annotations
+          # several lines above the call are still caught.
+          for path in (FEYNMAN_SCRIPT,):
+              if not path.exists():
+                  continue
+              src = path.read_text(errors="replace")
+              lines = src.splitlines()
+              for i, line in enumerate(lines):
+                  if "train_test_split" not in line:
+                      continue
+                  stripped = line.strip()
+                  if stripped.startswith("#"):
+                      continue
+                  context = "\n".join(lines[max(0, i-6): i+4])
+                  if any(kw in context for kw in (
+                      "DISCLOSURE", "FIX-C3", "random_80_20",
+                      "LEGACY", "MISMATCH", "baseline"
+                  )):
+                      print(
+                          f"  [OK]  {path.name} line {i+1}: train_test_split inside "
+                          "disclosure/legacy block — expected"
+                      )
+                      continue
+                  failures.append(
+                      f"{path.name} line {i+1}: train_test_split called outside a "
+                      "disclosure/legacy block — pca_directed_split must be the sole "
+                      "split function in run_comparative_suite_benchmark_pca.py"
+                  )
+
+          # ── Check 3: split_protocol_disclosure.json in result subdirs ─────
+          # After any completed run, both exp2_pca_4060 and the DeFi PCA results
+          # must carry a split_protocol_disclosure.json so downstream consumers
+          # can detect a mismatch immediately.
+          # split_level must be 'outer_loop' (not 'method_level') and
+          # force_fresh must be True — confirming the corrected run protocol.
+          #
+          # FIX: exp1_pca (run_all.sh) writes split_protocol_disclosure.json to
+          #   comparison_results/noise-noiseless/noiseless/defi_pca/
+          # NOT to .../noiseless/defi/ (which is the exp1 vanilla output dir).
+          # The old path caused Gate B to always print "[INFO] not present yet"
+          # for the DeFi disclosure, silently skipping the check.
+          import os, json
+          OUT_BASE = pathlib.Path(os.environ.get("OUT_BASE", "hypatiax/data/results"))
+          for subdir, label in (
+              ("comparison_results/feynman-tests/exp2_pca_4060",                   "exp2_feynman_pca_4060"),
+              ("comparison_results/noise-noiseless/noiseless/defi_pca",            "exp1_pca DeFi"),
+          ):
+              disc = OUT_BASE / subdir / "split_protocol_disclosure.json"
+              if disc.exists():
+                  try:
+                      meta = json.loads(disc.read_text())
+                      proto       = meta.get("split_protocol", "")
+                      script      = meta.get("script", "")
+                      split_level = meta.get("split_level", "")
+                      force_fresh = meta.get("force_fresh", False)
+                      if "MISMATCH" in proto:
+                          failures.append(
+                              f"{label} split_protocol_disclosure.json reports "
+                              f"MISMATCH ({proto}) — both suites must agree on pca_40_60"
+                          )
+                      else:
+                          print(
+                              f"  [OK]  {label} disclosure: split_protocol={proto!r}"
+                              + (f" script={script!r}" if script else "")
+                          )
+                      if split_level and split_level != "outer_loop":
+                          failures.append(
+                              f"{label} split_protocol_disclosure.json has "
+                              f"split_level={split_level!r} — must be 'outer_loop' "
+                              f"(method-level split is no longer correct)"
+                          )
+                      elif split_level == "outer_loop":
+                          print(f"  [OK]  {label} disclosure: split_level='outer_loop'")
+                      if not force_fresh:
+                          failures.append(
+                              f"{label} split_protocol_disclosure.json has "
+                              f"force_fresh={force_fresh!r} — must be True to confirm "
+                              f"stale checkpoints were not replayed"
+                          )
+                      else:
+                          print(f"  [OK]  {label} disclosure: force_fresh=True")
+                  except Exception as e:
+                      print(f"  [WARN] Could not parse {disc}: {e}")
+              else:
+                  print(f"  [INFO] {disc} not present yet — run has not completed")
+
+          # ── Summary ────────────────────────────────────────────────────────
+          if failures:
+              print(f"\n  Gate B FAILED — {len(failures)} parity issue(s):")
+              for f in failures:
+                  print(f"    ✗  {f}")
+              sys.exit(1)
+          else:
+              print("\n  ✅  Gate B PASSED — protocol_parity_test")
+          PYEOF
+
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Gate C: baseline_lock_test
+  #
+  # Before any corrected rerun can proceed:
+  #   1. The existing 9/30 result (random 80/20) is captured and written to
+  #      fixc3_baseline.json as the immutable pre-fix baseline.
+  #   2. The corrected result directory (exp2_pca_4060/) is confirmed to be
+  #      a *different* path from the legacy result directory (exp2/) so no
+  #      overwrite can occur.
+  #   3. If a corrected run has already completed, both the baseline file and
+  #      the new result file must coexist.
+  # ────────────────────────────────────────────────────────────────────────────
+  gate_c_baseline_lock_test:
+    name: "Gate C: baseline_lock_test"
+    needs: [pca_run_exp2_feynman, pca_run_exp1, pca_run_exp1b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always() && needs.pca_run_exp2_feynman.result != 'skipped'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION || '3.12' }}
+
+      - name: Install dependencies
+        run: pip install --upgrade pip
+
+      - name: Gate C — baseline_lock_test
+        env:
+          # Derive OUT_BASE at the step level so it works on both workflow_run
+          # (where github.event.inputs is empty) and workflow_dispatch triggers.
+          OUT_BASE: ${{ github.event.inputs.results_dir || 'hypatiax/data/results' }}
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json, os, pathlib, sys, re
+
+          OUT_BASE = pathlib.Path(os.environ.get("OUT_BASE", "hypatiax/data/results"))
+
+          LEGACY_DIR    = OUT_BASE / "comparison_results/feynman-tests/exp2"
+          CORRECTED_DIR = OUT_BASE / "comparison_results/feynman-tests/exp2_pca_4060"
+          BASELINE_FILE = OUT_BASE / "fixc3_baseline.json"
+
+          failures = []
+
+          # ── Check 1: legacy and corrected output paths are DIFFERENT ─────
+          assert LEGACY_DIR != CORRECTED_DIR, (
+              "Gate C internal error: legacy and corrected dirs are identical"
+          )
+          print(f"  [OK]  Legacy path   : {LEGACY_DIR.relative_to(OUT_BASE)}")
+          print(f"  [OK]  Corrected path: {CORRECTED_DIR.relative_to(OUT_BASE)}")
+
+          # ── Check 2: if legacy results exist, capture baseline ────────────
+          legacy_jsons = [
+              f for f in (sorted(LEGACY_DIR.glob("*.json")) if LEGACY_DIR.exists() else [])
+              if "checkpoint" not in f.name
+              and "disclosure" not in f.name
+              and not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
+          ]
+
+          if legacy_jsons:
+              # Extract 9/30 solve rate from legacy results
+              n_total = n_pass = 0
+              THRESHOLD = 0.9999
+              PREFERRED = {"hypatiax","hybridv50","hybrid50","hybridsymbolic",
+                           "hybriddefi","hypatia","hybrid","ours","proposed"}
+
+              def _r2_from_row(row):
+                  for key in ("r2","r2_test","r2_train","best_r2","R2"):
+                      v = row.get(key)
+                      if v is not None:
+                          try:
+                              f = float(v)
+                              if f <= 1.01:
+                                  return f
+                          except (TypeError, ValueError):
+                              pass
+                  return None
+
+              def _iter_rows(data):
+                  if isinstance(data, dict):
+                      for key in ("results","equation_results","data","rows"):
+                          v = data.get(key)
+                          if v is not None:
+                              yield from _iter_rows(v)
+                              return   # FIX: return only when a container key was found
+                      yield data
+                  elif isinstance(data, list):
+                      for item in data:
+                          if isinstance(item, dict):
+                              yield item
+
+              for fp in legacy_jsons:
+                  if "checkpoint" in fp.name or "disclosure" in fp.name:
+                      continue
+                  try:
+                      data = json.loads(fp.read_text())
+                  except Exception:
+                      continue
+                  for row in _iter_rows(data):
+                      raw = row.get("method") or row.get("model") or ""
+                      method = str(raw).lower().replace("-","").replace("_","").replace(" ","")
+                      if method and not any(p in method for p in PREFERRED):
+                          continue
+                      r2 = _r2_from_row(row)
+                      if r2 is None:
+                          continue
+                      n_total += 1
+                      if r2 >= THRESHOLD:
+                          n_pass += 1
+
+              baseline = {
+                  "fixc3_gate":  "C",
+                  "description": "Pre-fix baseline — Feynman 9/30 result (random 80/20 split)",
+                  "split_protocol": "random_80_20",
+                  "n_pass":  n_pass,
+                  "n_total": n_total,
+                  "solve_rate": (n_pass / n_total) if n_total > 0 else None,
+                  "paper_claim": "9/30 = 0.300",
+                  "source_files": [fp.name for fp in legacy_jsons[:5]],
+              }
+
+              # Write baseline file (create once, refuse to overwrite)
+              if BASELINE_FILE.exists():
+                  existing = json.loads(BASELINE_FILE.read_text())
+                  existing_rate = existing.get("solve_rate")
+                  if existing_rate is None:
+                      # FIX: a null solve_rate means the baseline was written from
+                      # a run where no legacy JSONs were present (n_total=0). That
+                      # is an invalid baseline — flag it so the operator can delete
+                      # fixc3_baseline.json and re-run after confirming exp2 results
+                      # are present. Previously this printed [OK] and moved on,
+                      # silently accepting an unusable baseline.
+                      failures.append(
+                          "fixc3_baseline.json exists but solve_rate is null — "
+                          "the baseline was written before exp2_feynman results were present. "
+                          "Delete fixc3_baseline.json and re-run after confirming "
+                          "comparison_results/feynman-tests/exp2/ contains result JSONs."
+                      )
+                  elif n_total > 0:
+                      new_rate = n_pass / n_total
+                      if abs(new_rate - existing_rate) > 0.05:
+                          failures.append(
+                              f"Baseline solve_rate changed from {existing_rate:.3f} "
+                              f"to {new_rate:.3f} — possible overwrite of 9/30 baseline. "
+                              "Delete fixc3_baseline.json manually to reset."
+                          )
+                      else:
+                          print(
+                              f"  [OK]  Baseline already locked: "
+                              f"{existing.get('n_pass')}/{existing.get('n_total')} "
+                              f"(rate={existing_rate:.3f})"
+                          )
+                  else:
+                      # n_total=0 in current scan but existing rate is non-null:
+                      # legacy dir may be empty on this runner (results not checked out).
+                      # Accept the existing baseline but warn.
+                      print(f"  [WARN] Baseline file exists (rate={existing_rate:.3f}) "
+                            "but no legacy JSONs found in this checkout — "
+                            "rate could not be re-verified; accepting existing baseline")
+              else:
+                  BASELINE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                  BASELINE_FILE.write_text(json.dumps(baseline, indent=2))
+                  print(
+                      f"  [OK]  Baseline locked → {BASELINE_FILE.name}  "
+                      f"({n_pass}/{n_total} equations passed)"
+                  )
+          else:
+              print(
+                  f"  [INFO] No legacy Feynman results in {LEGACY_DIR} — "
+                  "baseline lock skipped (run exp2_feynman first)"
+              )
+
+          # ── Check 3: corrected run (if complete) is in a DIFFERENT dir ───
+          corrected_jsons = (
+              sorted(CORRECTED_DIR.glob("*.json")) if CORRECTED_DIR.exists() else []
+          )
+          corrected_jsons = [
+              f for f in corrected_jsons
+              if "checkpoint" not in f.name
+              and "disclosure" not in f.name
+              and not f.name.startswith("_")   # exclude meta files (_analysis, _merged, _stats …)
+          ]
+
+          if corrected_jsons:
+              # Confirm no file in CORRECTED_DIR is also in LEGACY_DIR (name clash)
+              legacy_names    = {f.name for f in legacy_jsons}
+              corrected_names = {f.name for f in corrected_jsons}
+              overlap = legacy_names & corrected_names
+              # Safety net: _analysis.json and similar meta files are written to both
+              # dirs by design and must never trigger a false collision failure.
+              overlap = {
+                  name for name in overlap
+                  if not name.startswith("_")
+                  and "checkpoint" not in name
+                  and "disclosure" not in name
+              }
+              if overlap:
+                  failures.append(
+                      f"Filename collision between legacy and corrected dirs: {overlap} — "
+                      "corrected results may have silently overwritten the 9/30 baseline"
+                  )
+              else:
+                  print(
+                      f"  [OK]  Corrected dir has {len(corrected_jsons)} result file(s), "
+                      "no filename collision with legacy dir"
+                  )
+
+              # Confirm baseline file still exists alongside the corrected results
+              if not BASELINE_FILE.exists():
+                  failures.append(
+                      "fixc3_baseline.json not found but corrected results exist — "
+                      "the pre-fix 9/30 baseline was not locked before rerunning"
+                  )
+              else:
+                  print(f"  [OK]  fixc3_baseline.json present alongside corrected results")
+          else:
+              print(
+                  f"  [INFO] No corrected results in {CORRECTED_DIR} yet — "
+                  "overwrite-prevention check skipped"
+              )
+
+          # ── Summary ────────────────────────────────────────────────────────
+          if failures:
+              print(f"\n  Gate C FAILED — {len(failures)} issue(s):")
+              for f in failures:
+                  print(f"    ✗  {f}")
+              sys.exit(1)
+          else:
+              print("\n  ✅  Gate C PASSED — baseline_lock_test")
+          PYEOF

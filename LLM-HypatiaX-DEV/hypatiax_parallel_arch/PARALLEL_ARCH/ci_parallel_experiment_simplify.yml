@@ -1,0 +1,356 @@
+# ==============================================================================
+#  ci_parallel_experiment_simplify.yml  —  HypatiaX parallel-sharded experiment
+#                                          runner (multi-shard dispatch variant)
+#
+#  PURPOSE
+#  ─────────────────────────────────────────────────────────────────────────────
+#  Wraps ci_experiment_simplify.yml for experiments that benefit from N > 1
+#  parallel GitHub Actions runners.  A single "orchestrator" job dispatches
+#  N copies of ci_experiment_simplify.yml (one per shard), locates each run's
+#  GitHub run-ID via dispatch_parallel_experiment.sh (FIX-D1..D5), then polls
+#  all shard runs to completion before committing a completion summary.
+#
+#  RELATIONSHIP TO OTHER WORKFLOWS
+#  ─────────────────────────────────────────────────────────────────────────────
+#  ci_parallel_schedule_simplify.yml   — wave-level orchestrator; calls this
+#                                        workflow's dispatch path when n_shards>1
+#  ci_experiment_simplify.yml          — actual experiment runner (shard target)
+#  dispatch_parallel_experiment.sh     — shard dispatcher / run-ID locator
+#
+#  WHEN TO USE THIS WORKFLOW
+#  ─────────────────────────────────────────────────────────────────────────────
+#  • n_shards = 1  → prefer ci_experiment_simplify.yml directly (no overhead)
+#  • n_shards ≥ 2  → use this workflow; each shard runs in a separate runner
+#
+#  Experiments that benefit from sharding:
+#    exp1b         (4 shards — multi-seed DeFi portfolio runs)
+#    exp3b         (4 shards — Nguyen-12 multi-seed extrapolation)
+#    exp2_feynman  (up to 4 — 11 Feynman domains, ~5.5 h total)
+#    exp2          (up to 4 — 10 cross-domain sets, ~5.5 h total)
+#
+#  All other experiments default to n_shards=1 and are unchanged.
+#
+#  ARCHITECTURE
+#  ─────────────────────────────────────────────────────────────────────────────
+#  orchestrate ──► dispatch_parallel_experiment.sh × N
+#              ──► locate each shard run-ID (FIX-D2: displayTitle suffix match)
+#              ──► poll round-robin until all shards terminal or deadline
+#              ──► emit completion summary + set job output exp_ok
+#
+#  ci_experiment_simplify.yml must already support the following dispatch inputs
+#  (enabled by FIX-D1 in dispatch_parallel_experiment.sh):
+#    shard_index   (0-based integer)
+#    n_shards      (total shard count)
+#  And its run-name must follow the pattern:
+#    "HypatiaX - <experiment> (shard <shard_index>/<n_shards>) . ci_experiment_simplify"
+#  (FIX-D2 match target in dispatch_parallel_experiment.sh::locate_run_id())
+#
+#  TIMEOUTS
+#  ─────────────────────────────────────────────────────────────────────────────
+#  The orchestrate job has timeout-minutes: 355 (safely under GitHub's 360-min
+#  hard cap).  The PERIOD_SECONDS dispatch input governs the inner poll deadline
+#  and should be set to the worst-case wall-clock for the slowest shard.
+#
+#  FIXES INCORPORATED
+#  ─────────────────────────────────────────────────────────────────────────────
+#  FIX-D1  shard_index + n_shards passed as --field args to gh workflow run
+#  FIX-D2  locate_run_id() matches displayTitle suffix "(shard N/M)"
+#  FIX-D3  Pre-dispatch timestamp margin = 30 s (API propagation + clock skew)
+#  FIX-D4  gh run list --limit 100 (headroom for busy repos)
+#  FIX-D5  poll_run_to_completion() removed; polling is this workflow's job
+#  FIX-S6  Poll jitter (RANDOM % 30) to stagger concurrent API calls
+# ==============================================================================
+
+name: "HypatiaX - parallel sharded experiment"
+run-name: "HypatiaX - ${{ inputs.experiment }} (${{ inputs.n_shards }} shards) . ci_parallel_experiment_simplify"
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+    inputs:
+
+      # -- Which experiment to run --------------------------------------------
+      experiment:
+        description: "Experiment ID (forwarded to ci_experiment_simplify.yml)"
+        required: true
+        type: choice
+        options:
+          - exp1
+          - exp1b
+          - exp2_feynman
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
+        default: exp2_feynman
+
+      # -- Shard count -------------------------------------------------------
+      n_shards:
+        description: "Number of parallel shard runners (1–4). Experiments with table-default > 1 (exp1b, exp3b) override values below their minimum."
+        required: false
+        default: "2"
+
+      # -- Per-experiment deadline -------------------------------------------
+      period_seconds:
+        description: "Wall-clock deadline for the slowest shard, in seconds. Default 19800 = 5.5 h."
+        required: false
+        default: "19800"
+
+      # -- Task / seed overrides ---------------------------------------------
+      task_ids_override:
+        description: "Space-separated task IDs to run (blank = full experiment set)"
+        required: false
+        default: ""
+
+      resume:
+        description: "Resume from checkpoint (true/false)"
+        required: false
+        default: "true"
+
+      dry_run:
+        description: "Dry-run — print commands without executing (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  actions:  write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  EXP_WORKFLOW_FILE: "ci_experiment_simplify.yml"
+
+
+# ==============================================================================
+#  JOB — orchestrate
+#
+#  Dispatches N shards of ci_experiment_simplify.yml and polls them to
+#  completion.  A single orchestrate job (rather than a matrix) is used so that
+#  all shard run-IDs are collected in one place and the wait loop can do
+#  round-robin polling across all shards simultaneously.
+# ==============================================================================
+jobs:
+  orchestrate:
+    name: "Orchestrate — ${{ inputs.experiment }} × ${{ inputs.n_shards }} shards"
+    runs-on: ubuntu-latest
+    timeout-minutes: 355    # safely under the 360-min GitHub hard cap
+
+    outputs:
+      exp_ok:   ${{ steps.wait.outputs.exp_ok }}
+      run_ids:  ${{ steps.dispatch.outputs.run_ids }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      # ── O-1. Validate inputs ───────────────────────────────────────────────
+      - name: Validate inputs
+        env:
+          N_SHARDS:        ${{ inputs.n_shards }}
+          PERIOD_SECONDS:  ${{ inputs.period_seconds }}
+          EXP:             ${{ inputs.experiment }}
+        run: |
+          set -euo pipefail
+
+          # n_shards must be 1–16 (dispatch_parallel_experiment.sh hard-limit)
+          if ! [[ "$N_SHARDS" =~ ^[1-9][0-9]*$ ]] || (( N_SHARDS > 16 )); then
+            echo "::error::n_shards must be a positive integer ≤ 16 (got '${N_SHARDS}')"
+            exit 1
+          fi
+
+          # period_seconds must be a positive integer (reasonable range: 60–360×60)
+          if ! [[ "$PERIOD_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::period_seconds must be a positive integer (got '${PERIOD_SECONDS}')"
+            exit 1
+          fi
+
+          echo "Input validation OK:"
+          echo "  experiment     : ${EXP}"
+          echo "  n_shards       : ${N_SHARDS}"
+          echo "  period_seconds : ${PERIOD_SECONDS}"
+
+      # ── O-2. Dispatch all shards ───────────────────────────────────────────
+      #
+      # Calls dispatch_parallel_experiment.sh which:
+      #   • Fires  gh workflow run  for each shard (FIX-D1: passes shard_index,
+      #     n_shards as --field args so every shard receives its correct slice)
+      #   • Locates each run's run-ID by matching displayTitle suffix
+      #     "(shard N/M)" (FIX-D2)
+      #   • Emits  PARALLEL_RUN_IDS=<id0>,<id1>,...  on stdout (FIX-D5: no
+      #     poll loop; polling is done in O-3 below)
+      #
+      # n_shards = 1 still uses dispatch_parallel_experiment.sh for consistency,
+      # but ci_parallel_schedule_simplify.yml would normally dispatch
+      # ci_experiment_simplify.yml directly for single-shard experiments.
+      - name: Dispatch ${{ inputs.experiment }} (${{ inputs.n_shards }} shards)
+        id: dispatch
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME:   ${{ github.ref_name }}
+          EXP:               ${{ inputs.experiment }}
+          N_SHARDS:          ${{ inputs.n_shards }}
+          TASK_IDS_OVERRIDE: ${{ inputs.task_ids_override }}
+        run: |
+          set -euo pipefail
+
+          echo "======================================================================"
+          echo "  Dispatching: ${EXP}  ×  ${N_SHARDS} shard(s)"
+          echo "  Branch     : ${GITHUB_REF_NAME}"
+          echo "  Repo       : ${GITHUB_REPOSITORY}"
+          echo "======================================================================"
+
+          DISPATCH_OUTPUT=$(bash .github/scripts/dispatch_parallel_experiment.sh \
+            "${EXP}" \
+            "${N_SHARDS}" \
+            "${TASK_IDS_OVERRIDE}" \
+            "${EXP_WORKFLOW_FILE}" 2>&1)
+          echo "${DISPATCH_OUTPUT}"
+
+          RUN_IDS=$(echo "${DISPATCH_OUTPUT}" \
+            | grep '^PARALLEL_RUN_IDS=' | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+
+          if [[ -z "${RUN_IDS}" ]]; then
+            echo "::error::dispatch_parallel_experiment.sh did not emit PARALLEL_RUN_IDS for ${EXP}."
+            echo "  Expected line:  PARALLEL_RUN_IDS=<id0>,<id1>,..."
+            echo "  Script output is shown above — check for locate_run_id() failures."
+            echo "  Checklist:"
+            echo "    1. ci_experiment_simplify.yml run-name includes '(shard N/M)' (FIX-D2)"
+            echo "    2. shard_index and n_shards inputs exist in ci_experiment_simplify.yml (FIX-D1)"
+            echo "    3. GH_LIST_LIMIT in dispatch_parallel_experiment.sh ≥ current queue depth (FIX-D4)"
+            exit 1
+          fi
+
+          echo "  Dispatched run IDs: ${RUN_IDS}"
+          echo "run_ids=${RUN_IDS}" >> "$GITHUB_OUTPUT"
+
+      # ── O-3. Wait for all shards to complete ───────────────────────────────
+      #
+      # Round-robin poll loop — checks every shard run once per 60 s cycle.
+      #
+      # FIX-S6: initial jitter (RANDOM % 30) staggers the first API call so
+      # concurrent orchestrate jobs spawned by ci_parallel_schedule_simplify.yml
+      # don't all hammer the GitHub Actions API at the same second.
+      #
+      # Exits 1 if any shard fails, is cancelled, or times out.
+      # Sets exp_ok=true/false in GITHUB_OUTPUT.
+      - name: Wait for all shards of ${{ inputs.experiment }}
+        id: wait
+        env:
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          EXP:             ${{ inputs.experiment }}
+          RUN_IDS:         ${{ steps.dispatch.outputs.run_ids }}
+          PERIOD_SECONDS:  ${{ inputs.period_seconds }}
+          N_SHARDS:        ${{ inputs.n_shards }}
+        run: |
+          set -euo pipefail
+
+          # FIX-S6: stagger first poll across concurrent orchestrate jobs.
+          JITTER=$(( RANDOM % 30 ))
+          echo "  [${EXP}] Poll jitter: sleeping ${JITTER}s to stagger API calls ..."
+          sleep $JITTER
+
+          DEADLINE=$(( $(date +%s) + PERIOD_SECONDS ))
+          IFS=',' read -ra IDS <<< "${RUN_IDS}"
+          N_RUNS=${#IDS[@]}
+
+          echo "======================================================================"
+          echo "  Waiting for ${N_RUNS} shard run(s) of '${EXP}'"
+          echo "  Deadline  : $(date -u -d "@${DEADLINE}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                                || date -u -r "${DEADLINE}" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "======================================================================"
+
+          declare -A DONE=()
+          declare -A RESULT=()
+          for rid in "${IDS[@]}"; do
+            DONE[$rid]=0
+            RESULT[$rid]="pending"
+          done
+          DONE_COUNT=0
+          FAIL_COUNT=0
+
+          while (( DONE_COUNT < N_RUNS )); do
+            for rid in "${IDS[@]}"; do
+              [[ "${DONE[$rid]}" == "1" ]] && continue
+
+              STATUS=$(gh api \
+                "/repos/${{ github.repository }}/actions/runs/${rid}" \
+                --jq '"\(.status) \(.conclusion)"' 2>/dev/null \
+                || echo "unknown unknown")
+
+              echo "  [${EXP} run=${rid}] $(date -u +%H:%M:%SZ)  ${STATUS}"
+
+              case "${STATUS}" in
+                "completed success")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true
+                  RESULT[$rid]="success"
+                  echo "  ✓ ${EXP} run ${rid} SUCCEEDED  ($DONE_COUNT/$N_RUNS done)" ;;
+                "completed failure"|"completed cancelled"|"completed timed_out")
+                  DONE[$rid]=1; (( DONE_COUNT++ )) || true; (( FAIL_COUNT++ )) || true
+                  RESULT[$rid]="failure"
+                  echo "  ✗ ${EXP} run ${rid} FAILED: ${STATUS}  ($DONE_COUNT/$N_RUNS done)" ;;
+              esac
+            done
+
+            # Deadline check — abort remaining in-progress shards.
+            if [[ $(date +%s) -gt $DEADLINE && $DONE_COUNT -lt $N_RUNS ]]; then
+              REMAINING=$(( N_RUNS - DONE_COUNT ))
+              echo "::error::${EXP} deadline (${PERIOD_SECONDS}s) exceeded — ${REMAINING} shard(s) still in-progress. Aborting."
+              FAIL_COUNT=$(( FAIL_COUNT + REMAINING ))
+              break
+            fi
+
+            (( DONE_COUNT < N_RUNS )) && sleep 60
+          done
+
+          # ── Completion report ────────────────────────────────────────────
+          echo ""
+          echo "======================================================================"
+          echo "  ${EXP} shard completion report"
+          echo "  Run IDs : ${RUN_IDS}"
+          IDX=0
+          for rid in "${IDS[@]}"; do
+            echo "    shard ${IDX}  run ${rid}  → ${RESULT[$rid]:-unknown}"
+            IDX=$(( IDX + 1 ))
+          done
+          echo "======================================================================"
+
+          if (( FAIL_COUNT > 0 )); then
+            echo "::error::${EXP}: ${FAIL_COUNT} / ${N_RUNS} shard run(s) failed."
+            echo "exp_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "exp_ok=true" >> "$GITHUB_OUTPUT"
+          echo "${EXP} completed successfully (${N_RUNS} / ${N_RUNS} shards OK)."
+
+      # ── O-4. Emit final summary ────────────────────────────────────────────
+      #
+      # Always runs so the result is visible in the workflow log even when
+      # O-3 exits 1.  Does not affect the job exit code.
+      - name: Summary
+        if: always()
+        env:
+          EXP:      ${{ inputs.experiment }}
+          N_SHARDS: ${{ inputs.n_shards }}
+          EXP_OK:   ${{ steps.wait.outputs.exp_ok }}
+          RUN_IDS:  ${{ steps.dispatch.outputs.run_ids }}
+        run: |
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "  ci_parallel_experiment_simplify — final summary"
+          echo "───────────────────────────────────────────────────────────────"
+          echo "  Experiment   : ${EXP}"
+          echo "  Shards       : ${N_SHARDS}"
+          echo "  Run IDs      : ${RUN_IDS:-<none dispatched>}"
+          echo "  Outcome      : ${EXP_OK:-unknown}"
+          echo "═══════════════════════════════════════════════════════════════"

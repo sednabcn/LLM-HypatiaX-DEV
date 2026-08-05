@@ -1,0 +1,728 @@
+name: "HypatiaX - scheduled full run"
+
+# -------------------------------------------------------------
+#  TRIGGER STRATEGY
+#  - cron fires once per week to kick off the chain at slot 0
+#  - each slot self-dispatches this workflow with experiment_index+1
+#    so the chain runs sequentially through all experiments
+#  - workflow_dispatch lets you start mid-chain or run a single
+#    experiment manually; n_shards is the ONLY input you type
+#
+#  TIMEOUT FIX (was: single 510-min job - exceeded GitHub's 6-hour hard cap)
+#  Each slot is split into TWO jobs chained with `needs`:
+#
+#    run-experiment   (~355 min)  dispatch + wait for ci_experiment.yml
+#    run-finalize     (~125 min)  wait for analysis (up to 60 min) + 1 h cooldown
+#                                 + self-dispatch next slot
+#
+#  Both jobs stay safely under the 360-minute (6 h) GitHub hard limit.
+#  The `needs` dependency keeps them sequentially ordered within one run.
+#
+#  CRASH-STOP BEHAVIOUR (added)
+#  If ci_experiment.yml completes with failure, cancelled, or timed_out,
+#  Job B (run-experiment) exits 1.  Because run-finalize depends on
+#  run-experiment via `needs`, GitHub skips Job C entirely, so the
+#  self-dispatch in C4 never fires and the chain halts immediately.
+#  The exp_ok output is also forwarded to Job C as a secondary guard.
+#
+#  WORKER COUNT (per-experiment)
+#  Each experiment has a fixed worker count based on its parallelism needs:
+#    exp1 / exp1b              → 2  (DeFi tasks / portfolio seeds)
+#    exp2 / exp2_feynman       → 4  (10-11 domain keys; full parallelism required)
+#    exp3                      → 1  (single-seed Nguyen-12; sequential OK)
+#    all remaining experiments → 1  (suppA/B/B_sc, hybrid, instability, extrap, exp3b)
+#
+#  The value is resolved by the resolve job (N_SHARDS_TABLE) and forwarded to
+#  ci_experiment.yml via dispatch_experiment.sh.  The workflow_dispatch
+#  n_shards input is IGNORED for scheduled / chained runs — it is retained
+#  only for manual single-slot overrides (continue_chain=false).
+#
+#  ci_experiment.yml clamps n_shards to [3, 4] — values of 1 or 2 will be
+#  SILENTLY CLAMPED UP TO 3 by the plan job Python script (BUG — see ISSUES).
+# -------------------------------------------------------------
+
+on:
+  # Kicks off slot 0 every Monday at 09:10 UTC (10:10 BST).
+  schedule:
+    - cron: "10 9 * * 1"   # Monday   09:10 UTC (10:10 BST) - regular weekly run
+    - cron: "0 11 * * 4"   # Thursday 11:00 UTC (12:00 BST) - recovery / ad-hoc
+
+  # Manual entry point - also used by each slot to dispatch the next.
+  workflow_dispatch:
+    inputs:
+      experiment_index:
+        description: "Slot to run next (0 = start from the beginning)"
+        required: false
+        default: "0"
+      n_shards:
+        description: "Manual override: worker shards for THIS slot only (ignored in chained runs - per-experiment table used instead). Valid: 1-4."
+        required: false
+        default: "4"
+      task_ids_override:
+        description: "Space-separated task IDs to run (blank = full experiment set) - forwarded to ci_experiment.yml"
+        required: false
+        default: ""
+      continue_chain:
+        description: "Automatically dispatch the next slot when this one finishes (uncheck to run a single slot only)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # needed by ci_consolidate_experiment.yml to commit merged results
+  actions:  write
+
+env:
+  # Ordered list - must agree with ci_experiment.yml and ci_consolidate_experiment.yml.
+  ALL_EXPERIMENTS: >-
+    exp1 exp1b exp2_feynman exp2
+    exp3 exp3b suppA suppB suppB_sc
+    hybrid_all_domains instability extrap
+
+  # Fallback experiment deadline (seconds) used only when resolve job has no
+  # per-experiment entry in its timing table.  Each experiment's actual deadline
+  # is emitted by the resolve job as period_seconds and consumed by Job B.
+  PERIOD_SECONDS: "19800"
+
+# -------------------------------------------------------------
+jobs:
+
+  # ==========================================================
+  #  JOB A - resolve which experiment lives at the current slot
+  #  (fast; kept separate so both downstream jobs can share outputs)
+  # ==========================================================
+  resolve:
+    name: "Resolve slot ${{ github.event.inputs.experiment_index || '0' }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      experiment:              ${{ steps.resolve.outputs.experiment }}
+      next_index:              ${{ steps.resolve.outputs.next_index }}
+      total:                   ${{ steps.resolve.outputs.total }}
+      done:                    ${{ steps.resolve.outputs.done }}
+      analysis_only:           ${{ steps.resolve.outputs.analysis_only }}
+      period_seconds:          ${{ steps.resolve.outputs.period_seconds }}
+      cooldown_seconds:        ${{ steps.resolve.outputs.cooldown_seconds }}
+      finalize_timeout_minutes: ${{ steps.resolve.outputs.finalize_timeout_minutes }}
+      n_shards:                ${{ steps.resolve.outputs.n_shards }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      - name: Resolve experiment for this slot
+        id: resolve
+        env:
+          IDX: ${{ github.event.inputs.experiment_index || '0' }}
+        run: |
+          EXP_LIST=($ALL_EXPERIMENTS)
+          TOTAL=${#EXP_LIST[@]}
+
+          # Parse experiment_index input.
+          #
+          #   Plain integer  (e.g. "2")  → run the full chain from that slot.
+          #   Integer + "a"  (e.g. "2a") → dispatch ci_analysis.yml for that
+          #                                 slot only; no experiment runner, no
+          #                                 cooldown, no self-dispatch.
+          #
+          ANALYSIS_ONLY=false
+          if [[ "$IDX" =~ ^([0-9]+)a$ ]]; then
+            IDX="${BASH_REMATCH[1]}"
+            ANALYSIS_ONLY=true
+            echo "-> Analysis-only mode detected (input contained 'a' suffix)."
+          elif ! [[ "$IDX" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: experiment_index must be a non-negative integer or NUMBERa for"
+            echo "  analysis-only mode (got: '${IDX}')."
+            echo "  Examples:  2  = run full chain from slot 2"
+            echo "             2a = re-run ci_analysis only for slot 2"
+            echo "  Experiments in order:"
+            for i in "${!EXP_LIST[@]}"; do
+              echo "    $i  / ${i}a  = ${EXP_LIST[$i]}"
+            done
+            exit 1
+          fi
+
+          IDX=$(( IDX ))
+
+          if [[ $IDX -ge $TOTAL ]]; then
+            echo "OK All $TOTAL experiments complete - chain ends here."
+            echo "done=true"          >> "$GITHUB_OUTPUT"
+            echo "analysis_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          EXP="${EXP_LIST[$IDX]}"
+          NEXT=$(( IDX + 1 ))
+
+          echo "experiment=$EXP"   >> "$GITHUB_OUTPUT"
+          echo "next_index=$NEXT"  >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL"      >> "$GITHUB_OUTPUT"
+          echo "done=false"          >> "$GITHUB_OUTPUT"
+          echo "analysis_only=$ANALYSIS_ONLY" >> "$GITHUB_OUTPUT"
+          echo "-> Slot $IDX / $(( TOTAL - 1 )): $EXP  (next=$NEXT)"
+
+          # ------------------------------------------------------------------
+          #  Per-experiment timing table
+          #
+          #  period_seconds   — how long Job B waits for ci_experiment.yml
+          #                     before declaring timeout and aborting the chain.
+          #                     Must satisfy: startup_overhead (~15 min) +
+          #                     period/60 <= 355 (job timeout-minutes: 355).
+          #                     Max safe value: (355 - 15) * 60 = 20400 s.
+          #
+          #  cooldown_seconds — pause in Job C between experiments.
+          #                     Gives GitHub's runner pool time to settle.
+          #                     Scale down for fast/small experiments.
+          #
+          #  finalize_timeout_minutes — Job C timeout-minutes.
+          #                     Formula: ceil(60 + cooldown/60 + 10)
+          #                     (60 min analysis poll + cooldown + 10 min buffer)
+          #
+          #  Update these values when an experiment's case count changes.
+          # ------------------------------------------------------------------
+
+          declare -A PERIOD_TABLE=(
+            [exp1]=19800           # large         — full noiseless suite   (5.5 h)
+            [exp1b]=19800          # medium        — 15 % noise, ~half cases of exp1 (5.5 h max)
+            [exp2_feynman]=19800   # large         — full Feynman benchmark  (5.5 h)
+            [exp2]=19800           # large         — multi-method full      (5.5 h)
+            [exp3]=12600           # medium        — Nguyen-12 PySR         (3.5 h)
+            [exp3b]=14400          # medium        — multi-seed PySR        (4 h)
+            [suppA]=10800          # small         — hybrid/defi subset     (3 h)
+            [suppB]=16200          # medium-large  — noise sweep            (4.5 h)
+            [suppB_sc]=12600       # medium        — sample-complexity      (3.5 h)
+            [hybrid_all_domains]=16200  # medium-large — all domains        (4.5 h)
+            [instability]=7200     # small         — no _merged.json, fast  (2 h)
+            [extrap]=12600         # medium        — extrapolation suite    (3.5 h)
+          )
+
+          declare -A COOLDOWN_TABLE=(
+            [exp1]=675             [exp1b]=225
+            [exp2_feynman]=1800    [exp2]=1800
+            [exp3]=450             [exp3b]=450
+            [suppA]=300            [suppB]=675
+            [suppB_sc]=450         [hybrid_all_domains]=675
+            [instability]=150      [extrap]=450
+          )
+
+          # finalize_timeout_minutes = 60 (analysis poll) + cooldown_min + 10 (buffer)
+          declare -A FINALIZE_TABLE=(
+            [exp1]=82              [exp1b]=74
+            [exp2_feynman]=100     [exp2]=100
+            [exp3]=78              [exp3b]=78
+            [suppA]=75             [suppB]=82
+            [suppB_sc]=78          [hybrid_all_domains]=82
+            [instability]=73       [extrap]=78
+          )
+
+          # ------------------------------------------------------------------
+          #  Per-experiment worker (shard) count
+          #
+          #  Drives the matrix width in ci_experiment.yml.
+          #  exp1 / exp1b         → 2  (10 DeFi tasks / portfolio seeds)
+          #  exp2 / exp2_feynman  → 4  (10/11 domain keys; max parallelism)
+          #  exp3                 → 1  (single seed, 12 tasks; sequential OK)
+          #  everything else      → 1  (small/medium experiments)
+          #
+          #  NOTE: ci_experiment.yml currently clamps n_shards to [3,4].
+          #  Values 1 and 2 will be silently raised to 3 — see cross-ref
+          #  ISSUE-1 in the file header.  Until that clamp is widened,
+          #  effective shards for exp1/exp1b/exp3/supp*/instability/extrap
+          #  will be 3, not 1 or 2 as intended here.
+          # ------------------------------------------------------------------
+          declare -A N_SHARDS_TABLE=(
+            [exp1]=2               [exp1b]=2
+            [exp2_feynman]=4       [exp2]=4
+            [exp3]=1               [exp3b]=1
+            [suppA]=1              [suppB]=1
+            [suppB_sc]=1           [hybrid_all_domains]=1
+            [instability]=1        [extrap]=1
+          )
+
+          PERIOD=${PERIOD_TABLE[$EXP]:-19800}
+          COOLDOWN=${COOLDOWN_TABLE[$EXP]:-900}
+          FINALIZE=${FINALIZE_TABLE[$EXP]:-85}
+          # For chained (scheduled) runs use per-experiment table.
+          # For manual single-slot runs (continue_chain=false) the caller's
+          # n_shards input takes precedence — forwarded by the dispatch step.
+          N_SHARDS_EXP=${N_SHARDS_TABLE[$EXP]:-1}
+
+          echo "period_seconds=$PERIOD"             >> "$GITHUB_OUTPUT"
+          echo "cooldown_seconds=$COOLDOWN"         >> "$GITHUB_OUTPUT"
+          echo "finalize_timeout_minutes=$FINALIZE" >> "$GITHUB_OUTPUT"
+          echo "n_shards=$N_SHARDS_EXP"             >> "$GITHUB_OUTPUT"
+          echo "-> Timing: period=${PERIOD}s  cooldown=${COOLDOWN}s  finalize_job=${FINALIZE}min  n_shards=${N_SHARDS_EXP}"
+
+  # ==========================================================
+  #  JOB B - dispatch ci_experiment.yml and wait for it
+  #
+  #  timeout-minutes: 355 = 5 h 55 m
+  #  < GitHub's 6 h (360 min) hard limit, with 5 min to spare.
+  #  The worker deadline (PERIOD_SECONDS=19800 = 5 h 30 m) fits
+  #  inside this with 25 min of headroom for startup + API calls.
+  #
+  #  CRASH-STOP: exits 1 on failure/cancelled/timed_out so that
+  #  run-finalize is skipped by GitHub (needs: dependency) and the
+  #  self-dispatch in C4 never fires.
+  # ==========================================================
+  run-experiment:
+    name: "Dispatch + wait - ${{ needs.resolve.outputs.experiment }}"
+    needs: [resolve]
+    if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355   # safely under the 360-min GitHub hard cap
+
+    outputs:
+      exp_run_id:          ${{ steps.dispatch.outputs.exp_run_id }}
+      exp_concluded_iso:   ${{ steps.wait_exp.outputs.exp_concluded_iso }}
+      exp_ok:              ${{ steps.wait_exp.outputs.exp_ok }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Install PyYAML
+        run: pip install pyyaml --quiet
+
+      # -- B1. Dispatch ci_experiment.yml ------------------------------------
+      - name: Dispatch experiment
+        id: dispatch
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          EXP:               ${{ needs.resolve.outputs.experiment }}
+          N_SHARDS:          ${{ needs.resolve.outputs.n_shards }}
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+          # Paper-quality timeouts from repro.yaml (method_seconds / feynman_pysr_seconds).
+          # Read by run_comparative_suite_benchmark_v2.py BUG-6-FIX env-override block.
+          # Low-RAM machines: method_seconds=900 gives Julia 90 s startup + 600 s search.
+          METHOD_TIMEOUT:       "900"    # repro.yaml timeouts.method_seconds
+          FEYNMAN_TIMEOUT:      "900"    # repro.yaml timeouts.feynman_pysr_seconds (capped at method budget)
+          PYSR_FIT_WALL_TIMEOUT: "1200"  # repro.yaml timeouts.fit_wall_timeout -> DiscoveryConfig
+          PYSR_FIT_GRACE_SECS:   "120"   # repro.yaml timeouts.fit_grace_secs   -> DiscoveryConfig
+        run: |
+          set -euo pipefail
+
+          DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "> Dispatching $EXP at $DISPATCH_ISO (n_shards=$N_SHARDS)"
+          # BUG 10 FIX (residual): dispatch_experiment.sh was fixed to treat $3
+          # as TASK_IDS_OVERRIDE (not --dry-run which is now a named flag).  The
+          # old call here passed 4 positional args: "EXP" "N_SHARDS" "" "TASK_IDS_OVERRIDE"
+          # which meant $3="" (empty) and $4=TASK_IDS_OVERRIDE was silently dropped.
+          # Updated to the new 3-arg signature: "EXP" "N_SHARDS" "TASK_IDS_OVERRIDE".
+          bash .github/scripts/dispatch_experiment.sh "$EXP" "$N_SHARDS" "$TASK_IDS_OVERRIDE"
+
+          sleep 30   # give GitHub time to register the new run
+
+          echo "Locating run ID for $EXP dispatched after $DISPATCH_ISO ..."
+          EXP_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            # Use display_title (set per-run by ci_experiment.yml, contains the experiment
+            # name) rather than .name (the static workflow file title "HypatiaX - experiment
+            # runner . run_all.sh", which never contains the experiment name).
+            EXP_RUN_ID=$(gh api \
+              "/repos/${{ github.repository }}/actions/workflows/ci_experiment.yml/runs?per_page=5" \
+              --jq ".workflow_runs[]
+                    | select(.display_title | startswith(\"HypatiaX - ${EXP}\"))
+                    | select(.created_at > \"$DISPATCH_ISO\")
+                    | .id" \
+              | head -1)
+            [[ -n "$EXP_RUN_ID" ]] && break
+            echo "  Not found yet (attempt $attempt/20) - retrying in 15 s ..."
+            sleep 15
+          done
+
+          if [[ -z "$EXP_RUN_ID" ]]; then
+            echo "ERROR: could not locate the dispatched run for $EXP"; exit 1
+          fi
+          echo "Experiment run ID: $EXP_RUN_ID"
+          echo "exp_run_id=$EXP_RUN_ID"   >> "$GITHUB_OUTPUT"
+          echo "dispatch_iso=$DISPATCH_ISO" >> "$GITHUB_OUTPUT"
+
+      # -- B2. Wait for ci_experiment.yml to reach COMPLETED ----------------
+      #
+      #  exp_ok values:
+      #    true      -> completed success  -> Job C proceeds normally
+      #    false     -> failure/cancelled  -> exit 1 halts the chain here
+      #    timed_out -> PERIOD_SECONDS elapsed before GitHub reported done
+      #                 -> treated as a crash; exit 1 halts the chain
+      - name: Wait for experiment to complete
+        id: wait_exp
+        env:
+          GH_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          EXP:           ${{ needs.resolve.outputs.experiment }}
+          EXP_RUN_ID:    ${{ steps.dispatch.outputs.exp_run_id }}
+          PERIOD_SECONDS: ${{ needs.resolve.outputs.period_seconds }}  # per-experiment, from resolve job
+        run: |
+          set -euo pipefail
+
+          EXP_DEADLINE=$(( $(date +%s) + PERIOD_SECONDS ))
+
+          while true; do
+            EXP_STATUS=$(gh api \
+              "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
+              --jq '"\(.status) \(.conclusion)"')
+
+            echo "  [exp/$EXP] $(date -u +%H:%M:%SZ)  $EXP_STATUS"
+
+            case "$EXP_STATUS" in
+              "completed success")
+                EXP_CONCLUDED_ISO=$(gh api \
+                  "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
+                  --jq '.updated_at')
+                echo "OK Experiment $EXP succeeded."
+                echo "exp_concluded_iso=$EXP_CONCLUDED_ISO" >> "$GITHUB_OUTPUT"
+                echo "exp_ok=true"                          >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              "completed failure"|"completed cancelled"|"completed timed_out")
+                EXP_CONCLUDED_ISO=$(gh api \
+                  "/repos/${{ github.repository }}/actions/runs/$EXP_RUN_ID" \
+                  --jq '.updated_at')
+                echo "FAIL Experiment $EXP concluded with: $EXP_STATUS - ABORTING CHAIN."
+                echo "  Re-trigger manually from slot ${{ github.event.inputs.experiment_index || '0' }} once fixed."
+                echo "exp_concluded_iso=$EXP_CONCLUDED_ISO" >> "$GITHUB_OUTPUT"
+                echo "exp_ok=false"                         >> "$GITHUB_OUTPUT"
+                exit 1   # kills Job B -> GitHub skips Job C -> chain stops
+                ;;
+            esac
+
+            if [[ $(date +%s) -gt $EXP_DEADLINE ]]; then
+              echo "FAIL ${PERIOD_SECONDS}s deadline reached for $EXP with no success - ABORTING CHAIN."
+              echo "exp_concluded_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+              echo "exp_ok=timed_out"                                   >> "$GITHUB_OUTPUT"
+              exit 1   # treat deadline expiry as a crash
+            fi
+
+            sleep 60
+          done
+
+
+  # ==========================================================
+  #  JOB D - analysis-only path (triggered by NUMBERa input)
+  #
+  #  Dispatches ci_analysis.yml directly against the already-committed
+  #  _merged.json for the chosen experiment.  No experiment runner is
+  #  launched, no cooldown is applied, and no self-dispatch fires.
+  #
+  #  Use this to re-run or inspect analysis without touching workers:
+  #    experiment_index = "2a"  →  re-analyse slot 2 (exp2_feynman)
+  # ==========================================================
+  run-analysis-only:
+    name: "Analysis-only - ${{ needs.resolve.outputs.experiment }}"
+    needs: resolve
+    if: needs.resolve.outputs.done == 'false' && needs.resolve.outputs.analysis_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75   # pip install ~8 min + analysis <10 s + locate + commit + 5 min buffer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      # -- D1. Dispatch ci_analysis.yml (no source_run_id — uses committed _merged.json)
+      - name: Dispatch ci_analysis.yml
+        id: dispatch_analysis
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXP:      ${{ needs.resolve.outputs.experiment }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "> Dispatching ci_analysis.yml for ${EXP} (analysis-only, no source_run_id)"
+          gh workflow run ci_analysis.yml \
+            --field experiment="${EXP}"
+
+          sleep 20   # give GitHub time to register the run
+
+          # Locate the run we just dispatched
+          ANALYSIS_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            ANALYSIS_RUN_ID=$(gh api \
+              "/repos/${REPO}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
+              --jq ".workflow_runs[]
+                    | select(.event == \"workflow_dispatch\")
+                    | select(.display_title | contains(\"${EXP}\"))
+                    | select(.created_at > \"${DISPATCH_ISO}\")
+                    | .id" \
+              | head -1)
+            [[ -n "$ANALYSIS_RUN_ID" ]] && break
+            echo "  Not found yet (attempt ${attempt}/20) — retrying in 15s ..."
+            sleep 15
+          done
+
+          if [[ -z "$ANALYSIS_RUN_ID" ]]; then
+            echo "::error::Could not locate dispatched ci_analysis.yml run for ${EXP}"
+            exit 1
+          fi
+          echo "Analysis run ID: ${ANALYSIS_RUN_ID}"
+          echo "analysis_run_id=${ANALYSIS_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      # -- D2. Poll until complete (up to 60 min)
+      - name: Wait for analysis to complete
+        env:
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          EXP:             ${{ needs.resolve.outputs.experiment }}
+          ANALYSIS_RUN_ID: ${{ steps.dispatch_analysis.outputs.analysis_run_id }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          DEADLINE=$(( $(date +%s) + 3600 ))
+
+          while true; do
+            STATUS=$(gh api \
+              "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}" \
+              --jq '"\(.status) \(.conclusion)"')
+
+            echo "  [analysis/${EXP}] $(date -u +%H:%M:%SZ)  run=${ANALYSIS_RUN_ID}  ${STATUS}"
+
+            case "$STATUS" in
+              "completed success")
+                echo "OK Analysis of ${EXP} succeeded."
+                exit 0 ;;
+              "completed failure"|"completed cancelled"|"completed timed_out")
+                echo "FAIL Analysis of ${EXP} concluded with: ${STATUS}"
+                exit 1 ;;
+            esac
+
+            if [[ $(date +%s) -gt $DEADLINE ]]; then
+              echo "FAIL 60 min timeout waiting for analysis of ${EXP}."
+              exit 1
+            fi
+
+            sleep 30
+          done
+
+      # -- D3. Self-dispatch next slot as a plain number (full chain resumes)
+      #  Skipped when continue_chain is unchecked — analysis runs standalone.
+      #  n_shards NOT forwarded — next slot's resolve job reads N_SHARDS_TABLE.
+      - name: Self-dispatch next slot
+        if: ${{ github.event.inputs.continue_chain != 'false' }}
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          NEXT_INDEX:        ${{ needs.resolve.outputs.next_index }}
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+          TOTAL:             ${{ needs.resolve.outputs.total }}
+        run: |
+          set -euo pipefail
+          if [[ $NEXT_INDEX -lt $TOTAL ]]; then
+            echo "-> Dispatching next slot: index $NEXT_INDEX (full chain, n_shards resolved by next slot)"
+            gh workflow run ci_schedule_all.yml \
+              --field experiment_index="$NEXT_INDEX" \
+              --field task_ids_override="$TASK_IDS_OVERRIDE"
+          else
+            echo "OK All experiments dispatched — chain complete."
+          fi
+
+
+  #
+  #  timeout-minutes: fromJSON(finalize_timeout_minutes) per-experiment value
+  #  from the resolve job timing table:
+  #    Formula: ceil(60 min analysis poll + cooldown_seconds/60 + 10 min buffer)
+  #    Range: 73 min (instability) to 100 min (exp2_feynman / exp2).
+  #  All values safely under the 360-min GitHub hard cap.
+  #
+  #  Poll window is 60 min (3600 s). ci_analysis.yml fires via workflow_dispatch
+  #  which can take >30 min to start on a busy runner pool; 60 min avoids
+  #  systematic timed_out results.
+  #
+  #  This job only runs when run-experiment succeeds (exp_ok=true).
+  #  If run-experiment exits 1, GitHub's `needs` mechanism skips this
+  #  job entirely, so the self-dispatch in C4 never fires.
+  # ==========================================================
+  run-finalize:
+    name: "Analyse + cooldown - ${{ needs.resolve.outputs.experiment }}"
+    needs: [resolve, run-experiment]
+    if: needs.resolve.outputs.done == 'false' && needs.run-experiment.outputs.exp_ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.resolve.outputs.finalize_timeout_minutes) }}   # 60 min analysis poll + per-experiment cooldown + 10 min buffer
+
+    outputs:
+      consol_ok: ${{ steps.wait_consol.outputs.consol_ok }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      # -- C1. Dispatch ci_analysis.yml and wait for it ---------------------
+      # ci_analysis.yml uses a workflow_run trigger which GitHub does NOT fire
+      # when the triggering workflow was itself dispatched by another workflow
+      # (ci_schedule_all.yml → ci_experiment.yml → no auto-trigger).
+      # Fix: explicitly dispatch ci_analysis.yml here, then poll for completion.
+      - name: Dispatch and wait for analysis
+        id: wait_consol
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          EXP:               ${{ needs.resolve.outputs.experiment }}
+          EXP_RUN_ID:        ${{ needs.run-experiment.outputs.exp_run_id }}
+          DISPATCH_ISO:      ${{ needs.run-experiment.outputs.exp_concluded_iso }}
+        run: |
+          set -euo pipefail
+
+          REPO="${{ github.repository }}"
+
+          # -- C1a. Dispatch ci_analysis.yml explicitly ----------------------
+          echo "> Dispatching ci_analysis.yml for ${EXP} (exp_run_id=${EXP_RUN_ID})"
+          gh workflow run ci_analysis.yml \
+            --field experiment="${EXP}" \
+            --field source_run_id="${EXP_RUN_ID}"
+
+          sleep 20   # give GitHub time to register the new run
+
+          # -- C1b. Locate the run ID we just dispatched ---------------------
+          DISPATCH_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ANALYSIS_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            ANALYSIS_RUN_ID=$(gh api \
+              "/repos/${REPO}/actions/workflows/ci_analysis.yml/runs?per_page=10" \
+              --jq '.workflow_runs[]
+                    | select(.event == "workflow_dispatch")
+                    | select(.display_title | contains("'"${EXP}"'"))
+                    | .id' \
+              | head -1)
+            [[ -n "$ANALYSIS_RUN_ID" ]] && break
+            echo "  Not found yet (attempt ${attempt}/20) — retrying in 15s ..."
+            sleep 15
+          done
+
+          if [[ -z "$ANALYSIS_RUN_ID" ]]; then
+            echo "::error::Could not locate dispatched ci_analysis.yml run for ${EXP}"
+            echo "consol_ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "Analysis run ID: ${ANALYSIS_RUN_ID}"
+
+          # -- C1c. Poll until complete (up to 60 min) -----------------------
+          CONSOL_DEADLINE=$(( $(date +%s) + 3600 ))
+          while true; do
+            CONSOL_STATUS=$(gh api \
+              "/repos/${REPO}/actions/runs/${ANALYSIS_RUN_ID}" \
+              --jq '"\(.status) \(.conclusion)"')
+
+            echo "  [analysis/${EXP}] $(date -u +%H:%M:%SZ)  run=${ANALYSIS_RUN_ID}  ${CONSOL_STATUS}"
+
+            case "$CONSOL_STATUS" in
+              "completed success")
+                echo "OK Analysis of ${EXP} SUCCEEDED."
+                echo "consol_ok=true" >> "$GITHUB_OUTPUT"
+                break ;;
+              "completed failure"|"completed cancelled"|"completed timed_out")
+                echo "FAIL Analysis of ${EXP} concluded with: ${CONSOL_STATUS} — ABORTING CHAIN."
+                echo "consol_ok=false" >> "$GITHUB_OUTPUT"
+                break ;;
+            esac
+
+            if [[ $(date +%s) -gt $CONSOL_DEADLINE ]]; then
+              echo "WARN 60 min timeout waiting for analysis of ${EXP} — marking as timed_out."
+              echo "consol_ok=timed_out" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            sleep 30
+          done
+
+      # -- C2. Cooldown (halved) -----------------------------------------------
+      - name: Cooldown (reduced)
+        run: |
+          COOLDOWN_SECS="${{ needs.resolve.outputs.cooldown_seconds }}"
+          echo "Cooldown: sleeping ${COOLDOWN_SECS}s before dispatching the next experiment ..."
+          sleep "$COOLDOWN_SECS"
+          echo "Cooldown complete."
+
+      # -- C3. Clean Actions cache for completed experiment ------------------
+      # Runs after cooldown so the just-finished experiment's worker caches
+      # (shard checkpoints, Julia depot) are evicted before the next slot
+      # starts.  This prevents stale checkpoint data from a failed run from
+      # seeding a fresh run with wrong state.
+      #
+      # --repo is mandatory for `gh cache` commands because they operate on
+      # repository-level resources and gh requires an explicit --repo flag
+      # when not inferring from a git remote in the working directory.
+      - name: Clean experiment cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXP:      ${{ needs.resolve.outputs.experiment }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "Listing caches matching 'checkpoint-worker-${EXP}-' ..."
+
+          # Collect matching cache IDs (gh cache list --json id,key).
+          CACHE_IDS=$(gh cache list \
+            --repo "$REPO" \
+            --limit 100 \
+            --json id,key \
+            --jq ".[] | select(.key | startswith(\"checkpoint-worker-${EXP}-\")) | .id" \
+            2>/dev/null || true)
+
+          if [[ -z "$CACHE_IDS" ]]; then
+            echo "No caches found for experiment '${EXP}' - nothing to delete."
+          else
+            COUNT=$(echo "$CACHE_IDS" | wc -l | tr -d ' ')
+            echo "Deleting ${COUNT} cache(s) for '${EXP}' ..."
+            while IFS= read -r cid; do
+              [[ -z "$cid" ]] && continue
+              gh cache delete "$cid" --repo "$REPO" \
+                && echo "  OK deleted cache $cid" \
+                || echo "  WARN could not delete cache $cid (may have already expired)"
+            done <<< "$CACHE_IDS"
+            echo "Cache clean complete for '${EXP}'."
+          fi
+
+      # -- C4. Self-dispatch next slot ---------------------------------------
+      #
+      #  consol_ok=false     -> analysis explicitly failed/cancelled -> abort chain.
+      #  consol_ok=timed_out -> analysis did not finish within 30 min; warn and
+      #                         continue so one slow experiment doesn't stop all.
+      #  consol_ok=true      -> success -> continue normally.
+      #
+      #  Note: exp_ok=false never reaches here because the `if` condition on this
+      #  job already requires exp_ok == 'true'.  The check below is a safety net.
+      #  Skipped when continue_chain is unchecked — this slot runs standalone.
+      - name: Self-dispatch next slot
+        if: ${{ github.event.inputs.continue_chain != 'false' }}
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          NEXT_INDEX:        ${{ needs.resolve.outputs.next_index }}
+          # N_SHARDS is intentionally NOT forwarded here — the next slot's resolve
+          # job will look up the correct per-experiment value from N_SHARDS_TABLE.
+          # The manual input is passed only so it can be overridden for single-slot
+          # manual runs (continue_chain=false already skips this step).
+          TASK_IDS_OVERRIDE: ${{ github.event.inputs.task_ids_override || '' }}
+          TOTAL:             ${{ needs.resolve.outputs.total }}
+          CONSOL_OK:         ${{ steps.wait_consol.outputs.consol_ok }}
+          EXP_OK:            ${{ needs.run-experiment.outputs.exp_ok }}
+        run: |
+          set -euo pipefail
+
+          # Secondary guard: should not be needed given the job-level `if`,
+          # but prevents an accidental dispatch if outputs are ever empty.
+          if [[ "${EXP_OK}" != "true" ]]; then
+            echo "FAIL Experiment did not succeed (exp_ok=${EXP_OK}) - CHAIN ABORTED."
+            exit 1
+          fi
+
+          if [[ "${CONSOL_OK}" == "false" ]]; then
+            echo "FAIL Analysis explicitly failed (consol_ok=false) - CHAIN ABORTED."
+            echo "  Fix the analysis failure for ${{ needs.resolve.outputs.experiment }} and re-trigger manually."
+            exit 1
+          fi
+
+          if [[ "${CONSOL_OK}" == "timed_out" ]]; then
+            echo "::warning::Analysis of ${{ needs.resolve.outputs.experiment }} timed out after 90 min."
+            echo "  The analysis run may still be in progress.  Continuing chain - monitor Actions UI."
+          fi
+
+          if [[ $NEXT_INDEX -lt $TOTAL ]]; then
+            echo "-> Dispatching next slot: index $NEXT_INDEX (n_shards resolved per-experiment by next slot)"
+            gh workflow run ci_schedule_all.yml \
+              --field experiment_index="$NEXT_INDEX" \
+              --field task_ids_override="$TASK_IDS_OVERRIDE"
+          else
+            echo "OK All experiments dispatched - chain complete."
+          fi

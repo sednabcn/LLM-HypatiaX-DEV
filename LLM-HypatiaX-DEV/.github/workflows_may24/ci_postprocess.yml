@@ -1,0 +1,133 @@
+name: "HypatiaX - post-process (figures + tables)"
+on:
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: "Experiment ID"
+        required: true
+        type: string
+      result_subdir:
+        description: "Result subdirectory (derived from experiment if blank)"
+        required: false
+        type: string
+        default: ""
+
+# ISSUE 5 FIX: declare write permission so git push succeeds on repos
+# that default to contents: read.
+permissions:
+  contents: write
+
+jobs:
+  postprocess:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # ISSUE 6 FIX: pass token explicitly (matches ci_analysis.yml pattern)
+      # so the checkout carries write credentials for the subsequent git push.
+      - uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5.3.0
+        with: { python-version: "3.12" }
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn
+
+      # ISSUE 3 FIX: resolve result_subdir from experiment name (same canonical
+      # mapping used by ci_analysis.yml) so the scripts receive the correct
+      # per-experiment subtree instead of the entire results tree.
+      - name: Resolve result_subdir
+        id: meta
+        env:
+          DISPATCH_EXP: ${{ github.event.inputs.experiment }}
+          DISPATCH_SUB: ${{ github.event.inputs.result_subdir }}
+        run: |
+          set -euo pipefail
+          SUB="${DISPATCH_SUB}"
+          if [[ -z "$SUB" ]]; then
+            SUB=$(EXP_ID="$DISPATCH_EXP" python3 -c "
+          import os
+          mapping = {
+              'exp1':               'comparison_results/noise-noiseless/noiseless/defi',
+              'exp1b':              'comparison_results/noise-noiseless/15',
+              'exp2_feynman':       'comparison_results/feynman-tests/exp2',
+              'exp2':               'comparison_results/feynman-tests/exp2_multi',
+              'exp3':               'extrapolation',
+              'exp3b':              'extrapolation/multi_seed',
+              'suppA':              'hybrid_pysr/defi',
+              'suppB':              'comparison_results/feynman-tests/noise-sweep',
+              'suppB_sc':           'comparison_results/feynman-tests/sample-complexity',
+              'hybrid_all_domains': 'hybrid_llm_nn/all_domains',
+              'instability':        'figures',
+              'extrap':             'comparison_results/extrapolation',
+          }
+          exp = os.environ['EXP_ID']
+          print(mapping.get(exp, exp))
+          ")
+          fi
+          echo "result_subdir=${SUB}" >> "$GITHUB_OUTPUT"
+          echo "Resolved result_subdir=${SUB} for experiment=${DISPATCH_EXP}"
+
+      - name: Generate figures
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          # Pre-create output dirs — the generator scripts may not create them,
+          # and git add must find the paths even when no files are produced.
+          # BUG 2b FIX: tables dir was missing; only figures dir was pre-created,
+          # so git add "${TABS}/" would warn and tables were never committed.
+          mkdir -p "hypatiax/data/results/${SUB}/figures"
+          mkdir -p "hypatiax/data/results/${SUB}/tables"
+          # BUG 2a FIX: script was invoked as figures/generate_figures.py — that path
+          # resolves to the output subdirectory, not the script source location.
+          # Scripts live under scripts/ (same prefix as scripts/patches/paper_targets.json).
+          python scripts/generate_figures.py \
+            --repo-root   "hypatiax/data/results/${SUB}" \
+            --figures-dir "hypatiax/data/results/${SUB}/figures" \
+            --source auto
+
+      - name: Generate tables
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          # BUG 2a FIX: same wrong-path bug as generate_figures — was tables/generate_tables.py.
+          python scripts/generate_tables.py \
+            --results-dir "hypatiax/data/results/${SUB}" \
+            --output-dir  "hypatiax/data/results/${SUB}/tables"
+
+      - name: Commit outputs
+        env:
+          SUB: ${{ steps.meta.outputs.result_subdir }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Reset index before rebasing — matches ci_analysis.yml pattern.
+          # Without this, a dirty index from prior steps causes rebase to refuse.
+          git reset HEAD 2>/dev/null || true
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+
+          # Stage outputs; warn explicitly if either directory is empty or missing
+          # rather than hiding it with a bare || true.
+          FIGS="hypatiax/data/results/${SUB}/figures"
+          TABS="hypatiax/data/results/${SUB}/tables"
+
+          if [[ ! -d "$FIGS" ]] || [[ -z "$(ls -A "$FIGS" 2>/dev/null)" ]]; then
+            echo "::warning::figures directory is empty or missing: ${FIGS}"
+          fi
+          if [[ ! -d "$TABS" ]] || [[ -z "$(ls -A "$TABS" 2>/dev/null)" ]]; then
+            echo "::warning::tables directory is empty or missing: ${TABS}"
+          fi
+
+          git add "${FIGS}/" "${TABS}/" 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to post-process outputs — results unchanged from previous run."
+          else
+            git commit -m "ci: figures+tables for ${{ github.event.inputs.experiment }} - run ${{ github.run_id }}"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "Pushed figures+tables for ${{ github.event.inputs.experiment }}."
+          fi

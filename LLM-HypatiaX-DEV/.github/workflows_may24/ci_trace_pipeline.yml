@@ -1,0 +1,578 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  ci_trace_pipeline.yml — HypatiaX static pipeline tracer
+#
+#  Runs trace_pipeline.py against run_all.sh and emits a structured report.
+#  Mirrors the conventions of ci_experiment.yml (Python 3.12, pyyaml, checkout@v4,
+#  artifact upload, REPRO_CFG env var) so it can slot cleanly into the existing
+#  ci_schedule_all (resolve → run-experiment → run-finalize)
+#  → ci_experiment → ci_consolidate_experiment chain.
+#
+#  Triggers:
+#    1. Push / PR to master or any branch touching the pipeline files — catch
+#       regressions before they reach a scheduled run.
+#    2. After ci_experiment.yml completes — cross-check the static trace against
+#       the live run that just finished (experiment_id is parsed from the
+#       triggering workflow name, same pattern as ci_consolidate_experiment.yml).
+#    3. workflow_dispatch — run on demand with optional --repo-root, step filter,
+#       and dry-run flag.
+#
+#  Outputs:
+#    • trace_report.txt   — full human-readable report (errors, warnings, info)
+#    • trace_summary.json — machine-readable summary: error/warning counts,
+#                           step list, dep graph, coverage gaps, timestamp
+#    Both are uploaded as the artifact "pipeline-trace-report-<run_id>" and,
+#    when errors are found, the job fails so the broken state is visible in the
+#    Actions UI.
+#
+#  Design decisions:
+#    - No experiment matrix, no sharding: the tracer is a cheap single-pass
+#      static analysis (< 10 s) so one runner is always enough.
+#    - Script paths resolved relative to REPO_ROOT so on-disk existence checks
+#      work for every script in every sub-directory.
+#    - n_shards is not a concern here: the tracer is single-runner by design.
+#      The 3-or-4 shard count used by ci_experiment.yml workers is visible
+#      in the triggering workflow's inputs and logged in trace_summary.json.
+#    - REPRO_CFG is injected for parity with ci_experiment.yml (trace_pipeline.py
+#      can optionally read it to cross-check hyperparameter coverage).
+#    - On a workflow_run trigger the resolved experiment_id is echoed in the job
+#      summary so the trace can be filtered to just that step.
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: "HypatiaX — pipeline trace"
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+on:
+  # 1. Push / PR: run whenever pipeline-defining files change.
+  push:
+    branches: ["master", "main"]
+    paths:
+      - "run_all.sh"
+      - "trace_pipeline*.py"
+      - ".github/workflows/ci_trace_pipeline.yml"
+      - "config/repro.yaml"
+  pull_request:
+    paths:
+      - "run_all.sh"
+      - "trace_pipeline*.py"
+      - ".github/workflows/ci_trace_pipeline.yml"
+      - "config/repro.yaml"
+
+  # 2. Auto-trigger: fires after any ci_experiment.yml run completes.
+  #    Workflow names must be listed literally (GitHub does not evaluate
+  #    expressions inside workflow_run.workflows[]).
+  workflow_run:
+    workflows:
+      - "HypatiaX - experiment runner . run_all.sh"
+    types: [completed]
+
+  # 3. Manual: run on demand with optional overrides.
+  workflow_dispatch:
+    inputs:
+      experiment_filter:
+        description: "Limit trace to a single step (blank = all steps)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - env_check
+          - exp1
+          - exp1b
+          - exp2_feynman
+          - exp2
+          - exp3
+          - exp3b
+          - suppA
+          - suppB
+          - suppB_sc
+          - hybrid_all_domains
+          - instability
+          - extrap
+          - tables
+          - figures
+          - validate
+      repo_root:
+        description: "Repo root for on-disk script existence checks (blank = GITHUB_WORKSPACE)"
+        required: false
+        default: ""
+      fail_on_warning:
+        description: "Treat warnings as errors (true/false)"
+        required: false
+        default: "false"
+      dry_run:
+        description: "Print the trace command without executing it (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  actions:  read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  REPRO_CFG: "${{ github.workspace }}/config/repro.yaml"
+  TRACE_SCRIPT: "trace_pipeline.py"   # update if the script is renamed
+  SHELL_SCRIPT: "run_all.sh"
+
+# ══════════════════════════════════════════════════════════════════════════════
+jobs:
+  trace:
+    name: "Static pipeline trace"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15   # the tracer itself runs in < 30 s; 15 min is generous
+
+    steps:
+      # ── 0. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 1
+
+      # ── 1. Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml --quiet
+
+      # ── 2. Resolve experiment from workflow_run trigger (if applicable) ───────
+      #       Uses the same sed pattern as ci_consolidate_experiment.yml so the
+      #       two files stay in sync.
+      - name: Resolve triggered experiment (workflow_run only)
+        id: triggered_exp
+        run: |
+          # BUG 3 FIX: github.event.workflow_run.name is the static workflow `name:` field
+          # and never contains the experiment ID.  display_title reflects the dynamic
+          # `run-name:` ("HypatiaX - exp2_feynman . run_all.sh") which does embed it.
+          # ci_experiment.yml run-name uses ASCII hyphen (-) and period (.) — not em-dash
+          # or middle-dot.  Kept in sync with ci_consolidate_experiment.yml sed pattern.
+          WF_TITLE="${{ github.event.workflow_run.display_title }}"
+          if [[ -n "$WF_TITLE" ]]; then
+            EXP=$(echo "$WF_TITLE" | sed 's/.*- \(.*\) \. .*/\1/')
+            echo "Parsed experiment from triggering workflow display_title: $EXP"
+            echo "exp=$EXP" >> "$GITHUB_OUTPUT"
+          else
+            echo "exp=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 3. Verify required files are present ─────────────────────────────────
+      - name: Verify pipeline files present
+        run: |
+          MISSING=0
+          for f in "${TRACE_SCRIPT}" "${SHELL_SCRIPT}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error file=$f::Required file '$f' not found in repo root."
+              MISSING=$(( MISSING + 1 ))
+            else
+              echo "✓ Found: $f"
+            fi
+          done
+          if [[ $MISSING -gt 0 ]]; then
+            echo "::error::${MISSING} required file(s) missing — cannot run trace."
+            exit 1
+          fi
+
+      # ── 4b. Cross-check repro.yaml hyperparameters ───────────────────────────
+      #        Validates on-disk repro.yaml against expected paper values.
+      #        Mismatches are emitted as ::warning:: annotations and counted in
+      #        n_repro_warns (surfaced in the job summary). Never blocks the job
+      #        unless fail_on_warning=true is set at dispatch.
+      - name: Cross-check repro.yaml
+        id: repro_check
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          REPRO_CFG: ${{ env.REPRO_CFG }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, sys, yaml
+
+          cfg_path = os.environ["REPRO_CFG"]
+          if not os.path.exists(cfg_path):
+              print(f"::warning::repro.yaml not found at {cfg_path} — hyperparameter cross-check skipped")
+              with open(os.environ.get("GITHUB_OUTPUT", "/dev/null"), "a") as gh:
+                  gh.write("n_repro_warns=1\n")
+              sys.exit(0)
+
+          with open(cfg_path) as f:
+              cfg = yaml.safe_load(f)
+
+          warns = []
+
+          def chk(path, expected, label=None):
+              keys = path.split(".")
+              val = cfg
+              try:
+                  for k in keys:
+                      val = val[k]
+              except (KeyError, TypeError):
+                  warns.append(f"MISSING  {path} — expected {expected!r}")
+                  return
+              if val != expected:
+                  warns.append(f"MISMATCH {label or path}: got {val!r}, expected {expected!r}")
+
+          # Identity
+          chk("run_id",      "paper_v3")
+          chk("run_version", "3.0")
+          # NOTE: claude-sonnet-4-20250514 requires anthropic SDK ≥ 0.40.0.
+          # environment.yml was updated from anthropic==0.28.0 → anthropic==0.40.0
+          # (fixed two sessions ago); this check is now satisfied by that pin.
+          chk("llm_model",   "claude-sonnet-4-20250514")
+          chk("llm_retries", 3)
+          chk("llm_k_runs",  30)
+
+          # Seeds
+          chk("seeds.default",   42)
+          chk("seeds.pysr_seed", 42)
+
+          # Task counts
+          chk("n_tasks_defi",        74)
+          chk("n_tasks_instability", 70)
+          chk("pca_train_frac",      0.40)
+          chk("nn_time_limit",       120)
+
+          # Timeouts
+          chk("timeouts.pysr_attempt_seconds",      1100)
+          chk("timeouts.feynman_pysr_seconds",       1100)
+          chk("timeouts.instability_pysr_seconds",    300)
+          chk("timeouts.fit_wall_timeout",           1200)
+          chk("timeouts.fit_grace_secs",              120)
+          chk("timeouts.kill_grace_seconds",          300)
+          chk("timeouts.method_seconds",              900)
+          chk("timeouts.equation_wall_clock",        1200)
+
+          # PySR
+          chk("pysr.niterations",    1000)
+          chk("pysr.populations",      30)
+          chk("pysr.population_size",  33)
+          chk("pysr.parsimony",       0.01)
+          chk("pysr.maxsize",           30)
+          chk("pysr.deterministic",   True)
+          chk("pysr.fit_wall_timeout", 1200)
+          chk("pysr.fit_grace_secs",    120)
+
+          # Engine
+          chk("engine.name",                  "hybrid_system_v50_2")
+          chk("engine.version",               "v5.1")
+          chk("engine.allow_nondeterministic", False)
+
+          # Benchmark expected values
+          chk("benchmarks.defi.expected.accuracy",          0.892)
+          chk("benchmarks.defi.expected.total_cases",          74)
+          chk("benchmarks.defi.expected.catastrophic",           0)
+          chk("benchmarks.defi.train_frac",                  0.40)
+          chk("benchmarks.core15.expected.mw_u",            126.0)
+          chk("benchmarks.core15.expected.mw_p",            0.295)
+          chk("benchmarks.core15.expected.speedup",          1.73)
+          chk("benchmarks.feynman.expected.successes",           9)
+          chk("benchmarks.feynman.expected.total",              30)
+          chk("benchmarks.nguyen12.expected.hypatia_success",   11)
+          chk("benchmarks.nguyen12.expected.pysr_success",      10)
+          chk("benchmarks.nguyen12.expected.nn_success",         0)
+          chk("benchmarks.nguyen12.expected.mw_u",             113)
+          chk("benchmarks.nguyen12.expected.mw_p",          0.0097)
+          chk("benchmarks.noise_sweep.expected.ehd_rate",      1.0)
+          chk("benchmarks.noise_sweep.expected.plateau_n",     500)
+          chk("benchmarks.routing.expected.fix1_improvement", 0.06)
+          chk("benchmarks.routing.expected.fix2_improvement", 0.05)
+          chk("benchmarks.routing.expected.fix3_improvement", 0.01)
+          chk("benchmarks.instability.expected.spearman_rho", -0.70)
+          chk("benchmarks.instability.expected.p_value",       0.001)
+          chk("benchmarks.instability.k_runs",                   30)
+          chk("benchmarks.instability.total_tasks",              70)
+
+          # Paper fixes declared
+          for fk in ["FIX-C1", "FIX-C2", "FIX-T1", "FIX-T2", "FIX-XR3", "FIX-B2", "FIX-B3"]:
+              if fk not in (cfg.get("fixes") or {}):
+                  warns.append(f"MISSING  fixes.{fk} — expected paper fix not declared")
+
+          # Emit
+          for w in warns:
+              print(f"::warning::repro.yaml \u25b8 {w}")
+          if warns:
+              print(f"\nrepro cross-check: {len(warns)} warning(s)")
+          else:
+              print("\u2713 repro.yaml cross-check passed \u2014 all hyperparameters match paper values")
+
+          with open(os.environ.get("GITHUB_OUTPUT", "/dev/null"), "a") as gh:
+              gh.write(f"n_repro_warns={len(warns)}\n")
+              gh.write(f"repro_run_id={cfg.get('run_id','')}\n")
+              gh.write(f"repro_run_version={cfg.get('run_version','')}\n")
+              gh.write(f"repro_llm_model={cfg.get('llm_model','')}\n")
+          PYEOF
+
+      # ── 4c. Build trace command ───────────────────────────────────────────────
+      - name: Build and echo trace command
+        id: cmd
+        env:
+          EXPERIMENT_FILTER:  ${{ steps.triggered_exp.outputs.exp || github.event.inputs.experiment_filter || '' }}
+          REPO_ROOT_OVERRIDE: ${{ github.event.inputs.repo_root || '' }}
+          FAIL_ON_WARNING:    ${{ github.event.inputs.fail_on_warning || 'false' }}
+        run: |
+          CMD="python3 ${TRACE_SCRIPT} --shell ${SHELL_SCRIPT}"
+
+          # Resolve repo root: explicit input > GITHUB_WORKSPACE
+          ROOT="${REPO_ROOT_OVERRIDE:-$GITHUB_WORKSPACE}"
+          CMD="$CMD --repo-root ${ROOT}"
+
+          # Optional single-step filter (from manual input or workflow_run trigger)
+          if [[ -n "${EXPERIMENT_FILTER}" ]]; then
+            CMD="$CMD --step ${EXPERIMENT_FILTER}"
+            echo "Filtering trace to step: ${EXPERIMENT_FILTER}"
+          fi
+
+          # Pass REPRO_CFG so trace_pipeline.py can cross-check hyperparameters
+          if [[ -f "${REPRO_CFG}" ]]; then
+            CMD="$CMD --repro-cfg ${REPRO_CFG}"
+            echo "repro.yaml found at ${REPRO_CFG} — passed to tracer"
+          else
+            echo "::warning::repro.yaml not found at ${REPRO_CFG} — hyperparameter cross-check skipped"
+          fi
+
+          if [[ "${FAIL_ON_WARNING}" == "true" ]]; then
+            CMD="$CMD --fail-on-warning"
+          fi
+
+          echo "Trace command: $CMD"
+          echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
+
+      # ── 5. Dry-run guard ──────────────────────────────────────────────────────
+      - name: "[DRY RUN] echo command only"
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "=== DRY RUN — command that would be executed ==="
+          echo "${{ steps.cmd.outputs.cmd }}"
+          echo "================================================="
+
+      # ── 6. Run trace ─────────────────────────────────────────────────────────
+      - name: Run static trace
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        id: trace
+        env:
+          REPRO_CFG: ${{ env.REPRO_CFG }}
+        run: |
+          set -euo pipefail
+
+          # Execute tracer; tee to file and capture exit code without errexit
+          set +e
+          ${{ steps.cmd.outputs.cmd }} 2>&1 | tee trace_report.txt
+          TRACE_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          echo "Tracer exit code: $TRACE_EXIT"
+          echo "exit_code=$TRACE_EXIT" >> "$GITHUB_OUTPUT"
+
+          # Surface ERRORs and WARNINGs as annotations in the Actions UI
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*ERRORs[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+              N_ERR="${BASH_REMATCH[1]}"
+              echo "n_errors=$N_ERR" >> "$GITHUB_OUTPUT"
+            fi
+            if [[ "$line" =~ ^[[:space:]]*WARNINGs[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+              N_WARN="${BASH_REMATCH[1]}"
+              echo "n_warnings=$N_WARN" >> "$GITHUB_OUTPUT"
+            fi
+          done < trace_report.txt
+
+          # Emit each ERROR line as a GitHub error annotation
+          grep -E "^\s*(ERROR|✗)" trace_report.txt | while IFS= read -r err; do
+            echo "::error::$err"
+          done || true
+
+          # Emit each WARNING line as a GitHub warning annotation
+          grep -E "^\s*(WARN|⚠)" trace_report.txt | while IFS= read -r warn; do
+            echo "::warning::$warn"
+          done || true
+
+          # Propagate tracer exit code: non-zero → job fails
+          exit $TRACE_EXIT
+
+      # ── 7. Generate machine-readable summary JSON ─────────────────────────────
+      - name: Generate trace_summary.json
+        if: ${{ always() && github.event.inputs.dry_run != 'true' }}
+        env:
+          TRIGGERED_EXP:  ${{ steps.triggered_exp.outputs.exp }}
+          TRACE_EXIT:     ${{ steps.trace.outputs.exit_code || '0' }}
+          N_ERRORS:       ${{ steps.trace.outputs.n_errors || '0' }}
+          N_WARNINGS:     ${{ steps.trace.outputs.n_warnings || '0' }}
+          FAIL_ON_WARNING: ${{ github.event.inputs.fail_on_warning || 'false' }}
+          # Capture the shard count used by the triggering experiment run
+          # (available only on workflow_run; blank on push/PR/manual triggers).
+          N_SHARDS_UPSTREAM: ${{ github.event.workflow_run.inputs.n_shards || '' }}
+          EXP_FILTER:        ${{ steps.triggered_exp.outputs.exp || github.event.inputs.experiment_filter || '' }}
+          N_REPRO_WARNS:     ${{ steps.repro_check.outputs.n_repro_warns || '0' }}
+          REPRO_RUN_ID:      ${{ steps.repro_check.outputs.repro_run_id || '' }}
+          REPRO_RUN_VERSION: ${{ steps.repro_check.outputs.repro_run_version || '' }}
+          REPRO_LLM_MODEL:   ${{ steps.repro_check.outputs.repro_llm_model || '' }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re
+          from datetime import datetime, timezone
+
+          report_path = "trace_report.txt"
+          report_text = open(report_path).read() if os.path.exists(report_path) else ""
+
+          # Parse step list from report (lines like "[NN] step_name …")
+          steps_found = re.findall(r'^\s*\[(\d+)\]\s+(\S+)', report_text, re.MULTILINE)
+
+          # Parse dependency graph edges from "← dep1, dep2" lines
+          dep_edges = {}
+          for m in re.finditer(r'^\s*\[(\d+)\]\s+(\S+).*?(?:←\s*(.*))?$', report_text, re.MULTILINE):
+            idx, name, deps_raw = m.group(1), m.group(2), (m.group(3) or "").strip()
+            dep_edges[name] = [d.strip() for d in deps_raw.split(",") if d.strip()] if deps_raw else []
+
+          # Parse warnings by category
+          warn_lines = re.findall(r'^\s*\[(\w+)\].*(?:WARN|⚠).*$', report_text, re.MULTILINE)
+
+          summary = {
+              "generated_at":       datetime.now(timezone.utc).isoformat(),
+              "source_run_id":      os.environ.get("GITHUB_RUN_ID", ""),
+              "repository":         os.environ.get("GITHUB_REPOSITORY", ""),
+              "ref":                os.environ.get("GITHUB_REF", ""),
+              "shell_script":       os.environ.get("SHELL_SCRIPT", "run_all.sh"),
+              "trace_script":       os.environ.get("TRACE_SCRIPT", "trace_pipeline.py"),
+              "triggered_by_exp":   os.environ.get("TRIGGERED_EXP", ""),
+              "n_shards_upstream":  os.environ.get("N_SHARDS_UPSTREAM", "unknown"),
+              "experiment_filter":  os.environ.get("EXP_FILTER", ""),
+              "fail_on_warning":    os.environ.get("FAIL_ON_WARNING", "false") == "true",
+              "trace_exit_code":    int(os.environ.get("TRACE_EXIT", "0")),
+              "n_errors":           int(os.environ.get("N_ERRORS", "0")),
+              "n_warnings":         int(os.environ.get("N_WARNINGS", "0")),
+              "n_repro_warns":      int(os.environ.get("N_REPRO_WARNS", "0")),
+              "repro_run_id":       os.environ.get("REPRO_RUN_ID", ""),
+              "repro_run_version":  os.environ.get("REPRO_RUN_VERSION", ""),
+              "repro_llm_model":    os.environ.get("REPRO_LLM_MODEL", ""),
+              "status":             "PASS" if int(os.environ.get("TRACE_EXIT", "0")) == 0 else "FAIL",
+              "steps_found":        [{"index": int(i), "name": n} for i, n in steps_found],
+              "dep_graph":          dep_edges,
+              "warning_categories": warn_lines,
+          }
+
+          with open("trace_summary.json", "w") as f:
+              json.dump(summary, f, indent=2)
+
+          print(f"trace_summary.json written — status={summary['status']}  "
+                f"errors={summary['n_errors']}  warnings={summary['n_warnings']}  "
+                f"repro_warns={summary['n_repro_warns']}  steps={len(summary['steps_found'])}")
+          PYEOF
+
+      # ── 8. Write GitHub Actions job summary ──────────────────────────────────
+      - name: Write job summary
+        if: ${{ always() && github.event.inputs.dry_run != 'true' }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          summary_path = "trace_summary.json"
+          report_path  = "trace_report.txt"
+
+          if not os.path.exists(summary_path):
+              print("No summary file — skipping job summary write.")
+              exit()
+
+          s = json.load(open(summary_path))
+          status_icon = "✅" if s["status"] == "PASS" else "❌"
+
+          lines = [
+              f"## {status_icon} HypatiaX pipeline trace — {s['status']}",
+              "",
+              f"| Field | Value |",
+              f"|---|---|",
+              f"| Run | `{s['source_run_id']}` |",
+              f"| Ref | `{s['ref']}` |",
+              f"| Triggered by | `{s['triggered_by_exp'] or '—'}` |",
+              f"| Upstream n_shards | `{s.get('n_shards_upstream') or '—'}` |",
+              f"| Filter | `{s['experiment_filter'] or 'all steps'}` |",
+              f"| Errors | **{s['n_errors']}** |",
+              f"| Warnings | **{s['n_warnings']}** |",
+              f"| Repro warns | **{s.get('n_repro_warns', 0)}** |",
+              f"| Steps traced | **{len(s['steps_found'])}** |",
+              "",
+              "### Reproducibility config",
+              f"| Field | Value |",
+              f"|---|---|",
+              f"| run_id | `{s.get('repro_run_id') or '—'}` |",
+              f"| run_version | `{s.get('repro_run_version') or '—'}` |",
+              f"| llm_model | `{s.get('repro_llm_model') or '—'}` |",
+              "",
+          ]
+
+          if s["steps_found"]:
+              lines.append("### Steps")
+              lines.append("| # | Name | Deps |")
+              lines.append("|---|---|---|")
+              for step in s["steps_found"]:
+                  deps = ", ".join(s["dep_graph"].get(step["name"], [])) or "—"
+                  lines.append(f"| {step['index']} | `{step['name']}` | {deps} |")
+              lines.append("")
+
+          if s["n_warnings"] > 0 and s["warning_categories"]:
+              lines.append("### Warnings")
+              lines.append("```")
+              lines.extend(s["warning_categories"][:20])
+              if len(s["warning_categories"]) > 20:
+                  lines.append(f"… and {len(s['warning_categories']) - 20} more")
+              lines.append("```")
+              lines.append("")
+
+          # Append full report (collapsed)
+          if os.path.exists(report_path):
+              report = open(report_path).read()
+              lines += [
+                  "<details>",
+                  "<summary>Full trace report</summary>",
+                  "",
+                  "```",
+                  report[:20000],  # cap at 20 k chars to stay under Actions limit
+              ]
+              if len(report) > 20000:
+                  lines.append(f"… (truncated; download artifact for full report)")
+              lines += ["```", "", "</details>"]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "w") as f:
+              f.write("\n".join(lines))
+
+          print("Job summary written.")
+          PYEOF
+
+      # ── 9. Upload trace artifacts ─────────────────────────────────────────────
+      - name: Upload trace artifacts
+        if: ${{ always() && github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v4.3.6
+        with:
+          name: pipeline-trace-report-${{ github.run_id }}
+          path: |
+            trace_report.txt
+            trace_summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ── 10. Final gate ────────────────────────────────────────────────────────
+      #        Re-read the summary and fail explicitly so downstream jobs (e.g.
+      #        a gate before ci_schedule_all dispatches the chain) can depend on
+      #        this step with `needs: [trace]`.
+      - name: Gate — fail if trace found errors
+        if: ${{ always() && github.event.inputs.dry_run != 'true' }}
+        run: |
+          if [[ -f trace_summary.json ]]; then
+            N_ERR=$(python3 -c "import json; print(json.load(open('trace_summary.json'))['n_errors'])")
+            N_WARN=$(python3 -c "import json; print(json.load(open('trace_summary.json'))['n_warnings'])")
+            N_REPRO=$(python3 -c "import json; print(json.load(open('trace_summary.json')).get('n_repro_warns', 0))")
+            N_TOTAL_WARN=$(( N_WARN + N_REPRO ))
+            FAIL_WARN="${{ github.event.inputs.fail_on_warning || 'false' }}"
+            echo "Trace result: errors=$N_ERR  warnings=$N_WARN  repro_warns=$N_REPRO  fail_on_warning=$FAIL_WARN"
+            if [[ $N_ERR -gt 0 ]]; then
+              echo "::error::Pipeline trace found $N_ERR error(s) — see trace_report.txt."
+              exit 1
+            fi
+            if [[ "$FAIL_WARN" == "true" && $N_TOTAL_WARN -gt 0 ]]; then
+              echo "::error::Pipeline trace found $N_WARN trace warning(s) and $N_REPRO repro warning(s) — fail_on_warning=true."
+              exit 1
+            fi
+            echo "✓ Gate passed — no blocking issues."
+          else
+            echo "::warning::trace_summary.json not found — gate skipped."
+          fi
