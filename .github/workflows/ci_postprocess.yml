@@ -1,473 +1,504 @@
-name: "HypatiaX - post-process (figures + tables)"
-
-# ==============================================================================
-# ci_postprocess.yml — generic, config-driven figures + tables generation.
-#
-# Every experiment's source dir, output dirs, and which generators apply to
-# it lives in config/experiments.yml — NOT in this file. To add, remove, or move an
-# experiment, edit config/experiments.yml only; nothing here should need to change.
-#
-# GitHub Actions limitation: workflow_dispatch `options:` and push `paths:`
-# must be static YAML — Actions evaluates triggers before running any code,
-# so it can't read config/experiments.yml to build them. Both lists below are
-# therefore mirrored by hand from config/experiments.yml. The "Validate config
-# sync" step fails the run loudly the moment they drift apart, instead of
-# silently misrouting a run the way the old three-file-duplicated mapping
-# did.
-# ==============================================================================
-
-"on":
-  push:
-    branches: ["main", "master"]
-    paths:
-      - "config/experiments.yml"
-      - "scripts/generate_figures.py"
-      - "scripts/generate_tables.py"
-      - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/**/*.json"
-      - "hypatiax/data/results/comparison_results/noise-noiseless/15/**/*.json"
-      - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi_pca/**/*.json"
-      - "hypatiax/data/results/comparison_results/noise-noiseless/15_pca/**/*.json"
-      - "hypatiax/data/results/ablation/exp1_ablation/**/*.json"
-      - "hypatiax/data/results/five_systems/exp1_five/**/*.json"
-      - "hypatiax/data/results/comparison_results/feynman-tests/exp2/**/*.json"
-      - "hypatiax/data/results/comparison_results/feynman-tests/exp2_extrap/**/*.json"
-      - "hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060/**/*.json"
-      - "hypatiax/data/results/comparison_results/feynman-tests/exp2_multi/**/*.json"
-      - "hypatiax/data/results/five_systems/exp2_five/**/*.json"
-      - "hypatiax/data/results/extrapolation/**/*.json"
-      - "hypatiax/data/results/hybrid_pysr/**/*.json"
-      - "hypatiax/data/results/comparison_results/feynman-tests/noise-sweep/**/*.json"
-      - "hypatiax/data/results/comparison_results/feynman-tests/sample-complexity/**/*.json"
-      - "hypatiax/data/results/hybrid_llm_nn/**/*.json"
-      - "hypatiax/data/results/comparison_results/extrapolation/**/*.json"
-      - "hypatiax/data/results/figures/**/*.json"
-
-  workflow_dispatch:
-    inputs:
-      experiment:
-        description: "Experiment ID — must be a key (or alias) in config/experiments.yml"
-        required: true
-        type: choice
-        options:
-          - exp1
-          - exp1b
-          - exp1_pca
-          - exp1b_pca
-          - exp1_ablation
-          - exp1_five
-          - exp2_feynman
-          - exp2_feynman_extrap
-          - exp2_feynman_pca
-          - exp2
-          - exp2_five
-          - exp3
-          - exp3b
-          - suppA
-          - suppB
-          - suppB_sc
-          - hybrid_all_domains
-          - instability
-          - extrap
-          - figures_deploy
-
-permissions:
-  contents: write
-
-env:
-  CONFIG_FILE: "config/experiments.yml"
-
-jobs:
-  postprocess:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4.2.2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5.3.0
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn \
-                      "sympy>=1.12" "tabulate>=0.9" "PyYAML>=6.0"
-
-      # ------------------------------------------------------------------
-      # Step 0 — fail loudly if this workflow's static dispatch/push lists
-      # have drifted out of sync with config/experiments.yml, rather than silently
-      # misrouting or refusing a valid run.
-      # ------------------------------------------------------------------
-      - name: Validate config sync
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import sys, yaml
-
-          with open("${{ env.CONFIG_FILE }}") as f:
-              cfg = yaml.safe_load(f)
-
-          config_ids = set(cfg["experiments"]) | set(cfg["aggregates"])
-
-          dispatch_options = set("""
-          exp1 exp1b exp1_pca exp1b_pca exp1_ablation exp1_five
-          exp2_feynman exp2_feynman_extrap exp2_feynman_pca exp2 exp2_five
-          exp3 exp3b suppA suppB suppB_sc hybrid_all_domains instability
-          extrap figures_deploy
-          """.split())
-
-          missing_from_dispatch = config_ids - dispatch_options
-          missing_from_config   = dispatch_options - config_ids
-          if missing_from_dispatch or missing_from_config:
-              print("::error::ci_postprocess.yml's workflow_dispatch options "
-                    "have drifted from config/experiments.yml.")
-              if missing_from_dispatch:
-                  print(f"  In config/experiments.yml but NOT in this workflow's "
-                        f"dispatch options: {sorted(missing_from_dispatch)}")
-              if missing_from_config:
-                  print(f"  In this workflow's dispatch options but NOT in "
-                        f"config/experiments.yml: {sorted(missing_from_config)}")
-              print("Fix: update the workflow_dispatch.inputs.experiment.options "
-                    "list (and the push.paths list, if a source_dir changed) "
-                    "in ci_postprocess.yml to match config/experiments.yml.")
-              sys.exit(1)
-
-          print(f"OK — {len(config_ids)} experiment/aggregate IDs in sync "
-                f"between config/experiments.yml and ci_postprocess.yml.")
-          PY
-
-      # ------------------------------------------------------------------
-      # Step 1 — resolve which experiment this run is for, and every path
-      # it needs, purely by reading config/experiments.yml. Nothing below this
-      # step contains a hardcoded experiment name or directory.
-      # ------------------------------------------------------------------
-      - name: Resolve experiment from config
-        id: resolve
-        shell: bash
-        env:
-          DISPATCH_INPUT: ${{ github.event.inputs.experiment }}
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          AFTER_SHA: ${{ github.event.after }}
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, re, subprocess, sys, json, yaml
-
-          # NOTE: every diagnostic/error print in this step must go to stderr,
-          # not stdout — stdout here is redirected straight into $GITHUB_OUTPUT,
-          # and anything that isn't a "key=value" line makes GitHub reject the
-          # whole step with "Invalid format".
-          def die(msg: str) -> None:
-              print(f"::error::{msg}", file=sys.stderr)
-              sys.exit(1)
-
-          with open(os.environ["CONFIG_FILE"]) as f:
-              cfg = yaml.safe_load(f)
-
-          experiments = cfg["experiments"]
-          aggregates  = cfg["aggregates"]
-          all_entries = {**experiments, **aggregates}
-          results_root = cfg["results_root"]
-
-          def glob_to_regex(pat: str) -> re.Pattern:
-              pat = re.escape(pat)
-              pat = pat.replace(r"\*\*/", "(?:.*/)?")
-              pat = pat.replace(r"\*\*", ".*")
-              pat = pat.replace(r"\*", "[^/]*")
-              return re.compile("^" + pat + "$")
-
-          def matches(entry_id: str, changed_path: str) -> bool:
-              trig = all_entries[entry_id].get("trigger_paths", [])
-              positives = [p for p in trig if not p.startswith("!")]
-              negatives = [p[1:] for p in trig if p.startswith("!")]
-              if any(glob_to_regex(p).match(changed_path) for p in negatives):
-                  return False
-              return any(glob_to_regex(p).match(changed_path) for p in positives)
-
-          def resolve_id(raw: str) -> str:
-              if raw in all_entries:
-                  return raw
-              for eid, entry in all_entries.items():
-                  if raw in entry.get("aliases", []):
-                      return eid
-              die(f"'{raw}' is not a known experiment ID or alias "
-                  f"in {os.environ['CONFIG_FILE']}.")
-
-          def changed_files_via_git() -> list[str]:
-              # github.event.head_commit.modified/added/removed is unreliable:
-              # it's empty for merge commits (e.g. a squash-merged PR), and it
-              # only reflects the single head commit, not the full push range.
-              # actions/checkout already ran with fetch-depth: 0, so diffing
-              # before..after directly is both correct and simple.
-              before = os.environ.get("BEFORE_SHA", "")
-              after  = os.environ.get("AFTER_SHA", "")
-              all_zero = set("0")
-              if after and set(after) == all_zero:
-                  return []  # branch/tag deletion — nothing to diff
-              if not before or set(before) == all_zero:
-                  # first push to a new branch: no "before" to diff against,
-                  # fall back to the files touched by the head commit itself.
-                  cmd = ["git", "show", "--name-only", "--pretty=format:", after or "HEAD"]
-              else:
-                  cmd = ["git", "diff", "--name-only", before, after]
-              try:
-                  out = subprocess.run(cmd, capture_output=True, text=True, check=True)
-              except subprocess.CalledProcessError as e:
-                  die(f"git diff failed while resolving changed files: {e.stderr.strip()}")
-              return [p for p in out.stdout.splitlines() if p]
-
-          event = os.environ["EVENT_NAME"]
-          if event == "workflow_dispatch":
-              exp_id = resolve_id(os.environ["DISPATCH_INPUT"])
-          else:
-              changed = changed_files_via_git()
-              exp_id = None
-              for path in changed:
-                  for eid in all_entries:
-                      if matches(eid, path):
-                          exp_id = eid
-                          break
-                  if exp_id:
-                      break
-              if exp_id is None:
-                  die("No changed file matched any experiment's trigger_paths "
-                      f"in {os.environ['CONFIG_FILE']} — cannot determine which "
-                      f"experiment this push run is for. Changed files were: {changed}")
-
-          entry = all_entries[exp_id]
-          is_aggregate = exp_id in aggregates
-
-          if is_aggregate:
-              figures_dir = entry["figures_dir"]
-              tables_dir  = entry.get("tables_dir")
-              source_dir  = figures_dir   # aggregates read from their own figures dir
-          else:
-              source_dir  = entry["source_dir"]
-              figures_dir = f"{source_dir}/figures"
-              tables_dir  = f"{source_dir}/tables"
-
-          out = {
-              "id": exp_id,
-              "is_aggregate": str(is_aggregate).lower(),
-              "results_root": results_root,
-              "source_dir_abs":  f"{results_root}/{source_dir}",
-              "figures_dir_abs": f"{results_root}/{figures_dir}",
-              "tables_dir_abs":  f"{results_root}/{tables_dir}" if tables_dir else "",
-              "generates_tables":  str(entry.get("generates_tables", False)).lower(),
-              "generates_figures": str(entry.get("generates_figures", False)).lower(),
-              "extra_stage_files": json.dumps(entry.get("extra_stage_files", [])),
-              "description": entry.get("description", exp_id),
-          }
-          for k, v in out.items():
-              print(f"{k}={v}")
-          PY
-
-      - name: Create output directories
-        shell: bash
-        run: |
-          mkdir -p "${{ steps.resolve.outputs.figures_dir_abs }}"
-          if [ -n "${{ steps.resolve.outputs.tables_dir_abs }}" ]; then
-            mkdir -p "${{ steps.resolve.outputs.tables_dir_abs }}"
-          fi
-
-      # ------------------------------------------------------------------
-      # Step 2 — cross-experiment write guards (config/experiments.yml: guards:).
-      # Snapshot every directory this run does NOT own, before generation.
-      # ------------------------------------------------------------------
-      - name: Snapshot guarded directories
-        id: guard_pre
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import os, hashlib, json, yaml
-
-          with open(os.environ["CONFIG_FILE"]) as f:
-              cfg = yaml.safe_load(f)
-
-          exp_id = "${{ steps.resolve.outputs.id }}"
-          root = "${{ steps.resolve.outputs.results_root }}"
-          snapshot = {}
-
-          for guard in cfg.get("guards", []):
-              if exp_id in guard["owners"]:
-                  continue   # this run legitimately owns this directory
-              for d in guard["dirs"]:
-                  path = os.path.join(root, d)
-                  files = {}
-                  if os.path.isdir(path):
-                      for dirpath, _, filenames in os.walk(path):
-                          for fn in filenames:
-                              fp = os.path.join(dirpath, fn)
-                              files[fp] = hashlib.sha256(open(fp, "rb").read()).hexdigest()
-                  snapshot[path] = files
-
-          with open("/tmp/guard_snapshot.json", "w") as f:
-              json.dump(snapshot, f)
-          print(f"Guarding {len(snapshot)} directory(ies) not owned by '{exp_id}'.")
-          PY
-
-      # ------------------------------------------------------------------
-      # Step 3 — generate. Both scripts already warn-and-skip on missing
-      # data (config/experiments.yml: on_missing_data) and always exit 0; no
-      # hardcoded/paper-verified value is ever substituted by either.
-      # ------------------------------------------------------------------
-      - name: "Generate tables"
-        if: steps.resolve.outputs.generates_tables == 'true'
-        shell: bash
-        run: |
-          python3 scripts/generate_tables.py \
-            --experiment "${{ steps.resolve.outputs.id }}" \
-            --results-dir "${{ steps.resolve.outputs.source_dir_abs }}" \
-            --output-dir "${{ steps.resolve.outputs.tables_dir_abs }}"
-
-      - name: "Generate figures"
-        if: steps.resolve.outputs.generates_figures == 'true'
-        shell: bash
-        run: |
-          python3 scripts/generate_figures.py \
-            --experiment "${{ steps.resolve.outputs.id }}" \
-            --results-dir "${{ steps.resolve.outputs.source_dir_abs }}" \
-            --figures-dir "${{ steps.resolve.outputs.figures_dir_abs }}"
-
-      # ------------------------------------------------------------------
-      # Step 4 — figures_deploy is an assembly step, not a generator: pull
-      # every experiment's own canonical figures into one flat directory
-      # for the LaTeX build. Real filename conflicts (same name, different
-      # content) are logged and left for manual review rather than guessed
-      # at — this never overwrites silently.
-      # ------------------------------------------------------------------
-      - name: "Deploy assembled figures"
-        if: steps.resolve.outputs.id == 'figures_deploy'
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import os, shutil, hashlib, yaml
-
-          with open(os.environ["CONFIG_FILE"]) as f:
-              cfg = yaml.safe_load(f)
-
-          root = "${{ steps.resolve.outputs.results_root }}"
-          dest = "${{ steps.resolve.outputs.figures_dir_abs }}"
-          os.makedirs(dest, exist_ok=True)
-
-          def sha(path):
-              return hashlib.sha256(open(path, "rb").read()).hexdigest()
-
-          copied, skipped, conflicts = 0, 0, []
-          for eid, entry in cfg["experiments"].items():
-              if not entry.get("generates_figures"):
-                  continue
-              src_dir = os.path.join(root, entry["source_dir"], "figures")
-              if not os.path.isdir(src_dir):
-                  continue
-              for fn in os.listdir(src_dir):
-                  src = os.path.join(src_dir, fn)
-                  dst = os.path.join(dest, fn)
-                  if not os.path.isfile(src):
-                      continue
-                  if os.path.exists(dst):
-                      if sha(src) == sha(dst):
-                          skipped += 1
-                          continue
-                      conflicts.append((fn, eid))
-                      continue
-                  shutil.copy2(src, dst)
-                  copied += 1
-
-          print(f"figures_deploy: copied {copied}, already up to date {skipped}, "
-                f"{len(conflicts)} conflict(s).")
-          if conflicts:
-              print("::warning::Filename conflicts (same name, different content) "
-                    "left untouched — resolve manually:")
-              for fn, eid in conflicts:
-                  print(f"  {fn} (from {eid}) differs from existing figures/{fn}")
-          PY
-
-      # ------------------------------------------------------------------
-      # Step 5 — re-check guarded directories. A diff here means this run
-      # wrote into a directory it doesn't own; that's a bug, not a
-      # missing-data situation, so it fails the build.
-      # ------------------------------------------------------------------
-      - name: Check guarded directories unchanged
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import hashlib, json, os, sys
-
-          with open("/tmp/guard_snapshot.json") as f:
-              before = json.load(f)
-
-          violations = []
-          for path, before_files in before.items():
-              after_files = {}
-              if os.path.isdir(path):
-                  for dirpath, _, filenames in os.walk(path):
-                      for fn in filenames:
-                          fp = os.path.join(dirpath, fn)
-                          after_files[fp] = hashlib.sha256(open(fp, "rb").read()).hexdigest()
-              if after_files != before_files:
-                  violations.append(path)
-
-          if violations:
-              print("::error::This run wrote into a directory it does not own:")
-              for v in violations:
-                  print(f"  {v}")
-              print("See config/experiments.yml's guards: section for the owning experiment(s).")
-              sys.exit(1)
-          print("OK — no guarded directory was touched by this run.")
-          PY
-
-      # ------------------------------------------------------------------
-      # Step 6 — commit whatever was actually generated. Skipped
-      # tables/figures are (by design) simply absent, not staged, and any
-      # previously-committed good output is left untouched.
-      # ------------------------------------------------------------------
-      - name: Commit generated outputs
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add "${{ steps.resolve.outputs.figures_dir_abs }}" 2>/dev/null || true
-          if [ -n "${{ steps.resolve.outputs.tables_dir_abs }}" ]; then
-            git add "${{ steps.resolve.outputs.tables_dir_abs }}" 2>/dev/null || true
-          fi
-
-          python3 - <<'PY'
-          import json, subprocess
-          extra = json.loads('''${{ steps.resolve.outputs.extra_stage_files }}''')
-          src_dir = "${{ steps.resolve.outputs.source_dir_abs }}"
-          for fn in extra:
-              subprocess.run(["git", "add", f"{src_dir}/{fn}"], check=False)
-          PY
-
-          if git diff --cached --quiet; then
-            echo "Nothing to commit — no tables/figures changed."
-          else
-            git commit -m "postprocess(${{ steps.resolve.outputs.id }}): regenerate tables/figures [skip ci]"
-            git push
-          fi
-
-      - name: Step summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "### Post-process: \`${{ steps.resolve.outputs.id }}\`"
-            echo "${{ steps.resolve.outputs.description }}"
-            echo ""
-            echo "| | |"
-            echo "|---|---|"
-            echo "| Source dir | \`${{ steps.resolve.outputs.source_dir_abs }}\` |"
-            echo "| Figures dir | \`${{ steps.resolve.outputs.figures_dir_abs }}\` |"
-            echo "| Tables dir | \`${{ steps.resolve.outputs.tables_dir_abs }}\` |"
-            echo "| Generated tables | ${{ steps.resolve.outputs.generates_tables }} |"
-            echo "| Generated figures | ${{ steps.resolve.outputs.generates_figures }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+1| name: "HypatiaX - post-process (figures + tables)"
+2| 
+3| # ==============================================================================
+4| # ci_postprocess.yml — generic, config-driven figures + tables generation.
+5| #
+6| # Every experiment's source dir, output dirs, and which generators apply to
+7| # it lives in config/experiments.yml — NOT in this file. To add, remove, or move an
+8| # experiment, edit config/experiments.yml only; nothing here should need to change.
+9| #
+10| # GitHub Actions limitation: workflow_dispatch `options:` and push `paths:`
+11| # must be static YAML — Actions evaluates triggers before running any code,
+12| # so it can't read config/experiments.yml to build them. Both lists below are
+13| # therefore mirrored by hand from config/experiments.yml. The "Validate config
+14| # sync" step fails the run loudly the moment they drift apart, instead of
+15| # silently misrouting a run the way the old three-file-duplicated mapping
+16| # did.
+17| # ==============================================================================
+18| 
+19| "on":
+20|   push:
+21|     branches: ["main", "master"]
+22|     paths:
+23|       - "config/experiments.yml"
+24|       - "scripts/generate_figures.py"
+25|       - "scripts/generate_tables.py"
+26|       - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/**/*.json"
+27|       - "hypatiax/data/results/comparison_results/noise-noiseless/15/**/*.json"
+28|       - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi_pca/**/*.json"
+29|       - "hypatiax/data/results/comparison_results/noise-noiseless/15_pca/**/*.json"
+30|       - "hypatiax/data/results/ablation/exp1_ablation/**/*.json"
+31|       - "hypatiax/data/results/five_systems/exp1_five/**/*.json"
+32|       - "hypatiax/data/results/comparison_results/feynman-tests/exp2/**/*.json"
+33|       - "hypatiax/data/results/comparison_results/feynman-tests/exp2_extrap/**/*.json"
+34|       - "hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060/**/*.json"
+35|       - "hypatiax/data/results/comparison_results/feynman-tests/exp2_multi/**/*.json"
+36|       - "hypatiax/data/results/five_systems/exp2_five/**/*.json"
+37|       - "hypatiax/data/results/extrapolation/**/*.json"
+38|       - "hypatiax/data/results/hybrid_pysr/**/*.json"
+39|       - "hypatiax/data/results/comparison_results/feynman-tests/noise-sweep/**/*.json"
+40|       - "hypatiax/data/results/comparison_results/feynman-tests/sample-complexity/**/*.json"
+41|       - "hypatiax/data/results/hybrid_llm_nn/**/*.json"
+42|       - "hypatiax/data/results/comparison_results/extrapolation/**/*.json"
+43|       - "hypatiax/data/results/figures/**/*.json"
+44| 
+45|   workflow_dispatch:
+46|     inputs:
+47|       experiment:
+48|         description: "Experiment ID — must be a key (or alias) in config/experiments.yml"
+49|         required: true
+50|         type: choice
+51|         options:
+52|           - exp1
+53|           - exp1b
+54|           - exp1_pca
+55|           - exp1b_pca
+56|           - exp1_ablation
+57|           - exp1_five
+58|           - exp2_feynman
+59|           - exp2_feynman_extrap
+60|           - exp2_feynman_pca
+61|           - exp2
+62|           - exp2_five
+63|           - exp3
+64|           - exp3b
+65|           - suppA
+66|           - suppB
+67|           - suppB_sc
+68|           - hybrid_all_domains
+69|           - instability
+70|           - extrap
+71|           - figures_deploy
+72| 
+73| permissions:
+74|   contents: write
+75| 
+76| env:
+77|   CONFIG_FILE: "config/experiments.yml"
+78| 
+79| jobs:
+80|   postprocess:
+81|     runs-on: ubuntu-latest
+82|     timeout-minutes: 30
+83|     steps:
+84| 
+85|       - name: Checkout
+86|         uses: actions/checkout@v4.2.2
+87|         with:
+88|           token: ${{ secrets.GITHUB_TOKEN }}
+89|           fetch-depth: 0
+90| 
+91|       - name: Set up Python
+92|         uses: actions/setup-python@v5.3.0
+93|         with:
+94|           python-version: "3.12"
+95| 
+96|       - name: Install dependencies
+97|         shell: bash
+98|         run: |
+99|           python -m pip install --upgrade pip
+100|           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn \
+101|                       "sympy>=1.12" "tabulate>=0.9" "PyYAML>=6.0"
+102| 
+103|       # ------------------------------------------------------------------
+104|       # Step 0 — fail loudly if this workflow's static dispatch/push lists
+105|       # have drifted out of sync with config/experiments.yml, rather than silently
+106|       # misrouting or refusing a valid run.
+107|       # ------------------------------------------------------------------
+108|       - name: Validate config sync
+109|         shell: bash
+110|         run: |
+111|           python3 - <<'PY'
+112|           import sys, yaml
+113| 
+114|           with open("${{ env.CONFIG_FILE }}") as f:
+115|               cfg = yaml.safe_load(f)
+116| 
+117|           config_ids = set(cfg["experiments"]) | set(cfg["aggregates"])
+118| 
+119|           dispatch_options = set("""
+120|           exp1 exp1b exp1_pca exp1b_pca exp1_ablation exp1_five
+121|           exp2_feynman exp2_feynman_extrap exp2_feynman_pca exp2 exp2_five
+122|           exp3 exp3b suppA suppB suppB_sc hybrid_all_domains instability
+123|           extrap figures_deploy
+124|           """.split())
+125| 
+126|           missing_from_dispatch = config_ids - dispatch_options
+127|           missing_from_config   = dispatch_options - config_ids
+128|           if missing_from_dispatch or missing_from_config:
+129|               print("::error::ci_postprocess.yml's workflow_dispatch options "
+130|                     "have drifted from config/experiments.yml.")
+131|               if missing_from_dispatch:
+132|                   print(f"  In config/experiments.yml but NOT in this workflow's "
+133|                         f"dispatch options: {sorted(missing_from_dispatch)}")
+134|               if missing_from_config:
+135|                   print(f"  In this workflow's dispatch options but NOT in "
+136|                         f"config/experiments.yml: {sorted(missing_from_config)}")
+137|               print("Fix: update the workflow_dispatch.inputs.experiment.options "
+138|                     "list (and the push.paths list, if a source_dir changed) "
+139|                     "in ci_postprocess.yml to match config/experiments.yml.")
+140|               sys.exit(1)
+141| 
+142|           print(f"OK — {len(config_ids)} experiment/aggregate IDs in sync "
+143|                 f"between config/experiments.yml and ci_postprocess.yml.")
+144|           PY
+145| 
+146|       # ------------------------------------------------------------------
+147|       # Step 1 — resolve which experiment this run is for, and every path
+148|       # it needs, purely by reading config/experiments.yml. Nothing below this
+149|       # step contains a hardcoded experiment name or directory.
+150|       # ------------------------------------------------------------------
+151|       - name: Resolve experiment from config
+152|         id: resolve
+153|         shell: bash
+154|         env:
+155|           DISPATCH_INPUT: ${{ github.event.inputs.experiment }}
+156|           EVENT_NAME: ${{ github.event_name }}
+157|           BEFORE_SHA: ${{ github.event.before }}
+158|           AFTER_SHA: ${{ github.event.after }}
+159|         run: |
+160|           python3 - <<'PY' >> "$GITHUB_OUTPUT"
+161|           import os, re, subprocess, sys, json, yaml
+162| 
+163|           # NOTE: every diagnostic/error print in this step must go to stderr,
+164|           # not stdout — stdout here is redirected straight into $GITHUB_OUTPUT,
+165|           # and anything that isn't a "key=value" line makes GitHub reject the
+166|           # whole step with "Invalid format".
+167|           def die(msg: str) -> None:
+168|               print(f"::error::{msg}", file=sys.stderr)
+169|               sys.exit(1)
+170| 
+171|           with open(os.environ["CONFIG_FILE"]) as f:
+172|               cfg = yaml.safe_load(f)
+173| 
+174|           experiments = cfg["experiments"]
+175|           aggregates  = cfg["aggregates"]
+176|           all_entries = {**experiments, **aggregates}
+177|           results_root = cfg["results_root"]
+178| 
+179|           def glob_to_regex(pat: str) -> re.Pattern:
+180|               pat = re.escape(pat)
+181|               pat = pat.replace(r"\*\*/", "(?:.*/)?")
+182|               pat = pat.replace(r"\*\*", ".*")
+183|               pat = pat.replace(r"\*", "[^/]*")
+184|               return re.compile("^" + pat + "$")
+185| 
+186|           def matches(entry_id: str, changed_path: str) -> bool:
+187|               trig = all_entries[entry_id].get("trigger_paths", [])
+188|               positives = [p for p in trig if not p.startswith("!")]
+189|               negatives = [p[1:] for p in trig if p.startswith("!")]
+190|               if any(glob_to_regex(p).match(changed_path) for p in negatives):
+191|                   return False
+192|               return any(glob_to_regex(p).match(changed_path) for p in positives)
+193| 
+194|           def resolve_id(raw: str) -> str:
+195|               if raw in all_entries:
+196|                   return raw
+197|               for eid, entry in all_entries.items():
+198|                   if raw in entry.get("aliases", []):
+199|                       return eid
+200|               die(f"'{raw}' is not a known experiment ID or alias "
+201|                   f"in {os.environ['CONFIG_FILE']}.")
+202| 
+203|           def changed_files_via_git() -> list[str]:
+204|               # github.event.head_commit.modified/added/removed is unreliable:
+205|               # it's empty for merge commits (e.g. a squash-merged PR), and it
+206|               # only reflects the single head commit, not the full push range.
+207|               # actions/checkout already ran with fetch-depth: 0, so diffing
+208|               # before..after directly is both correct and simple.
+209|               before = os.environ.get("BEFORE_SHA", "")
+210|               after  = os.environ.get("AFTER_SHA", "")
+211|               all_zero = set("0")
+212|               if after and set(after) == all_zero:
+213|                   return []  # branch/tag deletion — nothing to diff
+214|               if not before or set(before) == all_zero:
+215|                   # first push to a new branch: no "before" to diff against,
+216|                   # fall back to the files touched by the head commit itself.
+217|                   cmd = ["git", "show", "--name-only", "--pretty=format:", after or "HEAD"]
+218|               else:
+219|                   cmd = ["git", "diff", "--name-only", before, after]
+220|               try:
+221|                   out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+222|               except subprocess.CalledProcessError as e:
+223|                   die(f"git diff failed while resolving changed files: {e.stderr.strip()}")
+224|               return [p for p in out.stdout.splitlines() if p]
+225| 
+226|           event = os.environ["EVENT_NAME"]
+227|           if event == "workflow_dispatch":
+228|               exp_id = resolve_id(os.environ["DISPATCH_INPUT"])
+229|           else:
+230|               changed = changed_files_via_git()
+231|               exp_id = None
+232|               for path in changed:
+233|                   for eid in all_entries:
+234|                       if matches(eid, path):
+235|                           exp_id = eid
+236|                           break
+237|                   if exp_id:
+238|                       break
+239|               if exp_id is None:
+240|                   die("No changed file matched any experiment's trigger_paths "
+241|                       f"in {os.environ['CONFIG_FILE']} — cannot determine which "
+242|                       f"experiment this push run is for. Changed files were: {changed}")
+243| 
+244|           entry = all_entries[exp_id]
+245|           is_aggregate = exp_id in aggregates
+246| 
+247|           if is_aggregate:
+248|               figures_dir = entry["figures_dir"]
+249|               tables_dir  = entry.get("tables_dir")
+250|               source_dir  = figures_dir   # aggregates read from their own figures dir
+251|           else:
+252|               source_dir  = entry["source_dir"]
+253|               figures_dir = f"{source_dir}/figures"
+254|               tables_dir  = f"{source_dir}/tables"
+255| 
+256|           out = {
+257|               "id": exp_id,
+258|               "is_aggregate": str(is_aggregate).lower(),
+259|               "results_root": results_root,
+260|               "source_dir_abs":  f"{results_root}/{source_dir}",
+261|               "figures_dir_abs": f"{results_root}/{figures_dir}",
+262|               "tables_dir_abs":  f"{results_root}/{tables_dir}" if tables_dir else "",
+263|               "generates_tables":  str(entry.get("generates_tables", False)).lower(),
+264|               "generates_figures": str(entry.get("generates_figures", False)).lower(),
+265|               "extra_stage_files": json.dumps(entry.get("extra_stage_files", [])),
+266|               "description": entry.get("description", exp_id),
+267|           }
+268|           for k, v in out.items():
+269|               print(f"{k}={v}")
+270|           PY
+271| 
+272|       - name: Create output directories
+273|         shell: bash
+274|         run: |
+275|           mkdir -p "${{ steps.resolve.outputs.figures_dir_abs }}"
+276|           if [ -n "${{ steps.resolve.outputs.tables_dir_abs }}" ]; then
+277|             mkdir -p "${{ steps.resolve.outputs.tables_dir_abs }}"
+278|           fi
+279| 
+280|       # ------------------------------------------------------------------
+281|       # Step 2 — cross-experiment write guards (config/experiments.yml: guards:).
+282|       # Snapshot every directory this run does NOT own, before generation.
+283|       # ------------------------------------------------------------------
+284|       - name: Snapshot guarded directories
+285|         id: guard_pre
+286|         shell: bash
+287|         run: |
+288|           python3 - <<'PY'
+289|           import os, hashlib, json, yaml
+290| 
+291|           with open(os.environ["CONFIG_FILE"]) as f:
+292|               cfg = yaml.safe_load(f)
+293| 
+294|           exp_id = "${{ steps.resolve.outputs.id }}"
+295|           root = "${{ steps.resolve.outputs.results_root }}"
+296|           snapshot = {}
+297| 
+298|           for guard in cfg.get("guards", []):
+299|               if exp_id in guard["owners"]:
+300|                   continue   # this run legitimately owns this directory
+301|               for d in guard["dirs"]:
+302|                   path = os.path.join(root, d)
+303|                   files = {}
+304|                   if os.path.isdir(path):
+305|                       for dirpath, _, filenames in os.walk(path):
+306|                           for fn in filenames:
+307|                               fp = os.path.join(dirpath, fn)
+308|                               files[fp] = hashlib.sha256(open(fp, "rb").read()).hexdigest()
+309|                   snapshot[path] = files
+310| 
+311|           with open("/tmp/guard_snapshot.json", "w") as f:
+312|               json.dump(snapshot, f)
+313|           print(f"Guarding {len(snapshot)} directory(ies) not owned by '{exp_id}'.")
+314|           PY
+315| 
+316|       # ------------------------------------------------------------------
+317|       # Step 3 — generate. Both scripts already warn-and-skip on missing
+318|       # data (config/experiments.yml: on_missing_data) and always exit 0; no
+319|       # hardcoded/paper-verified value is ever substituted by either.
+320|       # ------------------------------------------------------------------
+321|       - name: "Generate tables"
+322|         if: steps.resolve.outputs.generates_tables == 'true'
+323|         shell: bash
+324|         run: |
+325|           python3 scripts/generate_tables.py \
+326|             --experiment "${{ steps.resolve.outputs.id }}" \
+327|             --results-dir "${{ steps.resolve.outputs.source_dir_abs }}" \
+328|             --output-dir "${{ steps.resolve.outputs.tables_dir_abs }}"
+329| 
+330|       - name: "Generate figures"
+331|         if: steps.resolve.outputs.generates_figures == 'true'
+332|         shell: bash
+333|         run: |
+334|           python3 scripts/generate_figures.py \
+335|             --experiment "${{ steps.resolve.outputs.id }}" \
+336|             --results-dir "${{ steps.resolve.outputs.source_dir_abs }}" \
+337|             --figures-dir "${{ steps.resolve.outputs.figures_dir_abs }}"
+338| 
+339|       # ------------------------------------------------------------------
+340|       # Step 4 — figures_deploy is an assembly step, not a generator: pull
+341|       # every experiment's own canonical figures into one flat directory
+342|       # for the LaTeX build. Real filename conflicts (same name, different
+343|       # content) are logged and left for manual review rather than guessed
+344|       # at — this never overwrites silently.
+345|       # ------------------------------------------------------------------
+346|       - name: "Deploy assembled figures"
+347|         if: steps.resolve.outputs.id == 'figures_deploy'
+348|         shell: bash
+349|         run: |
+350|           python3 - <<'PY'
+351|           import os, shutil, hashlib, yaml
+352| 
+353|           with open(os.environ["CONFIG_FILE"]) as f:
+354|               cfg = yaml.safe_load(f)
+355| 
+356|           root = "${{ steps.resolve.outputs.results_root }}"
+357|           dest = "${{ steps.resolve.outputs.figures_dir_abs }}"
+358|           os.makedirs(dest, exist_ok=True)
+359| 
+360|           def sha(path):
+361|               return hashlib.sha256(open(path, "rb").read()).hexdigest()
+362| 
+363|           copied, skipped, conflicts = 0, 0, []
+364|           for eid, entry in cfg["experiments"].items():
+365|               if not entry.get("generates_figures"):
+366|                   continue
+367|               src_dir = os.path.join(root, entry["source_dir"], "figures")
+368|               if not os.path.isdir(src_dir):
+369|                   continue
+370|               for fn in os.listdir(src_dir):
+371|                   src = os.path.join(src_dir, fn)
+372|                   dst = os.path.join(dest, fn)
+373|                   if not os.path.isfile(src):
+374|                       continue
+375|                   if os.path.exists(dst):
+376|                       if sha(src) == sha(dst):
+377|                           skipped += 1
+378|                           continue
+379|                       conflicts.append((fn, eid))
+380|                       continue
+381|                   shutil.copy2(src, dst)
+382|                   copied += 1
+383| 
+384|           print(f"figures_deploy: copied {copied}, already up to date {skipped}, "
+385|                 f"{len(conflicts)} conflict(s).")
+386|           if conflicts:
+387|               print("::warning::Filename conflicts (same name, different content) "
+388|                     "left untouched — resolve manually:")
+389|               for fn, eid in conflicts:
+390|                   print(f"  {fn} (from {eid}) differs from existing figures/{fn}")
+391|           PY
+392| 
+393|       # ------------------------------------------------------------------
+394|       # Step 5 — re-check guarded directories. A diff here means this run
+395|       # wrote into a directory it doesn't own; that's a bug, not a
+396|       # missing-data situation, so it fails the build.
+397|       # ------------------------------------------------------------------
+398|       - name: Check guarded directories unchanged
+399|         shell: bash
+400|         run: |
+401|           python3 - <<'PY'
+402|           import hashlib, json, os, sys
+403| 
+404|           with open("/tmp/guard_snapshot.json") as f:
+405|               before = json.load(f)
+406| 
+407|           violations = []
+408|           for path, before_files in before.items():
+409|               after_files = {}
+410|               if os.path.isdir(path):
+411|                   for dirpath, _, filenames in os.walk(path):
+412|                       for fn in filenames:
+413|                           fp = os.path.join(dirpath, fn)
+414|                           after_files[fp] = hashlib.sha256(open(fp, "rb").read()).hexdigest()
+415|               if after_files != before_files:
+416|                   violations.append(path)
+417| 
+418|           if violations:
+419|               print("::error::This run wrote into a directory it does not own:")
+420|               for v in violations:
+421|                   print(f"  {v}")
+422|               print("See config/experiments.yml's guards: section for the owning experiment(s).")
+423|               sys.exit(1)
+424|           print("OK — no guarded directory was touched by this run.")
+425|           PY
+426| 
+427|       # ------------------------------------------------------------------
+428|       # Step 6 — commit whatever was actually generated. Skipped
+429|       # tables/figures are (by design) simply absent, not staged, and any
+430|       # previously-committed good output is left untouched.
+431|       # ------------------------------------------------------------------
+432|       - name: Commit generated outputs
+433|         shell: bash
+434|         run: |
+435|           set -euo pipefail
+436|           git config user.name "github-actions[bot]"
+437|           git config user.email "github-actions[bot]@users.noreply.github.com"
+438| 
+439|           git add "${{ steps.resolve.outputs.figures_dir_abs }}" 2>/dev/null || true
+440|           if [ -n "${{ steps.resolve.outputs.tables_dir_abs }}" ]; then
+441|             git add "${{ steps.resolve.outputs.tables_dir_abs }}" 2>/dev/null || true
+442|           fi
+443| 
+444|           python3 - <<'PY'
+445|           import json, subprocess, os
+446|           extra = json.loads('''${{ steps.resolve.outputs.extra_stage_files }}''')
+447|           src_dir = "${{ steps.resolve.outputs.source_dir_abs }}"
+448|           for fn in extra:
+449|               subprocess.run(["git", "add", f"{src_dir}/{fn}"], check=False)
+450|           PY
+451| 
+452|           if git diff --cached --quiet; then
+453|             echo "Nothing to commit — no tables/figures changed."
+454|             exit 0
+455|           fi
+456| 
+457|           git commit -m "postprocess(${{ steps.resolve.outputs.id }}): regenerate tables/figures [skip ci]"
+458| 
+459|           # Determine branch name (GITHUB_REF is e.g. refs/heads/<branch>)
+460|           BRANCH="${GITHUB_REF#refs/heads/}"
+461|           if [ -z "$BRANCH" ]; then
+462|             BRANCH=$(git rev-parse --abbrev-ref HEAD || echo "master")
+463|           fi
+464|           REMOTE="${REMOTE:-origin}"
+465| 
+466|           # Try a normal push first; if rejected, fetch+rebase and retry; fall back to --force-with-lease.
+467|           if git push "${REMOTE}" "HEAD:${BRANCH}"; then
+468|             echo "Pushed changes."
+469|             exit 0
+470|           fi
+471| 
+472|           echo "Push was rejected; fetching remote branch and attempting rebase..."
+473|           git fetch "${REMOTE}" "${BRANCH}"
+474|           if git rebase "${REMOTE}/${BRANCH}"; then
+475|             if git push "${REMOTE}" "HEAD:${BRANCH}"; then
+476|               echo "Pushed changes after rebase."
+477|               exit 0
+478|             fi
+479|           else
+480|             echo "::error::Rebase failed — aborting so the change can be resolved manually."
+481|             git rebase --abort || true
+482|             exit 1
+483|           fi
+484| 
+485|           echo "Push still rejected; attempting git push --force-with-lease as a last resort."
+486|           git push --force-with-lease "${REMOTE}" "HEAD:${BRANCH}"
+487| 
+488|       - name: Step summary
+489|         if: always()
+490|         shell: bash
+491|         run: |
+492|           {
+493|             echo "### Post-process: \`${{ steps.resolve.outputs.id }}\`"
+494|             echo "${{ steps.resolve.outputs.description }}"
+495|             echo ""
+496|             echo "| | |"
+497|             echo "|---|---|"
+498|             echo "| Source dir | \`${{ steps.resolve.outputs.source_dir_abs }}\` |"
+499|             echo "| Figures dir | \`${{ steps.resolve.outputs.figures_dir_abs }}\` |"
+500|             echo "| Tables dir | \`${{ steps.resolve.outputs.tables_dir_abs }}\` |"
+501|             echo "| Generated tables | ${{ steps.resolve.outputs.generates_tables }} |"
+502|             echo "| Generated figures | ${{ steps.resolve.outputs.generates_figures }} |"
+503|           } >> "$GITHUB_STEP_SUMMARY"
+504| 
