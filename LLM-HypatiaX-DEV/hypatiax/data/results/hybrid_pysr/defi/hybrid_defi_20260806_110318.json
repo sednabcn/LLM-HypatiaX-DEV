@@ -1,7 +1,7 @@
 {
-  "timestamp": "20260715_210128",
-  "total": 79,
-  "successful": 79,
+  "timestamp": "20260806_110318",
+  "total": 80,
+  "successful": 80,
   "results": [
     {
       "domain": "amm",
@@ -11,10 +11,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9998552970245066,
-      "hybrid_train_r2": 0.9999638294999094,
+      "nn_train_r2": 0.9999205466468103,
+      "hybrid_train_r2": 0.9999801382806143,
       "llm_formula": "IL = 2\u221ar/(1+r) - 1",
-      "llm_python": "def formula(price_ratio):\n    # price_ratio = P1/P0 (current price / initial price)\n    il = (2 * np.sqrt(price_ratio)) / (1 + price_ratio) - 1\n    return il",
+      "llm_python": "def formula(price_ratio):\n    # price_ratio = P_t / P_0 (current price / initial price)\n    r = price_ratio\n    il = (2 * np.sqrt(r) / (1 + r)) - 1\n    return il",
       "success": true
     },
     {
@@ -25,10 +25,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9997422542090009,
-      "hybrid_train_r2": 0.9999355802006225,
+      "nn_train_r2": 0.9999565587338959,
+      "hybrid_train_r2": 0.9999891401663294,
       "llm_formula": "IL(%) = [2\u221ar / (1 + r) - 1] \u00d7 100",
-      "llm_python": "def formula(price_ratio):\n    # price_ratio = P_new / P_old\n    il = (2 * np.sqrt(price_ratio) / (1 + price_ratio) - 1) * 100\n    return il",
+      "llm_python": "def formula(price_ratio):\n    import numpy as np\n    r = price_ratio\n    il = (2 * np.sqrt(r) / (1 + r) - 1) * 100\n    return il",
       "success": true
     },
     {
@@ -40,10 +40,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9998875591188132,
-      "hybrid_train_r2": 0.9999718930096902,
-      "llm_formula": "Y = k / X",
-      "llm_python": "def formula(reserve_x, invariant_k):\n    reserve_y = invariant_k / reserve_x\n    return reserve_y",
+      "nn_train_r2": 0.9998921545331049,
+      "hybrid_train_r2": 0.9999730414728355,
+      "llm_formula": "y = k / x",
+      "llm_python": "def formula(reserve_x, invariant_k):\n    return invariant_k / reserve_x",
       "success": true
     },
     {
@@ -55,8 +55,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999964222313977,
-      "hybrid_train_r2": 0.9999991055570987,
+      "nn_train_r2": 0.9999565877585809,
+      "hybrid_train_r2": 0.9999891473938275,
       "llm_formula": "Price Impact = (swap_amount) / (reserve_x + swap_amount)",
       "llm_python": "def formula(reserve_x, swap_amount):\n    price_impact = swap_amount / (reserve_x + swap_amount)\n    return price_impact",
       "success": true
@@ -68,10 +68,10 @@
         "reserve_x",
         "reserve_y"
       ],
-      "decision": "ensemble",
+      "decision": "fitted_llm",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9837410966455195,
-      "hybrid_train_r2": 0.9960016295121626,
+      "nn_train_r2": 0.44624550571281973,
+      "hybrid_train_r2": 1.0,
       "llm_formula": "R = reserve_x / reserve_y",
       "llm_python": "def formula(reserve_x, reserve_y):\n    return reserve_x / reserve_y",
       "success": true
@@ -85,26 +85,42 @@
         "pool_depth"
       ],
       "decision": "ensemble",
-      "llm_train_r2": 0.9999999999270729,
-      "nn_train_r2": 0.9999965834211242,
-      "hybrid_train_r2": 0.999999146647657,
-      "llm_formula": "P_effective = spot_price \u00d7 (1 + trade_size / (2 \u00d7 pool_depth)) \u00d7 (1 + (trade_size / pool_depth)\u00b2 / 8)",
-      "llm_python": "def formula(spot_price, trade_size, pool_depth):\n    import numpy as np\n    linear_slippage = 1 + trade_size / (2 * pool_depth)\n    convexity_adjustment = 1 + (trade_size / pool_depth) ** 2 / 8\n    effective_price = spot_price * linear_slippage * convexity_adjustment\n    return effective_price",
+      "llm_train_r2": 0.9999999993414618,
+      "nn_train_r2": 0.9999527335077347,
+      "hybrid_train_r2": 0.9999882214610306,
+      "llm_formula": "P_eff = S \u00d7 (1 + Q/(2\u00d7D)) \u00d7 (1 + Q\u00b2/(8\u00d7D\u00b2))",
+      "llm_python": "def formula(spot_price, trade_size, pool_depth):\n    import numpy as np\n    # First-order slippage term\n    first_order = trade_size / (2.0 * pool_depth)\n    # Second-order convexity correction term\n    second_order = (trade_size ** 2) / (8.0 * pool_depth ** 2)\n    # Convexity-adjusted effective price (Taylor expansion of sqrt AMM price impact)\n    # Exact form: spot_price / sqrt(1 - trade_size/pool_depth)\n    ratio = trade_size / pool_depth\n    # Use exact formula where valid, clamp ratio to avoid sqrt of negative\n    ratio_clamped = np.minimum(ratio, 0.9999)\n    effective_price = spot_price / np.sqrt(1.0 - ratio_clamped)\n    return effective_price",
       "success": true
     },
     {
       "domain": "amm",
-      "description": "Spot price from AMM reserve ratio (token A / token B)",
+      "description": "Spot price from AMM ratio (token A / token B)",
       "variable_names": [
         "reserve_a",
         "reserve_b"
       ],
       "decision": "nn",
       "llm_train_r2": -1.1770678667674086,
-      "nn_train_r2": 0.9397028743757223,
-      "hybrid_train_r2": 0.9397028743757223,
-      "llm_formula": "P = reserve_a / reserve_b",
+      "nn_train_r2": 0.8781709230367122,
+      "hybrid_train_r2": 0.8781709230367122,
+      "llm_formula": "spot_price = reserve_a / reserve_b",
       "llm_python": "def formula(reserve_a, reserve_b):\n    return reserve_a / reserve_b",
+      "success": true
+    },
+    {
+      "domain": "amm",
+      "description": "Spot price from AMM reserve adjusted for pending trade size (price impact)",
+      "variable_names": [
+        "reserve_a",
+        "reserve_b",
+        "trade_size"
+      ],
+      "decision": "nn",
+      "llm_train_r2": 0.0,
+      "nn_train_r2": 0.9992092353135631,
+      "hybrid_train_r2": 0.9992092353135631,
+      "llm_formula": "P = reserve_b * (1 - reserve_a / (reserve_a + trade_size)) / trade_size = reserve_b / (reserve_a + trade_size)",
+      "llm_python": "def formula(reserve_a, reserve_b, trade_size):\n    import numpy as np\n    # Constant product invariant: reserve_a * reserve_b = k\n    k = reserve_a * reserve_b\n\n    # Spot price before trade (no impact)\n    spot_price_initial = reserve_b / reserve_a\n\n    # New reserve_a after trade\n    reserve_a_new = reserve_a + trade_size\n\n    # New reserve_b after trade (constant product)\n    reserve_b_new = k / reserve_a_new\n\n    # Amount of token B received\n    delta_b = reserve_b - reserve_b_new\n\n    # Effective (average) execution price adjusted for price impact\n    effective_price = delta_b / trade_size\n\n    # Marginal spot price after trade execution\n    marginal_price_after = reserve_b_new / reserve_a_new\n\n    # Price impact as a fraction\n    price_impact = (spot_price_initial - effective_price) / spot_price_initial\n\n    return {\n        \"effective_price\": effective_price,\n        \"marginal_price_after\": marginal_price_after,\n        \"spot_price_before\": spot_price_initial,\n        \"price_impact_fraction\": price_impact,\n        \"delta_b\": delta_b\n    }",
       "success": true
     },
     {
@@ -117,10 +133,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999947348737661,
-      "hybrid_train_r2": 0.9999986837209118,
-      "llm_formula": "dy = (reserve_y * dx) / (reserve_x + dx)",
-      "llm_python": "def formula(reserve_x, reserve_y, dx):\n    dy = (reserve_y * dx) / (reserve_x + dx)\n    return dy",
+      "nn_train_r2": 0.9998705264287121,
+      "hybrid_train_r2": 0.9999676358375161,
+      "llm_formula": "dy = (reserve_y \u00d7 dx) / (reserve_x + dx)",
+      "llm_python": "def formula(reserve_x, reserve_y, dx):\n    # Constant product AMM output formula\n    # dy = (reserve_y * dx) / (reserve_x + dx)\n    dy = (reserve_y * dx) / (reserve_x + dx)\n    return dy",
       "success": true
     },
     {
@@ -132,10 +148,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9986483738368372,
-      "hybrid_train_r2": 0.9996625502539533,
-      "llm_formula": "LP Share % = (lp_deposit / pool_total) \u00d7 100",
-      "llm_python": "def formula(lp_deposit, pool_total):\n    return (lp_deposit / pool_total) * 100",
+      "nn_train_r2": 0.9979089985854511,
+      "hybrid_train_r2": 0.9994783432195979,
+      "llm_formula": "share_percentage = (lp_deposit / pool_total) \u00d7 100",
+      "llm_python": "def formula(lp_deposit, pool_total):\n    share_percentage = (lp_deposit / pool_total) * 100\n    return share_percentage",
       "success": true
     },
     {
@@ -146,11 +162,11 @@
         "trade_dx"
       ],
       "decision": "ensemble",
-      "llm_train_r2": -2.770431021939794,
-      "nn_train_r2": 0.9996663739156406,
-      "hybrid_train_r2": 0.9998105875436138,
-      "llm_formula": "slippage (%) = (trade_dx / (reserve_x + trade_dx)) \u00d7 100",
-      "llm_python": "def formula(reserve_x, trade_dx):\n    # Price slippage percentage in a constant product AMM (x * y = k)\n    # Slippage = proportion of pool consumed by trade\n    slippage_pct = (trade_dx / (reserve_x + trade_dx)) * 100\n    return slippage_pct",
+      "llm_train_r2": 1.0,
+      "nn_train_r2": 0.9995291569258438,
+      "hybrid_train_r2": 0.999882344716385,
+      "llm_formula": "slippage(%) = (trade_dx / (2 * reserve_x + trade_dx)) * 100",
+      "llm_python": "def formula(reserve_x, trade_dx):\n    # Price slippage percentage in constant product AMM (x * y = k)\n    # Derived from the ratio of execution price vs spot price\n    slippage_pct = (trade_dx / (2.0 * reserve_x + trade_dx)) * 100.0\n    return slippage_pct",
       "success": true
     },
     {
@@ -162,11 +178,11 @@
         "arb_amount"
       ],
       "decision": "nn",
-      "llm_train_r2": -1.7923652809850363,
-      "nn_train_r2": 0.9941502244388353,
-      "hybrid_train_r2": 0.9941502244388353,
-      "llm_formula": "Arbitrage Profit = arb_amount \u00d7 |ext_price - amm_price| - arb_amount\u00b2 \u00d7 (amm_price / (2 \u00d7 L\u00b2))",
-      "llm_python": "def formula(amm_price, ext_price, arb_amount):\n    import numpy as np\n    # Implied base reserve from AMM price (assuming unit liquidity depth normalization)\n    # For a constant product AMM: x * y = k, P = y/x => x0 = sqrt(k/P)\n    # We use a normalized liquidity L=1 so x0 = 1/sqrt(amm_price)\n    x0 = 1.0 / np.sqrt(amm_price)\n\n    # Price spread\n    spread = ext_price - amm_price\n\n    # Linear gain from exploiting the spread\n    gross_profit = spread * arb_amount\n\n    # Quadratic cost due to price impact on the AMM (slippage)\n    price_impact_cost = (amm_price * arb_amount**2) / (2.0 * x0)\n\n    # Net arbitrage profit\n    arb_profit = gross_profit - price_impact_cost\n\n    return np.maximum(arb_profit, 0.0)",
+      "llm_train_r2": -31840050.11653103,
+      "nn_train_r2": 0.9806705937186039,
+      "hybrid_train_r2": 0.9806705937186039,
+      "llm_formula": "Arbitrage Profit = arb_amount \u00d7 |ext_price - amm_price| - arb_amount \u00d7 amm_price \u00d7 (arb_amount / (2 \u00d7 AMM_liquidity))",
+      "llm_python": "def formula(amm_price, ext_price, arb_amount, liquidity=1e6):\n    # Arbitrage profit from price spread in constant product AMM\n    # Price spread\n    spread = ext_price - amm_price\n\n    # Price impact factor: as arb_amount approaches liquidity, slippage increases\n    # Based on constant product AMM: effective price = amm_price * L / (L - arb_amount)\n    price_impact_factor = np.maximum(0.0, 1.0 - arb_amount / (2.0 * liquidity))\n\n    # Gross profit without price impact\n    gross_profit = arb_amount * spread\n\n    # Net profit accounting for price impact (slippage cost)\n    net_profit = gross_profit * price_impact_factor\n\n    # Only positive when spread favors the trade direction\n    # Arbitrageur buys low on AMM, sells high externally (or vice versa)\n    arb_profit = np.maximum(0.0, net_profit)\n\n    return arb_profit",
       "success": true
     },
     {
@@ -179,10 +195,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9998746023446994,
-      "hybrid_train_r2": 0.9998746023446994,
-      "llm_formula": "L = min(token_amount_x * sqrt(price_upper) * sqrt(price_lower) / (sqrt(price_upper) - sqrt(price_lower)), token_amount_y / (sqrt(price_upper) - sqrt(price_lower)))",
-      "llm_python": "def formula(price_lower, price_upper, token_amount_x, token_amount_y, current_price=None):\n    import numpy as np\n    sqrt_pa = np.sqrt(price_lower)\n    sqrt_pb = np.sqrt(price_upper)\n\n    if current_price is None:\n        # Assume position is out-of-range or use boundary approximation\n        # Default: compute L from both tokens assuming full range coverage\n        L_from_x = token_amount_x * (sqrt_pa * sqrt_pb) / (sqrt_pb - sqrt_pa)\n        L_from_y = token_amount_y / (sqrt_pb - sqrt_pa)\n        L = np.minimum(L_from_x, L_from_y)\n    else:\n        sqrt_p = np.sqrt(current_price)\n        # Clamp sqrt_p within range boundaries\n        sqrt_p_clamped = np.maximum(sqrt_pa, np.minimum(sqrt_pb, sqrt_p))\n\n        below_range = current_price <= price_lower\n        above_range = current_price >= price_upper\n        in_range = ~below_range & ~above_range\n\n        L = np.zeros_like(np.array(token_amount_x, dtype=float))\n\n        # Below range: only token X is held\n        if np.any(below_range):\n            L_x = token_amount_x * (sqrt_pa * sqrt_pb) / (sqrt_pb - sqrt_pa)\n            L = np.where(below_range, L_x, L)\n\n        # Above range: only token Y is held\n        if np.any(above_range):\n            L_y = token_amount_y / (sqrt_pb - sqrt_pa)\n            L = np.where(above_range, L_y, L)\n\n        # In range: both tokens contribute, take binding constraint\n        if np.any(in_range):\n            L_from_x = token_amount_x * (sqrt_p_clamped * sqrt_pb) / (sqrt_pb - sqrt_p_clamped)\n            L_from_y = token_amount_y / (sqrt_p_clamped - sqrt_pa)\n            L_in = np.minimum(L_from_x, L_from_y)\n            L = np.where(in_range, L_in, L)\n\n    return L",
+      "nn_train_r2": 0.9998787361271121,
+      "hybrid_train_r2": 0.9998787361271121,
+      "llm_formula": "L = min(x \u00b7 \u221aP_upper \u00b7 \u221aP / (\u221aP_upper - \u221aP), y / (\u221aP - \u221aP_lower))",
+      "llm_python": "def formula(price_lower, price_upper, token_amount_x, token_amount_y):\n    # Compute square roots of boundary prices\n    sqrt_lower = np.sqrt(price_lower)\n    sqrt_upper = np.sqrt(price_upper)\n\n    # Current price assumed to be geometric mean of bounds (balanced position)\n    price_current = np.sqrt(price_lower * price_upper)\n    sqrt_current = np.sqrt(price_current)\n\n    # Liquidity from token X (token0)\n    # L_x = x * sqrt(P_l) * sqrt(P_u) / (sqrt(P_u) - sqrt(P_l))\n    L_x = token_amount_x * sqrt_lower * sqrt_upper / (sqrt_upper - sqrt_lower)\n\n    # Liquidity from token Y (token1)\n    # L_y = y / (sqrt(P_u) - sqrt(P_l))\n    L_y = token_amount_y / (sqrt_upper - sqrt_lower)\n\n    # Virtual liquidity is the binding (minimum) constraint\n    L = np.minimum(L_x, L_y)\n\n    return L",
       "success": true
     },
     {
@@ -193,10 +209,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999122791816677,
-      "hybrid_train_r2": 0.9999780717440596,
-      "llm_formula": "f_breakeven = 1 - (2\u221ar)/(1 + r)",
-      "llm_python": "def formula(price_ratio):\n    # price_ratio = P_final / P_initial\n    # Impermanent loss magnitude\n    r = price_ratio\n    il = 1 - (2 * np.sqrt(r)) / (1 + r)\n    # Breakeven fee rate must offset IL over LP value\n    # IL expressed relative to hold value: IL = 2*sqrt(r)/(1+r) - 1\n    # Breakeven fee = |IL| = 1 - 2*sqrt(r)/(1+r)\n    breakeven_fee = 1 - (2 * np.sqrt(r)) / (1 + r)\n    return breakeven_fee",
+      "nn_train_r2": 0.999905416298156,
+      "hybrid_train_r2": 0.9999763563030264,
+      "llm_formula": "fee_rate_breakeven = 1 - (2 * sqrt(price_ratio) / (1 + price_ratio))",
+      "llm_python": "def formula(price_ratio):\n    # price_ratio = P1 / P0 (final price / initial price)\n    sqrt_r = np.sqrt(price_ratio)\n    impermanent_loss = 1 - (2 * sqrt_r / (1 + price_ratio))\n    # Breakeven fee rate must exactly offset the impermanent loss\n    fee_rate_breakeven = impermanent_loss\n    return fee_rate_breakeven",
       "success": true
     },
     {
@@ -209,10 +225,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9839638957883592,
-      "hybrid_train_r2": 0.9960555209205928,
+      "nn_train_r2": 0.9587550759616349,
+      "hybrid_train_r2": 0.990118437821794,
       "llm_formula": "z = k / (x \u00b7 y)",
-      "llm_python": "def formula(reserve_x, reserve_y, invariant_k):\n    import numpy as np\n    z = invariant_k / (reserve_x * reserve_y)\n    return z",
+      "llm_python": "def formula(reserve_x, reserve_y, invariant_k):\n    import numpy as np\n    return invariant_k / (reserve_x * reserve_y)",
       "success": true
     },
     {
@@ -224,8 +240,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": -29926.158920372807,
-      "nn_train_r2": 0.9973229119314662,
-      "hybrid_train_r2": 0.9993325213575023,
+      "nn_train_r2": 0.9966261420155132,
+      "hybrid_train_r2": 0.9991593833930357,
       "llm_formula": "Collateral Ratio = (collateral_value / borrowed_value) \u00d7 100%",
       "llm_python": "def formula(collateral_value, borrowed_value):\n    import numpy as np\n    collateral_ratio = (collateral_value / borrowed_value) * 100\n    return collateral_ratio",
       "success": true
@@ -240,9 +256,9 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999825430928027,
-      "hybrid_train_r2": 0.9999956358551303,
-      "llm_formula": "A = P \u00d7 e^(r \u00d7 t)",
+      "nn_train_r2": 0.9996585752952117,
+      "hybrid_train_r2": 0.9999146730160056,
+      "llm_formula": "A = P * e^(r * t)",
       "llm_python": "def formula(principal, interest_rate, time_years):\n    import numpy as np\n    interest_accrued = principal * (np.exp(interest_rate * time_years) - 1)\n    return interest_accrued",
       "success": true
     },
@@ -253,10 +269,10 @@
         "loan_amount",
         "asset_value"
       ],
-      "decision": "ensemble",
+      "decision": "fitted_llm",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9582009320594516,
-      "hybrid_train_r2": 0.9899915823791839,
+      "nn_train_r2": 0.9245828683008916,
+      "hybrid_train_r2": 1.0,
       "llm_formula": "LTV = loan_amount / asset_value",
       "llm_python": "def formula(loan_amount, asset_value):\n    return loan_amount / asset_value",
       "success": true
@@ -269,12 +285,12 @@
         "collateral_b",
         "borrowed"
       ],
-      "decision": "nn",
-      "llm_train_r2": -62.69259835380419,
-      "nn_train_r2": 0.9999612554541005,
-      "hybrid_train_r2": 0.9999612554541005,
-      "llm_formula": "LTV = (collateral_a \u00d7 0.85 + collateral_b \u00d7 0.70) / borrowed",
-      "llm_python": "def formula(collateral_a, collateral_b, borrowed):\n    # Exact constant values\n    ltv_factor_a = 0.85\n    ltv_factor_b = 0.70\n\n    # Weighted collateral capacity\n    weighted_collateral = (collateral_a * ltv_factor_a) + (collateral_b * ltv_factor_b)\n\n    # Multi-collateral LTV ratio\n    ltv = weighted_collateral / borrowed\n\n    return ltv",
+      "decision": "ensemble",
+      "llm_train_r2": 1.0,
+      "nn_train_r2": 0.9999572883655464,
+      "hybrid_train_r2": 0.99998932254741,
+      "llm_formula": "LTV = borrowed / (collateral_a \u00d7 0.85 + collateral_b \u00d7 0.70)",
+      "llm_python": "def formula(collateral_a, collateral_b, borrowed):\n    # Use EXACT constant values\n    ltv_factor_a = 0.85\n    ltv_factor_b = 0.70\n    weighted_collateral = collateral_a * ltv_factor_a + collateral_b * ltv_factor_b\n    ltv = borrowed / weighted_collateral\n    return ltv",
       "success": true
     },
     {
@@ -286,8 +302,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9850608285701389,
-      "hybrid_train_r2": 0.9963212101472193,
+      "nn_train_r2": 0.9984513463642454,
+      "hybrid_train_r2": 0.9996134361935536,
       "llm_formula": "U = total_borrowed / total_supplied",
       "llm_python": "def formula(total_borrowed, total_supplied):\n    import numpy as np\n    return np.where(total_supplied > 0, total_borrowed / total_supplied, 0.0)",
       "success": true
@@ -300,10 +316,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999880239076367,
-      "hybrid_train_r2": 0.9999970059989691,
-      "llm_formula": "Borrow APY = base_rate + slope \u00d7 utilization_rate",
-      "llm_python": "def formula(utilization_rate):\n    # Linear interest rate model\n    # Constants (exact values as specified)\n    base_rate = 0.02\n    slope = 0.2\n\n    # Clamp utilization rate to [0, 1]\n    U = np.minimum(np.maximum(utilization_rate, 0.0), 1.0)\n\n    # Borrow APY via linear model\n    borrow_apy = base_rate + slope * U\n    return borrow_apy",
+      "nn_train_r2": 0.9999878569842483,
+      "hybrid_train_r2": 0.9999969642830254,
+      "llm_formula": "Borrow_APY = base_rate + slope \u00d7 utilization_rate",
+      "llm_python": "def formula(utilization_rate):\n    # Linear interest rate model constants\n    base_rate = 0.02\n    slope = 0.2\n    # Clamp utilization rate to [0, 1]\n    u = np.minimum(np.maximum(utilization_rate, 0.0), 1.0)\n    borrow_apy = base_rate + slope * u\n    return borrow_apy",
       "success": true
     },
     {
@@ -315,8 +331,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999899176613947,
-      "hybrid_train_r2": 0.999997479437084,
+      "nn_train_r2": 0.9999958980453596,
+      "hybrid_train_r2": 0.9999989745194033,
       "llm_formula": "Supply APY = borrow_rate \u00d7 utilization \u00d7 (1 - reserve_factor)",
       "llm_python": "def formula(borrow_rate, utilization):\n    reserve_factor = 0.1\n    supply_apy = borrow_rate * utilization * (1 - reserve_factor)\n    return supply_apy",
       "success": true
@@ -328,10 +344,10 @@
         "collateral_value",
         "debt"
       ],
-      "decision": "ensemble",
+      "decision": "fitted_llm",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9857574192324999,
-      "hybrid_train_r2": 0.9964902482010921,
+      "nn_train_r2": 0.9056174545847985,
+      "hybrid_train_r2": 1.0,
       "llm_formula": "Health Factor = (collateral_value \u00d7 liq_threshold) / debt",
       "llm_python": "def formula(collateral_value, debt):\n    liq_threshold = 0.85\n    health_factor = (collateral_value * liq_threshold) / debt\n    return health_factor",
       "success": true
@@ -344,10 +360,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.999996063932025,
-      "hybrid_train_r2": 0.9999990159864798,
+      "nn_train_r2": 0.9999848043068047,
+      "hybrid_train_r2": 0.9999962011463068,
       "llm_formula": "liquidation_bonus = seized_collateral \u00d7 bonus_pct",
-      "llm_python": "def formula(seized_collateral):\n    # Exact constant as specified\n    bonus_pct = 0.08\n    liquidation_bonus = seized_collateral * bonus_pct\n    return liquidation_bonus",
+      "llm_python": "def formula(seized_collateral):\n    # Liquidation bonus received by liquidator for collateral seizure\n    # bonus_pct = 0.08 (8% liquidation bonus)\n    bonus_pct = 0.08\n    liquidation_bonus = seized_collateral * bonus_pct\n    return liquidation_bonus",
       "success": true
     },
     {
@@ -358,10 +374,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.999989502021677,
-      "hybrid_train_r2": 0.9999973755245496,
-      "llm_formula": "protocol_reserve = interest_earned \u00d7 reserve_factor",
-      "llm_python": "def formula(interest_earned):\n    # Use EXACT constant\n    reserve_factor = 0.1\n    protocol_reserve = interest_earned * reserve_factor\n    return protocol_reserve",
+      "nn_train_r2": 0.9999904655037726,
+      "hybrid_train_r2": 0.999997616396497,
+      "llm_formula": "protocol_reserves = interest_earned \u00d7 reserve_factor = interest_earned \u00d7 0.1",
+      "llm_python": "def formula(interest_earned):\n    reserve_factor = 0.1\n    protocol_reserves = interest_earned * reserve_factor\n    return protocol_reserves",
       "success": true
     },
     {
@@ -373,10 +389,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999890080892089,
-      "hybrid_train_r2": 0.9999972520561015,
+      "nn_train_r2": 0.9999406678428785,
+      "hybrid_train_r2": 0.9999851678126753,
       "llm_formula": "VaR = portfolio_value \u00d7 daily_volatility \u00d7 z_score_95",
-      "llm_python": "def formula(portfolio_value, daily_volatility):\n    z_score_95 = 1.645\n    var = portfolio_value * daily_volatility * z_score_95\n    return var",
+      "llm_python": "def formula(portfolio_value, daily_volatility):\n    # Parametric VaR at 95% confidence level (1-day)\n    # Assumes normally distributed returns\n    z_score_95 = 1.645\n    var = portfolio_value * daily_volatility * z_score_95\n    return var",
       "success": true
     },
     {
@@ -388,8 +404,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999969831241252,
-      "hybrid_train_r2": 0.9999992457826145,
+      "nn_train_r2": 0.9999852032197607,
+      "hybrid_train_r2": 0.9999963008603944,
       "llm_formula": "VaR = portfolio_value \u00d7 daily_volatility \u00d7 z_score_99",
       "llm_python": "def formula(portfolio_value, daily_volatility):\n    z_score_99 = 2.326\n    var = portfolio_value * daily_volatility * z_score_99\n    return var",
       "success": true
@@ -403,10 +419,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999944047975068,
-      "hybrid_train_r2": 0.9999986012157348,
-      "llm_formula": "VaR(T) = VaR(1day) \u00d7 \u221aT",
-      "llm_python": "def formula(var_1day, time_horizon_days):\n    import numpy as np\n    return var_1day * np.sqrt(time_horizon_days)",
+      "nn_train_r2": 0.9999936591164966,
+      "hybrid_train_r2": 0.9999984147817511,
+      "llm_formula": "VaR(T) = VaR(1-day) \u00d7 \u221aT",
+      "llm_python": "def formula(var_1day, time_horizon_days):\n    return var_1day * np.sqrt(time_horizon_days)",
       "success": true
     },
     {
@@ -419,10 +435,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999428307842945,
-      "hybrid_train_r2": 0.9999857085429018,
+      "nn_train_r2": 0.9999406886261072,
+      "hybrid_train_r2": 0.9999851729305417,
       "llm_formula": "Portfolio VaR = sqrt(VaR\u2081\u00b2 + VaR\u2082\u00b2 + 2\u00b7\u03c1\u00b7VaR\u2081\u00b7VaR\u2082)",
-      "llm_python": "def formula(var_asset1, var_asset2, correlation):\n    # Portfolio VaR for two correlated assets\n    # Derived from quadratic form of covariance matrix: w^T * Sigma * w\n    portfolio_var = np.sqrt(\n        var_asset1**2\n        + var_asset2**2\n        + 2 * correlation * var_asset1 * var_asset2\n    )\n    return portfolio_var",
+      "llm_python": "def formula(var_asset1, var_asset2, correlation):\n    # Portfolio VaR for two correlated assets\n    # Derived from the quadratic form: VaR_p = sqrt(w^T * Sigma * w)\n    # where individual VaRs absorb position sizes and confidence level\n    portfolio_var = np.sqrt(\n        var_asset1**2\n        + var_asset2**2\n        + 2 * correlation * var_asset1 * var_asset2\n    )\n    return portfolio_var",
       "success": true
     },
     {
@@ -433,8 +449,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999956532703584,
-      "hybrid_train_r2": 0.9999989133234276,
+      "nn_train_r2": 0.9999927088955992,
+      "hybrid_train_r2": 0.9999981772367311,
       "llm_formula": "Annual VaR = Daily VaR \u00d7 \u221a252",
       "llm_python": "def formula(daily_var):\n    trading_days = 252\n    annual_var = daily_var * np.sqrt(trading_days)\n    return annual_var",
       "success": true
@@ -448,8 +464,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999888723325637,
-      "hybrid_train_r2": 0.9999972181018498,
+      "nn_train_r2": 0.9997432768985771,
+      "hybrid_train_r2": 0.9999358356673153,
       "llm_formula": "IR = active_return / tracking_error",
       "llm_python": "def formula(active_return, tracking_error):\n    return active_return / tracking_error",
       "success": true
@@ -462,10 +478,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999909864776276,
-      "hybrid_train_r2": 0.9999977466381217,
+      "nn_train_r2": 0.9999872121323558,
+      "hybrid_train_r2": 0.9999968030787308,
       "llm_formula": "Annual TE = Daily TE \u00d7 \u221a252",
-      "llm_python": "def formula(daily_tracking_error):\n    import numpy as np\n    annualised_tracking_error = daily_tracking_error * np.sqrt(252)\n    return annualised_tracking_error",
+      "llm_python": "def formula(daily_tracking_error):\n    import numpy as np\n    return daily_tracking_error * np.sqrt(252)",
       "success": true
     },
     {
@@ -478,10 +494,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999924768697873,
-      "hybrid_train_r2": 0.9999981192328553,
-      "llm_formula": "Incremental VaR = (portfolio_var\u00b2 + position_var\u00b2 + 2 \u00b7 \u03c1 \u00b7 portfolio_var \u00b7 position_var)^(1/2) - portfolio_var",
-      "llm_python": "def formula(portfolio_var, position_var, correlation):\n    import numpy as np\n    new_portfolio_var = np.sqrt(\n        portfolio_var**2\n        + position_var**2\n        + 2 * correlation * portfolio_var * position_var\n    )\n    incremental_var = new_portfolio_var - portfolio_var\n    return incremental_var",
+      "nn_train_r2": 0.9999487682941327,
+      "hybrid_train_r2": 0.9999871926968315,
+      "llm_formula": "Incremental VaR = (correlation \u00d7 position_var) / portfolio_var \u00d7 portfolio_var + [(position_var\u00b2 + 2 \u00d7 correlation \u00d7 portfolio_var \u00d7 position_var) / (2 \u00d7 portfolio_var)]",
+      "llm_python": "def formula(portfolio_var, position_var, correlation):\n    # Incremental VaR: change in portfolio VaR from adding new position\n    # portfolio_var: current portfolio VaR (dollar or percent)\n    # position_var: standalone VaR of the new position\n    # correlation: correlation between new position and existing portfolio\n\n    combined_var = np.sqrt(\n        portfolio_var ** 2\n        + position_var ** 2\n        + 2 * correlation * portfolio_var * position_var\n    )\n\n    incremental_var = combined_var - portfolio_var\n\n    return incremental_var",
       "success": true
     },
     {
@@ -493,9 +509,9 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999669317288977,
-      "hybrid_train_r2": 0.9999917331815046,
-      "llm_formula": "ES = portfolio_value \u00d7 daily_volatility \u00d7 2.063",
+      "nn_train_r2": 0.9999663912167942,
+      "hybrid_train_r2": 0.9999915980861585,
+      "llm_formula": "ES\u2089\u2085 = portfolio_value \u00d7 daily_volatility \u00d7 2.063",
       "llm_python": "def formula(portfolio_value, daily_volatility):\n    es_multiplier_95 = 2.063\n    expected_shortfall = portfolio_value * daily_volatility * es_multiplier_95\n    return expected_shortfall",
       "success": true
     },
@@ -508,9 +524,9 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999883966341465,
-      "hybrid_train_r2": 0.9999970991784177,
-      "llm_formula": "ES_99 = portfolio_value \u00d7 daily_volatility \u00d7 2.665",
+      "nn_train_r2": 0.9999968541820151,
+      "hybrid_train_r2": 0.9999992135478731,
+      "llm_formula": "ES\u2089\u2089 = portfolio_value \u00d7 daily_volatility \u00d7 2.665",
       "llm_python": "def formula(portfolio_value, daily_volatility):\n    es_multiplier_99 = 2.665\n    expected_shortfall = portfolio_value * daily_volatility * es_multiplier_99\n    return expected_shortfall",
       "success": true
     },
@@ -522,8 +538,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999902699328659,
-      "hybrid_train_r2": 0.9999975674971963,
+      "nn_train_r2": 0.9999853085238155,
+      "hybrid_train_r2": 0.9999963271837269,
       "llm_formula": "ES = VaR_95 \u00d7 tail_multiplier",
       "llm_python": "def formula(var_95):\n    tail_multiplier = 1.254\n    expected_shortfall = var_95 * tail_multiplier\n    return expected_shortfall",
       "success": true
@@ -536,12 +552,12 @@
         "position2_es",
         "correlation"
       ],
-      "decision": "nn",
-      "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9999915382006768,
-      "hybrid_train_r2": 0.9999915382006768,
+      "decision": "ensemble",
+      "llm_train_r2": -7468686670.126867,
+      "nn_train_r2": 0.999990382844936,
+      "hybrid_train_r2": 0.9768092467549165,
       "llm_formula": "N/A",
-      "llm_python": "# WRONG - multiplies two ES values together and applies multiplier again\n# ES values already contain the multiplier, so it's double-applied\n# Correlation is imported but never used\nreturn position1_es * position2_es * es_multiplier",
+      "llm_python": "def formula(position1_es, position2_es, correlation):\n    import numpy as np\n    es_multiplier = 2.063\n    return position1_es * position2_es * es_multiplier  # \u274c WRONG",
       "success": true
     },
     {
@@ -553,9 +569,9 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999970906908618,
-      "hybrid_train_r2": 0.9999992726717142,
-      "llm_formula": "ES(T) = ES(1) \u00d7 \u221aT",
+      "nn_train_r2": 0.999984427642812,
+      "hybrid_train_r2": 0.9999961069751981,
+      "llm_formula": "ES_T = ES_1 \u00d7 \u221aT",
       "llm_python": "def formula(es_1day, holding_days):\n    import numpy as np\n    return es_1day * np.sqrt(holding_days)",
       "success": true
     },
@@ -569,10 +585,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9999857128870584,
-      "hybrid_train_r2": 0.9999857128870584,
-      "llm_formula": "CES_i = w_i \u00d7 \u03c1_i,P \u00d7 ES_i",
-      "llm_python": "def formula(weights, individual_es, correlation):\n    # weights: array of portfolio weights\n    # individual_es: array of individual Expected Shortfall values\n    # correlation: array of correlations of each asset with the portfolio\n    import numpy as np\n    weights = np.asarray(weights, dtype=float)\n    individual_es = np.asarray(individual_es, dtype=float)\n    correlation = np.asarray(correlation, dtype=float)\n    component_es = weights * correlation * individual_es\n    portfolio_es = np.sum(component_es)\n    return component_es, portfolio_es",
+      "nn_train_r2": 0.9999860275534416,
+      "hybrid_train_r2": 0.9999860275534416,
+      "llm_formula": "CES_i = w_i \u00d7 \u03c1_i,p \u00d7 ES_i",
+      "llm_python": "def formula(weights, individual_es, correlations_with_portfolio):\n    # Component ES for each position\n    # CES_i = w_i * rho_{i,p} * ES_i\n    component_es = weights * correlations_with_portfolio * individual_es\n\n    # Total diversified portfolio ES\n    portfolio_es = np.sum(component_es)\n\n    # Percentage contribution to total ES\n    percentage_contribution = component_es / portfolio_es\n\n    return component_es, portfolio_es, percentage_contribution",
       "success": true
     },
     {
@@ -583,10 +599,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.999988690429866,
-      "hybrid_train_r2": 0.9999971726413784,
-      "llm_formula": "ES = VaR \u00d7 (1 + tail_factor)",
-      "llm_python": "def formula(var):\n    # tail_factor constant as specified\n    tail_factor = 0.25\n    es = var * (1 + tail_factor)\n    return es",
+      "nn_train_r2": 0.9999886794544323,
+      "hybrid_train_r2": 0.9999971698947124,
+      "llm_formula": "ES = VaR \u00d7 (1 + tail_factor) = VaR \u00d7 1.25",
+      "llm_python": "def formula(var):\n    tail_factor = 0.25\n    es = var * (1 + tail_factor)\n    return es",
       "success": true
     },
     {
@@ -598,10 +614,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999837757422542,
-      "hybrid_train_r2": 0.9999959439744519,
+      "nn_train_r2": 0.999646709148693,
+      "hybrid_train_r2": 0.9999117084289594,
       "llm_formula": "Sharpe Ratio = (R_p - R_f) / \u03c3_p",
-      "llm_python": "def formula(portfolio_return, volatility):\n    # Use EXACT constant as specified\n    risk_free_rate = 0.04\n    sharpe_ratio = (portfolio_return - risk_free_rate) / volatility\n    return sharpe_ratio",
+      "llm_python": "def formula(portfolio_return, volatility):\n    # Use EXACT constant value\n    risk_free_rate = 0.04\n    sharpe_ratio = (portfolio_return - risk_free_rate) / np.maximum(volatility, 1e-10)\n    return sharpe_ratio",
       "success": true
     },
     {
@@ -614,10 +630,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999872569671509,
-      "hybrid_train_r2": 0.9999968142798268,
+      "nn_train_r2": 0.9999864255982106,
+      "hybrid_train_r2": 0.9999966064399315,
       "llm_formula": "VaR_portfolio = sqrt(VaR\u2081\u00b2 + VaR\u2082\u00b2 + 2\u00b7\u03c1\u00b7VaR\u2081\u00b7VaR\u2082)",
-      "llm_python": "def formula(var_asset1, var_asset2, correlation):\n    # Correlated Portfolio VaR for two assets\n    # Derived from portfolio variance: Var_p = w1^2*s1^2 + w2^2*s2^2 + 2*w1*w2*s1*s2*rho\n    # where VaR_i = z * wi * sigma_i, so VaR_i^2 terms replace variance contributions\n    portfolio_var_squared = (\n        var_asset1 ** 2\n        + var_asset2 ** 2\n        + 2.0 * correlation * var_asset1 * var_asset2\n    )\n    return np.sqrt(portfolio_var_squared)",
+      "llm_python": "def formula(var_asset1, var_asset2, correlation):\n    import numpy as np\n    portfolio_var = np.sqrt(\n        var_asset1**2\n        + var_asset2**2\n        + 2 * correlation * var_asset1 * var_asset2\n    )\n    return portfolio_var",
       "success": true
     },
     {
@@ -627,12 +643,12 @@
         "staked_amount",
         "reward_rate"
       ],
-      "decision": "nn",
-      "llm_train_r2": -1.5221541460961712,
-      "nn_train_r2": 0.9999867916914257,
-      "hybrid_train_r2": 0.9999867916914257,
-      "llm_formula": "APY = reward_rate \u00d7 staked_amount / staked_amount \u00d7 100 = reward_rate \u00d7 100",
-      "llm_python": "def formula(staked_amount, reward_rate):\n    # Annual reward in token terms\n    annual_reward = staked_amount * reward_rate\n\n    # APY expressed as a percentage\n    apy_percent = reward_rate * 100\n\n    return apy_percent",
+      "decision": "ensemble",
+      "llm_train_r2": 1.0,
+      "nn_train_r2": 0.9999882855955048,
+      "hybrid_train_r2": 0.9999970714346738,
+      "llm_formula": "APY = reward_rate \u00d7 staked_amount",
+      "llm_python": "def formula(staked_amount, reward_rate):\n    annual_reward = reward_rate * staked_amount\n    return annual_reward",
       "success": true
     },
     {
@@ -645,10 +661,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.999920804847353,
-      "hybrid_train_r2": 0.9999802027126163,
+      "nn_train_r2": 0.9999980658152612,
+      "hybrid_train_r2": 0.9999995164566179,
       "llm_formula": "A = P \u00d7 (1 + r/n)^(n\u00d7t)",
-      "llm_python": "def formula(principal, apr, compounds_per_year, years=1):\n    # principal: initial staked amount\n    # apr: annual percentage rate as a decimal (e.g., 0.12 for 12%)\n    # compounds_per_year: number of times rewards are compounded per year\n    # years: time horizon in years (default = 1)\n    rate_per_period = apr / compounds_per_year\n    total_periods = compounds_per_year * years\n    final_amount = principal * np.power(1 + rate_per_period, total_periods)\n    return final_amount",
+      "llm_python": "def formula(principal, apr, compounds_per_year, years=1):\n    # apr should be provided as a decimal (e.g., 0.12 for 12%)\n    r = apr\n    n = compounds_per_year\n    t = years\n    A = principal * np.power(1 + r / n, n * t)\n    return A",
       "success": true
     },
     {
@@ -661,8 +677,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9997098376784079,
-      "hybrid_train_r2": 0.9999274804323,
+      "nn_train_r2": 0.9997833984283632,
+      "hybrid_train_r2": 0.9999458613801214,
       "llm_formula": "Reward = staked_amount \u00d7 APY \u00d7 (lock_days / 365)",
       "llm_python": "def formula(staked_amount, apy, lock_days):\n    reward = staked_amount * apy * (lock_days / 365)\n    return reward",
       "success": true
@@ -676,8 +692,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999809497774149,
-      "hybrid_train_r2": 0.9999952375383495,
+      "nn_train_r2": 0.9999705552422186,
+      "hybrid_train_r2": 0.9999926390285147,
       "llm_formula": "net_reward = gross_reward \u00d7 (1 - commission_rate)",
       "llm_python": "def formula(gross_reward, commission_rate):\n    net_reward = gross_reward * (1 - commission_rate)\n    return net_reward",
       "success": true
@@ -691,8 +707,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": -1.2707874459122386,
-      "nn_train_r2": 0.9999847368833327,
-      "hybrid_train_r2": 0.9999961842811889,
+      "nn_train_r2": 0.9999775096912078,
+      "hybrid_train_r2": 0.9999943775802977,
       "llm_formula": "slash_amount = staked_amount \u00d7 (slash_pct / 100)",
       "llm_python": "def formula(staked_amount, slash_pct):\n    slash_amount = staked_amount * (slash_pct / 100)\n    return slash_amount",
       "success": true
@@ -706,8 +722,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999830389322772,
-      "hybrid_train_r2": 0.9999957597969095,
+      "nn_train_r2": 0.9999978319722321,
+      "hybrid_train_r2": 0.9999994579942457,
       "llm_formula": "Real APY = ((1 + nominal_apy) / (1 + inflation_rate)) - 1",
       "llm_python": "def formula(nominal_apy, inflation_rate):\n    real_apy = ((1 + nominal_apy) / (1 + inflation_rate)) - 1\n    return real_apy",
       "success": true
@@ -722,10 +738,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9998732585726576,
-      "hybrid_train_r2": 0.9999683187034393,
+      "nn_train_r2": 0.9999009980171236,
+      "hybrid_train_r2": 0.9999752519963693,
       "llm_formula": "Final Value = initial_stake \u00d7 (1 + apy)^years",
-      "llm_python": "def formula(initial_stake, apy, years):\n    # Compound growth formula for staking position\n    # apy expressed as decimal (e.g., 0.12 for 12%)\n    return initial_stake * np.power((1 + apy), years)",
+      "llm_python": "def formula(initial_stake, apy, years):\n    # Compound growth formula: Final = initial_stake * (1 + apy)^years\n    # apy should be provided as a decimal (e.g., 0.12 for 12%)\n    final_value = initial_stake * np.power(1 + apy, years)\n    return final_value",
       "success": true
     },
     {
@@ -738,8 +754,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9910769559419966,
-      "hybrid_train_r2": 0.9977891889826068,
+      "nn_train_r2": 0.9934632168204254,
+      "hybrid_train_r2": 0.9983765038644539,
       "llm_formula": "delegator_reward = epoch_reward \u00d7 (delegator_stake / total_stake)",
       "llm_python": "def formula(epoch_reward, delegator_stake, total_stake):\n    stake_share = delegator_stake / total_stake\n    delegator_reward = epoch_reward * stake_share\n    return delegator_reward",
       "success": true
@@ -753,8 +769,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 0.9710561438652786,
-      "nn_train_r2": 0.9999662908163783,
-      "hybrid_train_r2": 0.9930803707882121,
+      "nn_train_r2": 0.9999609361615793,
+      "hybrid_train_r2": 0.9930244162922941,
       "llm_formula": "liquidation_price_long = entry_price * (1 - 1/leverage)",
       "llm_python": "def formula(entry_price, leverage):\n    import numpy as np\n    return entry_price * (1 - 1/np.array(leverage))",
       "success": true
@@ -768,8 +784,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 0.9958105784860272,
-      "nn_train_r2": 0.9999766369366958,
-      "hybrid_train_r2": 0.9989270904120787,
+      "nn_train_r2": 0.9999976654611001,
+      "hybrid_train_r2": 0.9989562109545097,
       "llm_formula": "liquidation_price = entry_price * (1 + 1/leverage)",
       "llm_python": "def formula(entry_price, leverage):\n    import numpy as np\n    return entry_price * (1 + 1/np.array(leverage))",
       "success": true
@@ -783,10 +799,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999327018362071,
-      "hybrid_train_r2": 0.9999831766759258,
+      "nn_train_r2": 0.9999780371242051,
+      "hybrid_train_r2": 0.9999945094132101,
       "llm_formula": "effective_leverage = initial_leverage / (1 + initial_leverage \u00d7 price_change_pct)",
-      "llm_python": "def formula(initial_leverage, price_change_pct):\n    # effective leverage accounts for how leverage changes as price moves\n    # as price increases for a long position, effective leverage decreases\n    # as price decreases for a long position, effective leverage increases\n    denominator = 1 + initial_leverage * price_change_pct\n    effective_leverage = initial_leverage / denominator\n    return effective_leverage",
+      "llm_python": "def formula(initial_leverage, price_change_pct):\n    # effective leverage accounting for price movement\n    # as price moves in your favor, effective leverage decreases\n    # as price moves against you, effective leverage increases\n    effective_leverage = initial_leverage / (1 + initial_leverage * price_change_pct)\n    return effective_leverage",
       "success": true
     },
     {
@@ -799,8 +815,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999015550328618,
-      "hybrid_train_r2": 0.9999753911650661,
+      "nn_train_r2": 0.9998866692026072,
+      "hybrid_train_r2": 0.9999716705117732,
       "llm_formula": "Unrealized PnL = (mark_price - entry_price) \u00d7 size",
       "llm_python": "def formula(entry_price, mark_price, size):\n    # Long position unrealized PnL\n    # Positive when mark_price > entry_price (profit)\n    # Negative when mark_price < entry_price (loss)\n    unrealized_pnl = (mark_price - entry_price) * size\n    return unrealized_pnl",
       "success": true
@@ -815,10 +831,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999796419171827,
-      "hybrid_train_r2": 0.99999491057034,
+      "nn_train_r2": 0.9999232323850827,
+      "hybrid_train_r2": 0.9999808095596121,
       "llm_formula": "PnL = (entry_price - mark_price) \u00d7 size",
-      "llm_python": "def formula(entry_price, mark_price, size):\n    pnl = (entry_price - mark_price) * size\n    return pnl",
+      "llm_python": "def formula(entry_price, mark_price, size):\n    # Short position profits when price decreases\n    # PnL = (entry_price - mark_price) * size\n    return (entry_price - mark_price) * size",
       "success": true
     },
     {
@@ -831,8 +847,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999662732440748,
-      "hybrid_train_r2": 0.999991568602355,
+      "nn_train_r2": 0.999746989670132,
+      "hybrid_train_r2": 0.9999367633802857,
       "llm_formula": "Total Funding Cost = notional \u00d7 funding_rate \u00d7 periods",
       "llm_python": "def formula(notional, funding_rate, periods):\n    import numpy as np\n    return notional * funding_rate * periods",
       "success": true
@@ -846,8 +862,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.999983786067053,
-      "hybrid_train_r2": 0.999995946586148,
+      "nn_train_r2": 0.999983820315773,
+      "hybrid_train_r2": 0.9999959551348007,
       "llm_formula": "Notional = Collateral \u00d7 Leverage",
       "llm_python": "def formula(collateral, leverage):\n    import numpy as np\n    notional = collateral * leverage\n    return notional",
       "success": true
@@ -860,9 +876,9 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999928869723929,
-      "hybrid_train_r2": 0.9999982217581327,
-      "llm_formula": "VaR_99 = var_95 \u00d7 (z_99 / z_95) = var_95 \u00d7 (2.326 / 1.645)",
+      "nn_train_r2": 0.9999792897656379,
+      "hybrid_train_r2": 0.9999948225450769,
+      "llm_formula": "VaR_99 = VaR_95 \u00d7 (z_99 / z_95) = VaR_95 \u00d7 (2.326 / 1.645)",
       "llm_python": "def formula(var_95):\n    z_99 = 2.326\n    z_95 = 1.645\n    var_99 = var_95 * (z_99 / z_95)\n    return var_99",
       "success": true
     },
@@ -877,9 +893,9 @@
       ],
       "decision": "fitted_llm",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9430577793777446,
+      "nn_train_r2": 0.9315324130525213,
       "hybrid_train_r2": 1.0,
-      "llm_formula": "Funding Cost = notional \u00d7 ((mark_price - index_price) / index_price) \u00d7 periods",
+      "llm_formula": "Funding Cost = notional \u00d7 [(mark_price - index_price) / index_price] \u00d7 periods",
       "llm_python": "def formula(notional, mark_price, index_price, periods):\n    premium_rate = (mark_price - index_price) / index_price\n    funding_cost = notional * premium_rate * periods\n    return funding_cost",
       "success": true
     },
@@ -890,12 +906,12 @@
         "moneyness",
         "implied_volatility"
       ],
-      "decision": "nn",
-      "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9798801266226195,
-      "hybrid_train_r2": 0.9798801266226195,
+      "decision": "ensemble",
+      "llm_train_r2": 0.8948170404938278,
+      "nn_train_r2": 0.9799013882665224,
+      "hybrid_train_r2": 0.9605088087711938,
       "llm_formula": "\u0394 = N(d\u2081)",
-      "llm_python": "def formula(moneyness, implied_volatility):\n    # moneyness: m = ln(S/K), log-moneyness\n    # implied_volatility: sigma (annualized, at T=1)\n    # Delta = N(d1) using error function approximation (no scipy)\n    # N(x) = 0.5 * (1 + erf(x / sqrt(2)))\n\n    d1 = moneyness / implied_volatility + implied_volatility / 2.0\n\n    # Compute N(d1) using numpy erf (no scipy needed)\n    delta = 0.5 * (1.0 + np.erf(d1 / np.sqrt(2.0)))\n\n    return delta",
+      "llm_python": "def formula(moneyness, implied_volatility, T=1.0, option_type='call'):\n    # moneyness = ln(S/K), implied_volatility = annualized vol\n    # T = time to expiry in years\n    # option_type: 'call' or 'put'\n    import numpy as np\n\n    m = moneyness\n    sigma = implied_volatility\n\n    # d1 using moneyness and implied volatility\n    d1 = (m + 0.5 * sigma**2 * T) / (sigma * np.sqrt(T))\n\n    # Standard normal CDF via error function (no scipy)\n    # N(x) = 0.5 * (1 + erf(x / sqrt(2)))\n    N_d1 = 0.5 * (1.0 + np.sign(d1) * (\n        1.0 - np.exp(-d1**2 / (1.0 + 0.04516822 * d1**2 + 0.20013573 * np.abs(d1)))))\n\n    # Use numpy erf via polynomial approximation\n    # More accurate: use the erf relation\n    sqrt2 = np.sqrt(2.0)\n    z = d1 / sqrt2\n    # erf approximation using Horner's method (Abramowitz & Stegun 7.1.26)\n    t = 1.0 / (1.0 + 0.3275911 * np.abs(z))\n    poly = t * (0.254829592\n                + t * (-0.284496736\n                       + t * (1.421413741\n                              + t * (-1.453152027\n                                     + t * 1.061405429))))\n    erf_z = np.sign(z) * (1.0 - poly * np.exp(-z**2))\n    N_d1 = 0.5 * (1.0 + erf_z)\n\n    if option_type == 'call':\n        delta = N_d1\n    else:\n        delta = N_d1 - 1.0\n\n    return delta",
       "success": true
     },
     {
@@ -907,10 +923,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": 0.0,
-      "nn_train_r2": 0.944155022888152,
-      "hybrid_train_r2": 0.944155022888152,
+      "nn_train_r2": 0.916870040824882,
+      "hybrid_train_r2": 0.916870040824882,
       "llm_formula": "C = S \u00b7 N(d\u2081) - K \u00b7 e^(-rT) \u00b7 N(d\u2082)",
-      "llm_python": "def formula(spot_price, implied_volatility, strike_price, risk_free_rate, time_to_expiry):\n    import numpy as np\n\n    S = spot_price\n    sigma = implied_volatility\n    K = strike_price\n    r = risk_free_rate\n    T = time_to_expiry\n\n    def norm_cdf(x):\n        # Abramowitz and Stegun approximation for N(x) without scipy\n        a1 =  0.254829592\n        a2 = -0.284496736\n        a3 =  1.421413741\n        a4 = -1.453152027\n        a5 =  1.061405429\n        p  =  0.327591100\n        sign = np.where(x >= 0, 1.0, -1.0)\n        abs_x = np.abs(x)\n        t = 1.0 / (1.0 + p * abs_x)\n        poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))))\n        approx = 1.0 - poly * np.exp(-abs_x * abs_x / 2.0) / np.sqrt(2.0 * np.pi) * np.sqrt(2.0 * np.pi)\n        # Standard form: CDF via error-function style\n        erf_approx = 1.0 - (a1*t + a2*t**2 + a3*t**3 + a4*t**4 + a5*t**5) * np.exp(-abs_x**2 / 2.0)\n        cdf = np.where(x >= 0, erf_approx, 1.0 - erf_approx)\n        return cdf\n\n    def norm_cdf_clean(x):\n        # Using the relationship: N(x) = 0.5 * (1 + erf(x / sqrt(2)))\n        # erf via series approximation (numpy has no erf, using Horner method)\n        a1 =  0.254829592\n        a2 = -0.284496736\n        a3 =  1.421413741\n        a4 = -1.453152027\n        a5 =  1.061405429\n        p  =  0.3275911\n        sign = np.where(x >= 0, 1.0, -1.0)\n        abs_x = np.abs(x) / np.sqrt(2.0)\n        t = 1.0 / (1.0 + p * abs_x)\n        erf_abs = 1.0 - (a1*t + a2*t**2 + a3*t**3 + a4*t**4 + a5*t**5) * np.exp(-abs_x**2)\n        erf_x = sign * erf_abs\n        return 0.5 * (1.0 + erf_x)\n\n    sqrt_T = np.sqrt(T)\n    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * sqrt_T)\n    d2 = d1 - sigma * sqrt_T\n\n    N_d1 = norm_cdf_clean(d1)\n    N_d2 = norm_cdf_clean(d2)\n\n    call_price = S * N_d1 - K * np.exp(-r * T) * N_d2\n    return call_price",
+      "llm_python": "def formula(spot_price, implied_volatility, strike_price, risk_free_rate, time_to_expiry):\n    # Normal CDF implemented via error function (no scipy)\n    # N(x) = 0.5 * (1 + erf(x / sqrt(2)))\n    # erf approximation using Abramowitz & Stegun (maximum error: 1.5e-7)\n    def norm_cdf(x):\n        # Use the relation: erf(x) = sign(x) * (1 - erfc(|x|))\n        # Abramowitz & Stegun approximation for erfc\n        a1 =  0.254829592\n        a2 = -0.284496736\n        a3 =  1.421413741\n        a4 = -1.453152027\n        a5 =  1.061405429\n        p  =  0.3275911\n        sign = np.where(x >= 0, 1.0, -1.0)\n        abs_x = np.abs(x)\n        t = 1.0 / (1.0 + p * abs_x)\n        poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))))\n        erfc_approx = poly * np.exp(-abs_x * abs_x)\n        erf_approx = sign * (1.0 - erfc_approx)\n        return 0.5 * (1.0 + erf_approx)\n\n    S = spot_price\n    K = strike_price\n    r = risk_free_rate\n    T = time_to_expiry\n    sigma = implied_volatility\n\n    sqrt_T = np.sqrt(T)\n    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrt_T)\n    d2 = d1 - sigma * sqrt_T\n\n    call_price = S * norm_cdf(d1) - K * np.exp(-r * T) * norm_cdf(d2)\n    return call_price",
       "success": true
     },
     {
@@ -919,12 +935,12 @@
       "variable_names": [
         "moneyness"
       ],
-      "decision": "nn",
-      "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9999929187270445,
-      "hybrid_train_r2": 0.9999929187270445,
-      "llm_formula": "\u03c3(m) = \u03c3_ATM + skew \u00d7 m + curvature \u00d7 m\u00b2",
-      "llm_python": "def formula(K, F):\n    # K: strike price\n    # F: forward price (or current underlying price)\n    # Constants\n    atm_vol = 0.2\n    skew = -0.1\n    curvature = 0.05\n\n    # Moneyness defined as log-moneyness\n    m = np.log(K / F)\n\n    # Volatility smile skew adjustment\n    implied_vol = atm_vol + skew * m + curvature * m ** 2\n\n    return implied_vol",
+      "decision": "ensemble",
+      "llm_train_r2": 1.0,
+      "nn_train_r2": 0.9999923293013303,
+      "hybrid_train_r2": 0.9999980823856056,
+      "llm_formula": "\u03c3(k) = \u03c3_ATM + skew \u00d7 k + curvature \u00d7 k\u00b2",
+      "llm_python": "def formula(moneyness):\n    # moneyness = log(K/F), log-moneyness relative to the forward price\n    atm_vol = 0.2\n    skew = -0.1\n    curvature = 0.05\n    implied_vol = atm_vol + skew * moneyness + curvature * moneyness ** 2\n    return implied_vol",
       "success": true
     },
     {
@@ -938,8 +954,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999927934911902,
-      "hybrid_train_r2": 0.9999981983900441,
+      "nn_train_r2": 0.9999980394149075,
+      "hybrid_train_r2": 0.9999995098533954,
       "llm_formula": "F = S \u00d7 e^((r - q) \u00d7 T)",
       "llm_python": "def formula(spot, risk_free_rate, div_yield, maturity):\n    return spot * np.exp((risk_free_rate - div_yield) * maturity)",
       "success": true
@@ -953,10 +969,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9994937698297466,
-      "hybrid_train_r2": 0.9998735065549885,
+      "nn_train_r2": 0.9999241808507174,
+      "hybrid_train_r2": 0.9999810466523146,
       "llm_formula": "Intrinsic Value = max(K - S, 0)",
-      "llm_python": "def formula(strike, spot_at_expiry):\n    import numpy as np\n    return np.maximum(strike - spot_at_expiry, 0.0)",
+      "llm_python": "def formula(strike, spot_at_expiry):\n    import numpy as np\n    return np.maximum(strike - spot_at_expiry, 0)",
       "success": true
     },
     {
@@ -968,10 +984,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": -1.517096334063066,
-      "nn_train_r2": 0.9999685891599155,
-      "hybrid_train_r2": 0.9999685891599155,
-      "llm_formula": "V = max(S - K, 0)",
-      "llm_python": "def formula(spot_at_expiry, strike):\n    import numpy as np\n    return np.maximum(spot_at_expiry - strike, 0.0)",
+      "nn_train_r2": 0.9999677684582134,
+      "hybrid_train_r2": 0.9999677684582134,
+      "llm_formula": "V = max(S_T - K, 0)",
+      "llm_python": "def formula(spot_at_expiry, strike):\n    return np.maximum(spot_at_expiry - strike, 0.0)",
       "success": true
     },
     {
@@ -983,9 +999,9 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999906775133421,
-      "hybrid_train_r2": 0.9999976693999382,
-      "llm_formula": "C - P = S - K \u00b7 e^(-r \u00b7 T)",
+      "nn_train_r2": 0.9999868982875698,
+      "hybrid_train_r2": 0.9999967246122433,
+      "llm_formula": "C - P = S - K * e^(-r * T)",
       "llm_python": "def formula(S, T):\n    K = 100.0\n    r = 0.04\n    return S - K * np.exp(-r * T)",
       "success": true
     },
@@ -997,8 +1013,8 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999865736676214,
-      "hybrid_train_r2": 0.9999966434595824,
+      "nn_train_r2": 0.9999932326132694,
+      "hybrid_train_r2": 0.9999983081673461,
       "llm_formula": "Moneyness (%) = ((S - K) / K) \u00d7 100",
       "llm_python": "def formula(spot_price):\n    K = 100.0\n    moneyness_pct = ((spot_price - K) / K) * 100.0\n    return moneyness_pct",
       "success": true
@@ -1012,10 +1028,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9627925383713454,
-      "hybrid_train_r2": 0.9627925383713454,
-      "llm_formula": "P = K\u00b7e^(-rT)\u00b7N(-d\u2082) - S\u00b7N(-d\u2081)",
-      "llm_python": "def formula(spot_price, implied_volatility, strike_price, risk_free_rate, time_to_expiry):\n    # Black-Scholes European Put Option Price\n    # N(x) implemented via error function (erf) without scipy\n    S = spot_price\n    sigma = implied_volatility\n    K = strike_price\n    r = risk_free_rate\n    T = time_to_expiry\n\n    # Compute d1 and d2\n    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))\n    d2 = d1 - sigma * np.sqrt(T)\n\n    # Standard normal CDF using error function: N(x) = 0.5 * (1 + erf(x / sqrt(2)))\n    def norm_cdf(x):\n        return 0.5 * (1.0 + np.erf(x / np.sqrt(2.0)))\n\n    # Black-Scholes Put Price\n    P = K * np.exp(-r * T) * norm_cdf(-d2) - S * norm_cdf(-d1)\n    return P",
+      "nn_train_r2": 0.9536700512281198,
+      "hybrid_train_r2": 0.9536700512281198,
+      "llm_formula": "P = K\u00b7e^(-r\u00b7T)\u00b7N(-d\u2082) - S\u00b7N(-d\u2081)",
+      "llm_python": "def formula(spot_price, implied_volatility, strike_price, risk_free_rate, time_to_expiry):\n    # Normal CDF approximation using numpy (no scipy)\n    def norm_cdf(x):\n        return 0.5 * (1.0 + np.sign(x) * np.sqrt(1.0 - np.exp(-2.0 / np.pi * x**2)) * 0.0 + 0.5 * np.sign(x))\n\n    def standard_normal_cdf(x):\n        # Abramowitz & Stegun approximation (error < 7.5e-8)\n        a1 =  0.319381530\n        a2 = -0.356563782\n        a3 =  1.781477937\n        a4 = -1.821255978\n        a5 =  1.330274429\n        k = 1.0 / (1.0 + 0.2316419 * np.abs(x))\n        poly = k * (a1 + k * (a2 + k * (a3 + k * (a4 + k * a5))))\n        cdf = 1.0 - (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * x**2) * poly\n        return np.where(x >= 0, cdf, 1.0 - cdf)\n\n    S = spot_price\n    K = strike_price\n    r = risk_free_rate\n    T = time_to_expiry\n    sigma = implied_volatility\n\n    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))\n    d2 = d1 - sigma * np.sqrt(T)\n\n    put_price = K * np.exp(-r * T) * standard_normal_cdf(-d2) - S * standard_normal_cdf(-d1)\n    return put_price",
       "success": true
     },
     {
@@ -1028,10 +1044,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": 0.0,
-      "nn_train_r2": 0.999984574783532,
-      "hybrid_train_r2": 0.999984574783532,
-      "llm_formula": "Gamma = \u03c6(d\u2081) / (S \u00b7 \u03c3 \u00b7 \u221aT)",
-      "llm_python": "def formula(spot_price, strike_price, implied_volatility, time_to_expiry, risk_free_rate):\n    # d1 calculation\n    d1 = (np.log(spot_price / strike_price) + (risk_free_rate + 0.5 * implied_volatility ** 2) * time_to_expiry) / (implied_volatility * np.sqrt(time_to_expiry))\n    # Standard normal PDF with full normalization constant\n    phi_d1 = (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * d1 ** 2)\n    # Gamma\n    gamma = phi_d1 / (spot_price * implied_volatility * np.sqrt(time_to_expiry))\n    return gamma",
+      "nn_train_r2": 0.9997246773972503,
+      "hybrid_train_r2": 0.9997246773972503,
+      "llm_formula": "\u0393 = \u03c6(d\u2081) / (S \u00b7 \u03c3 \u00b7 \u221aT)",
+      "llm_python": "def formula(spot_price, strike_price, implied_volatility, time_to_expiry, risk_free_rate):\n    # d1 calculation\n    d1 = (np.log(spot_price / strike_price) + (risk_free_rate + 0.5 * implied_volatility ** 2) * time_to_expiry) / (implied_volatility * np.sqrt(time_to_expiry))\n    # Standard normal PDF (full normalization constant included)\n    phi_d1 = (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * d1 ** 2)\n    # Gamma\n    gamma = phi_d1 / (spot_price * implied_volatility * np.sqrt(time_to_expiry))\n    return gamma",
       "success": true
     },
     {
@@ -1043,11 +1059,11 @@
         "time_to_expiry"
       ],
       "decision": "nn",
-      "llm_train_r2": 0.4570183182562012,
-      "nn_train_r2": 0.9999826951713022,
-      "hybrid_train_r2": 0.9999826951713022,
-      "llm_formula": "Vega = S \u00b7 \u03c6(d\u2081) \u00b7 \u221aT",
-      "llm_python": "def formula(spot_price, implied_volatility, time_to_expiry):\n    # Vega: sensitivity of option price to implied volatility\n    # Uses at-the-money (ATM) approximation where K=S and r=0\n    # d1 = sigma * sqrt(T) / 2 under ATM assumption\n    import numpy as np\n\n    S = spot_price\n    sigma = implied_volatility\n    T = time_to_expiry\n\n    # Ensure time_to_expiry is non-negative\n    T = np.maximum(T, 0.0)\n\n    # d1 under ATM approximation (S = K, r = 0)\n    # d1 = (ln(S/K) + (r + sigma^2/2)*T) / (sigma*sqrt(T))\n    # with S=K, r=0 => d1 = sigma*sqrt(T)/2\n    sqrt_T = np.sqrt(T)\n\n    d1 = (sigma * sqrt_T) / 2.0\n\n    # Standard normal PDF (full normalization constant included)\n    phi_d1 = (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * d1**2)\n\n    # Vega = S * phi(d1) * sqrt(T)\n    vega = S * phi_d1 * sqrt_T\n\n    return vega",
+      "llm_train_r2": 0.0,
+      "nn_train_r2": 0.9999880029158188,
+      "hybrid_train_r2": 0.9999880029158188,
+      "llm_formula": "Vega = S \u00b7 \u221aT \u00b7 \u03c6(d\u2081)",
+      "llm_python": "def formula(spot_price, strike_price, implied_volatility, time_to_expiry, risk_free_rate):\n    # d1 component of Black-Scholes\n    d1 = (np.log(spot_price / strike_price) + (risk_free_rate + 0.5 * implied_volatility ** 2) * time_to_expiry) / (implied_volatility * np.sqrt(time_to_expiry))\n    # Standard normal PDF with full normalization constant\n    phi_d1 = (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * d1 ** 2)\n    # Vega\n    vega = spot_price * np.sqrt(time_to_expiry) * phi_d1\n    return vega",
       "success": true
     },
     {
@@ -1059,11 +1075,11 @@
         "time_to_expiry"
       ],
       "decision": "nn",
-      "llm_train_r2": -3.0807334450143706,
-      "nn_train_r2": 0.9999787270633845,
-      "hybrid_train_r2": 0.9999787270633845,
-      "llm_formula": "\u0398 = -[S \u00b7 \u03c3 \u00b7 N'(d\u2081)] / [2\u221aT] - r \u00b7 K \u00b7 e^(-rT) \u00b7 N(d\u2082)",
-      "llm_python": "def formula(spot_price, implied_volatility, time_to_expiry, strike_price=100.0, risk_free_rate=0.05):\n    import numpy as np\n\n    S = spot_price\n    sigma = implied_volatility\n    T = time_to_expiry\n    K = strike_price\n    r = risk_free_rate\n\n    # Compute d1 and d2\n    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))\n    d2 = d1 - sigma * np.sqrt(T)\n\n    # Standard normal PDF (full normalization constant included)\n    N_prime_d1 = (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * d1 ** 2)\n\n    # Standard normal CDF approximation (Abramowitz & Stegun, no scipy)\n    def norm_cdf(x):\n        a1 =  0.254829592\n        a2 = -0.284496736\n        a3 =  1.421413741\n        a4 = -1.453152027\n        a5 =  1.061405429\n        p  =  0.3275911\n        sign = np.where(x < 0, -1.0, 1.0)\n        x_abs = np.abs(x)\n        t = 1.0 / (1.0 + p * x_abs)\n        poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))))\n        cdf = 1.0 - poly * np.exp(-x_abs ** 2)\n        return 0.5 * (1.0 + sign * (cdf - 0.5) * 2.0)\n\n    N_d2 = norm_cdf(d2)\n\n    # Theta (annualized)\n    theta_annual = (\n        -(S * sigma * N_prime_d1) / (2.0 * np.sqrt(T))\n        - r * K * np.exp(-r * T) * N_d2\n    )\n\n    # Convert to per-day theta\n    theta_per_day = theta_annual / 365.0\n\n    return theta_per_day",
+      "llm_train_r2": -3.08109796777057,
+      "nn_train_r2": 0.9999845934473904,
+      "hybrid_train_r2": 0.9999845934473904,
+      "llm_formula": "Theta = -[S \u00b7 \u03c3 \u00b7 N'(d1)] / (2 \u00b7 \u221aT) / 365",
+      "llm_python": "def formula(spot_price, implied_volatility, time_to_expiry):\n    # spot_price: current price of underlying asset\n    # implied_volatility: annualized implied volatility (e.g. 0.20 for 20%)\n    # time_to_expiry: time to expiry in years (e.g. 30/365 for 30 days)\n    # Assumes ATM option (K = S) and risk-free rate r = 0 for simplicity\n    import numpy as np\n\n    S = spot_price\n    sigma = implied_volatility\n    T = np.maximum(time_to_expiry, 1e-10)  # avoid division by zero\n\n    # For ATM option: K = S, r = 0\n    # d1 = (sigma * sqrt(T)) / 2\n    d1 = (sigma * np.sqrt(T)) / 2.0\n\n    # Standard normal PDF (full normalization constant included)\n    norm_pdf_d1 = (1.0 / np.sqrt(2.0 * np.pi)) * np.exp(-0.5 * d1 ** 2)\n\n    # Theta per day (annualized theta divided by 365)\n    theta_per_day = -(S * sigma * norm_pdf_d1) / (2.0 * np.sqrt(T) * 365.0)\n\n    return theta_per_day",
       "success": true
     },
     {
@@ -1075,8 +1091,8 @@
       ],
       "decision": "nn",
       "llm_train_r2": 0.0,
-      "nn_train_r2": 0.9999847421977245,
-      "hybrid_train_r2": 0.9999847421977245,
+      "nn_train_r2": 0.9999839148545904,
+      "hybrid_train_r2": 0.9999839148545904,
       "llm_formula": "N/A",
       "llm_python": "N/A",
       "success": true
@@ -1091,10 +1107,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9998351286190227,
-      "hybrid_train_r2": 0.9999587890027372,
+      "nn_train_r2": 0.9998477984903219,
+      "hybrid_train_r2": 0.9999619554135192,
       "llm_formula": "LP Fee Earnings = (liquidity_provided / pool_liquidity) \u00d7 total_fees",
-      "llm_python": "def formula(liquidity_provided, pool_liquidity, total_fees):\n    # Compute liquidity share fraction\n    liquidity_share = liquidity_provided / pool_liquidity\n    # Compute fee earnings proportional to share\n    fee_earnings = liquidity_share * total_fees\n    return fee_earnings",
+      "llm_python": "def formula(liquidity_provided, pool_liquidity, total_fees):\n    # Compute the LP's proportional share of the pool\n    liquidity_share = liquidity_provided / pool_liquidity\n    # Multiply share by total fees earned in the pool\n    lp_fee_earnings = liquidity_share * total_fees\n    return lp_fee_earnings",
       "success": true
     },
     {
@@ -1107,8 +1123,8 @@
       ],
       "decision": "nn",
       "llm_train_r2": -12157369.763001533,
-      "nn_train_r2": 0.9999935398937965,
-      "hybrid_train_r2": 0.9999935398937965,
+      "nn_train_r2": 0.9999975756149395,
+      "hybrid_train_r2": 0.9999975756149395,
       "llm_formula": "\u03b7 = 1 / (1 - \u221a(price_lower/price_current) - \u221a(price_current/price_upper) + \u221a(price_lower/price_upper))",
       "llm_python": "def formula(price_lower, price_upper, price_current):\n    import numpy as np\n    sqrt_pl = np.sqrt(price_lower)\n    sqrt_pu = np.sqrt(price_upper)\n    sqrt_pc = np.sqrt(price_current)\n    denominator = 1 - (sqrt_pl / sqrt_pc) - (sqrt_pc / sqrt_pu) + (sqrt_pl / sqrt_pu)\n    return 1 / denominator",
       "success": true
@@ -1121,10 +1137,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999849757498983,
-      "hybrid_train_r2": 0.999996243993468,
+      "nn_train_r2": 0.9999848649255334,
+      "hybrid_train_r2": 0.9999962162813353,
       "llm_formula": "APY = (1 + APR/365)^365 - 1",
-      "llm_python": "def formula(apr):\n    # apr: annual percentage rate as a decimal (e.g., 0.12 for 12%)\n    apy = (1 + apr / 365) ** 365 - 1\n    return apy",
+      "llm_python": "def formula(apr):\n    # apr: Annual Percentage Rate as a decimal (e.g., 0.12 for 12%)\n    n = 365  # daily compounding periods\n    apy = (1 + apr / n) ** n - 1\n    return apy",
       "success": true
     },
     {
@@ -1134,10 +1150,10 @@
         "daily_volume",
         "pool_tvl"
       ],
-      "decision": "fitted_llm",
+      "decision": "ensemble",
       "llm_train_r2": -3576674.548467239,
-      "nn_train_r2": 0.9166825499038145,
-      "hybrid_train_r2": 1.0,
+      "nn_train_r2": 0.9618664110206029,
+      "hybrid_train_r2": 0.9908336162523531,
       "llm_formula": "Fee APY = (daily_volume \u00d7 fee_rate \u00d7 365) / pool_tvl \u00d7 100",
       "llm_python": "def formula(daily_volume, pool_tvl):\n    fee_rate = 0.003\n    fee_apy = (daily_volume * fee_rate * 365) / pool_tvl * 100\n    return fee_apy",
       "success": true
@@ -1151,10 +1167,10 @@
       ],
       "decision": "nn",
       "llm_train_r2": -1357.7326470493938,
-      "nn_train_r2": 0.9999733954997828,
-      "hybrid_train_r2": 0.9999733954997828,
+      "nn_train_r2": 0.9999724382345485,
+      "hybrid_train_r2": 0.9999724382345485,
       "llm_formula": "width = sqrt(price_upper) - sqrt(price_lower)",
-      "llm_python": "def formula(price_lower, price_upper):\n    width = np.sqrt(price_upper) - np.sqrt(price_lower)\n    return width",
+      "llm_python": "def formula(price_lower, price_upper):\n    return np.sqrt(price_upper) - np.sqrt(price_lower)",
       "success": true
     },
     {
@@ -1165,10 +1181,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 0.0014985553915237704,
-      "nn_train_r2": 0.9999867033912925,
-      "hybrid_train_r2": 0.9999966758876131,
-      "llm_formula": "rebalancing_cost = fee \u00d7 rebalance_size",
-      "llm_python": "def formula(rebalance_size):\n    # Use EXACT constant fee = 0.003\n    fee = 0.003\n    rebalancing_cost = fee * rebalance_size\n    return rebalancing_cost",
+      "nn_train_r2": 0.9999889274560236,
+      "hybrid_train_r2": 0.9999972318922754,
+      "llm_formula": "rebalancing_cost = fee \u00d7 rebalance_size = 0.003 \u00d7 rebalance_size",
+      "llm_python": "def formula(rebalance_size):\n    # Use EXACT constant\n    fee = 0.003\n    rebalancing_cost = fee * rebalance_size\n    return rebalancing_cost",
       "success": true
     },
     {
@@ -1178,12 +1194,12 @@
         "il_pct",
         "volume_share"
       ],
-      "decision": "fitted_llm",
+      "decision": "ensemble",
       "llm_train_r2": 0.9999999999999307,
-      "nn_train_r2": 0.7969400528414876,
-      "hybrid_train_r2": 0.9999999999999307,
+      "nn_train_r2": 0.9913348906272302,
+      "hybrid_train_r2": 0.997852530551914,
       "llm_formula": "fee_rate_breakeven = il_pct / volume_share",
-      "llm_python": "def formula(il_pct, volume_share):\n    import numpy as np\n    # Breakeven fee rate: the minimum fee rate needed so that\n    # total fees collected offset impermanent loss\n    # fee_revenue = fee_rate * volume_share (fees as fraction of position value)\n    # breakeven when fee_revenue >= il_pct\n    fee_rate_breakeven = il_pct / np.maximum(volume_share, 1e-18)\n    return fee_rate_breakeven",
+      "llm_python": "def formula(il_pct, volume_share):\n    # il_pct: impermanent loss as a decimal fraction (e.g., 0.05 for 5%)\n    # volume_share: ratio of trading volume to total liquidity (turnover ratio)\n    # Returns the minimum fee rate required to break even on IL\n    fee_rate_breakeven = il_pct / volume_share\n    return fee_rate_breakeven",
       "success": true
     },
     {
@@ -1195,10 +1211,10 @@
       ],
       "decision": "ensemble",
       "llm_train_r2": 1.0,
-      "nn_train_r2": 0.9999561057420149,
-      "hybrid_train_r2": 0.9999890268839391,
-      "llm_formula": "width = \u221aprice_upper - \u221aprice_lower",
-      "llm_python": "def formula(price_lower, price_upper):\n    import numpy as np\n    sqrt_lower = np.sqrt(price_lower)\n    sqrt_upper = np.sqrt(price_upper)\n    width = sqrt_upper - sqrt_lower\n    return width",
+      "nn_train_r2": 0.999979304077598,
+      "hybrid_train_r2": 0.9999948261406684,
+      "llm_formula": "width = sqrt(price_upper) - sqrt(price_lower)",
+      "llm_python": "def formula(price_lower, price_upper):\n    import numpy as np\n    sqrt_price_lower = np.sqrt(price_lower)\n    sqrt_price_upper = np.sqrt(price_upper)\n    width = sqrt_price_upper - sqrt_price_lower\n    return width",
       "success": true
     }
   ]
