@@ -1948,6 +1948,17 @@ def parse_args() -> argparse.Namespace:
                     help="Stem for output files (default: _analysis).  "
                          "Pass e.g. _analysis_pca_4060 for PCA corrected runs "
                          "so the output never collides with the legacy _analysis.json.")
+    ap.add_argument("--input-mode", required=False, default=None,
+                    choices=["merged", "direct", "shards"],
+                    help="Echoes ci_analysis.yml's $INPUT_MODE (set by the "
+                         "'Locate analysis input' step; values: merged, direct, "
+                         "shards — see the case statement in ci_analysis.yml's "
+                         "'Run analysis' step). Used only to gate the "
+                         "shard-manifest-missing fallback: that fallback is only "
+                         "taken automatically when CI itself resolved this "
+                         "experiment as 'direct' (NSHARDS=1). If omitted (manual/"
+                         "legacy invocation) the fallback behaves as before — "
+                         "best-effort, with a warning either way.")
     return ap.parse_args()
 
 
@@ -2280,6 +2291,32 @@ def main() -> None:
             # protocol_core_*.json, Shape A/B/C for others).  If result_dir
             # is absent or contains no JSON files, fall through to the original
             # hard error so genuine manifest misconfigurations still fail loudly.
+            #
+            # --input-mode gate: ci_analysis.yml already knows, from its own
+            # "Locate analysis input" step, whether this experiment is DIRECT
+            # (NSHARDS=1, no merge step, manifest legitimately absent) or SHARDS
+            # (multi-shard, manifest MUST exist). Previously this fallback fired
+            # on file-presence alone, so a genuinely multi-shard experiment that
+            # failed to write its manifest (e.g. a bug in the "Merge shards" /
+            # manifest-writing step) would be silently treated as a DIRECT case
+            # instead of erroring — masking the real failure. When --input-mode
+            # is passed and says SHARDS, refuse the fallback and fail loudly
+            # instead. When --input-mode is DIRECT, or omitted entirely (manual/
+            # legacy invocations that predate this flag), fall back as before.
+            if args.input_mode == "shards":
+                print(
+                    f"::error::shard manifest not found: '{manifest_path}', but "
+                    f"--input-mode=shards says ci_analysis.yml resolved this as a "
+                    f"multi-shard experiment — a missing manifest here is a genuine "
+                    f"bug (e.g. the shard-merge/manifest-writing step failed or was "
+                    f"skipped), not a normal NSHARDS=1 case. Refusing to silently "
+                    f"fall back to a direct result_dir scan, which could mask "
+                    f"missing shards. Fix the manifest-writing step; do not remove "
+                    f"this check.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
             fallback_used = False
             if args.result_dir:
                 fallback_dir = Path(args.result_dir)
@@ -2289,10 +2326,14 @@ def main() -> None:
                     if not p.name.startswith("_")   # exclude _merged, _stats, _checkpoint, _analysis
                 )
                 if candidate_jsons:
+                    mode_note = (
+                        f"--input-mode={args.input_mode} confirms this" if args.input_mode == "direct"
+                        else "--input-mode not passed; assuming this"
+                    )
                     print(
                         f"::warning::--shard-manifest '{manifest_path}' not found — "
-                        f"this is normal for NSHARDS=1 / direct-result experiments "
-                        f"(e.g. exp1) that commit JSON directly without a shard-merge step. "
+                        f"{mode_note} is a NSHARDS=1 / direct-result experiment "
+                        f"(e.g. exp1) that commits JSON directly without a shard-merge step. "
                         f"Falling back to scanning result_dir '{fallback_dir}' "
                         f"({len(candidate_jsons)} JSON file(s) found).",
                         file=sys.stderr,
