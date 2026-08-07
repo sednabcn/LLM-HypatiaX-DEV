@@ -313,7 +313,21 @@ jobs:
               exp_id = resolve_id(os.environ["DISPATCH_INPUT"])
           else:
               changed = changed_files_via_git()
-              exp_id = None
+
+              # If the push only changed infra/global files (config or generator scripts),
+              # treat this as an assembly run: use the 'figures_deploy' aggregate id if present.
+              infra_files = {os.environ["CONFIG_FILE"], "scripts/generate_figures.py", "scripts/generate_tables.py"}
+              if changed:
+                  if all(p in infra_files for p in changed):
+                      if "figures_deploy" in all_entries:
+                          exp_id = "figures_deploy"
+                      else:
+                          die("Push touched only infra files, but no 'figures_deploy' aggregate is defined in the config.")
+                  else:
+                      exp_id = None
+              else:
+                  exp_id = None
+
               for path in changed:
                   for eid in all_entries:
                       if matches(eid, path):
