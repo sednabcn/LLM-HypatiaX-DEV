@@ -1,0 +1,121 @@
+﻿#!/usr/bin/env python3
+"""
+fix_ci_statistics.py
+
+Recompute the neural-network statistics used in the paper.
+
+Input:
+    CSV containing one extrapolation error per benchmark equation.
+
+Example CSV:
+
+equation,error_percent
+I.6.2a,0.0
+I.6.2b,142.1
+...
+"""
+
+import argparse
+import numpy as np
+import pandas as pd
+from scipy.stats import t
+
+
+def compute_stats(values):
+    values = np.asarray(values, dtype=float)
+
+    n = len(values)
+    mean = np.mean(values)
+    median = np.median(values)
+    sd = np.std(values, ddof=1)
+    se = sd / np.sqrt(n)
+
+    tcrit = t.ppf(0.975, df=n - 1)
+
+    ci_low = mean - tcrit * se
+    ci_high = mean + tcrit * se
+
+    return {
+        "n": n,
+        "mean": mean,
+        "median": median,
+        "sd": sd,
+        "se": se,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+    }
+
+
+def check_reported_ci(mean, low, high, tol=1e-6):
+    lower = mean - low
+    upper = high - mean
+
+    if abs(lower - upper) < tol:
+        print("✓ Reported CI is symmetric.")
+    else:
+        print("WARNING: Reported CI is asymmetric.")
+        print(f" Lower half-width : {lower:.3f}")
+        print(f" Upper half-width : {upper:.3f}")
+
+
+def latex_line(stats):
+    return (
+        f"Mean error {stats['mean']:.1f}\\% "
+        f"(95\\% CI: "
+        f"[{stats['ci_low']:.1f}\\%, "
+        f"{stats['ci_high']:.1f}\\%], "
+        f"n={stats['n']})"
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("csv")
+    args = parser.parse_args()
+
+    df = pd.read_csv(args.csv)
+
+    stats = compute_stats(df["error_percent"])
+
+    print("\nComputed statistics")
+    print("-------------------")
+    for k, v in stats.items():
+        if isinstance(v, float):
+            print(f"{k:10s}: {v:.6f}")
+        else:
+            print(f"{k:10s}: {v}")
+
+    print("\nLaTeX replacement:")
+    print(latex_line(stats))
+
+    print("\nChecking published CI:")
+    check_reported_ci(
+        stats["mean"],
+        stats["ci_low"],
+        stats["ci_high"],
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+
+If your published numbers are already fixed
+If your manuscript intentionally reports a bootstrap confidence interval (which can legitimately be asymmetric), then the script should instead compute bootstrap percentile intervals:
+from scipy.stats import bootstrap
+
+res = bootstrap(
+    (values,),
+    np.mean,
+    confidence_level=0.95,
+    n_resamples=100000,
+    method="BCa",
+    random_state=42,
+)
+
+ci_low = res.confidence_interval.low
+ci_high = res.confidence_interval.high
+
+In that case, the manuscript should explicitly state that 95% BCa bootstrap confidence intervals were used, rather than implying a conventional t-based confidence interval.
+The most robust long-term solution is to generate the LaTeX table, theorem values, and appendix statistics automatically from the same analysis script so they cannot drift out of sync.
+

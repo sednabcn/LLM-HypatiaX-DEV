@@ -1,0 +1,208 @@
+﻿provenance_map_exp1.json
+File
+This provenance file is very encouraging because it shows you're already treating each experiment as a reproducible artifact.
+From the file:
+    • It records the exact engine (hybrid_system_v50_2.py v5.4). 
+    • It records the seed (42) and identifies it as the paper's primary seed. 
+    • It records the execution parameters (populations=30, niterations=1000). 
+    • Most importantly, it records the path to the experiment's results_json, along with the other generated artifacts. 
+That means I would not introduce another layer of runners. Instead, I'd make the provenance map the entry point for table generation.
+What I'd build
+paper/
+    generate_tables.py
+
+experiments/
+    exp1/
+        provenance_map.json
+        results.json
+
+    exp2/
+        provenance_map.json
+        results.json
+
+    exp3/
+        provenance_map.json
+        results.json
+Then generate_tables.py becomes:
+def load_experiment(provenance_file):
+
+    prov = json.load(open(provenance_file))
+
+    results = json.load(open(prov["outputs"]["results_json"]))
+
+    return results
+No searching directories.
+No guessing filenames.
+No fallback.
+
+Then implement a small adapter for each experiment.
+For example:
+class Exp1Adapter:
+
+    def five_system_rows(self, results):
+
+        return [
+            ...
+        ]
+and
+class Exp2Adapter:
+
+    def five_system_rows(self, results):
+
+        return [
+            ...
+        ]
+because the experiments may store their metrics differently.
+The workflow becomes:
+provenance_map.json
+        │
+        ▼
+results_json
+        │
+        ▼
+ExperimentAdapter
+        │
+        ▼
+Common FiveSystemRow objects
+        │
+        ▼
+gen_five_system()
+Notice that gen_five_system() no longer knows or cares whether the data came from Exp1, Exp2, DeFi, or another benchmark. It simply renders a list of standardized rows.
+Why I prefer this design
+Your provenance map is already the canonical record of:
+    • the engine, 
+    • the parameters, 
+    • the seed, 
+    • and the output files. 
+If every experiment has a similar provenance file, you gain:
+    • a single source of truth for locating results, 
+    • traceability from every table back to the exact experiment configuration, 
+    • and a clean separation between experiment-specific parsing and paper-specific formatting. 
+I think this is a more maintainable solution than hardcoding directory searches or creating a new runner solely for table generation.
+The next step I'd recommend is to define a single internal data model (for example, a FiveSystemRow dataclass) that every experiment adapter produces. Once that's in place, gen_five_system() becomes a pure rendering function, and adding a new experiment only requires writing a new adapter rather than modifying the table-generation logic.
+the prolem is using a single metric
+I think you've identified the real design problem.
+The issue is not that gen_five_system() can't find the data—it's that Table 1 tries to compare fundamentally different systems using a single metric.
+For example:
+System	Natural output
+Neural Network	Prediction accuracy (RMSE, MAE, R²)
+Symbolic Regression	Formula + prediction accuracy + complexity
+Pure LLM	Generated expression, success rate, validity
+Hybrid	Formula + accuracy + search cost
+LLM + Fallback	Formula + accuracy + fallback rate
+A single metric like "extrapolation error (%)" unfairly favors or penalizes some systems because they have different objectives and outputs.
+I would redesign the comparison
+Instead of one metric, define a common evaluation schema with multiple dimensions.
+For example:
+System	Valid	Train R²	Test R²	Extrapolation	Formula	Runtime
+Pure LLM	✓	—	0.72	410%	✓	2 s
+Neural Net	✓	0.99	0.94	85%	✗	8 s
+Symbolic	✓	0.97	0.95	61%	✓	210 s
+Hybrid	✓	0.99	0.98	24%	✓	95 s
+Now every system is judged on the aspects it can actually provide.
+Even better: define metric categories
+Instead of one "score", organize metrics into categories:
+Predictive Performance
+    • RMSE
+    • MAE
+    • R²
+
+Extrapolation
+    • Mean error
+    • Median error
+    • 95% CI
+
+Interpretability
+    • Formula recovered
+    • Expression complexity
+    • Exact match
+
+Efficiency
+    • Runtime
+    • API calls
+    • Memory
+Each experiment can populate the applicable metrics, while the table generator renders the same structure consistently.
+If the paper still needs a single ranking
+If reviewers require one overall ranking, I would not invent a weighted score. Instead, use a multi-criteria approach:
+    • Report each metric separately. 
+    • Highlight the best value in each column. 
+    • Let readers see the trade-offs. 
+This is much more transparent and avoids arbitrary weighting.
+My suggestion
+Rather than trying to force every experiment into a single metric, refactor the pipeline around a canonical result schema that stores all relevant metrics for each method. Then gen_five_system() can select the subset of metrics appropriate for a particular table.
+That way:
+    • The experiments remain faithful to what they measure. 
+    • The tables are reproducible. 
+    • You can generate different comparison tables (accuracy-focused, efficiency-focused, interpretability-focused) from the same underlying JSON without rerunning experiments. 
+I think this approach is both scientifically stronger and easier to maintain than trying to make every system fit one metric.
+\subsection{Five-System Comparative Analysis (Feynman Core-15)}\label{subsec:fivesystem-comparative-analysis-feynman-} \label{sec:five_systems} Table~\ref{tab:five_systems_full} compares the five system configurations on the Core-15 Feynman benchmark at $2\times$ training range. \begin{table}[htbp] \centering \begin{threeparttable} \caption{Five-System Comparison: Extrapolation Error vs.\ Interpolation $R^2$.} \label{tab:five_systems_full} \scriptsize \setlength{\tabcolsep}{3pt} \begin{tabular}{@{}lp{0.6cm}p{1.3cm}p{1.3cm}p{1.4cm}p{0.7cm}p{1.4cm}@{}} \toprule \textbf{System} & \textbf{n} & \textbf{Extrap.} & \textbf{Extrap.} & \textbf{Train $R^{2}$} & \textbf{Std} & \textbf{Design} \\ & & \textbf{Median (\%)} & \textbf{Mean (\%)} & \textbf{Mean} & & \textbf{Focus} \\ \midrule \textbf{Hybrid v50\_2}\tnote{a} & 14 & \textbf{0.0} & \textbf{0.0} & 0.931\tnote{b} & --- & Extrapolation \\ Neural Network & 13 & 86.7 & 1231.0\tnote{c} & 0.940 & --- & Baseline \\ \midrule \multicolumn{7}{l}{\textit{Systems Without Extrapolation Testing}\tnote{d}} \\ Pure LLM & 0 & --- & --- & --- & --- & Recognition \\ System 2 Symbolic & 0 & --- & --- & --- & --- & Validation \\ System 3 LLM+Fallback & 0 & --- & --- & 1.000 & 0.0002 & Robustness \\ \bottomrule \end{tabular} \begin{tablenotes} \small \item[a] Our proposed system (Section~\ref{sec:architecture}). \item[b] Mean $R^2 = 0.931$; median $R^2 = 1.000$ ($n=15$). \item[c] Mean 1231\% at $2\times$ training range ($n=13$). \item[d] Pure LLM: formula-to-callable compilation failures prevented extrapolation test execution. Mann-Whitney $U=0$, $p=1.11\times10^{-6}$ (Hybrid v50\_2 vs.\ NN). \end{tablenotes} \end{threeparttable} \end{table} \begin{result}[Five-System Extrapolation Hierarchy] \label{thm:five_system_hierarchy} Across 14 ground-truth equations at $2\times$ training range, Hybrid~v50\_2 achieves near-zero error (median $< 10^{-12}$ relative) while neural networks exhibit mean error 1231\% (95\% CI: [1087\%, 1456\%], $n=13$), with no distributional overlap: Mann-Whitney $U=0$, $p < 10^{-6}$. \end{result} (ALL data came from the same experiment exp1b)
+That changes the picture significantly.
+If all of the data in Table 1 came from the same experiment (exp1-ablation), then I would not split it into multiple experiments or multiple metrics. Instead, I would redesign exp1b so that it becomes the authoritative producer of the five-system comparison.
+The real issue is that the current table mixes missing evaluations with evaluated systems.
+For example:
+System	Extrapolation tested?
+Hybrid	✅
+Neural Network	✅
+Pure LLM	❌
+Symbolic	❌
+LLM+Fallback	❌
+This isn't a metric problem—it's an evaluation coverage problem. The table is comparing systems where only two were actually evaluated for extrapolation.
+I would change exp1-ablation
+Instead of producing:
+Hybrid
+NN
+LLM (not evaluated)
+Symbolic (not evaluated)
+Fallback (not evaluated)
+make exp1-ablation run all five systems on exactly the same:
+    • 15 equations 
+    • training split 
+    • interpolation split 
+    • 2× extrapolation split 
+    • random seed 
+Then every row contains
+{
+    "system": "...",
+    "n": 15,
+    "train_r2": ...,
+    "median_extrapolation": ...,
+    "mean_extrapolation": ...,
+    "std": ...
+}
+Now Table 1 becomes completely data-driven.
+If some systems genuinely cannot extrapolate
+For example, your note says:
+Pure LLM: formula-to-callable compilation failures prevented extrapolation test execution.
+That is a valid experimental result, but it should be encoded as such in the JSON, not hardcoded in the LaTeX.
+For example:
+{
+  "system": "Pure LLM",
+  "status": "failed",
+  "reason": "formula compilation failed",
+  "train_r2": null,
+  "extrapolation": null
+}
+Then the table generator renders:
+System	Status
+Pure LLM	Formula compilation failed
+Symbolic	Timeout
+LLM+Fallback	Not applicable
+rather than embedding special cases in generate_tables.py.
+I would also rethink the table itself
+Currently it says
+Five-System Comparison
+but only two systems have extrapolation numbers.
+Scientifically, I'd split this into two parts:
+Table A – Prediction Performance
+| System | Train R² | Test R² | Runtime |
+Table B – Extrapolation Performance
+| System | n | Median | Mean | Std | Status |
+This makes it explicit which systems were evaluated for extrapolation and which were not, while still keeping everything derived from the same exp1b results.
+The key takeaway
+Since you've confirmed that all data originated from exp1b, the right architecture is:
+    1. Make exp1b produce a complete five_system_results.json. 
+    2. Include successful evaluations and structured failure records. 
+    3. Have gen_five_system() render whatever is present in that JSON—numbers for successful runs and status/reason for unsuccessful ones. 
+    4. Eliminate all hardcoded values and fallback logic. 
+That preserves reproducibility and accurately reflects the experiment without conflating "not evaluated" with "no result."
+

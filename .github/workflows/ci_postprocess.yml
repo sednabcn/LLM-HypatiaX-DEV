@@ -140,7 +140,55 @@ jobs:
               sys.exit(1)
 
           print(f"OK — {len(config_ids)} experiment/aggregate IDs in sync "
-                f"between config/experiments.yml and ci_postprocess.yml.")
+                f"between config/experiments.yml and ci_postprocess.yml (dispatch options).")
+
+          # --------------------------------------------------------------
+          # The comment at the top of this workflow claims THIS step also
+          # catches drift in `on.push.paths` — it previously didn't; only
+          # dispatch options were checked. push.paths drift is the more
+          # dangerous failure mode: it doesn't error, it just means the
+          # workflow never fires for a changed directory, silently.
+          #
+          # Gotcha: PyYAML (1.1 resolver) parses the bare key `on:` as the
+          # boolean True, not the string "on" — so this workflow's own
+          # trigger block is parsed_self[True], not parsed_self["on"].
+          # --------------------------------------------------------------
+          self_path = ".github/workflows/ci_postprocess.yml"
+          with open(self_path) as f:
+              self_cfg = yaml.safe_load(f)
+
+          on_block = self_cfg.get("on", self_cfg.get(True))
+          if on_block is None:
+              print(f"::error::Could not find an 'on:' trigger block in {self_path} "
+                    f"(checked both 'on' and boolean-True keys — PyYAML parses the "
+                    f"bare 'on:' key as True under the YAML 1.1 resolver).")
+              sys.exit(1)
+
+          declared_push_paths = set(on_block.get("push", {}).get("paths", []))
+
+          config_trigger_paths = set()
+          for entry in all_entries.values():
+              for p in entry.get("trigger_paths", []):
+                  if not p.startswith("!"):  # ignore negation patterns
+                      config_trigger_paths.add(p)
+
+          missing_from_push   = config_trigger_paths - declared_push_paths
+          missing_from_config_paths = declared_push_paths - config_trigger_paths
+          if missing_from_push or missing_from_config_paths:
+              print("::error::ci_postprocess.yml's on.push.paths list has "
+                    "drifted from config/experiments.yml's trigger_paths.")
+              if missing_from_push:
+                  print(f"  In config/experiments.yml trigger_paths but NOT in "
+                        f"on.push.paths: {sorted(missing_from_push)}")
+              if missing_from_config_paths:
+                  print(f"  In on.push.paths but NOT in any trigger_paths: "
+                        f"{sorted(missing_from_config_paths)}")
+              print("Fix: update the on.push.paths list in ci_postprocess.yml "
+                    "to match config/experiments.yml's trigger_paths.")
+              sys.exit(1)
+
+          print(f"OK — {len(config_trigger_paths)} trigger path(s) in sync "
+                f"between config/experiments.yml and ci_postprocess.yml (push.paths).")
           PY
 
       # ------------------------------------------------------------------
