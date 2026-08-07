@@ -114,6 +114,12 @@ jobs:
           with open("${{ env.CONFIG_FILE }}") as f:
               cfg = yaml.safe_load(f)
 
+          # Combine experiments + aggregates so the push.paths check below
+          # (which needs each entry's trigger_paths) can iterate all of them.
+          # This step runs as its own isolated process — it can't reuse
+          # all_entries from the separate "Resolve experiment from config"
+          # step, even though that step defines the identically-named var.
+          all_entries = {**cfg.get("experiments", {}), **cfg.get("aggregates", {})}
           config_ids = set(cfg["experiments"]) | set(cfg["aggregates"])
 
           dispatch_options = set("""
@@ -164,7 +170,18 @@ jobs:
                     f"bare 'on:' key as True under the YAML 1.1 resolver).")
               sys.exit(1)
 
-          declared_push_paths = set(on_block.get("push", {}).get("paths", []))
+          # Paths that trigger the workflow globally but aren't tied to any
+          # single experiment's trigger_paths (the config file itself, and
+          # the two generator scripts every experiment's tables/figures
+          # depend on) — these are expected to be in push.paths without a
+          # matching trigger_paths entry, so exclude them from the diff.
+          INFRA_PUSH_PATHS = {
+              "config/experiments.yml",
+              "scripts/generate_figures.py",
+              "scripts/generate_tables.py",
+          }
+
+          declared_push_paths = set(on_block.get("push", {}).get("paths", [])) - INFRA_PUSH_PATHS
 
           config_trigger_paths = set()
           for entry in all_entries.values():
