@@ -181,7 +181,7 @@ jobs:
               "scripts/generate_tables.py",
           }
 
-          declared_push_paths = set(on_block.get("push", {}).get("paths", [])) - INFRA_PUSH_PATHS
+          declared_push_paths = set(on_block.get("push", {}).get("paths", []))
 
           config_trigger_paths = set()
           for entry in all_entries.values():
@@ -189,8 +189,28 @@ jobs:
                   if not p.startswith("!"):  # ignore negation patterns
                       config_trigger_paths.add(p)
 
-          missing_from_push   = config_trigger_paths - declared_push_paths
-          missing_from_config_paths = declared_push_paths - config_trigger_paths
+          def covered(trigger_path: str, push_paths: set) -> bool:
+              """A trigger_path is covered if it's an exact match, or if some
+              declared push path is a '**/*.json'-style glob whose fixed
+              prefix is a prefix of trigger_path (a broader glob already
+              matches every file the narrower one would)."""
+              if trigger_path in push_paths:
+                  return True
+              for pp in push_paths:
+                  if pp.endswith("/**/*.json"):
+                      prefix = pp[: -len("/**/*.json")]
+                      if trigger_path.startswith(prefix + "/"):
+                          return True
+              return False
+
+          missing_from_push = {
+              t for t in (config_trigger_paths - INFRA_PUSH_PATHS)
+              if not covered(t, declared_push_paths)
+          }
+          missing_from_config_paths = {
+              p for p in (declared_push_paths - INFRA_PUSH_PATHS)
+              if not covered(p, config_trigger_paths)
+          }
           if missing_from_push or missing_from_config_paths:
               print("::error::ci_postprocess.yml's on.push.paths list has "
                     "drifted from config/experiments.yml's trigger_paths.")
