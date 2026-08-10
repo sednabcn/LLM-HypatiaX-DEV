@@ -138,7 +138,13 @@ Section~\ref{sec:bugfix}), both methods achieve median $\Rsq = 1.000000$
 across all tested conditions.
 \EHD{} achieves 100\% recovery at all noise levels tested.
 \HSL{} achieves 100\% recovery at all \emph{noisy} conditions ($\sigma > 0$)
-and 90.0\% (27/30 equations) under the strict noiseless protocol ($\Rsq > 0.9999$).
+and 100\% (30/30 equations, v2-corrected) under the strict noiseless protocol
+($\Rsq > 0.9999$). \HDS{} achieves 90.0\% (27/30 equations) under the same
+noiseless protocol.
+\textbf{[Correction, Phase~3 audit: a prior version of this abstract attributed
+\HDS's 90.0\% (27/30) figure to \HSL. This has been corrected here; see the
+companion \emph{Phase 3 Reproducibility Audit: Consolidated Findings and Bug
+Recovery History} report, Item~2a.]}
 All results in this document use the v2 corrected harness; v1 figures are
 retained in the repository commit history for audit purposes only.
 Both converge at $n = 50$ samples.
@@ -555,13 +561,15 @@ correction drives the fit to machine precision.
 \toprule
 $\sigma$ & M3 Recovery & M3 Catastrophic & M4 Recovery & M4 Catastrophic\\
 \midrule
-0\%   & 100.0\%           & 0 & 90.0\%$^\ddagger$ & 0\\
+0\%   & 100.0\%           & 0 & 100.0\%$^\ddagger$ & 0\\
 0.5\% & 100.0\%          & 0 & 100.0\% & 0\\
 1\%   & 100.0\%          & 0 & 100.0\% & 0\\
 5\%   & 100.0\%          & 0 & 100.0\% & 0\\
 10\%  & 100.0\%          & 0 & 100.0\% & 0\\
 \bottomrule
-\multicolumn{5}{l}{\footnotesize$^\ddagger$ M4 noiseless: 90\% at threshold 0.999999; 100\% at threshold 0.995.}\\
+\multicolumn{5}{l}{\footnotesize$^\ddagger$ M4 noiseless: 100\% (v2-corrected) at threshold 0.999999.}\\
+\multicolumn{5}{l}{\footnotesize\textbf{[Correction, Phase~3 audit: this row}}\\
+\multicolumn{5}{l}{\footnotesize\textbf{previously reported \HDS's (M6) 90\% figure as M4's; see Item~2a.]}}\\
 \end{tabular}
 \end{table}
 
@@ -841,9 +849,12 @@ Process/CI credibility  & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{OPEN}
 \begin{enumerate}
   \item \textbf{Both M3 and M4 achieve 100\% recovery} at all tested noisy
     conditions ($0.5$--$10\%$ noise) and all sample sizes ($50$--$1000$).
-  \item \textbf{M3 outperforms M4 at $\sigma=0$}: 100\% vs 90\% noiseless;
-    three further M4 noiseless failures remain (Lorentz force, Photon energy,
-    Zeeman energy).
+  \item \textbf{Both M3 and M4 reach 100\% at $\sigma=0$} (noiseless,
+    v2-corrected); \HDS{} (M6, tools track) trails at 90\% (27/30), with
+    three near-miss equations (Lorentz force, Photon energy, Zeeman energy).
+    \textbf{[Correction, Phase~3 audit: this item previously attributed
+    \HDS's 90\% figure and its three near-misses to M4/\HSL; corrected here
+    --- see Item~2a in the companion Bug Recovery History report.]}
   \item \textbf{M4 is $1.5$--$76\times$ faster} with near-zero RMSE; for
     production sweeps its throughput advantage is decisive.
   \item \textbf{Both substantially exceed published results on the 30-equation subset}:
@@ -991,7 +1002,7 @@ python run_comparative_suite_benchmark_v2.py \
     --noiseless --threshold 0.9999       \
     --nn-seeds 3 --samples 200           \
     --method-timeout 900                 \
-    --pysr-timeout 900
+    --pysr-timeout 1100
 \end{verbatim}
 Output: \texttt{protocol\_core\_noiseless\_20260304\_154510.json}
 (full run: 30/30 equations, all 6 methods, $\approx$1\,h\,13\,min wall-clock
@@ -999,8 +1010,28 @@ on Intel Celeron T3100, 2~cores; faster on modern multi-core hardware).
 
 \textbf{Note on timeout upgrade:} \texttt{--method-timeout} was set to 300\,s
 for tests 1--18 and upgraded to 900\,s for tests 19--30. Arrhenius (test~4)
-ran under the 300\,s limit and hung for 27574\,s before the Julia process was
-killed; this is recorded as a genuine failure independent of the v2 bug fix.
+ran under the 300\,s limit and the harness recorded a 27574\,s wall-clock
+before the run ended; this is recorded as a genuine failure independent of
+the v2 bug fix. \textbf{Revised mechanism (Phase~3 audit, item~10b):} PySR is
+invoked via \texttt{juliacall}, which embeds Julia in-process rather than
+spawning a separate OS process, so there was no external Julia PID being
+``killed.'' The 27574\,s figure instead reflects a gap in the harness's own
+timeout wiring: the outer \texttt{ThreadPoolExecutor} timeout fires at
+300\,s but abandons the background thread without a reference back to the
+underlying call, which then continues to run unobserved. \textbf{Update
+(Phase~3 audit, Item~10b, closed):} the fix (a thread-safe \texttt{\_ProcBox}
+handle threading the live \texttt{Popen} reference for the in-flight PySR
+subprocess up to the outer timeout handler, which then terminates it via
+\texttt{\_kill\_process\_group}) is implemented in
+\texttt{run\_comparative\_suite\_benchmark\_v2\_FIXED.py} and has been
+wall-clock verified twice: once in a sandboxed reproduction using a
+synthetic hang-prone subprocess, and once on the real Julia/PySR stack
+(\texttt{verify\_proc\_box\_fix.py}, unmodified, run on the user's own
+machine). Both verifications show the outer timeout now bounds real
+wall-clock time rather than only the abandoned thread's timeout. See the
+companion document \emph{Phase 3 Reproducibility Audit: Consolidated
+Findings and Bug Recovery History} (\S\ref{sec:findings:item10b}) for the
+full diagnosis, including a superseded intermediate root-cause model.
 Nernst (test~6) also timed out under the 300\,s default; counted as failure.
 
 \subsection*{Random Seeds}
@@ -1059,12 +1090,15 @@ The Messages API interface is stable across 0.18$+$ versions; earlier
 installations may require minor call-site adjustments but the prompts and
 response parsing are otherwise unchanged.
 
-\noindent PySR uses Julia under the hood; the 900\,s
-\texttt{--pysr-timeout} was required to accommodate Julia JIT
-initialisation on the first run. Subsequent equations in the same process
-are faster; the 27574\,s Arrhenius hang is specific to single-variable
-flat-landscape equations where PySR's complexity search does not converge
-within the timeout.
+\noindent PySR uses Julia under the hood; the 1100\,s
+\texttt{--pysr-timeout} (\texttt{FEYNMAN\_TIMEOUT}, the inner PySR fit
+budget---distinct from the 900\,s outer \texttt{--method-timeout} above,
+which governs the per-method wall-clock allowance, not the PySR fit itself)
+was required to accommodate Julia JIT initialisation on the first run.
+Subsequent equations in the same process are faster. The 27574\,s Arrhenius
+figure is a harness-timeout artifact, not evidence that PySR's complexity
+search fails to converge on single-variable flat-landscape equations; see
+the revised mechanism note above.
 
 \subsection*{Measurement Correction (v1\,$\to$\,v2)}
 \label{sec:r2_measurement_bugfix}

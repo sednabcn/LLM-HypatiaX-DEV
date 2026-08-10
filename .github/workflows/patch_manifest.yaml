@@ -1,0 +1,122 @@
+# Patch manifest — one entry per PLAN-ACTION.txt item.
+# category: text | stale | open | blocked
+# status:   ready | needs_investigation | blocked
+#
+# Items marked `status: TODO` below have their old_str left as a verbatim
+# excerpt from report-wrong.pdf for you to trim to a *unique* substring of
+# the real .tex file (grep -n it first — the PDF's line numbers won't match
+# the raw .tex line numbers exactly).
+
+- id: 2
+  title: "Supp Table 4 (30/30) vs Abstract/Conclusion (27/30) on M4"
+  category: stale
+  status: SUPERSEDED   # report-wrong.pdf's proposed fix direction is wrong — see note
+  file: supp_benchmark_report.tex
+  cross_checked_against: phase3_consolidated_report.tex#sec:findings:item2a
+  note: >
+    report-wrong.pdf recommends changing Table 4's 30/30 to 27/30 to match the
+    abstract. phase3_consolidated_report.tex Item 2a already root-caused this
+    the other way: 27/30 is HDS's (M6) figure, misattributed to HSL/M4 in the
+    abstract, Conclusions, and one sweep-table row; a same-day reproduction
+    shows HSL passes all three named "M4 failures" cleanly. Table 4's 30/30
+    is correct and should NOT change. The real fix is the abstract +
+    Conclusions + tab:rr_noise row (4 locations), same as Item 2a's
+    already-approved edit table in phase3_consolidated_report.tex
+    (\ref{tab:edits}) — reuse that, don't re-derive it here.
+  action: defer_to_other_manifest
+  see_also: phase3_edits_manifest.yaml#item-2a   # the 4-location fix already specified there
+
+- id: 5
+  title: "68 of 74 cited without seed/split"
+  category: text
+  status: TODO
+  file: jmlr_paper_main.tex
+  old_str: "68 of 74 tasks are routed to this path."
+  new_str: "68 of 74 tasks (v3c seed 123) are routed to this path."
+  notes: "Also patch the Abstract's '(68 of 74)' occurrence as a second, separate old_str entry — confirm which split the abstract's speedup figure actually used before picking v3c vs PCA seed 42."
+
+- id: 7
+  title: "Remark 9 tier arithmetic doesn't add up"
+  category: text
+  status: TODO
+  file: jmlr_paper_main.tex
+  old_str: "The current benchmark (v3.0, 74 tasks) adds three additional hard cases in multi-asset\n     risk"
+  new_str: "The current benchmark (v3.0, 74 tasks) adds two additional medium cases and one additional hard case in multi-asset\n     risk"
+  notes: "Confirm which 2 of the 3 new tasks are actually Medium before finalizing wording — don't just adjust the count without checking the task list."
+
+- id: 11
+  title: "Model/temperature mismatch across documents (already resolved by audit)"
+  category: stale
+  status: TODO
+  file: supp_benchmark_report.tex
+  old_str: "Anthropic SDK 0.73.0 (claude-sonnet-4-20250514, temperature 0.0)"
+  new_str: "Anthropic SDK 0.73.0 (claude-sonnet-5, temperature 0.25)"
+  notes: "Two more stale occurrences of 'claude-sonnet-4-20250514' at l.1243/1261 (same file) and one in supp_routing_improvements.tex l.756 — add as separate manifest entries (ids 11b, 11c) since each needs its own unique old_str."
+
+- id: 13
+  title: "Near-duplicate task names across tiers"
+  category: text
+  status: TODO
+  file: jmlr_paper_main.tex
+  old_str: "Liquidation Price Long, Liquidation Price Short"
+  new_str: "Liquidation Price, Basic Long/Short"
+  notes: "Second old_str needed for the Hard-tier 'Liquidation price for leveraged long/short' -> 'Liquidation Price, Leveraged Long/Short (funding-adjusted)'."
+
+# ---- OPEN items: needs_investigation, values must come from a script ----
+
+- id: 3
+  title: "EHSDeFi (M3) runtime 20.2s vs 841.4s"
+  category: open
+  status: needs_investigation
+  file: supp_benchmark_report.tex
+  investigation_script: scripts/investigate_item3_runtime.py
+  old_str: "0.999993 &  20.2\\,s"
+  new_str_template: "0.999993 &  {value}\\,s"
+  notes: "Script must trace which raw timing log produced 20.2s vs which produced 841.4s (tab:time_noise) and report which is correct for tab:overall — do not just copy 841.4 over without checking they measure the same condition."
+
+- id: 4
+  title: "CI/SD statistical incompatibility"
+  category: open
+  status: needs_investigation
+  file: jmlr_paper_main.tex
+  investigation_script: scripts/investigate_item4_ci.py
+  old_str: "95% CI: [1087\\%, 1456\\%]"
+  new_str_template: "95% CI: [{value}]"
+  notes: "Recompute from SD=1842%, n=13 directly; script should output the formatted '[low%, high%]' string."
+
+- id: 12
+  title: "Rounding slippage 3.36x vs printed 3.40x"
+  category: open
+  status: needs_investigation
+  file: jmlr_paper_main.tex
+  investigation_script: scripts/investigate_item12_rounding.py
+  old_str: "94/370 & 3.40\\times"
+  new_str_template: "94/370 & {value}"
+  notes: "Fix generate_table1.py to divide full-precision values, re-run it, and have the investigation script just read its regenerated output rather than recomputing independently."
+
+- id: 1
+  title: "Nguyen-12 Table 13 success counts (10/12, 11/12, 4/12 all disagree)"
+  category: open
+  status: needs_investigation
+  file: jmlr_paper_main.tex
+  investigation_script: scripts/investigate_item1_nguyen12.py
+  old_str: "P: 10/12 (83.3\\%) & H: 11/12 (91.7\\%)"
+  new_str_template: "{value}"
+  notes: "Script should regenerate BOTH the per-equation bolded cells and the Success row from raw JSON, not just re-tally the printed (possibly-wrong) cells."
+
+# ---- BLOCKED: caveat only, never a guessed number ----
+
+- id: 9
+  title: "Uncorrected mean R2 (+0.8721) despite disclosed masked failure"
+  category: open
+  status: blocked
+  action: insert_caveat
+  file: jmlr_paper_main.tex
+  anchor_str: "HypatiaX & 1.0000 & +0.8721 & 90.5 & 90.5 & 0"
+  new_str: "\\footnote{Mean $R^2=+0.8721$ uses the same masked success/$R^2$ fields flagged above (\\S\\ref{sec:hybrid-attribution-bug}) and is known-invalid pending the full corrected re-run. Do not treat as corrected; do not hand-estimate a replacement value.}"
+
+# ---- Remaining items (#6, #8, #10) follow the same two patterns above;
+#      add them once their old_str is confirmed unique. #8's fix additionally
+#      requires regenerating Figure 3 itself (image, not text) from
+#      _merged.json before the caption text patch makes sense — sequence
+#      that as a prerequisite step, not a manifest text entry.

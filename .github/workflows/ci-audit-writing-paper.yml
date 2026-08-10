@@ -1,0 +1,102 @@
+name: Audit paper patch runner
+
+# Mirrors the ci_issue2b_repro.yml pattern: preflight checks, a real-stack
+# run (actual pdflatex compile, not a mock), a job summary, and a
+# conditional commit — nothing is written back to the repo unless the
+# run was explicitly asked to --apply and it succeeded cleanly.
+
+on:
+  pull_request:
+    paths:
+      - 'patch_manifest.yaml'
+      - '**/*.tex'
+      - 'patch_runner.py'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write changes (default is dry-run/report-only)'
+        type: boolean
+        default: false
+      allow_value_change:
+        description: 'Permit overwriting an already-applied value with a different one'
+        type: boolean
+        default: false
+      ids:
+        description: 'Comma-separated item ids to restrict to (blank = all)'
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: audit-paper-patch-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a run that may be writing/committing
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    env:
+      APPLY: ${{ github.event_name == 'workflow_dispatch' && inputs.apply || false }}
+      ALLOW_VALUE_CHANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_value_change || false }}
+      IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.ids || '' }}
+      MANIFEST: patch_manifest.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python deps
+        run: pip install pyyaml --break-system-packages
+
+      - name: Install TeX Live (for compile-check step)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-extra texlive-fonts-recommended
+
+      - name: Run patch runner
+        id: run
+        run: |
+          chmod +x .github/scripts/run_patch_ci.sh
+          .github/scripts/run_patch_ci.sh
+
+      - name: Upload ledger + investigation cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-run-artifacts-${{ github.run_id }}
+          path: |
+            applied_log.json
+            investigation_results.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Check for changes
+        id: diff
+        if: env.APPLY == 'true'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Only commits when this was an explicit --apply run, the runner
+      # exited 0 (no ERROR/WARN items), and something actually changed on
+      # disk. A failed run (exit != 0) never reaches this step.
+      - name: Commit applied changes
+        if: env.APPLY == 'true' && steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "audit-paper-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          ids_suffix="${IDS:+ (ids: $IDS)}"
+          git commit -m "chore(audit-paper): apply patch_runner.py changes${ids_suffix} [skip ci]"
+          git push
