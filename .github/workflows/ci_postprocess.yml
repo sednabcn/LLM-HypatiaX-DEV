@@ -529,6 +529,7 @@ jobs:
       # previously-committed good output is left untouched.
       # ------------------------------------------------------------------
       - name: Commit generated outputs
+        id: commit
         shell: bash
         run: |
           set -euo pipefail
@@ -547,6 +548,35 @@ jobs:
           for fn in extra:
               subprocess.run(["git", "add", f"{src_dir}/{fn}"], check=False)
           PY
+
+          # ----------------------------------------------------------------
+          # Count new/modified figures & tables for THIS run's SELECTED
+          # experiment only (steps.resolve's own figures/tables dirs) — not
+          # every experiment in the repo. Scoping the `git diff --cached`
+          # to these two paths is what keeps the step summary honest when
+          # only one experiment was post-processed.
+          # ----------------------------------------------------------------
+          count_new_modified() {
+            local dir="$1"
+            if [ -z "$dir" ]; then
+              echo "0 0"
+              return
+            fi
+            local status
+            status="$(git diff --cached --name-status -- "$dir" || true)"
+            local new_count modified_count
+            new_count="$(printf '%s\n' "$status" | grep -c '^A' || true)"
+            modified_count="$(printf '%s\n' "$status" | grep -c '^M' || true)"
+            echo "${new_count:-0} ${modified_count:-0}"
+          }
+
+          read -r FIG_NEW FIG_MOD <<< "$(count_new_modified "${{ steps.resolve.outputs.figures_dir_abs }}")"
+          read -r TAB_NEW TAB_MOD <<< "$(count_new_modified "${{ steps.resolve.outputs.tables_dir_abs }}")"
+
+          echo "figures_new=${FIG_NEW}"      >> "$GITHUB_OUTPUT"
+          echo "figures_modified=${FIG_MOD}" >> "$GITHUB_OUTPUT"
+          echo "tables_new=${TAB_NEW}"       >> "$GITHUB_OUTPUT"
+          echo "tables_modified=${TAB_MOD}"  >> "$GITHUB_OUTPUT"
 
           if git diff --cached --quiet; then
             echo "Nothing to commit — no tables/figures changed."
@@ -588,6 +618,13 @@ jobs:
         if: always()
         shell: bash
         run: |
+          FIG_NEW="${{ steps.commit.outputs.figures_new || '0' }}"
+          FIG_MOD="${{ steps.commit.outputs.figures_modified || '0' }}"
+          TAB_NEW="${{ steps.commit.outputs.tables_new || '0' }}"
+          TAB_MOD="${{ steps.commit.outputs.tables_modified || '0' }}"
+          FIG_TOTAL=$(( FIG_NEW + FIG_MOD ))
+          TAB_TOTAL=$(( TAB_NEW + TAB_MOD ))
+
           {
             echo "### Post-process: \`${{ steps.resolve.outputs.id }}\`"
             echo "${{ steps.resolve.outputs.description }}"
@@ -599,5 +636,13 @@ jobs:
             echo "| Tables dir | \`${{ steps.resolve.outputs.tables_dir_abs }}\` |"
             echo "| Generated tables | ${{ steps.resolve.outputs.generates_tables }} |"
             echo "| Generated figures | ${{ steps.resolve.outputs.generates_figures }} |"
+            echo ""
+            echo "#### Files new/modified this run — \`${{ steps.resolve.outputs.id }}\` only"
+            echo "_Counts are scoped to this run's own figures/tables dirs, not every experiment in the repo._"
+            echo ""
+            echo "| Type | New | Modified | Total |"
+            echo "|---|---|---|---|"
+            echo "| Figures | ${FIG_NEW} | ${FIG_MOD} | ${FIG_TOTAL} |"
+            echo "| Tables | ${TAB_NEW} | ${TAB_MOD} | ${TAB_TOTAL} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
