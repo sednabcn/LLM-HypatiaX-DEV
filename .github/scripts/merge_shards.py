@@ -571,13 +571,119 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
 # EXTRACTION
 # ============================================================
 
+def _is_pysr_nguyen_file(raw: Any) -> bool:
+    """Return True for Shape H — exp3/exp3b PySR-vs-HypatiaX Nguyen runs.
+
+    Produced by the exp3/exp3b worker as:
+      {"config": {"seed": int, ...},
+       "results": {"hypatiax": [{"system": "hypatiax", "metadata": {...
+                                   "nguyen_id"/"name"/"equation_name" ...},
+                                  "expression": ..., "evaluation": {"r2": ...},
+                                  "elapsed": ...}, ...],
+                   "pysr":     [{"system": "pysr", "metadata": {...}, ...}]},
+       "summary": {...}}
+
+    The identity fields (nguyen_id / name) live only inside "metadata",
+    which is a META_KEYS subtree that extract_rows()'s generic walk()
+    intentionally never descends into (to stop stats blocks being
+    re-ingested as rows). That makes every record in this shape invisible
+    to the generic extractor -- hence a dedicated Shape-H path here rather
+    than special-casing "metadata" globally, which would risk re-ingesting
+    stats blocks in the other shapes META_KEYS is protecting.
+    """
+    if not isinstance(raw, dict):
+        return False
+    results = raw.get("results")
+    if not isinstance(results, dict) or not results:
+        return False
+    for system_records in results.values():
+        if (
+            isinstance(system_records, list)
+            and system_records
+            and isinstance(system_records[0], dict)
+            and isinstance(system_records[0].get("metadata"), dict)
+            and "evaluation" in system_records[0]
+        ):
+            return True
+    return False
+
+
+def _pysr_nguyen_equation_id(meta: Dict[str, Any]) -> Optional[str]:
+    for key in ("nguyen_id", "equation_name", "name"):
+        v = meta.get(key)
+        if v:
+            return str(v)
+    return None
+
+
+def extract_pysr_nguyen_rows(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract one row per (equation, seed) from a Shape-H file.
+
+    Seed is folded into task_id: the same 12 Nguyen equation IDs repeat
+    identically across every seed shard (exp3b is a 4-seed multi-seed
+    design), so keying by equation ID alone would silently collapse all
+    seeds' data down to a single record per equation in merge_rows().
+
+    Deliberately does NOT map "evaluation.r2" onto extrap_r2_far/train_r2
+    (that pairing belongs to the ablation-mode schema used by
+    exp1_ablation/exp2_feynman, a different EXPERIMENT_MODE than exp3b's
+    "pysr" mode). Raw per-system values are preserved verbatim under
+    "systems" so no statistic is guessed at this layer; run_analysis.py's
+    pysr-mode path does not currently consume hypatia/nn-style fields for
+    this experiment, so there is nothing correct to alias them to yet.
+    """
+    seed = (raw.get("config") or {}).get("seed")
+    by_equation: Dict[str, Dict[str, Any]] = {}
+
+    for system_name, system_records in raw["results"].items():
+        if not isinstance(system_records, list):
+            continue
+        for item in system_records:
+            if not isinstance(item, dict):
+                continue
+            meta = item.get("metadata")
+            if not isinstance(meta, dict):
+                continue
+            eq_id = _pysr_nguyen_equation_id(meta)
+            if not eq_id:
+                continue
+
+            task_id = f"{eq_id}__seed{seed}" if seed is not None else eq_id
+            row = by_equation.setdefault(task_id, {
+                "task_id":    task_id,
+                "name":       meta.get("name") or eq_id,
+                "nguyen_id":  eq_id,
+                "domain":     "nguyen12",
+                "seed":       seed,
+                "difficulty": meta.get("difficulty"),
+                "extrapolation_intractable": False,
+                "systems":    {},
+            })
+
+            evaluation = item.get("evaluation") or {}
+            row["systems"][system_name] = {
+                "expression": item.get("expression"),
+                "r2_raw":     evaluation.get("r2"),
+                "elapsed":    item.get("elapsed"),
+            }
+
+    return list(by_equation.values())
+
+
 def extract_rows(obj: Any) -> List[Dict[str, Any]]:
     """
     Recursively walk an arbitrary JSON structure and collect all records
     that normalise into valid task rows.
 
     Walks into lists and dict values except META_KEYS subtrees.
+
+    Shape H (exp3/exp3b PySR-vs-HypatiaX Nguyen runs) is detected up front
+    and routed to extract_pysr_nguyen_rows() -- see _is_pysr_nguyen_file()
+    for why the generic walk below can never see those records.
     """
+    if _is_pysr_nguyen_file(obj):
+        return extract_pysr_nguyen_rows(obj)
+
     found: List[Dict[str, Any]] = []
 
     def walk(x: Any) -> None:
@@ -757,9 +863,29 @@ def main() -> None:
     logger.info(f"INPUT_ROOT : {config.input_root}")
     logger.info(f"OUTPUT_DIR : {config.output_dir}")
 
-    files = sorted(
+    # FIX: unlike locate_analysis_input.sh's shard-mode `find` (which
+    # excludes `_*.json` and the full METADATA_EXCLUSIONS list), this glob
+    # previously had zero filename filtering. That let it pick up
+    # underscore-prefixed non-record files sitting in the same directory --
+    # this script's own prior outputs (_merged.json/_stats.json/
+    # _checkpoint.json) on a re-run, plus crashed/incomplete-run leftovers
+    # (e.g. _checkpoint_shard0.json, _exp3_seed123_partial.json) -- as
+    # candidate shards. Each contributed 0 rows (they're not per-record
+    # data), which was harmless in isolation but obscured the real shard
+    # count in the log and could double-count on a re-merge. Filtering by
+    # basename here keeps this glob in sync with locate_analysis_input.sh's
+    # `! -name '_*.json'` rule without needing that script's full
+    # METADATA_EXCLUSIONS list (this script only ever sees files already
+    # inside RESULT_DIR, not the metadata/summary files excluded upstream).
+    all_files = sorted(
         glob.glob(f"{config.input_root}/**/*.json", recursive=True)
     )
+    files = [f for f in all_files if not os.path.basename(f).startswith("_")]
+    skipped = sorted(set(all_files) - set(files))
+    if skipped:
+        logger.info(f"SKIPPED (underscore-prefixed, non-record files): {len(skipped)}")
+        for s in skipped:
+            logger.info(f"  - {s}")
     logger.info(f"JSON FILES FOUND: {len(files)}")
 
     # ── Shape S (suppB / suppB_sc): sweep-format merge, not task-row merge ──
