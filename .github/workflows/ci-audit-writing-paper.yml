@@ -27,9 +27,6 @@ on:
         type: string
         default: ''
 
-permissions:
-  contents: write
-
 concurrency:
   group: audit-paper-patch-${{ github.ref }}
   cancel-in-progress: false   # never cancel a run that may be writing/committing
@@ -37,6 +34,8 @@ concurrency:
 jobs:
   patch:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       APPLY: ${{ github.event_name == 'workflow_dispatch' && inputs.apply || false }}
       ALLOW_VALUE_CHANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_value_change || false }}
