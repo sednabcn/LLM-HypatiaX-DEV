@@ -357,6 +357,12 @@ def merge(
             return far is not None and _math.isfinite(far) and far >= EXTRAP_SUCCESS_THRESHOLD
 
         paired.append({
+            # "name" is what run_analysis.py's analyse_ablation() actually reads
+            # (r.get("name", r.get("task_id", "?"))) -- equation_name/equation_id
+            # alone silently fall through to "?" for every row. Keep all three
+            # keys so both this schema's original consumers and analyse_ablation()
+            # resolve the same value.
+            "name":          eq_name,
             "equation_name": eq_name,
             "equation_id":   eq_name,
             "domain":        g["domain"],
