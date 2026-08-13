@@ -485,47 +485,116 @@ jobs:
           echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
-      # NOTE: no merge step for extrap / exp2_feynman / exp2_feynman_pca
+      # Merge parameter-loop results (PARAM_LOOP_MERGE_EXPERIMENTS only)
       # -----------------------------------------------------------------------
-      # These three are single-worker, per-domain-loop experiments (one
-      # protocol_core_*.json per FEYNMAN_DOMAINS entry, not one file total),
-      # but they do NOT need a dedicated merge step here. Confirmed against
-      # locate_analysis_input.sh and run_analysis.py directly:
+      # Counterpart to "Merge shards" above, for a different problem: extrap,
+      # exp2_feynman, and exp2_feynman_pca are all single-worker,
+      # per-domain-loop experiments (one protocol_core_*.json per
+      # FEYNMAN_DOMAINS entry, not one file total) rather than CI shard
+      # fan-out, so they're in merge_experiments.PARAM_LOOP_MERGE_EXPERIMENTS,
+      # not merge_shards.MERGE_REQUIRED_EXPERIMENTS — the "Merge shards" step
+      # above always skips them (see its SINGLE_SHARD_EXPERIMENTS list).
       #
-      #   - locate_analysis_input.sh does NOT do an in-memory
-      #     "_merged_benchmark.json" merge for these (that sub-case in the
-      #     Input modes comment above is stale documentation — see the NOTE
-      #     there). REQUIRE_MERGE is false for all three, so they fall
-      #     through to SHARDS mode: INPUT_MODE=shards, INPUT_JSON="",
-      #     shard_manifest.txt lists all per-domain protocol_core_*.json
-      #     files directly.
-      #   - run_analysis.py's --shard-manifest path already loads each raw
-      #     shard file through _load_records_from_json(), which detects
-      #     Shape P ("tests": [...]) and normalises it correctly per
-      #     experiment mode: exp2_feynman is EXPERIMENT_MODE="ablation" and
-      #     is read as-is (paired hypatia/pysr_only records, untouched);
-      #     extrap ("ood") and exp2_feynman_pca ("multi_method") go through
-      #     _normalise_protocol_record()'s method-key remap into the
-      #     standard {"results": {method: {...}}} shape. No consolidation
-      #     into a single file is required for any of the three.
+      # Which experiments need this merge is controlled solely by
+      # PARAM_LOOP_MERGE_EXPERIMENTS in merge_experiments.py, exactly as
+      # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is the single source of
+      # truth above. Adding a new domain/parameter-loop experiment requires
+      # updating that set AND confirming its raw files are Shape P
+      # ("tests": [{"description"/"equation_id", "domain", "results": {...}}])
+      # — merge_domain_loop_results() only handles that shape.
       #
-      # A "Merge parameter-loop results" step using merge_experiments.py was
-      # added here in a previous pass and has been removed: its output
-      # schema (one row per equation/domain/method, metrics nested under a
-      # "result" key, top-level "results" as a *list* of those rows) matches
-      # none of the shapes run_analysis.py's loader understands (Shape
-      # A/B/C/P/S/N all expect either a dict or a per-equation record with
-      # "results" as a *dict* keyed by method). Concretely, it breaks
-      # exp2_feynman: flattening the paired hypatia/pysr_only record into
-      # separate per-method rows produces exactly the "flat per-method
-      # records" shape that analyse_ablation()'s schema guard rejects with
-      # WRONG_SCHEMA_FOR_ABLATION, a hard CI fatal. For extrap and
-      # exp2_feynman_pca it would silently load zero (or garbage) records
-      # instead, since none of run_analysis.py's shape detectors recognise
-      # merge_experiments.py's output. PARAM_LOOP_MERGE_EXPERIMENTS in
-      # merge_experiments.py remains defined for standalone/local use of
-      # that script but is intentionally NOT wired into this workflow.
+      # merge_experiments.py's merge_domain_loop_results() (NOT the generic
+      # merge_results()) is what's called here. It writes a flat
+      # task_id-keyed JSON — the same shape merge_shards.py's _merged.json
+      # is (run_analysis.py's "Shape B") — with each test's original
+      # "results": {method: {...}} dict preserved untouched. None of these
+      # three experiments use the paired hypatia/pysr_only ablation schema
+      # (confirmed against a real exp2_feynman protocol_core_*.json: no such
+      # key anywhere in it) — extrap reads "ood" mode, exp2_feynman and
+      # exp2_feynman_pca read "multi_method" mode (see the EXPERIMENT_MODE
+      # fix in run_analysis.py; exp2_feynman was previously miscategorised
+      # as "ablation", which silently discarded every record since paired
+      # keys never existed in its data).
+      #
+      # This step overrides INPUT_MODE/INPUT_JSON exactly like "Merge shards"
+      # does for MERGE_REQUIRED_EXPERIMENTS, so run_analysis.py reads the
+      # consolidated file instead of the per-domain shard_manifest.txt that
+      # locate_analysis_input.sh would otherwise resolve for these three.
       # -----------------------------------------------------------------------
+
+      - name: Merge parameter-loop results
+        if: github.event.inputs.experiment != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NEEDS_PARAM_MERGE=$(python3 -c "
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from merge_experiments import PARAM_LOOP_MERGE_EXPERIMENTS
+          print('true' if '${{ github.event.inputs.experiment }}' in PARAM_LOOP_MERGE_EXPERIMENTS else 'false')
+          ")
+
+          if [[ "$NEEDS_PARAM_MERGE" != "true" ]]; then
+            echo "Experiment '${EXPERIMENT}' not in PARAM_LOOP_MERGE_EXPERIMENTS — skipping."
+            exit 0
+          fi
+
+          # Registry disjointness guard: PARAM_LOOP_MERGE_EXPERIMENTS and
+          # MERGE_REQUIRED_EXPERIMENTS solve different problems (local domain
+          # loop vs. CI shard fan-out) and must never overlap — an experiment
+          # in both would silently double-merge. Fail loudly rather than
+          # letting that invariant break silently.
+          IS_ALSO_SHARD_MERGE=$(python3 -c "
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+          print('true' if '${{ github.event.inputs.experiment }}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
+          ")
+          if [[ "$IS_ALSO_SHARD_MERGE" == "true" ]]; then
+            echo "::error::Experiment '${EXPERIMENT}' is in BOTH PARAM_LOOP_MERGE_EXPERIMENTS (merge_experiments.py) and MERGE_REQUIRED_EXPERIMENTS (merge_shards.py). These sets must be disjoint — fix the registries before proceeding."
+            exit 1
+          fi
+
+          # Same skip-if-already-merged-and-non-empty guard "Merge shards"
+          # uses, in case a re-run of this workflow already produced a
+          # populated _merged_paramloop.json.
+          PARAM_MERGED_JSON="${RESULT_DIR}/_merged_paramloop.json"
+          if [[ -f "$PARAM_MERGED_JSON" && "${INPUT_MODE:-}" == "direct" ]]; then
+            _n_records=$(python3 -c "import json; d=json.load(open('${PARAM_MERGED_JSON}')); print(sum(1 for k in d if isinstance(k, str) and not k.startswith('_')))" 2>/dev/null || echo 0)
+            if [[ "${_n_records:-0}" -gt 0 ]]; then
+              echo "  _merged_paramloop.json already present (${_n_records} record(s)) — skipping re-merge."
+              echo "INPUT_MODE=direct"                >> "$GITHUB_ENV"
+              echo "INPUT_JSON=${PARAM_MERGED_JSON}"  >> "$GITHUB_ENV"
+              exit 0
+            fi
+          fi
+
+          python3 .github/scripts/merge_experiments.py \
+            --experiment    "$EXPERIMENT" \
+            --results-root  "$RESULT_DIR" \
+            --input-dir     "$RESULT_DIR" \
+            --output        "$PARAM_MERGED_JSON"
+
+          if [[ ! -f "$PARAM_MERGED_JSON" ]]; then
+            echo "::error::merge_experiments.py did not produce ${PARAM_MERGED_JSON}"
+            exit 1
+          fi
+
+          N_ROWS=$(python3 -c "import json; d=json.load(open('${PARAM_MERGED_JSON}')); print(sum(1 for k in d if isinstance(k, str) and not k.startswith('_')))")
+          echo "  _merged_paramloop.json: ${N_ROWS} row(s) across ${EXPERIMENT}'s domain/parameter loop"
+
+          if [[ "${N_ROWS}" -eq 0 ]]; then
+            echo "::error::${EXPERIMENT} parameter-loop merge produced zero rows — check ${RESULT_DIR} for the domain-loop output files (one protocol_core_*.json expected per FEYNMAN_DOMAINS entry)."
+            exit 1
+          fi
+
+          # INPUT_MODE stays 'direct' — this is still a single consolidated
+          # file read via --input-json, not a shard manifest — only
+          # INPUT_JSON changes, pointing run_analysis.py at the merged file
+          # instead of the per-domain shard_manifest.txt.
+          echo "INPUT_MODE=direct"                >> "$GITHUB_ENV"
+          echo "INPUT_JSON=${PARAM_MERGED_JSON}"  >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
       # Rename merged JSON to canonical result filename
