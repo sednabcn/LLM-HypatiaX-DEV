@@ -129,6 +129,19 @@ REGISTRY: dict[str, ExperimentEntry] = {
         glob_pattern="all_systems_merged.json",
         notes="exp2_run.log has no dedicated per-run JSON of its own.",
     ),
+    "suppA": ExperimentEntry(
+        subdir="hybrid_pysr/defi",
+        glob_pattern="consolidated_hybrid_*.json",
+        notes="run_all.sh STEP 9 (run_hybrid_system_benchmark.py + "
+              "test_enhanced_defi_extrapolation.py + "
+              "analyze_hybrid_performance.py, no domain loop). Move-block "
+              "glob per run_all.sh FIX-suppA-glob comment; that block also "
+              "relocates hybrid_llm_nn_all_domains_*.json (-> "
+              "hybrid_llm_nn/all_domains, i.e. the hybrid_all_domains entry) "
+              "and ablation_exp1_*.json / hypatiax_defi_benchmark_*results* "
+              "(-> RESULTS_DIR root) -- those belong to other experiments' "
+              "entries, not this one.",
+    ),
     "extrap": ExperimentEntry(
         subdir="comparison_results/extrapolation",
         glob_pattern="all_domains_extrap_v4_*.json",

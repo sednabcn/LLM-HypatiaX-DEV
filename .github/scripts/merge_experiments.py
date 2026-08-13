@@ -184,6 +184,32 @@ def _propagate_identity(parent: dict[str, Any], rows: list[dict[str, Any]]) -> N
 #                         exp2_feynman_pca_4060 step (STEP 5b). Registry:
 #                         "Mirrors exp2_feynman: same 11-domain registry,
 #                         single shard table entry."
+# exp3                -- for SEED in ${NGUYEN12_SEEDS} (run_all.sh nguyen12
+#                         step, single worker, NOT the CI-parallel exp3b shard
+#                         fan-out). Registry: subdir="nguyen12", glob=
+#                         "exp3_nguyen12_seed*.json", shards=True, "12
+#                         equations x 5 seeds = 60 combos; nguyen12 script
+#                         writes to cwd, may need explicit --results-dir."
+#                         One file per seed, written sequentially by one
+#                         worker -- same local-loop shape as extrap /
+#                         exp2_feynman above, not a retry/fan-out shape.
+#                         Distinct from "exp3b" (below, and in
+#                         merge_shards.MERGE_REQUIRED_EXPERIMENTS): exp3b is
+#                         the 4-shard CI-parallel multi-seed version of this
+#                         same nguyen12 benchmark, where N workers each own a
+#                         disjoint seed subset and can legitimately retry/
+#                         duplicate -- that's merge_shards.py's highest-
+#                         score-wins territory. exp3 (this entry) is one
+#                         worker looping seeds locally, so it belongs here
+#                         instead, on the same reasoning as exp2_feynman's
+#                         domain loop.
+#
+# NOTE on "exp3b": intentionally NOT in this set -- it is the CI shard
+# fan-out sibling of exp3 above (see MERGE_REQUIRED_EXPERIMENTS docstring in
+# merge_shards.py: "4-shard Nguyen-12 multi-seed (seeds 99/123/777/2024)").
+# It is not present in experiment_registry.REGISTRY under its own key at
+# all -- only "exp3" is -- so it can't be resolved via --results-root either;
+# it must be run through merge_shards.py directly.
 #
 # NOTE on "exp2_feynman_extrap": it is intentionally NOT in this set, even
 # though its STEP 5b sub-block also loops `for DOMAIN_ID in ${ACTIVE_DOMAINS}`.
@@ -193,21 +219,77 @@ def _propagate_identity(parent: dict[str, Any], rows: list[dict[str, Any]]) -> N
 # this generic merger as well would give run_analysis.py two conflicting
 # consolidated files for the same experiment.
 #
-# NOTE on "exp2": its STEP 6 sub-block also loops `for DOMAIN_ID in
-# ${EXP2_DOMAINS}`, but experiment_registry.py marks it shards=False --
-# "exp2_run.log has no dedicated per-run JSON of its own" -- i.e. the
-# five-system comparison script already consolidates internally across its
-# domain loop and writes a single all_systems_merged.json directly. Adding it
-# here would merge an already-merged file back into itself.
+# exp1                -- run_all.sh STEP 1 (hypatiax_defi_benchmark_v3c.py,
+#                         no domain loop). Registry: subdir="", glob=
+#                         "benchmark_results*.json" (fallback: hypatiax_defi_
+#                         benchmark_v3*results*.json). Normally writes ONE
+#                         canonical file per run, so files_found will usually
+#                         be 0 or 1 -- see SC-CHECKPOINT-POLLUTION-2 / the
+#                         skip-below-2-files guard in merge_results() for why
+#                         that is a silent no-op here rather than an error.
+#                         Included so a re-run that leaves more than one
+#                         timestamped benchmark_results*.json on disk (retry,
+#                         manual local re-run, etc.) still gets consolidated.
+# suppA                -- run_all.sh STEP 9 (run_hybrid_system_benchmark.py +
+#                         two post-processing scripts, no domain loop).
+#                         Registry: subdir="hybrid_pysr/defi", glob=
+#                         "consolidated_hybrid_*.json" (see run_all.sh's
+#                         move-block glob list, FIX-suppA-glob comment).
+#                         Same "usually 1 file, harmless no-op otherwise"
+#                         reasoning as exp1 above.
+# exp2                 -- run_all.sh STEP 6, `for DOMAIN_ID in ${EXP2_DOMAINS}`
+#                         (10 domains). Registry marks it shards=False because
+#                         the five-system comparison script writes a single
+#                         consolidated all_systems_merged.json directly -- so
+#                         files_found is normally 0 or 1 and the skip-below-2-
+#                         files guard below makes this a no-op rather than
+#                         "merge an already-merged file back into itself"
+#                         (the previous reason this entry was excluded). Kept
+#                         in this set for the same reason as exp1/suppA: if a
+#                         run ever leaves more than one candidate file on
+#                         disk, it still gets consolidated instead of silently
+#                         picking whichever one a naive glob happens to find.
+# hybrid_all_domains   -- run_all.sh STEP 4, one Python invocation covering
+#                         10 domains internally (run_all.sh's own comment
+#                         calls it "one-shot"), not a bash `for DOMAIN_ID`
+#                         loop. Registry: subdir="hybrid_llm_nn/all_domains",
+#                         glob="hybrid_llm_nn_all_domains_*.json". Previously
+#                         excluded ("nothing for this module to consolidate")
+#                         -- now included with the same skip-below-2-files
+#                         reasoning as exp2 above: normally a no-op, but not
+#                         silently wrong if a re-run leaves multiple files.
+# exp1_five            -- Registry: subdir="five_systems/exp1_five", glob=
+#                         "exp1_five_results*.json". No run_all.sh step
+#                         currently invokes this path (see experiment_registry
+#                         review) -- kept here for when/if it is wired up, or
+#                         for ad-hoc local runs directly against that subdir.
+#                         Same skip-below-2-files behavior as the rest.
+# exp2_five            -- Registry: subdir="five_systems/exp2_five", glob=
+#                         "*.json". Same status as exp1_five above.
 #
-# NOTE on "hybrid_all_domains": it covers 10 domains but does so inside one
-# Python invocation (run_all.sh's comment calls it "one-shot"), not a bash
-# `for DOMAIN_ID` loop -- there is nothing for this module to consolidate.
+# SKIP-BELOW-2-FILES: every entry in this set can legitimately produce as few
+# as ONE result file (a single-worker run that never re-ran, or a script that
+# already consolidates internally, like exp2/hybrid_all_domains). Merging a
+# lone file just re-wraps it in this module's row schema for no benefit, and
+# for exp2/hybrid_all_domains specifically it used to be the stated reason
+# for EXCLUDING them entirely. merge_results() now checks file count instead
+# of experiment identity: fewer than 2 non-excluded input files -> skip
+# silently (no _merged.json written, exit 0), rather than either mis-merging
+# a single file or requiring a hardcoded per-experiment exclusion list that
+# has to be kept in sync with which experiments "happen to" write >1 file on
+# a given run. See merge_results()'s SKIP-BELOW-2-FILES block below.
 # ---------------------------------------------------------------------------
 PARAM_LOOP_MERGE_EXPERIMENTS: frozenset[str] = frozenset({
     "extrap",
     "exp2_feynman",
     "exp2_feynman_pca",
+    "exp3",
+    "exp1",
+    "suppA",
+    "exp2",
+    "hybrid_all_domains",
+    "exp1_five",
+    "exp2_five",
 })
 
 
@@ -601,6 +683,41 @@ def merge_results(
         and not p.name.startswith("_merged")
     ]
 
+    # SKIP-BELOW-2-FILES: fewer than 2 candidate files means there is nothing
+    # to merge -- either the run hasn't produced timestamped output yet, or
+    # (exp2 / hybrid_all_domains / a single-seed exp1 / suppA run) the source
+    # script already writes one consolidated file directly, in which case
+    # wrapping that lone file in this module's row schema adds nothing and
+    # risks masking the fact that no real merge happened. This is a graceful
+    # no-op (exit 0, no _merged.json written), not a FATAL -- see main()'s
+    # skipped-result branch. Keeps PARAM_LOOP_MERGE_EXPERIMENTS free of a
+    # brittle "which experiments happen to write >1 file" hardcoded list.
+    if len(files) < 2:
+        print(
+            f"[merge_experiments] SKIP: {len(files)} candidate JSON file(s) "
+            f"found under {input_dir} -- nothing to merge (need >= 2). "
+            f"No {output} written."
+        )
+        return {
+            "schema_version": "1.0",
+            "experiment": experiment,
+            "statistics": {
+                "files_found": len(files),
+                "files_loaded": 0,
+                "files_failed": 0,
+                "rows": 0,
+                "duplicates": 0,
+                "skipped": True,
+            },
+            "errors": [],
+            "results": [],
+            "skipped": True,
+            "skipped_reason": (
+                f"only {len(files)} candidate JSON file(s) under {input_dir} "
+                "-- merge is a no-op below 2 files"
+            ),
+        }
+
     merged: list[dict[str, Any]] = []
 
     stats = {
@@ -609,6 +726,7 @@ def merge_results(
         "files_failed": 0,
         "rows": 0,
         "duplicates": 0,
+        "skipped": False,
     }
 
     errors: list[dict[str, str]] = []
@@ -821,6 +939,17 @@ def main() -> int:
     print(f"Input directory : {input_dir}")
     print(f"Output          : {args.output}")
     print(f"Files found     : {stats['files_found']}")
+
+    # SKIP-BELOW-2-FILES: merge_results() returns early (no file written)
+    # when fewer than 2 candidate JSONs were found. Report that plainly
+    # instead of printing "Files loaded/Result rows/Merge complete" for a
+    # merge that never actually ran -- exit 0, this is not a failure.
+    if result.get("skipped"):
+        print(f"Status          : SKIPPED -- {result.get('skipped_reason', '')}")
+        print()
+        print("No merge performed (nothing to merge).")
+        return 0
+
     print(f"Files loaded    : {stats['files_loaded']}")
     print(f"Files failed    : {stats['files_failed']}")
     print(f"Result rows     : {stats['rows']}")
