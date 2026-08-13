@@ -2,7 +2,7 @@
 # HypatiaX Analysis Report — `exp2_feyman_extrap`
 
 Experiment mode: **standard**
-N total: 60 | N standard: 60 | N intractable: 0
+N total: 30 | N standard: 30 | N intractable: 0
 R² success threshold: 0.8
 
 ## ✅ No Fatal Conditions
@@ -43,70 +43,40 @@ Hybrid wins:  0  (N/A)
 NN wins:      0
 Tied:         0
 
-## Coverage Gaps (60 equations with best R² < 0.8)
+## Coverage Gaps (30 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
+| Michaelis-Menten enzyme kinetics — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
+| Logistic growth rate — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
+| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | N/A |
+| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
+| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | N/A |
+| Nernst equation for electrode potential — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
+| Clausius-Mossotti: effective field in dielectric | None | None | N/A | N/A | N/A | N/A |
+| Dielectric polarisation: P = n * alpha * E (dilute limit) | None | None | N/A | N/A | N/A | N/A |
+| Lorentz force on moving charge in magnetic field: F = qvB | None | None | N/A | N/A | N/A | N/A |
+| Ohm's law: voltage as product of current and resistance | None | None | N/A | N/A | N/A | N/A |
+| Energy stored in a capacitor: E = 0.5 * C * V^2 | None | None | N/A | N/A | N/A | N/A |
+| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | N/A |
+| Coulomb's law: electric force between charges | None | None | N/A | N/A | N/A | N/A |
+| Curie's law for magnetic susceptibility: chi = C/T | None | None | N/A | N/A | N/A | N/A |
+| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | N/A |
+| Kinetic energy (classical): KE = 0.5 * m * v² | None | None | N/A | N/A | N/A | N/A |
+| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | N/A |
+| Total mechanical energy: spring potential + kinetic | None | None | N/A | N/A | N/A | N/A |
+| Snell's law: refracted angle from incident angle and refractive indices | None | None | N/A | N/A | N/A | N/A |
+| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | N/A |
+| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | N/A |
+| Photon energy: E = h * f (Planck relation) | None | None | N/A | N/A | N/A | N/A |
+| Zeeman energy: electron spin in magnetic field | None | None | N/A | N/A | N/A | N/A |
+| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | N/A |
+| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | N/A |
+| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | N/A |
+| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | None | None | N/A | N/A | N/A | N/A |
+| Fourier's law of heat conduction: heat flux across material | None | None | N/A | N/A | N/A | N/A |
+| Stefan-Boltzmann law: blackbody radiated power | None | None | N/A | N/A | N/A | N/A |
+| Ideal gas law: pressure from moles, temperature, volume | None | None | N/A | N/A | N/A | N/A |
 
 ## R²≥0.80 Rate by Difficulty
 
