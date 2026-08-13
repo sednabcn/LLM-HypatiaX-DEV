@@ -54,7 +54,9 @@
 #  Outputs committed to master:
 #    hypatiax/data/results/{result_subdir}/_report.md
 #    hypatiax/data/results/{result_subdir}/_analysis.json
-#    hypatiax/data/results/{result_subdir}/ablation_paired.json  (exp2_feynman_extrap only)
+#    hypatiax/data/results/{result_subdir}/ablation_paired.json  (exp2_feynman_extrap
+#      and its 'exp2_feyman_extrap' typo alias only — both spellings gate the
+#      "Merge extrap into benchmark" / "Commit ablation_paired.json" steps below)
 #      Committed immediately after merge_extrap_into_benchmark.py so that manual
 #      re-runs of ci_analysis.yml find it via locate_analysis_input.sh without
 #      needing source_run_id or re-running the merge step.
@@ -365,7 +367,7 @@ jobs:
           # mistakenly added to (or never excluded from) MERGE_REQUIRED_EXPERIMENTS
           # in merge_shards.py. Keep this in sync with EXP_SHARD_TABLE entries
           # whose value is 1 in ci_runner.yml.
-          SINGLE_SHARD_EXPERIMENTS="exp1 exp1_five exp2_feynman exp2_feynman_extrap exp2 exp2_five exp3 suppA instability hybrid_all_domains extrap"
+          SINGLE_SHARD_EXPERIMENTS="exp1 exp1_five exp2_feynman exp2_feynman_extrap exp2_feyman_extrap exp2 exp2_five exp3 suppA instability hybrid_all_domains extrap"
           for _s in $SINGLE_SHARD_EXPERIMENTS; do
             if [[ "$EXPERIMENT" == "$_s" ]]; then
               echo "Experiment '${EXPERIMENT}' is single-shard (N_SHARDS=1 per ci_runner.yml EXP_SHARD_TABLE) — no merge required, skipping."
@@ -680,10 +682,23 @@ jobs:
       # Primary source  : benchmark_results_extrap.json  (v2.2+ runner --extrap flag)
       # Legacy fallback : extrap_results_*.json           (passed via --extrap-dir)
       # Both live in RESULT_DIR; the script picks extrap_benchmark_dir first per-eq.
+      #
+      # ALIAS GATE: the `experiment` dispatch input is a free-text `type: string`
+      # (unlike ci_postprocess.yml's `type: choice`), so the typo alias
+      # 'exp2_feyman_extrap' (missing 'n' — already resolved to the same subdir
+      # by the MAPPING in "Resolve result directory") can reach this step. Both
+      # spellings MUST be listed here. A single exact-match condition previously
+      # let 'exp2_feyman_extrap' runs silently skip this entire step (and the
+      # "Commit ablation_paired.json" step below): INPUT_MODE fell through to
+      # 'shards', run_analysis.py analysed the raw per-domain shards instead of
+      # the paired ablation schema, and emitted WARN_NO_METHOD_RECORDS with no
+      # ablation_paired.json ever produced. Fixed 2026-08-13 (run 86016837952).
       # -----------------------------------------------------------------------
 
       - name: Merge extrap into benchmark (exp2_feynman_extrap)
-        if: github.event.inputs.experiment == 'exp2_feynman_extrap'
+        if: |
+          github.event.inputs.experiment == 'exp2_feynman_extrap' ||
+          github.event.inputs.experiment == 'exp2_feyman_extrap'
         shell: bash
         run: |
           set -euo pipefail
@@ -751,7 +766,9 @@ jobs:
       # any .gitignore patterns that exclude generated JSON files.
       # -----------------------------------------------------------------------
       - name: Commit ablation_paired.json (exp2_feynman_extrap)
-        if: github.event.inputs.experiment == 'exp2_feynman_extrap'
+        if: |
+          github.event.inputs.experiment == 'exp2_feynman_extrap' ||
+          github.event.inputs.experiment == 'exp2_feyman_extrap'
         shell: bash
         run: |
           set -euo pipefail
