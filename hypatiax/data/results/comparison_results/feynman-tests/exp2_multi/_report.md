@@ -2,13 +2,14 @@
 # HypatiaX Analysis Report — `exp2`
 
 Experiment mode: **multi_method**
-N total: 30 | N standard: 30 | N intractable: 0
+N total: 1 | N standard: 1 | N intractable: 0
 R² success threshold: 0.8
 
 > **Multi-method experiment**: a 4th method key (`HybridSystemLLMNN all-domains`) is present in the raw output but is not in `METHODS` and is excluded from comparisons. Verify `merge_shards.py` translates method names correctly.
 
-## ✅ No Fatal Conditions
+## ⚠️ Fatal Conditions
 
+- **TOO_FEW_RECORDS: only 1 standard records (need ≥ 3) for meaningful statistics.**
 
 ## ℹ️ Informational / Warnings
 
@@ -45,39 +46,10 @@ Hybrid wins:  0  (N/A)
 NN wins:      0
 Tied:         0
 
-## Coverage Gaps (30 equations with best R² < 0.8)
+## Coverage Gaps (1 equations with best R² < 0.8)
 
 | Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
 |----------|------------|------|---------|-----|----|----|
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
-| ? | None | None | N/A | N/A | N/A | N/A |
 | ? | None | None | N/A | N/A | N/A | N/A |
 
 ## R²≥0.80 Rate by Difficulty
