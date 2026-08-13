@@ -439,18 +439,27 @@ jobs:
       # ------------------------------------------------------------------
       # Step 4 — figures_deploy is an assembly step, not a generator: pull
       # every experiment's own canonical figures into one flat directory
-      # for the LaTeX build. Filename conflicts (same name, different
-      # content) are now resolved by overwriting with the source
-      # experiment's copy — each experiment's own figures/ dir is always
-      # the source of truth, so "differs from what's deployed" just means
-      # deploy is stale. Every overwrite is still logged for auditability.
+      # for the LaTeX build.
+      #
+      # Two different situations both produce a "same filename, different
+      # content" case, and they are NOT the same thing:
+      #   1. The already-deployed copy differs from its (single, unambiguous)
+      #      source experiment — the source is stale-deployed and gets
+      #      overwritten. Safe: there is only one possible correct answer.
+      #   2. Two DIFFERENT source experiments produce the same filename
+      #      with different content — there is no correct answer to pick
+      #      automatically, so this fails the build loudly instead of
+      #      silently choosing one based on dict/filesystem iteration
+      #      order (which is what str/os.listdir ordering would otherwise
+      #      do). Iteration below is explicitly sorted by experiment ID
+      #      and filename so any output printed here is deterministic.
       # ------------------------------------------------------------------
       - name: "Deploy assembled figures"
         if: steps.resolve.outputs.id == 'figures_deploy'
         shell: bash
         run: |
           python3 - <<'PY'
-          import os, shutil, hashlib, yaml
+          import os, shutil, hashlib, sys, yaml
 
           with open(os.environ["CONFIG_FILE"]) as f:
               cfg = yaml.safe_load(f)
@@ -462,33 +471,59 @@ jobs:
           def sha(path):
               return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
-          copied, skipped, overwritten = 0, 0, []
-          for eid, entry in cfg["experiments"].items():
+          # First pass: collect every (eid, path, sha) that wants to produce
+          # each filename. Sorted by experiment ID / filename so results
+          # are identical on every run, independent of dict or os.listdir
+          # ordering.
+          sources = {}  # fn -> [(eid, path, sha), ...]
+          for eid, entry in sorted(cfg["experiments"].items()):
               if not entry.get("generates_figures"):
                   continue
               src_dir = os.path.join(root, entry["source_dir"], "figures")
               if not os.path.isdir(src_dir):
                   continue
-              for fn in os.listdir(src_dir):
+              for fn in sorted(os.listdir(src_dir)):
                   src = os.path.join(src_dir, fn)
-                  dst = os.path.join(dest, fn)
                   if not os.path.isfile(src):
                       continue
-                  if os.path.exists(dst):
-                      if sha(src) == sha(dst):
-                          skipped += 1
-                          continue
-                      shutil.copy2(src, dst)
-                      overwritten.append((fn, eid))
+                  sources.setdefault(fn, []).append((eid, src, sha(src)))
+
+          # Genuine cross-experiment collision: same filename, different
+          # content, from two different experiments. No sort order makes
+          # one of them "correct" — refuse to guess.
+          collisions = {
+              fn: entries for fn, entries in sources.items()
+              if len({s for _, _, s in entries}) > 1
+          }
+          if collisions:
+              print("::error::Two or more experiments produce the same figure "
+                    "filename with different content — cannot deploy unambiguously:")
+              for fn, entries in sorted(collisions.items()):
+                  owners = ", ".join(eid for eid, _, _ in entries)
+                  print(f"  {fn} — produced differently by: {owners}")
+              print("Fix: rename the conflicting file at its source, or give "
+                    "config/experiments.yml an explicit owner for this filename.")
+              sys.exit(1)
+
+          copied, skipped, overwritten = 0, 0, []
+          for fn, entries in sorted(sources.items()):
+              eid, src, src_sha = entries[0]  # all entries agree on content
+              dst = os.path.join(dest, fn)
+              if os.path.exists(dst):
+                  if sha(dst) == src_sha:
+                      skipped += 1
                       continue
                   shutil.copy2(src, dst)
-                  copied += 1
+                  overwritten.append((fn, eid))
+                  continue
+              shutil.copy2(src, dst)
+              copied += 1
 
           print(f"figures_deploy: copied {copied}, already up to date {skipped}, "
                 f"{len(overwritten)} overwritten.")
           if overwritten:
-              print("::warning::Filename conflicts (same name, different content) "
-                    "were overwritten with the source experiment's version:")
+              print("::warning::Deployed copy differed from its source experiment "
+                    "(stale deploy) and was overwritten:")
               for fn, eid in overwritten:
                   print(f"  {fn} <- {eid}")
           PY
