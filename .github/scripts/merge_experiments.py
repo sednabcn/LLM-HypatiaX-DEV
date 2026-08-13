@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -568,6 +569,20 @@ def merge_metadata(
 # Main merge operation
 # ---------------------------------------------------------------------------
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively replace NaN/Inf floats with None so JSON serialization
+    doesn't fail when allow_nan=False."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    return obj
+
+
 def merge_results(
     input_dir: Path,
     output: Path,
@@ -685,9 +700,13 @@ def merge_results(
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    # Sanitize the result to remove NaN/Inf values before serializing,
+    # since allow_nan=False would otherwise raise ValueError.
+    sanitized_result = _sanitize_for_json(result)
+
     with output.open("w", encoding="utf-8") as f:
         json.dump(
-            result,
+            sanitized_result,
             f,
             indent=2,
             ensure_ascii=False,
