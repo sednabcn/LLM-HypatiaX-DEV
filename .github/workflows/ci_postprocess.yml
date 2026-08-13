@@ -48,6 +48,7 @@ on:
         description: "Experiment ID — must be a key (or alias) in config/experiments.yml"
         required: true
         type: choice
+        default: exp1_ablation
         options:
           - exp1
           - exp1b
@@ -438,9 +439,11 @@ jobs:
       # ------------------------------------------------------------------
       # Step 4 — figures_deploy is an assembly step, not a generator: pull
       # every experiment's own canonical figures into one flat directory
-      # for the LaTeX build. Real filename conflicts (same name, different
-      # content) are logged and left for manual review rather than guessed
-      # at — this never overwrites silently.
+      # for the LaTeX build. Filename conflicts (same name, different
+      # content) are now resolved by overwriting with the source
+      # experiment's copy — each experiment's own figures/ dir is always
+      # the source of truth, so "differs from what's deployed" just means
+      # deploy is stale. Every overwrite is still logged for auditability.
       # ------------------------------------------------------------------
       - name: "Deploy assembled figures"
         if: steps.resolve.outputs.id == 'figures_deploy'
@@ -459,7 +462,7 @@ jobs:
           def sha(path):
               return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
-          copied, skipped, conflicts = 0, 0, []
+          copied, skipped, overwritten = 0, 0, []
           for eid, entry in cfg["experiments"].items():
               if not entry.get("generates_figures"):
                   continue
@@ -475,18 +478,19 @@ jobs:
                       if sha(src) == sha(dst):
                           skipped += 1
                           continue
-                      conflicts.append((fn, eid))
+                      shutil.copy2(src, dst)
+                      overwritten.append((fn, eid))
                       continue
                   shutil.copy2(src, dst)
                   copied += 1
 
           print(f"figures_deploy: copied {copied}, already up to date {skipped}, "
-                f"{len(conflicts)} conflict(s).")
-          if conflicts:
+                f"{len(overwritten)} overwritten.")
+          if overwritten:
               print("::warning::Filename conflicts (same name, different content) "
-                    "left untouched — resolve manually:")
-              for fn, eid in conflicts:
-                  print(f"  {fn} (from {eid}) differs from existing figures/{fn}")
+                    "were overwritten with the source experiment's version:")
+              for fn, eid in overwritten:
+                  print(f"  {fn} <- {eid}")
           PY
 
       # ------------------------------------------------------------------
