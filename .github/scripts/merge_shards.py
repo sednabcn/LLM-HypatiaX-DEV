@@ -195,6 +195,21 @@ def canonical_task_id(obj: Dict[str, Any]) -> Optional[str]:
         obj.get("task_id"),
         obj.get("equation_id"),
         obj.get("protocol"),
+        # BUG 6 FIX: exp1_ablation.py's run_instability_stats() writes
+        # core15_instability rows shaped {"equation": <eq name>, "domain": ...,
+        # "extrap_r2_near": ..., "extrap_r2_far": ..., "instability_index": ...}
+        # -- no "name"/"equation_id"/"task_id" key, just "equation". Before this
+        # fix, "equation" wasn't a candidate at all, so lookup fell through to
+        # "domain" (e.g. "Chemistry", "Biology") -- shared by 3 Core-15
+        # equations each, so merge_rows()'s same-task_id collapse turned 15
+        # instability rows (3 per domain x 5 domains) into 5 phantom
+        # domain-keyed entries (hypatia={}, nn={}, score 0) sitting alongside
+        # the 15 real ablation entries in _merged.json. Must be checked before
+        # "domain" so the real equation name wins; the real ablation row for
+        # the same equation still wins the merge on score (10+ vs 0) once both
+        # correctly resolve to the same task_id, so this only removes the
+        # phantom entries -- it doesn't change which row's data is kept.
+        obj.get("equation"),
         obj.get("domain"),
         obj.get("id"),
         obj.get("name"),

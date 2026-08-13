@@ -107,6 +107,14 @@ _parser.add_argument(
          "Defaults to 'figures/' under --results-dir, or './figures/' if neither is set.",
 )
 _parser.add_argument(
+    "--patched-dir", default=None, dest="patched_dir",
+    help="Root directory for 'patched' result overrides (mirrors generate_tables.py's "
+         "PATCHED). Only consulted as a second candidate location for "
+         "ablation/exp1_ablation/_merged.json, since that file has been observed "
+         "living under hypatiax/data/patched/ as well as hypatiax/data/results/. "
+         "Defaults to <repo_root>/hypatiax/data/patched.",
+)
+_parser.add_argument(
     "--source", default="auto",
     choices=["auto", "committed", "artifact"],
     help="Data source hint (default: auto). Currently informational only.",
@@ -189,6 +197,25 @@ _EXPERIMENTS_WITHOUT_ABLATION = {
 _EXP1_ABLATION_GROUP = {"exp1_ablation", "exp1", "exp1b"}
 _SUPPB_GROUP = {"suppB", "suppB_sc"}
 
+# ── Repo root / patched-dir resolution (mirrors generate_tables.py's PATCHED) ─
+def _find_repo_root():
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [here] + [os.path.dirname(here)] * 0  # placeholder, walked below
+    path = here
+    while True:
+        if os.path.isfile(os.path.join(path, "hypatiax", "__init__.py")):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return here  # fallback: couldn't find it, use script dir
+        path = parent
+
+_REPO_ROOT = _find_repo_root()
+_PATCHED_DIR = (
+    os.path.abspath(_ARGS.patched_dir) if _ARGS.patched_dir
+    else os.path.join(_REPO_ROOT, "hypatiax", "data", "patched")
+)
+
 # ── Helper: resolve a filename relative to --results-dir ─────────────────────
 def _rpath(filename):
     """Return filename resolved under _RESULTS_DIR (absolute path)."""
@@ -206,10 +233,17 @@ DATA_MAIN          = _rpath("exp1_ablation_results.json")
 # which _normalise_cases() already supports.  Fall back to _merged.json when
 # exp1_ablation_results.json is absent.
 if _EXPERIMENT == "exp1_ablation" and not os.path.isfile(DATA_MAIN):
-    _merged_fallback = _rpath("_merged.json")
-    if os.path.isfile(_merged_fallback):
+    _merged_candidates = [
+        _rpath("_merged.json"),
+        os.path.join(_PATCHED_DIR, "ablation", "exp1_ablation", "_merged.json"),
+    ]
+    _merged_fallback = next((p for p in _merged_candidates if os.path.isfile(p)), None)
+    if _merged_fallback:
         print(f"  [INFO] {DATA_MAIN} not found — falling back to {_merged_fallback}")
         DATA_MAIN = _merged_fallback
+    else:
+        print(f"  [WARN] exp1_ablation_results.json not found, and no _merged.json "
+              f"in any of: {_merged_candidates}")
 # exp2_feynman_extrap-specific required files
 DATA_ABLATION_PAIRED  = _rpath("ablation_paired.json")
 DATA_EXTRAP_BENCHMARK = _rpath("benchmark_results_extrap.json")
