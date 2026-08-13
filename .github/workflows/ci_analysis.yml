@@ -27,17 +27,29 @@
 #
 #    DIRECT  (NSHARDS=1 / single-file experiments — exp1 and any other
 #             experiment whose worker commits exactly one result JSON):
-#      Reads the single committed result file directly.
+#      Reads the single committed result file directly via --input-json.
 #      No shard_manifest.txt is written; no merge step needed.
-#      Covers two sub-cases:
-#        • benchmark-format (tests[] array) — in-memory merge to
-#          _merged_benchmark.json, then --input-json.
-#        • flat/list JSON — --input-json on the single file directly.
+#      NOTE: there is no in-memory "_merged_benchmark.json" sub-case —
+#      locate_analysis_input.sh performs no benchmark-format merge (see the
+#      "NO inline benchmark merge for non-merge experiments" guard in that
+#      script, added to avoid field-name mismatches like exp2/Feynman
+#      records lacking far-R²). A prior version of this comment claimed
+#      such a sub-case existed; it did not match the script and has been
+#      corrected here.
 #      run_analysis.py flag: --input-json <path>
 #
-#    SHARDS  (multi-shard, non-benchmark-format experiments):
+#    SHARDS  (multi-shard, non-benchmark-format experiments — this also
+#             covers extrap, exp2_feynman, and exp2_feynman_pca: each is a
+#             single CI worker that internally loops over FEYNMAN_DOMAINS
+#             and writes one protocol_core_*.json per domain, so
+#             REQUIRE_MERGE is false but SHARD_FILES still has 11 entries):
 #      Reads multiple committed shard *.json files listed in shard_manifest.txt.
 #      Hard-fails if no shard files are found.
+#      run_analysis.py's per-shard loader (_load_records_from_json) already
+#      detects the Shape-P protocol wrapper and normalises method keys per
+#      experiment mode (ablation records are passed through unchanged;
+#      standard/multi_method records go through _normalise_protocol_record).
+#      No separate merge step is needed or run for these three.
 #      run_analysis.py flag: --shard-manifest shard_manifest.txt
 #
 #  Responsibilities:
@@ -471,6 +483,49 @@ jobs:
 
           echo "INPUT_MODE=merged"          >> "$GITHUB_ENV"
           echo "INPUT_JSON=${MERGED_JSON}"  >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # NOTE: no merge step for extrap / exp2_feynman / exp2_feynman_pca
+      # -----------------------------------------------------------------------
+      # These three are single-worker, per-domain-loop experiments (one
+      # protocol_core_*.json per FEYNMAN_DOMAINS entry, not one file total),
+      # but they do NOT need a dedicated merge step here. Confirmed against
+      # locate_analysis_input.sh and run_analysis.py directly:
+      #
+      #   - locate_analysis_input.sh does NOT do an in-memory
+      #     "_merged_benchmark.json" merge for these (that sub-case in the
+      #     Input modes comment above is stale documentation — see the NOTE
+      #     there). REQUIRE_MERGE is false for all three, so they fall
+      #     through to SHARDS mode: INPUT_MODE=shards, INPUT_JSON="",
+      #     shard_manifest.txt lists all per-domain protocol_core_*.json
+      #     files directly.
+      #   - run_analysis.py's --shard-manifest path already loads each raw
+      #     shard file through _load_records_from_json(), which detects
+      #     Shape P ("tests": [...]) and normalises it correctly per
+      #     experiment mode: exp2_feynman is EXPERIMENT_MODE="ablation" and
+      #     is read as-is (paired hypatia/pysr_only records, untouched);
+      #     extrap ("ood") and exp2_feynman_pca ("multi_method") go through
+      #     _normalise_protocol_record()'s method-key remap into the
+      #     standard {"results": {method: {...}}} shape. No consolidation
+      #     into a single file is required for any of the three.
+      #
+      # A "Merge parameter-loop results" step using merge_experiments.py was
+      # added here in a previous pass and has been removed: its output
+      # schema (one row per equation/domain/method, metrics nested under a
+      # "result" key, top-level "results" as a *list* of those rows) matches
+      # none of the shapes run_analysis.py's loader understands (Shape
+      # A/B/C/P/S/N all expect either a dict or a per-equation record with
+      # "results" as a *dict* keyed by method). Concretely, it breaks
+      # exp2_feynman: flattening the paired hypatia/pysr_only record into
+      # separate per-method rows produces exactly the "flat per-method
+      # records" shape that analyse_ablation()'s schema guard rejects with
+      # WRONG_SCHEMA_FOR_ABLATION, a hard CI fatal. For extrap and
+      # exp2_feynman_pca it would silently load zero (or garbage) records
+      # instead, since none of run_analysis.py's shape detectors recognise
+      # merge_experiments.py's output. PARAM_LOOP_MERGE_EXPERIMENTS in
+      # merge_experiments.py remains defined for standalone/local use of
+      # that script but is intentionally NOT wired into this workflow.
+      # -----------------------------------------------------------------------
 
       # -----------------------------------------------------------------------
       # Rename merged JSON to canonical result filename
