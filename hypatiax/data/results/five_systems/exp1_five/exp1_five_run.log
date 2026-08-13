@@ -1,0 +1,533 @@
+Loading exp1_ablation.py (Core-15 equation suite, data generators, checkpoint helpers)...
+✅ API key found in environment
+populations : 30  (paper-quality, FIX-POP)
+niterations : 1000
+timeout_s   : METHOD_TIMEOUT=900s  PYSR_TIMEOUT=1100s
+wall-clock  : hypatia=3600s  pysr_only=1400s  (FIX-WALLCLOCK)
+seed        : 42  (source: PYSR_SEED)
+✅ Parameters ready
+   [MEM] start: RSS=0.87 GB
+✅ HybridDiscoverySystem (v5.1) imported from /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/tools/symbolic/hybrid_system_v50_2.py
+✅ PySR 1.5.10 ready
+  [    0.0s] Imports complete
+✅ Core-15 loaded: 15 equations, 5 domains
+  [00] Arrhenius                    (Chemistry)
+  [01] Henderson-Hasselbalch        (Chemistry)
+  [02] Rate Law                     (Chemistry)
+  [03] Allometric Scaling           (Biology)
+  [04] Michaelis-Menten             (Biology)
+  [05] Logistic Growth              (Biology)
+  [06] Kinetic Energy               (Physics)
+  [07] Gravitational Force          (Physics)
+  [08] Ideal Gas Law                (Physics)
+  [09] Impermanent Loss             (DeFi AMM)
+  [10] Price Impact                 (DeFi AMM)
+  [11] Constant Product             (DeFi AMM)
+  [12] Value at Risk                (DeFi Risk)
+  [13] Liquidation Price            (DeFi Risk)
+  [14] Portfolio Std Dev            (DeFi Risk)
+✅ sympy available — true OOD evaluation (Mode A) enabled
+✅ run_condition ready — hypatia → HybridDiscoverySystem v5.1 | pysr_only → raw PySR
+Loading run_comparative_suite_benchmark_v2.py (method classes, extrap eval helpers)...
+⚠️  No .env file found. Trying load_dotenv() without path...
+✅ Loaded ExperimentProtocolAll from: hypatiax/protocols/
+ℹ️  hybrid_all_domains module found — class: HybridSystemAllDomains
+✅  SymbolicEngineWithLLM available
+populations   : 30
+method_timeout: 900s  pysr_timeout: 1100s
+seed          : 42
+=================================================================
+EXPERIMENT 1-FIVE: Five-System Comparison  (§10.1 Core-15)
+Methods   : ['Pure LLM', 'Neural Network', 'System 3 LLM+Fallback', 'System 2 Symbolic', 'Hybrid v50_2']
+Equations : 15
+=================================================================
+
+────────────────────────────────────────────────────────────
+▶  [00] Arrhenius  [Chemistry]
+────────────────────────────────────────────────────────────
+  [    2.2s] generate_data: Arrhenius  N=200  noise=0.05  seed=42
+  [    2.2s] generate_data done: X_train=(160, 1)
+  [Pure LLM] 'def formula(T):\n    import numpy as np\n    A  = 28'  R²=0.9318  extrap(near=None, medium=None, far=None)  0.0s
+  [    2.2s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [    2.2s] generate_data: Arrhenius  N=200  noise=0.05  seed=42
+  [    2.2s] generate_data done: X_train=(160, 1)
+  [Neural Network] 'ImprovedNN(1→128→64→32→1,lin)'  R²=0.9978  extrap(near=-0.7127261089460584, medium=-0.629449596034928, far=-12.534877411698472)  0.5s
+  [    2.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [    2.8s] generate_data: Arrhenius  N=200  noise=0.05  seed=42
+  [    2.8s] generate_data done: X_train=(160, 1)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  0.8s
+  [    3.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [    3.6s] generate_data: Arrhenius  N=200  noise=0.05  seed=42
+  [    3.6s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-SE] 85 iters  pysr_timeout=750s  proc_timeout=870s  (spread=3.8dec, vars=1, score=0.23)
+   [SE-TRACE] domain='chemistry' | eq='Arrhenius' | vars=['x0'] | n=160 | niter=85 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=exp,log | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(10, 'exp((((2.6191776 / (x0 + -425.49997)) + (x0 + -435.0031)) / x0) * 13.729986)', 0.9979), (11, 'exp((((2.6191776 / (x0 + -425.49997)) + (x0 + -435.0031)) / x0) * 13.729986) + -0.0009099674', 0.9979), (12, 'exp((13.735968 / x0) * ((x0 + -435.01245) + (2.6187487 / ((x0 + 13.545089) + -439.13123)))) + -0.0014992201', 0.9979), (13, 'exp((13.735968 / x0) * ((2.6187706 / ((((x0 + -435.01123) / (x0 * 0.20864815)) + (x0 - 439.04016)) + 13.545109)) + (x0 + -435.01166))) + -0.0014822116', 0.9979), (6, 'exp(((x0 + -434.9307) * 13.721962) / x0)', 0.9978)] | best_r2=0.9979 | best_expr=exp((13.735968 / x0) * ((2.6187706 / ((((x0 + -435.01123) / (x0 * 0.20864815)) +
+  [System 2 Symbolic] 'exp((13.735968 / T) * ((2.6187706 / ((((T + -435.0'  R²=0.9979  extrap(near=0.9987868411129628, medium=0.9976747949751247, far=0.9469858808915451)  32.1s
+  [   35.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [   35.7s] generate_data: Arrhenius  N=200  noise=0.05  seed=42
+  [   35.7s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-V50_2] 69 iters (spread=3.8dec, vars=1, depth=2, diff=medium, score=0.23) — eq='arrhenius'
+  [Hybrid v50_2] 'sqrt(sqrt(((sqrt(sqrt(0.13621785)) / exp(sqrt(T)))'  R²=0.9979  extrap(near=-0.6329155716818475, medium=-92.20434938021405, far=-inf)  118.2s
+  [  153.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [01] Henderson-Hasselbalch  [Chemistry]
+────────────────────────────────────────────────────────────
+  [  153.9s] generate_data: Henderson-Hasselbalch  N=200  noise=0.05  seed=49
+  [  153.9s] generate_data done: X_train=(160, 2)
+  [Pure LLM] 'import numpy as np\n\ndef formula(pKa, A, HA):\n    #'  R²=-52.7761  extrap(near=None, medium=None, far=None)  7.3s
+  [  161.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [  161.3s] generate_data: Henderson-Hasselbalch  N=200  noise=0.05  seed=49
+  [  161.3s] generate_data done: X_train=(160, 2)
+  [Neural Network] 'ImprovedNN(2→128→64→32→1,log)'  R²=0.9983  extrap(near=-0.8243629928442562, medium=-0.8810878758656409, far=-54.77611994809171)  0.5s
+  [  161.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [  161.8s] generate_data: Henderson-Hasselbalch  N=200  noise=0.05  seed=49
+  [  161.8s] generate_data done: X_train=(160, 2)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  9.6s
+  [  171.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [  171.4s] generate_data: Henderson-Hasselbalch  N=200  noise=0.05  seed=49
+  [  171.4s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-SE] 85 iters  pysr_timeout=750s  proc_timeout=870s  (spread=0.3dec, vars=2, score=0.23)
+   [SE-TRACE] domain='chemistry' | eq='Henderson-Hasselbalch' | vars=['A', 'HA'] | n=160 | niter=85 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=exp,log | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=['ratio_HA_A', 'ratio_A_HA'] | pop_scale=skipped(multithreading,pops=30) | iter_scale=0.71(85→60) | pareto_top5=[(17, '(((2.8095098 - (log(ratio_A_HA) * -0.30621773)) + (((ratio_A_HA / log(HA)) + ((A / log(ratio_A_HA * 0.61683726)) + (-1.0688463 * ratio_HA_A))) * 0.0002660042)) * 1.4128726) - -0.780798', 0.9986), (10, '(4.7507334 - (log(ratio_A_HA) * -0.43630388)) + (0.00049775664 / ((ratio_HA_A / sqrt(ratio_A_HA)) * log(HA)))', 0.9985), (11, '((2.8091636 - (log(ratio_A_HA) * -0.3072432)) * (((ratio_HA_A / log(ratio_A_HA * 0.61521924)) * 0.00011343436) + 1.4123667)) - -0.7807555', 0.9985), (12, '(((2.8091636 + (0.00011343436 * ((1.3153944 / log(0.61521924 * ratio_A_HA)) - ratio_HA_A))) - (log(ratio_A_HA) * -0.3072432)) * 1.4123667) - -0.7807555', 0.9985), (13, '(((2.8091636 - (log(ratio_A_HA) * -0.3072432)) * 1.4123667) - -0.7807555) + (0.00011343436 * ((exp(HA) / log(0.61521924 * ratio_A_HA)) - ratio_HA_A))', 0.9985)] | best_r2=0.9986 | best_expr=(((2.8095098 - (log(ratio_A_HA) * -0.30621773)) + (((ratio_A_HA / log(HA)) + ((A
+  [System 2 Symbolic] '(((2.8095098 - (log(ratio_A_HA) * -0.30621773)) + '  R²=0.9986  extrap(near=None, medium=None, far=None)  33.5s
+  [  205.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [  205.0s] generate_data: Henderson-Hasselbalch  N=200  noise=0.05  seed=49
+  [  205.0s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-V50_2] 69 iters (spread=0.3dec, vars=2, depth=2, diff=medium, score=0.23) — eq='henderson-hasselbalch'
+  [Hybrid v50_2] 'log(((116.08126 / (ratio_HA_A ^ 1.4313254)) / rati'  R²=0.9985  extrap(near=None, medium=None, far=None)  123.0s
+  [  328.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [02] Rate Law  [Chemistry]
+────────────────────────────────────────────────────────────
+  [  328.0s] generate_data: Rate Law  N=200  noise=0.05  seed=56
+  [  328.0s] generate_data done: X_train=(160, 2)
+  [Pure LLM] 'def formula(k, A, B, m, n):\n    # k: rate constant'  R²=-0.8470  extrap(near=None, medium=None, far=None)  9.4s
+  [  337.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [  337.3s] generate_data: Rate Law  N=200  noise=0.05  seed=56
+  [  337.3s] generate_data done: X_train=(160, 2)
+  [Neural Network] 'ImprovedNN(2→128→64→32→1,log)'  R²=0.9977  extrap(near=-2.681182955253502, medium=-2.215207668547242, far=-16.165866049162542)  0.5s
+  [  337.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [  337.9s] generate_data: Rate Law  N=200  noise=0.05  seed=56
+  [  337.9s] generate_data done: X_train=(160, 2)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  11.2s
+  [  349.1s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [  349.1s] generate_data: Rate Law  N=200  noise=0.05  seed=56
+  [  349.1s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-SE] 97 iters  pysr_timeout=750s  proc_timeout=870s  (spread=3.9dec, vars=2, score=0.29)
+   [SE-TRACE] domain='chemistry' | eq='Rate Law' | vars=['A', 'B'] | n=160 | niter=97 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=exp,log | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=['ratio_A_B', 'ratio_B_A'] | pop_scale=skipped(multithreading,pops=30) | iter_scale=0.71(97→68) | pareto_top5=[(11, 'B * (((A * A) * 0.5017393) + (-0.0028749101 / ((ratio_B_A * (log(B) / log(A))) - -0.026609601)))', 0.998), (12, 'B * ((-0.0029805654 / ((ratio_B_A * (log(B) / log(A))) - -0.025681322)) + (((A * 0.50466436) * A) - 0.0068220836))', 0.998), (13, '((-0.0032936586 / (((ratio_B_A * log(B)) / (log(B) + log(A))) - -0.028589621)) + (((A * 0.5058241) * A) - 0.0059889653)) * B', 0.998), (14, 'B * (((-0.0027149362 / ((((ratio_B_A / (log(A) + -0.10520756)) + log(B)) * log(B)) - -0.027340593)) + ((A * A) * 0.50447875)) - 0.0073695127)', 0.998), (15, 'B * ((-0.0027149362 / (((((B / A) / (log(A) + -0.10520756)) + log(B)) * log(B)) - -0.027340593)) + (((A * A) * 0.50447875) - 0.0073695127))', 0.998)] | best_r2=0.9980 | best_expr=B * (((-0.0027149362 / ((((ratio_B_A / (log(A) + -0.10520756)) + log(B)) * log(B
+  [System 2 Symbolic] 'B * (((-0.0027149362 / ((((ratio_B_A / (log(A) + -'  R²=0.9980  extrap(near=None, medium=None, far=None)  34.6s
+  [  383.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [  383.6s] generate_data: Rate Law  N=200  noise=0.05  seed=56
+  [  383.6s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-V50_2] 77 iters (spread=3.9dec, vars=2, depth=2, diff=medium, score=0.29) — eq='rate law'
+  [Hybrid v50_2] '((A ^ (2.0172958 - (((0.012691078 / ratio_A_B) / ('  R²=0.9980  extrap(near=None, medium=None, far=None)  128.1s
+  [  511.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [03] Allometric Scaling  [Biology]
+────────────────────────────────────────────────────────────
+  [  511.7s] generate_data: Allometric Scaling  N=200  noise=0.05  seed=63
+  [  511.7s] generate_data done: X_train=(160, 1)
+  [Pure LLM] 'def formula(M):\n    import numpy as np\n    a = 0.1'  R²=0.9971  extrap(near=-inf, medium=None, far=None)  0.0s
+  [  511.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [  511.8s] generate_data: Allometric Scaling  N=200  noise=0.05  seed=63
+  [  511.8s] generate_data done: X_train=(160, 1)
+  [Neural Network] 'ImprovedNN(1→128→64→32→1,log)'  R²=0.9978  extrap(near=0.8990431744403896, medium=-0.35681699521984744, far=-27.716692492931948)  0.5s
+  [  512.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [  512.3s] generate_data: Allometric Scaling  N=200  noise=0.05  seed=63
+  [  512.3s] generate_data done: X_train=(160, 1)
+  [System 3 LLM+Fallback] 'N/A'  R²=0.9979  extrap(near=None, medium=None, far=None)  1.5s
+  [  513.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [  513.8s] generate_data: Allometric Scaling  N=200  noise=0.05  seed=63
+  [  513.8s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-SE] 77 iters  pysr_timeout=750s  proc_timeout=870s  (spread=1.5dec, vars=1, score=0.19)
+   [SE-TRACE] domain='biology' | eq='Allometric Scaling' | vars=['x0'] | n=160 | niter=77 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=exp,log | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(11, 'x0 * (((0.07894533 / sqrt(x0 - log(x0))) - -0.030082507) + (sqrt(x0 * sqrt(x0)) * -0.00021281619))', 0.9979), (12, 'x0 * (((0.07894533 / sqrt(x0 - log(x0 - 0.29234606))) - -0.030082507) + (sqrt(x0 * sqrt(x0)) * -0.00021281619))', 0.9979), (13, '(x0 - 0.33320865) * ((0.07831892 / sqrt((x0 - sqrt(log(x0))) - log(sqrt(x0)))) - ((sqrt(x0) * 0.0009773897) + -0.03333467))', 0.9979), (14, '((0.09031356 / sqrt(x0 - sqrt(log(x0)))) - ((x0 * 4.804231e-5) + -0.027094228)) * (x0 - (0.10350166 / log(sqrt(x0 * x0))))', 0.9979), (15, '(x0 - (0.070643865 / (x0 - 1.1304401))) * (((0.089493535 / sqrt(x0 - sqrt(log(x0)))) - (x0 * (exp(exp(1.291188 / x0)) * 1.782428e-5))) + 0.027279109)', 0.9979)] | best_r2=0.9979 | best_expr=(x0 - (0.070643865 / (x0 - 1.1304401))) * (((0.089493535 / sqrt(x0 - sqrt(log(x0
+  [System 2 Symbolic] '(M - (0.070643865 / (M - 1.1304401))) * (((0.08949'  R²=0.9979  extrap(near=0.9214233015675353, medium=-0.7537937685209524, far=-52.915643766567854)  30.9s
+  [  544.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [  544.7s] generate_data: Allometric Scaling  N=200  noise=0.05  seed=63
+  [  544.7s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-V50_2] 64 iters (spread=1.5dec, vars=1, depth=2, diff=medium, score=0.19) — eq='allometric scaling'
+  [Hybrid v50_2] '((M - (0.87133086 * M)) * 0.83037233) / (((M + log'  R²=0.9978  extrap(near=0.9985103551243305, medium=0.9984896780950767, far=0.9706778065275907)  105.7s
+  [  650.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [04] Michaelis-Menten  [Biology]
+────────────────────────────────────────────────────────────
+  [  650.4s] generate_data: Michaelis-Menten  N=200  noise=0.05  seed=70
+  [  650.4s] generate_data done: X_train=(160, 1)
+  [Pure LLM] 'def formula(S):\n    import numpy as np\n    Vmax = '  R²=0.9930  extrap(near=-inf, medium=-inf, far=-inf)  0.0s
+  [  650.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [  650.4s] generate_data: Michaelis-Menten  N=200  noise=0.05  seed=70
+  [  650.4s] generate_data done: X_train=(160, 1)
+  [Neural Network] 'ImprovedNN(1→128→64→32→1,log)'  R²=0.9976  extrap(near=0.9296432223450473, medium=0.985878245670227, far=-7.605604517922933)  0.5s
+  [  651.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [  651.0s] generate_data: Michaelis-Menten  N=200  noise=0.05  seed=70
+  [  651.0s] generate_data done: X_train=(160, 1)
+  [System 3 LLM+Fallback] 'N/A'  R²=0.9977  extrap(near=None, medium=None, far=None)  1.5s
+  [  652.5s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [  652.5s] generate_data: Michaelis-Menten  N=200  noise=0.05  seed=70
+  [  652.5s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-SE] 75 iters  pysr_timeout=750s  proc_timeout=870s  (spread=1.2dec, vars=1, score=0.18)
+   [SE-TRACE] domain='biology' | eq='Michaelis-Menten' | vars=['x0'] | n=160 | niter=75 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=exp,log | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(6, '(x0 + 0.004913822) * ((1.986845 / ((x0 * 0.19238958) - -0.39743286)) - 0.040897027)', 0.9976), (4, '(x0 * 9.907193) / (x0 + 1.9554187)', 0.9975), (5, '((1.6130363 / ((x0 * 0.16130708) + 0.31815335)) + -0.011505186) * x0', 0.9975), (3, 'log(x0 + 1.185134) * 4.1075473', 0.9828), (2, 'sqrt(x0 * 11.256177)', 0.9774)] | best_r2=0.9976 | best_expr=(x0 + 0.004913822) * ((1.986845 / ((x0 * 0.19238958) - -0.39743286)) - 0.0408970
+  [System 2 Symbolic] '(S + 0.004913822) * ((1.986845 / ((S * 0.19238958)'  R²=0.9976  extrap(near=0.9038816415084161, medium=0.6551163517867781, far=-87.41547681316935)  31.9s
+  [  684.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [  684.3s] generate_data: Michaelis-Menten  N=200  noise=0.05  seed=70
+  [  684.4s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-V50_2] 63 iters (spread=1.2dec, vars=1, depth=2, diff=medium, score=0.18) — eq='michaelis-menten'
+  [Hybrid v50_2] '(S + (S + (-0.0026113342 / ((-0.63605714 / S) + (2'  R²=0.9977  extrap(near=0.9806532251357463, medium=0.9899691646417238, far=0.2415012188543103)  103.8s
+  [  788.2s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [05] Logistic Growth  [Biology]
+────────────────────────────────────────────────────────────
+  [  788.2s] generate_data: Logistic Growth  N=200  noise=0.05  seed=77
+  [  788.2s] generate_data done: X_train=(160, 1)
+  [Pure LLM] 'def formula(N):\n    import numpy as np\n    r = 0.2'  R²=0.9975  extrap(near=None, medium=None, far=None)  0.0s
+  [  788.2s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [  788.2s] generate_data: Logistic Growth  N=200  noise=0.05  seed=77
+  [  788.2s] generate_data done: X_train=(160, 1)
+  [Neural Network] 'ImprovedNN(1→128→64→32→1,log)'  R²=0.9976  extrap(near=-1.401184077203946, medium=-1.0642195514881605, far=-9.274272215497316)  0.5s
+  [  788.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [  788.7s] generate_data: Logistic Growth  N=200  noise=0.05  seed=77
+  [  788.7s] generate_data done: X_train=(160, 1)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  2.2s
+  [  790.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [  790.9s] generate_data: Logistic Growth  N=200  noise=0.05  seed=77
+  [  790.9s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-SE] 75 iters  pysr_timeout=750s  proc_timeout=870s  (spread=1.2dec, vars=1, score=0.18)
+   [SE-TRACE] domain='biology' | eq='Logistic Growth' | vars=['x0'] | n=160 | niter=75 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=exp,log | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(12, '((x0 * ((x0 * -0.00031752948) + 0.31467456)) - (1.0206228 + log(x0 + ((x0 / (x0 * ((x0 * 0.16644616) + -4.003867))) * -4.003867)))) - -4.003867', 0.9976), (13, '((x0 * (0.31467456 + (x0 * -0.00031752948))) - (log(x0 + (((x0 / (x0 * ((x0 * 0.16644616) + -4.003867))) + 0.31467456) * -4.003867)) + 1.0206228)) - -4.003867', 0.9976), (4, 'x0 * ((x0 * -0.00029884066) + 0.29934603)', 0.9975), (5, '(((x0 * -0.00030083643) + 0.30055723) * x0) - 0.15333939', 0.9975), (6, '((x0 * -0.00030493073) + 0.30268136) * (x0 - log(log(x0)))', 0.9975)] | best_r2=0.9976 | best_expr=((x0 * (0.31467456 + (x0 * -0.00031752948))) - (log(x0 + (((x0 / (x0 * ((x0 * 0.
+  [System 2 Symbolic] '((N * (0.31467456 + (N * -0.00031752948))) - (log('  R²=0.9976  extrap(near=0.9421272983646996, medium=0.9783066803248854, far=0.9452177374049551)  32.2s
+  [  823.1s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [  823.1s] generate_data: Logistic Growth  N=200  noise=0.05  seed=77
+  [  823.1s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-V50_2] 63 iters (spread=1.2dec, vars=1, depth=2, diff=medium, score=0.18) — eq='logistic growth'
+  [Hybrid v50_2] '((-0.30608252 / (N + 3.4121323)) + 0.00030898562) '  R²=0.9976  extrap(near=0.9768533680683152, medium=0.9923079087757309, far=0.9840301063512885)  88.5s
+  [  911.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [06] Kinetic Energy  [Physics]
+────────────────────────────────────────────────────────────
+  [  911.6s] generate_data: Kinetic Energy  N=200  noise=0.05  seed=84
+  [  911.6s] generate_data done: X_train=(160, 2)
+  [Pure LLM] 'def formula(m, v):\n    import numpy as np\n    retu'  R²=0.9968  extrap(near=None, medium=None, far=None)  5.4s
+  [  917.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [  917.0s] generate_data: Kinetic Energy  N=200  noise=0.05  seed=84
+  [  917.0s] generate_data done: X_train=(160, 2)
+  [Neural Network] 'ImprovedNN(2→128→64→32→1,log)'  R²=0.9972  extrap(near=-2.854174517777248, medium=-1.2815468031048733, far=-13.315669499641121)  0.5s
+  [  917.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [  917.6s] generate_data: Kinetic Energy  N=200  noise=0.05  seed=84
+  [  917.6s] generate_data done: X_train=(160, 2)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  5.5s
+  [  923.1s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [  923.1s] generate_data: Kinetic Energy  N=200  noise=0.05  seed=84
+  [  923.1s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-SE] 94 iters  pysr_timeout=750s  proc_timeout=870s  (spread=3.0dec, vars=2, score=0.27)
+   [SE-TRACE] domain='physics' | eq='Kinetic Energy' | vars=['m', 'v'] | n=160 | niter=94 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(13, '((v * ((v * m) + 1.0523161)) * 0.4940976) - (-7.243789 / ((v + (2.0281446 - m)) * (m - ((v + 1.9943227) - m))))', 0.9973), (14, '(((v * ((v * m) + 1.0523161)) * 0.4940976) - (-7.243789 / (((v + 2.0281446) - m) * (m - (v + (1.9943227 - m)))))) - 0.5484712', 0.9973), (11, '((v * (v * 0.49333587)) * (m - -0.0704464)) - (-5.4970126 / ((v + (2.0233648 - m)) * (m - 1.1283073)))', 0.9972), (12, '((((v * (m - -0.07652222)) * 0.4928756) * v) - (-5.367007 / ((v + (2.0222168 - m)) * (m - 1.1246899)))) + -0.34469417', 0.9972), (10, '((v * (v * 0.4990429)) * m) - (-6.4491982 / ((v + (2.028814 - m)) * (m - 1.1155981)))', 0.9971)] | best_r2=0.9973 | best_expr=(((v * ((v * m) + 1.0523161)) * 0.4940976) - (-7.243789 / (((v + 2.0281446) - m)
+  [System 2 Symbolic] '(((v * ((v * m) + 1.0523161)) * 0.4940976) - (-7.2'  R²=0.9973  extrap(near=0.9988706362510842, medium=0.999688279469806, far=0.9980350184345353)  33.5s
+  [  956.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [  956.6s] generate_data: Kinetic Energy  N=200  noise=0.05  seed=84
+  [  956.6s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-V50_2] 75 iters (spread=3.0dec, vars=2, depth=2, diff=medium, score=0.27) — eq='kinetic energy'
+  [Hybrid v50_2] '((v * m) * (v * 0.49509293)) + sqrt((m ^ (((v - -5'  R²=0.9972  extrap(near=0.9454229291084792, medium=None, far=-inf)  130.1s
+  [ 1086.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [07] Gravitational Force  [Physics]
+────────────────────────────────────────────────────────────
+  [ 1086.7s] generate_data: Gravitational Force  N=200  noise=0.05  seed=91
+  [ 1086.7s] generate_data done: X_train=(160, 3)
+  [Pure LLM] 'import numpy as np\n\ndef formula(m1, m2, r):\n    G '  R²=0.9978  extrap(near=None, medium=None, far=None)  5.7s
+  [ 1092.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 1092.4s] generate_data: Gravitational Force  N=200  noise=0.05  seed=91
+  [ 1092.4s] generate_data done: X_train=(160, 3)
+  [Neural Network] 'ImprovedNN(3→256→128→64→32→1,log)'  R²=0.9227  extrap(near=-inf, medium=0.050952608653302534, far=-inf)  1.2s
+  [ 1093.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 1093.6s] generate_data: Gravitational Force  N=200  noise=0.05  seed=91
+  [ 1093.6s] generate_data done: X_train=(160, 3)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  8.3s
+  [ 1101.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 1101.9s] generate_data: Gravitational Force  N=200  noise=0.05  seed=91
+  [ 1101.9s] generate_data done: X_train=(160, 3)
+[ADAPTIVE-SE] 112 iters  pysr_timeout=750s  proc_timeout=870s  (spread=4.5dec, vars=3, score=0.36)
+   [SE-TRACE] domain='physics' | eq='Gravitational Force' | vars=['m1', 'm2', 'r'] | n=160 | niter=112 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=['m1', 'm2', 'r'] | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(8, '(((m1 - (0.0114935385 / (m2 - r))) / r) * 0.006693877) * (m2 / r)', 0.998), (9, '0.0067368033 * ((m2 * ((m1 - ((0.017314052 * m2) / (m2 - r))) / r)) / r)', 0.998), (10, '(m2 * (((m1 - ((sqrt(m2) * 0.016209612) / (m2 - r))) / r) / r)) * 0.006727012', 0.998), (11, '(m2 * (0.20509899 + (((m1 - ((sqrt(m2) * 0.016209612) / (m2 - r))) / r) / r))) * 0.006727012', 0.998), (12, '((m2 + -0.009913798) * ((-0.019267455 / r) / -2.8410091)) * ((m1 - ((m2 / (m2 - r)) * 0.0149466405)) / r)', 0.998)] | best_r2=0.9980 | best_expr=(m2 - 0.014442499) * (((-0.037890792 / r) * (((m1 - ((((r * 0.008028777) / m1) /
+  [System 2 Symbolic] '[X-normalised: m1÷5.150e+11, m2÷4.745e+11, r÷4.971'  R²=0.9980  extrap(near=-inf, medium=-inf, far=-inf)  34.7s
+  [ 1136.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 1136.7s] generate_data: Gravitational Force  N=200  noise=0.05  seed=91
+  [ 1136.7s] generate_data done: X_train=(160, 3)
+[ADAPTIVE-V50_2] 87 iters (spread=4.5dec, vars=3, depth=2, diff=medium, score=0.36) — eq='gravitational force'
+  [Hybrid v50_2] 'sqrt((((0.10393099 ^ r) * (0.22409354 / r)) * ((m1'  R²=0.9877  extrap(near=None, medium=None, far=None)  151.4s
+  [ 1288.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [08] Ideal Gas Law  [Physics]
+────────────────────────────────────────────────────────────
+  [ 1288.0s] generate_data: Ideal Gas Law  N=200  noise=0.05  seed=98
+  [ 1288.0s] generate_data done: X_train=(160, 3)
+  [Pure LLM] 'import numpy as np\n\ndef formula(n, T, V):\n    # R '  R²=0.9976  extrap(near=None, medium=None, far=None)  7.6s
+  [ 1295.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 1295.6s] generate_data: Ideal Gas Law  N=200  noise=0.05  seed=98
+  [ 1295.6s] generate_data done: X_train=(160, 3)
+  [Neural Network] 'ImprovedNN(3→256→128→64→32→1,log)'  R²=0.8348  extrap(near=-55.4094188217408, medium=-12.965463407447299, far=-inf)  1.2s
+  [ 1296.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 1296.8s] generate_data: Ideal Gas Law  N=200  noise=0.05  seed=98
+  [ 1296.8s] generate_data done: X_train=(160, 3)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  8.7s
+  [ 1305.5s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 1305.5s] generate_data: Ideal Gas Law  N=200  noise=0.05  seed=98
+  [ 1305.5s] generate_data done: X_train=(160, 3)
+[ADAPTIVE-SE] 109 iters  pysr_timeout=750s  proc_timeout=870s  (spread=3.7dec, vars=3, score=0.35)
+   [SE-TRACE] domain='physics' | eq='Ideal Gas Law' | vars=['n', 'x0', 'V'] | n=160 | niter=109 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(11, '((n * 0.00030219223) * (((n / ((V * -0.3455228) + 0.16715993)) * 0.030815952) + (x0 * 0.3730109))) / V', 0.9978), (12, '((((n / ((V * -0.3455228) + 0.1662587)) * 0.020522349) + (0.3730109 * x0)) + n) * (n * (0.00029611442 / V))', 0.9978), (13, '(((((n / (((V * -0.3455228) + 0.1662587) * 0.7512641)) * 0.020522349) + (x0 * 0.3730109)) + n) * 0.00029611442) * (n / V)', 0.9978), (14, '(((n * 0.00029611442) * ((n + ((0.020522349 * n) / (((V * -0.3455228) + 0.1662587) * 0.7512641))) + (x0 * 0.3730109))) / V) + -0.0008354644', 0.9978), (8, '((n / V) + -0.064738385) * ((x0 * 0.000111648274) + (n * (0.09467683 / x0)))', 0.9977)] | best_r2=0.9978 | best_expr=(((n * 0.00029611442) * ((n + ((0.020522349 * n) / (((V * -0.3455228) + 0.166258
+  [System 2 Symbolic] '7.346877e+04 * ((((n * 0.00029611442) * ((n + ((0.'  R²=0.9978  extrap(near=0.999340942306577, medium=0.9971340890288367, far=0.9992831073673505)  34.1s
+  [ 1339.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 1339.6s] generate_data: Ideal Gas Law  N=200  noise=0.05  seed=98
+  [ 1339.6s] generate_data done: X_train=(160, 3)
+[ADAPTIVE-V50_2] 85 iters (spread=3.7dec, vars=3, depth=2, diff=medium, score=0.35) — eq='ideal gas law'
+  [Hybrid v50_2] '7.346877e+04 * (-0.00011228595 * ((n * ((n - sqrt('  R²=0.9978  extrap(near=0.9906495626672828, medium=0.9992528749168454, far=0.9908742115173691)  104.7s
+  [ 1444.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [09] Impermanent Loss  [DeFi AMM]
+────────────────────────────────────────────────────────────
+  [ 1444.4s] generate_data: Impermanent Loss  N=200  noise=0.05  seed=105
+  [ 1444.4s] generate_data done: X_train=(160, 1)
+  [Pure LLM] 'def formula(r):\n    # r: price ratio (P_new / P_in'  R²=-1.1683  extrap(near=-1.4867685669639652, medium=-inf, far=-inf)  8.4s
+  [ 1452.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 1452.8s] generate_data: Impermanent Loss  N=200  noise=0.05  seed=105
+  [ 1452.8s] generate_data done: X_train=(160, 1)
+  [Neural Network] 'ImprovedNN(1→128→64→32→1,lin)'  R²=0.9975  extrap(near=0.9640791485421606, medium=0.9187310262298753, far=0.37315950322520197)  0.5s
+  [ 1453.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 1453.3s] generate_data: Impermanent Loss  N=200  noise=0.05  seed=105
+  [ 1453.3s] generate_data done: X_train=(160, 1)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  12.1s
+  [ 1465.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 1465.4s] generate_data: Impermanent Loss  N=200  noise=0.05  seed=105
+  [ 1465.4s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-SE] 82 iters  pysr_timeout=750s  proc_timeout=870s  (spread=3.2dec, vars=1, score=0.21)
+   [SE-TRACE] domain='defi_amm' | eq='Impermanent Loss' | vars=['r'] | n=160 | niter=82 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(10, '(((sqrt(r) - r) * 95.87388) + ((r * 47.862446) - 47.842896)) / (((r / 0.8633874) + 1.0182886) * 0.43596432)', 0.9977), (11, '((((sqrt(r) - r) * 95.84243) - 47.864285) + (47.882404 * r)) / ((r / 2.0222144) + ((r / r) - 0.54573125))', 0.9977), (7, '(((sqrt(r) * (-50.342255 - ((51.515636 - r) * r))) / r) + 101.85473) - r', 0.9976), (8, '101.85473 + (sqrt(r) * (((-50.342255 - ((51.515636 - r) * r)) / r) - sqrt(r)))', 0.9976), (9, '((-10.325689 - (((r * ((sqrt(r) * -5.084674) + 11.514278)) * r) * r)) / r) + 16.760517', 0.9976)] | best_r2=0.9977 | best_expr=((((sqrt(r) - r) * 95.84243) - 47.864285) + (47.882404 * r)) / ((r / 2.0222144) 
+  [System 2 Symbolic] '((((sqrt(r) - r) * 95.84243) - 47.864285) + (47.88'  R²=0.9977  extrap(near=0.9991477863187285, medium=0.9967215224374181, far=0.8835202925516448)  30.6s
+  [ 1496.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 1496.0s] generate_data: Impermanent Loss  N=200  noise=0.05  seed=105
+  [ 1496.0s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-V50_2] 67 iters (spread=3.2dec, vars=1, depth=2, diff=medium, score=0.21) — eq='impermanent loss'
+  [Hybrid v50_2] '(((((r ^ (r * -1.1658773)) * 1.1282332) / (r ^ sqr'  R²=0.9977  extrap(near=0.739633554396474, medium=-46.10068802950704, far=-inf)  104.9s
+  [ 1600.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [10] Price Impact  [DeFi AMM]
+────────────────────────────────────────────────────────────
+  [ 1600.9s] generate_data: Price Impact  N=200  noise=0.05  seed=112
+  [ 1600.9s] generate_data done: X_train=(160, 2)
+  [Pure LLM] 'def formula(dx, x):\n    # Price impact for constan'  R²=0.9976  extrap(near=None, medium=None, far=None)  7.1s
+  [ 1608.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 1608.0s] generate_data: Price Impact  N=200  noise=0.05  seed=112
+  [ 1608.0s] generate_data done: X_train=(160, 2)
+  [Neural Network] 'ImprovedNN(2→128→64→32→1,log)'  R²=0.9972  extrap(near=0.4281713982771018, medium=-0.05413562865333921, far=-20.284226465462968)  0.5s
+  [ 1608.5s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 1608.5s] generate_data: Price Impact  N=200  noise=0.05  seed=112
+  [ 1608.5s] generate_data done: X_train=(160, 2)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  9.7s
+  [ 1618.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 1618.3s] generate_data: Price Impact  N=200  noise=0.05  seed=112
+  [ 1618.3s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-SE] 93 iters  pysr_timeout=750s  proc_timeout=870s  (spread=2.8dec, vars=2, score=0.27)
+   [SE-TRACE] domain='defi_amm' | eq='Price Impact' | vars=['dx', 'x'] | n=160 | niter=93 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(9, '((0.012441206 / dx) + dx) / (x + (((dx * 0.10076803) * dx) + (8.898714 / dx)))', 0.9977), (10, 'dx / ((dx + x) + (((x * 0.005839399) + -1.2148371) / (dx + (sqrt((dx * 0.09473987) * x) * -0.48456845))))', 0.9977), (11, 'dx / (dx + (x + ((-1.4114207 + (x * (0.54817516 * 0.0122813))) / (dx + (sqrt(dx * (0.09473987 * x)) * -0.48456845)))))', 0.9977), (12, 'dx / (((-1.4114207 + (x * (0.0122813 * sqrt(0.35974193)))) / (dx + (-0.48456845 * sqrt(0.09473987 * (x * dx))))) + (x + dx))', 0.9977), (2, 'dx / (dx + x)', 0.9976)] | best_r2=0.9977 | best_expr=dx / (((-1.4114207 + (x * (0.0122813 * sqrt(0.35974193)))) / (dx + (-0.48456845 
+  [System 2 Symbolic] 'dx / (((-1.4114207 + (x * (0.0122813 * sqrt(0.3597'  R²=0.9977  extrap(near=0.9999452438652169, medium=0.998247636557357, far=0.9999955016506954)  32.1s
+  [ 1650.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 1650.4s] generate_data: Price Impact  N=200  noise=0.05  seed=112
+  [ 1650.4s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-V50_2] 75 iters (spread=2.8dec, vars=2, depth=2, diff=medium, score=0.27) — eq='price impact'
+  [Hybrid v50_2] '(dx / ((sqrt(sqrt(dx)) / (dx + -0.7546074)) + ((x '  R²=0.9977  extrap(near=0.9994870977251011, medium=0.9999920041430813, far=0.999391083593832)  93.9s
+  [ 1744.2s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [11] Constant Product  [DeFi AMM]
+────────────────────────────────────────────────────────────
+  [ 1744.2s] generate_data: Constant Product  N=200  noise=0.05  seed=119
+  [ 1744.2s] generate_data done: X_train=(160, 1)
+  [Pure LLM] 'def formula(x, y):\n    # Constant Product Formula '  R²=-0.2325  extrap(near=-inf, medium=None, far=None)  7.7s
+  [ 1751.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 1751.9s] generate_data: Constant Product  N=200  noise=0.05  seed=119
+  [ 1751.9s] generate_data done: X_train=(160, 1)
+  [Neural Network] 'ImprovedNN(1→128→64→32→1,log)'  R²=0.9982  extrap(near=-9.426172313769987, medium=-inf, far=-inf)  0.5s
+  [ 1752.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 1752.4s] generate_data: Constant Product  N=200  noise=0.05  seed=119
+  [ 1752.4s] generate_data done: X_train=(160, 1)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  9.3s
+  [ 1761.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 1761.7s] generate_data: Constant Product  N=200  noise=0.05  seed=119
+  [ 1761.7s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-SE] 82 iters  pysr_timeout=750s  proc_timeout=870s  (spread=3.1dec, vars=1, score=0.21)
+   [SE-TRACE] domain='defi_amm' | eq='Constant Product' | vars=['x'] | n=160 | niter=82 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(6, '((-10.052316 / (x + -1.3202893)) + 10021.668) / x', 0.9984), (7, '((10035.233 / x) + -1.8221681) + (-7.5986056 / (x + -1.3208615))', 0.9984), (8, '(((-10.190277 / (x + -1.3193074)) + 10022.725) / x) - (x * 0.046373267)', 0.9984), (9, '(((-10.671148 / (x + -1.3160808)) + 10008.569) / x) + ((x * -0.10877313) + 4.3665147)', 0.9984), (10, '(((x / (-9.583371 + sqrt(x))) + 10008.641) / x) + (-8.157722 / (-1.3103315 + x))', 0.9984)] | best_r2=0.9984 | best_expr=((-8.1579275 / (x + -1.31131)) + (10008.641 / x)) + (-0.88090456 - (x / (sqrt((x
+  [System 2 Symbolic] '((-8.1579275 / (x + -1.31131)) + (10008.641 / x)) '  R²=0.9984  extrap(near=0.9436123019898786, medium=0.9538647456958768, far=-6.283324607490944)  32.0s
+  [ 1793.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 1793.7s] generate_data: Constant Product  N=200  noise=0.05  seed=119
+  [ 1793.7s] generate_data done: X_train=(160, 1)
+[ADAPTIVE-V50_2] 67 iters (spread=3.1dec, vars=1, depth=2, diff=medium, score=0.21) — eq='constant product'
+  [Hybrid v50_2] '(((-4.017197 / ((x - 1.3105099) * 0.36521998)) + 1'  R²=0.9984  extrap(near=0.9986465423587838, medium=0.9993920917676749, far=0.9451308255839267)  87.4s
+  [ 1881.1s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [12] Value at Risk  [DeFi Risk]
+────────────────────────────────────────────────────────────
+  [ 1881.1s] generate_data: Value at Risk  N=200  noise=0.05  seed=126
+  [ 1881.1s] generate_data done: X_train=(160, 2)
+  [Pure LLM] 'def formula(P, sigma):\n    z = 1.645  # z-score fo'  R²=0.9979  extrap(near=None, medium=None, far=None)  8.8s
+  [ 1889.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 1889.8s] generate_data: Value at Risk  N=200  noise=0.05  seed=126
+  [ 1889.8s] generate_data done: X_train=(160, 2)
+  [Neural Network] 'ImprovedNN(2→128→64→32→1,log)'  R²=0.9981  extrap(near=0.3268411129711176, medium=-1.4006408952762683, far=-27.9962103229119)  0.5s
+  [ 1890.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 1890.4s] generate_data: Value at Risk  N=200  noise=0.05  seed=126
+  [ 1890.4s] generate_data done: X_train=(160, 2)
+  [System 3 LLM+Fallback] 'N/A'  R²=0.9991  extrap(near=None, medium=None, far=None)  12.0s
+  [ 1902.4s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 1902.4s] generate_data: Value at Risk  N=200  noise=0.05  seed=126
+  [ 1902.4s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-SE] 89 iters  pysr_timeout=750s  proc_timeout=870s  (spread=1.6dec, vars=2, score=0.25)
+   [SE-TRACE] domain='defi_risk' | eq='Value at Risk' | vars=['P', 'sigma'] | n=160 | niter=89 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(3, '((sigma / 0.6028738) + -0.0008011586) * P', 0.998), (4, '(sigma * sqrt(sigma + 2.6365037)) * P', 0.998), (5, '((sigma * 0.34734097) + 1.6205473) * (sigma * P)', 0.998), (6, 'sqrt(sigma + 2.6285672) * ((sigma * P) - -0.64432925)', 0.998), (7, '((sigma * P) * ((sigma * 0.4265973) + 1.6102725)) + 1.8605273', 0.998)] | best_r2=0.9980 | best_expr=((((sqrt(sigma) * sqrt(sqrt(sigma) * 0.61887187)) + ((sigma * sigma) * 3.7011168
+  [System 2 Symbolic] '((((sqrt(sigma) * sqrt(sqrt(sigma) * 0.61887187)) '  R²=0.9980  extrap(near=0.935705291449358, medium=0.7814662541024016, far=-19.145515661026362)  34.2s
+  [ 1936.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 1936.6s] generate_data: Value at Risk  N=200  noise=0.05  seed=126
+  [ 1936.6s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-V50_2] 72 iters (spread=1.6dec, vars=2, depth=2, diff=medium, score=0.25) — eq='value at risk'
+  [Hybrid v50_2] '((((2.2017937 ^ (sigma + sigma)) - -0.10483769) + '  R²=0.9980  extrap(near=0.9673607500188373, medium=0.8945193503330119, far=-12.641246760762677)  123.4s
+  [ 2060.0s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [13] Liquidation Price  [DeFi Risk]
+────────────────────────────────────────────────────────────
+  [ 2060.0s] generate_data: Liquidation Price  N=200  noise=0.05  seed=133
+  [ 2060.0s] generate_data done: X_train=(160, 2)
+WARNING: _generate_specialized_prompt matched no branch for 'Liquidation Price' (domain=defi_risk). Falling back to standard prompt. Add a matching branch if this case requires structured output.
+  [Pure LLM] 'def formula(p0, L):\n    # p0: entry price of the a'  R²=0.9175  extrap(near=None, medium=None, far=None)  6.3s
+  [ 2066.3s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 2066.3s] generate_data: Liquidation Price  N=200  noise=0.05  seed=133
+  [ 2066.3s] generate_data done: X_train=(160, 2)
+  [Neural Network] 'ImprovedNN(2→128→64→32→1,log)'  R²=0.9967  extrap(near=0.9666274378661347, medium=0.7775658573659461, far=-5.111542751076684)  0.5s
+  [ 2066.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 2066.9s] generate_data: Liquidation Price  N=200  noise=0.05  seed=133
+  [ 2066.9s] generate_data done: X_train=(160, 2)
+WARNING: _generate_specialized_prompt matched no branch for 'Liquidation Price' (domain=defi_risk). Falling back to standard prompt. Add a matching branch if this case requires structured output.
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  10.0s
+  [ 2076.9s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 2076.9s] generate_data: Liquidation Price  N=200  noise=0.05  seed=133
+  [ 2076.9s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-SE] 93 iters  pysr_timeout=750s  proc_timeout=870s  (spread=2.6dec, vars=2, score=0.27)
+   [SE-TRACE] domain='defi_risk' | eq='Liquidation Price' | vars=['p0', 'L'] | n=160 | niter=93 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(12, '((p0 + 57.62999) / (L / ((0.988282 * L) + -1.2153504))) + (-31.788506 - (-0.24357866 * (L / (L + -2.8399067))))', 0.9976), (13, '((p0 + 57.62999) / (L / ((L * 0.98880166) + -1.2169275))) + ((((L / p0) * 287.54776) / (L + -2.8352132)) - 31.27131)', 0.9976), (14, '(((p0 + 56.828724) / (L / ((L * 0.9887807) + -1.2170751))) + (((L / -0.21021868) * (-70.08932 / (L + -2.835416))) / p0)) - 30.560246', 0.9976), (15, '(((p0 + 57.62999) / (L / (-1.2153468 + (L * 0.9883401)))) + -31.788506) - ((57.62999 * sqrt(L / p0)) / ((L + -2.837746) * -2.8399062))', 0.9976), (16, '(((p0 + 57.62999) / (L / (-1.2153468 + (L * 0.9883401)))) + -31.788506) - ((sqrt(L / p0) * (57.62999 / ((L + -2.837746) * -2.8399062))) - 0.23230805)', 0.9976)] | best_r2=0.9976 | best_expr=((((p0 + 57.62999) / (L / ((L * 0.98828125) + -1.2153773))) + 2.129173) - (((((L
+  [System 2 Symbolic] '((((p0 + 57.62999) / (L / ((L * 0.98828125) + -1.2'  R²=0.9976  extrap(near=0.9985202443604904, medium=0.999439541395508, far=0.9934877421430246)  33.7s
+  [ 2110.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 2110.6s] generate_data: Liquidation Price  N=200  noise=0.05  seed=133
+  [ 2110.6s] generate_data done: X_train=(160, 2)
+[ADAPTIVE-V50_2] 74 iters (spread=2.6dec, vars=2, depth=2, diff=medium, score=0.27) — eq='liquidation price'
+  [Hybrid v50_2] '(((L + (p0 / (L / 0.988152))) * (L + -1.2330321)) '  R²=0.9976  extrap(near=0.9995123586808893, medium=0.9993447788376355, far=0.9843499730771296)  103.1s
+  [ 2213.7s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+────────────────────────────────────────────────────────────
+▶  [14] Portfolio Std Dev  [DeFi Risk]
+────────────────────────────────────────────────────────────
+  [ 2213.7s] generate_data: Portfolio Std Dev  N=200  noise=0.05  seed=140
+  [ 2213.7s] generate_data done: X_train=(160, 3)
+  [Pure LLM] 'def formula(s1, s2, rho):\n    w1 = 0.5\n    w2 = 0.'  R²=-0.9583  extrap(near=None, medium=None, far=None)  10.9s
+  [ 2224.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Pure LLM saved to checkpoint
+  [ 2224.6s] generate_data: Portfolio Std Dev  N=200  noise=0.05  seed=140
+  [ 2224.6s] generate_data done: X_train=(160, 3)
+  [Neural Network] 'ImprovedNN(3→256→128→64→32→1,log)'  R²=0.9975  extrap(near=0.9506876642743515, medium=0.8614337276496894, far=-24.42561101046424)  1.2s
+  [ 2225.8s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Neural Network saved to checkpoint
+  [ 2225.8s] generate_data: Portfolio Std Dev  N=200  noise=0.05  seed=140
+  [ 2225.8s] generate_data done: X_train=(160, 3)
+  [System 3 LLM+Fallback] 'N/A'  R²=1.0000  extrap(near=None, medium=None, far=None)  11.8s
+  [ 2237.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 3 LLM+Fallback saved to checkpoint
+  [ 2237.6s] generate_data: Portfolio Std Dev  N=200  noise=0.05  seed=140
+  [ 2237.6s] generate_data done: X_train=(160, 3)
+[ADAPTIVE-SE] 101 iters  pysr_timeout=750s  proc_timeout=870s  (spread=1.4dec, vars=3, score=0.31)
+   [SE-TRACE] domain='defi_risk' | eq='Portfolio Std Dev' | vars=['s1', 's2', 'rho'] | n=160 | niter=101 | pysr_to=750 | parsimony_cfg=0.01 | use_tc=False | explog=skipped | eq_file_kwarg='temp_equation_file' | x_scaled=none | ratio_features=skipped | pop_scale=skipped(multithreading,pops=30) | pareto_top5=[(12, 'sqrt((s2 + (((rho - ((-0.9950488 / s2) * s1)) + rho) * s1)) * s2)', 0.9976), (13, 'sqrt((s2 * ((s1 * ((rho + rho) - ((-0.9903778 / s2) * s1))) + s2)) + 3.837238e-5)', 0.9976), (14, 'sqrt((s1 * 0.0029770182) + (s2 * ((s1 * ((rho + rho) - ((s1 * -0.9741183) / s2))) + s2)))', 0.9976), (15, 'sqrt((((((rho - ((-0.711137 / s2) * (s1 / 0.7287543))) + rho) * s1) + s2) * s2) + (s1 * 0.0027073708))', 0.9976), (16, 'sqrt(((s2 + (s1 * ((rho - (((s1 * -0.7111949) / s2) / 0.72869986)) + rho))) * s2) + ((s1 + -0.004249531) * 0.0028131998))', 0.9976)] | best_r2=0.9976 | best_expr=sqrt((s2 * (s2 + (((rho + rho) - ((s1 * -0.994514) / s2)) * s1))) - ((((s1 + -0.
+  [System 2 Symbolic] 'sqrt((s2 * (s2 + (((rho + rho) - ((s1 * -0.994514)'  R²=0.9976  extrap(near=0.9999040996214968, medium=0.9999531719914302, far=0.9999880713519933)  33.0s
+  [ 2270.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ System 2 Symbolic saved to checkpoint
+  [ 2270.6s] generate_data: Portfolio Std Dev  N=200  noise=0.05  seed=140
+  [ 2270.6s] generate_data done: X_train=(160, 3)
+[ADAPTIVE-V50_2] 80 iters (spread=1.4dec, vars=3, depth=2, diff=medium, score=0.31) — eq='portfolio std dev'
+  [Hybrid v50_2] '(s2 - (((((sqrt(s1) * (0.63701415 - (s1 * rho))) *'  R²=0.9920  extrap(near=0.7808334084771213, medium=0.8564685234037426, far=-61.17010901523905)  75.0s
+  [ 2345.6s] Checkpoint saved: /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_checkpoint.json
+  ✓ Hybrid v50_2 saved to checkpoint
+
+✅ Results saved → /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_results.json
+   Complete: 15/15 equations (all 5 methods)
+✅ Performance sub-table → /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_performance.json
+✅ Extrapolation sub-table → /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/exp1_five_extrapolation.json
+✅ Provenance → /home/runner/work/LLM-HypatiaX-REPRO/LLM-HypatiaX-REPRO/hypatiax/data/results/five_systems/exp1_five/provenance_map_exp1_five.json
+
+✅ exp1_five_system.py complete — all outputs written.

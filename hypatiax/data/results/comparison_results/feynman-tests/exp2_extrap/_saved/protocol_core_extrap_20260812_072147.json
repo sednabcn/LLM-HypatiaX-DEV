@@ -1,0 +1,384 @@
+{
+  "timestamp": "2026-08-12T07:21:47.024883",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "extrap",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 2,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Snell's law: refracted angle from incident angle and refract": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(n1, theta1, n2):\n    # theta1 in radians\n    return np.arcsin((n1 / "
+      },
+      "Double-slit wave interference intensity": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(I1, I2, delta):\n    import numpy as np\n    return I1 + I2 + 2*np.sqr"
+      }
+    }
+  },
+  "total_tests": 2,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "EnhancedHybridSystemDeFi (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Snell's law: refracted angle from incident angle and refractive indices",
+      "domain": "feynman_optics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 2.5183008244568946e-17,
+          "formula": "def formula(n1, theta1, n2):\n    # theta1 in radians\n    return np.arcsin((n1 / n2) * np.sin(theta1))",
+          "formula_hash": "52734fced3727cff7195c223a6ee00454e2eb5ff7fef7ce4b2c7a94186af2bb6",
+          "error": null,
+          "time": 7.903197765350342,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.99994075146414,
+          "rmse": 0.001219697874538226,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.081052541732788,
+          "metadata": {}
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999999999483241,
+          "rmse": 1.1390880625715098e-06,
+          "formula": "def formula(n1, theta1, n2):\n    # Clip argument to [-1, 1] to handle numerical edge cases (total internal reflection boundary)\n    sin_theta2 = (n1 / n2) * np.sin(theta1)\n    sin_theta2_clipped = np.maximum(-1.0, np.minimum(1.0, sin_theta2))\n    return np.arcsin(sin_theta2_clipped)",
+          "formula_hash": "608a0c3ada804c1928ae4f23346e90dd6f1a695c333026fb78b55fa6043c3cd6",
+          "error": null,
+          "time": 12.536725282669067,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.341855143752688e-17,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 11.393533706665039,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "safe_asin((sin(theta1) * n1) / n2)",
+          "formula_hash": "be78538e053cc50bc4ddb3d57edf494b0e3559c6179519d29f63b195de1ae836",
+          "error": null,
+          "time": 42.743478536605835,
+          "metadata": {
+            "iterations": 120
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "safe_asin((n1 / n2) * sin(theta1))",
+          "formula_hash": "b544aec1d8cf1d283015fa9a1d80a22ed2318ceefc4cf093da8f2091c182e197",
+          "error": null,
+          "time": 64.44418859481812,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.99994075146414,
+          "EnhancedHybridSystemDeFi (core)": 0.9999999999483241,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 1.0,
+          "HybridDiscoverySystem v50_2 (tools)": 1.0
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "EnhancedHybridSystemDeFi (core)": 3,
+          "ImprovedNN (core)": 4,
+          "SymbolicEngineWithLLM (tools)": 5,
+          "HybridDiscoverySystem v50_2 (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "EnhancedHybridSystemDeFi (core)",
+            "diff": 5.1675885792690224e-11,
+            "pct": 5.167588579536062e-09
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 5.924853586003476e-05,
+            "pct": 0.005925204645703405
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 0.15845773933974938,
+          "mean": 0.22358149982748854,
+          "range": 0.7520312980945734,
+          "max": 0.7591875144844338,
+          "denom": 0.15845773933974938
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T07:19:30.360931",
+      "extrap_r2_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 1.0,
+        "HybridDiscoverySystem v50_2 (tools)": 1.0
+      },
+      "extrap_rmse_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 0.0,
+        "HybridDiscoverySystem v50_2 (tools)": 3.262940617574229e-17
+      },
+      "extrap_error_pct": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": null,
+        "HybridDiscoverySystem v50_2 (tools)": 129.569135898525
+      },
+      "extrap_train_frac": 0.8,
+      "extrap_multiplier": 2.0,
+      "extrap_n_train": 160,
+      "extrap_n_test": 40,
+      "extrap_x_train_max": 1.8036720768991144,
+      "extrap_far_ceiling": 3.3999719964501383
+    },
+    {
+      "description": "Double-slit wave interference intensity",
+      "domain": "feynman_optics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(I1, I2, delta):\n    import numpy as np\n    return I1 + I2 + 2*np.sqrt(I1*I2)*np.cos(delta)",
+          "formula_hash": "36136dfc7d9f198a9295f762af66de42fb655391d625d063ee49adec9b409094",
+          "error": null,
+          "time": 6.91519021987915,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9998775023192027,
+          "rmse": 0.046747981196131216,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.0421268939971924,
+          "metadata": {}
+        },
+        "EnhancedHybridSystemDeFi (core)": {
+          "method": "EnhancedHybridSystemDeFi (core)",
+          "success": true,
+          "r2": 0.9999999999417016,
+          "rmse": 3.224981273240892e-05,
+          "formula": "def formula(I1, I2, delta):\n    # Double-slit wave interference intensity\n    # I1, I2: individual beam intensities\n    # delta: phase difference between the two waves\n    return I1 + I2 + 2 * np.sqrt(I1 * I2) * np.cos(delta)",
+          "formula_hash": "ed8c4e2a54b46017b2a1645872a7ec831e63653e598e82f12135920b496e56c5",
+          "error": null,
+          "time": 13.773615837097168,
+          "metadata": {
+            "decision": "ensemble",
+            "nn_applied": true
+          }
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 8.599960549520755e-16,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 11.731462001800537,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "((cos(delta) * (gm_I1_I2 * 2.0)) + (I1 + I2)) * 1.0",
+          "formula_hash": "fcc144bd9a8f6760b7289ced9a15f7bd19ab4ed4ec24dbfa1e1318ebf67f81e4",
+          "error": null,
+          "time": 43.50751185417175,
+          "metadata": {
+            "iterations": 140
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "(I2 + I1) + (cos(delta) * (gm_I1_I2 + gm_I1_I2))",
+          "formula_hash": "cdf7e505dc9ee1a4c7745be5b143c459efb2b03cc39a5a4cd73ae88cffb99cc9",
+          "error": null,
+          "time": 59.686612129211426,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9998775023192027,
+          "EnhancedHybridSystemDeFi (core)": 0.9999999999417016,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 1.0,
+          "HybridDiscoverySystem v50_2 (tools)": 1.0
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "EnhancedHybridSystemDeFi (core)": 3,
+          "ImprovedNN (core)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5,
+          "SymbolicEngineWithLLM (tools)": 6
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "EnhancedHybridSystemDeFi (core)",
+            "diff": 5.829836613457928e-11,
+            "pct": 5.8298366137977986e-09
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0001224976807973066,
+            "pct": 0.012251268831749373
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 4.223757028394101,
+          "mean": 4.891593238295782,
+          "range": 16.81440651469851,
+          "max": 16.819268970008036,
+          "denom": 4.223757028394101
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T07:21:47.021685",
+      "extrap_r2_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 1.0,
+        "HybridDiscoverySystem v50_2 (tools)": 1.0
+      },
+      "extrap_rmse_far": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 3.2465140850820826e-13,
+        "HybridDiscoverySystem v50_2 (tools)": 3.2465140850820826e-13
+      },
+      "extrap_error_pct": {
+        "PureLLM Baseline (core)": null,
+        "ImprovedNN (core)": null,
+        "EnhancedHybridSystemDeFi (core)": null,
+        "HybridSystemLLMNN all-domains (core)": null,
+        "SymbolicEngineWithLLM (tools)": 32.25693631012798,
+        "HybridDiscoverySystem v50_2 (tools)": 32.25693631012798
+      },
+      "extrap_train_frac": 0.8,
+      "extrap_multiplier": 2.0,
+      "extrap_n_train": 160,
+      "extrap_n_test": 40,
+      "extrap_x_train_max": 4.101077155170459,
+      "extrap_far_ceiling": 12.097193789131211
+    }
+  ]
+}

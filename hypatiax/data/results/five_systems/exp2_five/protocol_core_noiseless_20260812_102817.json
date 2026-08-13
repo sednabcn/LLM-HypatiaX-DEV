@@ -1,0 +1,398 @@
+{
+  "timestamp": "2026-08-12T10:28:17.924077",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "noiseless",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 3,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Pythagorean Theorem: c = sqrt(a\u00b2 + b\u00b2)": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(a, b):\n    # Pythagorean theorem: hypotenuse length\n    return np.sq"
+      },
+      "Compound Interest: A = P*(1+r/n)^(n*t)": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "import numpy as np\n\ndef formula(P, r, n, t):\n    # P: principal, r: annual inter"
+      },
+      "Quadratic Discriminant: \u0394 = b\u00b2 - 4ac": {
+        "truncated": false,
+        "r2": 0.0,
+        "success": false,
+        "formula": "N/A"
+      }
+    }
+  },
+  "total_tests": 3,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Pythagorean Theorem: c = sqrt(a\u00b2 + b\u00b2)",
+      "domain": "mathematics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(a, b):\n    # Pythagorean theorem: hypotenuse length\n    return np.sqrt(a**2 + b**2)",
+          "formula_hash": "2047a58d3073f26b9cb84e99ee3c0c8d269aefbc317dfbd2ce5df2e8076f60f8",
+          "error": null,
+          "time": 5.805402994155884,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999800869323191,
+          "rmse": 0.0116374624979901,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 0.5760269165039062,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.0751408024913127e-15,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 9.080222368240356,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "sqrt((b * b) + (a * a))",
+          "formula_hash": "e2c328491614fb65fac9cc6296b6b5459a301bbc4773f2b5e3330ad3eb9d233e",
+          "error": null,
+          "time": 34.36002516746521,
+          "metadata": {
+            "iterations": 72
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9999999997968309,
+          "rmse": 3.7172186659310366e-05,
+          "formula": "b * sqrt((a / ((b * b) / a)) + 1.0000149)",
+          "formula_hash": "629594b6414b514e59d5b4784f46d4e59f98772fb256a7dd9492be311d97f60a",
+          "error": null,
+          "time": 47.514728307724,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999800869323191,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 1.0,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9999999997968309
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 2.031691481718667e-10,
+            "pct": 2.031691482131444e-08
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 1.9913067680898955e-05,
+            "pct": 0.0019913464219059713
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 2.6078896427782268,
+          "mean": 8.154668122510891,
+          "range": 11.186311909391534,
+          "max": 12.822085809818224,
+          "denom": 2.6078896427782268
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T10:22:41.247893"
+    },
+    {
+      "description": "Compound Interest: A = P*(1+r/n)^(n*t)",
+      "domain": "mathematics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "import numpy as np\n\ndef formula(P, r, n, t):\n    # P: principal, r: annual interest rate (decimal), n: compounding periods per year, t: time in years\n    A = P * np.power(1 + r / n, n * t)\n    return A",
+          "formula_hash": "471d09b14902fb6c9cf146559d88f79962e61c07ec9493383c3708708fb6dc1e",
+          "error": null,
+          "time": 7.990598440170288,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999137431677353,
+          "rmse": 79.73639772855124,
+          "formula": "ImprovedNN(4\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.6232290267944336,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 7.477327736040881e-12,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 17.395302772521973,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9994744280183437,
+          "rmse": 196.82305186140013,
+          "formula": "((safe_asin(-0.39538282 + ((r * t) * -0.2951732)) * ((((r * (P + ((n * t) * 2.2864766))) * -2.2088437) - -19.926128) * t)) + P) + t",
+          "formula_hash": "1407725af201e01eb2b13fe87a48c41ca8a62c0ecde5c290abf966c4d94a96aa",
+          "error": null,
+          "time": 43.84672260284424,
+          "metadata": {
+            "iterations": 114
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9999699189590295,
+          "rmse": 47.087571177027755,
+          "formula": "(2.7092776 ^ (r * t)) * (((-201.6515 - ((2.7092776 ^ -0.23362722) - ((t * r) * ((-0.26637465 ^ n) * (P / (0.6363707 / cos(-0.29557842))))))) * r) + P)",
+          "formula_hash": "db9fd8cc68550304da8e2b2a6bca93d18ceeb388ca0248b7848edca5df5d7d1e",
+          "error": null,
+          "time": 168.43041229248047,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999137431677353,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9994744280183437,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9999699189590295
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "HybridDiscoverySystem v50_2 (tools)": 4,
+          "SymbolicEngineWithLLM (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 3.008104097046438e-05,
+            "pct": 0.0030081945866710464
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 8.625683226470837e-05,
+            "pct": 0.00862642731476477
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0005255719816562587,
+            "pct": 0.05258483528170995
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 8585.386656949111,
+          "mean": 11196.410548253649,
+          "range": 44949.57991659288,
+          "max": 46402.22063984326,
+          "denom": 8585.386656949111
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T10:26:40.535971"
+    },
+    {
+      "description": "Quadratic Discriminant: \u0394 = b\u00b2 - 4ac",
+      "domain": "mathematics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": false,
+          "r2": 0.0,
+          "rmse": Infinity,
+          "formula": "N/A",
+          "formula_hash": "",
+          "error": "Evaluation failed: All evaluation strategies failed. Function has 3 params: ['a', 'b', 'c'], Data has 3 features, var_names: ['a', 'b', 'c']",
+          "time": 7.436945915222168,
+          "metadata": {}
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.999956465511668,
+          "rmse": 0.30514359099466887,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,lin)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.3007502555847168,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 5.148250127546932e-16,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 11.307829856872559,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "(b * b) - ((a * 4.0) * c)",
+          "formula_hash": "cc5408aa2a86517f521772b48f52ee0af0ca2b59b9a4c05618fe7f9229978cdc",
+          "error": null,
+          "time": 35.99675989151001,
+          "metadata": {
+            "iterations": 93
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "(b * b) + (a * (c * -4.0))",
+          "formula_hash": "cf3c22d01feb9f9d8d3de07ce7a0c78b5c295084d9fee66a09a94d2a1d757f74",
+          "error": null,
+          "time": 41.34138250350952,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "HybridSystemLLMNN all-domains (core)",
+        "scores": {
+          "ImprovedNN (core)": 0.999956465511668,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 1.0,
+          "HybridDiscoverySystem v50_2 (tools)": 1.0
+        },
+        "rankings": {
+          "HybridSystemLLMNN all-domains (core)": 1,
+          "ImprovedNN (core)": 2,
+          "SymbolicEngineWithLLM (tools)": 3,
+          "HybridDiscoverySystem v50_2 (tools)": 4
+        },
+        "advantages": [
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 4.35344883320532e-05,
+            "pct": 0.004353638366623993
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 46.2474222085512,
+          "mean": 43.83914911098649,
+          "range": 226.64208371009605,
+          "max": 141.39952290866262,
+          "denom": 46.2474222085512
+        }
+      },
+      "winner": "HybridSystemLLMNN all-domains (core)",
+      "timestamp": "2026-08-12T10:28:17.921463"
+    }
+  ]
+}

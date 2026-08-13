@@ -1,0 +1,408 @@
+{
+  "timestamp": "2026-08-12T09:39:46.617903",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "noiseless",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 3,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Coulomb's Law: F = 8.99e9*q1*q2/r\u00b2": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "import numpy as np\n\ndef formula(q1, q2, r):\n    k = 8.99e9\n    return k * q1 * q"
+      },
+      "Ohm's Law: V = I*R": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "import numpy as np\n\ndef formula(I, R):\n    I = np.asarray(I)\n    R = np.asarray("
+      },
+      "Lorentz Force: F = q*v*B": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(q, v, B):\n    return q * v * B\n"
+      }
+    }
+  },
+  "total_tests": 3,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Coulomb's Law: F = 8.99e9*q1*q2/r\u00b2",
+      "domain": "electromagnetism",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "import numpy as np\n\ndef formula(q1, q2, r):\n    k = 8.99e9\n    return k * q1 * q2 / np.power(r, 2)",
+          "formula_hash": "950b4ebc7b752e1893cfe87837302e015dd6c4a0f58f922cdf74686ea7f71cfa",
+          "error": null,
+          "time": 7.810349941253662,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9988668606962176,
+          "rmse": 0.042849807051084605,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.312911033630371,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.503939723059951e-15,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 11.362492322921753,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999999979,
+          "rmse": 5.832780850215477e-08,
+          "formula": "[X-normalised: q1\u00f74.845e-07, q2\u00f75.049e-07] (((q2 / r) * 0.0018281635) / (r / q1)) / 0.831307",
+          "formula_hash": "185cb7e6bacbe7467873cbce8b6b992b1956d7aafd77c9e95e253aeac55db245",
+          "error": null,
+          "time": 41.98651599884033,
+          "metadata": {
+            "iterations": 119
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9993826814246706,
+          "rmse": NaN,
+          "formula": "[X-normalised: q1\u00f74.845e-07, q2\u00f75.049e-07] 1.0812185 * tan(tan((8.742278e-8 ^ (r / (r + sqrt((q2 * ((q1 * 0.5446408) * 0.5414653)) + ((1.1729438 * r) * (1.1729438 * r)))))) - -0.00063519564))",
+          "formula_hash": "81d12a030eb945f6b9235233c20a159e8a46b3ec661ee1579378d7a871160241",
+          "error": null,
+          "time": 164.02690744400024,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9988668606962176,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999999979,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9993826814246706
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "SymbolicEngineWithLLM (tools)": 3,
+          "ImprovedNN (core)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 2.1094237467877974e-15,
+            "pct": 2.1094237467878017e-13
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0006173185753294286,
+            "pct": 0.06176998929473239
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0011331393037824489,
+            "pct": 0.11344247650709349
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 1.2729379048282552,
+          "mean": 0.23717979112689622,
+          "range": 12.031696992707628,
+          "max": 12.031701905208037,
+          "denom": 1.2729379048282552
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:36:32.042083"
+    },
+    {
+      "description": "Ohm's Law: V = I*R",
+      "domain": "electromagnetism",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "import numpy as np\n\ndef formula(I, R):\n    I = np.asarray(I)\n    R = np.asarray(R)\n    V = I * R\n    return V",
+          "formula_hash": "4852f8727b8f9cc34a360d8b09f036546a69af6c7e8a5d1d377fe1cd9f79342a",
+          "error": null,
+          "time": 6.057336807250977,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999422175638687,
+          "rmse": 16.22843428459862,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 0.5581116676330566,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.4925154501362247e-12,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 9.35358452796936,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "I * R",
+          "formula_hash": "da53e4bbfad119c599d30e6bf9fb3fa067df9ff87ed726057498447908c1a6c1",
+          "error": null,
+          "time": 35.95536684989929,
+          "metadata": {
+            "iterations": 80
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "R * I",
+          "formula_hash": "b71e6c7577cd5293f10f869f4d295e64488bbcacde36d650049c225165309159",
+          "error": null,
+          "time": 53.90500855445862,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999422175638687,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 1.0,
+          "HybridDiscoverySystem v50_2 (tools)": 1.0
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "SymbolicEngineWithLLM (tools)": 3,
+          "HybridDiscoverySystem v50_2 (tools)": 4,
+          "ImprovedNN (core)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 5.778243613130396e-05,
+            "pct": 0.005778577513416495
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 2134.905702490337,
+          "mean": 2271.6875349462734,
+          "range": 9152.438129972661,
+          "max": 9156.644301248663,
+          "denom": 2134.905702490337
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:38:17.873610"
+    },
+    {
+      "description": "Lorentz Force: F = q*v*B",
+      "domain": "electromagnetism",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(q, v, B):\n    return q * v * B\n",
+          "formula_hash": "8e583f660a7f16c2735f3ba9f74f11be9469c7fd7cf27545a15d1eb84adcd18f",
+          "error": null,
+          "time": 0.00048804283142089844,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": true
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999501145196624,
+          "rmse": 1.0020089127379108e-06,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.2941789627075195,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 7.051236172448338e-20,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 1.6789367198944092,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999992625,
+          "rmse": 1.2183254814845238e-10,
+          "formula": "[X-normalised: q\u00f75.441e-07] (v * q) * (B * 5.4410833e-7)",
+          "formula_hash": "d7ae7ecddb45548b49e34ae1e2bf55af5076307c63f6f1f85db98cf0adc881f7",
+          "error": null,
+          "time": 38.27400827407837,
+          "metadata": {
+            "iterations": 93
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9999999999884001,
+          "rmse": NaN,
+          "formula": "[X-normalised: q\u00f75.441e-07] ((q * 0.9709081) * (v * 5.604114e-7)) * (B + 1.3966161e-5)",
+          "formula_hash": "0bd351abce2995cfe4a66de69aca888c58b0b563ec92b39c56e66197ba862b25",
+          "error": null,
+          "time": 47.49112057685852,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999501145196624,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999992625,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9999999999884001
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 7.375211552584915e-13,
+            "pct": 7.375211552590355e-11
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 1.1599943228191023e-11,
+            "pct": 1.1599943228325583e-09
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 4.9885480337574784e-05,
+            "pct": 0.0049887969022872555
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 0.0001418680193129343,
+          "mean": 0.00013222225788966634,
+          "range": 0.0007577882754691818,
+          "max": 0.0007580598631420919,
+          "denom": 0.0001418680193129343
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:39:46.614053"
+    }
+  ]
+}

@@ -1,0 +1,408 @@
+{
+  "timestamp": "2026-08-12T09:53:13.272223",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "noiseless",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 3,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Bernoulli's Equation: Total = P + (1/2)*\u03c1*v\u00b2 + \u03c1*g*h": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(P, rho, v, g, h):\n    # Bernoulli's equation: total pressure/energy "
+      },
+      "Reynolds Number: Re = \u03c1*v*L/\u03bc": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(rho, v, L, mu):\n    # rho: fluid density, v: velocity, L: characteri"
+      },
+      "Hagen-Poiseuille: Q = \u03c0*r\u2074*\u0394P/(8*0.001*L)": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "import numpy as np\n\ndef formula(dP, r, L):\n    # Hagen-Poiseuille flow rate\n    "
+      }
+    }
+  },
+  "total_tests": 3,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Bernoulli's Equation: Total = P + (1/2)*\u03c1*v\u00b2 + \u03c1*g*h",
+      "domain": "fluid_dynamics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(P, rho, v, g, h):\n    # Bernoulli's equation: total pressure/energy per unit volume\n    total = P + 0.5 * rho * v**2 + rho * g * h\n    return total",
+          "formula_hash": "5cce9aa3c5821f66c9cead7595d2658e009778abebff461eb0e68821b048d1f3",
+          "error": null,
+          "time": 7.688594341278076,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9986342723416063,
+          "rmse": 1950.654720487259,
+          "formula": "ImprovedNN(5\u2192512\u2192256\u2192128\u219264\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 4.133678197860718,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 14.281830072402954,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": false
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9878949704233054,
+          "rmse": 5807.393820631215,
+          "formula": "5.278352e+04 * (((((rho * g) * h) + ((P + (v * rho)) + 0.38077638)) * 1.8909615e-5) + ((v - 0.45183775) * ((v - ((v - v) - -1.089809)) * 0.008886948)))",
+          "formula_hash": "c31fe6725cba33db5f4f546a57b9c22bdfcca33ab403821bd106df2b62d9311d",
+          "error": null,
+          "time": 48.30190110206604,
+          "metadata": {
+            "iterations": 138
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9819207140859513,
+          "rmse": 1e+150,
+          "formula": "5.278352e+04 * (((((rho ^ 0.51502055) * tan(cos(P) ^ 1.2551377)) + h) + (v + (cos(v * 0.32743323) * 1.7767428))) * 0.17645207)",
+          "formula_hash": "37a46c0820891e6e6dd47fb7ae17fdfc71c33204b3bdd7a2e7fd55ac0282cf84",
+          "error": null,
+          "time": 188.0847771167755,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9986342723416063,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9878949704233054,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9819207140859513
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0013657276583937117,
+            "pct": 0.13675954212860547
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.01210502957669457,
+            "pct": 1.22533568234563
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.018079285914048726,
+            "pct": 1.841216470402943
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 52783.52022139248,
+          "mean": 234330.95034540453,
+          "range": 282239.3958199534,
+          "max": 395288.65090701485,
+          "denom": 52783.52022139248
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:44:18.724609"
+    },
+    {
+      "description": "Reynolds Number: Re = \u03c1*v*L/\u03bc",
+      "domain": "fluid_dynamics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(rho, v, L, mu):\n    # rho: fluid density, v: velocity, L: characteristic length, mu: dynamic viscosity\n    return (rho * v * L) / mu",
+          "formula_hash": "943a9fca013e4ce57859953d44607f6e1ee55b03c34cf84172e0d6b01b5f5b8e",
+          "error": null,
+          "time": 6.5485827922821045,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9998904751158064,
+          "rmse": 2822.5529741425694,
+          "formula": "ImprovedNN(4\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.6031391620635986,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.2404535908741176e-10,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 11.899360656738281,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999980437,
+          "rmse": 0.3772335907884015,
+          "formula": "2.697030e+05 * ((((v * (rho + (((mu * -7.786933e-7) / -0.31367198) / -1.1010883))) * (L * -3.0200914e-7)) / -0.08145286) / mu)",
+          "formula_hash": "cbcde55532abbdc9325fd449fad91d00098812c6ef6ed1349828ef72e82fd258",
+          "error": null,
+          "time": 42.9245023727417,
+          "metadata": {
+            "iterations": 110
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9959080827086979,
+          "rmse": 70600.36993748246,
+          "formula": "(((((((L * rho) + cos(asin_of_sin(rho) + rho)) ^ -1.1426156) * mu) / (v - 0.17723466)) ^ -0.062154043) * 3.0852907) + (-1.6377456 - mu)",
+          "formula_hash": "dd20edcc1e67b72aff67b10e5cfc44dddc5534a1cd4fca1354c00beae1971e4a",
+          "error": null,
+          "time": 172.7473599910736,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9998904751158064,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999980437,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9959080827086979
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 1.9563239916919883e-12,
+            "pct": 1.9563239916958156e-10
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.0001095248841935792,
+            "pct": 0.010953688120780842
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.004091917291302094,
+            "pct": 0.4108729874119292
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 269702.9521648278,
+          "mean": 125024.40338019107,
+          "range": 2462069.3918850375,
+          "max": 2462112.549807407,
+          "denom": 269702.9521648278
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:48:14.449307"
+    },
+    {
+      "description": "Hagen-Poiseuille: Q = \u03c0*r\u2074*\u0394P/(8*0.001*L)",
+      "domain": "fluid_dynamics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "import numpy as np\n\ndef formula(dP, r, L):\n    # Hagen-Poiseuille flow rate\n    # dP: pressure difference, r: pipe radius, L: pipe length\n    mu = 0.001  # dynamic viscosity constant (Pa*s), e.g. water at ~20\u00b0C\n    Q = (np.pi * r**4 * dP) / (8 * mu * L)\n    return Q",
+          "formula_hash": "e5b22875ee0a1b37d59b2d8fc0f45a2debc25307cf7f7b4bc4294bcfd6b383b4",
+          "error": null,
+          "time": 9.154304265975952,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9414926224054216,
+          "rmse": 17.306755534171575,
+          "formula": "ImprovedNN(3\u2192256\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 1.2998244762420654,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 3.4945012809708647e-12,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 16.481659173965454,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.999999999999993,
+          "rmse": 6.002568138838785e-06,
+          "formula": "((r * (r * r)) * -55.173862) * ((dP * -7.1174846) * (r / L))",
+          "formula_hash": "f9300efa63fd258e245c11c9214d8ab29efaf7bae7e0027fbd190c792b88be5c",
+          "error": null,
+          "time": 49.546483278274536,
+          "metadata": {
+            "iterations": 137
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9778532577288639,
+          "rmse": 26.10858074629406,
+          "formula": "safe_acos((((L ^ 1.4644804) / dP) ^ r) ^ 1.4134755) ^ 3.9167368",
+          "formula_hash": "4c55f3b8fa3374322d20c0e93a3bf2cd2499ddf6a9858445e1754bc17937dba8",
+          "error": null,
+          "time": 222.33589005470276,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9414926224054216,
+          "HybridSystemLLMNN all-domains (core)": 1.0,
+          "SymbolicEngineWithLLM (tools)": 0.999999999999993,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9778532577288639
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "SymbolicEngineWithLLM (tools)": 3,
+          "HybridDiscoverySystem v50_2 (tools)": 4,
+          "ImprovedNN (core)": 5
+        },
+        "advantages": [
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 6.994405055138486e-15,
+            "pct": 6.994405055138535e-13
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.02214674227113611,
+            "pct": 2.2648328975835854
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.05850737759457836,
+            "pct": 6.21432140860517
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 71.5501160947871,
+          "mean": 22.64844029551414,
+          "range": 655.9785850328304,
+          "max": 655.9786132046819,
+          "denom": 71.5501160947871
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:53:13.269749"
+    }
+  ]
+}

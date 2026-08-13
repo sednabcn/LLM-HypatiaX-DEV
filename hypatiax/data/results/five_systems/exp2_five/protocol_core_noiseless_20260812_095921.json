@@ -1,0 +1,401 @@
+{
+  "timestamp": "2026-08-12T09:59:21.220874",
+  "script": "run_protocol_benchmark_core.py v2.2 (sign-fix + log-widen + domain-guard + formula-hash + complexity-score + json-export + extrap_r2_far-fix)",
+  "protocol": {
+    "mode": "noiseless",
+    "noise_level": 0.0,
+    "threshold": 0.999999,
+    "note": "Noiseless run \u2014 directly comparable to published SR literature: NeSymReS (59.4%), AI Feynman (79.3%), TPSR (56.0%), DSR (32.0%)"
+  },
+  "purelm_truncation_audit": {
+    "truncated_count": 0,
+    "total_purelm_tests": 3,
+    "note": "No truncated PureLLM formulas detected \u2014 all results are valid.",
+    "details": {
+      "Thin Lens: 1/f = 1/do + 1/di": {
+        "truncated": false,
+        "r2": -3.0253867109924553,
+        "success": true,
+        "formula": "def formula(do, di):\n    # Thin lens equation solved for focal length f\n    # 1/"
+      },
+      "Snell's Law: n1*sin(\u03b81) = n2*sin(\u03b82)": {
+        "truncated": false,
+        "r2": 1.0,
+        "success": true,
+        "formula": "def formula(n1, sin_theta1):\n    # Computes the conserved optical invariant n1*s"
+      },
+      "Diffraction: sin(\u03b8) = \u03bb/a": {
+        "truncated": false,
+        "r2": 0.9997982907888391,
+        "success": true,
+        "formula": "def formula(wavelength, a):\n    # theta: diffraction angle for first minimum (si"
+      }
+    }
+  },
+  "total_tests": 3,
+  "methods": [
+    "PureLLM Baseline (core)",
+    "ImprovedNN (core)",
+    "HybridSystemLLMNN all-domains (core)",
+    "SymbolicEngineWithLLM (tools)",
+    "HybridDiscoverySystem v50_2 (tools)"
+  ],
+  "tests": [
+    {
+      "description": "Thin Lens: 1/f = 1/do + 1/di",
+      "domain": "optics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": -3.0253867109924553,
+          "rmse": 2.4526390758904375,
+          "formula": "def formula(do, di):\n    # Thin lens equation solved for focal length f\n    # 1/f = 1/do + 1/di  =>  f = (do*di)/(do+di)\n    return (do * di) / (do + di)",
+          "formula_hash": "639ee83d24534087dc6656a382f3a7cdc8512cff0c20b4a0f4b8dda124aef835",
+          "error": null,
+          "time": 8.725881814956665,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9997778855424325,
+          "rmse": 0.01821873642998348,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 0.5792443752288818,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999856777229931,
+          "rmse": 0.004626322174941982,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 14.466760873794556,
+          "metadata": {
+            "decision": "nn",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999999979,
+          "rmse": 5.5423535248641547e-08,
+          "formula": "(1.0 / di) - (-0.99999994 / do)",
+          "formula_hash": "3ac6836ca63c0e421f46768e3b7aea6894b013a015aefda9133d82c36c64184b",
+          "error": null,
+          "time": 34.678529500961304,
+          "metadata": {
+            "iterations": 74
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 1.2350451473345786e-16,
+          "formula": "((do / di) + asin_of_sin((di / di) ^ asin_of_sin(0.46748376))) / do",
+          "formula_hash": "f4088f41c8db187554334d01a66e236699612fc5ac9cc9b5d572022966158e4f",
+          "error": null,
+          "time": 47.153833866119385,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "HybridSystemLLMNN all-domains (core)",
+        "scores": {
+          "ImprovedNN (core)": 0.9997778855424325,
+          "HybridSystemLLMNN all-domains (core)": 0.9999856777229931,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999999979,
+          "HybridDiscoverySystem v50_2 (tools)": 1.0
+        },
+        "rankings": {
+          "HybridSystemLLMNN all-domains (core)": 1,
+          "ImprovedNN (core)": 2,
+          "SymbolicEngineWithLLM (tools)": 3,
+          "HybridDiscoverySystem v50_2 (tools)": 4
+        },
+        "advantages": [
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": -1.4322277006928452e-05,
+            "pct": -0.0014322277006928452
+          },
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": -1.4322277004819028e-05,
+            "pct": -0.0014322277004819059
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.00020779218056055093,
+            "pct": 0.020783834446169276
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 1.2224464367574954,
+          "mean": 0.9758307186402311,
+          "range": 7.1274596359795765,
+          "max": 7.351115665052994,
+          "denom": 1.2224464367574954
+        }
+      },
+      "winner": "HybridSystemLLMNN all-domains (core)",
+      "timestamp": "2026-08-12T09:55:08.844571"
+    },
+    {
+      "description": "Snell's Law: n1*sin(\u03b81) = n2*sin(\u03b82)",
+      "domain": "optics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "def formula(n1, sin_theta1):\n    # Computes the conserved optical invariant n1*sin(theta1)\n    # which equals n2*sin(theta2) by Snell's Law\n    result = n1 * sin_theta1\n    return result",
+          "formula_hash": "4c0399eec349e33d6684890953ba4c0254bb5b6bbe31116542ea2e6f797af141",
+          "error": null,
+          "time": 8.886032819747925,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9999808092846662,
+          "rmse": 0.002120908777817272,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 0.5638954639434814,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999992404918451,
+          "rmse": 0.0004219321596024166,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 15.148085117340088,
+          "metadata": {
+            "decision": "nn",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "n1 * sin_theta1",
+          "formula_hash": "d2faac83d1e8fb3dd4bbbbcfe3e9d1821af2fde2024a63c79cea9e029347c799",
+          "error": null,
+          "time": 40.117453813552856,
+          "metadata": {
+            "iterations": 73
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 1.0,
+          "rmse": 0.0,
+          "formula": "sin_theta1 * n1",
+          "formula_hash": "4a4d20033319cf8c5f24310a3bee5fa6e56ff62f9810bad38d7968268a23ccf0",
+          "error": null,
+          "time": 66.45623660087585,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "PureLLM Baseline (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 1.0,
+          "ImprovedNN (core)": 0.9999808092846662,
+          "HybridSystemLLMNN all-domains (core)": 0.9999992404918451,
+          "SymbolicEngineWithLLM (tools)": 1.0,
+          "HybridDiscoverySystem v50_2 (tools)": 1.0
+        },
+        "rankings": {
+          "PureLLM Baseline (core)": 1,
+          "HybridSystemLLMNN all-domains (core)": 2,
+          "ImprovedNN (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": 0.0,
+            "pct": 0.0
+          },
+          {
+            "method": "HybridSystemLLMNN all-domains (core)",
+            "diff": 7.595081549238714e-07,
+            "pct": 7.595087317769469e-05
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 1.9190715333849973e-05,
+            "pct": 0.0019191083624472756
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 0.4841460666276206,
+          "mean": 0.8665103074235532,
+          "range": 2.0745825038244607,
+          "max": 2.2054084726055176,
+          "denom": 0.4841460666276206
+        }
+      },
+      "winner": "PureLLM Baseline (core)",
+      "timestamp": "2026-08-12T09:57:20.017896"
+    },
+    {
+      "description": "Diffraction: sin(\u03b8) = \u03bb/a",
+      "domain": "optics",
+      "results": {
+        "PureLLM Baseline (core)": {
+          "method": "PureLLM Baseline (core)",
+          "success": true,
+          "r2": 0.9997982907888391,
+          "rmse": 0.0005566335643717745,
+          "formula": "def formula(wavelength, a):\n    # theta: diffraction angle for first minimum (single-slit diffraction)\n    # wavelength: light wavelength, a: slit width\n    ratio = wavelength / a\n    ratio = np.clip(ratio, -1.0, 1.0)  # ensure valid domain for arcsin\n    theta = np.arcsin(ratio)\n    return theta",
+          "formula_hash": "cb3da7f55edf46e8b95624f6317355b64b96f19d305f551926b5385111df9480",
+          "error": null,
+          "time": 8.490314722061157,
+          "metadata": {
+            "truncated_formula": false,
+            "is_hardcoded": false
+          }
+        },
+        "ImprovedNN (core)": {
+          "method": "ImprovedNN (core)",
+          "success": true,
+          "r2": 0.9998424788185872,
+          "rmse": 0.0004918990739456331,
+          "formula": "ImprovedNN(2\u2192128\u219264\u219232\u21921,log)",
+          "formula_hash": "",
+          "error": null,
+          "time": 0.5658984184265137,
+          "metadata": {}
+        },
+        "HybridSystemLLMNN all-domains (core)": {
+          "method": "HybridSystemLLMNN all-domains (core)",
+          "success": true,
+          "r2": 0.9999999841394351,
+          "rmse": 4.935894296997253e-06,
+          "formula": "N/A",
+          "formula_hash": "e2f79e5b60330bba4c289962231b6ba2957d0b14e7deb3110417003c79dea635",
+          "error": null,
+          "time": 17.762649059295654,
+          "metadata": {
+            "decision": "llm",
+            "nn_applied": true
+          }
+        },
+        "SymbolicEngineWithLLM (tools)": {
+          "method": "SymbolicEngineWithLLM (tools)",
+          "success": true,
+          "r2": 0.9999999999999929,
+          "rmse": 3.3010610350090245e-09,
+          "formula": "[X-normalised: wavelength\u00f75.390e-07] (wavelength * 5.390372e-7) / a",
+          "formula_hash": "b5f2ccb166659ab95a56a8590a6b9aa362c119876139bcbc6022b9d6d183bd9d",
+          "error": null,
+          "time": 37.62369990348816,
+          "metadata": {
+            "iterations": 75
+          }
+        },
+        "HybridDiscoverySystem v50_2 (tools)": {
+          "method": "HybridDiscoverySystem v50_2 (tools)",
+          "success": true,
+          "r2": 0.9999999999998143,
+          "rmse": NaN,
+          "formula": "[X-normalised: wavelength\u00f75.390e-07] (wavelength * (4.3001072e-7 / a)) / 0.79773813",
+          "formula_hash": "3f0920c45d96f91fbc5cc1ee02e85ac9b20d26986d71f9385445f12fac730a99",
+          "error": null,
+          "time": 56.75619173049927,
+          "metadata": {
+            "strategy": "symbolic",
+            "validations": 1
+          }
+        }
+      },
+      "comparison": {
+        "winner": "HybridSystemLLMNN all-domains (core)",
+        "scores": {
+          "PureLLM Baseline (core)": 0.9997982907888391,
+          "ImprovedNN (core)": 0.9998424788185872,
+          "HybridSystemLLMNN all-domains (core)": 0.9999999841394351,
+          "SymbolicEngineWithLLM (tools)": 0.9999999999999929,
+          "HybridDiscoverySystem v50_2 (tools)": 0.9999999999998143
+        },
+        "rankings": {
+          "HybridSystemLLMNN all-domains (core)": 1,
+          "ImprovedNN (core)": 2,
+          "PureLLM Baseline (core)": 3,
+          "SymbolicEngineWithLLM (tools)": 4,
+          "HybridDiscoverySystem v50_2 (tools)": 5
+        },
+        "advantages": [
+          {
+            "method": "SymbolicEngineWithLLM (tools)",
+            "diff": -1.5860557756042226e-08,
+            "pct": -1.5860557756042338e-06
+          },
+          {
+            "method": "HybridDiscoverySystem v50_2 (tools)",
+            "diff": -1.5860379121157564e-08,
+            "pct": -1.586037912116051e-06
+          },
+          {
+            "method": "ImprovedNN (core)",
+            "diff": 0.00015750532084790603,
+            "pct": 0.015753013518090782
+          },
+          {
+            "method": "PureLLM Baseline (core)",
+            "diff": 0.00020169335059605498,
+            "pct": 0.020173404221057355
+          }
+        ],
+        "duplicates": {},
+        "y_scale": {
+          "std": 0.03919282106784838,
+          "mean": 0.02251845895531239,
+          "range": 0.34504715654432017,
+          "max": 0.34917347027033857,
+          "denom": 0.03919282106784838
+        }
+      },
+      "winner": "HybridSystemLLMNN all-domains (core)",
+      "timestamp": "2026-08-12T09:59:21.218537"
+    }
+  ]
+}
