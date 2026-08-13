@@ -1,111 +1,148 @@
 
-# HypatiaX Analysis Report — `exp2_feyman_extrap`
+# HypatiaX Analysis Report — `exp2_feynman_extrap` (RF09 Feynman n=30)
 
-Experiment mode: **standard**
-N total: 30 | N standard: 30 | N intractable: 0
-R² success threshold: 0.8
+Experiment mode: **ablation** | N equations: 30
+Tier-1 (all-N) pairs: 22 | Tier-2 (excl-train-fail) pairs: 22 | Tier-3 (extrap R²≥0.99) pairs: 19 | Skipped: 8
 
 ## ✅ No Fatal Conditions
 
 
 ## ℹ️ Informational / Warnings
 
-- WARN_NO_METHOD_RECORDS: records were loaded but none contained results under canonical keys (pure_llm, neural_network, hybrid). This usually means the JSON uses non-standard method names that were not translated by merge_shards.py, or the experiment should be mapped to 'multi_method' mode in EXPERIMENT_MODE. Verify _normalise_protocol_record() output or add an EXPERIMENT_MODE entry. Workflow continues.
+- INFO_MW_SUCCESS_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney one-sided p=0.0075 (two-sided p=0.0150, r=-0.4571, n=19 equations with extrap R²>=0.99) — SIGNIFICANT. Primary paper claim confirmed.
 
-## Method Summary (standard equations only)
+## A. Primary Result — Three-Tier MW Framing (§10.7)
 
-| Method | N | Success% (flag) | R²≥0.80% | Median test R² | Mean test R² |
-|--------|---|-----------------|----------|----------------|--------------|
-| Pure LLM | 0 | 0.0% | 0.0% | N/A | N/A |
-| Neural Net | 0 | 0.0% | 0.0% | N/A | N/A |
-| Hybrid | 0 | 0.0% | 0.0% | N/A | N/A |
+**Tier 1 (all-N):** Expected non-significant — 21 discovery failures add variance. Report with explicit framing: 'not significant; expected given 21 failures.' 
 
-## Mann-Whitney U Tests (two-sided, clipped R², standard equations)
+**Tier 2 (excl-train-fail):** Excludes equations where HypatiaX train R²<0. Intermediate result; shows signal strengthens once degenerate outputs removed. 
 
+**Tier 3 (success-subset, R²≥0.99):** The paper's primary claim (§10.7). Restricts to equations where HypatiaX achieved symbolic recovery. This is the publishable result — it answers whether symbolic recovery produces a qualitatively different extrapolation regime, not whether HypatiaX always wins.
 
-### Hybrid vs Pure LLM
+  Tier 1 — All-N: U=330.5, p_one=0.0185**, p_two=0.0369, n=22, r=-0.3657
+  Tier 2 — Excl-train-fail (train R²≥0): U=330.5, p_one=0.0185**, p_two=0.0369, n=22, r=-0.3657
+  Tier 3 — Success-subset (extrap R²≥0.99) ★: U=263.0, p_one=0.0075**, p_two=0.0150, n=19, r=-0.4571
+_** = p_one < 0.05  |  ★ = primary paper claim_
 
-  N/A (insufficient samples)
+### Win / Loss by Tier
 
-### Hybrid vs Neural Net
+| Split | HypatiaX wins | PySR wins | Tied | N pairs |
+|-------|---------------|-----------|------|---------|
+| Tier 1 — All-N | 8 | 3 | 11 | 22 |
+| Tier 2 — Excl-train-fail | 8 | 3 | 11 | 22 |
+| Tier 3 — Success-subset ★ | 8 | 1 | 10 | 19 |
 
-  N/A (insufficient samples)
+## B. Failure Analysis (0 equations — degenerate PySR, train R² < 0)
 
-### Neural Net vs Pure LLM
+_None — all equations have hypatia train R² ≥ 0._
 
-  N/A (insufficient samples)
+### Domain Stratification
+
+| Domain | N | Hypatia Wins | Win Rate | Failures | Fail Rate |
+|--------|---|-------------|----------|----------|-----------|
+| feynman_biology | 3 | 0 | 0.0 | 0 | 0.0 |
+| feynman_chemistry | 2 | 1 | 0.5 | 0 | 0.0 |
+| feynman_electrochemistry | 1 | 0 | N/A | 0 | 0.0 |
+| feynman_electromagnetism | 5 | 1 | 0.25 | 0 | 0.0 |
+| feynman_electrostatics | 2 | 1 | 0.5 | 0 | 0.0 |
+| feynman_magnetism | 1 | 0 | N/A | 0 | 0.0 |
+| feynman_mechanics | 4 | 2 | 0.5 | 0 | 0.0 |
+| feynman_optics | 2 | 0 | 0.0 | 0 | 0.0 |
+| feynman_probability | 1 | 1 | 1.0 | 0 | 0.0 |
+| feynman_quantum | 5 | 0 | 0.0 | 0 | 0.0 |
+| feynman_thermodynamics | 4 | 2 | 1.0 | 0 | 0.0 |
+
+### Fisher's Exact Test — Failure Cluster Non-Randomness
+
+p=1.0000, OR=None, Not significant
+Tests whether the failure cluster in physics-with-small-constants domains is larger than expected by chance.
+
+## C. Scale / Magnitude Sensitivity
+
+Spearman correlation between `scale_log` (log₁₀ of smallest constant magnitude) and HypatiaX performance. Positive ρ means larger-scale constants → better results.
+  scale_log vs train R²: N/A (insufficient data or scipy missing)
+  scale_log vs far R²: N/A (insufficient data or scipy missing)
+scale_log available for 0 equations.
+_** = p < 0.05. N/A if scale_log field absent from records._
+
+## D. Expression Complexity — Success vs Failure
+
+| Group | N | Min | Max | Mean | Median | IQR |
+|-------|---|-----|-----|------|--------|-----|
+| HypatiaX successes | 0 | N/A | N/A | N/A | N/A | N/A |
+| HypatiaX failures | 0 | N/A | N/A | N/A | N/A | N/A |
+| HypatiaX all | 0 | N/A | N/A | N/A | N/A | N/A |
+| PySR-only all | 0 | N/A | N/A | N/A | N/A | N/A |
 _** = p < 0.05_
 
-## Hybrid vs Neural Net (head-to-head, equation level)
+## F. Train-R² Threshold Sweep — Robustness of Inclusion Cutoff
 
-Equations with both finite R²: 0
-Hybrid wins:  0  (N/A)
-NN wins:      0
-Tied:         0
+MW p_one at each train-R² inclusion threshold. A robust result stays significant across a range near 0.
+| Threshold | N included | U | p_one | p_two | Significant? |
+|-----------|------------|---|-------|-------|--------------|
+| -0.50 | 22 | 330.5 | 0.0185 | 0.0369 | ✅ |
+| -0.25 | 22 | 330.5 | 0.0185 | 0.0369 | ✅ |
+| +0.00 | 22 | 330.5 | 0.0185 | 0.0369 | ✅ |
+| +0.10 | 22 | 330.5 | 0.0185 | 0.0369 | ✅ |
+| +0.25 | 22 | 330.5 | 0.0185 | 0.0369 | ✅ |
+| +0.50 | 22 | 330.5 | 0.0185 | 0.0369 | ✅ |
 
-## Coverage Gaps (30 equations with best R² < 0.8)
+## G. Leave-One-Out Sensitivity — Failure Equations
 
-| Equation | Difficulty | Type | Best R² | LLM | NN | Hybrid |
-|----------|------------|------|---------|-----|----|----|
-| Michaelis-Menten enzyme kinetics — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
-| Logistic growth rate — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
-| Allometric scaling law (metabolic rate vs mass) | None | None | N/A | N/A | N/A | N/A |
-| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
-| Henderson-Hasselbalch equation for buffer pH | None | None | N/A | N/A | N/A | N/A |
-| Nernst equation for electrode potential — cross-benchmark consistency check | None | None | N/A | N/A | N/A | N/A |
-| Clausius-Mossotti: effective field in dielectric | None | None | N/A | N/A | N/A | N/A |
-| Dielectric polarisation: P = n * alpha * E (dilute limit) | None | None | N/A | N/A | N/A | N/A |
-| Lorentz force on moving charge in magnetic field: F = qvB | None | None | N/A | N/A | N/A | N/A |
-| Ohm's law: voltage as product of current and resistance | None | None | N/A | N/A | N/A | N/A |
-| Energy stored in a capacitor: E = 0.5 * C * V^2 | None | None | N/A | N/A | N/A | N/A |
-| Coulomb force between two point charges (1D, simplified) | None | None | N/A | N/A | N/A | N/A |
-| Coulomb's law: electric force between charges | None | None | N/A | N/A | N/A | N/A |
-| Curie's law for magnetic susceptibility: chi = C/T | None | None | N/A | N/A | N/A | N/A |
-| Newton's gravitational force between two masses | None | None | N/A | N/A | N/A | N/A |
-| Kinetic energy (classical): KE = 0.5 * m * v² | None | None | N/A | N/A | N/A | N/A |
-| Reduced mass of a two-body system | None | None | N/A | N/A | N/A | N/A |
-| Total mechanical energy: spring potential + kinetic | None | None | N/A | N/A | N/A | N/A |
-| Snell's law: refracted angle from incident angle and refractive indices | None | None | N/A | N/A | N/A | N/A |
-| Double-slit wave interference intensity | None | None | N/A | N/A | N/A | N/A |
-| Gaussian/normal distribution probability density | None | None | N/A | N/A | N/A | N/A |
-| Photon energy: E = h * f (Planck relation) | None | None | N/A | N/A | N/A | N/A |
-| Zeeman energy: electron spin in magnetic field | None | None | N/A | N/A | N/A | N/A |
-| Bose-Einstein occupation number for bosons | None | None | N/A | N/A | N/A | N/A |
-| Fermi-Dirac occupation number for fermions | None | None | N/A | N/A | N/A | N/A |
-| Rabi frequency of two-level atom in magnetic field | None | None | N/A | N/A | N/A | N/A |
-| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | None | None | N/A | N/A | N/A | N/A |
-| Fourier's law of heat conduction: heat flux across material | None | None | N/A | N/A | N/A | N/A |
-| Stefan-Boltzmann law: blackbody radiated power | None | None | N/A | N/A | N/A | N/A |
-| Ideal gas law: pressure from moles, temperature, volume | None | None | N/A | N/A | N/A | N/A |
+All-N MW re-run with each failure equation removed. Shows how much each discovery failure masks the signal.
+_No LOO data (no failure equations or scipy unavailable)._
 
-## R²≥0.80 Rate by Difficulty
+## Skipped from MW (8 equations)
 
-| Difficulty | N | LLM R²≥0.80 | NN R²≥0.80 | Hybrid R²≥0.80 |
-|------------|---|-------------|------------|----------------|
-| unknown | 0 | 0.0% | 0.0% | 0.0% |
+| Equation | Domain | Reason |
+|----------|--------|--------|
+| Nernst equation for electrode potential — cross-benchmark consistency check | feynman_electrochemistry | pysr_only.extrap_r2_far=nan is non-finite |
+| Dielectric polarisation: P = n * alpha * E (dilute limit) | feynman_electromagnetism | pysr_only.extrap_r2_far=nan is non-finite |
+| Curie's law for magnetic susceptibility: chi = C/T | feynman_magnetism | hypatia.extrap_r2_far is None |
+| Photon energy: E = h * f (Planck relation) | feynman_quantum | hypatia.extrap_r2_far is None |
+| Bose-Einstein occupation number for bosons | feynman_quantum | hypatia.extrap_r2_far is None |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | pysr_only.extrap_r2_far=nan is non-finite |
+| Stefan-Boltzmann law: blackbody radiated power | feynman_thermodynamics | pysr_only.extrap_r2_far=nan is non-finite |
+| Ideal gas law: pressure from moles, temperature, volume | feynman_thermodynamics | hypatia.extrap_r2_far is None |
 
-## Median Test R² by Formula Type
+## Instability Index (1 − extrap_r2_far; None→0.0; unclamped)
 
-| Formula Type | N | LLM median R² | NN median R² | Hybrid median R² |
-|--------------|---|---------------|--------------|------------------|
-| unknown | 0 | N/A | N/A | N/A |
+| Equation | Domain | Near R² | Far R² | Instability | Skipped? |
+|----------|--------|---------|--------|-------------|----------|
+| Michaelis-Menten enzyme kinetics — cross-benchmark consistency check | feynman_biology | N/A | 1.0000 | 0.0000 | no |
+| Logistic growth rate — cross-benchmark consistency check | feynman_biology | N/A | 1.0000 | 0.0000 | no |
+| Allometric scaling law (metabolic rate vs mass) | feynman_biology | N/A | 1.0000 | 0.0000 | no |
+| Arrhenius rate constant (Feynman variant) — cross-benchmark consistency check | feynman_chemistry | N/A | 0.9999 | 0.0001 | no |
+| Henderson-Hasselbalch equation for buffer pH | feynman_chemistry | N/A | 1.0000 | 0.0000 | no |
+| Nernst equation for electrode potential — cross-benchmark consistency check | feynman_electrochemistry | N/A | 0.9997 | 0.0003 | no |
+| Clausius-Mossotti: effective field in dielectric | feynman_electromagnetism | N/A | 1.0000 | 0.0000 | no |
+| Dielectric polarisation: P = n * alpha * E (dilute limit) | feynman_electromagnetism | N/A | -1.1509 | 2.1509 | no |
+| Lorentz force on moving charge in magnetic field: F = qvB | feynman_electromagnetism | N/A | -1.4149 | 2.4149 | no |
+| Ohm's law: voltage as product of current and resistance | feynman_electromagnetism | N/A | 1.0000 | 0.0000 | no |
+| Energy stored in a capacitor: E = 0.5 * C * V^2 | feynman_electromagnetism | N/A | 1.0000 | 0.0000 | no |
+| Coulomb force between two point charges (1D, simplified) | feynman_electrostatics | N/A | -0.0656 | 1.0656 | no |
+| Coulomb's law: electric force between charges | feynman_electrostatics | N/A | 1.0000 | 0.0000 | no |
+| Curie's law for magnetic susceptibility: chi = C/T | feynman_magnetism | N/A | 0.0000 | 0.0000 | yes |
+| Newton's gravitational force between two masses | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Kinetic energy (classical): KE = 0.5 * m * v² | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Reduced mass of a two-body system | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Total mechanical energy: spring potential + kinetic | feynman_mechanics | N/A | 1.0000 | 0.0000 | no |
+| Snell's law: refracted angle from incident angle and refractive indices | feynman_optics | N/A | 1.0000 | 0.0000 | no |
+| Double-slit wave interference intensity | feynman_optics | N/A | 1.0000 | 0.0000 | no |
+| Gaussian/normal distribution probability density | feynman_probability | N/A | 1.0000 | 0.0000 | no |
+| Photon energy: E = h * f (Planck relation) | feynman_quantum | N/A | 0.0000 | 0.0000 | yes |
+| Zeeman energy: electron spin in magnetic field | feynman_quantum | N/A | 1.0000 | 0.0000 | no |
+| Bose-Einstein occupation number for bosons | feynman_quantum | N/A | 0.0000 | 0.0000 | yes |
+| Fermi-Dirac occupation number for fermions | feynman_quantum | N/A | -5.6051 | 6.6051 | no |
+| Rabi frequency of two-level atom in magnetic field | feynman_quantum | N/A | -3.0577 | 4.0577 | no |
+| Planck blackbody spectral radiance (dimensionless: x=hf/kT) | feynman_thermodynamics | N/A | 1.0000 | 0.0000 | no |
+| Fourier's law of heat conduction: heat flux across material | feynman_thermodynamics | N/A | 1.0000 | 0.0000 | no |
+| Stefan-Boltzmann law: blackbody radiated power | feynman_thermodynamics | N/A | 0.9999 | 0.0001 | no |
+| Ideal gas law: pressure from moles, temperature, volume | feynman_thermodynamics | N/A | 0.0000 | 0.0000 | yes |
 
-## Extrapolation Gap (train R² − test R²)
+## Wall-clock Timing
 
-| Method | Mean gap | Median gap | N |
+| Method | Mean (s) | Median (s) | N |
 |--------|----------|------------|---|
-| Pure LLM | N/A | N/A | 0 |
-| Neural Net | N/A | N/A | 0 |
-| Hybrid | N/A | N/A | 0 |
-
-## Wall-clock Timing (standard equations)
-
-| Method | Mean (s) | Median (s) | Total (s) | N |
-|--------|----------|------------|-----------|---|
-| Pure LLM | N/A | N/A | None | 0 |
-| Neural Net | N/A | N/A | None | 0 |
-| Hybrid | N/A | N/A | None | 0 |
-
-## Hybrid Routing Decisions
-
-_No hybrid decision data available._
+| HypatiaX | N/A | N/A | 0 |
+| PySR-only | N/A | N/A | 0 |
