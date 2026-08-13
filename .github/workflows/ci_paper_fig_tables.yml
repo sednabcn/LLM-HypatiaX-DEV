@@ -1,0 +1,285 @@
+name: "HypatiaX - assemble paper figures + tables in manuscript order"
+
+# ==============================================================================
+# ci_paper_fig_tables.yml
+#
+# Assembles the figures and tables that appear in the compiled paper into a
+# single flat directory at the repo root, figures_tables_paper/, using
+# filenames prefixed with the item's DISPLAY ORDER in the manuscript (main
+# paper, then Supplementary A, then Supplementary B) — not source-file
+# alphabetical order, not experiment ID.
+#
+# This is an ASSEMBLY workflow, same family as figures_deploy in
+# ci_postprocess.yml and the global sync in ci_fig_tables.yml. It does not
+# generate anything itself; it reads config/paper_order.yml (the single
+# source of truth for "what order does this appear in the paper") and copies
+# already-generated files found anywhere under results_root's figures/ and
+# tables/ directories.
+#
+# IMPORTANT CAVEAT (see config/paper_order.yml's header for the full
+# explanation): only a subset of the paper's tables are actually produced by
+# generate_tables.py — the rest are hand-authored directly in the .tex
+# source and have no generated file to sync. Those entries are marked
+# source: manual in config/paper_order.yml. This workflow does NOT treat a
+# manual entry as an error; it lists it in the step summary / MANIFEST.md so
+# the gap stays visible instead of silently disappearing.
+#
+# Same "same name/same content -> skip, same name/different content -> warn
+# and leave untouched" conflict rule as ci_fig_tables.yml and figures_deploy.
+# ==============================================================================
+
+"on":
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "config/paper_order.yml"
+      - "config/experiments.yml"
+      - "hypatiax/data/results/**/figures/**"
+      - "hypatiax/data/results/**/tables/**"
+
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  CONFIG_FILE: "config/experiments.yml"
+  PAPER_ORDER_FILE: "config/paper_order.yml"
+  DEST_DIR: "figures_tables_paper"
+
+jobs:
+  assemble-paper-order:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install "PyYAML>=6.0"
+
+      # ------------------------------------------------------------------
+      # Step 1 — walk config/paper_order.yml in order; for each item, find
+      # its source file(s) anywhere under results_root's figures/ or
+      # tables/ directories and copy them into DEST_DIR with a zero-padded
+      # order prefix. Manual (no-generated-source) table entries are logged,
+      # not copied. Conflicting duplicate source files (same target name,
+      # different content, found in two different experiment dirs) are
+      # logged as conflicts and left out rather than guessed at.
+      # ------------------------------------------------------------------
+      - name: Assemble figures_tables_paper
+        id: assemble
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          import sys
+          import yaml
+
+          with open(os.environ["CONFIG_FILE"]) as f:
+              cfg = yaml.safe_load(f)
+          results_root = cfg["results_root"]
+
+          with open(os.environ["PAPER_ORDER_FILE"]) as f:
+              paper_cfg = yaml.safe_load(f)
+          items = sorted(paper_cfg["items"], key=lambda x: x["order"])
+
+          dest_dir = os.environ["DEST_DIR"]
+          os.makedirs(dest_dir, exist_ok=True)
+
+          if not os.path.isdir(results_root):
+              print(f"::error::results_root '{results_root}' does not exist.")
+              sys.exit(1)
+
+          def sha256(path: str) -> str:
+              with open(path, "rb") as fh:
+                  return hashlib.sha256(fh.read()).hexdigest()
+
+          # Index every file under any 'figures/' or 'tables/' dir in the repo,
+          # keyed by (kind, basename) -> list of absolute source paths.
+          index = {"figures": {}, "tables": {}}
+          for dirpath, dirnames, filenames in os.walk(results_root):
+              base = os.path.basename(dirpath)
+              if base not in ("figures", "tables"):
+                  continue
+              for fn in filenames:
+                  if fn.endswith("_timestamp"):
+                      continue
+                  index[base].setdefault(fn, []).append(os.path.join(dirpath, fn))
+
+          def resolve(kind: str, basename: str):
+              """Return (chosen_path, conflict_paths) for a wanted filename."""
+              candidates = index[kind].get(basename, [])
+              if not candidates:
+                  return None, []
+              if len(candidates) == 1:
+                  return candidates[0], []
+              # Multiple copies found (e.g. per-experiment dir + globally
+              # synced dir from ci_fig_tables.yml). Same rule as elsewhere:
+              # identical content -> fine, pick any; differing content ->
+              # conflict, report and skip.
+              hashes = {sha256(p) for p in candidates}
+              if len(hashes) == 1:
+                  return candidates[0], []
+              return None, candidates
+
+          copied, skipped_manual, missing, conflicts = [], [], [], []
+          manifest_lines = [
+              "# figures_tables_paper — manuscript display order",
+              "",
+              "Generated by ci_paper_fig_tables.yml. Do not edit by hand — edit "
+              "config/paper_order.yml and re-run instead.",
+              "",
+              "| # | Type | Doc | Section | Status | File(s) |",
+              "|---|---|---|---|---|---|",
+          ]
+
+          DOC_LABEL = {"main": "Main paper", "suppA": "Supp A", "suppB": "Supp B"}
+
+          for item in items:
+              n = item["order"]
+              prefix = f"{n:03d}"
+              doc_label = DOC_LABEL.get(item["doc"], item["doc"])
+              status = ""
+              files_note = ""
+
+              if item["type"] == "figure":
+                  stem = item["stem"]
+                  found_any = False
+                  copied_names = []
+                  for ext in ("png", "pdf"):
+                      basename = f"{stem}.{ext}"
+                      path, conf = resolve("figures", basename)
+                      if conf:
+                          conflicts.append(("figure", basename, conf))
+                          continue
+                      if path is None:
+                          continue
+                      found_any = True
+                      dest_name = f"{prefix}_fig_{stem}.{ext}"
+                      dest_path = os.path.join(dest_dir, dest_name)
+                      if os.path.exists(dest_path) and sha256(dest_path) == sha256(path):
+                          pass  # already in sync
+                      else:
+                          shutil.copy2(path, dest_path)
+                      copied_names.append(dest_name)
+                  if found_any:
+                      copied.append((n, item, copied_names))
+                      status = "synced"
+                      files_note = ", ".join(f"`{x}`" for x in copied_names)
+                  else:
+                      missing.append((n, item))
+                      status = "**missing** (no .png/.pdf found under any figures/ dir)"
+
+              else:  # table
+                  if item["source"] == "manual":
+                      skipped_manual.append((n, item))
+                      status = "no generated source (hand-authored in the .tex)"
+                  else:
+                      basename = item["generated_file"]
+                      path, conf = resolve("tables", basename)
+                      if conf:
+                          conflicts.append(("table", basename, conf))
+                          status = "**conflict** — differing copies found, left out"
+                      elif path is None:
+                          missing.append((n, item))
+                          status = f"**missing** ({basename} not found under any tables/ dir)"
+                      else:
+                          dest_name = f"{prefix}_tab_{os.path.splitext(basename)[0]}.tex"
+                          dest_path = os.path.join(dest_dir, dest_name)
+                          if os.path.exists(dest_path) and sha256(dest_path) == sha256(path):
+                              pass
+                          else:
+                              shutil.copy2(path, dest_path)
+                          copied.append((n, item, [dest_name]))
+                          status = "synced"
+                          files_note = f"`{dest_name}`"
+
+              manifest_lines.append(
+                  f"| {n} | {item['type']} | {doc_label} | {item['section']} | {status} | {files_note} |"
+              )
+
+          with open(os.path.join(dest_dir, "MANIFEST.md"), "w") as f:
+              f.write("\n".join(manifest_lines) + "\n")
+
+          print(f"Synced: {len(copied)}")
+          print(f"Manual (no generated source, expected): {len(skipped_manual)}")
+          print(f"Missing (generated source expected but not found): {len(missing)}")
+          print(f"Conflicts: {len(conflicts)}")
+
+          if missing:
+              print("::warning::Items with a generated source declared in "
+                    "config/paper_order.yml, but no matching file found under "
+                    "any figures/ or tables/ dir in results_root:")
+              for n, item in missing:
+                  ref = item.get("stem") or item.get("generated_file")
+                  print(f"  [{n}] {item['section']} -> {ref}")
+
+          if conflicts:
+              print("::warning::Filename conflicts (same name, different "
+                    "content) found across multiple experiment dirs — left "
+                    "out, resolve manually:")
+              for kind, fn, paths in conflicts:
+                  print(f"  [{kind}] {fn}:")
+                  for p in paths:
+                      print(f"    {p}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"synced={len(copied)}\n")
+              f.write(f"manual={len(skipped_manual)}\n")
+              f.write(f"missing={len(missing)}\n")
+              f.write(f"conflicts={len(conflicts)}\n")
+              f.write(f"total={len(items)}\n")
+          PY
+
+      # ------------------------------------------------------------------
+      # Step 2 — commit whatever changed. Nothing to commit is not an error.
+      # ------------------------------------------------------------------
+      - name: Commit assembled paper figures/tables
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "${{ env.DEST_DIR }}"
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — figures_tables_paper already in sync."
+          else
+            git commit -m "assemble(paper-order): sync figures_tables_paper/ to manuscript order [skip ci]"
+            git push
+          fi
+
+      - name: Step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Paper-order figures/tables assembly"
+            echo ""
+            echo "Manuscript order: main paper -> Supplementary A -> Supplementary B."
+            echo "Full breakdown: \`${{ env.DEST_DIR }}/MANIFEST.md\`"
+            echo ""
+            echo "| | count |"
+            echo "|---|---|"
+            echo "| Total items in config/paper_order.yml | ${{ steps.assemble.outputs.total }} |"
+            echo "| Synced this run | ${{ steps.assemble.outputs.synced }} |"
+            echo "| Manual — no generated source (expected) | ${{ steps.assemble.outputs.manual }} |"
+            echo "| Missing — generated source expected but not found | ${{ steps.assemble.outputs.missing }} |"
+            echo "| Conflicts (differing duplicate copies) | ${{ steps.assemble.outputs.conflicts }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

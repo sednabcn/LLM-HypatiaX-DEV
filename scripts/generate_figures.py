@@ -111,6 +111,22 @@ _parser.add_argument(
     choices=["auto", "committed", "artifact"],
     help="Data source hint (default: auto). Currently informational only.",
 )
+_parser.add_argument(
+    "--metric", default="loss",
+    choices=["loss", "both"],
+    help="Only used by the exp3/exp3b PySR trajectory block (ported from "
+         "plot_pysr_trajectories.py). loss (default) plots best_loss on a "
+         "log-scaled y-axis, matching every other figure in this script. "
+         "both additionally plots a second panel with cumulative "
+         "elapsed_seconds on the x-axis, letting wall-clock and iteration "
+         "progress be compared side by side for the same trajectory.",
+)
+_parser.add_argument(
+    "--include-expressions", action="store_true", dest="include_expressions",
+    help="Only used by the exp3/exp3b PySR trajectory block. Annotate each "
+         "per-equation trajectory figure with the final H/P expressions, "
+         "same as plot_pysr_trajectories.py --include-expressions.",
+)
 _ARGS, _unknown = _parser.parse_known_args()
 
 # Resolve results_dir and figures_dir to absolute paths.
@@ -128,6 +144,8 @@ _RESULTS_DIR = _dedup_trailing(
     os.path.abspath(_ARGS.results_dir) if _ARGS.results_dir else os.getcwd()
 )
 _EXPERIMENT  = _ARGS.experiment  # may be None (legacy invocation)
+_METRIC = _ARGS.metric  # only consumed by the exp3/exp3b trajectory block
+_INCLUDE_EXPRESSIONS = _ARGS.include_expressions  # ditto
 # For _FIGURES_DIR, also collapse a doubled "figures/figures" that would arise
 # when --results-dir already ends in "figures" and we append "figures" below.
 _FIGURES_DIR = _dedup_trailing(
@@ -1718,8 +1736,336 @@ if RAW is not None:
 #  not in paper inventory or any .tex file)
 
 
-# (exp3_nguyen12_hybrid50v_extrap_r2 removed — exp3_nguyen12_output.json
-#  not in paper inventory or any .tex file)
+# ══════════════════════════════════════════════════════════════════════════════
+# exp3 / exp3b — PySR outer-iteration trajectory figures
+# (ported from scripts/plot_pysr_trajectories.py)
+#
+# Data source: one JSON file per seed, produced by exp3_nguyen12_hybrid50v_04.py:
+#   {
+#     "config": {"seed": 42, ...},
+#     "results": {
+#       "hypatiax": [{"metadata": {"nguyen_id": "N1", ...},
+#                      "trajectory": [...], "trajectory_summary": {...}}, ...],
+#       "pysr":     [{"metadata": {"nguyen_id": "N1", ...},
+#                      "trajectory": [...], "trajectory_summary": {...}}, ...]
+#     }
+#   }
+#
+# exp3 and exp3b each have their own --results-dir (per config/experiments.yml),
+# so this block runs identically for both — it just discovers whichever seed
+# files live under _RESULTS_DIR for the selected experiment.
+#
+# The x-axis is deliberately called "observed outer iteration", not
+# "generation": the upstream experiment script polls PySR's Hall-of-Fame
+# checkpoint and does not expose every individual mutation/generation.
+#
+# --metric {loss,both} and --include-expressions (module-level _METRIC /
+# _INCLUDE_EXPRESSIONS, parsed at the top of this file) restore full parity
+# with plot_pysr_trajectories.py's own CLI:
+#   --metric both           adds a second panel plotting the same loss
+#                            curves against cumulative elapsed_seconds
+#                            instead of outer iteration.
+#   --include-expressions   annotates the per-equation figure with each
+#                            trajectory's final best_expression.
+# Both default to the standalone script's defaults (loss-only, no
+# annotation), so existing invocations without these flags are unaffected.
+#
+# Per seed file, produces:
+#   <exp>_traj_seed<seed>_<nguyen_id>.png/.pdf   — one per equation with data
+#   <exp>_traj_seed<seed>_overview.png/.pdf      — all equations, one figure
+#   <exp>_traj_seed<seed>_summary.csv            — per-equation summary table
+# ══════════════════════════════════════════════════════════════════════════════
+if _EXPERIMENT in ("exp3", "exp3b"):
+    import csv as _csv
+
+    def _ptraj_finite_float(value):
+        try:
+            x = float(value)
+        except (TypeError, ValueError):
+            return None
+        return x if math.isfinite(x) else None
+
+    def _ptraj_clean_trajectory(rows):
+        """Keep usable trajectory observations and sort by iteration."""
+        if not isinstance(rows, list):
+            return []
+        cleaned = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            iteration = _ptraj_finite_float(row.get("iteration"))
+            loss = _ptraj_finite_float(row.get("best_loss"))
+            if iteration is None or loss is None:
+                continue
+            item = dict(row)
+            item["_iteration"] = iteration
+            item["_elapsed"] = _ptraj_finite_float(row.get("elapsed_seconds"))
+            item["_loss"] = loss
+            cleaned.append(item)
+        cleaned.sort(key=lambda r: r["_iteration"])
+        return cleaned
+
+    def _ptraj_index_records(records):
+        """Index a list of {"metadata": {...}, "trajectory": [...]} records by nguyen_id."""
+        indexed = {}
+        if not isinstance(records, list):
+            return indexed
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("metadata", {}) or {}
+            key = metadata.get("nguyen_id") or metadata.get("id") or metadata.get("name")
+            if key is None:
+                key = f"unknown_{len(indexed) + 1}"
+            indexed[str(key)] = record
+        return indexed
+
+    def _ptraj_safe_filename(value):
+        return "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
+
+    def _ptraj_seed_from_payload(payload, path):
+        seed = (payload.get("config", {}) or {}).get("seed")
+        if seed is not None:
+            return seed
+        # Fallback for files named e.g. exp3_nguyen12_seed42.json.
+        stem = os.path.splitext(os.path.basename(path))[0]
+        marker = "seed"
+        if marker in stem:
+            tail = stem.split(marker, 1)[1]
+            digits = ""
+            for ch in tail:
+                if ch.isdigit() or (ch == "-" and not digits):
+                    digits += ch
+                else:
+                    break
+            if digits:
+                try:
+                    return int(digits)
+                except ValueError:
+                    pass
+        return "unknown"
+
+    def _ptraj_plot_one_axis(ax, h_traj, p_traj, xkey, xlabel, h_record, p_record,
+                              mark_thresholds):
+        if h_traj:
+            ax.plot([r[xkey] for r in h_traj], [r["_loss"] for r in h_traj],
+                    marker="o", markersize=2.5, linewidth=1.4, label="H / LLM warm-start")
+        if p_traj:
+            ax.plot([r[xkey] for r in p_traj], [r["_loss"] for r in p_traj],
+                    marker="o", markersize=2.5, linewidth=1.4, label="P / cold PySR")
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Best loss (MSE/error)")
+        ax.set_yscale("log")
+        ax.grid(True, which="both", alpha=0.25, color=C_GRID)
+
+        # Mark the first observed threshold crossing using the summary already
+        # written by the experiment. R² is not reconstructed here because the
+        # JSON does not store Var(y), which exact R² = 1 - MSE/Var(y) requires.
+        # Threshold markers are iteration-indexed in the source data, so they
+        # are only meaningful (and only drawn) on the iteration x-axis.
+        if mark_thresholds:
+            for label, record, linestyle in (("H", h_record, "--"), ("P", p_record, ":")):
+                if not record:
+                    continue
+                summary = record.get("trajectory_summary", {}) or {}
+                threshold_iteration = summary.get("first_threshold_iteration")
+                if threshold_iteration is not None:
+                    ax.axvline(float(threshold_iteration), linestyle=linestyle, linewidth=1.0,
+                                alpha=0.7, label=f"{label}: first R²≥0.9999 observed")
+
+        ax.legend(fontsize=8)
+
+    def _ptraj_plot_equation(exp_id, seed, nguyen_id, h_record, p_record,
+                              metric="loss", include_expressions=False):
+        h_traj = _ptraj_clean_trajectory((h_record or {}).get("trajectory", []))
+        p_traj = _ptraj_clean_trajectory((p_record or {}).get("trajectory", []))
+        if not h_traj and not p_traj:
+            return False
+
+        # metric="both": a second panel plots the same loss curves against
+        # cumulative elapsed_seconds instead of outer iteration, so
+        # wall-clock and iteration progress can be read side by side for the
+        # same run. Rows with no elapsed_seconds are simply omitted from
+        # that panel rather than breaking the whole figure.
+        want_time_panel = (
+            metric == "both"
+            and (any(r["_elapsed"] is not None for r in h_traj)
+                 or any(r["_elapsed"] is not None for r in p_traj))
+        )
+
+        if want_time_panel:
+            fig, (ax_iter, ax_time) = plt.subplots(1, 2, figsize=(15, 5.5))
+        else:
+            fig, ax_iter = plt.subplots(figsize=(9, 5.5))
+            ax_time = None
+
+        _ptraj_plot_one_axis(ax_iter, h_traj, p_traj, "_iteration",
+                              "Observed outer iteration", h_record, p_record,
+                              mark_thresholds=True)
+        ax_iter.set_title(f"Nguyen {nguyen_id} — seed {seed}")
+
+        if ax_time is not None:
+            h_traj_t = [r for r in h_traj if r["_elapsed"] is not None]
+            p_traj_t = [r for r in p_traj if r["_elapsed"] is not None]
+            _ptraj_plot_one_axis(ax_time, h_traj_t, p_traj_t, "_elapsed",
+                                  "Elapsed time (s)", h_record, p_record,
+                                  mark_thresholds=False)
+            ax_time.set_title("vs. wall-clock time")
+
+        if include_expressions:
+            # Annotate only the last expression from each trajectory to keep
+            # the figure readable; the full history stays in the source JSON.
+            annotations = []
+            for label, traj in (("H", h_traj), ("P", p_traj)):
+                if traj:
+                    expr = str(traj[-1].get("best_expression") or "").strip()
+                    if expr:
+                        annotations.append(f"{label}: {expr}")
+            if annotations:
+                (ax_iter).text(
+                    0.01, 0.01, "\n".join(annotations), transform=ax_iter.transAxes,
+                    va="bottom", ha="left", fontsize=8, wrap=True,
+                )
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_{_ptraj_safe_filename(nguyen_id)}"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    def _ptraj_plot_overview(exp_id, seed, h_records, p_records):
+        ids = sorted(set(h_records) | set(p_records))
+        if not ids:
+            return False
+
+        fig, ax = plt.subplots(figsize=(11, 7))
+        for nguyen_id in ids:
+            h_traj = _ptraj_clean_trajectory(h_records.get(nguyen_id, {}).get("trajectory", []))
+            p_traj = _ptraj_clean_trajectory(p_records.get(nguyen_id, {}).get("trajectory", []))
+            if h_traj:
+                ax.plot([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
+                        linewidth=0.9, alpha=0.75, label=f"{nguyen_id} H")
+            if p_traj:
+                ax.plot([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
+                        linewidth=0.9, alpha=0.45, linestyle="--", label=f"{nguyen_id} P")
+
+        ax.set_xlabel("Observed outer iteration")
+        ax.set_ylabel("Best loss (MSE/error)")
+        ax.set_title(f"PySR trajectory overview — seed {seed}")
+        ax.set_yscale("log")
+        ax.grid(True, which="both", alpha=0.2, color=C_GRID)
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=7, ncol=1)
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_overview"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    def _ptraj_write_summary_csv(exp_id, seed, h_records, p_records):
+        rows = []
+        for nguyen_id in sorted(set(h_records) | set(p_records)):
+            h = h_records.get(nguyen_id, {}) or {}
+            p = p_records.get(nguyen_id, {}) or {}
+            hs = h.get("trajectory_summary", {}) or {}
+            ps = p.get("trajectory_summary", {}) or {}
+            h_traj = _ptraj_clean_trajectory(h.get("trajectory", []))
+            p_traj = _ptraj_clean_trajectory(p.get("trajectory", []))
+            rows.append({
+                "seed": seed,
+                "nguyen_id": nguyen_id,
+                "h_observed_iterations": len(h_traj),
+                "p_observed_iterations": len(p_traj),
+                "h_first_threshold_iteration": hs.get("first_threshold_iteration"),
+                "p_first_threshold_iteration": ps.get("first_threshold_iteration"),
+                "h_first_threshold_time_seconds": hs.get("first_threshold_time_seconds"),
+                "p_first_threshold_time_seconds": ps.get("first_threshold_time_seconds"),
+                "h_final_best_loss": hs.get("final_best_loss"),
+                "p_final_best_loss": ps.get("final_best_loss"),
+                "h_final_expression": hs.get("final_best_expression"),
+                "p_final_expression": ps.get("final_best_expression"),
+                "same_final_expression": h.get("same_final_expression_as_p"),
+                "same_final_r2": h.get("same_final_r2_as_p"),
+                "warm_start_status": h.get("warm_start_status"),
+                "effective_method": h.get("effective_method"),
+                "h_independent_fit": h.get("independent_fit"),
+            })
+        if not rows:
+            return None
+        csv_path = os.path.join(
+            _FIGURES_DIR,
+            f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_summary.csv",
+        )
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        return csv_path
+
+    # Discover seed result files under _RESULTS_DIR. Naming has varied
+    # (exp3_nguyen12_seed42.json, exp3b_nguyen12_seed*.json, ...), so search
+    # broadly and validate by schema rather than assuming one fixed pattern —
+    # the same defensive-discovery approach used for the Supp-B sweep files
+    # above (_latest_glob).
+    _EXP3_CANDIDATE_PATTERNS = [
+        f"{_EXPERIMENT}_nguyen12_seed*.json",
+        f"{_EXPERIMENT}*nguyen12*.json",
+        "*nguyen12*seed*.json",
+    ]
+    _exp3_candidates = []
+    for _pat in _EXP3_CANDIDATE_PATTERNS:
+        _exp3_candidates.extend(glob.glob(os.path.join(_RESULTS_DIR, "**", _pat), recursive=True))
+    # De-duplicate while preserving discovery order.
+    _seen_exp3 = set()
+    _exp3_files = []
+    for _f in _exp3_candidates:
+        _key = os.path.abspath(_f)
+        if _key not in _seen_exp3:
+            _seen_exp3.add(_key)
+            _exp3_files.append(_f)
+    _exp3_files.sort(key=os.path.basename)
+
+    if not _exp3_files:
+        print(f"  [SKIP] No PySR trajectory seed files found under {_RESULTS_DIR} "
+              f"(recursive) for experiment '{_EXPERIMENT}' — trajectory figures skipped.")
+    else:
+        print(f"  [INFO] {_EXPERIMENT}: found {len(_exp3_files)} candidate trajectory "
+              f"file(s) under {_RESULTS_DIR}.")
+
+    _exp3_n_files_plotted = 0
+    for _exp3_path in _exp3_files:
+        _payload = _load_json(_exp3_path, _exp3_path)
+        if _payload is None:
+            continue
+        _results = _payload.get("results", {}) if isinstance(_payload, dict) else {}
+        if not isinstance(_results, dict) or not ("hypatiax" in _results or "pysr" in _results):
+            print(f"  [WARN] {_exp3_path} does not match the expected trajectory schema "
+                  f"(results.hypatiax / results.pysr) — skipped.")
+            continue
+
+        _seed = _ptraj_seed_from_payload(_payload, _exp3_path)
+        _h_records = _ptraj_index_records(_results.get("hypatiax", []))
+        _p_records = _ptraj_index_records(_results.get("pysr", []))
+        _eq_ids = sorted(set(_h_records) | set(_p_records))
+
+        _n_plotted = 0
+        for _nguyen_id in _eq_ids:
+            if _ptraj_plot_equation(_EXPERIMENT, _seed, _nguyen_id,
+                                     _h_records.get(_nguyen_id), _p_records.get(_nguyen_id),
+                                     metric=_METRIC, include_expressions=_INCLUDE_EXPRESSIONS):
+                _n_plotted += 1
+
+        _ptraj_plot_overview(_EXPERIMENT, _seed, _h_records, _p_records)
+        _ptraj_write_summary_csv(_EXPERIMENT, _seed, _h_records, _p_records)
+
+        print(f"✓ {_EXPERIMENT}: seed={_seed} — {_n_plotted} equation trajectory figure(s) "
+              f"+ overview + summary CSV (from {os.path.basename(_exp3_path)})")
+        _exp3_n_files_plotted += 1
+
+    if _exp3_files and _exp3_n_files_plotted == 0:
+        print(f"  [SKIP] {_EXPERIMENT}: no candidate file matched the expected trajectory "
+              f"schema — no trajectory figures generated.")
 
 
 # (figure_5systems_comparison removed — systems_2_3_2_data.json + glob sources

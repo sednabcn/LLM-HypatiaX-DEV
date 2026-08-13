@@ -1,0 +1,106 @@
+# ==============================================================================
+# config/paper_order.yml
+#
+# Declares, in the EXACT order they are displayed in the compiled paper, every
+# figure and table across:
+#   1. jmlr_paper_main.tex          (the main paper)
+#   2. supp_routing_improvements.tex  (Supplementary A)
+#   3. supp_benchmark_report.tex      (Supplementary B)
+#
+# ci_paper_fig_tables.yml reads this file — nothing about paper order is
+# hardcoded in the workflow itself. To reorder, add, or remove an item, edit
+# this file only.
+#
+# IMPORTANT — read before editing:
+#   Every figure in the paper is \includegraphics{...}-ed from a file that
+#   generate_figures.py produces, so all 5 figure entries below have
+#   source: generated.
+#
+#   The tables are a different story: as of this file's creation, NONE of the
+#   ~50 tables in the compiled paper are \input{}-ed from the .tex fragments
+#   that generate_tables.py writes — every table is hand-authored directly in
+#   the paper/supplement source. Where a table's numbers visibly correspond to
+#   an existing generate_tables.py output (matched by label/section/content in
+#   the docstring of generate_tables.py), it is listed as source: generated
+#   and this workflow will sync that fragment for reference. Every other
+#   table is source: manual — there is nothing for this workflow to copy, and
+#   it is listed here only so the paper-order manifest/report stays complete
+#   and the gap is visible rather than silently omitted.
+#
+# Fields:
+#   order         - display order across the whole paper (1-indexed, global)
+#   type          - figure | table
+#   doc           - main | suppA | suppB
+#   label         - the \label{} used in the .tex source (fig: or tab:),
+#                   "none" if the item has no \label
+#   source        - generated | manual
+#   stem          - (figures only) the \includegraphics filename with no
+#                   extension; both .png and .pdf variants are synced
+#   generated_file - (tables with source: generated) the .tex fragment
+#                    filename written by generate_tables.py
+#   section       - short human label for the report / step summary
+# ==============================================================================
+
+items:
+  # ── main paper: figures + tables, in document order ─────────────────────
+  - {order: 1,  type: figure, doc: main,  label: "fig:architecture",           source: generated, stem: hypatiax_three_systems,                section: "Architecture overview"}
+  - {order: 2,  type: table,  doc: main,  label: "tab:five_systems_full",      source: generated, generated_file: five_system.tex,             section: "Five-system comparison"}
+  - {order: 3,  type: table,  doc: main,  label: "tab:main_results",           source: generated, generated_file: defi_main.tex,                section: "Aggregate extrapolation performance"}
+  - {order: 4,  type: figure, doc: main,  label: "fig:r2_heatmap_clipped",     source: generated, stem: fig18_r2_heatmap_improved,             section: "Far-extrap R2 heatmap (clipped)"}
+  - {order: 5,  type: figure, doc: main,  label: "fig:r2_heatmap_raw",         source: generated, stem: fig09_r2_heatmap_regimes,               section: "R2 heatmap by regime"}
+  - {order: 6,  type: table,  doc: main,  label: "tab:difficulty",             source: generated, generated_file: defi_tiers.tex,               section: "Performance by difficulty"}
+  - {order: 7,  type: table,  doc: main,  label: "tab:hybrid-bug-breakdown",   source: manual,     section: "Hybrid decision-attribution bug breakdown"}
+  - {order: 8,  type: table,  doc: main,  label: "tab:timing",                 source: generated, generated_file: runtime.tex,                  section: "Runtime analysis"}
+  - {order: 9,  type: table,  doc: main,  label: "tab:portfolio_seed_sweep",   source: generated, generated_file: portfolio_sweep.tex,           section: "Portfolio variance seed sweep"}
+  - {order: 10, type: figure, doc: main,  label: "fig:portfolio_seed_sweep",   source: generated, stem: fig1_seed_sweep,                        section: "Portfolio variance seed sweep (figure)"}
+  - {order: 11, type: table,  doc: main,  label: "tab:llm_ablation",           source: generated, generated_file: ablation.tex,                 section: "LLM ablation (PySR vs HypatiaX)"}
+  - {order: 12, type: table,  doc: main,  label: "tab:provenance",             source: manual,     section: "Feynman-30 run provenance"}
+  - {order: 13, type: table,  doc: main,  label: "tab:randomsplit",            source: manual,     section: "Feynman-30 random 80/20 split"}
+  - {order: 14, type: table,  doc: main,  label: "tab:pcasplit",               source: manual,     section: "Feynman-30 PCA 40/60 split"}
+  - {order: 15, type: table,  doc: main,  label: "tab:feynman30-legacy",       source: manual,     section: "[WITHDRAWN] legacy Feynman-30 run"}
+  - {order: 16, type: table,  doc: main,  label: "tab:nguyen12",               source: generated, generated_file: nguyen12.tex,                 section: "Nguyen-12 benchmark"}
+  - {order: 17, type: table,  doc: main,  label: "tab:instability",            source: generated, generated_file: instability.tex,              section: "LLM instability regime distribution"}
+  - {order: 18, type: figure, doc: main,  label: "fig:routing_cascade",        source: generated, stem: hypatiax_algorithm1_routing_cascade_v2, section: "Algorithm 1 - routing cascade"}
+  - {order: 19, type: table,  doc: main,  label: "none",                       source: generated, generated_file: version_history.tex,          section: "Appendix B - benchmark version history"}
+  - {order: 20, type: table,  doc: main,  label: "none",                       source: generated, generated_file: timing_detail.tex,             section: "Appendix C - corrected runtime claim"}
+
+  # ── Supplementary A: supp_routing_improvements.tex ───────────────────────
+  - {order: 21, type: table,  doc: suppA, label: "tab:baseline",               source: manual,     section: "Supp A - baseline before routing improvements"}
+  - {order: 22, type: table,  doc: suppA, label: "tab:fix5_cases",             source: manual,     section: "Supp A - Fix 5 / routing guard outcomes"}
+  - {order: 23, type: table,  doc: suppA, label: "tab:projected",              source: manual,     section: "Supp A - measured vs projected R2>0.99 by fix"}
+  - {order: 24, type: table,  doc: suppA, label: "tab:changes",                source: manual,     section: "Supp A - all changes across modified files"}
+  - {order: 25, type: table,  doc: suppA, label: "tab:runtime_reproducibility", source: manual,    section: "Supp A - software environment"}
+  - {order: 26, type: table,  doc: suppA, label: "tab:timing_breakdown",       source: manual,     section: "Supp A - computational cost breakdown"}
+  - {order: 27, type: table,  doc: suppA, label: "tab:scalability",            source: manual,     section: "Supp A - scalability with dataset size"}
+  - {order: 28, type: table,  doc: suppA, label: "tab:cost_accuracy_tradeoff", source: manual,     section: "Supp A - runtime vs extrapolation error tradeoff"}
+  - {order: 29, type: table,  doc: suppA, label: "tab:equation_prevalence",    source: manual,     section: "Supp A - equation prevalence in training data"}
+  - {order: 30, type: table,  doc: suppA, label: "tab:conceptual_complexity",  source: manual,     section: "Supp A - conceptual requirements comparison"}
+
+  # ── Supplementary B: supp_benchmark_report.tex ────────────────────────────
+  - {order: 31, type: table,  doc: suppB, label: "tab:methods",                source: manual,     section: "Supp B - six-method benchmark under evaluation"}
+  - {order: 32, type: table,  doc: suppB, label: "tab:sweeps",                 source: manual,     section: "Supp B - sweep design"}
+  - {order: 33, type: table,  doc: suppB, label: "tab:hardcoded",              source: manual,     section: "Supp B - equations flagged is_hardcoded"}
+  - {order: 34, type: table,  doc: suppB, label: "tab:overall",                source: generated, generated_file: suppb_noiseless.tex,          section: "Supp B - six-method aggregate performance"}
+  - {order: 35, type: table,  doc: suppB, label: "tab:sota",                   source: manual,     section: "Supp B - SOTA SR system comparison"}
+  - {order: 36, type: table,  doc: suppB, label: "tab:nrmse",                  source: manual,     section: "Supp B - raw vs normalised RMSE"}
+  - {order: 37, type: table,  doc: suppB, label: "tab:wilcoxon",               source: manual,     section: "Supp B - Wilcoxon signed-rank tests"}
+  - {order: 38, type: table,  doc: suppB, label: "tab:r2_noise",               source: generated, generated_file: suppb_r2_noise.tex,           section: "Supp B - R2 statistics per noise level"}
+  - {order: 39, type: table,  doc: suppB, label: "tab:rr_noise",               source: generated, generated_file: suppb_rr_noise.tex,           section: "Supp B - recovery rate per noise level"}
+  - {order: 40, type: table,  doc: suppB, label: "tab:time_noise",             source: generated, generated_file: suppb_time_noise.tex,         section: "Supp B - computation time per noise level"}
+  - {order: 41, type: table,  doc: suppB, label: "tab:sc_metrics",             source: generated, generated_file: suppb_sc_metrics.tex,         section: "Supp B - R2/RMSE per sample size"}
+  - {order: 42, type: table,  doc: suppB, label: "tab:winrate",                source: generated, generated_file: suppb_winrate.tex,            section: "Supp B - head-to-head win rates M3 vs M4"}
+  - {order: 43, type: table,  doc: suppB, label: "tab:arch",                   source: manual,     section: "Supp B - internal routing statistics"}
+  - {order: 44, type: table,  doc: suppB, label: "tab:jmlr",                   source: manual,     section: "Supp B - JMLR readiness assessment"}
+  - {order: 45, type: table,  doc: suppB, label: "tab:figlist",                source: manual,     section: "Supp B - complete figure inventory"}
+  - {order: 46, type: table,  doc: suppB, label: "tab:software_env",           source: manual,     section: "Supp B - software/hardware environment"}
+  - {order: 47, type: table,  doc: suppB, label: "tab:hyperparameters",        source: manual,     section: "Supp B - PySR configuration"}
+  - {order: 48, type: table,  doc: suppB, label: "tab:hyperparameters_complete", source: manual,   section: "Supp B - complete hyperparameter specs"}
+  - {order: 49, type: table,  doc: suppB, label: "tab:llm_detailed",           source: manual,     section: "Supp B - Pure LLM performance by test case"}
+  - {order: 50, type: table,  doc: suppB, label: "tab:defi_detailed",          source: manual,     section: "Supp B - DeFi-optimized HypatiaX performance"}
+  - {order: 51, type: table,  doc: suppB, label: "tab:formulas_detailed",      source: manual,     section: "Supp B - ground truth formulas"}
+  - {order: 52, type: table,  doc: suppB, label: "tab:interpolation_stats",    source: manual,     section: "Supp B - interpolation performance stats"}
+  - {order: 53, type: table,  doc: suppB, label: "tab:domain_success_detailed", source: manual,    section: "Supp B - success rate by domain/method"}
+  - {order: 54, type: table,  doc: suppB, label: "tab:validation_stats",       source: manual,     section: "Supp B - validation layer error detection"}
+  - {order: 55, type: table,  doc: suppB, label: "tab:supplementary_files",    source: manual,     section: "Supp B - supplementary data files"}
+  - {order: 56, type: table,  doc: suppB, label: "tab:additional_stats",       source: manual,     section: "Supp B - additional statistical tests"}
+  - {order: 57, type: table,  doc: suppB, label: "tab:noise_sensitivity",      source: manual,     section: "Supp B - success rate vs noise level"}
