@@ -1973,10 +1973,31 @@ if _EXPERIMENT in ("exp3", "exp3b"):
         if not ids:
             return False
 
-        fig, ax = plt.subplots(figsize=(11, 7))
+        # Pre-compute cleaned trajectories once and check whether ANY
+        # equation actually has observed points before drawing anything.
+        # `ids` being non-empty only means records exist (e.g. every
+        # equation fell back to pysr_cold_fallback with trajectory: []),
+        # not that there's anything to plot — without this check we'd
+        # silently emit a fully blank chart and still report success.
+        # This mirrors the check _ptraj_plot_equation already does.
+        _traj_by_id = {}
+        _any_points = False
         for nguyen_id in ids:
             h_traj = _ptraj_clean_trajectory(h_records.get(nguyen_id, {}).get("trajectory", []))
             p_traj = _ptraj_clean_trajectory(p_records.get(nguyen_id, {}).get("trajectory", []))
+            _traj_by_id[nguyen_id] = (h_traj, p_traj)
+            if h_traj or p_traj:
+                _any_points = True
+
+        if not _any_points:
+            print(f"  [WARN] {exp_id}: seed={seed} — no equation has any observed "
+                  f"trajectory points (all records have trajectory: []) — "
+                  f"overview figure skipped rather than emitting a blank chart.")
+            return False
+
+        fig, ax = plt.subplots(figsize=(11, 7))
+        for nguyen_id in ids:
+            h_traj, p_traj = _traj_by_id[nguyen_id]
             if h_traj:
                 ax.plot([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
                         linewidth=0.9, alpha=0.75, label=f"{nguyen_id} H")
@@ -2090,11 +2111,12 @@ if _EXPERIMENT in ("exp3", "exp3b"):
                                      metric=_METRIC, include_expressions=_INCLUDE_EXPRESSIONS):
                 _n_plotted += 1
 
-        _ptraj_plot_overview(_EXPERIMENT, _seed, _h_records, _p_records)
+        _overview_made = _ptraj_plot_overview(_EXPERIMENT, _seed, _h_records, _p_records)
         _ptraj_write_summary_csv(_EXPERIMENT, _seed, _h_records, _p_records)
 
+        _overview_note = "+ overview " if _overview_made else "(overview skipped — no trajectory data) "
         print(f"✓ {_EXPERIMENT}: seed={_seed} — {_n_plotted} equation trajectory figure(s) "
-              f"+ overview + summary CSV (from {os.path.basename(_exp3_path)})")
+              f"{_overview_note}+ summary CSV (from {os.path.basename(_exp3_path)})")
         _exp3_n_files_plotted += 1
 
     if _exp3_files and _exp3_n_files_plotted == 0:
