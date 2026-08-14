@@ -38,6 +38,10 @@ name: "HypatiaX - sync figures + tables to global dirs"
 permissions:
   contents: write
 
+concurrency:
+  group: fig-tables-sync-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CONFIG_FILE: "config/experiments.yml"
 
@@ -159,6 +163,14 @@ jobs:
       # ------------------------------------------------------------------
       # Step 3 — commit whatever changed (new/updated timestamp markers,
       # newly synced files). Nothing to commit is not an error.
+      #
+      # The push is wrapped in a rebase-and-retry loop: if another run (or
+      # another workflow) pushed to the branch in between our checkout and
+      # our push, `git push` is rejected. We rebase our commit onto the
+      # latest remote state and try again, up to 5 times. The concurrency
+      # group above already serializes runs of *this* workflow, so this
+      # loop mainly guards against pushes from other workflows/commits
+      # landing on the branch mid-run.
       # ------------------------------------------------------------------
       - name: Commit synced figures/tables
         shell: bash
@@ -170,10 +182,22 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "Nothing to commit — figures/tables already in sync."
-          else
-            git commit -m "sync(fig+tables): timestamp and sync figures/tables to global dirs [skip ci]"
-            git push
+            exit 0
           fi
+
+          git commit -m "sync(fig+tables): timestamp and sync figures/tables to global dirs [skip ci]"
+
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt) — rebasing onto ${GITHUB_REF_NAME} and retrying."
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+
+          echo "::error::Failed to push after 5 attempts."
+          exit 1
 
       - name: Step summary
         if: always()
