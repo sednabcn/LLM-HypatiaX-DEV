@@ -2072,25 +2072,26 @@ if _EXPERIMENT in ("exp3", "exp3b"):
     for _pat in _EXP3_CANDIDATE_PATTERNS:
         _exp3_candidates.extend(glob.glob(os.path.join(_RESULTS_DIR, "**", _pat), recursive=True))
     # De-duplicate while preserving discovery order.
-    # [FIX-EXP3-EXP3B-CROSS-CONTAMINATION] Globs can't express a "no more
-    # identifier characters after _EXPERIMENT" boundary. Without one,
-    # "exp3*nguyen12*.json" also matches exp3b_nguyen12_seed99.json (since
-    # "exp3" is a literal string prefix of "exp3b"), and the deliberately
-    # broad third fallback pattern matches either experiment's files
-    # regardless of prefix. If exp3 and exp3b's --results-dir are the same
-    # directory (or one nests under the other), running this script once for
-    # exp3 and once for exp3b silently pulls the OTHER experiment's seed file
-    # into each run — it gets re-plotted and written back out under the
-    # CURRENT _EXPERIMENT's filename prefix (see _ptraj_plot_equation /
-    # _ptraj_plot_overview below, which trust _EXPERIMENT rather than
-    # re-deriving it from the file), so the same underlying trajectory data
-    # ends up duplicated across both experiments' figure sets, mislabeled.
-    # Every candidate is filtered here to actually belong to _EXPERIMENT,
-    # regardless of which pattern above matched it.
-    _exp3_candidates = [
-        f for f in _exp3_candidates
-        if os.path.basename(f).startswith(f"{_EXPERIMENT}_")
-    ]
+    # [FIX-EXP3-EXP3B-CROSS-CONTAMINATION-v2] The experiment script hardcodes
+    # its output filename as f"exp3_nguyen12_seed{seed}.json" regardless of
+    # whether the exp3 or exp3b CI job produced it — exp3 and exp3b are
+    # distinguished purely by DIRECTORY (source_dir "extrapolation" vs the
+    # nested "extrapolation/multi_seed", per config/experiments.yml), never
+    # by filename. A prior version of this fix filtered by filename prefix
+    # (startswith(f"{_EXPERIMENT}_")) — that's wrong: it also rejected every
+    # one of exp3b's own legitimate files (also named "exp3_nguyen12_seed*.
+    # json"), producing 0 figures for exp3b. The correct fix mirrors what
+    # experiments.yml's own trigger_paths already does for exp3
+    # ("!hypatiax/data/results/extrapolation/multi_seed/**"): when running
+    # for exp3, exclude anything found under a "multi_seed" subdirectory of
+    # _RESULTS_DIR. exp3b's own search is rooted at .../multi_seed itself,
+    # with no further nested sibling beneath it, so no exclusion is needed
+    # in that direction.
+    if _EXPERIMENT == "exp3":
+        _exp3_candidates = [
+            f for f in _exp3_candidates
+            if "multi_seed" not in os.path.relpath(f, _RESULTS_DIR).split(os.sep)
+        ]
 
     _seen_exp3 = set()
     _exp3_files = []
