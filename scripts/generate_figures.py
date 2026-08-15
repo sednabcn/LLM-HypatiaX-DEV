@@ -2000,14 +2000,16 @@ if _EXPERIMENT in ("exp3", "exp3b"):
             h_traj, p_traj = _traj_by_id[nguyen_id]
             if h_traj:
                 ax.plot([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
-                        linewidth=0.9, alpha=0.75, label=f"{nguyen_id} H")
+                        marker="o", markersize=4, linewidth=0.9, alpha=0.75, label=f"{nguyen_id} H")
             if p_traj:
                 ax.plot([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
-                        linewidth=0.9, alpha=0.45, linestyle="--", label=f"{nguyen_id} P")
+                        marker="o", markersize=4, linewidth=0.9, alpha=0.45, linestyle="--", label=f"{nguyen_id} P")
 
         ax.set_xlabel("Observed outer iteration")
         ax.set_ylabel("Best loss (MSE/error)")
         ax.set_title(f"PySR trajectory overview — seed {seed}")
+        ax.text(0.01, 0.01, "x = observed HOF checkpoints (not PySR internal generations)",
+                transform=ax.transAxes, fontsize=8, alpha=0.7, va="bottom")
         ax.set_yscale("log")
         ax.grid(True, which="both", alpha=0.2, color=C_GRID)
         ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=7, ncol=1)
