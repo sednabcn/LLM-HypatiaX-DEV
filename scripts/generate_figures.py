@@ -2072,6 +2072,26 @@ if _EXPERIMENT in ("exp3", "exp3b"):
     for _pat in _EXP3_CANDIDATE_PATTERNS:
         _exp3_candidates.extend(glob.glob(os.path.join(_RESULTS_DIR, "**", _pat), recursive=True))
     # De-duplicate while preserving discovery order.
+    # [FIX-EXP3-EXP3B-CROSS-CONTAMINATION] Globs can't express a "no more
+    # identifier characters after _EXPERIMENT" boundary. Without one,
+    # "exp3*nguyen12*.json" also matches exp3b_nguyen12_seed99.json (since
+    # "exp3" is a literal string prefix of "exp3b"), and the deliberately
+    # broad third fallback pattern matches either experiment's files
+    # regardless of prefix. If exp3 and exp3b's --results-dir are the same
+    # directory (or one nests under the other), running this script once for
+    # exp3 and once for exp3b silently pulls the OTHER experiment's seed file
+    # into each run — it gets re-plotted and written back out under the
+    # CURRENT _EXPERIMENT's filename prefix (see _ptraj_plot_equation /
+    # _ptraj_plot_overview below, which trust _EXPERIMENT rather than
+    # re-deriving it from the file), so the same underlying trajectory data
+    # ends up duplicated across both experiments' figure sets, mislabeled.
+    # Every candidate is filtered here to actually belong to _EXPERIMENT,
+    # regardless of which pattern above matched it.
+    _exp3_candidates = [
+        f for f in _exp3_candidates
+        if os.path.basename(f).startswith(f"{_EXPERIMENT}_")
+    ]
+
     _seen_exp3 = set()
     _exp3_files = []
     for _f in _exp3_candidates:
