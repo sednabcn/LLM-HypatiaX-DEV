@@ -221,6 +221,19 @@ guards:
     owners: ["suppB_sc"]
   - dirs: ["figures"]
     owners: ["instability", "figures_deploy"]
+  # exp3b's source_dir ("extrapolation/multi_seed") nests inside exp3's own
+  # source_dir ("extrapolation") — see exp3's trigger_paths negation above,
+  # which excludes this subpath from exp3's push trigger for the same
+  # reason. generate_figures.py's exp3 discovery glob recursed into this
+  # subdirectory and (before being fixed to filter by filename prefix)
+  # picked up exp3b's own seed files. That read-side bug is now fixed, but
+  # this guard adds a write-side backstop: only exp3b's own run may write
+  # into its figures/tables dirs, so any future code path that walks the
+  # same nested tree without an equivalent filename check fails loudly on a
+  # write instead of silently corrupting exp3b's canonical output.
+  - dirs: ["extrapolation/multi_seed/figures",
+           "extrapolation/multi_seed/tables"]
+    owners: ["exp3b"]
 
 # ------------------------------------------------------------------------------
 # On missing result data: warn and skip only the affected table/figure,
