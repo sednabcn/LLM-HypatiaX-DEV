@@ -1857,6 +1857,93 @@ if _EXPERIMENT in ("exp3", "exp3b"):
     def _ptraj_safe_filename(value):
         return "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
 
+    # [ARCHIVE-HOF-CSV fallback] exp3_nguyen12_hybrid50v_02.py now archives
+    # each arm's final PySR hall_of_fame.csv (raw pipe-delimited checkpoint,
+    # not our trajectory-JSON schema) to
+    #   <results dir>/hall_of_fame_archives/hall_of_fame_seed{seed}_{H|P}_{nguyen_id}.csv
+    # right after fit(), since temp_equation_file=True means the live file
+    # isn't guaranteed to survive past that call. This is the FINAL Pareto
+    # front only (one row per complexity level), not a per-iteration time
+    # series — so it can only ever recover a single point per equation/arm.
+    # It's used strictly as a fallback for records whose polled `trajectory`
+    # list is empty (e.g. runs made before the trajectory-polling fix, or any
+    # future run where polling still misses everything for some other
+    # reason) so the figure/summary shows at least the final result instead
+    # of nothing. Parsing logic mirrors _read_pysr_hof_snapshot() in
+    # exp3_nguyen12_hybrid50v_02.py exactly (pipe-delimited, normalized
+    # column names, best row = minimum loss).
+    _ptraj_archive_cache = {}
+
+    def _ptraj_find_archive_csv(seed, arm, nguyen_id):
+        key = (str(seed), arm, str(nguyen_id))
+        if key in _ptraj_archive_cache:
+            return _ptraj_archive_cache[key]
+        fname = f"hall_of_fame_seed{seed}_{arm}_{nguyen_id}.csv"
+        matches = glob.glob(os.path.join(_RESULTS_DIR, "**", fname), recursive=True)
+        result = matches[0] if matches else None
+        _ptraj_archive_cache[key] = result
+        return result
+
+    def _ptraj_read_archived_hof(csv_path):
+        try:
+            with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+                rows = list(_csv.DictReader(f, delimiter="|"))
+            if not rows:
+                return None
+            norm = {}
+            for k in rows[0].keys():
+                if k is not None:
+                    norm[str(k).strip().lower()] = k
+
+            def col(*names):
+                for name in names:
+                    if name in norm:
+                        return norm[name]
+                return None
+
+            loss_col = col("loss", "mse", "error")
+            expr_col = col("equation", "expression", "expr")
+
+            def fnum(row, c):
+                if c is None:
+                    return None
+                try:
+                    x = float(str(row.get(c, "")).strip())
+                    return x if math.isfinite(x) else None
+                except (TypeError, ValueError):
+                    return None
+
+            valid = [(fnum(r, loss_col), r) for r in rows]
+            valid = [(loss, r) for loss, r in valid if loss is not None]
+            if not valid:
+                return None
+            best_loss, best_row = min(valid, key=lambda z: z[0])
+            best_expr = None if expr_col is None else str(best_row.get(expr_col, "")).strip()
+            return {"best_loss": best_loss, "best_expression": best_expr}
+        except (OSError, UnicodeError, ValueError, _csv.Error):
+            return None
+
+    def _ptraj_trajectory_with_fallback(record, seed, arm, nguyen_id):
+        """Clean the polled trajectory; if empty, fall back to a single
+        final point read from the archived hall_of_fame.csv, if one exists.
+        Returns (trajectory, from_archive)."""
+        traj = _ptraj_clean_trajectory((record or {}).get("trajectory", []))
+        if traj:
+            return traj, False
+        csv_path = _ptraj_find_archive_csv(seed, arm, nguyen_id)
+        if csv_path is None:
+            return [], False
+        snap = _ptraj_read_archived_hof(csv_path)
+        if snap is None:
+            return [], False
+        return [{
+            "_iteration": 1,
+            "_elapsed": None,
+            "_loss": snap["best_loss"],
+            "best_expression": snap["best_expression"],
+            "label": arm,
+        }], True
+
     def _ptraj_seed_from_payload(payload, path):
         seed = (payload.get("config", {}) or {}).get("seed")
         if seed is not None:
@@ -1912,8 +1999,8 @@ if _EXPERIMENT in ("exp3", "exp3b"):
 
     def _ptraj_plot_equation(exp_id, seed, nguyen_id, h_record, p_record,
                               metric="loss", include_expressions=False):
-        h_traj = _ptraj_clean_trajectory((h_record or {}).get("trajectory", []))
-        p_traj = _ptraj_clean_trajectory((p_record or {}).get("trajectory", []))
+        h_traj, h_from_archive = _ptraj_trajectory_with_fallback(h_record, seed, "H", nguyen_id)
+        p_traj, p_from_archive = _ptraj_trajectory_with_fallback(p_record, seed, "P", nguyen_id)
         if not h_traj and not p_traj:
             return False
 
@@ -1937,7 +2024,11 @@ if _EXPERIMENT in ("exp3", "exp3b"):
         _ptraj_plot_one_axis(ax_iter, h_traj, p_traj, "_iteration",
                               "Observed outer iteration", h_record, p_record,
                               mark_thresholds=True)
-        ax_iter.set_title(f"Nguyen {nguyen_id} — seed {seed}")
+        _title = f"Nguyen {nguyen_id} — seed {seed}"
+        if h_from_archive or p_from_archive:
+            _which = "/".join(a for a, flag in (("H", h_from_archive), ("P", p_from_archive)) if flag)
+            _title += f"  (final-only, from archived hall_of_fame.csv: {_which})"
+        ax_iter.set_title(_title, fontsize=10)
 
         if ax_time is not None:
             h_traj_t = [r for r in h_traj if r["_elapsed"] is not None]
@@ -1973,43 +2064,32 @@ if _EXPERIMENT in ("exp3", "exp3b"):
         if not ids:
             return False
 
-        # Pre-compute cleaned trajectories once and check whether ANY
-        # equation actually has observed points before drawing anything.
-        # `ids` being non-empty only means records exist (e.g. every
-        # equation fell back to pysr_cold_fallback with trajectory: []),
-        # not that there's anything to plot — without this check we'd
-        # silently emit a fully blank chart and still report success.
-        # This mirrors the check _ptraj_plot_equation already does.
-        _traj_by_id = {}
-        _any_points = False
-        for nguyen_id in ids:
-            h_traj = _ptraj_clean_trajectory(h_records.get(nguyen_id, {}).get("trajectory", []))
-            p_traj = _ptraj_clean_trajectory(p_records.get(nguyen_id, {}).get("trajectory", []))
-            _traj_by_id[nguyen_id] = (h_traj, p_traj)
-            if h_traj or p_traj:
-                _any_points = True
-
-        if not _any_points:
-            print(f"  [WARN] {exp_id}: seed={seed} — no equation has any observed "
-                  f"trajectory points (all records have trajectory: []) — "
-                  f"overview figure skipped rather than emitting a blank chart.")
-            return False
-
         fig, ax = plt.subplots(figsize=(11, 7))
         for nguyen_id in ids:
-            h_traj, p_traj = _traj_by_id[nguyen_id]
+            h_traj, h_from_archive = _ptraj_trajectory_with_fallback(
+                h_records.get(nguyen_id, {}), seed, "H", nguyen_id)
+            p_traj, p_from_archive = _ptraj_trajectory_with_fallback(
+                p_records.get(nguyen_id, {}), seed, "P", nguyen_id)
             if h_traj:
-                ax.plot([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
-                        marker="o", markersize=4, linewidth=0.9, alpha=0.75, label=f"{nguyen_id} H")
+                _label = f"{nguyen_id} H" + (" (final only, archive)" if h_from_archive else "")
+                if h_from_archive:
+                    ax.scatter([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
+                               s=14, alpha=0.75, marker="x", label=_label)
+                else:
+                    ax.plot([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
+                            linewidth=0.9, alpha=0.75, label=_label)
             if p_traj:
-                ax.plot([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
-                        marker="o", markersize=4, linewidth=0.9, alpha=0.45, linestyle="--", label=f"{nguyen_id} P")
+                _label = f"{nguyen_id} P" + (" (final only, archive)" if p_from_archive else "")
+                if p_from_archive:
+                    ax.scatter([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
+                               s=14, alpha=0.45, marker="x", label=_label)
+                else:
+                    ax.plot([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
+                            linewidth=0.9, alpha=0.45, linestyle="--", label=_label)
 
         ax.set_xlabel("Observed outer iteration")
         ax.set_ylabel("Best loss (MSE/error)")
         ax.set_title(f"PySR trajectory overview — seed {seed}")
-        ax.text(0.01, 0.01, "x = observed HOF checkpoints (not PySR internal generations)",
-                transform=ax.transAxes, fontsize=8, alpha=0.7, va="bottom")
         ax.set_yscale("log")
         ax.grid(True, which="both", alpha=0.2, color=C_GRID)
         ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=7, ncol=1)
@@ -2027,13 +2107,15 @@ if _EXPERIMENT in ("exp3", "exp3b"):
             p = p_records.get(nguyen_id, {}) or {}
             hs = h.get("trajectory_summary", {}) or {}
             ps = p.get("trajectory_summary", {}) or {}
-            h_traj = _ptraj_clean_trajectory(h.get("trajectory", []))
-            p_traj = _ptraj_clean_trajectory(p.get("trajectory", []))
+            h_traj, h_from_archive = _ptraj_trajectory_with_fallback(h, seed, "H", nguyen_id)
+            p_traj, p_from_archive = _ptraj_trajectory_with_fallback(p, seed, "P", nguyen_id)
             rows.append({
                 "seed": seed,
                 "nguyen_id": nguyen_id,
                 "h_observed_iterations": len(h_traj),
                 "p_observed_iterations": len(p_traj),
+                "h_from_archived_hof_csv": h_from_archive,
+                "p_from_archived_hof_csv": p_from_archive,
                 "h_first_threshold_iteration": hs.get("first_threshold_iteration"),
                 "p_first_threshold_iteration": ps.get("first_threshold_iteration"),
                 "h_first_threshold_time_seconds": hs.get("first_threshold_time_seconds"),
@@ -2074,27 +2156,6 @@ if _EXPERIMENT in ("exp3", "exp3b"):
     for _pat in _EXP3_CANDIDATE_PATTERNS:
         _exp3_candidates.extend(glob.glob(os.path.join(_RESULTS_DIR, "**", _pat), recursive=True))
     # De-duplicate while preserving discovery order.
-    # [FIX-EXP3-EXP3B-CROSS-CONTAMINATION-v2] The experiment script hardcodes
-    # its output filename as f"exp3_nguyen12_seed{seed}.json" regardless of
-    # whether the exp3 or exp3b CI job produced it — exp3 and exp3b are
-    # distinguished purely by DIRECTORY (source_dir "extrapolation" vs the
-    # nested "extrapolation/multi_seed", per config/experiments.yml), never
-    # by filename. A prior version of this fix filtered by filename prefix
-    # (startswith(f"{_EXPERIMENT}_")) — that's wrong: it also rejected every
-    # one of exp3b's own legitimate files (also named "exp3_nguyen12_seed*.
-    # json"), producing 0 figures for exp3b. The correct fix mirrors what
-    # experiments.yml's own trigger_paths already does for exp3
-    # ("!hypatiax/data/results/extrapolation/multi_seed/**"): when running
-    # for exp3, exclude anything found under a "multi_seed" subdirectory of
-    # _RESULTS_DIR. exp3b's own search is rooted at .../multi_seed itself,
-    # with no further nested sibling beneath it, so no exclusion is needed
-    # in that direction.
-    if _EXPERIMENT == "exp3":
-        _exp3_candidates = [
-            f for f in _exp3_candidates
-            if "multi_seed" not in os.path.relpath(f, _RESULTS_DIR).split(os.sep)
-        ]
-
     _seen_exp3 = set()
     _exp3_files = []
     for _f in _exp3_candidates:
@@ -2134,12 +2195,11 @@ if _EXPERIMENT in ("exp3", "exp3b"):
                                      metric=_METRIC, include_expressions=_INCLUDE_EXPRESSIONS):
                 _n_plotted += 1
 
-        _overview_made = _ptraj_plot_overview(_EXPERIMENT, _seed, _h_records, _p_records)
+        _ptraj_plot_overview(_EXPERIMENT, _seed, _h_records, _p_records)
         _ptraj_write_summary_csv(_EXPERIMENT, _seed, _h_records, _p_records)
 
-        _overview_note = "+ overview " if _overview_made else "(overview skipped — no trajectory data) "
         print(f"✓ {_EXPERIMENT}: seed={_seed} — {_n_plotted} equation trajectory figure(s) "
-              f"{_overview_note}+ summary CSV (from {os.path.basename(_exp3_path)})")
+              f"+ overview + summary CSV (from {os.path.basename(_exp3_path)})")
         _exp3_n_files_plotted += 1
 
     if _exp3_files and _exp3_n_files_plotted == 0:
