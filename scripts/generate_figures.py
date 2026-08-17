@@ -1923,6 +1923,275 @@ if _EXPERIMENT in ("exp3", "exp3b"):
         except (OSError, UnicodeError, ValueError, _csv.Error):
             return None
 
+    def _ptraj_read_archived_hof_pareto(csv_path):
+        """Read the FULL archived hall_of_fame.csv (every complexity level),
+        unlike _ptraj_read_archived_hof() above which keeps only the single
+        best row. This is what a PySR Pareto front actually is: one
+        (complexity, loss) point per complexity level explored. Returns a
+        list of {"complexity": float, "loss": float, "equation": str} sorted
+        by complexity, or [] if the file is missing/unreadable/has no usable
+        complexity column.
+        """
+        try:
+            with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+                rows = list(_csv.DictReader(f, delimiter="|"))
+            if not rows:
+                return []
+            norm = {}
+            for k in rows[0].keys():
+                if k is not None:
+                    norm[str(k).strip().lower()] = k
+
+            def col(*names):
+                for name in names:
+                    if name in norm:
+                        return norm[name]
+                return None
+
+            complexity_col = col("complexity")
+            loss_col = col("loss", "mse", "error")
+            expr_col = col("equation", "expression", "expr")
+            if complexity_col is None or loss_col is None:
+                return []
+
+            def fnum(row, c):
+                if c is None:
+                    return None
+                try:
+                    x = float(str(row.get(c, "")).strip())
+                    return x if math.isfinite(x) else None
+                except (TypeError, ValueError):
+                    return None
+
+            out = []
+            for r in rows:
+                complexity = fnum(r, complexity_col)
+                loss = fnum(r, loss_col)
+                if complexity is None or loss is None:
+                    continue
+                out.append({
+                    "complexity": complexity,
+                    "loss": loss,
+                    "equation": None if expr_col is None else str(r.get(expr_col, "")).strip(),
+                })
+            out.sort(key=lambda z: z["complexity"])
+            return out
+        except (OSError, UnicodeError, ValueError, _csv.Error):
+            return []
+
+    def _ptraj_collect_loss_pairs(seed, h_records, p_records):
+        """Return [(nguyen_id, p_final_loss, h_final_loss), ...] for every
+        equation where both arms have a usable final loss. Shared by the
+        per-seed win/loss scatter and the cross-seed aggregate below, so the
+        two stay consistent by construction."""
+        ids = sorted(set(h_records) | set(p_records))
+        pts = []
+        for nguyen_id in ids:
+            h_record = h_records.get(nguyen_id, {}) or {}
+            p_record = p_records.get(nguyen_id, {}) or {}
+            hs = h_record.get("trajectory_summary", {}) or {}
+            ps = p_record.get("trajectory_summary", {}) or {}
+            h_final = hs.get("final_best_loss")
+            p_final = ps.get("final_best_loss")
+            if h_final is None:
+                h_traj, _ = _ptraj_trajectory_with_fallback(h_record, seed, "H", nguyen_id)
+                h_final = h_traj[-1]["_loss"] if h_traj else None
+            if p_final is None:
+                p_traj, _ = _ptraj_trajectory_with_fallback(p_record, seed, "P", nguyen_id)
+                p_final = p_traj[-1]["_loss"] if p_traj else None
+            h_final = _ptraj_finite_float(h_final)
+            p_final = _ptraj_finite_float(p_final)
+            if h_final is None or p_final is None or h_final <= 0 or p_final <= 0:
+                continue
+            pts.append((nguyen_id, p_final, h_final))
+        return pts
+
+    def _ptraj_collect_speed_pairs(h_records, p_records):
+        """Return [(nguyen_id, p_threshold_iter, h_threshold_iter), ...] for
+        every equation where BOTH arms recorded first_threshold_iteration.
+        Shared by the per-seed speedup bar and the cross-seed aggregate."""
+        ids = sorted(set(h_records) | set(p_records))
+        rows = []
+        for nguyen_id in ids:
+            hs = (h_records.get(nguyen_id, {}) or {}).get("trajectory_summary", {}) or {}
+            ps = (p_records.get(nguyen_id, {}) or {}).get("trajectory_summary", {}) or {}
+            h_t = _ptraj_finite_float(hs.get("first_threshold_iteration"))
+            p_t = _ptraj_finite_float(ps.get("first_threshold_iteration"))
+            if h_t is None or p_t is None or h_t <= 0:
+                continue
+            rows.append((nguyen_id, p_t, h_t))
+        return rows
+
+    def _ptraj_wilcoxon_summary(label, diffs, higher_is_better_desc):
+        """Paired Wilcoxon signed-rank test on `diffs` (already oriented so
+        positive = H better). Returns a dict describing the result, or a
+        dict with just a `note` explaining why no test could be run — never
+        raises, since a stats-summary figure/file shouldn't crash the whole
+        script over one underpowered comparison.
+        """
+        diffs = [d for d in diffs if math.isfinite(d)]
+        n = len(diffs)
+        n_nonzero = sum(1 for d in diffs if d != 0)
+        result = {"label": label, "n_pairs": n, "n_nonzero": n_nonzero,
+                  "higher_is_better": higher_is_better_desc}
+        if n < 5 or n_nonzero < 5:
+            result["note"] = (f"too few pairs ({n}, {n_nonzero} nonzero) for a reliable "
+                               f"Wilcoxon signed-rank test — need at least 5 nonzero "
+                               f"differences; treat any win-count as descriptive only")
+            return result
+        try:
+            stat, p = scipy_stats.wilcoxon(diffs)
+            result["median_diff"] = float(np.median(diffs))
+            result["wilcoxon_stat"] = float(stat)
+            result["p_value"] = float(p)
+            result["n_favoring_h"] = sum(1 for d in diffs if d > 0)
+            result["n_favoring_p"] = sum(1 for d in diffs if d < 0)
+        except Exception as e:
+            result["note"] = f"scipy.stats.wilcoxon failed: {e}"
+        return result
+
+    def _ptraj_plot_aggregate_winloss(exp_id, all_loss_pairs):
+        """Cross-seed version of the per-seed win/loss scatter: every
+        (seed, equation) pair with a usable paired final loss, pooled, plus
+        a Wilcoxon signed-rank test on log10(P) - log10(H) (positive = H
+        better) printed on the figure. This is the plot that actually
+        supports an 'it works, in general' claim rather than 'it worked on
+        this one seed'."""
+        if not all_loss_pairs:
+            return False, None
+        diffs = [math.log10(p) - math.log10(h) for _, _, p, h in all_loss_pairs]
+        stats_result = _ptraj_wilcoxon_summary(
+            "final_loss (log10(P) - log10(H))", diffs, "positive = H lower loss")
+
+        fig, ax = plt.subplots(figsize=(7, 7))
+        xs = [p for _, _, p, h in all_loss_pairs]
+        ys = [h for _, _, p, h in all_loss_pairs]
+        colors = ["#1a7f37" if y < x * 0.999 else ("#b3261e" if x < y * 0.999 else "#888888")
+                  for x, y in zip(xs, ys)]
+        ax.scatter(xs, ys, c=colors, s=32, alpha=0.75, edgecolors="white", linewidths=0.5, zorder=3)
+
+        lo = min(xs + ys) * 0.5
+        hi = max(xs + ys) * 2.0
+        ax.plot([lo, hi], [lo, hi], linestyle="--", linewidth=1.0, color="#999999", zorder=1,
+                label="y = x (no difference)")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_xlabel("P / cold PySR — final loss")
+        ax.set_ylabel("H / LLM warm-start — final loss")
+        ax.grid(True, which="both", alpha=0.2, color=C_GRID)
+        ax.set_aspect("equal", adjustable="box")
+
+        n_h = sum(1 for c in colors if c == "#1a7f37")
+        n_p = sum(1 for c in colors if c == "#b3261e")
+        n_tie = len(colors) - n_h - n_p
+        n_seeds = len(set(s for _, s, _, _ in all_loss_pairs))
+        title = (f"Final-loss win/loss — all seeds pooled ({n_seeds} seed(s), "
+                 f"{len(all_loss_pairs)} equation-seed pairs)\n"
+                 f"H better in {n_h}/{len(colors)} (P better in {n_p}, tie in {n_tie})")
+        if "p_value" in stats_result:
+            title += (f"\nWilcoxon signed-rank on log-loss diff: "
+                      f"p={stats_result['p_value']:.4g} (n={stats_result['n_pairs']})")
+        else:
+            title += f"\n({stats_result.get('note', 'stats unavailable')})"
+        ax.set_title(title, fontsize=9.5)
+        ax.legend(fontsize=8, loc="upper left")
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_ALLSEEDS_winloss_scatter"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True, stats_result
+
+    def _ptraj_plot_aggregate_speedup(exp_id, all_speed_pairs):
+        """Cross-seed speedup distribution: one point per (seed, equation)
+        pair with a usable P/H threshold-iteration ratio, grouped by
+        equation as a strip plot (so per-equation consistency across seeds
+        is visible, not just the pooled average), with a Wilcoxon
+        signed-rank test on log(speedup) vs. 0 (i.e. speedup vs. 1x)."""
+        if not all_speed_pairs:
+            return False, None
+        log_speedups = [math.log(p / h) for _, _, p, h in all_speed_pairs]
+        stats_result = _ptraj_wilcoxon_summary(
+            "log(speedup) = log(P_iters / H_iters)", log_speedups, "positive = H faster")
+
+        by_eq = {}
+        for nguyen_id, seed, p_t, h_t in all_speed_pairs:
+            by_eq.setdefault(nguyen_id, []).append(p_t / h_t)
+        eq_order = sorted(by_eq, key=lambda k: np.median(by_eq[k]), reverse=True)
+
+        fig, ax = plt.subplots(figsize=(max(6, 0.6 * len(eq_order) + 1.5), 5.5))
+        rng = np.random.default_rng(0)
+        for i, nguyen_id in enumerate(eq_order):
+            vals = by_eq[nguyen_id]
+            jitter = rng.uniform(-0.15, 0.15, size=len(vals))
+            colors = ["#1a7f37" if v >= 1 else "#b3261e" for v in vals]
+            ax.scatter(np.full(len(vals), i) + jitter, vals, c=colors, s=28, alpha=0.75,
+                       edgecolors="white", linewidths=0.4, zorder=3)
+            ax.scatter([i], [np.median(vals)], marker="_", s=400, color="black", zorder=4)
+
+        all_speedups = [p / h for _, _, p, h in all_speed_pairs]
+        geo_mean = float(np.exp(np.mean(np.log(all_speedups))))
+        ax.axhline(1.0, linestyle="--", linewidth=1.0, color="#333333", label="1× (no speedup)")
+        ax.axhline(geo_mean, linestyle=":", linewidth=1.2, color="#1f77b4",
+                   label=f"pooled geometric mean = {geo_mean:.2f}×")
+        ax.set_xticks(range(len(eq_order)))
+        ax.set_xticklabels(eq_order, rotation=45, ha="right", fontsize=8)
+        ax.set_yscale("log")
+        ax.set_ylabel("Speedup to R²≥0.9999 (P iters / H iters)")
+        n_seeds = len(set(s for _, s, _, _ in all_speed_pairs))
+        title = (f"Warm-start speedup — all seeds pooled ({n_seeds} seed(s), "
+                 f"{len(all_speed_pairs)} equation-seed pairs; black tick = per-equation median)")
+        if "p_value" in stats_result:
+            title += (f"\nWilcoxon signed-rank on log(speedup): "
+                      f"p={stats_result['p_value']:.4g} (n={stats_result['n_pairs']})")
+        else:
+            title += f"\n({stats_result.get('note', 'stats unavailable')})"
+        ax.set_title(title, fontsize=9.5)
+        ax.grid(axis="y", which="both", alpha=0.2, color=C_GRID)
+        ax.legend(fontsize=8)
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_ALLSEEDS_speedup_strip"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True, stats_result
+
+    def _ptraj_write_stats_summary(exp_id, loss_stats, speed_stats):
+        """Small human-readable + machine-readable (JSON) summary of the
+        cross-seed statistical tests, so the headline numbers ('warm-start
+        is Nx faster, p=...') don't have to be read off a figure title by
+        hand when writing the paper."""
+        lines = [f"PySR warm-start (H) vs. cold PySR (P) — cross-seed statistical summary",
+                 f"exp_id: {exp_id}", ""]
+        payload = {"exp_id": exp_id}
+        for name, result in (("final_loss", loss_stats), ("speedup", speed_stats)):
+            payload[name] = result
+            if result is None:
+                lines.append(f"[{name}] no data available.")
+                continue
+            lines.append(f"[{name}] {result.get('label')}")
+            lines.append(f"  higher_is_better: {result.get('higher_is_better')}")
+            lines.append(f"  n_pairs: {result.get('n_pairs')}, n_nonzero: {result.get('n_nonzero')}")
+            if "p_value" in result:
+                lines.append(f"  median_diff: {result['median_diff']:.4g}")
+                lines.append(f"  wilcoxon_stat: {result['wilcoxon_stat']:.4g}")
+                lines.append(f"  p_value: {result['p_value']:.4g}")
+                lines.append(f"  n_favoring_H: {result['n_favoring_h']}, "
+                             f"n_favoring_P: {result['n_favoring_p']}")
+            else:
+                lines.append(f"  note: {result.get('note')}")
+            lines.append("")
+
+        txt_path = os.path.join(_FIGURES_DIR, f"{exp_id}_traj_ALLSEEDS_stats_summary.txt")
+        json_path = os.path.join(_FIGURES_DIR, f"{exp_id}_traj_ALLSEEDS_stats_summary.json")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return txt_path
+
     def _ptraj_trajectory_with_fallback(record, seed, arm, nguyen_id):
         """Clean the polled trajectory; if empty, fall back to a single
         final point read from the archived hall_of_fame.csv, if one exists.
@@ -2059,40 +2328,377 @@ if _EXPERIMENT in ("exp3", "exp3b"):
         plt.close(fig)
         return True
 
+    def _ptraj_plot_win_loss_scatter(exp_id, seed, h_records, p_records):
+        """Paired scatter: P's final loss (x) vs H's final loss (y), one
+        point per equation, log-log. Points below the y=x diagonal are
+        equations where the hybrid warm-start ended with a lower (better)
+        loss than cold PySR at the same observed run length. This is the
+        standard "does the intervention help, per-item" plot — more useful
+        for an aggregate claim than 12 separate curve subplots, because the
+        win/loss is read off directly rather than eyeballed per equation.
+        """
+        ids = sorted(set(h_records) | set(p_records))
+        pts = _ptraj_collect_loss_pairs(seed, h_records, p_records)
+        if not pts:
+            return False
+
+        fig, ax = plt.subplots(figsize=(6.5, 6.5))
+        xs = [p[1] for p in pts]
+        ys = [p[2] for p in pts]
+        colors = ["#1a7f37" if y < x * 0.999 else ("#b3261e" if x < y * 0.999 else "#888888")
+                  for x, y in zip(xs, ys)]
+        ax.scatter(xs, ys, c=colors, s=45, edgecolors="white", linewidths=0.6, zorder=3)
+        for nguyen_id, x, y in pts:
+            ax.annotate(nguyen_id, (x, y), fontsize=7, xytext=(4, 4),
+                        textcoords="offset points", color="#444444")
+
+        lo = min(xs + ys) * 0.5
+        hi = max(xs + ys) * 2.0
+        ax.plot([lo, hi], [lo, hi], linestyle="--", linewidth=1.0, color="#999999", zorder=1,
+                label="y = x (no difference)")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_xlabel("P / cold PySR — final loss")
+        ax.set_ylabel("H / LLM warm-start — final loss")
+        ax.grid(True, which="both", alpha=0.2, color=C_GRID)
+        ax.set_aspect("equal", adjustable="box")
+
+        n_h_win = sum(1 for c in colors if c == "#1a7f37")
+        n_p_win = sum(1 for c in colors if c == "#b3261e")
+        n_tie = len(colors) - n_h_win - n_p_win
+        ax.set_title(
+            f"Final-loss win/loss — seed {seed}\n"
+            f"H better in {n_h_win}/{len(colors)} equations "
+            f"(P better in {n_p_win}, tie in {n_tie})",
+            fontsize=10,
+        )
+        ax.legend(fontsize=8, loc="upper left")
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_winloss_scatter"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    def _ptraj_plot_speedup_bar(exp_id, seed, h_records, p_records):
+        """Per-equation speedup bar chart: P's iterations-to-threshold
+        divided by H's iterations-to-threshold, only for equations where
+        BOTH arms reached first_threshold_iteration (R²≥0.9999) — this is
+        the most direct 'warm-start saves search iterations' evidence.
+        Bars above the 1x reference line mean H reached the same target in
+        fewer iterations; the geometric mean across equations gives a single
+        headline speedup number.
+        """
+        ids = sorted(set(h_records) | set(p_records))
+        rows = _ptraj_collect_speed_pairs(h_records, p_records)
+        if not rows:
+            return False
+        rows = sorted(rows, key=lambda z: z[1] / z[2], reverse=True)
+        labels = [r[0] for r in rows]
+        speedups = [r[1] / r[2] for r in rows]
+        colors = ["#1a7f37" if s >= 1 else "#b3261e" for s in speedups]
+        geo_mean = float(np.exp(np.mean(np.log(speedups))))
+
+        fig, ax = plt.subplots(figsize=(max(6, 0.55 * len(labels) + 1.5), 5))
+        ax.bar(range(len(labels)), speedups, color=colors, alpha=0.85)
+        ax.axhline(1.0, linestyle="--", linewidth=1.0, color="#333333",
+                   label="1× (no speedup)")
+        ax.axhline(geo_mean, linestyle=":", linewidth=1.2, color="#1f77b4",
+                   label=f"geometric mean = {geo_mean:.2f}×")
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+        ax.set_yscale("log")
+        ax.set_ylabel("Speedup to R²≥0.9999 (P iters / H iters)")
+        ax.set_title(
+            f"Warm-start speedup to target R² — seed {seed} "
+            f"({len(labels)} equations reached threshold with both arms)",
+            fontsize=10,
+        )
+        ax.grid(axis="y", which="both", alpha=0.2, color=C_GRID)
+        ax.legend(fontsize=8)
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_speedup_bar"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    def _ptraj_plot_equation_grid(exp_id, seed, h_records, p_records):
+        """Small-multiples grid: one subplot per equation, each showing the
+        REAL (unaggregated) H and P trajectories on its own y-axis — this is
+        what directly answers "is the warm-start actually helping, per
+        equation?" without the scale-mixing problem the single-axis overview
+        had, and without collapsing away the per-equation detail the way the
+        aggregated overview curve does.
+
+        Each subplot title is annotated with which arm reached the lower
+        final loss, and which arm reached the R²≥0.9999 threshold sooner (if
+        both did) — the two most direct readouts of "hybrid is working":
+        better final answer, and/or faster convergence. The overall figure
+        title tallies the win counts across all equations.
+        """
+        from matplotlib.lines import Line2D
+
+        ids = sorted(set(h_records) | set(p_records))
+        if not ids:
+            return False
+
+        ncols = min(4, len(ids))
+        nrows = math.ceil(len(ids) / ncols)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(4.3 * ncols, 3.3 * nrows), squeeze=False)
+
+        h_wins_final = p_wins_final = both_final = 0
+        h_wins_speed = p_wins_speed = both_speed = 0
+
+        for idx, nguyen_id in enumerate(ids):
+            r, c = divmod(idx, ncols)
+            ax = axes[r][c]
+            h_record = h_records.get(nguyen_id, {}) or {}
+            p_record = p_records.get(nguyen_id, {}) or {}
+            h_traj, h_from_archive = _ptraj_trajectory_with_fallback(h_record, seed, "H", nguyen_id)
+            p_traj, p_from_archive = _ptraj_trajectory_with_fallback(p_record, seed, "P", nguyen_id)
+
+            if h_traj:
+                if h_from_archive:
+                    ax.scatter([q["_iteration"] for q in h_traj], [q["_loss"] for q in h_traj],
+                               color="#1f77b4", marker="x", s=18)
+                else:
+                    ax.plot([q["_iteration"] for q in h_traj], [q["_loss"] for q in h_traj],
+                            marker="o", markersize=2, linewidth=1.3, color="#1f77b4")
+            if p_traj:
+                if p_from_archive:
+                    ax.scatter([q["_iteration"] for q in p_traj], [q["_loss"] for q in p_traj],
+                               color="#d62728", marker="x", s=18)
+                else:
+                    ax.plot([q["_iteration"] for q in p_traj], [q["_loss"] for q in p_traj],
+                            marker="o", markersize=2, linewidth=1.3, linestyle="--", color="#d62728")
+
+            ax.set_yscale("log")
+            ax.grid(True, which="both", alpha=0.2, color=C_GRID)
+            ax.tick_params(labelsize=7)
+
+            # Same source of truth as the summary CSV (trajectory_summary),
+            # so the "which arm wins" badge here always agrees with the CSV.
+            hs = h_record.get("trajectory_summary", {}) or {}
+            ps = p_record.get("trajectory_summary", {}) or {}
+            h_final = hs.get("final_best_loss")
+            p_final = ps.get("final_best_loss")
+            if h_final is None and h_traj:
+                h_final = h_traj[-1]["_loss"]
+            if p_final is None and p_traj:
+                p_final = p_traj[-1]["_loss"]
+
+            badge, title_color = "no data", "#888888"
+            if h_final is not None and p_final is not None:
+                both_final += 1
+                if h_final < p_final * 0.999:
+                    badge, title_color = "H lower loss", "#1a7f37"
+                    h_wins_final += 1
+                elif p_final < h_final * 0.999:
+                    badge, title_color = "P lower loss", "#b3261e"
+                    p_wins_final += 1
+                else:
+                    badge = "tie"
+            elif h_final is not None:
+                badge = "H only"
+            elif p_final is not None:
+                badge = "P only"
+
+            h_thresh = hs.get("first_threshold_iteration")
+            p_thresh = ps.get("first_threshold_iteration")
+            speed_note = ""
+            if h_thresh is not None and p_thresh is not None:
+                both_speed += 1
+                if h_thresh < p_thresh:
+                    speed_note = f"\nH hits R²≥.9999 @{int(h_thresh)} (P @{int(p_thresh)})"
+                    h_wins_speed += 1
+                elif p_thresh < h_thresh:
+                    speed_note = f"\nP hits R²≥.9999 @{int(p_thresh)} (H @{int(h_thresh)})"
+                    p_wins_speed += 1
+                else:
+                    speed_note = f"\nboth hit R²≥.9999 @{int(h_thresh)}"
+            elif h_thresh is not None:
+                speed_note = f"\nonly H hit R²≥.9999 (@{int(h_thresh)})"
+            elif p_thresh is not None:
+                speed_note = f"\nonly P hit R²≥.9999 (@{int(p_thresh)})"
+
+            ax.set_title(f"{nguyen_id} — {badge}{speed_note}", fontsize=7.5, color=title_color)
+
+        for idx in range(len(ids), nrows * ncols):
+            r, c = divmod(idx, ncols)
+            axes[r][c].axis("off")
+
+        for c in range(ncols):
+            last_row_ax = None
+            for r in range(nrows - 1, -1, -1):
+                if r * ncols + c < len(ids):
+                    last_row_ax = axes[r][c]
+                    break
+            if last_row_ax is not None:
+                last_row_ax.set_xlabel("Observed outer iteration", fontsize=8)
+        for r in range(nrows):
+            axes[r][0].set_ylabel("Best loss (log)", fontsize=8)
+
+        legend_handles = [
+            Line2D([0], [0], color="#1f77b4", lw=1.6, label="H / LLM warm-start"),
+            Line2D([0], [0], color="#d62728", lw=1.6, linestyle="--", label="P / cold PySR"),
+        ]
+        fig.legend(handles=legend_handles, loc="upper center", ncol=2, fontsize=9,
+                   bbox_to_anchor=(0.5, 1.02))
+
+        summary_bits = []
+        if both_final:
+            summary_bits.append(f"H reaches lower final loss in {h_wins_final}/{both_final} equations")
+        if both_speed:
+            summary_bits.append(f"H reaches R²≥0.9999 sooner in {h_wins_speed}/{both_speed} equations")
+        suptitle = f"H vs P trajectories per equation — seed {seed}"
+        if summary_bits:
+            suptitle += "\n" + "; ".join(summary_bits)
+        fig.suptitle(suptitle, fontsize=11, y=1.10 if summary_bits else 1.04)
+
+        fig.tight_layout()
+        stem = f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_grid"
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    def _ptraj_aggregate_by_rank(trajs):
+        """Aggregate a list of per-equation trajectories (each a list of
+        {"_loss": ...} dicts, already sorted by iteration) into ONE summary
+        curve, position-aligned rather than iteration-aligned.
+
+        Equations report their best_loss at different, equation-specific
+        iteration numbers and on wildly different absolute scales (this is
+        exactly what made the old per-equation overlay unreadable: 24 lines
+        mixing values from ~1e-15 up to ~1e1 on one shared axis). Instead we
+        rank each trajectory's own observations 1st, 2nd, 3rd, ... and take
+        the cross-equation median (with a 25th-75th percentile band) at each
+        rank position. Position k stays in the aggregate as long as at least
+        two equations still have an observation there, so the tail isn't
+        dragged out by a single long-running equation with no peers to
+        compare against.
+
+        Returns (positions, median, p25, p75) as parallel lists; positions
+        are 1-indexed "k-th observed point for this arm", not raw iteration
+        numbers, since those are not comparable across equations.
+        """
+        trajs = [t for t in trajs if t]
+        if not trajs:
+            return [], [], [], []
+        max_len = max(len(t) for t in trajs)
+        positions, med, p25, p75 = [], [], [], []
+        for k in range(max_len):
+            vals = [t[k]["_loss"] for t in trajs if len(t) > k]
+            if len(vals) < 2:
+                break
+            positions.append(k + 1)
+            med.append(float(np.median(vals)))
+            p25.append(float(np.percentile(vals, 25)))
+            p75.append(float(np.percentile(vals, 75)))
+        return positions, med, p25, p75
+
+    def _ptraj_plot_loss_vs_complexity(exp_id, seed, nguyen_id, h_record, p_record):
+        """Classic PySR Pareto-front figure: loss vs. complexity, one step
+        curve for H and one for P, for a single equation. Unlike the
+        best_loss-vs-iteration trajectory plots above, complexity is only
+        available from the archived hall_of_fame.csv snapshot (the
+        trajectory JSON never recorded it), so this always reads that file
+        directly rather than going through the iteration-trajectory path.
+        Kept per-equation (not aggregated across equations, and not folded
+        into the overview) because loss values and complexity ranges are not
+        comparable across different target equations — combining them would
+        reproduce the same "mixture of numerical values" problem the
+        overview plot had.
+        """
+        h_csv = _ptraj_find_archive_csv(seed, "H", nguyen_id)
+        p_csv = _ptraj_find_archive_csv(seed, "P", nguyen_id)
+        h_pts = _ptraj_read_archived_hof_pareto(h_csv) if h_csv else []
+        p_pts = _ptraj_read_archived_hof_pareto(p_csv) if p_csv else []
+        if not h_pts and not p_pts:
+            return False
+
+        fig, ax = plt.subplots(figsize=(7.5, 5.5))
+        if h_pts:
+            ax.step([r["complexity"] for r in h_pts], [r["loss"] for r in h_pts],
+                    where="post", marker="o", markersize=4, linewidth=1.6,
+                    color="#1f77b4", label="H / LLM warm-start")
+        if p_pts:
+            ax.step([r["complexity"] for r in p_pts], [r["loss"] for r in p_pts],
+                    where="post", marker="o", markersize=4, linewidth=1.6,
+                    linestyle="--", color="#d62728", label="P / cold PySR")
+
+        ax.set_xlabel("Complexity")
+        ax.set_ylabel("Loss (MSE/error)")
+        ax.set_yscale("log")
+        ax.set_title(f"Loss vs. complexity — Nguyen {nguyen_id}, seed {seed}", fontsize=10)
+        ax.grid(True, which="both", alpha=0.25, color=C_GRID)
+        ax.legend(fontsize=8)
+
+        fig.tight_layout()
+        stem = (f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_"
+                f"{_ptraj_safe_filename(nguyen_id)}_loss_vs_complexity")
+        _savefig(fig, stem, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
     def _ptraj_plot_overview(exp_id, seed, h_records, p_records):
         ids = sorted(set(h_records) | set(p_records))
         if not ids:
             return False
 
-        fig, ax = plt.subplots(figsize=(11, 7))
+        h_trajs, p_trajs = [], []
+        n_h_archive_only = n_p_archive_only = 0
         for nguyen_id in ids:
             h_traj, h_from_archive = _ptraj_trajectory_with_fallback(
                 h_records.get(nguyen_id, {}), seed, "H", nguyen_id)
             p_traj, p_from_archive = _ptraj_trajectory_with_fallback(
                 p_records.get(nguyen_id, {}), seed, "P", nguyen_id)
-            if h_traj:
-                _label = f"{nguyen_id} H" + (" (final only, archive)" if h_from_archive else "")
-                if h_from_archive:
-                    ax.scatter([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
-                               s=14, alpha=0.75, marker="x", label=_label)
-                else:
-                    ax.plot([r["_iteration"] for r in h_traj], [r["_loss"] for r in h_traj],
-                            linewidth=0.9, alpha=0.75, label=_label)
-            if p_traj:
-                _label = f"{nguyen_id} P" + (" (final only, archive)" if p_from_archive else "")
-                if p_from_archive:
-                    ax.scatter([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
-                               s=14, alpha=0.45, marker="x", label=_label)
-                else:
-                    ax.plot([r["_iteration"] for r in p_traj], [r["_loss"] for r in p_traj],
-                            linewidth=0.9, alpha=0.45, linestyle="--", label=_label)
+            # Archive-fallback trajectories are a single final point with no
+            # `iteration` progression of their own — they'd distort the
+            # rank-aligned aggregate (position 1 == "final result", not
+            # "first observation"), so they're excluded from the summary
+            # curves and only counted for the caption note below.
+            if h_traj and not h_from_archive:
+                h_trajs.append(h_traj)
+            elif h_from_archive:
+                n_h_archive_only += 1
+            if p_traj and not p_from_archive:
+                p_trajs.append(p_traj)
+            elif p_from_archive:
+                n_p_archive_only += 1
 
-        ax.set_xlabel("Observed outer iteration")
+        h_pos, h_med, h_p25, h_p75 = _ptraj_aggregate_by_rank(h_trajs)
+        p_pos, p_med, p_p25, p_p75 = _ptraj_aggregate_by_rank(p_trajs)
+        if not h_pos and not p_pos:
+            return False
+
+        fig, ax = plt.subplots(figsize=(9, 6))
+        if h_pos:
+            ax.plot(h_pos, h_med, linewidth=2.0, color="#1f77b4",
+                    label=f"H / LLM warm-start (median, n={len(h_trajs)} equations)")
+            ax.fill_between(h_pos, h_p25, h_p75, color="#1f77b4", alpha=0.18,
+                             label="H: 25th–75th pct across equations")
+        if p_pos:
+            ax.plot(p_pos, p_med, linewidth=2.0, color="#d62728", linestyle="--",
+                    label=f"P / cold PySR (median, n={len(p_trajs)} equations)")
+            ax.fill_between(p_pos, p_p25, p_p75, color="#d62728", alpha=0.18,
+                             label="P: 25th–75th pct across equations")
+
+        ax.set_xlabel("k-th observed outer iteration (rank-aligned across equations)")
         ax.set_ylabel("Best loss (MSE/error)")
-        ax.set_title(f"PySR trajectory overview — seed {seed}")
+        _title = f"PySR trajectory overview — seed {seed}"
+        ax.set_title(_title)
         ax.set_yscale("log")
         ax.grid(True, which="both", alpha=0.2, color=C_GRID)
-        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=7, ncol=1)
+        ax.legend(loc="best", fontsize=8)
+        if n_h_archive_only or n_p_archive_only:
+            ax.text(0.01, 0.01,
+                    f"({n_h_archive_only} H / {n_p_archive_only} P equation(s) had only a "
+                    f"final archived point and are excluded from these summary curves)",
+                    transform=ax.transAxes, fontsize=7, color="#666666",
+                    va="bottom", ha="left")
 
         fig.tight_layout()
         stem = f"{exp_id}_traj_seed{_ptraj_safe_filename(str(seed))}_overview"
@@ -2173,6 +2779,8 @@ if _EXPERIMENT in ("exp3", "exp3b"):
               f"file(s) under {_RESULTS_DIR}.")
 
     _exp3_n_files_plotted = 0
+    _exp3_all_loss_pairs = []   # (nguyen_id, seed, p_final, h_final)
+    _exp3_all_speed_pairs = []  # (nguyen_id, seed, p_threshold_iter, h_threshold_iter)
     for _exp3_path in _exp3_files:
         _payload = _load_json(_exp3_path, _exp3_path)
         if _payload is None:
@@ -2189,22 +2797,65 @@ if _EXPERIMENT in ("exp3", "exp3b"):
         _eq_ids = sorted(set(_h_records) | set(_p_records))
 
         _n_plotted = 0
+        _n_pareto_plotted = 0
         for _nguyen_id in _eq_ids:
             if _ptraj_plot_equation(_EXPERIMENT, _seed, _nguyen_id,
                                      _h_records.get(_nguyen_id), _p_records.get(_nguyen_id),
                                      metric=_METRIC, include_expressions=_INCLUDE_EXPRESSIONS):
                 _n_plotted += 1
+            if _ptraj_plot_loss_vs_complexity(_EXPERIMENT, _seed, _nguyen_id,
+                                               _h_records.get(_nguyen_id), _p_records.get(_nguyen_id)):
+                _n_pareto_plotted += 1
 
         _ptraj_plot_overview(_EXPERIMENT, _seed, _h_records, _p_records)
+        _ptraj_plot_equation_grid(_EXPERIMENT, _seed, _h_records, _p_records)
+        _ptraj_plot_win_loss_scatter(_EXPERIMENT, _seed, _h_records, _p_records)
+        _ptraj_plot_speedup_bar(_EXPERIMENT, _seed, _h_records, _p_records)
         _ptraj_write_summary_csv(_EXPERIMENT, _seed, _h_records, _p_records)
 
-        print(f"✓ {_EXPERIMENT}: seed={_seed} — {_n_plotted} equation trajectory figure(s) "
-              f"+ overview + summary CSV (from {os.path.basename(_exp3_path)})")
+        # Accumulate this seed's paired comparisons for the cross-seed
+        # aggregate figures/stats below — reusing the exact same collectors
+        # the per-seed plots use, so per-seed and pooled results can never
+        # disagree due to divergent extraction logic.
+        for _nguyen_id, _p_final, _h_final in _ptraj_collect_loss_pairs(_seed, _h_records, _p_records):
+            _exp3_all_loss_pairs.append((_nguyen_id, _seed, _p_final, _h_final))
+        for _nguyen_id, _p_t, _h_t in _ptraj_collect_speed_pairs(_h_records, _p_records):
+            _exp3_all_speed_pairs.append((_nguyen_id, _seed, _p_t, _h_t))
+
+        print(f"✓ {_EXPERIMENT}: seed={_seed} — {_n_plotted} equation trajectory figure(s), "
+              f"{_n_pareto_plotted} loss-vs-complexity figure(s), + overview + per-equation grid "
+              f"+ win/loss scatter + speedup bar + summary CSV (from {os.path.basename(_exp3_path)})")
         _exp3_n_files_plotted += 1
 
     if _exp3_files and _exp3_n_files_plotted == 0:
         print(f"  [SKIP] {_EXPERIMENT}: no candidate file matched the expected trajectory "
               f"schema — no trajectory figures generated.")
+
+    # ── Cross-seed aggregate: the actual "does warm-start work, in general"
+    # evidence, pooling every seed file found above rather than reading one
+    # seed's figure at a time. Runs even with a single seed file (the stats
+    # will just be flagged low-powered / n too small), so the same code path
+    # is exercised regardless of how many seeds are available.
+    if _exp3_n_files_plotted > 0:
+        _n_seeds_seen = len(set(s for _, s, _, _ in _exp3_all_loss_pairs) |
+                             set(s for _, s, _, _ in _exp3_all_speed_pairs))
+        _did_loss, _loss_stats = _ptraj_plot_aggregate_winloss(_EXPERIMENT, _exp3_all_loss_pairs)
+        _did_speed, _speed_stats = _ptraj_plot_aggregate_speedup(_EXPERIMENT, _exp3_all_speed_pairs)
+        if _did_loss or _did_speed:
+            _stats_path = _ptraj_write_stats_summary(_EXPERIMENT, _loss_stats, _speed_stats)
+            print(f"✓ {_EXPERIMENT}: cross-seed aggregate ({_n_seeds_seen} seed(s), "
+                  f"{len(_exp3_all_loss_pairs)} loss pair(s), {len(_exp3_all_speed_pairs)} "
+                  f"speed pair(s)) — stats summary: {os.path.basename(_stats_path)}")
+            for _res in (_loss_stats, _speed_stats):
+                if _res and "p_value" in _res:
+                    print(f"    [{_res['label']}] p={_res['p_value']:.4g}  "
+                          f"n={_res['n_pairs']}  favoring H: {_res['n_favoring_h']}  "
+                          f"favoring P: {_res['n_favoring_p']}")
+                elif _res:
+                    print(f"    [{_res['label']}] {_res.get('note')}")
+        else:
+            print(f"  [SKIP] {_EXPERIMENT}: no paired data available for cross-seed aggregate "
+                  f"figures.")
 
 
 # (figure_5systems_comparison removed — systems_2_3_2_data.json + glob sources
