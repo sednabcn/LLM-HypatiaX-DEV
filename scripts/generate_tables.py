@@ -87,6 +87,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--sample-complexity-json", type=Path, default=None,
                    dest="sample_complexity", metavar="PATH",
                    help="Explicit sample_complexity_*.json (auto-detected if omitted).")
+    p.add_argument("--exp1-five-json", type=Path, default=None,
+                   dest="exp1_five_json", metavar="PATH",
+                   help="Explicit exp1_five_results.json for the five-system Core-15 tables.")
     p.add_argument("--experiment", type=str, default=None, dest="experiment",
                    metavar="NAME",
                    help="Experiment tag (e.g. exp2_feynman_pca).  When supplied, "
@@ -121,6 +124,9 @@ PATCHED    = _ARGS.patched_dir  or (_ROOT / "hypatiax" / "data" / "patched")
 RESULTS    = _ARGS.results_dir  or (_ROOT / "hypatiax" / "data" / "results")
 TABLES_DIR = _ARGS.output_dir   or (_ROOT / "paper" / "tables")
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
+
+# Optional explicit source for exp1_five Core-15 results.
+EXP1_FIVE_JSON = _ARGS.exp1_five_json
 
 # BUG FOUND WHILE TESTING exp1_five END-TO-END: gen_five_system() (a
 # module-level function) reads `_EXP` to decide whether to skip itself for
@@ -890,28 +896,81 @@ def _finite_or_none(v):
     return v if v == v and v not in (float("inf"), float("-inf")) else None
 
 
-def _robust_median_clipped_mean(values: list[float]) -> tuple[float | None, float | None]:
-    """Median (always robust) and an IQR-clipped mean (outlier-resistant).
+def _robust_median_clipped_mean_std(
+    values: list[float],
+) -> tuple[float | None, float | None, float | None, int]:
+    """Median, IQR-clipped mean, and the sample std of that SAME clipped
+    subset (i.e. std computed over exactly the values the clipped mean
+    describes), plus the count of values in that clipped subset.
+
+    BUG FIX (Std/CI column mismatch in tab:five_systems_full /
+    tab:five_systems_full_exp2five): every caller of this used to pair the
+    clipped extrapolation-error mean/median with a *separately computed*
+    train-R^2 std (a totally different quantity, different scale, often a
+    different sample) fed straight into _ci95(). A std of ~0.003 (train R^2)
+    printed next to an Extrap Mean of 20978.0 (%) makes the CI margin
+    (t * std/sqrt(n)) collapse to ~0, so the printed "95% CI" was always
+    [mean, mean] regardless of the real spread of the extrapolation-error
+    values. Returning the std of the *same* clipped population used for the
+    mean (and its matching n) means Std/CI now actually describe the
+    quantity printed next to them, and the CI is non-degenerate whenever the
+    underlying data has real spread.
 
     Raw means of extrap_error_pct are dominated by single catastrophic-
     blowup equations — e.g. one degenerate Pure LLM formula alone can push
-    a raw mean into the billions of percent (see five_systems.tex) — so an
-    unclipped arithmetic mean is not a usable summary statistic here.
+    a raw mean into the billions of percent (see five_systems.tex) — so
+    IQR-clipping is applied before mean/std/n are computed, exactly as it
+    already was for the mean alone.
     """
     vals = sorted(values)
     if not vals:
-        return None, None
+        return None, None, None, 0
     n = len(vals)
     median = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
     q1, q3 = vals[n // 4], vals[(3 * n) // 4]
     iqr = q3 - q1
     clipped = [v for v in vals if v <= q3 + 1.5 * iqr] if iqr > 0 else vals
-    mean = sum(clipped) / len(clipped) if clipped else None
+    if not clipped:
+        return median, None, None, 0
+    mean = sum(clipped) / len(clipped)
+    std = None
+    if len(clipped) >= 2:
+        std = (sum((x - mean) ** 2 for x in clipped) / (len(clipped) - 1)) ** 0.5
+    return median, mean, std, len(clipped)
+
+
+def _robust_median_clipped_mean(values: list[float]) -> tuple[float | None, float | None]:
+    """Median (always robust) and an IQR-clipped mean (outlier-resistant).
+
+    Thin wrapper around _robust_median_clipped_mean_std() for the (several)
+    call sites that only ever needed median/mean and don't print a Std or
+    95% CI column, so they're unaffected by the Std/CI bug fixed below.
+    """
+    median, mean, _std, _n = _robust_median_clipped_mean_std(values)
     return median, mean
+
+
+def _fmt_pct_stat(v: float | None) -> str:
+    """Format a percent-scale extrapolation-error statistic (mean/median/std)
+    for table display. Falls back to scientific notation outside a normal
+    percentage range, since extrapolation blowups can be enormous (see
+    _robust_median_clipped_mean_std's docstring) and a fixed .1f would print
+    an unreadable wall of digits (or silently round a huge std to something
+    that looks small)."""
+    if v is None:
+        return "---"
+    av = abs(v)
+    if av != 0 and (av >= 1e6 or av < 1e-3):
+        return f"{v:.3e}"
+    return f"{v:.1f}"
 
 
 def _load_exp2_five_system_rows() -> tuple[list[tuple] | None, Path | None]:
     """Build five-system rows directly from live exp2 + exp2_extrap output.
+
+    The Std column is the sample standard deviation of the same IQR-clipped
+    extrapolation-error population used for the displayed extrapolation mean,
+    so the 95% CI is statistically compatible with the reported quantity.
 
     Returns (rows, representative_path) in the same shape _rows_from_data()
     returns, or (None, None) if no exp2 output can be found/parsed at all.
@@ -991,20 +1050,19 @@ def _load_exp2_five_system_rows() -> tuple[list[tuple] | None, Path | None]:
     for mname, row_name in _EXP2_METHOD_TO_ROW.items():
         tr_vals = r2_by_method.get(mname, [])
         tr_mean = sum(tr_vals) / len(tr_vals) if tr_vals else None
-        tr_std = None
-        if tr_mean is not None and len(tr_vals) >= 2:
-            tr_std = (sum((x - tr_mean) ** 2 for x in tr_vals) / (len(tr_vals) - 1)) ** 0.5
-
         err_vals = err_by_method.get(mname, [])
-        median, clipped_mean = _robust_median_clipped_mean(err_vals)
+        # Std must describe the extrapolation-error values used by clipped_mean,
+        # never the unrelated train-R² sample.  This keeps _ci95() dimensionally
+        # and statistically compatible with the displayed extrapolation mean.
+        median, clipped_mean, err_std, err_n = _robust_median_clipped_mean_std(err_vals)
 
         rows_by_name[row_name] = (
             row_name,
-            len(err_vals),
-            f"{median:.1f}" if median is not None else "---",
-            f"{clipped_mean:.1f}" if clipped_mean is not None else "---",
+            err_n,
+            _fmt_pct_stat(median),
+            _fmt_pct_stat(clipped_mean),
             f"{tr_mean:.3f}" if tr_mean is not None else "---",
-            f"{tr_std:.4f}" if tr_std is not None else "---",
+            _fmt_pct_stat(err_std),
             _EXP2_DESIGN_FOCUS[row_name],
         )
 
@@ -1090,8 +1148,9 @@ def _load_exp2_five_own_raw(method_name: str) -> tuple[list[float], list[float],
 
 
 def _load_exp2_five_own_rows() -> tuple[list[tuple] | None, Path | None]:
-    """Aggregated (median, clipped-mean, tr_mean, tr_std) rows from
-    exp2_five's OWN output -- same shape _load_exp2_five_system_rows()
+    """Aggregated (median, clipped-mean, train-R² mean, extrapolation-error std)
+    rows from exp2_five's OWN output -- same shape
+    _load_exp2_five_system_rows()
     returns, but sourced from five_systems/exp2_five/ instead of exp2's
     regular directory. See module comment above for why these two loaders
     are deliberately kept separate rather than merged."""
@@ -1104,14 +1163,17 @@ def _load_exp2_five_own_rows() -> tuple[list[tuple] | None, Path | None]:
         tr_std = None
         if tr_mean is not None and len(tr_vals) >= 2:
             tr_std = (sum((x - tr_mean) ** 2 for x in tr_vals) / (len(tr_vals) - 1)) ** 0.5
-        median, clipped_mean = _robust_median_clipped_mean(err_vals)
+        # Std must describe the extrapolation-error values used by clipped_mean,
+        # never the unrelated train-R² sample.  This keeps _ci95() dimensionally
+        # and statistically compatible with the displayed extrapolation mean.
+        median, clipped_mean, err_std, err_n = _robust_median_clipped_mean_std(err_vals)
         rows_by_name[row_name] = (
             row_name,
-            len(err_vals),
-            f"{median:.1f}" if median is not None else "---",
-            f"{clipped_mean:.1f}" if clipped_mean is not None else "---",
+            err_n,
+            _fmt_pct_stat(median),
+            _fmt_pct_stat(clipped_mean),
             f"{tr_mean:.3f}" if tr_mean is not None else "---",
-            f"{tr_std:.4f}" if tr_std is not None else "---",
+            _fmt_pct_stat(err_std),
             _EXP2_DESIGN_FOCUS[row_name],
         )
     rows = [rows_by_name[name] for name in _EXP2_ROW_ORDER if name in rows_by_name]
@@ -1155,12 +1217,13 @@ def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
     * 100 — so numbers from this loader and the exp2-based one are on the
     same scale and comparable, even though they're measuring different
     equation suites (Core-15 vs. the 10-domain Feynman set)."""
-    src = None
-    for base in (PATCHED, RESULTS):
-        candidate = base / "five_systems/exp1_five/exp1_five_results.json"
-        if candidate.exists():
-            src = candidate
-            break
+    src = EXP1_FIVE_JSON if EXP1_FIVE_JSON and EXP1_FIVE_JSON.exists() else None
+    if src is None:
+        for base in (PATCHED, RESULTS):
+            candidate = base / "five_systems/exp1_five/exp1_five_results.json"
+            if candidate.exists():
+                src = candidate
+                break
     if src is None:
         return None, None
     try:
@@ -1200,13 +1263,16 @@ def _load_exp1_five_rows() -> tuple[list[tuple] | None, Path | None]:
         if tr_mean is not None and len(tr_vals) >= 2:
             tr_std = (sum((x - tr_mean) ** 2 for x in tr_vals) / (len(tr_vals) - 1)) ** 0.5
         err_vals = err_by_method.get(mname, [])
-        median, clipped_mean = _robust_median_clipped_mean(err_vals)
+        # Std must describe the extrapolation-error values used by clipped_mean,
+        # never the unrelated train-R² sample.  This keeps _ci95() dimensionally
+        # and statistically compatible with the displayed extrapolation mean.
+        median, clipped_mean, err_std, err_n = _robust_median_clipped_mean_std(err_vals)
         rows_by_name[mname] = (
-            mname, len(err_vals),
-            f"{median:.1f}" if median is not None else "---",
-            f"{clipped_mean:.1f}" if clipped_mean is not None else "---",
+            mname, err_n,
+            _fmt_pct_stat(median),
+            _fmt_pct_stat(clipped_mean),
             f"{tr_mean:.3f}" if tr_mean is not None else "---",
-            f"{tr_std:.4f}" if tr_std is not None else "---",
+            _fmt_pct_stat(err_std),
             focus_by_method.get(mname, _EXP2_DESIGN_FOCUS.get(mname, "---")),
         )
     rows = [rows_by_name[m] for m in _EXP2_ROW_ORDER if m in rows_by_name]
@@ -1234,12 +1300,13 @@ def _load_exp1_five_raw_extrap_errors(method_name: str) -> tuple[list[float], Pa
     file/parsing convention and same (extrap_rmse_far / train_rmse) * 100
     error definition as _load_exp1_five_rows(), just returning the
     un-aggregated list."""
-    src = None
-    for base in (PATCHED, RESULTS):
-        candidate = base / "five_systems/exp1_five/exp1_five_results.json"
-        if candidate.exists():
-            src = candidate
-            break
+    src = EXP1_FIVE_JSON if EXP1_FIVE_JSON and EXP1_FIVE_JSON.exists() else None
+    if src is None:
+        for base in (PATCHED, RESULTS):
+            candidate = base / "five_systems/exp1_five/exp1_five_results.json"
+            if candidate.exists():
+                src = candidate
+                break
     if src is None:
         return [], None
     try:
@@ -3596,6 +3663,8 @@ def main() -> None:
     print("═" * 65)
     print(f"  Results dir : {RESULTS}")
     print(f"  Output dir  : {TABLES_DIR}")
+    if EXP1_FIVE_JSON:
+        print(f"  exp1_five JSON: {EXP1_FIVE_JSON}")
     if _ARGS.experiment:
         print(f"  Experiment  : {_ARGS.experiment}")
     print()
