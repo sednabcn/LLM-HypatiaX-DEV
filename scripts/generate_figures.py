@@ -197,6 +197,18 @@ _EXPERIMENTS_WITHOUT_ABLATION = {
 _EXP1_ABLATION_GROUP = {"exp1_ablation", "exp1", "exp1b"}
 _SUPPB_GROUP = {"suppB", "suppB_sc"}
 
+# Filename suffix appended to every Supp-B figure stem, so that suppB
+# (noise-sweep) and suppB_sc (sample-complexity) runs that write into a
+# shared --figures-dir never overwrite each other's output — e.g.
+# fig11_recovery_heatmap_noise_sweep.pdf vs
+# fig11_recovery_heatmap_sample_complexity.pdf.
+# Left empty for legacy invocations (_EXPERIMENT is None), which combine
+# both sweeps into a single run and were never ambiguous.
+_SUPPB_SUFFIX = {
+    "suppB":    "_noise_sweep",
+    "suppB_sc": "_sample_complexity",
+}.get(_EXPERIMENT, "")
+
 # ── Repo root / patched-dir resolution (mirrors generate_tables.py's PATCHED) ─
 def _find_repo_root():
     here = os.path.dirname(os.path.abspath(__file__))
@@ -3334,7 +3346,7 @@ if _noise_rows:
         if y_key in _np:
             xs, ys, sems = _np[y_key]
             _line_fig(xs, ys, sems, xl, yl, title, color,
-                      os.path.join(_FIGURES_DIR, f"{stem}.png"), hline=hline)
+                      os.path.join(_FIGURES_DIR, f"{stem}{_SUPPB_SUFFIX}.png"), hline=hline)
 
     # fig10: per-equation R² box plot across noise levels
     # FIX FIG10-DEAD-BRANCH: _pivot_sweep() always populates every key passed
@@ -3377,9 +3389,9 @@ if _noise_rows:
             ax.set_title("Per-Equation $R^2$ Box Plots vs Noise (σ)", fontsize=11, fontweight="bold")
             ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
             fig.tight_layout()
-            _savefig(fig, "fig10_r2_boxplot_noise")
+            _savefig(fig, f"fig10_r2_boxplot_noise{_SUPPB_SUFFIX}")
             plt.close(fig)
-            print("✓ fig10_r2_boxplot_noise.png/.pdf")
+            print(f"✓ fig10_r2_boxplot_noise{_SUPPB_SUFFIX}.png/.pdf")
 
 
 # ── Sample-complexity figures (fig4–fig6, fig8) ───────────────────────────────
@@ -3413,7 +3425,7 @@ if _sample_rows:
     for y_key, stem, xl, yl, title, hline in _s_configs:
         _drawn = _multi_method_line_fig(
             _sample_rows, "n_samples", y_key, xl, yl, title,
-            os.path.join(_FIGURES_DIR, f"{stem}.png"), hline=hline)
+            os.path.join(_FIGURES_DIR, f"{stem}{_SUPPB_SUFFIX}.png"), hline=hline)
         if not _drawn:
             print(f"  [SKIP] {stem}.png: no rows had a usable '{y_key}' value "
                   f"(not present in this source's method_summary schema).")
@@ -3498,9 +3510,9 @@ if _noise_rows or _sample_rows:
                             fontsize=7, color="white" if v < 0.4 else "black")
         fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label="Recovery rate")
         fig.tight_layout()
-        _savefig(fig, "fig11_recovery_heatmap", bbox_inches="tight")
+        _savefig(fig, f"fig11_recovery_heatmap{_SUPPB_SUFFIX}", bbox_inches="tight")
         plt.close(fig)
-        print("✓ fig11_recovery_heatmap.png/.pdf")
+        print(f"✓ fig11_recovery_heatmap{_SUPPB_SUFFIX}.png/.pdf")
     else:
         print("  [SKIP] fig11_recovery_heatmap.png — no (sigma, n, recovery_rate) triples could be built from available sweep data.")
 
@@ -3540,9 +3552,9 @@ if _noise_rows or _sample_rows:
                     f"{v:.2f}s", va="center", fontsize=8)
         ax.grid(axis="x", alpha=0.3)
         fig.tight_layout()
-        _savefig(fig, "fig_runtime_comparison")
+        _savefig(fig, f"fig_runtime_comparison{_SUPPB_SUFFIX}")
         plt.close(fig)
-        print("✓ fig_runtime_comparison.png/.pdf")
+        print(f"✓ fig_runtime_comparison{_SUPPB_SUFFIX}.png/.pdf")
 
 
 # ── fig_comparative_table (domain × method, rendered as PNG) ─────────────────
@@ -3583,9 +3595,9 @@ if _noise_rows or _sample_rows:
         ax.set_title("Domain × Method $R^2$ Comparison (median)", fontsize=11, fontweight="bold",
                      pad=10)
         fig.tight_layout()
-        _savefig(fig, "fig_comparative_table", bbox_inches="tight")
+        _savefig(fig, f"fig_comparative_table{_SUPPB_SUFFIX}", bbox_inches="tight")
         plt.close(fig)
-        print("✓ fig_comparative_table.png/.pdf")
+        print(f"✓ fig_comparative_table{_SUPPB_SUFFIX}.png/.pdf")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
