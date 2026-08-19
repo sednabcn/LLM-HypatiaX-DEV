@@ -1,0 +1,348 @@
+# ==============================================================================
+#  ci_llm_paper_audit.yml — HypatiaX · Claude-powered *_patched.tex audit
+#
+#  SCOPE
+#  -----
+#  Independent of ci_paper_audit.yml (does not wait on it, does not read or
+#  write its JSON artifacts). Audits ONLY files matching **/*_patched.tex —
+#  never the raw source .tex.
+#
+#  It does three things, in order:
+#    1. INSPECT   — scripts/patches/llm_audit_inspector.py
+#                   Scans every *_patched.tex, extracts numeric/claim
+#                   statements, and for each one either:
+#                     a) finds it already consistent -> no finding
+#                     b) finds a mismatch against hypatiax/data/results ->
+#                        calls Claude to CONSOLIDATE the authoritative value
+#                        across every matching result file for that paper
+#                        section (see consolidate_results.py)
+#                     c) finds no matching results at all -> flags MISSING
+#                   Writes:
+#                     logs/llm_audit_findings.json   (this workflow's own
+#                                                      artifact — does NOT
+#                                                      touch verify_report.json,
+#                                                      paper_audit_findings.json,
+#                                                      or issue_registry.json)
+#                     audit_registry.json            (this audit's own open/
+#                                                      resolved/false_positive
+#                                                      ledger, parallel to but
+#                                                      independent of
+#                                                      issue_registry.json)
+#
+#  2. PATCH     — scripts/patches/llm_patch_apply.py
+#                   Consumes logs/llm_audit_findings.json and produces patch
+#                   entries in the SAME patch_manifest.yaml schema used by
+#                   patch_runner.py / ci-audit-writing-paper.yml, so they can
+#                   be applied through that existing, already-reviewed
+#                   dry-run/--apply/commit machinery.
+#
+#                   AUTO-COMMIT is allowed ONLY for entries tagged
+#                   kind: numeric_consolidated or kind: numeric_from_upload
+#                   AND that pass a mechanical, non-LLM verification step
+#                   (single-number regex substitution, old value != new
+#                   value, provenance resolves to a real source). Every
+#                   other finding (prose, structure, ambiguous claims) is
+#                   written to patch_manifest.yaml as PROPOSED ONLY and
+#                   requires an explicit workflow_dispatch --apply run with
+#                   human review, exactly like ci-audit-writing-paper.yml.
+#
+#  3. REPORT    — scripts/patches/generate_llm_audit_report.py
+#                   Writes the "open/flagging points" report in ALL THREE
+#                   forms:
+#                     audit/llm_audit_report.md              (cumulative,
+#                                                              overwritten
+#                                                              each run)
+#                     logs/llm_audit_report_<run_id>.md       (timestamped,
+#                                                              uploaded as an
+#                                                              artifact, never
+#                                                              committed)
+#                     <dir-of-tex>/<texfile>_llm_audit.md     (one per
+#                                                              *_patched.tex,
+#                                                              committed next
+#                                                              to the file it
+#                                                              describes)
+#
+#  TRIGGERS
+#  --------
+#  Independent of ci_paper_audit.yml. Fires on:
+#    - push to any *_patched.tex
+#    - push to hypatiax/data/results/**  (a result changing may invalidate a
+#      previously-consolidated number)
+#    - push to audit/observations/**     (uploaded observation/audit docs —
+#      both free-text .md and structured .json are supported)
+#    - workflow_dispatch, which additionally accepts an ad-hoc single-run
+#      observation (inline text or a path to an uploaded file) without
+#      requiring a commit first.
+#
+#  UPLOADED OBSERVATION / AUDIT DOCS — supports both delivery mechanisms:
+#    A) Committed directory: audit/observations/*.md | *.json
+#         .md   -> free-text notes, read directly by Claude alongside the
+#                  relevant tex/results context.
+#         .json -> structured corrections:
+#                  [{ "claim_id": "...", "section": "...",
+#                     "corrected_value": "...", "source": "...",
+#                     "note": "..." }, ...]
+#                  These are the ones eligible for numeric_from_upload
+#                  auto-commit, since they carry explicit claim_id +
+#                  corrected_value + source.
+#    B) workflow_dispatch inputs observation_text / observation_file for a
+#       single ad-hoc run that doesn't require committing anything first.
+# ==============================================================================
+
+name: "HypatiaX - Claude paper audit (patched tex)"
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "**/*_patched.tex"
+      - "hypatiax/data/results/**"
+      - "audit/observations/**"
+
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply patches now (default: dry-run/report-only, same convention as ci-audit-writing-paper.yml)"
+        type: boolean
+        default: false
+      allow_value_change:
+        description: "Permit overwriting an already-auto-committed numeric value with a different one"
+        type: boolean
+        default: false
+      observation_text:
+        description: "Ad-hoc free-text observation for this run only (optional)"
+        type: string
+        default: ""
+      observation_file:
+        description: "Path to an uploaded observation file for this run only, e.g. audit/observations/reviewer_notes.md (optional)"
+        type: string
+        default: ""
+      tex_glob:
+        description: "Restrict to a subset of *_patched.tex files (glob, blank = all)"
+        type: string
+        default: ""
+
+concurrency:
+  group: llm-paper-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  RESULTS_ROOT: "hypatiax/data/results"
+  OBSERVATIONS_DIR: "audit/observations"
+  FINDINGS_FILE: "logs/llm_audit_findings.json"
+  REGISTRY_FILE: "audit_registry.json"
+  MANIFEST: "patch_manifest.yaml"
+  APPLY: ${{ github.event_name == 'workflow_dispatch' && inputs.apply || false }}
+  ALLOW_VALUE_CHANGE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_value_change || false }}
+  OBSERVATION_TEXT: ${{ github.event_name == 'workflow_dispatch' && inputs.observation_text || '' }}
+  OBSERVATION_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.observation_file || '' }}
+  TEX_GLOB: ${{ github.event_name == 'workflow_dispatch' && inputs.tex_glob || '**/*_patched.tex' }}
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      findings_count: ${{ steps.inspect.outputs.findings_count }}
+      open_count: ${{ steps.inspect.outputs.open_count }}
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "PyYAML>=6.0" anthropic
+
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      - name: Run LLM audit inspector (consolidate + compare)
+        id: inspect
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESULTS_ROOT: ${{ env.RESULTS_ROOT }}
+          OBSERVATIONS_DIR: ${{ env.OBSERVATIONS_DIR }}
+          FINDINGS_FILE: ${{ env.FINDINGS_FILE }}
+          REGISTRY_FILE: ${{ env.REGISTRY_FILE }}
+          TEX_GLOB: ${{ env.TEX_GLOB }}
+          OBSERVATION_TEXT: ${{ env.OBSERVATION_TEXT }}
+          OBSERVATION_FILE: ${{ env.OBSERVATION_FILE }}
+        run: |
+          set -euo pipefail
+          python3 scripts/patches/llm_audit_inspector.py \
+            --results-root "$RESULTS_ROOT" \
+            --observations-dir "$OBSERVATIONS_DIR" \
+            --tex-glob "$TEX_GLOB" \
+            --findings-out "$FINDINGS_FILE" \
+            --registry-out "$REGISTRY_FILE" \
+            ${OBSERVATION_TEXT:+--observation-text "$OBSERVATION_TEXT"} \
+            ${OBSERVATION_FILE:+--observation-file "$OBSERVATION_FILE"} \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload findings + registry
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: llm-audit-findings-${{ github.run_id }}
+          path: |
+            logs/llm_audit_findings.json
+            audit_registry.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  patch:
+    needs: inspect
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install "PyYAML>=6.0"
+
+      - name: Download findings
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: llm-audit-findings-${{ github.run_id }}
+
+      - name: Build/append patch_manifest.yaml entries
+        id: patchgen
+        env:
+          FINDINGS_FILE: ${{ env.FINDINGS_FILE }}
+          MANIFEST: ${{ env.MANIFEST }}
+        run: |
+          set -euo pipefail
+          python3 scripts/patches/llm_patch_apply.py generate \
+            --findings "$FINDINGS_FILE" \
+            --manifest "$MANIFEST" \
+            --github-output "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------------
+      # Mechanically-verified numeric auto-commit ONLY. This step never
+      # calls Claude — it only substitutes a single number that
+      # llm_audit_inspector.py already had Claude consolidate/verify, and
+      # re-checks the substitution is a pure digit swap before writing.
+      # ------------------------------------------------------------------
+      - name: Auto-apply numeric_consolidated / numeric_from_upload entries
+        id: autonum
+        env:
+          MANIFEST: ${{ env.MANIFEST }}
+          ALLOW_VALUE_CHANGE: ${{ env.ALLOW_VALUE_CHANGE }}
+        run: |
+          set -euo pipefail
+          python3 scripts/patches/llm_patch_apply.py apply-numeric \
+            --manifest "$MANIFEST" \
+            --allow-value-change "$ALLOW_VALUE_CHANGE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit numeric auto-fixes
+        if: steps.diff.outputs.changed == 'true' && steps.autonum.outputs.applied_count != '0'
+        run: |
+          git config user.name "llm-paper-audit-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A -- '**/*_patched.tex' "${{ env.MANIFEST }}" "${{ env.REGISTRY_FILE }}"
+          git commit -m "chore(llm-audit): auto-commit ${{ steps.autonum.outputs.applied_count }} consolidated numeric value(s) [skip ci]"
+          git push
+
+      # Non-numeric proposed entries stay in patch_manifest.yaml unapplied
+      # unless this run was an explicit workflow_dispatch --apply=true, in
+      # which case they go through the SAME patch_runner.py flow as
+      # ci-audit-writing-paper.yml (not duplicated here — this workflow
+      # only ever writes numeric_* entries directly).
+      - name: Note manual-review items
+        if: always()
+        run: |
+          echo "Non-numeric findings (prose/structure/ambiguous) were written to ${{ env.MANIFEST }} as proposed-only entries." >> "$GITHUB_STEP_SUMMARY"
+          echo "Run ci-audit-writing-paper.yml with apply=true to review and commit them." >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    needs: [inspect, patch]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Download findings
+        uses: actions/download-artifact@v4.3.0
+        with:
+          name: llm-audit-findings-${{ github.run_id }}
+
+      - name: Generate open/flagging report (all three forms)
+        env:
+          FINDINGS_FILE: ${{ env.FINDINGS_FILE }}
+          REGISTRY_FILE: ${{ env.REGISTRY_FILE }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs audit
+          python3 scripts/patches/generate_llm_audit_report.py \
+            --findings "$FINDINGS_FILE" \
+            --registry "$REGISTRY_FILE" \
+            --cumulative-out "audit/llm_audit_report.md" \
+            --timestamped-out "logs/llm_audit_report_${RUN_ID}.md" \
+            --per-tex-suffix "_llm_audit.md"
+
+      - name: Upload timestamped report
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: llm-audit-report-${{ github.run_id }}
+          path: logs/llm_audit_report_${{ github.run_id }}.md
+          retention-days: 90
+
+      - name: Commit cumulative + per-tex reports
+        run: |
+          git config user.name "llm-paper-audit-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add "audit/llm_audit_report.md" -- '**/*_llm_audit.md'
+          if git diff --cached --quiet; then
+            echo "No report changes to commit."
+          else
+            git commit -m "docs(llm-audit): update open/flagging points report [skip ci]"
+            git push
+          fi
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "### Claude paper audit — *_patched.tex"
+            echo ""
+            echo "| | count |"
+            echo "|---|---|"
+            echo "| Findings | ${{ needs.inspect.outputs.findings_count }} |"
+            echo "| Open in audit_registry.json | ${{ needs.inspect.outputs.open_count }} |"
+            echo ""
+            echo "Full report: \`audit/llm_audit_report.md\`"
+          } >> "$GITHUB_STEP_SUMMARY"

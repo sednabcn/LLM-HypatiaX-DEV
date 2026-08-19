@@ -76,6 +76,7 @@ permissions:
 
 env:
   CONFIG_FILE: "config/experiments.yml"
+  MANIFEST_FILE: "scripts/figures_manifest.yml"
 
 jobs:
   postprocess:
@@ -464,25 +465,50 @@ jobs:
       # described a feature that didn't exist, so every real collision was
       # an unconditional hard failure with no config-level fix available.
       #
-      # `figure_owners:` in config/experiments.yml (optional top-level dict,
-      # `{ filename: experiment_id }`) is an OPT-IN override for cases where
-      # the colliding outputs really are duplicates/superseded and only one
-      # should survive under the original name — that experiment's copy is
-      # deployed and the others are logged as dropped.
+      # ROOT CAUSE of the *second* bug this uncovered: config/experiments.yml
+      # (figures_deploy aggregate, see comment there) documents that this
+      # step "Reads scripts/figures_manifest.yml for the full stem ->
+      # source-experiment mapping" — but nothing here ever actually opened
+      # that file. scripts/figures_manifest.yml ("the canonical mapping")
+      # was pure dead documentation: the deployed names it specifies
+      # (fig11_recovery_heatmap__suppB.pdf, etc.) happened to match what
+      # this step invented on its own via `f"{stem}__{eid}{ext}"`, so the
+      # collision was masked rather than fixed. Any future edit to the
+      # manifest (a differently-named deploy target, a new collision entry)
+      # would silently have no effect.
       #
-      # confirmed via config/experiments.yml (both suppB and suppB_sc are
-      # `protected: true` canonical sources, and the figures_deploy aggregate
-      # lists `depends_on: ["suppB", "suppB_sc"]`) that picking a winner is
-      # NOT the right default here — collapsing to one name silently discards
-      # the other experiment's canonical result. So anything left unresolved
-      # after figure_owners is no longer a hard failure: each producer's copy
-      # is deployed under its own suffixed filename
-      # (`fig11_recovery_heatmap.pdf` -> `fig11_recovery_heatmap__suppB.pdf`,
-      # `fig11_recovery_heatmap__suppB_sc.pdf`), so no canonical data is ever
-      # dropped and the build doesn't fail. This is logged loudly (not
-      # silently) because the LaTeX source needs to reference the new
-      # filenames explicitly — \includegraphics on the old bare name will no
-      # longer resolve for any auto-suffixed collision.
+      # Fix: MANIFEST_FILE (scripts/figures_manifest.yml) is now actually
+      # loaded and is the authoritative source for deployed filenames on a
+      # collision. Its schema is `figures: { <source filename>: {
+      # <experiment_id>: <deployed filename> } }` — i.e. it already encodes
+      # "deploy every producer's copy under its own name," matching the
+      # confirmed intent (both suppB and suppB_sc are `protected: true`
+      # canonical sources per config/experiments.yml, and the figures_deploy
+      # aggregate lists `depends_on: ["suppB", "suppB_sc"]`, so collapsing a
+      # collision to one winner would silently discard the other
+      # experiment's canonical result — that is NOT the right default here).
+      #
+      # Resolution order per colliding filename:
+      #   1. MANIFEST_FILE has an entry for this filename covering every
+      #      producer -> deploy each producer under its manifest-specified
+      #      name. This is now the normal, expected path for suppB/suppB_sc.
+      #   2. `figure_owners:` in config/experiments.yml (optional top-level
+      #      dict, `{ filename: experiment_id }`) is a separate, OPT-IN
+      #      override for the different case where the colliding outputs
+      #      really are duplicates/superseded and only one should survive
+      #      under the original bare name — that experiment's copy is
+      #      deployed and the others are logged as dropped.
+      #   3. Neither covers it -> fall back to auto-generated suffixed names
+      #      (`fig11_recovery_heatmap.pdf` -> `fig11_recovery_heatmap__suppB.pdf`)
+      #      so no canonical data is ever silently dropped and the build
+      #      never hard-fails on an unmapped collision.
+      # Any manifest entry that no longer matches an actual collision (wrong
+      # eid, or the collision no longer exists) is logged as stale rather
+      # than silently ignored, so the manifest can't drift from reality
+      # unnoticed again. All of this is logged loudly because the LaTeX
+      # source needs to reference the new filenames explicitly —
+      # \includegraphics on the old bare name will no longer resolve for
+      # any collision, however it was resolved.
       # ------------------------------------------------------------------
       - name: "Deploy assembled figures"
         if: steps.resolve.outputs.id == 'figures_deploy'
@@ -495,6 +521,16 @@ jobs:
               cfg = yaml.safe_load(f)
 
           figure_owners = cfg.get("figure_owners", {})  # { filename: experiment_id }
+
+          manifest_path = os.environ["MANIFEST_FILE"]
+          manifest = {}  # { filename: { experiment_id: deployed_filename } }
+          if os.path.isfile(manifest_path):
+              with open(manifest_path) as f:
+                  manifest_cfg = yaml.safe_load(f) or {}
+              manifest = manifest_cfg.get("figures", {}) or {}
+          else:
+              print(f"::warning::{manifest_path} not found — collisions will fall back "
+                    f"to figure_owners / auto-suffixed filenames.")
 
           root = "${{ steps.resolve.outputs.results_root }}"
           dest = "${{ steps.resolve.outputs.figures_dir_abs }}"
@@ -529,9 +565,39 @@ jobs:
               if len({s for _, _, s in entries}) > 1
           }
 
-          split_deploy = {}   # fn -> list of (eid, src, sha) to deploy suffixed
+          split_deploy = {}   # fn -> list of (eid, src, sha, deployed_fn) to deploy
           resolved_owner_log = []
+          resolved_manifest_log = []
+          manifest_seen_for = set()   # fn's actually consumed from the manifest,
+                                       # so we can flag stale/unused entries below.
+
           for fn, entries in sorted(collisions.items()):
+              manifest_map = manifest.get(fn)  # { experiment_id: deployed_filename }
+              producer_eids = {eid for eid, _, _ in entries}
+
+              if manifest_map and producer_eids <= set(manifest_map):
+                  # Manifest covers every current producer for this filename:
+                  # deploy each one under its manifest-specified name. This is
+                  # the primary, expected resolution path.
+                  del sources[fn]
+                  manifest_seen_for.add(fn)
+                  split_deploy[fn] = [
+                      (eid, src, src_sha, manifest_map[eid])
+                      for eid, src, src_sha in entries
+                  ]
+                  resolved_manifest_log.append((fn, sorted(producer_eids)))
+                  continue
+
+              if manifest_map:
+                  # Manifest has an entry for this filename but it doesn't
+                  # cover every current producer (stale/incomplete) — don't
+                  # silently trust a partial mapping, fall through to the
+                  # other resolution paths below and flag it as stale.
+                  print(f"::warning::{manifest_path} has an entry for {fn} but it "
+                        f"doesn't cover all current producers ({', '.join(sorted(producer_eids))}) "
+                        f"— ignoring it for this run and falling back to figure_owners / "
+                        f"auto-suffixing. Update the manifest.")
+
               owner = figure_owners.get(fn)
               owning_entries = [e for e in entries if e[0] == owner] if owner else []
               if owning_entries:
@@ -541,15 +607,34 @@ jobs:
                   skipped_eids = sorted({eid for eid, _, _ in entries if eid != owner})
                   resolved_owner_log.append((fn, owner, skipped_eids))
               else:
-                  # No override (or a misconfigured one naming a non-producer):
-                  # deploy every producer's copy under its own suffixed name
-                  # rather than silently dropping any canonical source.
+                  # No manifest entry, no override (or a misconfigured one
+                  # naming a non-producer): deploy every producer's copy
+                  # under its own auto-suffixed name rather than silently
+                  # dropping any canonical source.
                   del sources[fn]
-                  split_deploy[fn] = entries
+                  stem, ext = os.path.splitext(fn)
+                  split_deploy[fn] = [
+                      (eid, src, src_sha, f"{stem}__{eid}{ext}")
+                      for eid, src, src_sha in entries
+                  ]
                   if owner:
                       print(f"::warning::figure_owners names '{owner}' for {fn}, but that "
                             f"experiment did not produce it — ignoring the override and "
-                            f"deploying all producers under suffixed filenames instead.")
+                            f"deploying all producers under auto-suffixed filenames instead.")
+
+          # Flag manifest entries that no longer correspond to a real
+          # collision (typo'd/renamed source filename, or the collision was
+          # resolved upstream and no longer happens) — a silently-stale
+          # manifest is exactly how this went unnoticed the first time.
+          stale_manifest_entries = sorted(set(manifest) - manifest_seen_for)
+          if stale_manifest_entries:
+              print(f"::warning::{manifest_path} has entries that don't match any "
+                    f"current filename collision (stale?): {', '.join(stale_manifest_entries)}")
+
+          if resolved_manifest_log:
+              print(f"figures_deploy: resolved filename collision(s) via {manifest_path}:")
+              for fn, eids in resolved_manifest_log:
+                  print(f"  {fn} — deployed all of: {', '.join(eids)}, each under its manifest name")
 
           if resolved_owner_log:
               print("figures_deploy: resolved filename collision(s) via config/experiments.yml figure_owners:")
@@ -559,14 +644,12 @@ jobs:
           copied, skipped, overwritten = 0, 0, []
 
           if split_deploy:
-              print("::warning::Filename collision(s) with no figure_owners override — "
-                    "deploying EACH producer's copy under a suffixed name so no canonical "
-                    "result is dropped. Update the LaTeX source to reference these new "
-                    "filenames (the old bare name is no longer deployed for these stems):")
+              print("::warning::Filename collision(s) resolved by deploying EACH producer's "
+                    "copy under its own name so no canonical result is dropped. Update the "
+                    "LaTeX source to reference these filenames (the old bare name is no "
+                    "longer deployed for these stems):")
               for fn, entries in sorted(split_deploy.items()):
-                  stem, ext = os.path.splitext(fn)
-                  for eid, src, src_sha in sorted(entries):
-                      suffixed_fn = f"{stem}__{eid}{ext}"
+                  for eid, src, src_sha, suffixed_fn in sorted(entries):
                       dst = os.path.join(dest, suffixed_fn)
                       print(f"  {fn} ({eid}) -> {suffixed_fn}")
                       if os.path.exists(dst) and sha(dst) == src_sha:

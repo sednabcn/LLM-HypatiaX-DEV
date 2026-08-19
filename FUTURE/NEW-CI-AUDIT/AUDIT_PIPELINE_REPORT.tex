@@ -1,0 +1,208 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{seqsplit}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  frame=single,
+  backgroundcolor=\color{gray!8},
+  showstringspaces=false
+}
+
+\newcommand{\code}[1]{\texttt{\seqsplit{#1}}}
+\newcommand{\bslash}{\texttt{\seqsplit{\char`\\}}}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+\title{\textbf{Claude-powered paper audit pipeline --- design report}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+\noindent\textbf{Repo:} \code{sednabcn/LLM-HypatiX-DEV} \\
+\textbf{Scope:} audits \code{**/*\_patched.tex} against \code{hypatiax/data/results/}, using the Claude API, independent of the existing \code{ci\_paper\_audit.yml} gate.
+
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+\section{Why this exists}
+
+\code{ci\_paper\_audit.yml} already does deterministic, rule-based auditing of the paper against results data. This pipeline adds a second, LLM-driven layer on top, for two jobs a deterministic script can't do:
+
+\begin{enumerate}
+  \item \textbf{Numeric consolidation} --- when a paper claim's underlying results have multiple files (reruns, seeds, shards), decide the single authoritative value and \emph{why}, then propose (and in narrow cases, auto-commit) the fix.
+  \item \textbf{The narrative ``open/flagging points'' report} --- a human-readable account of what's stale, what's missing, and what's actively blocked, on top of the raw findings JSON.
+\end{enumerate}
+
+It deliberately does \textbf{not} try to replicate the deep, cascading, multi-file investigations run manually (the \code{68\_74-issue.txt} / \code{leak\_report.tex} style sessions). Those stay human+Claude, outside CI. This pipeline's only relationship to that work is: \textbf{it reads the block list those sessions produce, and it never overwrites a number in a table/figure that list says is currently invalid.}
+
+\section{Two-tier design}
+
+\begin{longtable}{@{}p{2.8cm}p{6cm}p{6cm}@{}}
+\toprule
+ & \textbf{Tier 1 --- automated, in CI} & \textbf{Tier 2 --- human+Claude, outside CI} \\
+\midrule
+\endhead
+What it is &
+  \code{llm\_audit\_inspector.py}, one Claude call per claim, bounded &
+  The kind of session in \code{68\_74-issue.txt} / \code{notes-nguyen12.txt} --- iterative, requests more files, hypotheses get overturned, scope legitimately expands \\
+Trigger &
+  push to \code{*\_patched.tex} / \code{hypatiax/data/results/**} / \code{audit/observations/**}, or manual dispatch &
+  you, manually, whenever \\
+Output &
+  \code{logs/llm\_audit\_findings.json}, updates to \code{audit\_registry.json}, three forms of report &
+  Incident docs like \code{leak\_report.tex}, filed back in via \code{audit/observations/*.json} (\code{type: "block"}) \\
+Can it auto-commit? &
+  Yes, but \textbf{only} a single-digit numeric substitution, mechanically re-verified (no LLM trust) &
+  Never automatically --- always a human-reviewed patch \\
+Relationship &
+  \textbf{Reads} Tier 2's block list before doing anything; refuses to touch any claim inside a blocked table/figure &
+  Produces the block list; the only way to remove a block is editing \code{audit\_registry.json} directly \\
+\bottomrule
+\end{longtable}
+
+\section{Data flow}
+
+\begin{lstlisting}
+push to *_patched.tex / hypatiax/data/results/** / audit/observations/**
+                |
+                v
+   +--------------------------+
+   |  1. INSPECT               |  llm_audit_inspector.py
+   |  - extract_claims()       |  reads: *_patched.tex,
+   |  - merge audit_registry   |         hypatiax/data/results/**,
+   |    (seed/tier2 preserved) |         audit/observations/*,
+   |  - blocklist check        |         audit_registry.json (existing)
+   |  - consolidate() per      |  calls: consolidate_results.py (Claude API)
+   |    unblocked claim        |  writes: logs/llm_audit_findings.json,
+   +--------------------------+          audit_registry.json (merged)
+                |
+                v
+   +--------------------------+
+   |  2. PATCH                 |  llm_patch_apply.py
+   |  generate: findings ->    |  reads: logs/llm_audit_findings.json
+   |    patch_manifest.yaml    |  writes: patch_manifest.yaml (proposed
+   |    entries                |          entries, all kinds)
+   |  apply-numeric: verify +  |  reads/writes: patch_manifest.yaml,
+   |    apply ONLY             |          *_patched.tex (numeric_* only)
+   |    numeric_consolidated/  |  auto-commits ONLY these, mechanically
+   |    numeric_from_upload    |  re-verified line-by-line
+   +--------------------------+
+                |
+                v
+   +--------------------------+
+   |  3. REPORT                |  generate_llm_audit_report.py
+   |  writes all 3 forms       |  reads: logs/llm_audit_findings.json,
+   +--------------------------+          audit_registry.json
+                |
+        +-------+----------------+
+        v       v                v
+ audit/llm_    logs/llm_audit_   <dir>/<file>_llm_audit.md
+ audit_report  report_<run_id>.  (per *_patched.tex,
+ .md (cumula-  md (artifact       committed next to it)
+ tive,          only, not
+ committed)     committed)
+\end{lstlisting}
+
+Separately, whenever a Tier-2 investigation produces a block:
+
+\begin{lstlisting}
+you file audit/observations/<name>.json  (type: "block")
+                |
+                v
+next Tier-1 run's INSPECT step merges it into audit_registry.json
+as a tier2_upload entry -> its `blocks` list is now enforced
+\end{lstlisting}
+
+\section{File inventory --- what goes where in the repo}
+
+All paths below are relative to the repo root.
+
+\begin{longtable}{@{}p{0.4cm}p{4.2cm}p{4.6cm}p{5.5cm}@{}}
+\toprule
+\# & \textbf{File} & \textbf{Repo destination} & \textbf{Purpose} \\
+\midrule
+\endhead
+1 & \code{ci\_llm\_paper\_audit.yml} & \code{.github/workflows/} & The workflow itself: 3 jobs (\code{inspect} $\to$ \code{patch} $\to$ \code{report}), independent of \code{ci\_paper\_audit.yml} \\
+2 & \code{llm\_audit\_inspector.py} & \code{scripts/patches/} & Tier-1 entry point. Extracts numeric claims from \code{*\_patched.tex}, tracks table/figure labels, checks the blocklist, calls \code{consolidate\_results.py} for unblocked claims, merges results into \code{audit\_registry.json} \\
+3 & \code{consolidate\_results.py} & \code{scripts/patches/} & The \textbf{only} file that calls the Claude API. One bounded call per claim: given a section's result summary files, returns the authoritative value + method + confidence + provenance as strict JSON \\
+4 & \code{llm\_patch\_apply.py} & \code{scripts/patches/} & Deterministic, no Claude calls. \code{generate} writes findings into \code{patch\_manifest.yaml} (existing schema); \code{apply-numeric} mechanically verifies and applies \emph{only} numeric single-token substitutions \\
+5 & \code{generate\_llm\_audit\_report.py} & \code{scripts/patches/} & Writes the open/flagging-points report in all three requested forms (cumulative, timestamped, per-tex-file) \\
+6 & \code{audit\_registry\_lib.py} & \code{scripts/patches/} & Shared library: load/save \code{audit\_registry.json}, compute the blocklist, merge Tier-1 findings without ever touching seed/\code{tier2\_upload} entries \\
+7 & \code{seed\_audit\_registry.py} & \code{scripts/patches/} & One-time (idempotent) importer --- merges a seed file into \code{audit\_registry.json} \\
+8 & \code{plan\_action\_seed.json} & \code{audit/seed/} & The actual 13 \code{PLAN-ACTION.txt} items + item 14 (the ground-truth leak from \code{leak\_report.tex}), pre-converted to the registry schema \\
+9 & \code{README.md} (observations) & \code{audit/observations/} & Documents both upload paths (committed \code{.md}/\code{.json}, and \code{workflow\_dispatch} ad-hoc) and the \code{type: "block"} schema for filing Tier-2 findings \\
+\bottomrule
+\end{longtable}
+
+\subsection*{Files this pipeline generates at runtime (not delivered --- created by the workflow)}
+
+\begin{longtable}{@{}p{4.5cm}p{4.0cm}p{2.2cm}p{3.9cm}@{}}
+\toprule
+\textbf{File} & \textbf{Path} & \textbf{Committed?} & \textbf{Notes} \\
+\midrule
+\endhead
+\code{audit\_registry.json} & repo root & Yes & merged and committed each run \\
+\code{patch\_manifest.yaml} & repo root & Yes & existing file; this pipeline only appends \\
+\code{logs/llm\_audit\_findings.json} & \code{logs/} & No & artifact only \\
+\code{audit/llm\_audit\_report.md} & \code{audit/} & Yes & cumulative, overwritten each run \\
+\code{logs/llm\_audit\_report\_<run\_id>.md} & \code{logs/} & No & artifact only \\
+\code{<dir>/<texfile>\_llm\_audit.md} & next to each \code{*\_patched.tex} & Yes & one per patched tex file \\
+\code{audit/incident\_reports/*.tex} & \code{audit/incident\_reports/} & manual & you commit these; pipeline only reads/links \\
+\bottomrule
+\end{longtable}
+
+\section{Setup steps (in order)}
+
+\begin{enumerate}
+  \item Copy files 1--9 from Section~4 into the listed paths.
+  \item \code{pip install anthropic pyyaml} (already in the workflow's install step --- nothing to do if only running in CI).
+  \item Confirm \code{secrets.ANTHROPIC\_API\_KEY} is set at the repo level (it already is, per \code{ci\_paper\_audit.yml}).
+  \item \textbf{Seed the registry once:}
+\begin{lstlisting}
+python3 scripts/patches/seed_audit_registry.py \
+  --seed audit/seed/plan_action_seed.json \
+  --registry audit_registry.json
+git add audit_registry.json && git commit -m \
+  "chore: seed audit_registry.json from PLAN-ACTION.txt"
+\end{lstlisting}
+  This immediately puts Tables 9--13, 15, \code{tab:hybrid\_all}, \code{tab:runtime}, \code{tab:timing}, and Figures 9--13 on the blocklist, and items \#4, \#10, \#12, \#13 in as \code{resolved} so Tier 1 doesn't re-flag them.
+  \item If \code{audit/incident\_reports/leak\_report.tex} already exists, commit it now too --- the seed entry for item 14 already points \code{linked\_report} at that exact path.
+  \item \textbf{Fix the one assumption made blind:} \code{resolve\_section\_to\_results()} in \code{llm\_audit\_inspector.py} assumes a \code{paper\_targets.json} schema of the form \code{\{"sections": [\{"section": ..., "experiment\_ids": [...]\}]\}}, which was invented for lack of the real file. Supply the real schema (or the equivalent lookup already inside \code{hypatia\_inspector.py}) to rewire that one function --- everything else is independent of it.
+\end{enumerate}
+
+\section{Known limitations (found via testing, not theoretical)}
+
+\begin{itemize}[leftmargin=1.2em]
+  \item \textbf{Label detection is regex-based, not a real tex parser.} \code{LABEL\_RE} catches \code{\textbackslash label\{tab:...\}}/\code{\textbackslash label\{fig:...\}}; \code{PROSE\_LABEL\_RE} catches literal ``Table N'' / ``Figure N''. It already correctly caught \code{1.73x} inside a Table~9 context in testing and blocked it --- but if the papers reference tables/figures another way (e.g.\ \code{\textbackslash cref}, \code{Tab.~\textbackslash ref\{...\}}), extend those two patterns.
+  \item \textbf{Numeric extraction was buggy on first pass and has been fixed and re-tested:} the original regex missed \code{"1.73x"} (a trailing letter broke the word-boundary check) --- it now explicitly handles \code{\%}, \code{x}/\texttimes, and \code{s}/\code{sec} suffixes. Re-verify against real \code{\_patched.tex} files before trusting it broadly, since paper prose has more unit variety than the smoke test covered.
+  \item \textbf{False positives are cheap, false negatives are not.} The pipeline is deliberately conservative --- e.g.\ it also flagged the bare \code{9} in ``Table 9'' as a separate (blocked) claim, which is harmless noise, not a wrong auto-fix.
+\end{itemize}
+
+\section{Still open}
+
+\begin{itemize}[leftmargin=1.2em]
+  \item Real \code{paper\_targets.json} schema (item 6 in Section~5) --- blocks Tier 1's section$\to$results resolution from working correctly until fixed.
+  \item Whether \code{audit\_registry.json}'s \code{resolved}/\code{open} items (2, 3, 6, 7, 8, 9, 11) should also get Tier-1 numeric checks run against them now, or be left for manual/Tier-2 handling since several are pure text fixes with no numeric component.
+\end{itemize}
+
+\end{document}
