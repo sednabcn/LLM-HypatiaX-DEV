@@ -451,8 +451,27 @@ jobs:
       #      automatically, so this fails the build loudly instead of
       #      silently choosing one based on dict/filesystem iteration
       #      order (which is what str/os.listdir ordering would otherwise
-      #      do). Iteration below is explicitly sorted by experiment ID
-      #      and filename so any output printed here is deterministic.
+      #      do) — UNLESS config/experiments.yml's `figure_owners:` map
+      #      names an explicit winner for that filename (see below).
+      #      Iteration is explicitly sorted by experiment ID and filename
+      #      so any output printed here is deterministic.
+      #
+      # FIX (figures_deploy filename collisions, e.g. suppB vs suppB_sc both
+      # writing fig11_recovery_heatmap.{pdf,png} / fig_comparative_table.{pdf,png}
+      # with different content): this step's own error message used to tell
+      # the user to "give config/experiments.yml an explicit owner for this
+      # filename," but nothing here ever read such an owner — the advice
+      # described a feature that didn't exist, so every real collision was
+      # an unconditional hard failure with no config-level fix available.
+      # `figure_owners:` in config/experiments.yml (optional top-level dict,
+      # `{ filename: experiment_id }`) is now actually consulted: if a
+      # colliding filename has a listed owner AND that owner is one of the
+      # experiments that produced it, that experiment's copy is deployed and
+      # the others are logged as skipped duplicates, instead of failing.
+      # Any collision without a `figure_owners` entry (or where the named
+      # owner isn't actually one of the producers — a config typo) still
+      # fails loudly exactly as before: this is a targeted escape hatch for
+      # acknowledged shared-filename cases, not a general "pick one" default.
       # ------------------------------------------------------------------
       - name: "Deploy assembled figures"
         if: steps.resolve.outputs.id == 'figures_deploy'
@@ -463,6 +482,8 @@ jobs:
 
           with open(os.environ["CONFIG_FILE"]) as f:
               cfg = yaml.safe_load(f)
+
+          figure_owners = cfg.get("figure_owners", {})  # { filename: experiment_id }
 
           root = "${{ steps.resolve.outputs.results_root }}"
           dest = "${{ steps.resolve.outputs.figures_dir_abs }}"
@@ -490,19 +511,50 @@ jobs:
 
           # Genuine cross-experiment collision: same filename, different
           # content, from two different experiments. No sort order makes
-          # one of them "correct" — refuse to guess.
+          # one of them "correct" — resolve via figure_owners if configured,
+          # otherwise refuse to guess.
           collisions = {
               fn: entries for fn, entries in sources.items()
               if len({s for _, _, s in entries}) > 1
           }
-          if collisions:
+
+          unresolved = {}
+          resolved_owner_log = []
+          for fn, entries in sorted(collisions.items()):
+              owner = figure_owners.get(fn)
+              owning_entries = [e for e in entries if e[0] == owner] if owner else []
+              if owning_entries:
+                  # Collapse to the owner's single entry; the others are
+                  # logged and dropped from what gets deployed.
+                  sources[fn] = owning_entries
+                  skipped_eids = sorted({eid for eid, _, _ in entries if eid != owner})
+                  resolved_owner_log.append((fn, owner, skipped_eids))
+              else:
+                  unresolved[fn] = entries
+
+          if resolved_owner_log:
+              print("figures_deploy: resolved filename collision(s) via config/experiments.yml figure_owners:")
+              for fn, owner, skipped_eids in resolved_owner_log:
+                  print(f"  {fn} — deployed from '{owner}', skipped: {', '.join(skipped_eids)}")
+
+          if unresolved:
               print("::error::Two or more experiments produce the same figure "
                     "filename with different content — cannot deploy unambiguously:")
-              for fn, entries in sorted(collisions.items()):
+              for fn, entries in sorted(unresolved.items()):
                   owners = ", ".join(eid for eid, _, _ in entries)
-                  print(f"  {fn} — produced differently by: {owners}")
-              print("Fix: rename the conflicting file at its source, or give "
-                    "config/experiments.yml an explicit owner for this filename.")
+                  configured = figure_owners.get(fn)
+                  if configured:
+                      print(f"  {fn} — produced differently by: {owners} "
+                            f"(figure_owners names '{configured}', which is NOT one of the producers — fix the config)")
+                  else:
+                      print(f"  {fn} — produced differently by: {owners}")
+              print("Fix: rename the conflicting file at its source, or add an entry "
+                    "under figure_owners: in config/experiments.yml naming which "
+                    "experiment's copy should be deployed, e.g.:")
+              print("  figure_owners:")
+              for fn in sorted(unresolved):
+                  eid = sorted(unresolved[fn])[0][0]
+                  print(f"    {fn}: {eid}")
               sys.exit(1)
 
           copied, skipped, overwritten = 0, 0, []
