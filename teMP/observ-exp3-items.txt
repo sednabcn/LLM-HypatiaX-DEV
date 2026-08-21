@@ -1,0 +1,52 @@
+﻿Only the .tex file was actually uploaded — the JSON result files (exp3_nguyen12_seed*.json) and the bash output you pasted aren't present in this session, so I can't independently verify those numbers right now.
+That distinction matters a lot here: this document is a research-integrity audit trail where nearly every paragraph exists specifically because a past number couldn't be verified against a real source file. I don't want to add another "corrected" claim to it based on data I can't actually check — that would repeat the exact failure mode the paper is already flagging.
+Could you upload the five exp3_nguyen12_seed*.json files? Once I have them, I can:
+    1. Recompute the per-seed H/P recovery and independence stats myself 
+    2. Check them against the specific claims in the "Reproducibility note" paragraph (§sec:nguyen12, lines ~2621–2665) — the one place in the paper that already cites these exact files 
+    3. Write a script that patches the .tex with only the changes the data actually supports, in the same audit-note style the rest of the document uses (source file, exact numbers, what it does/doesn't resolve) 
+Ran a command
+Ran it against the real files. Results:
+Step 1/2 — checks: Both existing claims in the paragraph hold up exactly as written — seed 123 = 12/12, and seeds 99/123/777/2024 = 12/12. No fabrication there; the tex was correct.
+New finding the tex didn't mention: h_recovered_independent is lower than h_recovered for two of the five seeds:
+    • seed 42: 11/12 independent (1 case where HypatiaX's accepted answer was just a copy of PySR-only's, not independently derived) 
+    • seed 777: same, 11/12 independent, 1 copy 
+Seeds 99, 123, 2024 show no such overlap.
+Step 3 — patch: Since the existing claims checked out, the script left them untouched and inserted a sourced addendum right after the "rules out an unlucky seed draw" sentence, documenting this independence gap with the exact JSON field names it came from.
+Ran a command
+That's the only change — a single inserted paragraph, no existing text altered. (One small blemish: there's a stray double space before "A within-seed comparison" on the last line — cosmetic, want me to clean it up before finalizing?)
+Presented file
+Let me know if you'd like that stray space fixed or the addendum wording adjusted.
+Jmlr paper main patched
+TEX 
+fixed
+Ran 3 commands, edited a file, read a file · 1 note
+That's the final version with the sourced addendum in place and the whitespace cleaned up.
+Jmlr paper main patched
+TEX 
+wht tasks remaining to do it?
+Ran a command, viewed a file
+Reading the section itself, it already lays out what's still open for this specific issue thread (FIX-N3 extension). Nothing left for me to script right now — these are things that need new source data or manual action, not something derivable from the files we have:
+Still open in the seed-123 / model-identity discrepancy:
+    1. Dead LLM_MODEL env var — exp3_nguyen12_hybrid50v_02.py reads it but doesn't actually use it to configure the call. Needs someone to either wire it up for real or delete it so it stops looking authoritative. 
+    2. Future seed-123 re-benchmark — should log hypatia.py's sampling temperature and candidate count alongside solve-rate, and report a distribution over repeated runs instead of one number. 
+    3. run_all.sh — still not obtained; it's the one unverified link confirming which script CI actually invokes. Without it, "which code path produced the original 11/12" stays a guess. 
+Still open elsewhere in this same table/section (§sec:nguyen12), not something I can fix from what's uploaded:
+    • The 33.3% caption figure is still unreconciled — conflicts with both the original 11/12(H) row and the corrected 58.3%(H) row, and the text is explicit that closing it requires the original PCA-directed extrapolation result file(s), not the axis-aligned seed files we just used (those were already checked and ruled out as that source). 
+    • The late-April–to-late-May 2026 infrastructure migration as the cause of the seed-123 drift is flagged "not yet confirmed" — would need timestamped run logs to confirm. 
+If you can get hold of run_all.sh or the original PCA-directed Nguyen-12 result file, I can extend the same verify-then-patch approach to close one of those. Otherwise there's nothing left to do on the part we just finished — that patch is complete and matches only what the seed files support.
+exp3_nguyen12_hybrid50v_02.py
+py
+run_all.sh
+sh
+hypatia.py
+406 lines
+py
+Ran 3 commands, viewed 2 files
+Read all three files. I can now close two of the three action items with hard evidence — let me verify one more thing before writing anything.
+Ran a command
+Confirmed. Here's what the three files actually resolve:
+(i) Dead LLM_MODEL env var — CONFIRMED, closeable now. exp3_nguyen12_hybrid50v_02.py line 626 sets os.environ.setdefault("LLM_MODEL", "claude-sonnet-4-6"), but its call to get_llm_prior() (line 947) passes only eq_dict, X, y, n_candidates=8, verbose=False — no model= argument. hypatia.py's get_llm_prior() never reads os.environ["LLM_MODEL"] anywhere in its body; it just uses its own default model: str = "claude-sonnet-5". So the env var is set, never read, and never wired to the actual call — exactly as the tex suspected, now with a verified mechanism instead of a guess.
+(iii) run_all.sh — CONFIRMED, closeable now. STEP 7 (exp3) and STEP 8 (exp3b) both invoke exp3_nguyen12_hybrid50v_02.py directly with --seed, confirming that's the actual script CI runs for Nguyen-12 (not some other candidate path).
+(ii) Future re-benchmark should log temperature/candidate count — still open, can't close from these files. The call site passes n_candidates=8 but no temperature; hypatia.py defaults to temperature=0.25 with no exposed seed. This confirms the problem (temperature/candidate count aren't logged into results) but a fix requires changing the script and re-running, not something I can verify after the fact.
+Want me to patch the tex's three-item action list to mark (i) and (iii) resolved, with these exact file/line citations, and leave (ii) as the one remaining open item?
+

@@ -1,0 +1,140 @@
+% =====================================================================
+% Nguyen-12 success-count table — audit trail
+% File: 01_nguyen12_success_count_arithmetic.tex
+% Status: BLOCKED — see audit note below. Do not cite H (HypatiaX) numbers
+%         from this table until the pipeline fix has been rerun and the
+%         resulting JSON re-verified.
+% =====================================================================
+
+% ---------------------------------------------------------------------
+% AUDIT NOTE (do not remove until resolved)
+% ---------------------------------------------------------------------
+% Round 1 (arithmetic): the printed table's row totals (10/12 P, 11/12 H)
+% did not match its own bolded cells (8/12 P, 9/12 H bolded), and two of
+% the H cells bolded as successes (N-3 = 0.9976, N-10 = 0.9997) fail the
+% caption's own stated threshold (R^2 >= 0.9999). The caption also carried
+% a fourth, disconnected figure (4/12, 33.3%) matching none of the above.
+% Tier-1 fix applied below: un-bold N-3/N-10, correct row totals to
+% P: 8/12 (66.7%), H: 7/12 (58.3%), delete the orphaned 4/12 sentence.
+%
+% Round 2 (raw data check): pulled exp3_nguyen12_seed42.json and the four
+% extended-seed files. Found hypatiax and pysr results byte-identical
+% (same expression string, same R^2 to 15 decimals) for all 12 equations,
+% in every seed file, including _merged.json.
+%
+% Round 3 (root cause, resolved): traced the duplication to
+% exp3_nguyen12_hybrid50v_02.py. The HypatiaX branch fetched LLM warm-start
+% candidates (llm_exprs = get_llm_prior(...)) but never passed them into
+% PySRRegressor or .fit() — both the `if llm_exprs:` and `else:` branches
+% called the identical model_h.fit(X, y, variable_names=var_names), and
+% model_h used the same **_pysr_kwargs (same random_state=seed,
+% deterministic=True, parallelism="serial") as the PySR-only model_p. With
+% no differentiating input and a deterministic solver, the two arms were
+% guaranteed to converge to identical results. This is a warm-start
+% injection bug, not the ground-truth-leak pattern documented in
+% run_all.sh for exp1/exp1b/hybrid_all_domains (that leak is a different
+% mechanism — target formula reaching the LLM prompt — and exp3 has not
+% yet been separately audited for it).
+%
+% Fix applied to exp3_nguyen12_hybrid50v_02.py (FIX-HYPATIAX-WARMSTART):
+% llm_exprs is now passed to PySRRegressor via the `guesses` parameter for
+% the HypatiaX arm only, so the two arms can actually diverge. A
+% `llm_warm_start_used` flag was added to each HypatiaX result record so
+% future runs can confirm this without re-diffing full JSON files.
+%
+% Round 4 (hypatia.py reviewed — two follow-on findings):
+%
+%   a. GT-LEAK CHECK (was item 2, open last round): hypatia.py's
+%      _build_prompt() only reads eq["formula_hint"]; it never touches
+%      eq["formula"] (the ground-truth expression also present in exp3's
+%      eq_dict). So get_llm_prior() does NOT leak the full ground-truth
+%      formula into the LLM prompt the way run_all.sh documents for
+%      exp1/exp1b — this is a different, and cleaner, situation than that
+%      pattern. Residual gap: formula_hint's actual content is defined in
+%      NguYenProtocol, which is still not in this checkout, so it can't
+%      yet be confirmed that formula_hint itself is answer-free.
+%
+%   b. SYNTAX MISMATCH (new, found while implementing (a)'s neighbor):
+%      the guesses=llm_exprs patch from the previous round was itself
+%      broken. get_llm_prior() returns Python/numpy-syntax expressions
+%      ("x**3 + x**2", "np.sin(x) + x"), but this script's PySR config
+%      uses binary_operators=[...,"^"] (not "**") and
+%      unary_operators=["sin","cos","log","sqrt","exp"] (bare names, no
+%      "np." prefix; "abs" is not configured at all). Unconverted, `guesses`
+%      would have received strings PySR's own operator set can't parse —
+%      likely a silent no-op or hard error, not a real warm-start.
+%      FIXED: added _llm_expr_to_pysr_syntax() in the script, converting
+%      "**"->"^" and stripping "np." prefixes, and dropping any candidate
+%      that still references an operator outside the configured set (e.g.
+%      abs(...), which has no equivalent here). Result records now track
+%      llm_candidates_raw vs llm_candidates_used_after_syntax_filter so a
+%      rerun's logs show exactly how many LLM candidates survived.
+%
+% STATUS: every H (HypatiaX) result currently in exp3_nguyen12_seed42.json
+% and the extended-seed files is invalid — HypatiaX was never actually
+% evaluated, only PySR-only was (twice, under two labels). No H number in
+% this table, or elsewhere in the paper, should be cited until exp3 is
+% rerun with both fixes above and the new JSON is independently
+% re-verified (Tier 2, still open). The P (PySR-only) numbers in the raw
+% JSON are believed valid but have not been separately re-audited for the
+% GT-leak pattern.
+%
+% REMAINING (blocking, in priority order):
+%   1. Confirm formula_hint (defined in NguYenProtocol, not yet reviewed)
+%      doesn't itself encode the answer — closes out the GT-leak check.
+%   2. Reconcile _merged.json vs exp3_nguyen12_seed42.json — the two
+%      disagree on the recovered N-1 expression despite both claiming to
+%      be seed-42 results.
+%   3. Rerun exp3 (seed 42 + extended seeds 99/123/777/2024) with the
+%      warm-start + syntax fixes and regenerate this table from
+%      RESULTS_DIR/extrapolation/*.json rather than hand-editing .tex.
+%      Check llm_candidates_used_after_syntax_filter in the output — if
+%      it's consistently 0, the conversion still isn't matching what the
+%      LLM actually returns and needs another pass.
+%   4. run_all.sh's FIX NO-TABLES-FIGURES change removed automatic .tex
+%      table emission; restore it (or add a diff-check script) so this
+%      table can't drift from its source of truth again.
+%   5. Patch the two prose mentions (l. 220, l. 2503) still citing the
+%      stale 91.7% figure — only after 1-3 above are resolved.
+% ---------------------------------------------------------------------
+
+\begin{table}[t]
+\centering
+\caption{Nguyen-12 benchmark: train and extrapolation $\Rsq$ by equation.
+$P$ = PySR-only; $H$ = HypatiaX; $N$ = Neural MLP.
+Near-miss criterion: $\Rsq \ge 0.9999$ (4-decimal convention of
+\citealt{uy2011semantically}).
+\textbf{HypatiaX column: INVALID — see audit note in source; do not cite
+until exp3 is rerun with the warm-start fix.}}
+\label{tab:nguyen12}
+\begin{tabular}{l l cc cc cc}
+\toprule
+& & \multicolumn{2}{c}{$P$} & \multicolumn{2}{c}{$H$} & \multicolumn{2}{c}{$N$} \\
+ID & Equation & Train & Extrap & Train & Extrap & Train & Extrap \\
+\midrule
+% ... (rows N-1, N-2, N-4, N-5 through N-9, N-11, N-12 unchanged from
+%      prior Tier-1 pass — reproduced here only where content changed)
+N-3  & $x^5 + x^4 + x^3 + x^2 + x$
+  & 0.9999 & \emph{$-426.2$}
+  & 0.9999 & 0.9976
+  & 0.9986 & $-0.913$ \\
+% N-3 H-extrap left un-bold: 0.9976 < 0.9999 threshold (Tier-1 fix)
+...
+N-10 & $2\sin(x)\cos(y)$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & 0.9997
+  & 0.9995 & $-2.379$ \\
+% N-10 H-extrap left un-bold: 0.9997 < 0.9999 threshold (Tier-1 fix)
+...
+\midrule
+\multicolumn{2}{l}{Success ($\Rsq\ge0.9999$)}
+  & \multicolumn{2}{c}{8/12 (66.7\%)}
+  & \multicolumn{2}{c}{\textit{INVALID — see audit note}}
+  & \multicolumn{2}{c}{0/12 (0\%)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Caption's stray "Strict recovery (>=0.9999) yields 4/12 (33.3%)" sentence
+% has been removed (Tier-1 fix) — it matched none of P/H/N's totals and
+% appears to be leftover text from an earlier table revision.

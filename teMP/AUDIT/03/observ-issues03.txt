@@ -1,0 +1,30 @@
+﻿The fix works — real timing data is now flowing through in both per_equation (e.g. EHD/M3 at 1.95s for that equation) and the new mean_time_s/median_time_s/std_time_s stats in method_summary. Let me verify across all 6 new shards and cross-check against the fresh protocol_core_noiseless re-runs.
+Verify timing fix across all new sample_complexity shards
+Verify timing fix across all new sample_complexity shards
+The fix is confirmed working cleanly across all 6 shards (n=50 through n=1000), every one reporting real mean_time_s with n_timed=30. Now let's use the fresh protocol_core_noiseless re-runs to update the ground-truth figure for Issue 3 with more data.
+Analyzed performance variance across batches and recalibrated estimates
+Analyzed performance variance across batches and recalibrated estimates
+Both confirmed. Two things worth flagging honestly:
+1. suppB_sc timing fix: verified working — all 6 shards (n=50 to n=1000) now report real mean_time_s with full n_timed=30 coverage. This validates the patch pattern (_aggregate_results was silently dropping time) is correct and generalizable.
+2. EHD(M3) ground truth, updated with more data — and a new caveat:
+Identified environmental factors affecting performance, opted for distribution reporting
+Identified environmental factors affecting performance, opted for distribution reporting
+There's a clear, consistent downward drift across both batches (7.2→8.6s, then 6.1→4.0s) — not random scatter. That's a real environmental effect (CI runner load/caching/etc.), not noise. Reporting a single point estimate like "20.2s" or even "7.87s" overstates precision. Let me update the footnote to report this honestly, and produce the suppB_sc runtime table now that it has real data too.
+Reconciled statistical distributions and revised documentation with robust measurements
+Reconciled statistical distributions and revised documentation with robust measurements
+Also update the earlier numeric mention in the discussion paragraph and the table cell itself:
+Edited 2 files, ran a command
+Edited 2 files, ran a command
+Now let's also update the "Action required" framing to reflect that the timing-instrumentation fix has now been applied and verified working for suppB_sc, narrowing what's still outstanding for suppB itself:
+Editing file
+Editing file
+Let's validate LaTeX balance and ship the updated files.
+Ran 2 commands, read a file
+Ran 2 commands, read a file
+Verified both things from these new uploads:
+1. The timing-instrumentation fix works. All 6 suppB_sc shards (n=50 through n=1000) now carry real per-equation time and computed mean_time_s/median_time_s/std_time_s per method, with full 30/30 coverage.
+2. Updated ground truth for EHD(M3), now with 12 runs (360 obs) instead of 6 — and a new honest caveat: per-run means drift consistently within each session (7.2→8.6s in the first batch, 6.1→4.0s in the second), which is a real environment effect, not noise. So I pulled back from a false-precision point estimate:
+    • Old: 7.87 ± 4.88s (single session, 6 runs) 
+    • New: 6.39 ± 4.72s, median 4.03s, range 0.73–19.13s (two sessions, 12 runs) — reported as "roughly 4–9s" in the table rather than a misleadingly precise single number, with the drift explicitly flagged as something to resolve on isolated hardware before quoting a headline figure. 
+Updated the replacement section accordingly and tightened the "action required" note: the root-cause fix (dropped time field in _aggregate_results()) is now proven correct on the sibling script, so what's left for tab:time_noise is applying the identical one-line fix to run_noise_sweep_benchmark.py and re-running — I still need that file to patch it directly, since I don't have its source, only strong structural inference that it shares the bug.
+

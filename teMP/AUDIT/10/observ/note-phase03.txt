@@ -1,0 +1,140 @@
+﻿
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Only the report itself is uploaded — no repo, no .tex files, no run_all.sh, no write-ups. So I can't actually run audit_nb04, grep jmlr-hypatiax*.tex for the Table 4 caption, or edit the sweep write-up's "900s" reference — those files aren't here.
+Here's where that leaves the two remaining items:
+Item 2 (Table 4 provenance check)
+This needs the actual paper source to answer two things:
+    1. Is Table 4 built from this exact all_domains 30-test run (the same 10-shard, 10-domain, 6-method set the report used), or a different 30-count run? 
+    2. Does Table 4's M-column header/caption actually state the "exclude registry idx 3 (HybridDeFiMethod), renumber remaining five sequentially" convention — or is that convention only inferred from exp1_five_system.py / provenance_map_exp1_five.json, with the paper silently assuming it? 
+If you upload jmlr-hypatiax*.tex (or just the Table 4 environment + its generating script reference) and audit_nb04's script, I can check both directly instead of leaving this as an open flag.
+Item 10a (doc-only align on 1100s)
+This is genuinely just prose — no code, no verification needed, since run_all.sh already has the authoritative FEYNMAN_TIMEOUT=1100 # FIX-G2 comment settled. The only work left is editing whichever write-up(s) still say "900s" for the PySR timeout to say 1100s, plus one clarifying line that METHOD_TIMEOUT=900 is the separate outer per-method budget, not a typo of the same number. If you point me at the sweep write-up file(s) — sounds like they're not in this report's file set — I can make that edit directly.
+Want to upload the paper .tex source (for item 2) and the sweep write-up doc (for item 10a) so I can close both out, or is there something else you want checked first from what's already in the report?
+Verified code references and located missing documentation source
+Verified code references and located missing documentation source
+I checked all three files against the two open action items. The results overturn part of the report's Item 2 conclusion — here's what I found.
+Item 2 — Table 4 provenance: the "exclude idx 3, renumber" theory is wrong
+The paper has an explicit Method Abbreviations legend (supp_benchmark_report.tex, §app:abbrev, line 919–933) that settles this directly — no inference needed:
+Short	Code	Full name
+PureLLM	M1	PureLLM Baseline (core)
+INN	M2	ImprovedNN (core)
+EHD	M3	EnhancedHybridSystemDeFi (core)
+HSL	M4	HybridSystemLLMNN all-domains (core)
+SEL	M5	SymbolicEngineWithLLM (tools)
+HDS	M6	HybridDiscoverySystem v50_2 (tools)
+This is a direct 1:1 mapping to all six METHOD_REGISTRY entries — nothing excluded, nothing renumbered. So M4 = HybridSystemLLMNN all-domains, exactly as the previous report's own registry table already had it under plain METHOD_REGISTRY numbering. The "exclude registry idx 3, renumber to five" theory built from exp1_five_system.py doesn't apply to this table at all — that was a different, unrelated file's convention.
+And Table 4 itself (\label{tab:overall}, "Six-method aggregate performance, noiseless protocol, R²≥0.9999," line 394–422) is the actual 4th table in this document and directly confirms:
+EHD (M3)   29/30 (96.7%)
+HDS        27/30 (90.0%)
+HSL (M4)   30/30 (v2)†
+SEL        26/30 (86.7%)
+INN (M2)   17/30 (56.7%)
+†footnote: "HSL v1 showed 26/30 due to the Newton measurement bug; v2 achieves 30/30."
+So M4's real score is 30/30, not 27/30. The 27/30 figure belongs to HDS (M6).
+The actual bug: the abstract of this same document (line 141) says:
+"\HSL{} (M4) ... achieves 100% recovery at all noisy conditions and 90.0% (27/30 equations) under the strict noiseless protocol"
+That's a straight misattribution — it bolts HDS's 27/30 (90.0%) figure onto HSL/M4, contradicting the table three sections later in the same file. This is very likely the actual "27/30, M4" claim Item 2 was chasing. The fix is a one-line abstract edit (change \HSL{} (M4) to \HDS{}, or add the correct number for M4), not the elaborate renumbering theory from the previous revision.
+Separately worth flagging: Table 4's numbers don't fully match the previous report's raw-shard recomputation either — SEL is 26/30 here vs. 27/30 recomputed, HDS is 27/30 here vs. 22/30 recomputed. audit_nb04 should catch both the abstract/table mismatch and this raw-vs-published discrepancy.
+Item 10a — no fix needed in these files
+run_all.sh is internally consistent everywhere I checked (METHOD_TIMEOUT=900, FEYNMAN_TIMEOUT=1100, correctly commented FIX-G2). Neither .tex file has a stale "900s" attributed to the PySR timeout — both already say PySR timeout = 1100s / --pysr-timeout 1100. So the stale write-up the earlier report flagged isn't in this file set — nothing to edit here.
+Want me to draft the corrected abstract paragraph for supp_benchmark_report.tex (swapping HDS in for the 27/30 figure), or check sec:bugfix for how the v1→v2 HSL correction was described, in case that section needs the same fix?
+do you need the exp2_feynman results to chec 30/30?
+Weighed verification gaps and data source reliability concerns
+Weighed verification gaps and data source reliability concerns
+Short answer: not required to trust the 30/30 figure — it's already independently corroborated — but it would be worth getting them given what I just found.
+Here's the reasoning:
+Why you might not need them: The earlier report's raw-shard recompute (10 protocol_core_noiseless_20260805_*.json shards, the all_domains protocol used by exp2/exp1_five in run_all.sh) already gave M4 (HybridSystemLLMNN all-domains) as 29/30 @0.999999, 30/30 @0.9999, 30/30 @0.999. That matches Table 4's claimed 30/30 (v2) at the R²≥0.9999 threshold exactly. So two independently-sourced numbers — a raw-shard recompute and the published table — agree on M4.
+Why I'd still want them: That agreement is inherited from the prior report, not something I verified myself in this session — I only have the .tex file's typeset claim, not the underlying JSON. And I just found that the same recompute methodology doesn't match Table 4 for the other two tools-tier methods:
+    • SEL: recompute said 27/30, table says 26/30 
+    • HDS: recompute said 22/30, table says 27/30 (a 5-test gap) 
+Given two of three cross-checks failed, M4's agreement could be a real match or could be coincidental (e.g. if both numbers trace back to the same stale intermediate file rather than independent ground truth). The shard files would let me recompute M4 directly rather than lean on a report whose Item 2 methodology just turned out to need correction elsewhere.
+If you have exp2_feynman results (or the same 10 protocol_core_noiseless_20260805_*.json shards referenced in the original recompute), uploading them would let me settle M4 the same direct way, plus re-check why SEL and HDS diverge — that divergence is the more urgent thing for audit_nb04 to catch, since it means Table 4 may not be sourced from the run everyone assumes it is.
+bash
+cd /mnt/user-data/uploads && python3 -c " import json, glob files = sorted(glob.glob('protocol_core_noiseless_20260807_*.json')) print(len(files), 'files') methods = [ 'PureLLM Baseline (core)', 'ImprovedNN (core)', 'EnhancedHybridSystemDeFi (core)', 'HybridSystemLLMNN all-domains (core)', 'SymbolicEngineWithLLM (tools)', 'HybridDiscoverySystem v50_2 (tools)', ] thresholds = [0.999999, 0.9999, 0.999] counts = {m: {t: 0 for t in thresholds} for m in methods} total = 0 fails = {m: {t: [] for t in thresholds} for m in methods} for f in files: d = json.load(open(f)) for test in d['tests']: total += 1 desc = test['description'] dom = test['domain'] for m in methods: r = test['results'].get(m, {}) r2 = r.get('r2') if r2 is None: continue for t in thresholds: if r2 >= t: counts[m][t] += 1 else: fails[m][t].append((dom, desc, r2)) print('total tests:', total) print() for m in methods: print(m, {t: counts[m][t] for t in thresholds}) " 
+Output
+11 files total tests: 30 PureLLM Baseline (core) {0.999999: 30, 0.9999: 30, 0.999: 30} ImprovedNN (core) {0.999999: 0, 0.9999: 19, 0.999: 26} EnhancedHybridSystemDeFi (core) {0.999999: 23, 0.9999: 30, 0.999: 30} HybridSystemLLMNN all-domains (core) {0.999999: 30, 0.9999: 30, 0.999: 30} SymbolicEngineWithLLM (tools) {0.999999: 26, 0.9999: 27, 0.999: 28} HybridDiscoverySystem v50_2 (tools) {0.999999: 21, 0.9999: 22, 0.999: 27} 
+
+Done
+
+You are out of free messages until 10:40 PM
+Upgrade
+
+
+Phse03 is closed?if not, list the remaining tasks,
+
+Triangulated distinct benchmarks and unearthed sourcing discrepancies
+Resolved — and it's not a data-integrity bug at all. Table 4 and the shard recompute are two different runs, five months apart. The .tex file gives the exact provenance:
+The smoking gun
+The reproduction command for Table 4 is spelled out explicitly in the paper (§Exact Reproduction Commands, "Phase 3 (noiseless, R²>0.9999, Table 4)"):
+python run_comparative_suite_benchmark_v2.py \
+    --noiseless --threshold 0.9999 --nn-seeds 3 --samples 200 \
+    --method-timeout 900 --pysr-timeout 900
+Output file named explicitly: protocol_core_noiseless_20260304_154510.json — dated March 4, 2026.
+The shard files behind the raw-recompute in Phase03_Report.md / note-phase03.txt are protocol_core_noiseless_20260805_*.json — dated August 5, 2026.
+Those are two separate benchmark runs, five months apart — not the same all_domains run being re-read twice. The SEL/HDS discrepancies aren't a stale-file or corruption bug; they're just run-to-run variance between two different executions.
+Independent confirmation: the domain taxonomies don't even match
+Table 4's own companion table (tab:hardcoded, the 11 PureLLM-hardcoded equations from that same 30-equation set) lists domains including Electrochemistry and Probability — neither of which appears anywhere in the 10-domain shard taxonomy (biology, chemistry, economics, electromagnetism, fluid_dynamics, mathematics, mechanics, optics, quantum, thermodynamics). Different domain vocabulary is exactly what you'd expect from a different equation-generation run, not the same protocol file re-invoked.
+(There's also a large 40-test "Classical + DeFi" PureLLM table in the same document with a totally different domain set — Materials, Fluid, Thermo, Mechanics, Chemistry, AMM, VaR, Liquidity, ES, Liquidation — confirming this paper draws on multiple distinct benchmark runs, not just the one.)
+Secondary flags worth noting for audit_nb04
+    • Config drift, not just date drift: the March run used --pysr-timeout 900, but the paper's own hyperparameters box (§Sweep Design) states "PySR timeout = 1100 s" — i.e., even within the paper, the Table 4 run predates the 1100s fix that Item 10a confirmed as canonical.
+    • --nn-seeds 3 in the reproduction command vs. "NN seeds = 5" stated in the hyperparameters paragraph a few hundred lines earlier — another same-document inconsistency.
+    • The paper has an unresolved [EDITORIAL NOTE] (line ~974) flagging that tab:feynman30 is cited nowhere and may be a dangling reference — separate issue, but also an audit_nb04-shaped problem.
+    • Good news: the Arrhenius 300s→27,574s hang narrative in the paper (test 4, tests 1–18 at 300s) matches Item 10b's bug description almost verbatim — strong corroboration that 10b's diagnosis was accurate, independent of this Table 4 issue.
+Bottom line for the report: replace "Table 4 vs. raw-shard mismatch — cause unknown" with "Table 4 is sourced from a March 2026 run (...20260304_154510.json), not the August 2026 shard set used for the recompute; the two are legitimately different experiments, so per-method deltas are expected rather than a data-integrity failure." Item 2's abstract misattribution (HDS's 27/30 mislabeled as M4) still stands as the real actionable bug.
+
+run_all.sh
+sh
+check the experiment?Which one?
+
+Disentangled conflicting experiment protocols and identified Table 4's source
+Good catch to dig into run_all.sh — it answers this precisely, and it's a protocol mismatch, not just a date mismatch. There are two different experiment steps in this pipeline that could plausibly have generated "the Feynman 30-equation run," and they use completely different domain taxonomies:
+The two candidate experiments
+exp2_feynman (STEP 5) — this is the one that matches Table 4:
+FEYNMAN_DOMAINS="feynman_biology feynman_chemistry feynman_electrochemistry
+  feynman_electromagnetism feynman_electrostatics feynman_magnetism
+  feynman_mechanics feynman_optics feynman_probability feynman_quantum
+  feynman_thermodynamics"
+That's 11 domains, using BenchmarkProtocol (the standard Feynman-benchmark domain taxonomy) — including Electrochemistry and Probability, which is exactly what showed up in the paper's tab:hardcoded table. This matches the paper's own line "30 physics equations from 11 scientific domains" word for word.
+exp2 / hybrid_all_domains (STEPs 4 & 6) — this is what the August shard recompute actually used:
+HYBRID_ALL_DOMAINS_EXPECTED="biology,chemistry,economics,electromagnetism,
+  fluid_dynamics,mathematics,mechanics,optics,quantum,thermodynamics"
+That's 10 domains, using ExperimentProtocolAll (a custom domain set that includes non-Feynman categories like Economics and Fluid Dynamics) — exactly the 10-domain list Phase03_Report.md cited for the shard files.
+The smoking gun is already documented in the script itself
+run_all.sh has a whole comment block (FIX-EXP2-PROTOCOL, around line 2404) describing a previous, already-diagnosed instance of this exact confusion:
+"...it silently ran BenchmarkProtocol's Feynman+SRBench domains (21 raw, unmapped domain keys: feynman_biology, feynman_chemistry, ..., agriculture, energy, ..., synthetic) instead of ExperimentProtocolAll's canonical 10-domain set..."
+So this isn't a hypothetical — the codebase has a known history of these two protocol classes getting swapped by mistake.
+Answer
+Table 4 is sourced from exp2_feynman (11-domain BenchmarkProtocol), matching its March 2026 reproduction command and its own hardcoded-equation table (Electrochemistry, Probability).
+The shard recompute in Phase03_Report.md used files from exp2/hybrid_all_domains (10-domain ExperimentProtocolAll) — a structurally different experiment with a different, non-overlapping domain set (adds Economics/Fluid Dynamics/Mathematics, drops Electrochemistry/Probability/Electrostatics/Magnetism).
+So the SEL/HDS mismatch isn't just "two runs five months apart" — it's two different experiment definitions being compared as if they were the same benchmark. That's a stronger, more specific finding than my earlier timestamp-only answer, and it's the more actionable one for audit_nb04: it should flag any place the paper or downstream tooling treats exp2_feynman output and exp2/hybrid_all_domains output as interchangeable "the Feynman 30" data.
+
+
+

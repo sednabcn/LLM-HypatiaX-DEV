@@ -1,0 +1,117 @@
+% ISSUE 4 — CI / SD Statistical Incompatibility
+% Category: Open (needs code/data investigation)
+% Source A: jmlr_paper_main.tex, subsec:fivesystem-comparative-analysis-feynman- (Five-System
+%           Comparative Analysis, Feynman Core-15), tab:five_systems_full and
+%           thm:five_system_hierarchy, l.1209-1259
+% Source B: supp_benchmark_report.tex, Appendix (Statistical Test Details), app:statistical_tests,
+%           l.1418-1472
+
+%% ---- SOURCE A: jmlr_paper_main.tex ----
+% =============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Five-System Comparative Analysis (Feynman Core-15)}\label{subsec:fivesystem-comparative-analysis-feynman-}
+\label{sec:five_systems}
+
+Table~\ref{tab:five_systems_full} compares the five system configurations on the
+Core-15 Feynman benchmark at $2\times$ training range.
+
+\begin{table}[htbp]
+\centering
+\begin{threeparttable}
+\caption{Five-System Comparison: Extrapolation Error vs.\ Interpolation $R^2$.}
+\label{tab:five_systems_full}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lp{0.6cm}p{1.3cm}p{1.3cm}p{1.4cm}p{0.7cm}p{1.4cm}@{}}
+\toprule
+\textbf{System} & \textbf{n} & \textbf{Extrap.} & \textbf{Extrap.} &
+  \textbf{Train $R^{2}$} & \textbf{Std} & \textbf{Design} \\
+ & & \textbf{Median (\%)} & \textbf{Mean (\%)} & \textbf{Mean} & & \textbf{Focus} \\
+\midrule
+\textbf{Hybrid v50\_2}\tnote{a} & 14 & \textbf{0.0} & \textbf{0.0} & 0.931\tnote{b} & --- & Extrapolation \\
+Neural Network & 13 & 86.7 & 1231.0\tnote{c} & 0.940 & --- & Baseline \\
+\midrule
+\multicolumn{7}{l}{\textit{Systems Without Extrapolation Testing}\tnote{d}} \\
+Pure LLM          & 0 & --- & --- & ---   & ---    & Recognition \\
+System 2 Symbolic & 0 & --- & --- & ---   & ---    & Validation \\
+System 3 LLM+Fallback & 0 & --- & --- & 1.000 & 0.0002 & Robustness \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item[a] Our proposed system (Section~\ref{sec:architecture}).
+\item[b] Mean $R^2 = 0.931$; median $R^2 = 1.000$ ($n=15$).
+\item[c] Mean 1231\% at $2\times$ training range ($n=13$).
+\item[d] Pure LLM: formula-to-callable compilation failures prevented
+  extrapolation test execution.  Mann-Whitney $U=0$, $p=1.11\times10^{-6}$
+  (Hybrid v50\_2 vs.\ NN).
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\begin{result}[Five-System Extrapolation Hierarchy]
+\label{thm:five_system_hierarchy}
+Across 14 ground-truth equations at $2\times$ training range, Hybrid~v50\_2
+achieves near-zero error (median $< 10^{-12}$ relative) while neural networks
+exhibit mean error 1231\% (95\% CI: [1087\%, 1456\%], $n=13$), with no
+distributional overlap: Mann-Whitney $U=0$, $p < 10^{-6}$.
+\end{result}
+
+%% ---- SOURCE B: supp_benchmark_report.tex, Appendix (Statistical Test Details) ----
+% ============================================================================
+% APPENDIX D: STATISTICAL TEST DETAILS (CORRECTED VALUES)
+% ============================================================================
+
+
+\section{Statistical Test Details}
+\label{app:statistical_tests}
+
+\subsection{Mann-Whitney U Test for Extrapolation Performance}
+
+For medium extrapolation regime (2$\times$ training range):
+
+\paragraph{Test Setup:}
+\begin{itemize}
+\item \textbf{Sample sizes}: $n_{\text{Hybrid}} = 14$, $n_{\text{NN}} = 13$ (CORRECTED)
+\item \textbf{Null hypothesis}: $H_0: E_{\text{hybrid}} \geq E_{\text{NN}}$ (Hybrid is not better)
+\item \textbf{Alternative hypothesis}: $H_1: E_{\text{hybrid}} < E_{\text{NN}}$ (Hybrid is better)
+\item \textbf{Significance level}: $\alpha = 0.05$ (one-tailed test)
+\end{itemize}
+
+\paragraph{Descriptive Statistics:}
+\begin{itemize}
+\item \textbf{Hybrid v50\_2}: Mean = 0.0\%, Median = 0.0\%, SD = 0.0\%, Range = [0.0, 0.0]
+\item \textbf{Neural Network}: Mean = 1231\%, Median = 86.7\%, SD = 1842\%, Range = [12.3, 5847\%] (CORRECTED)
+\end{itemize}
+
+\paragraph{Test Results:}
+\begin{itemize}
+\item \textbf{Test statistic}: $U = 0$ (all Hybrid errors < all NN errors)
+\item \textbf{P-value}: $p = 1.11 \times 10^{-6}$ (CORRECTED)
+\item \textbf{Critical value}: $U_{0.05} = 45$ for one-tailed test with n=14 vs n=13
+\item \textbf{Conclusion}: $U < U_{0.05}$ $\Rightarrow$ Reject $H_0$ at $\alpha = 0.05$
+\item \textbf{Interpretation}: Complete rank separation --- on every tested equation, Hybrid v50\_2 extrapolation error is strictly less than Neural Network error ($U = 0$, $p = 1.11 \times 10^{-6}$)
+\end{itemize}
+
+\subsection{Effect Size Calculation (Cohen's d)}
+
+\begin{align}
+\mu_{\text{NN}} &= 1231.0\%, \quad \sigma_{\text{NN}} = 1842.0\% \quad \text{(CORRECTED)} \\
+\mu_{\text{Hybrid}} &= 0.0\%, \quad \sigma_{\text{Hybrid}} = 0.0\% \\
+s_{\text{pooled}} &= \sqrt{\frac{\sigma_{\text{NN}}^2 + \sigma_{\text{Hybrid}}^2}{2}} = 1302.5\% \\
+d &= \frac{1231.0 - 0.0}{1302.5} = 0.95
+\end{align}
+
+\paragraph{Conservative Estimate:}
+Using only NN standard deviation (most conservative approach):
+\begin{equation}
+d_{\text{conservative}} = \frac{1231.0}{1842.0} = 0.67 \quad \text{(medium-to-large effect)}
+\end{equation}
+
+\paragraph{Alternative Calculation (Glass's $\Delta$):}
+Using only the control group (NN) standard deviation:
+\begin{equation}
+\Delta = \frac{1231.0 - 0.0}{1842.0} = 0.67
+\end{equation}

@@ -1,0 +1,81 @@
+﻿what is the best way to automate patching the tex after developing the code/run investigation from the plan of acion
+
+Architected drift detection and versioning for evolving numerical values
+Good question — this is the part that breaks naive find/replace tools. Three separate failure modes need separate handling:
+    1. A value gets patched once, then a later run/investigation produces a different number for the same item (e.g. the HDS 22/30 → 23/30 → 27/30 saga from the last report — same method, three different runs, three different pass rates).
+    2. Once patched, the original old_str no longer exists in the file — a second patch attempt needs to find the currently applied value, not the pristine original.
+    3. Sometimes the correction turns out to be a totally different fix altogether, like item #2 just did — not just a different number, but a reversed conclusion.
+Let me extend the runner with a value ledger so these are handled explicitly instead of silently.
+Edited 2 files
+Now the core of it — rewrite apply_item to search for the currently-applied value (not always the pristine manifest one), and to require an explicit flag before overwriting an already-applied value with a different one:
+Editing file
+Now wire the new arguments through main():
+Editing file
+Now let's actually simulate the "value later turns out different" scenario end to end, using item #3 (the runtime discrepancy) as the test case:
+Ran 2 commands, created a file, viewed a file
+Right, I clobbered load_investigation_results when inserting. Adding it back:
+Identified caching issue preventing fresh results between runs
+Patched to 841.4s. Now simulate a second, later investigation that finds a different correct value — the exact "totally different number" scenario you're asking about:
+Ran a command
+It refused, exactly as designed — the file still has 841.4 untouched. Now confirm it only updates once you explicitly accept the change:
+Ran a command
+Both rounds worked correctly. Let me clean up the demo files and reset your real files back to pristine before wrapping up:
+Ran a command
+How value drift is managed
+Three mechanisms, demonstrated above:
+    1. The manuscript is never the source of truth for "what value is currently there" — applied_log.json is. After every real apply, the runner records {new_str, value, source, timestamp} and appends it to a per-item history (never overwrites). On the next run, it searches the file for the last-applied text, not the pristine old_str from the manifest. So a second round of patching still finds its target even though the original old_str no longer exists in the file.
+    2. A changed value never overwrites silently. Round 2 above: a fresh investigation returned 312.9 instead of the already-applied 841.4. The runner detected prior_value != value, refused, and printed exactly what changed and why ('841.4' (from investigate_item3_runtime.py) -> '312.9' (from investigate_item3_runtime.py)). Nothing gets overwritten until you explicitly pass --allow-value-change — same asymmetry as --apply itself: dry-run is the default for new patches, explicit confirmation is required for changing an already-landed one.
+    3. Full provenance survives, not just the final number. applied_log.json's history list keeps every value this item has ever held, with its source and timestamp — so if a value flips twice (like the HDS 22/30 → 23/30 → 27/30 progression last time), you can see the whole chain, not just today's number. Combine that with a git commit per --allow-value-change application and you get the same auditable trail as the Phase 3 report's "Stage 0 / Stage 1 / Stage 2" supersession structure — except automatic instead of hand-written.
+The one thing this doesn't try to automate is judging whether a new value should be trusted — that's still a human call (or a rule you encode per-item, e.g. "only accept values from a real-stack GitHub Actions run, not a sandbox estimate"). It just guarantees the tool can't quietly clobber a good number with a worse one.
+
+do you give me any tool?
+
+Evaluated user's tool access inquiry
+Yes — let me package the actual tool (not just working copies) into a clean deliverable.
+Ran 2 commands
+Now a README so this is self-explanatory without re-reading the whole conversation:
+Created a file, ran a command, read a file
+Yes — patch_tooling.zip has everything (also linked individually above):
+    • patch_runner.py — the runner, tested end-to-end against your real supp_benchmark_report.tex in this conversation (uniqueness checks, value-change refusal, provenance ledger, recompile-check all verified working).
+    • patch_manifest.yaml — seeded with the 13 plan-action items: #2 marked SUPERSEDED with the pointer to Item 2a's real fix, #3/#4/#1/#12 as needs_investigation, #9 as blocked/caveat-only, #5/#7/#11/#13 as TODO (old_str not yet confirmed unique against the raw source).
+    • scripts/investigate_item3_runtime.py — the investigation-script contract/template, ready to copy for #1, #4, #12.
+    • README.md — setup, usage, the status table, and the safety rules we worked out (grep-from-source not PDF, unique-match-or-refuse, cross-check against existing audit trail before ready, explicit flag for value changes, recompile-after-apply).
+Drop it next to your three .tex files and point the file: fields in the manifest at them (or copy them alongside it, like I did here). Want me to keep working through the TODO items now — confirming real old_str text for #5/#7/#11/#13 against your uploaded files?
+Patch tooling
+ZIP 
+Download
+Patch runner
+PY 
+Download
+Patch manifest
+YAML 
+Download
+Readme
+Document · MD 
+Download
+Download all
+
+But is it a ci jobs  package?
+
+Clarified distinction between standalone script and CI workflow package
+Good catch — no, what I gave you is just a standalone script you run locally. It has no CI wrapper. Given you already have a working GitHub Actions pattern (ci_issue2b_repro.yml — preflight checks, real-stack run, job summary, conditional commit), let me wrap the patch tool the same way.
+Ran a command
+
+Prep workflow directory
+bash
+mkdir -p /home/claude/tool_package/.github/workflows
+
+
+===========================================================================================
+Now let me build the CI script that wraps the runner with preflight checks, a job summary, and exit-code propagation:
+Architected CI workflow and script file structure
+Architected CI workflow and script file structure
+Good — both files are syntactically valid, and the preflight parser correctly reads the manifest's file/investigation_script fields (note: only investigate_item3_runtime.py exists in scripts/, so preflight will correctly flag the other three as missing until you add them — that's intended fail-fast behavior, not a bug).
+Ran a command, read a file
+Ran a command, read a file
+How it works, in short:
+    • ci-audit-paper.yml — runs on PRs that touch the manifest/.tex/scripts (dry-run report), or on manual workflow_dispatch with apply, allow_value_change, and ids inputs. It installs TeX Live for real pdflatex compile checks, runs the wrapper script, uploads applied_log.json/investigation_results.json as artifacts, and only commits+pushes if it was an explicit --apply run, the runner exited 0, and something actually changed on disk. 
+    • run_patch_ci.sh (in .github/scripts/) — a thin CI wrapper, not a rewrite of patch_runner.py's logic: it preflights that the manifest and every file/investigation script it references actually exist (fails fast before wasting a compile pass), invokes patch_runner.py with whatever flags the workflow set, renders a per-item table into the GitHub Step Summary, and propagates the runner's exit code unchanged so ERROR/WARN items fail the job. 
+I verified both files parse (yaml.safe_load and bash -n) and ran the preflight parser against your real patch_manifest.yaml — it correctly resolved all file/investigation_script fields, and correctly flags that only investigate_item3_runtime.py exists so far (items #1/#4/#12 will show as missing until those scripts are written, which is the intended fail-fast behavior).
+The zip has these dropped into .github/workflows/ and .github/scripts/ alongside your existing patch_runner.py, patch_manifest.yaml, and scripts/, ready to push as-is.
+

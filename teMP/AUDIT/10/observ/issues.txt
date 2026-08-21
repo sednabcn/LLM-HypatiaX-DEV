@@ -1,0 +1,33 @@
+﻿Good catch to check — yes, there's more. hybrid_system_llm_nn_all_domains.py (HSL/M4) has the exact same two gaps, just not currently exposed by this particular test set. Let me check and patch it too.
+Viewed 2 files
+Viewed 2 files
+Found it — model = _make_model() at line 365 with no seed applied beforehand, same pattern as EHD. Let's check the caller signature so I can thread a seed/description through:
+Ran 2 commands, viewed 2 files
+Ran 2 commands, viewed 2 files
+description is in scope. Now let's patch both gaps in this file, matching the same pattern used for EHD.
+Ran 2 commands, edited a file
+Ran 2 commands, edited a file
+Fix A — pin temperature on HSL's local (dormant) fallback LLM call:
+Pin temperature=0.0 on HSL's local fallback LLM call, matching PureLLMBaseline's fix, for defense-in-depth. This path is currently dormant (PureLLMBaseline delegate succeeds for all 30 test equations) but becomes live -- and would reintroduce the same non-determinism -- if that delegate ever fails.
+Pin temperature=0.0 on HSL's local fallback LLM call, matching PureLLMBaseline's fix, for defense-in-depth. This path is currently dormant (PureLLMBaseline delegate succeeds for all 30 test equations) but becomes live -- and would reintroduce the same non-determinism -- if that delegate ever fails.
+Fix B — seed HSL's own train_nn:
+Add optional seed param to train_nn, seeding torch's global RNG right before the model is constructed via _make_model()
+Add optional seed param to train_nn, seeding torch's global RNG right before the model is constructed via _make_model()
+Now the call site:
+Ran 2 commands, edited a file, read a file
+Ran 2 commands, edited a file, read a file
+Yes — one more file had the same two gaps. hybrid_system_llm_nn_all_domains.py (HSL/M4) mirrors EHD's structure closely, and I found the identical pair of issues, just currently dormant:
+Fix A — local fallback LLM call had no temperature. HSL delegates to PureLLMBaseline first (same shared fix from before covers that path), but has its own local fallback (line ~175) that's only reached if the delegate fails. It never fires in this test set — PureLLMBaseline succeeds for all 30 equations — but if that ever changes, this path would reintroduce the same non-determinism. Patched to temperature=0.0 for consistency.
+Fix B — train_nn() had no seeding at all, same as EHD's train_nn_model(). This one is currently masked by luck: for all 30 equations in this set, decision="llm" wins (the LLM formula beats the NN), so the NN's unseeded output never reaches the final reported R². That's presumably why HSL passed the checker while EHD didn't — not because HSL's NN path is actually safe, but because it wasn't exercised. Patched the same way: seed param + torch.manual_seed() + sha256(description)-derived seed at the call site.
+Both patches compile cleanly.
+Where this leaves things:
+    • 4 patched files total now in outputs: the two from last turn plus this one and its diff. 
+    • All three of the file's LLM call sites across the pipeline (PureLLMBaseline, EHD local fallback, HSL local fallback) are now temperature=0.0. 
+    • Both hybrid methods' primary NN training steps are now seeded, matching the pattern the harness already used for its own residual-correction step. 
+Not yet touched, and worth a decision from you: the PureLLMBaseline.evaluate_function signature-matching bug from the very first message in this thread (the "All evaluation strategies failed" crashes). That's real and still there, but it's orthogonal to Item 2b — it affects M1's own scores in your comparison tables, not the reproducibility gate. Want me to patch that one too while I'm in these files, or leave it for a separate pass?
+Diff hybrid system llm nn all domains
+PATCH 
+Hybrid system llm nn all domains
+PY 
+yes
+

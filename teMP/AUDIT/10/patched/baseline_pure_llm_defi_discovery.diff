@@ -1,0 +1,76 @@
+--- /mnt/user-data/uploads/baseline_pure_llm_defi_discovery.py	2026-08-08 16:01:10.103364000 +0000
++++ /mnt/user-data/outputs/baseline_pure_llm_defi_discovery.py	2026-08-08 16:04:11.697935431 +0000
+@@ -162,6 +162,73 @@
+                 pass
+ 
+         # ============================================================
++        # STRATEGY 5: Match param names to var_names, allowing extra
++        # unmatched (placeholder) parameters
++        # ============================================================
++        # FIX-SIGNATURE-MATCHING: Strategy 4 requires *every* function
++        # parameter to be matched to a variable (len(param_to_idx) ==
++        # n_params). This fails whenever the LLM's generated signature
++        # includes an extra parameter that has no corresponding data
++        # column — most commonly an implicit "t" for time in an ODE rate
++        # law, e.g. def formula(N, t) when var_names=["N"] (see the
++        # documented logistic-growth workaround above, which currently
++        # sidesteps this by hardcoding the formula instead of fixing
++        # evaluation). That extra parameter isn't actually used to look up
++        # data we have, so instead of giving up, this strategy matches
++        # whatever parameters DO correspond to real variables (fuzzy match,
++        # same rule as Strategy 4) and supplies a 0.0 placeholder for any
++        # leftover parameters — succeeding as long as every real variable
++        # was matched to some parameter (len(set(param_to_idx.values())) ==
++        # n_features), even if the reverse isn't true.
++        if var_names is not None and param_names and len(var_names) == n_features:
++            param_to_idx = {}
++            for param_name in param_names:
++                for idx, var_name in enumerate(var_names):
++                    if (
++                        param_name.lower() in var_name.lower()
++                        or var_name.lower() in param_name.lower()
++                    ):
++                        param_to_idx[param_name] = idx
++                        break
++
++            if param_to_idx and len(set(param_to_idx.values())) == n_features:
++                try:
++                    # Vectorized: matched params get their data column,
++                    # any unmatched (extra) params get a 0.0 placeholder.
++                    kwargs = {
++                        param: (
++                            X[:, param_to_idx[param]]
++                            if param in param_to_idx
++                            else np.zeros(n_samples)
++                        )
++                        for param in param_names
++                    }
++                    y = func(**kwargs)
++                    y = np.asarray(y)
++                    if y.shape[0] == n_samples:
++                        return y.flatten()
++                except Exception:
++                    pass
++
++                try:
++                    # Row-by-row fallback with the same matching/placeholder
++                    # scheme.
++                    y = np.empty(n_samples, dtype=float)
++                    for i in range(n_samples):
++                        kwargs = {
++                            param: (
++                                float(X[i, param_to_idx[param]])
++                                if param in param_to_idx
++                                else 0.0
++                            )
++                            for param in param_names
++                        }
++                        y[i] = func(**kwargs)
++                    return y
++                except Exception:
++                    pass
++
++        # ============================================================
+         # All strategies failed
+         # ============================================================
+         raise RuntimeError(

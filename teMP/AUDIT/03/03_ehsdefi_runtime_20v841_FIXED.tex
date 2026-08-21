@@ -1,0 +1,102 @@
+% ISSUE 3 — EHSDeFi (M3) Runtime: 20.2 s vs. 841.4 s
+% Category: RESOLVED (Source A) / OPEN follow-up (Source B) — see RESOLUTION NOTE below
+% Source A: supp_benchmark_report.tex, tab:overall, l.390-423 (see EHD row, l.412-413)
+% Source B: supp_benchmark_report.tex, tab:time_noise (Sweep Results: Noise Robustness), l.568-589
+% Also relevant: Abstract line on "1.5-76x faster" (l.145), see file 02 for full abstract text
+%
+% RESOLUTION NOTE (2026-08-04, fix_issue3_ehsdefi_runtime.py --raw-log):
+%   Source A (tab:overall, 20.2s) is now CONFIRMED against real provenance:
+%   protocol_core_noiseless_*.json (run_protocol_benchmark_core.py, the
+%   actual script behind tab:overall; protocol.mode == "noiseless") --
+%   6 independent runs, 180 equation-runs total. True EHD(M3) mean runtime
+%   at sigma=0% = 7.87 +/- 4.88 s (run-to-run std of means only 0.56s, so
+%   this is a stable, reproducible number). See the diagnostic report
+%   printed by the script for the full sigma-proximity analysis.
+%
+%   IMPORTANT: 7.87s matches NEITHER of the two originally-conflicting
+%   figures. 20.2s was diagnosed as mislabeled (it actually matches the
+%   sigma=0.5% row, not sigma=0%). 841.4s (Source B) is now ALSO suspect,
+%   since it claims to be the same (method, sigma=0%) pair yet is ~107x the
+%   real measured value -- but Source B comes from a DIFFERENT script
+%   (the noise-sweep benchmark, not run_protocol_benchmark_core.py), so the
+%   protocol_core raw logs are not valid ground truth for that table. Source
+%   B (and the abstract's dependent 75.8x claim) is left UNCHANGED below and
+%   flagged as a separate open follow-up pending recovery of ITS OWN raw
+%   per-equation timing log (from the suppB noise-sweep run, not suppB_sc).
+
+%% ---- SOURCE A: tab:overall ----
+%% ============================================================
+\section{Six-Method Noiseless Results}
+\label{sec:noiseless}
+
+\begin{table}[ht]
+\caption{Six-method aggregate performance, noiseless protocol
+  ($\Rsq \geq 0.9999$, $n=1000$).
+  \warn~\PureLLM{} pass rate includes 11/30 hardcoded results.}
+\label{tab:overall}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{L{2.4cm} C{1.0cm}
+                C{1.8cm} C{1.3cm} C{1.4cm}}
+\toprule
+\textbf{Method} & \textbf{Type} &
+  \makecell{\textbf{Pass Rate}\\$(\Rsq \geq 0.9999)$} &
+  \makecell{\textbf{Mean} $\Rsq$} &
+  \makecell{\textbf{Avg}\\Runtime} \\
+\midrule
+\rowcolor{warnAmberBg}
+\PureLLM\,\warn & Core  & 30/30 (100\%)\warn & 1.000000 &   5.7\,s \\
+\rowcolor{passgreenBg}
+\EHD\,(M3)      & Core  & 29/30 (96.7\%)      & 0.999993 &  7.9\,s$^{\ddagger}$ \\
+\HDS            & Tools & 27/30 (90.0\%)      & 0.999960 & 155.0\,s \\
+\HSL\,(M4)      & Core  & 30/30 (v2)$^\dagger$ & 0.999+  &  11.4\,s \\
+\SEL            & Tools & 26/30 (86.7\%)      & 0.999829 & 201.2\,s \\
+\rowcolor{failredBg}
+\INN            & Core  & 17/30 (56.7\%)      & 0.999272 &  23.5\,s \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$\,\HSL{} v1 showed 26/30 due to the Newton
+  measurement bug; v2 achieves 30/30 (Section~\ref{sec:bugfix}).}\\
+\multicolumn{5}{l}{\footnotesize $^\ddagger$\,CORRECTED from an erroneous 20.2\,s (Issue 3). Recomputed directly from 6 independent raw noiseless run(s) (180 total equation-runs at $\sigma=0\%$, mean$\,\pm\,$std $= 7.87 \pm 4.88$\,s); value CONFIRMED against ground truth. Note: this contradicts BOTH previously reported figures (20.2\,s and 841.4\,s) -- neither matches the real per-equation log.}\\
+\end{tabular}
+\end{table}
+
+%% ---- SOURCE B: tab:time_noise + note on M3 noiseless cost ----
+\begin{table}[H]
+\centering
+\caption{Average per-equation computation time (seconds) per noise level.}
+\label{tab:time_noise}
+\small
+\begin{tabular}{lrrl}
+\toprule
+$\sigma$ & \textcolor{m3blue}{M3 avg (s)} & \textcolor{m4red}{M4 avg (s)} & Speedup\\
+\midrule
+0\%   & 841.4$^{\S}$ & 11.1 & $\mathbf{75.8\times}$\\
+0.5\% &  19.8 & 11.0 & $1.8\times$\\
+1\%   & 118.5 & 11.1 & $\mathbf{10.7\times}$\\
+5\%   &  22.6 & 11.1 & $2.0\times$\\
+10\%  &  18.3 & 11.1 & $1.6\times$\\
+\bottomrule
+\multicolumn{4}{l}{\footnotesize $^\S$\,OPEN FOLLOW-UP (Issue 3): this figure is
+  UNCHANGED pending its own raw-log recovery. The real EHD(M3) sigma=0\%
+  runtime confirmed in Table~\ref{tab:overall} (7.87\,s, from
+  protocol\_core\_noiseless\_*.json) contradicts this row by
+  $\sim$107$\times$, but that raw log belongs to a different script
+  (run\_protocol\_benchmark\_core.py) than the one that produced this
+  noise-sweep table, so it cannot be used to patch this row. This 841.4\,s
+  value -- and the dependent $75.8\times$ speedup / abstract claim -- should
+  be treated as unverified until the noise-sweep benchmark's own
+  per-equation timing log is located.}\\
+\end{tabular}
+\end{table}
+
+\paragraph{Note on M3 noiseless cost.}
+The 841\,s average at $\sigma=0$ was previously described as a one-time
+exhaustive symbolic search cost, not a production inference time, with the
+implication that modern multi-core hardware would bring it down substantially.
+That explanation is now in question: raw provenance for the \emph{same}
+method under the \emph{same} nominal condition (Table~\ref{tab:overall}, EHD
+row) measures $7.87\pm4.88$\,s across 180 equation-runs, i.e.\ two orders of
+magnitude below 841\,s -- too large a gap to attribute to a hardware
+difference alone. Until the noise-sweep run's own raw log is recovered, treat
+841.4\,s as an open discrepancy rather than an explained one.

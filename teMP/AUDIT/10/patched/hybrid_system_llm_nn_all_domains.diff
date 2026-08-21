@@ -1,0 +1,50 @@
+--- /mnt/user-data/uploads/hybrid_system_llm_nn_all_domains.py	2026-08-08 15:59:38.120847000 +0000
++++ /mnt/user-data/outputs/hybrid_system_llm_nn_all_domains.py	2026-08-08 16:06:57.277505549 +0000
+@@ -554,6 +554,7 @@
+         if n_params != n_features and var_names:
+             try:
+                 col_map = {}
++                unmatched = set()
+                 for p in param_names:
+                     # Exact match first, then case-insensitive substring match
+                     matched = None
+@@ -567,14 +568,33 @@
+                                 matched = j
+                                 break
+                     if matched is None:
+-                        # Fall back to positional for unmatched params
+-                        pidx = param_names.index(p)
+-                        matched = pidx if pidx < n_features else 0
++                        # FIX-SIGNATURE-MATCHING: previously fell back to
++                        # `pidx if pidx < n_features else 0`, which for a
++                        # genuinely unmatched extra param (e.g. an implicit
++                        # "t" in def formula(N, t) when var_names=["N"])
++                        # silently reused *column 0's real data* — feeding
++                        # N's values into the t slot. If the formula
++                        # actually uses that extra param, this produces a
++                        # wrong-but-plausible-looking prediction rather than
++                        # an error. A neutral 0.0 placeholder is used
++                        # instead (see `unmatched`, applied below), so an
++                        # unmatched param either has no effect (safe) or
++                        # produces an obviously-off prediction rather than
++                        # a value quietly corrupted by an unrelated
++                        # variable's data.
++                        unmatched.add(p)
++                        continue
+                     col_map[p] = matched
+ 
+-                kwargs = {p: X[:, col_map[p]] for p in param_names}
+-                y = func(**kwargs)
+-                return np.asarray(y).flatten()
++                # Require every real variable to be matched to some param —
++                # only the *extra* (unmatched) params get the placeholder.
++                if len(set(col_map.values())) == n_features:
++                    kwargs = {
++                        p: (X[:, col_map[p]] if p in col_map else np.zeros(X.shape[0]))
++                        for p in param_names
++                    }
++                    y = func(**kwargs)
++                    return np.asarray(y).flatten()
+             except Exception:
+                 pass
+ 

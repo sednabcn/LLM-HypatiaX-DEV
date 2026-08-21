@@ -1,0 +1,96 @@
+﻿Now let's check the five_systems.pdf — this is likely the actual document containing the investigation report shown in the conversation.
+Uncovered multiple unresolved data discrepancies across documentation tables
+Uncovered multiple unresolved data discrepancies across documentation tables
+I checked this directly rather than taking it at face value. Short answer: no — none of it is fixed, and the new files actually surface an additional, unrelated data-integrity problem.
+Here's the breakdown:
+1. five_systems.pdf is just the report you pasted, verbatim. I extracted its text and it's an exact match to the investigation report in your message — no new information, no fix applied. The five-system Table 1 provenance problem it describes is exactly as open as before: no data source in the repo reproduces FIVE_SYSTEM_PAPER_ROWS, and none of the report's own recommended next steps (decide what Table 1 should measure → decide whether to split it → locate the true source of the published n=13/n=14 numbers → only then patch code) have happened.
+2. discrepancy_addendum.tex fixes a different table entirely. It resolves Issues 14 and 16 — a checkpoint-key collision in exp1_ablation.py and a wrong dict key in run_analysis.py — both of which feed Table 6 (LLM Ablation, PySR vs. HypatiaX), not the five-system comparison. Issue 15 (four Mann-Whitney runs giving four different answers) is explicitly left open, pending author sign-off. None of this touches gen_five_system() or FIVE_SYSTEM_PAPER_ROWS at all — it's a separate pipeline, separate script, separate bug family. The five-system problem is untouched by this addendum.
+3. table1_audit_old.tex / table1_all_cses_old.tex are about a third, different "Table 1" — the DeFi wall-clock runtime table (NN vs. Hybrid speedup), not the five-system table. I didn't just read this one, I re-ran it myself against the exact JSON file I already have:
+NN mean/median   = 0.368 / 0.366 s   (audit found 0.36/0.36 — matches)
+Hybrid mean/median = 1.773 / 1.359 s  (Hybrid is ~4–5x SLOWER, not faster)
+That directly confirms the old audit's finding — and it's a problem for something I treated as settled earlier in this conversation: runtime.tex/timing_detail.tex (both stamped "Auto-generated... DO NOT EDIT MANUALLY", both citing this exact same seed-42 file as their source) report NN mean/median as 3.0s/2.7s — an order of magnitude off from what that file actually contains. So those "auto-generated" tables aren't actually reproducing their own cited source. That's a new, unresolved discrepancy, not something the new uploads fixed.
+One more thing worth flagging on myself: the investigation report explicitly recommends against doing what I did a few turns ago — presenting exp1_five/exp2_five-derived tables (five_system_comparative_analysis_section.tex) as a stand-in for the five-system comparison, since that "would misrepresent Table 1 as regenerated from real data" without first resolving what the table is even supposed to measure. I'd suggest holding off on merging that assembled section until questions 1–3 in the report's recommendation are actually answered by the paper's authors.
+Want me to draft the author-facing decision doc the report calls for (Table 1 scope: Feynman-only vs. DeFi-only vs. split), or dig into the runtime.tex discrepancy I just found?
+Scrutinized inconsistent benchmark data and identified reproducibility discrepancies
+Scrutinized inconsistent benchmark data and identified reproducibility discrepancies
+Let's dig deeper into the runtime discrepancy first, then draft the decision doc.
+Reconciled conflicting performance metrics and identified methodological discrepancies
+Reconciled conflicting performance metrics and identified methodological discrepancies
+Confirmed decisively. Now let's draft the author-facing decision memo for the five-system Table 1 scope question.
+Author-facing decision memo for the five-system Table 1 data-provenance problem, per the investigation report's recommended path forward
+Author-facing decision memo for the five-system Table 1 data-provenance problem, per the investigation report's recommended path forward
+Now let's copy everything to outputs and present.
+Ran a command, read a file
+Ran a command, read a file
+Did both. Here's what I found and produced:
+1) The runtime.tex discrepancy — confirmed independently
+I recomputed the runtime table straight from hypatiax_defi_benchmark_v3_results_seed42.json — the exact file runtime.tex/timing_detail.tex cite as their own source:
+	Paper claims	Actually in the cited file
+Neural MLP mean/median	3.0s / 2.7s	0.37s / 0.37s (8.2× off)
+HypatiaX mean/median	6.8s / 1.7s	1.77s / 1.36s
+Headline speedup	1.64× faster (median) / 1.73× faster (LLM-routed)	3.7–4.1× SLOWER, every framing
+This isn't a different-seed ambiguity — it's the same file giving a different answer than what's printed in the "auto-generated, DO NOT EDIT MANUALLY" tables. It independently confirms table1_audit_old.tex's finding using nothing but the file already in hand. recover_issue17_runtime.py and the corrected tab_runtime_corrected.tex are in the outputs.
+One side note worth flagging: the recomputed NN times are suspiciously flat (0.357–0.41s across 74 very different problems, essentially no variance) — that's not what real per-task NN training time should look like, and lines up with the audit's "version-drift" theory that 3.0s belonged to a heavier, superseded NN implementation.
+2) Decision memo for the five-system Table 1
+five_system_table1_decision_memo.md lays out four concrete options (Feynman-only / DeFi-only / keep as one cross-domain table / split into two tables) with what's actually available and what breaks for each, plus the two open questions the investigation report flagged (where did n=13/14/0.0% come from; which R² definition is intended). It ends with a recommended sequence and an explicit sign-off block, and — importantly — flags that the five_system_comparative_analysis_section.tex I built earlier in this conversation should not be merged as a Table 1 replacement until this memo gets an answer.
+Five system table1 decision memo
+Document · MD 
+Recover issue17 runtime
+PY 
+Tab runtime corrected
+TEX 
+I built earlier in this conversation should not be merged as a Table 1 replacement until this memo gets an answer. (i don't understand what should I do next about it?)
+Fair question — let me make it concrete.
+What that line means: the section I assembled (five_system_comparative_analysis_section.tex) is a real, useful artifact — it's just not safe to drop into the paper as the Table 1 yet, because nobody has decided what Table 1 is supposed to measure. Using it now would mean the paper silently claims "here's the real five-system comparison" when actually it's one candidate answer to a question that's still open.
+Concretely, here's what to do with it:
+    1. Don't delete it, don't merge it. Set it aside as a labeled draft — e.g. rename to five_system_comparative_analysis_section_DRAFT_pending_decision.tex or just leave it in a drafts/ folder, not in the file that gets compiled into the paper. 
+    2. Get the memo answered. That's the actual blocker. five_system_table1_decision_memo.md needs a person (whoever owns this paper — PI, corresponding author) to pick an option: 
+        ◦ A (Feynman-only), B (DeFi-only), C (keep as one cross-domain table — currently unsupportable), or D (split into two tables). 
+        ◦ They should also try to answer the "where did n=13/14/0.0% come from" git-archaeology question first, since if that turns up a real source, it may make this whole decision moot. 
+    3. Once you have an answer, the assembled section becomes useful again — but may need editing: 
+        ◦ If they pick A or D-Feynman-half: the exp2_five portion of my assembled section is basically what you want, but keep the NN-extrapolation limitation stated explicitly in the caption (my section already does this) rather than left as unexplained ---. 
+        ◦ If they pick B or D-DeFi-half: my assembled section's exp1_five tables are the wrong source — exp1_five isn't the DeFi 73-case harness, it's yet another dataset. You'd need to generate a new table from extrapolation_73cases_enhanced.json instead. 
+        ◦ If they pick C: technically not supportable right now — you'd be back to square one on data provenance. 
+    4. In the meantime, if you want, I can: 
+        ◦ Draft the DeFi-harness table (Option B ingredient) so it's ready regardless of which way the decision goes, or 
+        ◦ Do the git-archaeology step myself if you have repo access I can use (I don't currently — I only have the files you've uploaded), or 
+        ◦ Just leave things as they are until you get sign-off. 
+Want me to prep the DeFi-harness table now so it's ready either way, or hold off until the decision comes back?
+
+
+=================================================================================
+Did both. Here's what I found and produced:
+1) The runtime.tex discrepancy — confirmed independently
+I recomputed the runtime table straight from hypatiax_defi_benchmark_v3_results_seed42.json — the exact file runtime.tex/timing_detail.tex cite as their own source:
+	Paper claims	Actually in the cited file
+Neural MLP mean/median	3.0s / 2.7s	0.37s / 0.37s (8.2× off)
+HypatiaX mean/median	6.8s / 1.7s	1.77s / 1.36s
+Headline speedup	1.64× faster (median) / 1.73× faster (LLM-routed)	3.7–4.1× SLOWER, every framing
+This isn't a different-seed ambiguity — it's the same file giving a different answer than what's printed in the "auto-generated, DO NOT EDIT MANUALLY" tables. It independently confirms table1_audit_old.tex's finding using nothing but the file already in hand. recover_issue17_runtime.py and the corrected tab_runtime_corrected.tex are in the outputs.
+One side note worth flagging: the recomputed NN times are suspiciously flat (0.357–0.41s across 74 very different problems, essentially no variance) — that's not what real per-task NN training time should look like, and lines up with the audit's "version-drift" theory that 3.0s belonged to a heavier, superseded NN implementation.
+2) Decision memo for the five-system Table 1
+five_system_table1_decision_memo.md lays out four concrete options (Feynman-only / DeFi-only / keep as one cross-domain table / split into two tables) with what's actually available and what breaks for each, plus the two open questions the investigation report flagged (where did n=13/14/0.0% come from; which R² definition is intended). It ends with a recommended sequence and an explicit sign-off block, and — importantly — flags that the five_system_comparative_analysis_section.tex I built earlier in this conversation should not be merged as a Table 1 replacement until this memo gets an answer.
+Five system table1 decision memo
+Document · MD 
+Recover issue17 runtime
+PY 
+Tab runtime corrected
+TEX 
+I built earlier in this conversation should not be merged as a Table 1 replacement until this memo gets an answer. (i don't understand what should I do next about it?)
+Fair question — let me make it concrete.
+What that line means: the section I assembled (five_system_comparative_analysis_section.tex) is a real, useful artifact — it's just not safe to drop into the paper as the Table 1 yet, because nobody has decided what Table 1 is supposed to measure. Using it now would mean the paper silently claims "here's the real five-system comparison" when actually it's one candidate answer to a question that's still open.
+Concretely, here's what to do with it:
+    1. Don't delete it, don't merge it. Set it aside as a labeled draft — e.g. rename to five_system_comparative_analysis_section_DRAFT_pending_decision.tex or just leave it in a drafts/ folder, not in the file that gets compiled into the paper. 
+    2. Get the memo answered. That's the actual blocker. five_system_table1_decision_memo.md needs a person (whoever owns this paper — PI, corresponding author) to pick an option: 
+        ◦ A (Feynman-only), B (DeFi-only), C (keep as one cross-domain table — currently unsupportable), or D (split into two tables). 
+        ◦ They should also try to answer the "where did n=13/14/0.0% come from" git-archaeology question first, since if that turns up a real source, it may make this whole decision moot. 
+    3. Once you have an answer, the assembled section becomes useful again — but may need editing: 
+        ◦ If they pick A or D-Feynman-half: the exp2_five portion of my assembled section is basically what you want, but keep the NN-extrapolation limitation stated explicitly in the caption (my section already does this) rather than left as unexplained ---. 
+        ◦ If they pick B or D-DeFi-half: my assembled section's exp1_five tables are the wrong source — exp1_five isn't the DeFi 73-case harness, it's yet another dataset. You'd need to generate a new table from extrapolation_73cases_enhanced.json instead. 
+        ◦ If they pick C: technically not supportable right now — you'd be back to square one on data provenance. 
+    4. In the meantime, if you want, I can: 
+        ◦ Draft the DeFi-harness table (Option B ingredient) so it's ready regardless of which way the decision goes, or 
+        ◦ Do the git-archaeology step myself if you have repo access I can use (I don't currently — I only have the files you've uploaded), or 
+        ◦ Just leave things as they are until you get sign-off. 
+Want me to prep the DeFi-harness table now so it's ready either way, or hold off until the decision comes back?
+

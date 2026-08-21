@@ -1,0 +1,152 @@
+% ISSUE 1 — Nguyen-12 Table Success-Count Arithmetic
+% Category: Stale (reconciliation) + Open (needs code/data investigation)
+% Source: jmlr_paper_main.tex, subsec:nguyen12-benchmark-standard-sr-suite, tab:nguyen12, l.2422-2519
+%
+% UPDATE (2026-08-10): Tier-1 mechanical fix applied below (bold cells + Success
+% row re-tallied against the table's own stated >=0.9999 criterion; stray
+% caption figure removed). Per-equation values themselves are UNCHANGED from
+% the original submitted table — see the blocking finding below before citing
+% ANY exp3 number, including these corrected ones.
+%
+% ============================================================================
+% BLOCKING FINDING (raw-data audit, 2026-08-10) — DO NOT REGENERATE FROM
+% exp3_nguyen12_seed{42,99,123,777,2024}.json OR _merged.json YET
+% ============================================================================
+% Cross-checking the arithmetic fix against the raw exp3/exp3b result files
+% turned up something more serious than the tally bug this file was originally
+% opened for:
+%
+%   1. hypatiax and pysr entries are BYTE-IDENTICAL (same expression string,
+%      same R2 to 15 decimal places) for all 12 equations, in every one of
+%      exp3_nguyen12_seed42.json, seed99/123/777/2024, AND _merged.json.
+%      Independent SR runs do not converge to identical floating-point
+%      constants; this points to a copy/overwrite bug in result saving, or
+%      both arms receiving the same shortcut.
+%   2. The raw extrap R2 values are ~1.0 for essentially every equation in
+%      every seed (confirmed against X_extrap/y_extrap directly, not just
+%      the stored field) -- including an EXACT symbolic match to the N-3
+%      ground truth (x^5+x^4+x^3+x^2+x) for both systems. This directly
+%      contradicts the poor extrapolation this table currently reports for
+%      N-3, N-4, N-7, N-12 (large negative / near-zero R2).
+%   3. run_all.sh's FIX CRITICAL-GT-LEAK audit covers exp1, exp1b, and
+%      hybrid_all_domains only -- exp3 (use_llm=true) was never audited for
+%      the same ground-truth-in-prompt bug class, and the symptom pattern
+%      here (suspiciously perfect + identical-across-arms) matches it.
+%   4. _merged.json and exp3_nguyen12_seed42.json disagree with EACH OTHER on
+%      the recovered expression for the same equation (N-1), so there isn't
+%      even one internally-consistent "seed 42" source right now.
+%
+% Recommendation: treat exp3 as compromised under the same policy run_all.sh
+% already applies to exp1/exp1b/hybrid_all_domains -- audit the LLM prompt
+% path for exp3, fix, and rerun from scratch -- before any per-equation cell
+% or Success-row number is regenerated from this data. Do NOT replace the
+% cells below with the raw-JSON numbers until that audit closes.
+% ============================================================================
+
+% ── RF-04: Nguyen-12 Benchmark ───────────────────────────────────────────────
+\subsection{Nguyen-12 Benchmark (Standard SR Suite)}\label{subsec:nguyen12-benchmark-standard-sr-suite}
+\label{sec:nguyen12}
+
+The Nguyen-12 suite~\citep{uy2011semantically} is the standard symbolic-regression
+benchmark comprising 12 polynomial and transcendental equations (Nguyen-1 through
+Nguyen-12) with up to two input variables.  We evaluate HypatiaX and PySR-only on
+the same PCA-directed aggressive extrapolation protocol used for the DeFi benchmark
+(40\,\%/60\,\% split), and compare against the neural MLP baseline.
+
+\begin{table}[h]
+\centering
+\caption{Nguyen-12 benchmark: train and extrapolation $\Rsq$ by equation.
+$P$ = PySR-only; $H$ = HypatiaX; $N$ = Neural MLP.
+Near-miss criterion: $\Rsq \ge 0.9999$ (4-decimal convention of
+\citealt{uy2011semantically}).
+Near-miss detail: $\Rsq\in[0.9998,0.9999)$ with perfect extrapolation
+($\Rsq=1.0000$ on $2\times$ holdout).
+\textbf{Per-equation values pending re-verification (see audit note above);
+Success row reflects only a re-tally of this table's own printed cells
+against its stated criterion, not a re-derivation from raw results.}}
+\label{tab:nguyen12}
+\begin{threeparttable}
+\begin{tabular}{llrrrrrr}
+\toprule
+Eq. & Formula &
+  \multicolumn{2}{c}{PySR-only ($P$)} &
+  \multicolumn{2}{c}{HypatiaX ($H$)} &
+  \multicolumn{2}{c}{Neural MLP ($N$)} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+ &  & Train & Extrap & Train & Extrap & Train & Extrap \\
+\midrule
+N-1  & $x^3 + x^2 + x$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{0.9999}
+  & 0.9993 & $-0.784$ \\
+N-2  & $x^4 + x^3 + x^2 + x$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{1.0000}
+  & 0.9986 & $-0.902$ \\
+N-3  & $x^5 + x^4 + x^3 + x^2 + x$
+  & 0.9999 & \emph{$-426.2$}
+  & 0.9999 & 0.9976
+  & 0.9986 & $-0.913$ \\
+N-4  & $x^6 + x^5 + x^4 + x^3 + x^2 + x$
+  & 0.9999 & \emph{$\ll{-}100$}
+  & 0.9999 & \emph{$\ll{-}100$}
+  & 0.9979 & $-0.828$ \\
+N-5  & $\sin(x^2)\cos(x)-1$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{1.0000}
+  & 0.9979 & $-5.586$ \\
+N-6  & $\sin(x)+\sin(x+x^2)$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{1.0000}
+  & 0.9987 & $-12.654$ \\
+N-7  & $\ln(x+1)+\ln(x^2+1)$
+  & 0.9999 & 0.9762
+  & 0.9999 & 0.7316
+  & 0.9868 & $0.856$ \\
+N-8  & $\sqrt{x}$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{1.0000}$^\dag$
+  & 0.9988 & $0.954$ \\
+N-9  & $\sin(x)+\sin(y^2)$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{1.0000}
+  & 0.9986 & $-6.708$ \\
+N-10 & $2\sin(x)\cos(y)$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & 0.9997
+  & 0.9995 & $-2.379$ \\
+N-11 & $x^y$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & \textbf{0.9999}
+  & 0.9984 & $-0.423$ \\
+N-12 & $x^4 - x^3 + \tfrac{1}{2}y^2 - y$
+  & 0.9987 & $-1.056$
+  & 0.9994 & $-1.054$
+  & 0.9985 & $-1.198$ \\
+\midrule
+\multicolumn{2}{l}{Success ($\Rsq\ge0.9999$)}
+  & \multicolumn{2}{c}{8/12 (66.7\%)}
+  & \multicolumn{2}{c}{\textbf{7/12 (58.3\%)}}
+  & \multicolumn{2}{c}{0/12 (0\%)} \\
+MW $H>P$   & \multicolumn{7}{l}{$U=51.0$, $p=0.893$ — not significant} \\
+MW $P>N$   & \multicolumn{7}{l}{$U=113.0$, $p=0.0097$ — significant} \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\small
+  \item \textbf{Bold}: extrap $\Rsq \ge 0.9999$. \emph{Italic}: $\Rsq < 0$.
+    $P$ = PySR-only; $H$ = HypatiaX; $N$ = Neural MLP.
+    N-3 and N-10 (HypatiaX) are shown unbolded: both are below the table's
+    own $\ge 0.9999$ threshold (0.9976 and 0.9997 respectively) and were
+    previously bolded in error.
+  \item[$\dag$] N-8 ($\sqrt{x}$): HypatiaX routed to \texttt{hybrid\_llm\_only} mode.
+    The LLM directly proposed $x^{0.5}$, which passed the trust gate with
+    train $\Rsq = 0.9999$ and achieved exact extrapolation ($\Rsq = 1.000$)
+    without invoking PySR. Wall-clock time: 7.4\,s vs.\ 301\,s for PySR-only ---
+    the only equation where the LLM warm-start fully bypassed evolutionary search.
+  \item[$\ddag$] MW test statistics ($U$, $p$) were computed against the
+    original (uncorrected) per-equation cells and have not yet been
+    recomputed against the corrected Success counts above; treat as
+    provisional pending the exp3 re-audit described at the top of this file.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

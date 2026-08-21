@@ -1,0 +1,74 @@
+﻿Cross-checking your table against the two registries (PARAM_LOOP_MERGE_EXPERIMENTS in merge_experiments.py + MERGE_REQUIRED_EXPERIMENTS in merge_shards.py):
+Step from your table	Loop type	Where it's handled	Status
+extrap	domain (FEYNMAN_DOMAINS)	PARAM_LOOP_MERGE_EXPERIMENTS	✅ covered
+exp2_feynman	domain (FEYNMAN_DOMAINS)	PARAM_LOOP_MERGE_EXPERIMENTS	✅ covered
+exp2_feynman_pca_4060	domain (FEYNMAN_DOMAINS)	PARAM_LOOP_MERGE_EXPERIMENTS as "exp2_feynman_pca"	⚠️ covered, but name mismatch risk — see below
+exp2_feynman_extrap (STEP 5b sub-block, ACTIVE_DOMAINS)	domain	neither — intentionally excluded	✅ deliberate (has its own merge_extrap_into_benchmark.py)
+exp2 (STEP 6, EXP2_DOMAINS)	domain	neither — intentionally excluded	✅ deliberate (registry: self-consolidates to all_systems_merged.json)
+exp3b	seed (_SEED_ARR)	MERGE_REQUIRED_EXPERIMENTS (the other merger, merge_shards.py)	✅ covered — correctly a shard-fan-out, not a local domain loop
+suppB	noise (implicit, per-shard NOISE_LEVEL)	MERGE_REQUIRED_EXPERIMENTS	✅ covered — same reasoning, CI-shard not local loop
+Nothing is missing. Every experiment in your table lands in exactly one of: PARAM_LOOP_MERGE_EXPERIMENTS, MERGE_REQUIRED_EXPERIMENTS, or an explicit documented exclusion. The two "excluded" rows (exp2_feynman_extrap, exp2) aren't gaps — they're the ones I wrote inline NOTEs for specifically because they'd otherwise look like missing entries.
+One real risk worth checking
+experiment_registry.py's key is "exp2_feynman_pca" (used consistently by merge_experiments.py's new constant and by find_best/find_shards), but run_all.sh's step is literally named exp2_feynman_pca_4060. If ci_analysis.yml passes --experiment using the step name (exp2_feynman_pca_4060) rather than the registry key (exp2_feynman_pca), my FATAL guard in main() will reject it — since "exp2_feynman_pca_4060" not in PARAM_LOOP_MERGE_EXPERIMENTS.
+I can't confirm which name the CI actually passes without seeing ci_analysis.yml or the step's env var wiring in run_all.sh around line 1709. Want me to:
+    1. Add "exp2_feynman_pca_4060" as an accepted alias in the guard (safe, defensive), or 
+    2. Check run_all.sh around STEP 5b to see what --experiment/EXPERIMENT value that step actually exports? 
+Identified potential redundancy in merge pipeline architecture
+Good catch to check — let me look at how INPUT_MODE/INPUT_JSON actually get consumed, because that changes what "integrate" needs to mean here.
+Architected safe merge step with parameter override logic
+Before I hand you a diff — this surfaced something important. Let me show you what I found first.
+The integration point isn't as simple as mirroring "Merge shards"
+Look at the top-of-file architecture comment (lines 28–36):
+DIRECT (NSHARDS=1 / single-file experiments): ... Covers two sub-cases: benchmark-format (tests[] array) — in-memory merge to _merged_benchmark.json, then --input-json.
+extrap, exp2_feynman, and exp2_feynman_pca are all tests[]-shaped (Shape P) and all appear in SINGLE_SHARD_EXPERIMENTS (line 370), so they run in DIRECT mode. That means:
+    1. locate_analysis_input.sh (referenced at line 304, but not uploaded — I don't have its contents) already performs some in-memory domain-merge for these exact three experiments, writing _merged_benchmark.json. 
+    2. The "Merge shards" step (322–473) only fires for MERGE_REQUIRED_EXPERIMENTS — it never touches INPUT_MODE/INPUT_JSON for DIRECT-mode experiments. 
+    3. So a naive step that just runs merge_experiments.py and stops (like I sketched last turn) would produce a file nobody reads — run_analysis.py consumes $INPUT_JSON under $INPUT_MODE, and neither gets touched unless I explicitly override them. 
+This means two real risks I can't fully resolve without locate_analysis_input.sh:
+    • Redundancy — if its in-memory merge is already adequate, this is duplicate work. 
+    • Silent divergence — if I add this step and override INPUT_JSON, I need to be confident I'm not fighting logic in that script that also tries to set INPUT_MODE=direct with its own file. 
+What I'm doing about it
+I'll write the integration as a self-contained override step — same pattern as "Merge shards" does for MERGE_REQUIRED_EXPERIMENTS (run after locate, explicitly echo ... >> "$GITHUB_ENV" to win regardless of what came before), plus a disjointness guard between the two registries. That makes it correct regardless of what locate_analysis_input.sh does internally, at the cost of being possibly-redundant CPU work until you confirm.
+Ran a command, edited a file
+Now validate the YAML is well-formed:
+Ran 2 commands
+Clean insertion, YAML validates, and the step lands in the right place: Locate analysis input → Validate input data → Merge shards → Merge parameter-loop results → Rename merged JSON to canonical name. Since it sets INPUT_MODE=direct (not merged), it correctly won't trigger the Rename merged JSON to canonical name step (that one's gated on INPUT_MODE == 'merged'), avoiding any collision there.
+Ran a command, read a file
+What this diff does
+New step "Merge parameter-loop results", inserted right after "Merge shards" (line ~476):
+    1. Gate: skips unless EXPERIMENT is in merge_experiments.PARAM_LOOP_MERGE_EXPERIMENTS — same import-and-check pattern as "Merge shards" uses for MERGE_REQUIRED_EXPERIMENTS. 
+    2. Disjointness guard: hard-fails (::error:: + exit 1) if an experiment is ever in both registries — since the two mergers assume mutually exclusive problems, silent double-merging would be worse than a loud failure. 
+    3. Runs merge_experiments.py against $RESULT_DIR, writing _merged_paramloop.json. 
+    4. Zero-row guard, mirroring merge_shards.py's "FATAL: merge produced zero rows" philosophy. 
+    5. Overrides INPUT_MODE/INPUT_JSON via $GITHUB_ENV, same mechanism "Merge shards" uses — this is the part that actually makes run_analysis.py read the new file instead of whatever locate_analysis_input.sh resolved. 
+Still unresolved — needs your confirmation
+The inline comment block (KNOWN OVERLAP TO VERIFY) documents the open question honestly rather than hiding it: I don't have locate_analysis_input.sh, so I can't confirm whether its existing in-memory _merged_benchmark.json step for these three experiments is:
+    • redundant with this new step (harmless, just wasted compute), or 
+    • doing something this override should account for but doesn't (e.g. writing other env vars or side files downstream steps expect). 
+If you can upload locate_analysis_input.sh, I'll verify there's no conflict and tighten the comment (or simplify the step) accordingly.
+Ci analysis
+YML 
+locate_analysis_input.sh
+sh
+Excavated pipeline architecture discrepancies and field-naming conflicts
+This changes the picture significantly — and contradicts what ci_analysis.yml's top-of-file comment claimed. Let me walk through what the script actually does.
+Two corrections to my last turn
+1. There is no "in-memory merge to _merged_benchmark.json." That's explicitly disclaimed here:
+Line 43–44: "NO inline benchmark merge for non-merge experiments. This prevents field-name mismatches (e.g. exp2/Feynman records don't have far-R²)."
+ci_analysis.yml's architecture comment (lines 28–36, describing a "benchmark-format tests[] — in-memory merge to _merged_benchmark.json" sub-case) doesn't match the real script. That code path doesn't exist. Stale documentation, unrelated to our task but worth flagging separately.
+2. extrap/exp2_feynman/exp2_feynman_pca don't actually land in DIRECT mode. Trace it:
+    • REQUIRE_MERGE=false for them (not in MERGE_REQUIRED_EXPERIMENTS) → falls to SHARD/DIRECT MODE section (line 315+). 
+    • It globs RESULT_DIR for *.json, excluding _*.json and METADATA_EXCLUSIONS. 
+    • Since each of these experiments' single CI worker writes one protocol_core_*.json per domain (11 Feynman domains), SHARD_FILES has 11 entries, not 1. 
+    • N_SHARDS -eq 1 is false → falls to SHARDS mode: INPUT_MODE=shards, INPUT_JSON="", SHARD_MANIFEST lists all 11 raw per-domain files. 
+So today, run_analysis.py reads these 11 unmerged files directly via --shard-manifest, per the case "$INPUT_MODE" in shards) branch in ci_analysis.yml. There is currently no merge step at all for these — my "redundancy" worry from last turn was unfounded; the opposite problem exists.
+The real concern: this was a deliberate design choice, not an oversight
+That "prevents field-name mismatches (e.g. exp2/Feynman records don't have far-R²)" comment is a documented reason someone chose not to merge these files inline. I don't know the specifics of what broke, but the shape of the warning suggests: different domains/methods populate different R²-variant fields (near vs. far extrapolation), and a naive merge risks either dropping that distinction or introducing misleading nulls/defaults across domains that don't share a schema.
+merge_experiments.py's normalise_row/extract_result_rows is exactly the kind of generic, schema-tolerant flattening this comment warns against — it doesn't know about far-R² specifically, and my IDENTITY_KEYS propagation fix doesn't address metric-field semantics at all.
+I shouldn't have shipped the ci_analysis.yml override as confidently as I did. Before that step goes anywhere near real use, I'd want to see either run_analysis.py's SHARDS-mode reader (to know what it currently does with the raw per-domain files that a merge would need to preserve) or find the history/PR that added the "field-name mismatch" comment, to understand exactly what broke last time.
+What I'd suggest now
+    1. Withdraw the unconditional override — the Merge parameter-loop results step from last turn should not run unattended; at minimum it needs a caveat/manual-approval gate until the far-R² concern is resolved. 
+    2. If you have run_analysis.py (or whatever code currently consumes SHARD_MANIFEST for exp2_feynman/extrap), upload it and I'll check exactly what fields it expects, so merge_experiments.py can be made to preserve them rather than flatten them away. 
+Want me to hold the ci_analysis.yml change as a draft/disabled step pending that check, or would you rather see run_analysis.py first?
+You are out of free messages until 11:50 PM
+

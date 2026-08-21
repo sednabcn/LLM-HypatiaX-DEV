@@ -1,0 +1,111 @@
+% ISSUE 8 — Figure 3 Caption "DeFi AMM (Hard) = -78.04" Untraceable, Plus Impermanent-Loss Tier Clash
+% Category: Open (confirmed known-bad figure/caption, fix source already identified)
+% Source A: jmlr_paper_main.tex, Figure fig:r2_heatmap_clipped caption, l.1287-1300
+% Source B: jmlr_paper_main.tex, tab:llm_ablation, l.1838-1901
+% Source C: jmlr_paper_main.tex, Medium-tier definition (subsec:difficulty-classification), l.635-655
+%   (full section also in file 07)
+
+%% ---- SOURCE A: Figure 3 caption ----
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{fig18_r2_heatmap_improved}
+\caption{Mean far-extrapolation ($5\times$) $\Rsq$ by formula domain and
+difficulty tier (Easy/Med/Hard), Core-15 benchmark. Dashes indicate no
+equation exists for that domain--difficulty combination in this benchmark.
+HypatiaX is not uniformly better than PySR-only: it improves on
+Chemistry (Easy: $0.90$ vs.\ $-12.56$) but produces $-\infty$ --- a genuine
+evaluation crash, not merely a poor fit --- on DeFi AMM (Hard) and Physics
+(Hard), where PySR-only instead returns a finite (if poor, $-78.04$, or
+perfect, $1.00$) value. The per-equation values underlying this aggregate
+are given in Table~\ref{tab:llm_ablation}.}
+\label{fig:r2_heatmap_clipped}
+\end{figure}
+
+%% ---- SOURCE B: tab:llm_ablation ----
+Table~\ref{tab:llm_ablation} presents the full per-equation comparison between
+PySR-only ($P$) and HypatiaX ($H$) on the Core-15 benchmark across three
+extrapolation ranges (near $1.2\times$, canonical, far $5\times$).  The
+Mann-Whitney U-test on far-$\Rsq$ vectors ($n=15$): $U=126$, $p=0.2948$
+(two-sided); rank-biserial $r=-0.12$.  Run~B: $U=101.5$, $p=0.6833$.
+The null result is stable across two hardware runs, indicating that the
+HypatiaX advantage is domain-selective rather than universal.  Specifically:
+\textbf{Physics} (Kinetic Energy, Gravitational Force, Ideal Gas Law) and
+\textbf{DeFi Risk} (Value at Risk, Liquidation Price, Portfolio Variance) favour
+HypatiaX; \textbf{Chemistry} (Arrhenius, Henderson-Hasselbalch) and
+\textbf{DeFi AMM} (Impermanent Loss) favour PySR-only.  The null aggregate
+$p$-value reflects this domain cancellation: gains on Physics/Risk are offset by
+losses on Chemistry/AMM.  We report this honestly; the DeFi benchmark
+($n=74$, §\ref{sec:results}) shows the effect size when evaluated on
+HypatiaX's target domain.
+
+\textbf{This table has been rebuilt from the underlying \texttt{\_merged.json}
+data} (via \texttt{table6\_vs\_real\_data\_comparison.xlsx}), replacing the
+withdrawn version. Six equations show \textit{nan} or $-\infty$ for HypatiaX
+beyond the Train column --- these are missing or crashed evaluations, not
+$\Rsq$ scores, and are reported as such rather than omitted. The originally-
+published transcription (now withdrawn) had claimed finite values on all six
+of these cells, including a fabricated $-12.5553$ ``identical collapse'' on
+Arrhenius and a fabricated $-635$ on Michaelis-Menten, neither of which
+exists in the underlying \texttt{\_merged.json} records.
+
+\begin{table*}[htbp]
+\centering
+\caption{LLM Ablation: PySR Alone (P) vs.\ HypatiaX (H) on Core~15 ---
+\textbf{rebuilt from \texttt{\_merged.json}} (real data, not the withdrawn
+manuscript transcription). Extrap columns show $R^2$ at near ($1.2\times$),
+medium (canonical), and far ($5\times$) out-of-distribution ranges.
+\textit{nan}: evaluation never completed. $-\infty$: evaluation crashed.}
+\label{tab:llm_ablation}
+\small\setlength{\tabcolsep}{3pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llcccccccc}
+\toprule
+\textbf{Equation} & \textbf{Domain} & \multicolumn{2}{c}{\textbf{Train $R^2$}} & \multicolumn{2}{c}{\textbf{Near $R^2$}} & \multicolumn{2}{c}{\textbf{Med $R^2$}} & \multicolumn{2}{c}{\textbf{Far $R^2$}} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(lr){9-10}
+ & & P & H & P & H & P & H & P & H \\
+\midrule
+Allometric Scaling & Biology & 0.9977 & 0.9979 & 1.0000 & 0.9824 & 1.0000 & 0.9502 & 1.0000 & $-0.0644$ \\
+Arrhenius & Chemistry & 0.9974 & 0.9979 & 0.9779 & 0.9977 & 0.4636 & 0.9957 & $-12.5552$ & \textbf{0.9028} \\
+Constant Product & DeFi AMM & 0.9982 & 0.9985 & 0.9996 & $-1.807\times10^{4}$ & 1.0000 & $-5.416\times10^{34}$ & 0.9996 & $-1.852\times10^{46}$ \\
+Gravitational Force & Physics & 0.9976 & 0.9889 & 0.9973 & $-\infty$ & 0.9998 & $-\infty$ & 0.9973 & $-\infty$ \\
+Henderson-Hasselbalch & Chemistry & 0.9339 & 0.9986 & 0.8004 & \textit{nan} & 0.9850 & \textit{nan} & 0.8004 & \textit{nan} \\
+Ideal Gas Law & Physics & 0.9976 & 0.9980 & 1.0000 & 0.9988 & 1.0000 & 0.9999 & 1.0000 & 0.9993 \\
+Impermanent Loss & DeFi AMM & 0.9971 & 0.9977 & 0.7703 & 0.9639 & $-2.7832$ & $-80.4327$ & $-157.0776$ & $-8259.3$ \\
+Kinetic Energy & Physics & 0.9968 & 0.9968 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+Liquidation Price & DeFi Risk & 0.9974 & 0.9977 & 1.0000 & 0.9998 & 1.0000 & 0.9999 & 1.0000 & 0.9993 \\
+Logistic Growth & Biology & 0.9975 & 0.9976 & 0.9997 & \textit{nan} & 0.9998 & \textit{nan} & 0.9996 & \textit{nan} \\
+Michaelis-Menten & Biology & 0.9975 & 0.9979 & 0.9890 & \textit{nan} & 0.9951 & \textit{nan} & \textbf{0.6471} & \textit{nan} \\
+Portfolio Std Dev & DeFi Risk & 0.9975 & 0.9975 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+Price Impact & DeFi AMM & 0.9976 & 0.9976 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 \\
+Rate Law & Chemistry & 0.9977 & 0.9981 & 1.0000 & \textit{nan} & 1.0000 & \textit{nan} & 1.0000 & \textit{nan} \\
+Value at Risk & DeFi Risk & 0.9979 & 0.9979 & 0.9999 & 1.0000 & 1.0000 & 1.0000 & 0.9999 & 1.0000 \\
+\bottomrule
+\end{tabular}%
+}% end resizebox
+\par\vspace{4pt}
+{\footnotesize\noindent
+P = PySR-only; H = HypatiaX (PySR + LLM warm-start). \textbf{Bold}: cases
+where the real data reverses the withdrawn table's headline claim (Arrhenius
+
+%% ---- SOURCE C: Difficulty Classification (Easy/Medium/Hard defs) ----
+\subsection{Difficulty Classification}\label{subsec:difficulty-classification}
+\label{sec:bench_difficulty}
+
+Tasks are categorised by difficulty into three tiers based on functional structure:
+
+\begin{itemize}
+  \item \textbf{Easy} ($n=24$): linear or simple rational relationships, such as
+    Loan-to-Value, spot price from AMM reserve, collateral ratio, and simple staking APY.
+    These tasks admit algebraic solutions with AST depth $\le 3$.
+
+  \item \textbf{Medium} ($n=29$): nonlinear algebraic or exponential relationships,
+    such as impermanent loss, Uniswap V3 liquidity range, constant-product price impact,
+    and compounding staking returns.  These tasks require multi-step composition
+    of algebraic operations.
+
+  \item \textbf{Hard} ($n=21$): transcendental, probabilistic, or multivariate
+    formulations.  This category includes Black--Scholes pricing (which requires
+    the Gaussian CDF $\Phi$), all four Greeks, Portfolio Expected Shortfall for
+    correlated assets, and multi-day VaR scaling.  These tasks are the primary
+    source of LLM stochastic instability.
+\end{itemize}

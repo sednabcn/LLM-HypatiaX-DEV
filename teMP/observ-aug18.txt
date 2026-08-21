@@ -1,0 +1,34 @@
+﻿Wht happen with the hypatiax/data/results/comparison_results/noise-noiseless/15_pca and hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi_pca with the ambiguity of seed 42?
+Viewed 4 files
+Good — these eight files are three separate (but related) audit threads at three different stages. Here's the fix status and what's actually left to do on each.
+1. Runtime table (Issue 17) — already fixed, just needs merging
+recover_issue17_runtime.py recomputed the timing stats directly from the exact file tab:runtime/tab:timing_detail cite as their own source, and tab_runtime_corrected.tex is the output. The corrected numbers (NN 0.37s mean, HypatiaX 1.77s mean — slower, not faster) replace the old table, which showed 3.0s/6.8s with a fabricated "1.64× faster" median claim.
+The second defect (issue_runtime_table_second_defect.md) is also closed: tab:timing_full/tab:timing_llm_routed_full were regenerated fresh from all ten raw per-seed files with the paper's own generate_table1.py, giving the corrected 4.1×–7.7× slower range.
+Action: drop tab_runtime_corrected.tex in for tab:runtime, and make sure the two full-timing tables and every narrative mention of "2.5×–9.3× slower" elsewhere in the paper are updated to match, per the memo's list (author's-note box, abstract-adjacent contribution list, conclusion). The root-cause question in that memo is explicitly flagged as non-blocking — don't hold up the merge on it.
+2. Five-System Table 1 — blocked on a human decision, not a bug fix
+This is the deeper problem. FIVE_SYSTEM_PAPER_ROWS (the hardcoded fallback behind the old Table 1) can't be reproduced from any data in the repo. five_system_table1_decision_memo.md lays out four options; you can't "fix" this with code until someone signs off on what Table 1 is supposed to measure.
+five_system_comparative_analysis_section.tex + assemble_five_system_section.py are already a working implementation of Option D (the memo's recommendation): two honest, separately-labeled tables from real exp1_five/exp2_five runs instead of one spliced table. But the memo is explicit that this must not be merged as a replacement for Table 1 until:
+    • someone chases down where the published n=13/n=14/0.0% numbers actually came from (git log -p on run_hybrid_system_benchmark.py / generate_tables.py, per the memo), and 
+    • a human signs off on A/B/C/D. 
+3. CI/SD incompatibility (Issue 4) — the mechanical piece, but don't patch it in isolation
+This is a symptom of #2, not a separate bug. thm:five_system_hierarchy reports a 95% CI of [1087%, 1456%] around a mean of 1231%, but Appendix G's own disclosed SD (1842%, n=13) implies a much wider interval:
+1231±t0.975,12​⋅13
+​1842​≈1231±2.179×511.0≈1231±1114 
+→ correct CI ≈ [117%, 2345%], roughly 6× wider than what's printed, and it would no longer look like a tight, reassuring interval.
+Two things worth separating here:
+    • Mechanical fix, if this table stays as-is: recompute the CI from the disclosed SD/n using the standard formula and replace [1087%, 1456%] with the correct [117%, 2345%]. Trivial, but only meaningful if the underlying n=13/1231%/1842% numbers themselves are trustworthy — which per the decision memo, they aren't (unreproducible). 
+    • Root fix: once #2 is resolved and the table is regenerated from real data, compute CI the way five_system_comparative_analysis_section.tex already does it — per-row, directly from that row's own mean/std/n (mean ± t·std/√n), never hand-entered. That's structurally immune to a "Source A says X, Source B says Y" split because there's only one formula and one data source feeding both. 
+One catch: that new table isn't clean yet either — assemble_five_system_section.py's own trailing "DATA-QUALITY FLAGS" output flags that tab:five_systems_full's 95% CI column is currently degenerate ([X, X], i.e., collapsed to the mean) because the Std column being fed in is Train R² std, not extrapolation-error std. That's a distinct bug in the CI pipeline that needs fixing before this table can honestly replace the old one — likely worth its own tracked issue rather than folding it into #2's decision.
+So, concretely, in order:
+    1. Merge the runtime fixes (#1) — no blockers. 
+    2. Chase the n=13/14/0.0% provenance question; get sign-off on Option D for Table 1. 
+    3. Fix the Std-column bug feeding the new table's CI (currently [mean, mean]). 
+    4. Once 2–3 are done, Issue 4 resolves itself as a byproduct — the old hardcoded CI gets replaced by the correctly-computed per-row one, and there's no more Source A vs. Source B discrepancy because there's only one source. 
+fix that
+Ran 3 commands, viewed a file
+This file is 4,750 lines with dozens of already-documented fixes baked in — I don't want to guess at "the" bug and rewrite something that isn't actually broken. Could you tell me what's going wrong? For example:
+    • A specific CI run failing (paste the error/job name), or 
+    • A specific step's behavior you know is wrong (e.g., a seed-handling bug like the ones we found in run_all.sh), or 
+    • You want me to audit it end-to-end for a class of issue we've been finding elsewhere (seed ambiguity, GT-leak, table/figure generation, etc.) 
+If it's the last one, I'm happy to start scanning — just want to point the search at the right thing rather than rewrite working sections.
+

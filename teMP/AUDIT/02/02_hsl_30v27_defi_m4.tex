@@ -1,0 +1,71 @@
+% ISSUE 2 — Supp. Table 4 (30/30) vs. Abstract/Conclusion (27/30) on HyperSymLoop (M4)
+% Category: Stale (classic same-run desync)
+% Source A: supp_benchmark_report.tex, Abstract, l.128-156
+% Source B: supp_benchmark_report.tex, tab:overall (Six-Method Aggregate Performance), l.390-423
+
+%% ---- SOURCE A: Abstract ----
+\begin{abstract}
+We present an extended evaluation of the HypatiaX symbolic regression
+framework on 30 Feynman benchmark equations, integrating a six-method
+noiseless comparison with a comprehensive noise robustness sweep
+($\sigma \in \{0, 0.5, 1, 5, 10\}\%$) and a sample complexity sweep
+($n \in \{50, 100, 200, 500, 750, 1000\}$), focusing on the two
+top-performing core methods: \EHD{} (M3) and \HSL{} (M4).
+
+Following correction of a measurement harness bug in \HSL{} (see
+Section~\ref{sec:bugfix}), both methods achieve median $\Rsq = 1.000000$
+across all tested conditions.
+\EHD{} achieves 100\% recovery at all noise levels tested.
+\HSL{} achieves 100\% recovery at all \emph{noisy} conditions ($\sigma > 0$)
+and 90.0\% (27/30 equations) under the strict noiseless protocol ($\Rsq > 0.9999$).
+All results in this document use the v2 corrected harness; v1 figures are
+retained in the repository commit history for audit purposes only.
+Both converge at $n = 50$ samples.
+\EHD{} offers exact symbolic interpretability; \HSL{} is $1.5$--$76\times$
+faster depending on noise level.
+
+On this 30-equation subset, \EHD{} achieves 96.7\% recovery vs.\ AI~Feynman~2.0's
+79.3\% ($+17.4$\,pp), and \HDS{} achieves 90.0\% ($+10.7$\,pp).
+These are subset-specific comparisons: published baselines were evaluated on
+all 100 Feynman equations under the standardised SRBench protocol; these
+figures should not be read as a general state-of-the-art claim.
+We additionally correct four methodological issues:
+undisclosed hardcoded \PureLLM{} results, scale-biased raw \rmse,
+missing Wilcoxon significance tests, and mismatched pass-rate thresholds.
+\end{abstract}
+
+%% ---- SOURCE B: tab:overall ----
+%% ============================================================
+\section{Six-Method Noiseless Results}
+\label{sec:noiseless}
+
+\begin{table}[ht]
+\caption{Six-method aggregate performance, noiseless protocol
+  ($\Rsq \geq 0.9999$, $n=1000$).
+  \warn~\PureLLM{} pass rate includes 11/30 hardcoded results.}
+\label{tab:overall}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{L{2.4cm} C{1.0cm}
+                C{1.8cm} C{1.3cm} C{1.4cm}}
+\toprule
+\textbf{Method} & \textbf{Type} &
+  \makecell{\textbf{Pass Rate}\\$(\Rsq \geq 0.9999)$} &
+  \makecell{\textbf{Mean} $\Rsq$} &
+  \makecell{\textbf{Avg}\\Runtime} \\
+\midrule
+\rowcolor{warnAmberBg}
+\PureLLM\,\warn & Core  & 30/30 (100\%)\warn & 1.000000 &   5.7\,s \\
+\rowcolor{passgreenBg}
+\EHD\,(M3)      & Core  & 29/30 (96.7\%)      & 0.999993 &  20.2\,s \\
+\HDS            & Tools & 27/30 (90.0\%)      & 0.999960 & 155.0\,s \\
+\HSL\,(M4)      & Core  & 30/30 (v2)$^\dagger$ & 0.999+  &  11.4\,s \\
+\SEL            & Tools & 26/30 (86.7\%)      & 0.999829 & 201.2\,s \\
+\rowcolor{failredBg}
+\INN            & Core  & 17/30 (56.7\%)      & 0.999272 &  23.5\,s \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$\,\HSL{} v1 showed 26/30 due to the Newton
+  measurement bug; v2 achieves 30/30 (Section~\ref{sec:bugfix}).}\\
+\end{tabular}
+\end{table}

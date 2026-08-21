@@ -1,0 +1,28 @@
+--- /mnt/user-data/uploads/baseline_pure_llm_defi_discovery.py	2026-08-08 15:11:21.688435000 +0000
++++ patched/baseline_pure_llm_defi_discovery.py	2026-08-08 15:31:22.167647175 +0000
+@@ -327,9 +327,25 @@
+             )
+ 
+         try:
++            # FIX-ISSUE2B-LLM-TEMPERATURE: this call previously had no
++            # `temperature` argument, so it silently used the Anthropic API
++            # default (non-zero). Callers of this class (e.g.
++            # EnhancedHybridSystemDeFi.generate_llm_formula, which delegates
++            # here as its *preferred* path) assumed temperature=0 behaviour
++            # -- see the comment at HybridDeFiMethod.run() in
++            # run_comparative_suite_benchmark_v2.py claiming "At
++            # temperature=0 this produces the same formula". That assumption
++            # was false for this call site, which is why a fresh live call
++            # per Phase-A run could return a structurally-equivalent but
++            # not-bit-identical formula, producing the ~1e-9 R² spread
++            # observed on Snell's Law in the Item 2b reproducibility check.
++            # temperature=0.0 narrows (does not fully guarantee, since
++            # provider-side serving batching can still vary) run-to-run
++            # sampling variance.
+             response = self.client.messages.create(
+                 model=self.model,
+                 max_tokens=4000,
++                temperature=0.0,
+                 messages=[{"role": "user", "content": prompt}],
+             )
+             # FIX (ThinkingBlock crash): response.content[0] is not guaranteed to be

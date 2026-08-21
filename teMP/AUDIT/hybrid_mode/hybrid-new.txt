@@ -1,0 +1,784 @@
+﻿Good catch to push on this — and having the actual script changes everything. Let me walk through what it shows.
+**My Round-5 hypothesis (shared PySR checkpoint/tempdir) was wrong.** The script doesn't share any working directory between `model_h` and `model_p` — they're separate `PySRRegressor` instances, separate `.fit()` calls, no shared file state. That theory doesn't hold up against this code.
+**What the code actually does (lines 603–707):** when `_pysr_guesses` is non-empty, it takes the "genuinely differs" branch (line 628) and runs two independent fits — `model_h` with `guesses=_pysr_guesses, warm_start=False`, and `model_p` with no guesses. `_h_is_copy_of_p` is only set `True` in the *other* branch (line 686, no guesses available). Since every record in the JSON has `h_is_copy_of_p: false` and `warm_start_status: "used"`, we know the script took the independent-fit branch every single time — the copy-shortcut never fired. So the bookkeeping fields are actually accurate this run; the earlier "the flags are lying" framing was wrong too.
+**So the real question is:** why do two independently-run PySR fits — one seeded with 6–8 LLM-derived `guesses`, one cold — converge to byte-identical expressions (matching floating-point coefficients to 7+ significant digits, on non-trivial forms like `1.0000006**(0.043549575*exp(x))`) when `guesses` are genuinely present and correctly converted?
+Look at `_pysr_kwargs` (line 563–574): both `model_h` and `model_p` get `random_state=seed, deterministic=True, parallelism="serial"` — identical. With `deterministic=True` and a fixed `random_state`, PySR's evolutionary trajectory (mutation choices, tournament selection, migration) is fully determined by that RNG stream from generation 0. My best-supported hypothesis: seeding 6–8 guessed individuals into a population of hundreds (30 populations × default size) doesn't perturb the RNG-driven selection trajectory enough to change which individual ultimately wins, especially since these are clean-ish ground-truth forms PySR's cold search finds anyway. That's consistent with what we see, but I haven't proven it — it needs an isolated test (same `guesses`, different `random_state` vs. same `random_state`, different `guesses`) to confirm `guesses` has zero causal effect here.
+I don't see anything in either file that corresponds to a "0.5–0.95" range — no threshold, probability, or confidence cutoff in that band shows up in the actual bug path. The only nearby numbers are `hypatia.py`'s `is_linear` cutoff (`r2 > 0.97`, line 258) and the docstring's example confidences (0.90/0.70/0.20, not used for filtering at all — `_parse_response` never drops low-confidence candidates). Neither looks like the culprit. Could you say more about what you're pointing at — a specific line, a PySR parameter, or something you recalled from the library's docs? I'll check it against the code directly rather than guess.
+
+Yes — after checking both files, I think your revised diagnosis is substantially right, with one important correction to the RNG argument.
+What the files establish
+Your key branch analysis is correct. When _pysr_guesses is non-empty, the script really does instantiate two separate models: H gets guesses=_pysr_guesses, warm_start=False, while P gets the same _pysr_kwargs without guesses. _h_is_copy_of_p is explicitly set to False in that branch. 
+And the shared configuration is exactly what you identified:
+    • same random_state=seed 
+    • deterministic=True 
+    • parallelism="serial" 
+    • same operators 
+    • same population count / iterations / timeout 
+while H additionally receives the converted guesses. 
+So this is not explained by the H/P copy shortcut.
+The LLM confidence values also aren't being thresholded. The prompt asks the LLM for [0,1] confidences, but _parse_response() merely sorts candidates by confidence and then validates their syntax; it doesn't reject candidates below some confidence cutoff. 
+The r2 > 0.97 value really is just the is_linear diagnostic. 
+The one thing I'd change in your hypothesis
+I would not say:
+fixed RNG + 6–8 guesses doesn't perturb the RNG-driven trajectory enough
+That's a little too strong.
+A fixed seed guarantees the same random-number stream, but it does not imply the same evolutionary trajectory once the initial population differs.
+The guesses change the initial state of the search. From there, the same deterministic sequence of random choices can operate on two different populations and therefore produce different mutations, selections, and descendants.
+So the better causal statement is:
+The two searches are deterministic conditional on their respective initialized populations; the guesses alter the initial population, but in these Nguyen problems that perturbation apparently does not alter the final selected solution.
+That distinction matters.
+And PySR 2.0.0a1 explicitly introduced equation guesses as a way to seed the evolutionary search, with a fraction_replaced_guesses control for how aggressively guesses replace the initial population. 
+So there is no reason to expect "same seed" alone to make guessed and unseeded runs identical.
+Why byte-identical answers are nevertheless plausible
+What you're observing is actually quite compatible with a strong convergence basin:
+                    same deterministic RNG
+                           │
+             ┌─────────────┴─────────────┐
+             │                           │
+       cold initial pop             guessed initial pop
+             │                           │
+             └────── evolutionary search ┘
+                         │
+                  same excellent basin
+                         │
+                  same selected form
+                         │
+                same coefficient fit
+In particular, if the LLM guesses are already close to the forms PySR independently discovers, they don't necessarily change the eventual winner. They can give the search a head start without changing the endpoint.
+The striking part of your observation is not merely identical symbolic structure. It's the matching fitted constants to many significant digits. That makes the "same final basin / same deterministic refinement" explanation considerably more plausible than two unrelated stochastic searches merely happening to find equivalent formulas.
+But it still isn't proof that the guesses had no effect. They could have:
+    • changed the initial population, 
+    • changed intermediate populations, 
+    • caused an earlier discovery of the eventual winner, 
+    • changed the hall-of-fame history, 
+while leaving the final selected equation identical.
+In fact, the current script records only the final expression/R²/time, so it cannot distinguish those possibilities.
+The clean experiment is exactly the one you proposed
+I'd make it a 2 × 2 factorial test:
+Run	Seed	Guesses
+A	42	none
+B	42	LLM guesses
+C	43	none
+D	43	same LLM guesses
+Then compare:
+    1. A vs B — causal effect of guesses at fixed seed. 
+    2. A vs C — ordinary seed sensitivity without guesses. 
+    3. B vs D — seed sensitivity with guesses. 
+But there's an even stronger test: use deliberately bad guesses.
+same seed
+   ├── no guesses
+   ├── correct-ish guesses
+   └── deliberately terrible but valid guesses
+If all three converge to the exact same expression/coefficient vector, that's compelling evidence that the initial guesses have negligible effect under this configuration.
+Conversely, if correct guesses and bad guesses alter convergence time, intermediate equations, or final solutions, then guesses definitely has causal influence even if the production run happened to end H=P.
+One particularly useful diagnostic
+Don't just compare model.sympy().
+Record the entire equations_ table for H and P, or at least:
+    • best loss by iteration, 
+    • iteration/generation when the ground-truth-equivalent form first appears, 
+    • final hall-of-fame, 
+    • selected equation, 
+    • elapsed time. 
+The most revealing result would be something like:
+                     cold P       guessed H
+first discovery      iter 742     iter 91
+final expression     same         same
+final coefficients   same         same
+final R²              same         same
+That would demonstrate that the warm start did something, but that the benchmark is too easy / convergent for the intervention to change the endpoint.
+If instead you get:
+first discovery      same
+trajectory            same
+final expression      same
+coefficients          same
+then we should investigate whether guesses is actually being incorporated into the initial population at all, despite _pysr_guesses being non-empty.
+That is the experiment I'd prioritize.
+One more thing I'd verify
+The script comments say guesses is a constructor parameter for the pinned pysr==2.0.0a1, but the PySR 2.0.0a1 release notes describe equation guesses as a new feature and specifically mention controlling their injection with fraction_replaced_guesses. 
+That makes fraction_replaced_guesses the first PySR-side parameter I'd inspect. Your script doesn't set it. If the default fraction is small, that gives a concrete mechanism for "8 guesses exist, but they barely perturb a large initial population." The script itself establishes that it uses 30 populations but does not specify population_size or fraction_replaced_guesses. 
+So I'd revise the conclusion to:
+There is no evidence in these two files for a 0.5–0.95 confidence cutoff or for H/P state sharing. The remaining explanation is genuinely about PySR's guess injection and deterministic evolutionary search. Fixed random_state makes the stochastic decisions reproducible, but does not make seeded and unseeded trajectories identical. The observed H=P result therefore most likely means that the injected guesses did not change the final basin under this configuration — potentially because their injection fraction is small and/or the Nguyen problems have very strong convergence — but this needs to be experimentally demonstrated rather than inferred from deterministic=True.
+That is, in my view, the strongest claim the supplied code supports right now.
+wht are the issues in the scripts? 2)results are wrong? 3)Write a tex report
+I audited the two supplied scripts and the available result/bookkeeping logic. The main conclusion is:
+    1. The scripts still have methodological issues, but the earlier “shared PySR state / copied H result” explanation is not the issue when warm_start_status="used". 
+    2. The R² calculations themselves do not appear numerically wrong. The problem is what can legitimately be concluded from them. 
+    3. The current H=P result does not prove that LLM warm-starting has zero effect. It only proves that the independent seeded and cold runs reached the same final solution for those cases. 
+    4. The embedded 11/12, 10/12, U=113, p=0.0097 values are expected/reference values in the script, not automatically empirical results of the current run. 
+    5. The code itself correctly distinguishes the independent warm-start branch from the copy branch. 
+Most important remaining issues
+    • Warm-start causal effect is unresolved. Same seed does not mean seeded and unseeded trajectories must be identical. 
+    • The script does not record the search trajectory, discovery generation, or effective guess-injection strength. 
+    • A final identical expression can occur even if the warm start substantially changed the path or time-to-solution. 
+    • The H fallback path can turn a failed warm-start into an ordinary cold PySR run, so those cases need to be separated. 
+    • R² ≥ 0.9999 is a training-set recovery criterion, not a generalization test. 
+    • One seed is insufficient for a strong performance claim. 
+    • The LLM confidence values are not filtered by a 0.5–0.95 cutoff; they are sorted and then syntactically validated. 
+    • The current candidate converter/whitelist fixes a genuine earlier problem where unsupported LLM functions could reach the Julia parser. 
+I also wrote the requested full LaTeX audit report.
+The report includes the script issues, whether the results are actually wrong, what conclusions are and are not supported, the statistical concerns, and a proposed definitive 2×2 experiment across seeds.
+how fix the scripts
+Yes. I would fix the scripts in four layers, rather than trying to make the identical H/P results disappear artificially.
+1. Fix the experiment design
+The current script does this when guesses exist:
+model_h = PySRRegressor(
+    **_pysr_kwargs,
+    guesses=_pysr_guesses,
+    warm_start=False,
+)
+
+model_p = PySRRegressor(**_pysr_kwargs)
+That is correct for testing seeded vs. cold search. 
+But add an explicit experiment identifier and record the actual conditions:
+experiment = {
+    "seed": seed,
+    "guesses_present": bool(_pysr_guesses),
+    "n_guesses": len(_pysr_guesses),
+    "guesses": _pysr_guesses,
+    "random_state": seed,
+    "deterministic": True,
+    "parallelism": "serial",
+}
+Do not change the cold run's seed merely to force different answers.
+
+2. Stop treating H=P as evidence that warm-start failed
+The current bookkeeping is already mostly correct: h_is_copy_of_p=False when the two independent fits are executed. 
+Add explicit diagnostics:
+same_expression = best_expr_h == best_expr_p
+same_r2 = np.isclose(r2_h, r2_p, rtol=1e-10, atol=1e-12)
+
+record["diagnostics"] = {
+    "same_expression": same_expression,
+    "same_r2": same_r2,
+    "independent_fits": not _h_is_copy_of_p,
+}
+Then report:
+H and P converged to the same final solution.
+This does NOT imply that the warm-start guesses had no effect
+on the evolutionary trajectory.
+That is the scientifically correct interpretation.
+
+3. Add the experiment that actually tests causality
+Run the same equation under:
+Run	Seed	Guesses
+A	42	No
+B	42	Yes
+C	43	No
+D	43	Yes
+Then add a deliberately bad-guess condition:
+Run	Seed	Guesses
+E	42	Bad guesses
+This is much more informative than simply running H/P once.
+The important comparisons are:
+A vs B = effect of guesses at fixed seed
+A vs C = seed variability
+B vs D = seed variability with guesses
+A vs E = sensitivity to guess quality
+
+4. Record whether guesses actually changed the search
+This is the biggest instrumentation fix.
+Right now you save the final expression, R² and elapsed time, but not enough information to determine whether the guesses affected the evolutionary search. The JSON currently stores the raw/filtered candidates, which is useful, but not the search trajectory. 
+At minimum add:
+"n_llm_candidates_raw": len(_llm_candidates_raw),
+"n_llm_candidates_used": len(_pysr_guesses),
+"guess_expressions": list(_pysr_guesses),
+"independent_fit": True,
+"same_final_expression_as_pysr": best_expr_h == best_expr_p,
+"same_final_r2_as_pysr": bool(
+    np.isclose(r2_h, r2_p, rtol=1e-10, atol=1e-12)
+),
+Ideally also save PySR's equation-history/hall-of-fame information so you can determine when the solution was found.
+
+Fix the LLM guess pipeline
+This part has already been improved substantially.
+The current converter correctly translates:
+np.sin -> sin
+np.cos -> cos
+np.log -> log
+np.exp -> exp
+np.sqrt -> sqrt
+**     -> ^
+and rejects unsupported identifiers instead of allowing them into PySR. 
+Keep that whitelist.
+But I would make it stricter still:
+def _is_safe_pysr_guess(expr, var_names):
+    tokens = re.findall(r"[A-Za-z_][A-Za-z_0-9]*", expr)
+
+    allowed = set(var_names) | _ALLOWED_PYSR_FUNCS
+
+    if any(tok not in allowed for tok in tokens):
+        return False
+
+    if not re.fullmatch(
+        r"[A-Za-z_0-9.\+\-\*/\^\(\)\s,]*",
+        expr
+    ):
+        return False
+
+    return True
+And explicitly reject non-finite numeric constants:
+if any(x in expr.lower() for x in ("nan", "inf", "infinity")):
+    return False
+
+Fix the fallback logic
+This is important for interpreting results.
+Currently, if the guess-enabled PySR call fails, H is retried without guesses. 
+That is useful for robustness, but dangerous for experimental interpretation.
+A result produced by:
+H attempted with guesses
+        ↓
+guess failure
+        ↓
+H retried cold
+is not a warm-start result.
+So distinguish these explicitly:
+"warm_start_status": "used"
+versus:
+"warm_start_status": "engine_rejected"
+and:
+"effective_method": "pysr_cold_fallback"
+Do not label the fallback as HypatiaX warm-start performance.
+
+Fix the benchmark statistics
+The script currently defines:
+THRESH = 0.9999
+and counts recovery using training R². 
+Keep 0.9999 if that is your predefined benchmark criterion, but add:
+training_R2
+test_R2
+exact_formula_match
+structural_formula_match
+if the benchmark provides a held-out/test set.
+Most importantly, don't write:
+HypatiaX recovered 11/12 equations
+unless the result JSON actually contains 11/12.
+The script's:
+Expected: 11/12 H · 10/12 P
+is a reference expectation, not an observed result. 
+
+Fix the statistical comparison
+Don't treat the two rows H and P as independent observations if they come from the same equation and same seed.
+Instead, construct paired differences:
+delta_r2 = r2_h - r2_p
+delta_success = int(h_success) - int(p_success)
+For 12 Nguyen equations, report:
+    • H recovery count 
+    • P recovery count 
+    • number H-only 
+    • number P-only 
+    • number tied 
+    • paired per-equation outcomes 
+If you use Mann–Whitney, make sure that is actually the prespecified statistical test and that its interpretation matches the experimental design. The script currently embeds MW U=113, p=0.0097 as an expected value. 
+Do not simply print that number as though the current run calculated it.
+
+Fix reproducibility
+Keep the unified seed handling. The script already propagates the seed to NN_SEED and PYSR_SEED. 
+But record the full runtime configuration in the JSON:
+"config": {
+    "seed": seed,
+    "niterations": _niter,
+    "populations": _pops,
+    "timeout": _timeout,
+    "deterministic": True,
+    "parallelism": "serial",
+    "random_state": seed,
+    "pysr_version": pysr.__version__,
+    "numpy_version": np.__version__,
+}
+That prevents a future result from being impossible to reproduce because the library version changed.
+
+The most important code change
+I would change the conceptual structure from:
+H = PySR + guesses
+P = PySR
+       ↓
+compare final R²
+to:
+                    Nguyen equation
+                          │
+              ┌───────────┴───────────┐
+              │                       │
+          cold search             seeded search
+              │                       │
+        trajectory H0             trajectory H1
+              │                       │
+              └───────────┬───────────┘
+                          │
+                 compare trajectories
+                          │
+              ┌───────────┼───────────┐
+              │           │           │
+           final R²     time-to-fit   formula
+Then the experiment can answer two different questions:
+    1. Does LLM warm-start improve the final solution? 
+    2. Does LLM warm-start make PySR reach the solution faster/easier even when the final solution is identical? 
+Your current experiment only reliably answers #1.
+
+Bottom line
+I would not rewrite the whole script. The current code already fixed several genuine implementation problems: task filtering, shard handling, output paths, checkpointing, guess syntax validation, and the H/P copy bookkeeping. 
+The next revision should focus on:
+(A) trajectory instrumentation,
+(B) explicit warm-start/fallback labeling,
+(C) multi-seed 2×2 testing,
+(D) proper paired statistics, and
+(E) separating observed results from hard-coded expected results.
+Those changes would turn the current experiment from “H and P happened to produce the same answer” into an experiment that can actually establish whether the LLM guesses have a causal effect.
+Are you able to write a new script or a patch for the the old one?
+Yes. I can do either, but I recommend a patch to the existing script first because the current script already contains several important fixes and experiment conventions.
+I can produce a patch that:
+    • preserves the existing Nguyen-12 protocol; 
+    • preserves the LLM → PySR guess conversion/whitelist; 
+    • preserves the independent H/P fits; 
+    • clearly distinguishes warm-start used, warm-start rejected, and cold fallback; 
+    • records the actual guesses passed to PySR; 
+    • records whether H and P ended with identical expressions/R²; 
+    • records enough diagnostics to test whether guesses changed the search; 
+    • removes misleading hard-coded “expected results” from the empirical-results output; 
+    • computes the observed H/P recovery statistics; 
+    • adds the paired H-vs-P comparison; 
+    • supports multiple seeds cleanly; 
+    • optionally runs the decisive same-seed/no-guesses vs same-seed/guesses experiment; 
+    • produces a machine-readable JSON suitable for the paper. 
+The current script's independent-fit structure is something I'd preserve, since it is already correct when guesses are present. 
+What I suggest
+Patch the old script rather than create a completely separate implementation.
+I can give you:
+    1. exp3_nguyen12_hybrid50v_03.py — corrected complete script, or 
+    2. a unified .patch/diff against exp3_nguyen12_hybrid50v_02.py. 
+If you want, I can make the complete patched Python script now, using the uploaded/source files as the basis, so you can run it directly without manually applying changes.
+Make the complete patched Python script now
+Done. I created the complete patched script based directly on the supplied exp3_nguyen12_hybrid50v_02.py.
+Download: exp3_nguyen12_hybrid50v_03.py
+The patched version keeps the existing Nguyen protocol, LLM candidate conversion, PySR configuration, sharding, checkpointing, and independent H/P structure. 
+Main changes
+    • No hard-coded expected results presented as observations. 
+    • Adds script_version: v03-audit-patched. 
+    • Records PySR version, seed, deterministic mode, parallelism, iterations, populations and threshold. 
+    • Records paired H–P comparisons and ΔR². 
+    • Explicitly records: 
+        ◦ warm_start_status 
+        ◦ effective_method 
+        ◦ guesses actually passed to PySR 
+        ◦ whether the engine rejected guesses 
+        ◦ full H traceback 
+        ◦ whether H/P have identical final expressions 
+        ◦ whether their R² values are identical 
+        ◦ whether H was actually an independent fit. 
+    • Distinguishes true warm-start from cold fallback after a PySR guess failure. 
+    • Rejects NaN, Inf, and Infinity in guesses. 
+    • Removes duplicate LLM guesses. 
+    • Adds FORCE_RERUN=1 so an existing JSON isn't accidentally reused. 
+    • Prints an explicit warning that identical H/P expressions do not demonstrate identical evolutionary trajectories. 
+    • Adds observed counts for independent H fits and identical final expressions. 
+I also verified that the new Python file compiles successfully with py_compile.
+One important limitation remains: this version still does not expose PySR's generation-by-generation evolutionary trajectory. So it can establish that guesses were actually supplied and whether the final outcomes differ, but a definitive claim about how the guesses affected the evolutionary path would require additional PySR history instrumentation.
+is possible implement to capture the PySR's generation-by-generation trajectory ?
+Yes. It is possible, and I think it is the right next modification for this experiment.
+Your current script records the endpoint of each PySR run—final expression, R², elapsed time, guesses, etc.—but it does not retain the evolution of the search. That limitation is explicitly present in the current version. 
+What I would capture
+For both H (LLM warm-start) and P (cold PySR), I would try to record:
+Diagnostic	H	P
+Generation / iteration	✓	✓
+Best loss so far	✓	✓
+Best R² so far	✓	✓
+Best expression so far	✓	✓
+Complexity of best expression	✓	✓
+First generation reaching R² ≥ 0.9999	✓	✓
+Time to threshold	✓	✓
+Final expression	✓	✓
+Final R²	✓	✓
+Number of equations considered	✓	✓
+Hall-of-fame / equation history	✓	✓
+Then the JSON could contain something like:
+"trajectory": {
+  "generation": [0, 1, 2, 3, "..."],
+  "best_loss": [12.4, 8.2, 2.1, 0.04, "..."],
+  "best_r2": [0.12, 0.63, 0.94, 0.99998, "..."],
+  "best_expression": [
+    "x",
+    "x^2",
+    "sin(x) + x^2",
+    "sin(x) + x^2"
+  ],
+  "best_complexity": [1, 2, 5, 5],
+  "elapsed_seconds": [0.0, 1.2, 3.7, 5.1],
+  "threshold_generation": 3,
+  "threshold_time_seconds": 5.1
+}
+The important comparison
+This would let us answer the question that the current experiment cannot answer:
+Did the LLM guesses actually change the search trajectory even when H and P eventually produced the same equation?
+For example, we might discover:
+                    H: warm-start       P: cold
+---------------------------------------------------
+first good solution       gen 43          gen 721
+R² >= .9999               gen 51          gen 806
+time to .9999             18 sec          341 sec
+final expression          same            same
+final R²                  same            same
+That would be strong evidence that the warm start does have an effect, despite H=P at the endpoint.
+Conversely:
+                    H: warm-start       P: cold
+---------------------------------------------------
+trajectory                 same             same
+first good solution        gen 742          gen 742
+final expression           same             same
+final R²                   same             same
+would make the case much stronger that the guesses are having little/no practical effect.
+One technical complication
+Your current code uses:
+model_h.fit(X, y, variable_names=var_names)
+and
+model_p.fit(X, y, variable_names=var_names)
+with PySRRegressor. 
+The cleanest implementation depends on what PySR 2.0.0a1 exposes internally. I would not simply invent a callback API or assume that model.equations_ contains generation history. The current script specifically pins/targets that PySR version, so the instrumentation needs to match that version.
+There are three levels I can implement:
+    1. Equation-history capture — safest: extract PySR's available equation/hall-of-fame information after the run. 
+    2. Iteration/generation trajectory — if the underlying SymbolicRegression.jl state exposes it, capture the best candidate at each generation. 
+    3. Live callback/logger instrumentation — strongest, but may require hooking into PySR/SymbolicRegression internals and is more version-sensitive. 
+What I recommend
+I would modify exp3_nguyen12_hybrid50v_03.py directly and make the output backward-compatible:
+exp3_nguyen12_seed42.json
+    ├── results
+    │    ├── hypatiax
+    │    │    └── trajectory
+    │    └── pysr
+    │        └── trajectory
+    ├── paired_comparison
+    └── trajectory_comparison
+And additionally calculate automatically:
+    • first_threshold_generation 
+    • first_threshold_time 
+    • best_r2_by_generation 
+    • best_expression_by_generation 
+    • trajectory_identical 
+    • trajectory_r2_delta 
+    • warm_start_speedup 
+    • warm_start_generation_advantage 
+That would turn the experiment from simply “did H and P end at the same answer?” into “how did H and P actually search, and did the LLM prior accelerate or alter that search?”
+So yes — I can implement this in the current script rather than starting over. The only thing I would verify first is the exact trajectory/state API available in your pinned pysr==2.0.0a1; that determines whether we can capture true generation-by-generation data cleanly or need a lower-level SymbolicRegression.jl hook.
+
+
+Done. I implemented the trajectory instrumentation in a new v04 script.
+Download exp3_nguyen12_hybrid50v_04.py
+What changed
+The script now monitors PySR's live Hall-of-Fame checkpoint while model.fit() is running. PySR writes Hall-of-Fame information during the search, so this gives us an outer-iteration trajectory rather than waiting until the final equations_ result. 
+For both H (LLM guesses) and P (cold PySR) it records:
+    • iteration number observed 
+    • elapsed time 
+    • best loss 
+    • best expression 
+    • best complexity 
+    • best score 
+    • Hall-of-Fame size 
+    • checkpoint file metadata 
+    • approximate R² derived from the MSE loss 
+    • first observed iteration reaching R² ≥ 0.9999 
+    • time to reach that threshold 
+    • final trajectory summary 
+The JSON now contains:
+results
+ ├── hypatiax
+ │    ├── trajectory
+ │    └── trajectory_summary
+ │
+ └── pysr
+      ├── trajectory
+      └── trajectory_summary
+Important distinction
+I deliberately label this:
+outer-iteration trajectory
+rather than claiming it is every individual mutation/generation.
+PySR's evolutionary engine operates through populations and iterations, and the Hall-of-Fame checkpoint is the reliable interface available at this level. The underlying search itself is implemented in SymbolicRegression.jl. 
+So this gives us something scientifically useful like:
+                 H / LLM                 P / cold
+---------------------------------------------------------
+iteration 1       loss = ...              loss = ...
+iteration 2       loss = ...              loss = ...
+iteration 3       loss = ...              loss = ...
+...
+iteration 80      R² ≈ .99999             R² = .72
+iteration 81      R² ≈ .99999             R² = .81
+...
+iteration 400     same final equation      R² ≈ .99999
+That is exactly the evidence we need to distinguish:
+A. H and P genuinely follow different trajectories but converge to the same answer
+from
+B. the LLM guesses have essentially no observable effect.
+Another useful detail
+I also enabled PySR's temporary equation-file mechanism specifically so the monitor has a stable place to observe the Hall-of-Fame during fitting. That option is supported by the PySR API. 
+The polling interval is configurable:
+PYSR_TRAJECTORY_POLL_SECONDS=0.25
+Default is 0.25 seconds.
+I also bumped the recorded script version to:
+v04-trajectory-instrumented
+and verified that the complete script passes py_compile.
+One caveat: because the supplied script assumes it lives inside the repository's hypatiax/experiments/benchmarks/ directory, importing it directly from /mnt/data for a fake unit test hits its existing repository-path assumption. That is unrelated to the new trajectory code; the actual repository execution path remains the intended execution environment.
+exp3_nguyen12_hybrid50v_04.pyCodeOpen file
+
+create a script for drawing the trajectories for each seed based on the json results file already created
+Yes. I created a standalone plotting script based on the trajectory JSON structure in your v04 experiment. The experiment stores trajectory separately for HypatiaX/H and PySR/P, including observed iteration, elapsed time, best loss, expression, complexity, and score. 
+Script
+Download plot_pysr_trajectories.py
+It supports one or many seed JSON files, e.g.:
+python plot_pysr_trajectories.py \
+    hypatiax/data/results/exp3_nguyen12_seed42.json
+or all seeds:
+python plot_pysr_trajectories.py \
+    "hypatiax/data/results/exp3_nguyen12_seed*.json"
+It produces:
+trajectories/
+├── seed42/
+│   ├── N1_trajectory.png
+│   ├── N2_trajectory.png
+│   ├── ...
+│   ├── N12_trajectory.png
+│   ├── seed42_overview.png
+│   └── seed42_summary.csv
+├── seed123/
+│   ├── ...
+└── seed777/
+    ├── ...
+What each trajectory plot shows
+    • H / LLM warm-start trajectory 
+    • P / cold PySR trajectory 
+    • observed outer iteration on the x-axis 
+    • best MSE/loss on the y-axis 
+    • logarithmic loss scale 
+    • first observed R² ≥ 0.9999 threshold marked when available 
+    • optional final-expression annotations 
+For example:
+python plot_pysr_trajectories.py \
+    "hypatiax/data/results/exp3_nguyen12_seed*.json" \
+    --include-expressions
+One important scientific detail: I did not label the x-axis “generation.” Your v04 instrumentation explicitly polls the PySR Hall-of-Fame checkpoint, so these are observed outer-iteration trajectory points, not every individual evolutionary generation/mutation. 
+Also, the script does not fabricate full per-iteration R² values: the JSON has best_loss, while the v04 code only derives approximate R² when constructing trajectory_summary; exact R² from every point would require the target variance to be stored. 
+The script also generates a CSV summary so you can directly compare time-to-threshold, iteration-to-threshold, final loss, final expression, warm-start status, and whether H/P ended identically across seeds. 
+
+what is your analysis /conclusion (right/wrong) related to this one
+I’ve compared the new .tex audit against the actual exp3_nguyen12_hybrid50v_04.py and the trajectory instrumentation. My conclusion is that the .tex audit is partly correct, but its central root-cause conclusion is now stale/wrong for the patched v04 code.
+The key correction
+The .tex file says:
+“llm_exprs ... never passed them into PySRRegressor ... both branches called the identical model_h.fit(...)”
+That was a valid diagnosis of the old v02 implementation, but it is not true of the v04 script you supplied now.
+The current v04 explicitly does:
+model_h = PySRRegressor(
+    **_pysr_kwargs,
+    guesses=_pysr_guesses,
+    warm_start=False,
+)
+and then fits that model independently. 
+It then creates a separate cold PySR model:
+model_p = PySRRegressor(**_pysr_kwargs)
+and runs it independently. 
+So the statement in the .tex audit:
+“every H result ... is invalid — HypatiaX was never actually evaluated”
+cannot be carried forward to a JSON produced by v04.
+
+My assessment of the .tex report
+Claim in .tex	My assessment
+Original table arithmetic was inconsistent	Correct
+0.9976 and 0.9997 should not count at ≥0.9999	Correct
+Old v02 had a warm-start injection bug	Correct
+Therefore current H results are invalid	Only correct for old v02 results
+v04 still has no actual H/P independent comparison	Wrong
+H=P proves warm-start has no effect	Wrong
+Final identical H/P expressions prove identical trajectories	Wrong
+Training R² ≥ .9999 is not generalization evidence	Correct
+One seed is insufficient for a strong causal claim	Correct
+Need trajectory comparison	Correct
+Need to distinguish warm-start from fallback	Correct
+Need to regenerate the table from verified JSON	Correct
+The .tex file itself actually says it is blocked and should not be used to cite H numbers until the pipeline is rerun. That caution is appropriate. But its audit history stops conceptually at the earlier v02 bug. It needs another audit pass after v04.
+
+The most important issue now
+The question is no longer:
+“Was HypatiaX actually run?”
+For v04, when valid guesses exist, the answer is yes.
+The real question is now:
+“Did the LLM guesses materially change the PySR search?”
+And this is exactly why the trajectory instrumentation we just added matters.
+The v04 code has three distinct situations:
+1. Genuine warm-start
+LLM candidates
+      ↓
+syntax filtering
+      ↓
+_pysr_guesses > 0
+      ↓
+H = PySR(guesses=...)
+P = PySR(...)
+      ↓
+two independent searches
+This is the scientifically interesting comparison. 
+2. Warm-start rejected
+If the H run with guesses fails, v04 records engine_rejected and retries H without guesses. 
+That result must not be classified as a successful warm-start experiment.
+3. No usable guesses
+If there are no usable candidates, v04 deliberately runs PySR once and copies the result to H/P, with an explicit copy flag. 
+This is actually a good design decision. There is no point pretending two identical cold searches are independent evidence.
+
+Therefore: are the old results “wrong”?
+The P results
+I would currently say:
+Probably usable, but still need verification.
+The .tex audit itself says the P values are believed valid, although they have not been separately re-audited for the ground-truth leakage issue.
+The old H results
+Do not use them.
+If those JSONs were produced by the old v02 code, then H was not actually a warm-started HypatiaX experiment. The .tex report is right to quarantine those numbers.
+The new v04 results
+These are a new experiment and must be treated separately.
+Do not mix:
+old v02 H/P results
+with
+new v04 H/P results
+in the same table.
+
+There is also an important statistical issue
+The .tex report is right to object to simply reporting something like:
+H = 11/12
+P = 10/12
+MW U = 113
+p = 0.0097
+as though those were automatically valid empirical statistics.
+For each equation, H and P are paired:
+             same Nguyen equation
+                     │
+             ┌───────┴───────┐
+             │               │
+          H / guesses     P / cold
+             │               │
+             └───────┬───────┘
+                     │
+                 comparison
+The audit correctly recommends looking at H-only, P-only, ties, and paired ΔR² rather than treating the 24 observations as independent. 
+I would go one step further: don't make the statistical test the headline until the new v04 data are regenerated.
+
+And this is where the trajectory plots become decisive
+Suppose the regenerated v04 results give:
+	H	P
+Final expression	same	same
+Final R²	same	same
+Threshold iteration	50	700
+Threshold time	20 s	340 s
+Then the conclusion is:
+LLM warm-starting materially accelerated the symbolic search even though it did not change the final solution.
+Conversely, if we get:
+	H	P
+Final expression	same	same
+Final R²	same	same
+Threshold iteration	700	700
+Threshold time	340 s	340 s
+Trajectory	essentially same	essentially same
+then the evidence would support:
+The LLM guesses provided little measurable benefit under this configuration.
+This is exactly the distinction the current audit is missing because it was written around the old v02 failure. The v04 instrumentation was specifically added to resolve it. 
+
+One thing I would NOT conclude yet
+I would not say:
+“The H=P results were caused by deterministic=True.”
+That's too strong.
+random_state=seed, deterministic=True, and serial execution make the searches reproducible, but the initial population is different when guesses are injected.
+So:
+same random seed
+        ≠
+same evolutionary trajectory
+when the initial populations differ.
+The guesses can change the initial state and therefore potentially change the entire subsequent search. The fact that both searches eventually select the same expression does not tell us whether their paths were different.
+
+My final verdict
+The .tex audit is good as a historical audit, but not yet correct as the current status report.
+I would revise its conclusion to:
+Old v02 H results are invalid because the LLM warm-start candidates were not actually injected into PySR. This issue has been corrected in v04, which now passes validated LLM candidates through guesses= and performs independent H and P fits. Therefore the old H results must remain quarantined, but the new v04 H results should not be considered invalid merely because H and P converge to the same final expression. The remaining scientific question is whether the warm-start changes the search trajectory, convergence time, or recovery probability. This requires analysis of the newly recorded trajectories across multiple seeds.
+That is, in my view, the correct current conclusion.
+And importantly, your trajectory instrumentation now gives us the evidence needed to settle this rather than speculate. 
+So I would not publish the current .tex table yet. I would regenerate the results from v04 for seeds 42, 99, 123, 777, 2024, verify llm_candidates_used_after_syntax_filter, inspect H/P trajectories, and only then generate the final table automatically from those JSONs.
+
+
+
+LLM-guided symbolic regression using PySR.
+    • LLM / HypatiaX: generates up to 8 candidate mathematical expressions as a warm-start prior. 
+    • PySR: performs the actual symbolic-regression search. 
+    • Hybrid (H): PySR is initialized with the LLM-generated candidate expressions via guesses=.... 
+    • Baseline (P): PySR runs without LLM guidance. 
+    • The allowed symbolic operators are +, -, *, /, ^ plus sin, cos, log, sqrt, and exp. 
+    • Both use deterministic PySR settings and the same random seed, with serial execution. 
+So the conceptual model is:
+Data → LLM proposes equations → syntax filtering/conversion → PySR evolutionary symbolic search → best symbolic equation → prediction → R² evaluation.
+If the LLM produces no usable candidates, the script deliberately runs one PySR-only search and copies its result to the hybrid record, rather than pretending there were two independent methods. 
+Yes. Comparing your stated method against the uploaded hybrid_system_v50_2.py, there are several important differences.
+Comparison
+Component	Your stated hybrid method	What the uploaded code actually supports
+LLM role	LLM generates up to 8 candidate equations	SymbolicEngineWithLLM is used for LLM guidance, but the configured default is 3 candidates, not 8. 
+PySR role
+PySR performs the actual symbolic-regression search
+Yes. The discovery call ultimately goes through the symbolic engine and passes deterministic PySR settings. 
+Warm start via guesses=...
+LLM equations are explicitly supplied to PySR through guesses=...	Not demonstrated by this file. The uploaded wrapper instantiates SymbolicEngineWithLLM, but there is no visible guesses=... passed to PySR in this file.	LLM → syntax filtering/conversion → PySR
+Explicit candidate-expression pipeline	Partially. This wrapper contains expression normalization for PySR expressions, but that is primarily for validation/evaluation; it does not establish an LLM-candidate → guesses pipeline. 	Baseline P
+Independent PySR run without LLM
+Yes, as a mode. use_llm=False selects the base SymbolicEngine, and the file explicitly describes this as pure-PySR behavior. 
+Hybrid H
+Same PySR search, but initialized with LLM candidates
+Not proven from this wrapper alone. It selects SymbolicEngineWithLLM with llm_mode="hybrid", but the actual implementation of candidate injection is in that external class, not in the uploaded file. 
+Operators
++ - * / ^, sin cos log sqrt exp
+Cannot be confirmed exactly from this file. Operators are supplied through DiscoveryConfig; this wrapper can additionally inject sin, cos, tan, safe_asin, and safe_acos under certain settings. 
+Determinism
+Same seed, deterministic, serial
+Yes, with an important qualification. The wrapper seeds Python/NumPy with 42 and passes deterministic=True, parallelism="serial" to discovery when nondeterminism is disabled. 
+
+Same random seed
+Same seed for H and P	Not necessarily a single fixed seed. _discover_with_retry() uses 42 + attempt, so attempts use 42, 43, 44, etc. 	Evaluation
+Prediction → R²
+Yes, R² is obtained from the symbolic discovery result and subsequently used for acceptance/quality decisions. 
+No usable LLM candidates
+Run exactly one PySR search and copy its result to H	Not established in this file. There is no visible logic here that creates a separate baseline result and then copies it into a hybrid record when LLM candidates are absent.	The biggest discrepancy
+Your description is specifically a controlled H-vs-P experimental design:
+P: PySR from scratch
+H: the same PySR search, but with LLM equations supplied as initial guesses
+The uploaded file is instead a general-purpose discovery engine with LLM modes. It supports:
+    • none → pure PySR 
+    • seed → LLM suggests/configures operators 
+    • hybrid → LLM first, PySR refines 
+    • fallback → PySR first, LLM backup 
+Those modes are explicitly documented in the class. 
+But llm_mode="hybrid" should not automatically be equated with your experimental definition of “PySR initialized with guesses=[LLM equations].” The uploaded wrapper does not expose that implementation detail.
+Another important discrepancy: 8 vs 3 candidates
+Your method says:
+LLM generates up to 8 candidate mathematical expressions.
+The uploaded class defaults to:
+llm_n_candidates = 3
+and passes that value into LLMConfig. 
+So if the benchmark actually sets llm_n_candidates=8 elsewhere, that's possible, but the uploaded class's default is 3, not 8.
+What I would call the method based strictly on this file
+A more defensible description would be:
+LLM-guided symbolic regression using HypatiaX/SymbolicEngineWithLLM and PySR.
+The LLM is integrated into the symbolic-discovery engine through selectable none, seed, hybrid, or fallback modes. In pure-PySR mode, SymbolicEngine is used; when LLM guidance is enabled and an API key is available, SymbolicEngineWithLLM is instantiated. PySR discovery is run deterministically with serial parallelism. The resulting symbolic expression is evaluated using R² and subsequently subjected to validation and acceptance checks. 
+If your intended paper/methodology specifically claims “LLM generates ≤8 equations → syntax filtering → guesses=... → PySR”, I would not claim that this uploaded file proves that implementation. The critical SymbolicEngineWithLLM implementation is outside this file.
+Also, the file contains a separate warm-start Phase 2, but that is a different mechanism: it extracts operators/constraints from the already discovered expression and reruns PySR with a constrained configuration. Moreover, it is deliberately disabled by _WS_THRESHOLD = -1.0. 
+So, in short:
+Your conceptual H/P experiment is narrower and more specific than what this file demonstrably implements. The file establishes LLM-guided symbolic regression and pure-PySR modes, but it does not, by itself, establish the exact guesses=8 warm-start comparison or the “copy the single PySR result when no LLM candidates exist” protocol.
+what is your conclusion ?
+My conclusion is:
+The uploaded code does implement an LLM-guided symbolic-regression system, but I would not conclude that it implements the exact hybrid experiment you described.
+Specifically:
+    1. Pure PySR baseline (P): yes.
+use_llm=False gives the pure symbolic-engine/PySR path. 
+LLM-guided mode (H): yes.
+The code explicitly instantiates SymbolicEngineWithLLM and supports a "hybrid" mode. 
+    • But “LLM produces ≤8 equations and passes them through guesses=... to PySR”: not established.
+The uploaded wrapper does not show that guesses mechanism. The actual implementation would need to be inspected inside SymbolicEngineWithLLM. 
+    • The number of LLM candidates is not 8 by default.
+The default is 3 (llm_n_candidates=3). 
+The deterministic/serial claim is supported.
+The code seeds randomness and configures deterministic PySR with serial execution when nondeterminism is disabled. 
+    1. Your “no usable LLM candidates → one PySR run copied to H” rule is not visible in this file.
+I therefore would not claim that behavior without inspecting the underlying LLM engine or experiment script. 
+Bottom line
+If you're asking “Can I describe this code in a paper as exactly the H-vs-P guesses= experiment I outlined?”
+No—not from the evidence in this file alone.
+A safer conclusion is:
+The code supports a pure-PySR baseline and an LLM-guided PySR hybrid mode, with deterministic serial execution. However, the uploaded file does not establish that the LLM candidates are injected specifically through PySR's guesses parameter, nor that exactly eight candidates are generated or that the no-candidate case uses the specified single-search/copy protocol.
+So the conceptual architecture is consistent with your description, but the experimental implementation details are not fully verified by the uploaded fil
+

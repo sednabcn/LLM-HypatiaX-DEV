@@ -1,0 +1,552 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage[table]{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{fancyvrb}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+\newcommand{\rtwo}{$R^2$}
+\newcommand{\Rsq}{R^{2}}
+\newcommand{\HSL}{\textsc{HyperSymLoop}}
+\newcommand{\EHD}{\textsc{EHSDeFi}}
+\newcommand{\open}{\textcolor{red!60!black}{\textbf{[OPEN --- needs code/data investigation]}}}
+\newcommand{\stale}{\textcolor{orange!80!black}{\textbf{[STALE --- reconciliation only]}}}
+\newcommand{\textfix}{\textcolor{green!40!black}{\textbf{[TEXT --- pure writing fix]}}}
+\newcommand{\done}{\textcolor{blue!60!black}{\textbf{[ALREADY RESOLVED --- doc propagation only]}}}
+
+\newcommand{\loc}[1]{\textit{Location:} #1\par}
+\newenvironment{evidence}
+  {\begin{quote}\small\ttfamily}
+  {\end{quote}}
+
+\title{\bf Wrong-Section Report\\\large Thirteen Confirmed Discrepancies, Cross-Referenced to Source}
+\author{}
+\date{Compiled 2026-07-31}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+This report locates, quotes, and sub-labels every wrong or internally
+inconsistent section identified in the three manuscript files
+(\texttt{jmlr\_paper\_main.tex}, \texttt{supp\_benchmark\_report.tex},
+\texttt{supp\_routing\_improvements.tex}). Each numbered section below
+corresponds one-to-one with the issue of the same number in the audit
+fix list, gives the exact file/label/line location of the conflicting
+statements, quotes the conflicting text verbatim, and states the category
+of fix required.
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+% =======================================================================
+\section{Nguyen-12 Table Success-Count Arithmetic}
+\label{issue:1}
+% =======================================================================
+\stale\ (partial arithmetic fix) \open\ (per-equation values unverified)
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{subsec:nguyen12-benchmark-standard-sr-suite}
+``Nguyen-12 Benchmark (Standard SR Suite)'', \texttt{tab:nguyen12}, l.\,2432--2520.}
+
+\subsection*{What is wrong}
+The table's printed \emph{Success} row and its own per-equation cells
+disagree with each other under the table's own stated criterion
+(``Bold: extrap \rtwo\ $\geq 0.9999$''):
+
+\begin{evidence}
+Success (\rtwo$\ge$0.9999) \quad P: 10/12 (83.3\%) \quad H: 11/12 (91.7\%) \quad N: 0/12 (0\%)
+\end{evidence}
+
+A hand recount of the twelve bolded per-equation extrapolation cells gives:
+\textbf{PySR-only (P): 8/12}, not 10/12 (N-3 and N-7 are not $\geq0.9999$ but
+are not counted as passes, and no other cell was miscounted --- the printed
+total simply does not equal the number of bolded cells). \textbf{HypatiaX
+(H): 7/12}, not 11/12 --- two cells (N-3 $=0.9976$, N-10 $=0.9997$) are
+typeset in \textbf{bold} despite being below the table's own $\geq0.9999$
+threshold, and removing them from the bolded/passing count leaves 7, not 11.
+A third, independently conflicting figure appears in the caption itself:
+
+\begin{evidence}
+Strict recovery ($\ge 0.9999$) yields 4/12 (33.3\%); the 91.7\,\% figure uses
+the 4-decimal rounding convention.
+\end{evidence}
+
+Three different denominators for the same nominal quantity --- 10/12 (row),
+11/12 (row, also restated in prose at l.\,220, 2503), and 4/12 (caption) ---
+appear in the same table environment and do not reconcile against each other
+or against the twelve visible per-equation cells.
+
+\subsection*{Fix required}
+The Success row is fixable by hand re-tally against the table's own printed
+cells. However, per the fix-list's caution, the per-equation \rtwo\ values
+themselves have not been independently re-verified against the raw result
+JSON, so a complete fix should regenerate both the per-equation cells and
+the summary row from source, not merely re-tally the printed numbers.
+
+% =======================================================================
+\section{Supp.\ Table 4 (30/30) vs.\ Abstract/Conclusion (27/30) on \HSL{} (M4)}
+\label{issue:2}
+% =======================================================================
+\stale\ --- classic same-run desync, no code investigation needed
+
+\loc{\texttt{supp\_benchmark\_report.tex}, \texttt{tab:overall}
+(``Six-Method Aggregate Performance,'' l.\,394--423) vs.\ its own Abstract
+(l.\,140--141).}
+
+\subsection*{What is wrong}
+The Abstract states:
+\begin{evidence}
+\HSL{} achieves 100\% recovery at all \emph{noisy} conditions ($\sigma > 0$)
+and 90.0\% (27/30 equations) under the strict noiseless protocol
+($\Rsq > 0.9999$).
+\end{evidence}
+But \texttt{tab:overall}, in the same document, prints:
+\begin{evidence}
+\HSL\,(M4)\quad Core\quad 30/30 (v2)$^\dagger$\quad 0.999+\quad 11.4\,s
+\end{evidence}
+with a footnote reading ``\HSL{} v1 showed 26/30 due to the Newton
+measurement bug; v2 achieves 30/30.'' The table's 30/30 and the abstract's
+27/30 are both presented as the current (v2, corrected) figure for the same
+method on the same noiseless protocol, in the same document.
+
+\subsection*{Fix required}
+Regenerate \texttt{tab:overall}'s \HSL{} row from whichever run actually
+produced the 27/30 figure quoted in the abstract, and confirm both numbers
+come from the same run before republishing either.
+
+% =======================================================================
+\section{\EHD{} (M3) Runtime: 20.2\,s vs.\ 841.4\,s}
+\label{issue:3}
+% =======================================================================
+\open\ --- needs live code/data investigation
+
+\loc{\texttt{supp\_benchmark\_report.tex}, \texttt{tab:overall} l.\,413 vs.\
+\texttt{tab:time\_noise} (``Sweep Results: Noise Robustness'') l.\,571--584.}
+
+\subsection*{What is wrong}
+\texttt{tab:overall} reports \EHD{}'s (M3) average runtime as:
+\begin{evidence}
+\EHD\,(M3)\quad Core\quad 29/30 (96.7\%)\quad 0.999993\quad 20.2\,s
+\end{evidence}
+\texttt{tab:time\_noise}, covering the same method at $\sigma=0\%$ (the same
+noiseless condition), reports:
+\begin{evidence}
+0\% \quad 841.4 \quad 11.1 \quad \textbf{75.8$\times$}
+\end{evidence}
+The abstract's own claim that ``\EHD{} offers exact symbolic
+interpretability; \HSL{} is $1.5$--$76\times$ faster depending on noise
+level'' corroborates the $841.4$\,s figure (75.8$\times$ vs.\ M4's 11.1\,s),
+not the 20.2\,s figure.
+
+\subsection*{Fix required}
+Trace which script/run produced 20.2\,s. If it reflects different
+hardware/config, that must be stated explicitly; if it is simply wrong, it
+must be regenerated from the same raw timing logs that produced
+\texttt{tab:time\_noise}.
+
+% =======================================================================
+\section{CI / SD Statistical Incompatibility}
+\label{issue:4}
+% =======================================================================
+\open\ --- needs live code/data investigation
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{subsec:fivesystem-comparative-analysis-feynman-}
+``Five-System Comparative Analysis (Feynman Core-15),'' \texttt{tab:five\_systems\_full}
+and \texttt{thm:five\_system\_hierarchy}, l.\,1213--1259 vs.\
+\texttt{supp\_benchmark\_report.tex}, Appendix G ``Statistical Test
+Details,'' \texttt{app:statistical\_tests}, l.\,1423--1471.}
+
+\subsection*{What is wrong}
+The main paper's Result box states:
+\begin{evidence}
+neural networks exhibit mean error 1231\% (95\% CI: [1087\%, 1456\%], $n=13$)
+\end{evidence}
+That gives a CI half-width of $\approx 185$ percentage points around a mean
+of 1231\%. Appendix G, describing the same neural-network distribution,
+states:
+\begin{evidence}
+Neural Network: Mean = 1231\%, Median = 86.7\%, SD = 1842\%,
+Range = [12.3, 5847\%] (CORRECTED)
+\end{evidence}
+A standard 95\% CI on the mean with $n=13$ and $\mathrm{SD}=1842\%$ has a
+half-width of roughly $t_{0.975,12}\cdot 1842/\sqrt{13} \approx 2.18 \times
+511 \approx 1114$ percentage points --- almost six times narrower a CI is
+reported in the main text than the disclosed SD supports.
+
+\subsection*{Fix required}
+Re-run whatever CI computation produced Table 1's figure and check it
+against Appendix G's SD; the CI was very likely computed with the wrong SD,
+wrong $n$, or an undisclosed non-standard method.
+
+% =======================================================================
+\section{``68 of 74'' Cited Without Seed/Split}
+\label{issue:5}
+% =======================================================================
+\textfix\ --- pure writing/citation fix, underlying data is consistent
+
+\loc{\texttt{jmlr\_paper\_main.tex}, Abstract l.\,222--223 and
+\S\texttt{subsec:fivestage-routing-architecture-overview} l.\,1011,
+referencing Table~\texttt{tab:timing\_full} (\S\texttt{subsec:runtime-analysis}).}
+
+\subsection*{What is wrong}
+Both the abstract and \S\texttt{subsec:fivestage-routing-architecture-overview}
+cite ``68 of 74'' LLM-routed tasks with no seed or split attached:
+\begin{evidence}
+A previously reported $1.73\times$ median speedup of HypatiaX over
+neural-network inference on LLM-routed cases (68 of 74) does not reproduce\ldots
+\end{evidence}
+\begin{evidence}
+Stage~3 (optional): LLM proposes candidate expressions; on the v3.0 DeFi
+benchmark, 68 of 74 tasks are routed to this path.
+\end{evidence}
+But Table~\texttt{tab:timing\_full} shows \emph{two different} rows with exactly
+68/74 LLM-routed tasks --- \texttt{v3c seed123} (68/74) and \texttt{PCA
+seed42} (68/74) --- which are different seeds under different splits with
+different absolute runtimes. ``68 of 74,'' as written, does not identify
+which of the two.
+
+\subsection*{Fix required}
+Attach the specific seed and split (e.g.\ ``68 of 74 under v3c seed 123'' or
+``\ldots PCA seed 42'') wherever ``68 of 74'' is cited. No table value needs
+to change.
+
+% =======================================================================
+\section{``v3c'' vs.\ ``PCA-directed'' Never Defined as Two Variants}
+\label{issue:6}
+% =======================================================================
+\textfix\ --- pure writing fix, both variants' numbers are real
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{subsec:extrapolation-protocol}
+(\texttt{sec:split}, l.\,678--709) vs.\ Table~\texttt{tab:timing\_full} /
+Table~\texttt{tab:timing\_llm\_routed\_full} captions (l.\,1630--1636).}
+
+\subsection*{What is wrong}
+\S\texttt{subsec:extrapolation-protocol} (``Extrapolation Protocol'') defines
+exactly \emph{one} split methodology:
+\begin{evidence}
+To rigorously assess out-of-distribution generalisation, we employ a
+\textbf{PCA-directed aggressive extrapolation split}: \ldots
+\end{evidence}
+No ``v3c'' variant is introduced or distinguished anywhere in this section.
+Yet Table~\texttt{tab:timing\_full}'s caption (and every runtime table
+downstream) treats \texttt{v3c} and \texttt{PCA} as two distinct,
+sibling splits:
+\begin{evidence}
+Rows are grouped by split (v3c = aggressive 40/60; PCA = PCA-directed 40/60)\ldots
+\end{evidence}
+A reader following \S\texttt{subsec:extrapolation-protocol} alone has no way to
+learn that ``v3c'' and ``PCA-directed'' name two different, non-identical
+protocols rather than being two names for the same one.
+
+\subsection*{Fix required}
+Add an explicit definition of both variants (what specifically distinguishes
+\texttt{v3c}'s ``aggressive'' routing from the PCA-directed routing already
+described) to \S\texttt{subsec:extrapolation-protocol}, since the underlying
+runs for both are real.
+
+% =======================================================================
+\section{Remark on Difficulty-Tier Counts: $24/27/20 \to 24/29/21$ vs.\ ``+3 Hard''}
+\label{issue:7}
+% =======================================================================
+\textfix\ --- pure text/arithmetic fix
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{subsec:difficulty-classification}
+unlabeled remark following the Easy/Medium/Hard definitions, l.\,656--660.}
+
+\subsection*{What is wrong}
+The tier definitions immediately above state Easy $n=24$, Medium $n=29$,
+Hard $n=21$ (totalling 74). The remark directly below reads:
+\begin{evidence}
+An earlier version of this benchmark comprised 71 tasks (Easy=24, Medium=27,
+Hard=20). The current benchmark (v3.0, 74 tasks) adds three additional hard
+cases in multi-asset risk: correlated portfolio VaR, component ES, and
+multi-collateral LTV.
+\end{evidence}
+$71 + 3 = 74$ is correct in total, but $24/27/20 \to 24/29/21$ is a change
+of $+0/+2/+1$, not $+0/+0/+3$. The remark's claim that all three additions
+are Hard-tier is arithmetically inconsistent with the tier counts stated one
+paragraph above it.
+
+\subsection*{Fix required}
+Either the remark's ``adds three additional hard cases'' is wrong (should
+read something like ``+2 Medium, +1 Hard''), or the Medium/Hard counts in
+\S\texttt{subsec:difficulty-classification} are wrong. Purely a text
+correction; no code or data investigation implicated.
+
+% =======================================================================
+\section{Figure 3 Caption ``DeFi AMM (Hard) $=-78.04$'' Untraceable, Plus Impermanent-Loss Tier Clash}
+\label{issue:8}
+% =======================================================================
+\open\ --- confirmed known-bad figure/caption, fix source already identified
+
+\loc{\texttt{jmlr\_paper\_main.tex}, Figure~\texttt{fig:r2\_heatmap\_clipped}
+caption (\texttt{fig18\_r2\_heatmap\_improved}, l.\,1287--1300) vs.\
+Table~\texttt{tab:llm\_ablation} (l.\,1871--1897) vs.\ the Medium-tier
+definition (l.\,632--634).}
+
+\subsection*{What is wrong}
+The Figure~3 caption reads:
+\begin{evidence}
+HypatiaX is not uniformly better than PySR-only: it improves on Chemistry
+(Easy: $0.90$ vs.\ $-12.56$) but produces $-\infty$ --- a genuine evaluation
+crash, not merely a poor fit --- on DeFi AMM (Hard) and Physics (Hard),
+where PySR-only instead returns a finite (if poor, $-78.04$, or perfect,
+$1.00$) value.
+\end{evidence}
+Cross-checking against Table~\texttt{tab:llm\_ablation} (explicitly stated to
+underlie this figure): no ``DeFi AMM'' equation shows PySR-only $=-78.04$
+at any range (Constant Product P: $0.9982$--$0.9996$; Impermanent Loss P:
+$0.7703$ near, $-2.7832$ med, $-157.0776$ far; Price Impact P: all
+$\approx1.0$). The $-\infty$ HypatiaX crash described for the DeFi AMM row
+also does not appear in the DeFi AMM rows of Table~\texttt{tab:llm\_ablation}
+(all DeFi AMM H values are finite, if very large-magnitude negative); the
+only $-\infty$ H value in the whole table belongs to \textbf{Gravitational
+Force}, which is Physics, not DeFi AMM. Separately, the caption implies a
+DeFi AMM task sits in the \textbf{Hard} tier, but the difficulty-tier
+definition explicitly lists Impermanent Loss --- the DeFi AMM equation
+actually exhibiting catastrophic values in Table~\texttt{tab:llm\_ablation}
+--- as a \textbf{Medium}-tier example:
+\begin{evidence}
+Medium ($n=29$): nonlinear algebraic or exponential relationships, such as
+impermanent loss, Uniswap V3 liquidity range, constant-product price
+impact\ldots
+\end{evidence}
+
+\subsection*{Fix required}
+Regenerate Figure~3 from the same \texttt{\_merged.json} data used to
+rebuild Table~\texttt{tab:llm\\_ablation}, rather than whatever process produced
+the caption's $-78.04$/DeFi-AMM-Hard claims, and resolve whether an
+Impermanent-Loss-class task belongs to Medium or Hard consistently across
+the tier definition and the figure.
+
+% =======================================================================
+\section{Uncorrected Mean \rtwo\ ($+0.8721$) Despite Disclosed $-141{,}000$ Masked Failure}
+\label{issue:9}
+% =======================================================================
+\open\ --- pending, not yet executed against a full live re-run
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{subsec:overall-extrapolation-performance-defi-v}
+\texttt{tab:main\_results}, l.\,1261--1285, and the Abstract's masking-disclosure
+footnote, l.\,209--215.}
+
+\subsection*{What is wrong}
+The abstract discloses that HypatiaX's own success accounting silently masks
+catastrophic sub-method failures:
+\begin{evidence}
+The underlying computation is not free of catastrophic failures: 22 of the
+74 tasks route to a sub-method (typically the LLM proposal) that itself
+failed catastrophically (e.g.\ \texttt{pure\_llm.test\_r2} $\approx
+-141{,}000$ on Loan-to-Value), but the hybrid system's own accounting
+reports \texttt{success=True}, $\Rsq \approx 1.0$ regardless. The
+catastrophic failure is masked, not eliminated.
+\end{evidence}
+Yet \texttt{tab:main\_results}, whose own caption acknowledges the
+$90.5\%$ pass-rate figure is uncorrected for this exact bug, still reports
+HypatiaX's \textbf{Mean \rtwo} as $+0.8721$ --- computed, like the pass
+rate, from the same masked \texttt{success}/\rtwo\ fields that report
+$\approx1.0$ for the 22 tasks whose true sub-method result is catastrophic:
+\begin{evidence}
+HypatiaX \quad 1.0000 \quad $+0.8721$ \quad \textbf{90.5} \quad \textbf{90.5} \quad \textbf{0}
+\end{evidence}
+The caption corrects the pass-rate columns (``the corrected overall
+near-perfect rate is $60.8\%$'') but is silent on the Mean \rtwo\ column,
+which is left standing as if unaffected by the same bug.
+
+\subsection*{Fix required}
+Recompute Mean \rtwo\ from the corrected (decision-attribution-fixed) full
+live run described in \S\texttt{sec:hybrid-attribution-bug}; this is
+explicitly stated elsewhere as not yet executed, so the corrected number
+cannot be hand-estimated from the single disclosed $-141{,}000$ outlier
+alone.
+
+% =======================================================================
+\section{Timeout Contradiction: 1100\,s vs.\ 900\,s; ``300\,s Limit'' but a 27{,}574\,s Hang}
+\label{issue:10}
+% =======================================================================
+\open\ (enforcement bug, second half) / \stale\ (config bleed, first half)
+
+\loc{\texttt{supp\_benchmark\_report.tex}, Sweep hyperparameters
+(\texttt{tab:sweeps}, l.\,294--311) vs.\ Reproducibility Statement, Phase~3
+reproduction command, l.\,988--1004.}
+
+\subsection*{What is wrong}
+\texttt{tab:sweeps}' hyperparameter note states:
+\begin{evidence}
+Hyperparameters: NN seeds = 5, random seed 42, method timeout = 900\,s,
+PySR timeout = 1100\,s, threshold (noisy) = 0.995, threshold (noiseless) =
+0.999999. All 30 equations completed with zero timeouts across all 11
+conditions.
+\end{evidence}
+The Phase~3 reproduction command block, describing (per its own caption)
+the run underlying \texttt{tab:overall}, instead shows:
+\begin{evidence}
+python run\_comparative\_suite\_benchmark\_v2.py \textbackslash\\
+\ \ --noiseless --threshold 0.9999\ \ \ \ \ \ \ \textbackslash\\
+\ \ --nn-seeds 3 --samples 200\ \ \ \ \ \ \ \ \ \ \ \textbackslash\\
+\ \ --method-timeout 900\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \textbackslash\\
+\ \ --pysr-timeout 900
+\end{evidence}
+i.e.\ 900\,s for \emph{both} timeouts, not 1100\,s for PySR as
+\texttt{tab:sweeps} states. Immediately below, the same reproducibility
+note directly contradicts the ``zero timeouts'' claim:
+\begin{evidence}
+Note on timeout upgrade: \texttt{--method-timeout} was set to 300\,s for
+tests 1--18 and upgraded to 900\,s for tests 19--30. Arrhenius (test~4) ran
+under the 300\,s limit and hung for 27574\,s before the Julia process was
+killed\ldots Nernst (test~6) also timed out under the 300\,s default;
+counted as failure.
+\end{evidence}
+A stated ``300\,s limit'' allowing a process to run for 27{,}574\,s (over
+90$\times$ the configured limit) before manual kill indicates the timeout
+was not actually enforced for that run.
+
+\subsection*{Fix required}
+First half (1100\,s vs.\ 900\,s): reads as two different phases' configs
+bleeding into one write-up --- reconcile which value is correct for
+\texttt{tab:sweeps} and state it consistently. Second half (300\,s limit,
+27{,}574\,s hang): the timeout \emph{enforcement} itself needs checking in
+the harness code (or was silently disabled for that run) --- this is a
+code-level question, not just a documentation fix.
+
+% =======================================================================
+\section{Model/Temperature Mismatch Across Documents}
+\label{issue:11}
+% =======================================================================
+\done\ --- root cause already found; only stale doc entries remain
+
+\loc{\texttt{supp\_benchmark\_report.tex}, reproducibility tables l.\,1045--1046
+and l.\,1243/1261, and \texttt{supp\_routing\_improvements.tex}, ``Hardware
+and Software'' l.\,756, vs.\ \texttt{jmlr\_paper\_main.tex}, Nguyen-12
+reproducibility note, l.\,2606--2637.}
+
+\subsection*{What is wrong}
+\texttt{jmlr\_paper\_main.tex} already contains the corrected finding: the
+model that actually produced the Nguyen-12 results is
+\texttt{claude-sonnet-5} at \texttt{temperature=0.25}, via \texttt{hypatia.py}
+--- confirmed as a fourth, distinct hardcoded string, with the
+\texttt{LLM\_MODEL} environment variable and \texttt{repro.yaml}'s
+\texttt{llm\_model} field both confirmed to be dead code that nothing reads.
+Three stale locations in the supplementary files still report the
+superseded value:
+\begin{evidence}
+supp\_benchmark\_report.tex:1045 \quad Anthropic SDK \quad 0.73.0
+(\texttt{claude-sonnet-4-20250514}, temperature~0.0)
+\end{evidence}
+\begin{evidence}
+supp\_benchmark\_report.tex:1243, 1261 \quad Model: claude-sonnet-4-20250514
+\quad LLM temperature: 0.3
+\end{evidence}
+\begin{evidence}
+supp\_routing\_improvements.tex:756 \quad Anthropic SDK \quad 0.73.0 \quad
+\texttt{claude-sonnet-4-20250514}, temp~0.0
+\end{evidence}
+
+\subsection*{Fix required}
+Overwrite all three stale entries with the confirmed value
+(\texttt{claude-sonnet-5}, \texttt{temperature=0.25}). No further
+investigation needed --- this is doc propagation only.
+
+% =======================================================================
+\section{Rounding Slippage: $1.21/0.36 = 3.36\times$, Printed $3.40\times$}
+\label{issue:12}
+% =======================================================================
+\open\ --- narrow, mechanical script fix + regen
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{subsec:runtime-analysis}
+Table~\texttt{tab:timing\_full} pooled PCA row, l.\,1636.}
+
+\subsection*{What is wrong}
+The pooled PCA row of Table~\texttt{tab:timing\_full} reads:
+\begin{evidence}
+\textbf{PCA ALL SEEDS (pooled)} \quad \textbf{370} \quad \textbf{2.41 / 0.18}
+\quad \textbf{0.36 / 0.35} \quad \textbf{1.21 / 0.89} \quad \textbf{94/370}
+\quad \textbf{3.40$\times$ slower}
+\end{evidence}
+Dividing the printed Hybrid mean (1.21\,s) by the printed Neural MLP mean
+(0.36\,s) gives $1.21/0.36 \approx 3.361\times$, not the printed
+$3.40\times$. (By contrast every v3c-split row's printed speedup is
+internally consistent with its own printed mean columns.)
+
+\subsection*{Fix required}
+\texttt{generate\_table1.py} (already named in the paper as the
+regeneration script) is almost certainly dividing pre-rounded display
+values instead of full-precision ones; needs a one-line fix plus a full
+table regeneration.
+
+% =======================================================================
+\section{Near-Duplicate Task Names Across Difficulty Tiers}
+\label{issue:13}
+% =======================================================================
+\textfix\ --- naming-clarity issue, not a data bug
+
+\loc{\texttt{jmlr\_paper\_main.tex}, \S\texttt{sec:hybrid-attribution-bug}
+fabricated-success task list, l.\,1540--1550, vs.\
+\S\texttt{subsec:lending-protocols} ``Lending Protocols'' task inventory,
+l.\,2960--2977.}
+
+\subsection*{What is wrong}
+The Lending Protocols task inventory lists two visually near-identical
+pairs of tasks as distinct benchmark items:
+\begin{evidence}
+Liquidation Price Long and Liquidation Price Short: prices at which a
+position is liquidated.
+\ldots
+Liquidation price for leveraged long and leveraged short: extended formulas
+accounting for funding rates.
+\end{evidence}
+Both pairs then appear, split across different difficulty tiers, in the
+fabricated-success task list:
+\begin{evidence}
+Medium (10): \ldots Liquidation Price Long, Liquidation Price Short, \ldots
+\end{evidence}
+\begin{evidence}
+Hard (9): \ldots Liquidation price for leveraged long, Liquidation price
+for leveraged short, \ldots
+\end{evidence}
+A reader skimming either list alone could easily mistake ``Liquidation
+Price Long'' (Medium) for ``Liquidation price for leveraged long'' (Hard),
+or assume a duplicate/copy-paste error, when in fact these name four
+formulas that are genuinely distinct (the leveraged variants explicitly
+account for funding rates).
+
+\subsection*{Fix required}
+Rename one pair for clarity (e.g.\ ``Liquidation Price, Basic Long/Short''
+vs.\ ``Liquidation Price, Leveraged Long/Short (funding-adjusted)'') so the
+two are visually distinguishable wherever they are listed. No numeric or
+code change needed.
+
+\clearpage
+% =======================================================================
+\section*{Summary Table}
+% =======================================================================
+\begin{longtable}{p{1.2cm}p{6.7cm}p{2.2cm}p{2.8cm}}
+\toprule
+\textbf{\#} & \textbf{Issue} & \textbf{Fix category} & \textbf{Primary files} \\
+\midrule
+\endhead
+\ref{issue:1} & Nguyen-12 success-count arithmetic (10/12, 7-actual, 4/12) & Stale + Open & jmlr\_paper\_main \\
+\ref{issue:2} & Supp Table 4 (30/30) vs.\ Abstract (27/30), M4 & Stale & supp\_benchmark\_report \\
+\ref{issue:3} & \EHD{} runtime 20.2\,s vs.\ 841.4\,s & Open & supp\_benchmark\_report \\
+\ref{issue:4} & CI/SD statistical incompatibility & Open & jmlr\_paper\_main / supp\_benchmark\_report \\
+\ref{issue:5} & ``68 of 74'' without seed/split & Text & jmlr\_paper\_main \\
+\ref{issue:6} & v3c vs.\ PCA-directed undefined & Text & jmlr\_paper\_main \\
+\ref{issue:7} & Remark 9 tier arithmetic ($+3$ Hard) & Text & jmlr\_paper\_main \\
+\ref{issue:8} & Fig.\ 3 caption $-78.04$ untraceable + tier clash & Open (source ID'd) & jmlr\_paper\_main \\
+\ref{issue:9} & Uncorrected Mean \rtwo\ despite masked failure & Open (pending re-run) & jmlr\_paper\_main \\
+\ref{issue:10} & Timeout contradiction (1100 vs.\ 900\,s; 300\,s limit / 27{,}574\,s hang) & Open + Stale & supp\_benchmark\_report \\
+\ref{issue:11} & Model/temperature mismatch & Already resolved (doc only) & supp\_benchmark\_report / supp\_routing\_improvements \\
+\ref{issue:12} & Rounding slippage 3.36$\times$ vs.\ 3.40$\times$ & Open (mechanical) & jmlr\_paper\_main \\
+\ref{issue:13} & Near-duplicate task names & Text & jmlr\_paper\_main \\
+\bottomrule
+\end{longtable}
+
+\end{document}

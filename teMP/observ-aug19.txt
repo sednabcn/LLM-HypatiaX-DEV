@@ -1,0 +1,24 @@
+﻿Viewed 13 files, ran 10 commands, edited 5 files · 5 notes
+I found and fixed the actual bug in the uploaded generate_tables.py, in the code that builds tab:five_systems_full (and its exp2_five twin). It's confirmed and fixed, not the JSON-parsing/tex-narrative stuff described in that pasted transcript, which I can't verify from what's actually here.
+The bug: In three separate loaders (_load_exp1_five_rows, _load_exp2_five_system_rows, _load_exp2_five_own_rows), the "Std" column printed next to Extrapolation Mean/Median was actually the std of Train R² — a completely different quantity, on a totally different scale, computed from a different sample. So a std like 0.003 (train R²) was getting fed into _ci95() next to a mean like 20978.0 (extrapolation error %). The margin t·std/√n rounds to nothing at that scale, so every "95% CI" collapsed to [mean, mean] — exactly the symptom.
+The fix:
+    • New _robust_median_clipped_mean_std() computes std over the same IQR-clipped extrapolation-error values that back the mean/median (not the train-R² sample), plus the matching count.
+    • All three loaders now pass that std (and its matching n) into the row tuple instead of tr_std.
+    • Added _fmt_pct_stat() for sane formatting since extrapolation blowups can span many orders of magnitude.
+I verified it with synthetic data mirroring the scenario (one blowup outlier among otherwise-reasonable values): old code gave [14.0, 14.0], fixed code gives [10.9, 17.1] — a real, non-degenerate interval.
+What I couldn't verify: I don't have exp1_five_results.json or the other source JSONs in this conversation, so I haven't run this against your actual data — only confirmed the logic against synthetic data that reproduces the reported symptom. To fully close this out and regenerate five_system.tex, you'd run this script against your actual results//patched/ tree.
+Generate tables
+PY 
+Download
+
+exp1_five_results.json
+json
+
+Ran a command
+
+Inspect uploaded results JSON structure
+bash
+cd /home/claude && python3 -c " import json d = json.load(open('/mnt/user-data/uploads/exp1_five_results.json')) print(type(d), len(d)) k = list(d.keys())[0] print(k) print(json.dumps(d[k], indent=2)[:2000]) " 
+Output
+<class 'dict'> 15 0 { "name": "Arrhenius", "domain": "Chemistry", "Pure LLM": { "condition": "Pure LLM", "success": true, "timed_out": false, "excluded_from_timing": false, "train_r2": 0.9317930597861247, "train_rmse": 0.38834651105270085, "extrap_r2_near": null, "extrap_r2_medium": null, "extrap_r2_far": null, "extrap_rmse_near": Infinity, "extrap_rmse_medium": Infinity, "extrap_rmse_far": Infinity, "sr_time_s": 0.0008668899536132812, "llm_time_s": 0.0, "total_time_s": 0.0008668899536132812, "best_expression": "def formula(T):\n import numpy as np\n A = 28615.58\n Ea = 36623.211\n return A * np.exp(-Ea / (8.314 * T))\n", "complexity": null, "design_focus": "Recognition" }, "Neural Network": { "condition": "Neural Network", "success": true, "timed_out": false, "excluded_from_timing": false, "train_r2": 0.9978274759018387, "train_rmse": 0.06930864770079412, "extrap_r2_near": -0.7127261089460584, "extrap_r2_medium": -0.629449596034928, "extrap_r2_far": -12.534877411698472, "extrap_rmse_near": 113.24851676414107, "extrap_rmse_medium": 825.64819461346, "extrap_rmse_far": 90282.26277884046, "sr_time_s": 0.5348289012908936, "llm_time_s": 0.0, "total_time_s": 0.5348289012908936, "best_expression": "ImprovedNN(1\u2192128\u219264\u219232\u21921,lin)", "complexity": null, "design_focus": "Baseline" }, "System 3 LLM+Fallback": { "condition": "System 3 LLM+Fallback", "success": true, "timed_out": false, "excluded_from_timing": false, "train_r2": 0.9999980146384587, "train_rmse": 0.0020951973035602273, "extrap_r2_near": null, "extrap_r2_medium": null, "extrap_r2_far": null, "extrap_rmse_near": null, "extrap_rmse_medium": null, "extrap_rmse_far": null, "sr_time_s": 0.8470172882080078, "llm_time_s": 0.0, "total_time_s": 0.8470172882080078, "best_expression": "N/A", 
+

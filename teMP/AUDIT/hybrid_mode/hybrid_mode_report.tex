@@ -1,0 +1,358 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  citecolor=blue!50!black
+}
+
+\definecolor{codebg}{HTML}{F5F5F5}
+\definecolor{codekw}{HTML}{7A3E9D}
+\definecolor{codestr}{HTML}{2E7D32}
+\definecolor{codecom}{HTML}{888888}
+
+\lstdefinestyle{py}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  stringstyle=\color{codestr},
+  commentstyle=\color{codecom}\itshape,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=false,
+  frame=single,
+  framerule=0.3pt,
+  rulecolor=\color{gray!40},
+  xleftmargin=1em,
+  xrightmargin=1em,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  tabsize=4,
+}
+\lstset{style=py}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+\title{\vspace{-1.5em}Wiring LLM Hypotheses into PySR:\\
+the \texttt{extra\_*\_operators} / \texttt{seed\_expressions} Mechanism\\
+\large Hybrid-mode fix in \texttt{symbolic\_engine.py}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-3em}
+
+\section{Summary}
+
+\texttt{HybridDiscoverySystem}'s \texttt{llm\_mode="hybrid"} path (\texttt{\_discover\_hybrid()}) and
+\texttt{llm\_mode="seed"} path (\texttt{\_discover\_with\_llm\_seed()}) both computed an LLM-derived
+signal --- \texttt{\_use\_llm\_seed} / \texttt{llm\_config} --- and then discarded it before calling
+\texttt{super().discover()}. The subsequent PySR run was, in every case where refinement was supposed
+to add value, indistinguishable from a cold run with \texttt{llm\_mode="none"}. This report explains
+the replacement mechanism: what it wires up, why it stops short of a true population warm-start, and
+how it degrades safely.
+
+\section{Why the obvious fix does not work}
+
+The natural first instinct is to seed PySR's initial population directly with the LLM's candidate
+expression, e.g.\ \texttt{guesses=[best\_hyp.equation]}. We checked this against the installed
+\texttt{pysr} package (1.5.10) directly:
+
+\begin{lstlisting}[language=Python, caption={\texttt{PySRRegressor.\_\_init\_\_} has no working \texttt{guesses} parameter}]
+>>> import inspect
+>>> from pysr import PySRRegressor
+>>> "guesses" in set(inspect.signature(PySRRegressor.__init__).parameters)
+False
+\end{lstlisting}
+
+This is a known, currently-open upstream issue
+(\href{https://github.com/MilesCranmer/PySR/issues/1057}{MilesCranmer/PySR \#1057}, ``guesses
+parameter missing in PySRRegressor''): the parameter is referenced in some PySR documentation but is
+not accepted by the pip release actually installed. Critically, \texttt{PySRRegressor.\_\_init\_\_}
+is \emph{not} a permissive \texttt{**kwargs} sink --- unrecognized keywords raise \texttt{TypeError}
+rather than being silently ignored:
+
+\begin{lstlisting}[language=Python, caption={Unknown kwargs fail loudly, they are not swallowed}]
+else:
+    suggested_keywords = _suggest_keywords(PySRRegressor, k)
+    err_msg = f"`{k}` is not a valid keyword argument for PySRRegressor."
+    ...
+    raise TypeError(err_msg)
+\end{lstlisting}
+
+So naively adding \texttt{guesses=...} would not have reproduced the original silent-no-op bug ---
+it would have crashed every hybrid-mode run outright. Any fix has to either (a) use a parameter that
+is verified to exist, or (b) probe for the desired parameter at runtime and degrade gracefully if it
+is absent.
+
+\section{What \emph{is} real: operator-set biasing}
+
+\texttt{\_extract\_operators\_from\_equation()} already parses an equation string and returns exactly:
+
+\begin{lstlisting}[language=Python]
+{
+    "binary_operators": ["*", "/", ...],
+    "unary_operators":  ["exp", "sin", ...],
+}
+\end{lstlisting}
+
+\texttt{unary\_operators} and \texttt{binary\_operators} \emph{are} real, verified
+\texttt{PySRRegressor.\_\_init\_\_} parameters. That is the legitimate wiring point used here: instead
+of constraining PySR to \emph{only} the LLM's operators (which would shrink the search space and could
+make results worse than a cold run), the fix takes the \textbf{union} of the LLM's operators with
+everything the base \texttt{discover()} already assembles (domain heuristics, data-driven exp/log
+detection, transcendental-composition injection, etc.).
+
+\subsection{New hook in the base \texttt{discover()}}
+
+Two new keyword arguments are consumed --- and popped out of \texttt{kwargs} so they never reach
+\texttt{PySRRegressor} directly --- immediately after the existing domain/data-driven operator
+injection and before \texttt{pysr\_kwargs} is finalized:
+
+\begin{lstlisting}[language=Python, caption={\texttt{extra\_unary\_operators} / \texttt{extra\_binary\_operators} hook (base \texttt{discover()})}]
+_extra_unary = kwargs.pop("extra_unary_operators", None) or []
+_extra_binary = kwargs.pop("extra_binary_operators", None) or []
+_seed_expressions = kwargs.pop("seed_expressions", None) or []
+merged_binary_operators = list(self.config.binary_operators)
+
+if _extra_unary or _extra_binary:
+    _added_unary = [op for op in _extra_unary if op not in active_unary]
+    active_unary.extend(_added_unary)
+    _added_binary = [op for op in _extra_binary
+                      if op not in merged_binary_operators]
+    merged_binary_operators.extend(_added_binary)
+    if _added_unary or _added_binary:
+        print(f"   [LLM-OPS] injected unary={_added_unary} "
+              f"binary={_added_binary}", flush=True)
+\end{lstlisting}
+
+\texttt{binary\_operators} in the final \texttt{pysr\_kwargs} dict is changed from the fixed
+\texttt{self.config.binary\_operators} to the merged list:
+
+\begin{lstlisting}[language=Python]
+pysr_kwargs = dict(
+    ...
+    binary_operators=merged_binary_operators,
+    unary_operators=active_unary,
+    ...
+)
+\end{lstlisting}
+
+Because \texttt{active\_unary} is extended \emph{in place} before \texttt{pysr\_kwargs} is built,
+the LLM's operators automatically compose with every other operator-injection rule already in the
+method (trig-domain auto-injection, exp/log heuristics, transcendental compositions) rather than
+overwriting them.
+
+\subsection{Opportunistic true warm-start: \texttt{seed\_expressions} $\to$ \texttt{guesses}}
+
+\texttt{seed\_expressions} is also probed for, independently, right before construction:
+
+\begin{lstlisting}[language=Python, caption={Runtime probe for \texttt{guesses}, with safe fallback}]
+_guesses_requested = False
+if _seed_expressions:
+    _pysr_guess_params = set(
+        inspect.signature(PySRRegressor.__init__).parameters
+    )
+    if "guesses" in _pysr_guess_params:
+        pysr_kwargs["guesses"] = list(_seed_expressions)
+        _guesses_requested = True
+    else:
+        print("   [PySR] guesses param not available in this pysr "
+              "version -- falling back to operator biasing only",
+              flush=True)
+\end{lstlisting}
+
+If a future \texttt{pysr} release ships \texttt{guesses} with a different accepted format than a flat
+list of expression strings, construction may still fail. That failure is caught and retried
+\emph{once} with \texttt{guesses} removed, rather than aborting the run:
+
+\begin{lstlisting}[language=Python, caption={Retry-without-\texttt{guesses} on construction failure}]
+try:
+    self.model = PySRRegressor(**pysr_kwargs)
+except Exception as _init_exc:
+    ...
+    if _guesses_requested and "guesses" in pysr_kwargs:
+        print("   [PySR] retrying construction without `guesses` "
+              "(operator-biasing ... is still in effect)", flush=True)
+        pysr_kwargs.pop("guesses", None)
+        self.model = PySRRegressor(**pysr_kwargs)
+    else:
+        raise
+\end{lstlisting}
+
+Against the currently installed \texttt{pysr==1.5.10}, the probe finds no \texttt{guesses} parameter,
+so this path is inert today and every run falls through to operator biasing only ---
+verified with the installed package, not assumed.
+
+\section{The gate: \texttt{\_use\_llm\_seed} in \texttt{\_discover\_hybrid()}}
+
+The R\textsuperscript{2} threshold that decides whether the LLM's prior is trustworthy is unchanged,
+but it now actually gates something:
+
+\begin{lstlisting}[language=Python, caption={\texttt{\_discover\_hybrid()}: the gate now has teeth}]
+_use_llm_seed = True
+_llm_extra_ops = None
+if best_hyp.r2_score is None or best_hyp.r2_score < 0.5:
+    print(f"   LLM R2={best_hyp.r2_score:.3f} < 0.5 -- discarding LLM "
+          f"prior, running pure PySR", flush=True)
+    _use_llm_seed = False
+else:
+    _llm_extra_ops = self._extract_operators_from_equation(best_hyp.equation)
+    kwargs.setdefault("extra_unary_operators",
+                       _llm_extra_ops["unary_operators"])
+    kwargs.setdefault("extra_binary_operators",
+                       _llm_extra_ops["binary_operators"])
+    kwargs.setdefault("seed_expressions", [best_hyp.equation])
+    print(f"   -> Seeding PySR operator set from LLM candidate: "
+          f"{_llm_extra_ops}", flush=True)
+
+result = super().discover(X, y, variable_names, equation_name,
+                           random_state, auto_sanitize=auto_sanitize,
+                           **kwargs)
+\end{lstlisting}
+
+A weak LLM guess (R\textsuperscript{2} $< 0.5$) never reaches either the operator-biasing hook or the
+opportunistic \texttt{guesses} attempt --- it cannot narrow the operator search space, and it cannot be
+planted into a future population warm-start. This matters more for warm-start than for operator
+biasing: a bad operator hint just widens/narrows a menu PySR still searches freely, whereas a bad seed
+expression directly competes in generation~0 and can drag early tournament selection toward a wrong
+region of expression-space.
+
+The existing compare-and-select logic at the end of \texttt{\_discover\_hybrid()} --- run PySR, compare
+its R\textsuperscript{2} against the LLM's, keep whichever is better --- was already correct and is
+unchanged. What changes is that when the LLM's prior is used, it is used \emph{before} the comparison,
+not only as a fallback candidate at the end.
+
+\subsection{Result transparency}
+
+Both \texttt{\_discover\_with\_llm\_seed()} and \texttt{\_discover\_hybrid()} now surface what actually
+happened, instead of leaving downstream benchmark code to infer it from the \texttt{llm\_mode} string
+alone:
+
+\begin{lstlisting}[language=Python]
+result["llm_suggested_operators"] = llm_config       # seed mode
+result["llm_seed_used"]           = _use_llm_seed     # hybrid mode
+result["llm_suggested_operators"] = _llm_extra_ops    # hybrid mode
+\end{lstlisting}
+
+\section{Behavior by LLM R\textsuperscript{2} range}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+LLM $R^2$ & PySR called? & Interaction \\
+\midrule
+$> 0.95$ & No & LLM answer returned directly; PySR skipped entirely (unchanged). \\
+$0.5$--$0.95$ & Yes & \textbf{New:} LLM's operators unioned into search space; \\
+              &     & \texttt{guesses} attempted if supported; result compared \\
+              &     & against LLM answer, better one returned. \\
+$< 0.5$ & Yes & PySR runs with its normal defaults, uninformed by the LLM. \\
+        &     & LLM answer still kept as a fallback candidate for the \\
+        &     & final comparison (unchanged). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Worked example}
+
+Given an LLM hypothesis \texttt{best\_hyp.equation = "exp(x0)/x1"} with $R^2 = 0.71$ (inside the
+collaboration band):
+
+\begin{lstlisting}[language=Python, caption={What \texttt{\_extract\_operators\_from\_equation} returns for this input}]
+>>> engine._extract_operators_from_equation("exp(x0)/x1")
+{'binary_operators': ['/'], 'unary_operators': ['exp']}
+\end{lstlisting}
+
+\texttt{\_discover\_hybrid()} then calls the base \texttt{discover()} with:
+
+\begin{lstlisting}[language=Python]
+super().discover(
+    X, y, variable_names, equation_name, random_state,
+    auto_sanitize=True,
+    extra_unary_operators=['exp'],
+    extra_binary_operators=['/'],
+    seed_expressions=['exp(x0)/x1'],
+)
+\end{lstlisting}
+
+Inside the base method, suppose the config default is
+\texttt{unary\_operators=["sqrt"]}, \texttt{binary\_operators=["+","-","*","/"]}, and the domain is
+\texttt{"general"} (no auto-trig/exp-log heuristics fire). The merge behaves as:
+
+\begin{lstlisting}[language=Python, caption={Resulting operator sets passed to \texttt{PySRRegressor}}]
+active_unary            = ['sqrt', 'exp']        # 'exp' added, no duplicate
+merged_binary_operators = ['+', '-', '*', '/']   # '/' already present, no-op
+\end{lstlisting}
+
+\texttt{guesses} is attempted (\texttt{pysr\_kwargs["guesses"] = ["exp(x0)/x1"]}) but, against
+\texttt{pysr==1.5.10}, the probe reports \texttt{guesses} is unavailable, so that key is never added
+and construction proceeds with the merged operator sets only. The trace records
+\texttt{"guesses=unavailable"} so this is visible in the returned diagnostics rather than silent.
+
+\subsection{Contrast with the previous behavior}
+
+\begin{lstlisting}[language=Python, caption={Before: computed, printed, discarded}]
+_use_llm_seed = True
+if best_hyp.r2_score is None or best_hyp.r2_score < 0.5:
+    _use_llm_seed = False
+# _use_llm_seed is never read again.
+
+result = super().discover(X, y, variable_names, equation_name,
+                           random_state, auto_sanitize=auto_sanitize,
+                           **kwargs)
+# Identical to a cold run regardless of _use_llm_seed's value.
+\end{lstlisting}
+
+For the same $R^2=0.71$ example, the pre-fix Phase~2 call would have been
+
+\begin{lstlisting}[language=Python]
+super().discover(X, y, variable_names, equation_name, random_state,
+                  auto_sanitize=True)   # no LLM information reaches PySR
+\end{lstlisting}
+
+i.e.\ \texttt{unary\_operators=['sqrt']}, \texttt{binary\_operators=['+','-','*','/']} --- \texttt{exp}
+never enters the search space, so PySR cannot express the LLM's hypothesis at all regardless of how
+much search budget it is given.
+
+\section{Design notes}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Union, not replacement.} Overwriting \texttt{unary\_operators} with only the LLM's
+        operators would shrink the search space and could make hybrid mode worse than
+        \texttt{llm\_mode="none"}. Unioning preserves every operator the base method would have
+        included anyway.
+  \item \textbf{Two independent probes, not one assumption.} The \texttt{define\_operators} vs.\
+        embedded-body kwarg-name probe already existed in this file for a different PySR
+        version-compatibility issue; the \texttt{guesses} probe follows the same pattern rather than
+        hardcoding a parameter name that is verified \emph{not} to work in the pinned release.
+  \item \textbf{Failure of the opportunistic path never sinks the run.} \texttt{guesses} is popped and
+        construction retried once on failure; only a genuine, unrelated construction failure still
+        propagates.
+  \item \textbf{The gate protects the stronger mechanism most.} Operator biasing is a soft constraint
+        --- PySR still searches freely within the (widened) menu. A literal population seed is a hard
+        anchor that can dominate early tournament selection. Restricting \texttt{seed\_expressions} to
+        the $R^2 \geq 0.5$ branch means the riskier mechanism is the one most protected by the
+        threshold.
+  \item \textbf{\texttt{\_discover\_with\_fallback()} is untouched.} It runs PySR first and only
+        separately evaluates the LLM hypothesis if PySR underperforms --- a legitimate
+        compare-and-select pattern with nothing to inject, so it was not part of this bug.
+\end{itemize}
+
+\end{document}

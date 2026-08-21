@@ -1,0 +1,217 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\lstset{basicstyle=\ttfamily\small,breaklines=true,columns=fullflexible}
+
+\title{Audit of the Nguyen-12 HypatiaX/PySR Experiment\\
+\large Script Logic, Warm-Start Validity, and Interpretation of the Results}
+\author{Code and Results Audit}
+\date{August 11, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report audits the supplied \texttt{exp3\_nguyen12\_hybrid50v\_02.py} experiment script and its companion \texttt{hypatia.py} LLM-prior module. The central question is whether the observed equality between the HypatiaX (H) and PySR-only (P) results is caused by a bookkeeping/copy bug, an invalid warm-start, or genuine convergence of two independent searches. The code establishes that, when converted LLM guesses are non-empty, H and P are instantiated as separate \texttt{PySRRegressor} objects and fitted independently. The reported \texttt{h\_is\_copy\_of\_p=false} and \texttt{warm\_start\_status=used} fields are therefore consistent with that branch. However, the experiment still has important methodological limitations: final-expression equality does not prove that the guesses had no causal effect; the current output records do not expose the search trajectory or guess-injection fraction; and the pre-declared expected recovery rate and Mann--Whitney statistic are not themselves evidence produced by this run. The numerical R\textsuperscript{2} values can be valid as evaluations of the returned expressions, but the results are not sufficient to support a claim that LLM warm-starting improves symbolic-regression performance.
+\end{abstract}
+
+\section{Executive conclusion}
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{The old ``shared checkpoint/tempdir'' explanation is not supported by the current script.} The H and P models are separate objects and, in the warm-start branch, both call independent \texttt{fit()} operations.
+    \item \textbf{The copy-bookkeeping explanation is also not applicable to records with \texttt{warm\_start\_status=used}.} The copy flag is explicitly set to false in the warm-start branch and true only when no usable guesses exist.
+    \item \textbf{The LLM confidence values are not filtered by a 0.5--0.95 threshold.} They are used only for sorting the candidates before syntax/safety validation. The only nearby numerical cutoff in \texttt{hypatia.py} is the diagnostic linearity test \(R^2>0.97\), and the experiment's recovery criterion is \(R^2\ge0.9999\).
+    \item \textbf{The results may be numerically correct but are not, by themselves, evidence that warm-starting caused no effect.} Two runs can finish with identical best expressions while having different initial populations, trajectories, discovery times, or search efficiency.
+    \item \textbf{The key unresolved issue is PySR guess injection.} The script passes guesses, but it does not record how many initial individuals are replaced by guesses, nor does it record generation-by-generation search behavior. Consequently, identical final expressions cannot distinguish ``guesses were ineffective'' from ``guesses helped but the final optimum was already easy to find.''
+    \item \textbf{The expected recovery counts and Mann--Whitney result should not be treated as measured results unless an independent analysis actually recomputed them from the produced JSON.} The script itself prints an expected 11/12 H and 10/12 P and an expected \(U=113,p=0.0097\); these are embedded expectations, not calculations of the current run.
+\end{enumerate}
+
+\section{Files audited}
+
+The primary experiment file is \texttt{exp3\_nguyen12\_hybrid50v\_02.py}. The LLM-prior implementation is \texttt{hypatia.py}. The latter returns Python/NumPy syntax and explicitly warns that callers must convert those expressions to their own PySR operator configuration before passing them as guesses.
+
+\section{What the experiment actually does}
+
+The shared PySR configuration includes
+\begin{lstlisting}
+random_state=seed,
+deterministic=True,
+parallelism="serial",
+binary_operators=["+", "-", "*", "/", "^"],
+unary_operators=["sin", "cos", "log", "sqrt", "exp"]
+\end{lstlisting}
+with configurable iteration count, population count, and timeout. The script loads the 12 Nguyen equations with 200 samples and zero noise.
+
+When \texttt{\_pysr\_guesses} is non-empty, H is constructed with
+\begin{lstlisting}
+PySRRegressor(**_pysr_kwargs,
+              guesses=_pysr_guesses,
+              warm_start=False)
+\end{lstlisting}
+and P is constructed independently with \texttt{PySRRegressor(**\_pysr\_kwargs)}. Both then call \texttt{fit()} separately. This is direct evidence against a shared model/checkpoint explanation.
+
+When \texttt{\_pysr\_guesses} is empty, the script deliberately runs PySR once and copies the resulting expression, R\textsuperscript{2}, and elapsed time into the H record, setting \texttt{h\_is\_copy\_of\_p=true}. That branch is correctly marked as non-independent.
+
+\section{Issues in the scripts}
+
+\subsection{Issue 1: Warm-start effect is not experimentally isolated}
+
+This is the most important remaining issue. The experiment compares one seeded run against one unseeded run using the same seed. Because deterministic evolution is conditional on the initialized population, the same random seed does not imply identical trajectories when guesses are present. Conversely, different trajectories can still converge to the same final expression. Therefore, final H=P equality cannot establish that the guesses had zero effect.
+
+The output schema stores only the final expression, final R\textsuperscript{2}, elapsed time, warm-start flags, and candidate counts. It does not store the initial population, fraction of the population replaced by guesses, best-loss trajectory, generation of first discovery, or hall-of-fame trajectory.
+
+\subsection{Issue 2: No explicit control over or recording of guess-injection strength}
+
+The script does not explicitly set or record the PySR parameter controlling the fraction of the initial population replaced by guesses. Thus, the experiment does not tell the reader how strongly the 6--8 candidates perturb the initial search population. This is essential for interpreting an apparent null effect.
+
+A robust experiment should record at least the number of supplied guesses and the effective guess-injection configuration used by the pinned PySR version.
+
+\subsection{Issue 3: The LLM confidence field is potentially misleading}
+
+The prompt asks the LLM to return a confidence value in \([0,1]\), and the parser sorts candidates by that value. However, the parser does not apply a confidence threshold. Thus the confidence is ranking metadata, not a probability or acceptance criterion. A paper/report must not describe a confidence cutoff unless such a cutoff is implemented elsewhere.
+
+\subsection{Issue 4: Candidate vocabulary mismatch was a real earlier failure mode}
+
+The LLM module emits Python/NumPy syntax such as \texttt{**} and \texttt{np.sin}. The PySR experiment uses \texttt{\^} for power and bare unary names. The current script contains a converter and whitelist that maps supported functions and drops unsupported identifiers. This is an important repair.
+
+The comments document an earlier failure in which an overly permissive converter allowed unsupported functions/tokens to reach the PySR/Julia parser, producing immediate warm-start failures. The current whitelist substantially reduces that risk. Nevertheless, the experiment should report the number of raw LLM candidates, converted candidates, and candidates actually accepted by PySR for every equation; the current JSON stores the first two counts but not a detailed reason for every dropped candidate.
+
+\subsection{Issue 5: The H failure-retry path changes the treatment condition}
+
+If the warm-start fit fails, the script retries H without guesses. That is operationally sensible for robustness, but scientifically it changes the meaning of the H condition: an H record can potentially become a plain PySR run after a warm-start failure. The JSON should explicitly distinguish successful warm-start fits from fallback-to-cold-search fits and exclude the latter from a causal warm-start analysis.
+
+The current code does set \texttt{\_guesses\_rejected\_by\_engine}, but that diagnostic is not included in the shown result record. This should be added.
+
+\subsection{Issue 6: The recovery criterion is extremely strict and is evaluated on the training data}
+
+The experiment classifies recovery using \(R^2\ge0.9999\). The R\textsuperscript{2} is computed from predictions on the same \(X,y\) passed to the symbolic-regression fit. For noiseless Nguyen equations this can be a reasonable benchmark criterion, but it is not a generalization metric. It measures whether the returned expression reproduces the sampled training targets to the specified tolerance.
+
+The report should therefore call this ``training-set exact recovery'' or equivalent, rather than presenting it as a generalization result.
+
+\subsection{Issue 7: Expected statistics are embedded in the experiment script}
+
+The script prints an expected outcome of 11/12 H and 10/12 P and an expected Mann--Whitney statistic \(U=113,p=0.0097\). These values are expectations written into the script, not dynamically computed there. They must not be presented as the empirical result of a new run unless independently recomputed from the actual JSON outputs.
+
+Moreover, because the H and P observations can be exact duplicates when the no-warm-start branch is used, those duplicated records cannot be treated as independent observations in a statistical test. The script itself explicitly warns that downstream analysis must inspect \texttt{h\_is\_copy\_of\_p} before treating H and P as independent trials.
+
+\subsection{Issue 8: One seed is insufficient for a causal performance claim}
+
+A fixed seed is useful for reproducibility but does not establish robustness. A single seed can produce an unusually easy or unusually difficult evolutionary trajectory. A warm-start claim should be evaluated over multiple independent seeds, ideally with the same LLM guesses held fixed for paired comparisons.
+
+\subsection{Issue 9: LLM stochasticity is not separated from PySR stochasticity}
+
+The LLM call itself can produce different candidate sets across runs unless the model/API configuration guarantees deterministic output. The experiment currently asks for eight candidates, but a causal analysis should either freeze the exact candidate list or treat LLM generation as a separate random factor. Otherwise, differences between H runs can arise from both the prior and the evolutionary search.
+
+\section{Are the results wrong?}
+
+\subsection{Numerical correctness}
+
+Based on the supplied code, the per-run R\textsuperscript{2} calculation is straightforward: the fitted model predicts on \(X\), and scikit-learn's \texttt{r2\_score(y,y\_pred)} is recorded. There is no evidence in the supplied code that this calculation itself is wrong.
+
+Therefore, it would be too strong to say ``the R\textsuperscript{2} numbers are wrong.'' The more accurate conclusion is that the \textbf{interpretation of the numbers can be wrong if they are used to claim a warm-start advantage or disadvantage without the missing controls}.
+
+\subsection{What is wrong or unsupported about the interpretation}
+
+The following conclusions are not established merely by the observed H=P records:
+\begin{itemize}
+    \item ``The LLM guesses were ignored.''
+    \item ``The LLM guesses had zero causal effect.''
+    \item ``PySR deterministic mode makes seeded and unseeded runs identical.''
+    \item ``The LLM warm-start provides no benefit.''
+    \item ``The expected 11/12 versus 10/12 recovery result was reproduced.''
+    \item ``The reported Mann--Whitney \(p=0.0097\) is the p-value of this run.''
+\end{itemize}
+
+What the current evidence does support is narrower: \textbf{the production run used independent H and P fits whenever usable guesses were present, and those fits sometimes produced identical final expressions and coefficients.} That is an observation, not yet a causal explanation.
+
+\section{Recommended definitive experiment}
+
+A minimal factorial design is:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Condition & Seed & Guesses \\
+\midrule
+A & 42 & none \\
+B & 42 & fixed LLM guesses \\
+C & 43 & none \\
+D & 43 & fixed LLM guesses \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The primary causal comparison is A versus B. C versus A estimates ordinary seed sensitivity, while D versus B estimates seed sensitivity under warm-starting.
+
+An even stronger diagnostic uses deliberately poor but syntactically valid guesses in addition to correct-ish guesses. If cold, good-guess, and bad-guess conditions all produce the same final solution and nearly identical trajectories, the practical effect of the warm-start is likely negligible under the chosen configuration.
+
+For each run, record:
+\begin{enumerate}
+    \item exact guess strings;
+    \item number of raw, converted, and accepted guesses;
+    \item guess-injection fraction/parameter;
+    \item initial population summary;
+    \item best loss versus iteration/generation;
+    \item first generation at which the final/ground-truth-equivalent form appears;
+    \item final expression and coefficients;
+    \item final training R\textsuperscript{2};
+    \item elapsed time and number of evaluations;
+    \item whether H fell back to an unseeded retry.
+\end{enumerate}
+
+\section{Recommended statistical analysis}
+
+For paired H/P comparisons, use the equation as the unit of pairing. Do not count copied H records as independent observations. For each equation and seed, define paired differences in recovery indicator, R\textsuperscript{2}, time-to-solution, and/or search evaluations.
+
+For a 12-equation benchmark, exact recovery is naturally reported as counts and paired differences. If inferential testing is used, the statistical test should be chosen for the paired design rather than treating H and P as two independent samples. Multiple seeds provide the replication needed for a stronger claim.
+
+The most informative outcome may be efficiency rather than final recovery. If both methods reach the same solution, a warm-start can still be useful if it reaches that solution substantially earlier or with fewer evaluations.
+
+\section{Reproducibility and engineering fixes already present}
+
+Several important engineering problems have already been addressed in the current script. These include unified seed propagation, CI task filtering, correct application of case ranges, output-directory resolution, checkpointing after every completed equation, and atomic JSON writes. The script also explicitly records warm-start status and copy status. These changes improve operational reliability and make the current audit possible.
+
+The checkpoint logic is particularly important because the previous implementation wrote the final JSON only after all 12 equations. With two potentially long PySR fits per equation, a CI job could terminate before the final write and leave no result file despite substantial completed computation. The current implementation saves after every equation and uses an atomic temporary-file replacement.
+
+\section{Final assessment}
+
+\begin{longtable}{p{0.28\linewidth}p{0.18\linewidth}p{0.46\linewidth}}
+\toprule
+Issue & Status & Assessment \\
+\midrule
+Shared H/P working state & Not supported & Separate models and separate fits are used in the warm-start branch. \\
+Copy shortcut falsely used & Not supported for warm-start records & The copy flag is false when guesses are present and true only in the no-guess branch. \\
+0.5--0.95 confidence cutoff & Not present & Confidence is used for ordering, not filtering. \\
+LLM syntax incompatibility & Previously real; current code addresses it & Current converter maps supported syntax and uses a whitelist. \\
+Warm-start causal effect & Unresolved & Final equality does not prove zero effect. \\
+R\textsuperscript{2} computation & No evident arithmetic bug & It is computed directly from predictions on the training data. \\
+Recovery interpretation & Needs qualification & \(R^2\ge0.9999\) is a strict training-set recovery criterion. \\
+Expected 11/12 vs 10/12 & Not an empirical result by itself & The values are embedded expectations in the script. \\
+Mann--Whitney \(U=113,p=0.0097\) & Must be independently verified & The script prints it as an expectation; copied records also create dependence concerns. \\
+Single-seed conclusion & Insufficient & Multiple seeds are needed for a robust performance claim. \\
+\bottomrule
+\end{longtable}
+
+\section{Bottom line}
+
+The current scripts are much better than the earlier version: the warm-start branch is genuinely independent, the copy shortcut is explicitly marked, candidate syntax is converted and whitelisted, and checkpointing/CI failures have been addressed. The remaining problem is primarily \textbf{experimental validity rather than a simple coding bug}.
+
+The observed identical H and P expressions should therefore be reported as a finding: ``under this configuration and seed, the seeded and cold PySR fits converged to the same final solutions.'' They should \textbf{not} yet be reported as proof that LLM warm-starting has no effect. The decisive next step is to run paired fixed-guess versus no-guess experiments across multiple seeds while recording search trajectories and guess-injection details.
+
+\section*{Source-code evidence used in this audit}
+
+\begin{itemize}
+    \item \texttt{exp3\_nguyen12\_hybrid50v\_02.py}: warm-start and cold-start construction, shared deterministic configuration, candidate conversion, result bookkeeping, checkpointing, and expected aggregate statistics.
+    \item \texttt{hypatia.py}: LLM output format, confidence sorting, expression validation, and the \(R^2>0.97\) linearity diagnostic.
+\end{itemize}
+
+\end{document}

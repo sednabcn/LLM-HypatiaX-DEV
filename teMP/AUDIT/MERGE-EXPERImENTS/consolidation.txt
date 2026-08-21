@@ -1,0 +1,514 @@
+﻿Does it include the plot  script for generating figures for exp2_feynman_extrap?
+
+Analyzed file generation patterns across multiple domains
+Good — this confirms the pattern and gives me a real candidate list with evidence, not guesses.
+The core finding: several experiments are "single-shard" in the CI-parallelism sense (EXP_SHARD_TABLE[exp] == 1 — one GitHub Actions worker) but that one worker internally loops over many task IDs from the registry dict — e.g. exp2_feynman iterates 11 Feynman domains, hybrid_all_domains iterates 10 domains, exp3 iterates 12 equations × 5 seeds — and writes one output file per task ID, not one combined file. Those per-task files then need reshaping into a canonical single file before run_analysis.py can read them. That's your consolidation case, and it's orthogonal to N_SHARDS.
+Confirmed proof, not inference: you already have a live example. The exp2_feynman_extrap log from earlier in this conversation said:
+[PREFLIGHT] Found 11 protocol_core_extrap_*.json shard(s).
+— eleven files, one CI worker. merge_extrap_into_benchmark.py is already doing consolidation for this experiment today, it's just mislabeled "merge" throughout the codebase (the step name at line 685 of ci_analysis.yml, the doc comments) even though EXP_SHARD_TABLE["exp2_feynman_extrap"] = 1 — there's no CI-parallel merge happening here at all. This naming collision is very likely why the typo-alias bug from earlier was so easy to introduce: the same word "merge" is doing two different jobs in this codebase.
+Candidate list, ranked by confidence:
+Experiment	Evidence	Confidence
+exp2_feynman_extrap	Confirmed: 11 files, existing (mislabeled) consolidation script	Certain
+exp2_feynman	Same protocol_core_*.json naming family, same 11-domain registry, same single-shard table entry	High
+exp2_feynman_pca	Explicitly commented "mirrors exp2_feynman... single shard"	High
+extrap	all_domains_extrap_v4_*.json / protocol_core_*.json glob, 11-domain registry (FEYNMAN_DOMAINS), single-shard	High
+hybrid_all_domains	hybrid_llm_nn_all_domains_*.json glob, 10-domain registry, single-shard	High
+exp2 / exp2_five	protocol_core_*.json/benchmark_results.json glob, EXP2_DOMAINS registry, single-shard	Medium-high
+exp3	exp3_nguyen12_seed*.json glob (plural pattern), 60-combo registry, single-shard	Medium
+exp1_five	exp1_five_results*.json — plural glob but script "self-shards" internally; unclear if it still writes N files at N_SHARDS=1	Low — needs the script itself, not just the workflow
+Not candidates: exp1, exp1b, instability, suppA — their verification steps check a small fixed set of legacy/primary filenames rather than a per-domain glob, suggesting one worker writing to one canonical location already.
+Before I draft consolidate_results.py and the CONSOLIDATE_REQUIRED_EXPERIMENTS set, one more thing would remove the remaining guesswork: could you upload merge_extrap_into_benchmark.py again for reference (you shared it earlier but I should re-examine its actual reshape logic, not just its file list) alongside run_analysis.py? Since merge_extrap_into_benchmark.py is the one working example of exactly this pattern, generalizing it is far safer than writing the consolidation logic from scratch — the "High confidence" rows above likely just need the same script parameterized by domain-list and glob pattern rather than a brand-new implementation per experiment.
+
+merge_extrap_into_benchmark.py
+py
+run_analysis.py
+py
+
+Investigated data consolidation pipeline and identified missing connection
+
+Check file sizes
+
+Read merge_extrap_into_benchmark.py
+
+Read merge_extrap_into_benchmark.py
+
+Investigated data consolidation pipeline and identified missing connection.
+
+Check run_analysis.py for file-loading/consolidation logic
+bash
+grep -n -i "protocol_core\|glob\|shard\|consolidat\|def load\|def _load" /mnt/user-data/uploads/run_analysis.py | head -60
+Output
+5:HypatiaX post-consolidation statistical analysis. 8:NEVER called by workers or the consolidate job. 12:_merged.json — produced by scripts/merge_shards.py 45: exp1_ablation runs with NSHARDS=4; merged to _merged.json 140: # exp2_feynman_pca: protocol_core_noiseless_pca_*.json uses the IDENTICAL 158: # exp1_ablation runs with NSHARDS=4; shards are merged to _merged.json by 177: # exp2_feynman_extrap: NSHARDS=1, DIRECT mode. ablation_paired.json written here 191: # exp1_ablation: now CI-dispatched with NSHARDS=4; result_subdir mirrors 1596: "not translated by merge_shards.py, or the experiment should be mapped " 1623: # excluded from all method-comparison statistics. Verify that merge_shards.py 1630: "Confirm merge_shards.py translates method names before analysis." 1722: "Verify `merge_shards.py` translates method names correctly." 1898: description="HypatiaX post-consolidation statistical analysis." 1906: # LEGACY (merge_shards.py output): 1907: # --merged-json <path> Path to _merged.json from merge_shards.py. 1911: # CI / NSHARDS=1 (direct repo JSON): 1916: # ci_analysis.yml). Used for exp1 (NSHARDS=1) 1917: # and any other single-shard experiment where 1918: # merge_shards.py is not called. 1919: # --shard-manifest <f> Newline-delimited list of shard JSON paths. 1921: # before analysis (shard-direct mode from CI). 1926: # --input-json and --shard-manifest are mutually exclusive. 1931: help="Path to _merged.json produced by merge_shards.py " 1932: "(legacy; use --input-json for NSHARDS=1 direct mode).") 1935: "committed directly by a NSHARDS=1 worker, or an " 1938: input_group.add_argument("--shard-manifest", 1939: help="Newline-delimited file listing shard JSON paths " 1940: "(shard-direct mode; each file is loaded and records " 1952: choices=["merged", "direct", "shards"], 1955: "shards — see the case statement in ci_analysis.yml's " 1957: "shard-manifest-missing fallback: that fallback is only " 1959: "experiment as 'direct' (NSHARDS=1). If omitted (manual/" 1966:# Maps the long-form method names emitted by merge_shards.py to the canonical 1969:# merge_shards.py's naming changes. 1987: Shared extraction for merge_shards.py sweep shapes that nest 2026:def _load_records_from_json(json_path: Path, experiment: str) -> list[dict]: 2030: and individual shard files in --shard-manifest mode. 2037: — protocol_core_*.json / _merged_benchmark.json from the 2043: — suppB noise-sweep _merged.json from merge_shards.py 2044: (merge_shards.py's own log calls this "Shape S sweep file"). 2057: merge_shards.py. Same structure and extraction as Shape S, 2064: # Shape P — benchmark-format (protocol_core_*.json or _merged_benchmark.json) 2067: # This is the shape produced by the single NSHARDS=1 worker for exp1 and 2068: # assembled in-memory by ci_analysis.yml for other single-shard experiments. 2070: # Import merge_shards helpers with a graceful fallback so this script does 2071: # not crash when merge_shards.py is absent (e.g. standalone invocations or 2076: from merge_shards import _is_protocol_file, _normalise_protocol_record # type: ignore 2079: "WARNING: merge_shards.py not found on sys.path — " 2088: # Maps the long-form method names used in protocol_core_*.json to the 2090: # in merge_shards.py — keep in sync if merge_shards.py is updated. 2106: """Return True if data looks like a protocol_core_*.json wrapper.""" 2153: print(f" Shape P (protocol wrapper / NSHARDS=1 direct): " 2157: # Shape S — suppB noise-sweep _merged.json from merge_shards.py. 2170: print(f" Shape S (noise-sweep _merged.json from merge_shards.py): " 2175: # merge_shards.py. Detected by a non-empty "per_n" dict at top level 2185: print(f" Shape N (sample-complexity-sweep _merged.json from merge_shards.py): " 2192: print(f" Shape A (_merged.json from merge_shards.py): " 2226: elif args.shard_manifest: 2227: output_dir = Path(args.shard_manifest).parent 2230: "--shard-manifest required).", file=sys.stderr) 
+
+
+sorry, proably _mergedson name I don't knoe be the best option to plot after gather information
+
+Synthesized existing patterns and unified fragmented registry approach
+That instability you're describing is already a documented bug in your own codebase, not just a theoretical risk — worth grounding on it rather than solving from scratch.
+What's already there: generate_tables.py has a load_best(subdir, glob_pat) helper that globs a directory, sorts candidates by os.path.getmtime (newest wins), and reads the first hit. There's a per-experiment table (subdir + glob pattern) documented in a comment at the top of the file, one row per experiment, since each experiment writes to a different path with a different naming convention.
+Where it broke: the comment at line 222 explains a real incident — sample_complexity_n1000_checkpoint.json (an in-progress shard) matched the same glob as the final consolidated sample_complexity_<timestamp>.json, and since the checkpoint's mtime happened to be newer, load_best() silently loaded the checkpoint instead of the real result, in every CI run, producing empty tables with no error. Timestamp/mtime-based "latest wins" is exactly the kind of solution that looks portable but quietly picks the wrong file.
+So the actual fix isn't "one generic loader," it's three separate disciplines, all of which your code already gestures at but only applies inconsistently:
+    1. Exclude before sorting, not after. _EXCLUDE_SUBSTRINGS = ("checkpoint", "_sig", "MISSING") has to run before mtime sort, every time, in every script that touches that glob — not just in the one place someone remembered to add it.
+    2. One registry, not three. The (experiment → subdir, glob pattern) table exists as a comment in generate_tables.py, but generate_figures.py and run_analysis.py each reason about paths independently (that's how the exp1_ablation vs ablation/exp1_ablation subdir mismatch bug happened, per the same comment block). Making that table a real importable Python dict that all three files import is the portable part — not the mtime trick.
+    3. Detect shape from content, not filename. run_analysis.py's _load_records_from_json already does this right: it sniffs Shape P/S/N/A by which keys are present in the loaded JSON, rather than assuming structure from which experiment it is. That's the pattern to extend, since "different structure per experiment" is a losing battle to hardcode per-experiment but a solvable one to detect per-file.
+Want me to pull that path/glob table out of the comment in generate_tables.py and turn it into a shared experiment_registry.py (single source of truth, exclude-then-sort baked in) that the other scripts can import? Or do you want to just get one experiment's plot working first and generalize after you've seen the real file shapes?
+
+both after that, i can upload one by one
+
+Architected modular registry structure for sequential data integration
+Sounds good — I'll build the shared registry now using the mappings already documented in generate_tables.py's comment, then you can start uploading files one at a time and I'll wire up plotting/validation against them as they come in.
+Ran 4 commands, created a file
+Confirmed working: the checkpoint file has the newer mtime (I gave it a later timestamp on purpose) but gets excluded, so the real consolidated file wins — exactly the bug class from the comment in generate_tables.py, closed.
+Presented file
+A few things worth knowing before you start uploading:
+    • The registry is a lookup + selection helper, not a replacement for the three scripts — generate_tables.py, generate_figures.py, and a future merge_shards.py would each import REGISTRY/find_best/find_shards instead of re-deriving subdir/glob logic.
+    • exp2_feynman_extrap is deliberately marked shards=True but its consolidation target is ablation_paired.json via merge_extrap_into_benchmark.py, not _merged.json — different schema, different consumer (analyse_ablation()), so I kept it distinct rather than merging the two concepts.
+    • Some rows (exp2_feynman, extrap, hybrid_all_domains, exp3) are marked shards=True based on the earlier evidence about domain/seed loops writing per-task files, but I haven't seen real filenames from those dirs yet — treat those glob patterns as best-guess until your uploads confirm or correct them.
+Go ahead and upload the first file whenever you're ready — I'll check it against its registry entry and flag anything that doesn't match.
+Experiment registry
+PY 
+Download
+
+protocol_core_extrap_20260812_064422.json
+json
+protocol_core_extrap_20260812_070109.json
+json
+protocol_core_extrap_20260812_071701.json
+json
+protocol_core_extrap_20260812_073435.json
+json
+protocol_core_extrap_20260812_074145.json
+json
+protocol_core_extrap_20260812_064848.json
+384 lines
+json
+protocol_core_extrap_20260812_06
+How I would integrate it into your run_all.sh
+For example, after an experiment finishes:
+python3 "${SCRIPTS_DIR}/merge_experiment_json.py" \
+    --input-dir "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi" \
+    --output "${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi/_merged.json" \
+    --experiment exp1
+For the multi-seed experiment:
+python3 "${SCRIPTS_DIR}/merge_experiment_json.py" \
+    --input-dir "${RESULTS_DIR}/comparison_results/noise-noiseless/15" \
+    --output "${RESULTS_DIR}/comparison_results/noise-noiseless/15/_merged.json" \
+    --experiment exp1b
+And for the domain sweep:
+python3 "${SCRIPTS_DIR}/merge_experiment_json.py" \
+    --input-dir "${RESULTS_DIR}/comparison_results/extrapolation" \
+    --output "${RESULTS_DIR}/comparison_results/extrapolation/_merged.json" \
+    --experiment extrap
+This fits the structure of your current pipeline: exp1b explicitly runs different seeds and renames outputs with shard/seed information, while extrap runs once per domain. 
+One important design choice: I would not make the merger average or collapse seeds/domains. The merged file should retain the individual observations:
+experiment
+ └── equation_id
+      └── domain
+           └── seed
+                └── parameters
+                     └── result
+Then a separate analysis script can calculate mean/std/median, solve rate, best seed, etc. That prevents the merge stage from destroying experimental information.
+Your existing pipeline already expects _merged.json as part of the qualification gate, so this also aligns with that convention. 
+If you want, I can also adapt this specifically to the actual JSON schemas produced by each step in run_all.sh (exp1, exp1b, extrap, exp2, exp3, suppB, etc.) rather than using the generic schema-tolerant version above.
+Exactly. That distinction is important.
+merge_shards.py should remain responsible for one specific problem:
+N workers / shards produce pieces of the same experiment → merge those pieces back into the complete experiment result.
+It should not become the general-purpose merger for different experimental configurations.
+So there are really two different merge levels:
+                    EXPERIMENT
+                        │
+          ┌─────────────┴─────────────┐
+          │                           │
+      worker 0                    worker 1 ... worker N
+          │                           │
+          ▼                           ▼
+      result_0.json                result_1.json
+          │                           │
+          └─────────────┬─────────────┘
+                        │
+                        ▼
+                 merge_shards.py
+                        │
+                        ▼
+                experiment result
+                (one complete run)
+                        │
+                        │
+          ┌─────────────┼─────────────┐
+          │             │             │
+       seed=42       seed=99       seed=123
+          │             │             │
+       domain=A      domain=A      domain=A
+          │             │             │
+          └─────────────┬─────────────┘
+                        │
+                        ▼
+              experiment aggregation
+Therefore I would NOT modify merge_shards.py
+Its job is:
+shard 0
+shard 1
+shard 2
+...
+shard N
+   ↓
+merge_shards.py
+   ↓
+one complete JSON
+For example:
+{
+  "equations": [
+    ...
+  ]
+}
+where the equations are distributed across workers.
+
+What you are asking for is a second stage
+From your original request:
+"merge the results of the experiments which the output are json for a loop of equations ID/domains/parameters seed values etc"
+That sounds like you have something more like:
+experiment/
+├── equation_001/
+│   ├── domain_A/
+│   │   ├── seed_42/
+│   │   │   └── result.json
+│   │   ├── seed_99/
+│   │   │   └── result.json
+│   │   └── seed_123/
+│   │       └── result.json
+│   │
+│   └── domain_B/
+│       └── ...
+│
+├── equation_002/
+│   └── ...
+Those are different experimental runs, not shards.
+So the pipeline should be:
+                 N SHARDS
+                    │
+                    ▼
+             merge_shards.py
+                    │
+                    ▼
+          complete run JSON
+                    │
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+      seed 42              seed 99
+          │                   │
+       domain A            domain A
+          │                   │
+     equation 1          equation 1
+          │                   │
+     parameters X        parameters X
+          │                   │
+          └─────────┬─────────┘
+                    ▼
+            experiment merge
+                    │
+                    ▼
+          experiment_merged.json
+And this second merge should probably live in ci_analysis.yml
+Not in run_all.sh, and not inside merge_shards.py.
+For example:
+ci_runner
+   │
+   ├── runs experiment
+   │
+   ├── worker 0 ──┐
+   ├── worker 1 ──┤
+   ├── worker 2 ──┤
+   └── worker N ──┘
+                 │
+                 ▼
+          merge_shards.py
+                 │
+                 ▼
+          shard-merged JSON
+                 │
+                 ▼
+        ┌────────────────────┐
+        │ experiment merger  │  ← new
+        └────────────────────┘
+                 │
+                 ▼
+        experiment_merged.json
+                 │
+                 ▼
+            analysis
+This separation is much cleaner.
+Why this matters
+Suppose you have:
+eq1 domain=A seed=42
+eq1 domain=A seed=99
+eq1 domain=B seed=42
+eq2 domain=A seed=42
+merge_shards.py must never interpret these as shards of each other.
+Instead, each one is an independent run:
+run_id =
+    equation_id
+  + domain
+  + parameters
+  + seed
+  + possibly method/configuration
+Then the new merger collects those runs:
+{
+  "experiment": "exp3",
+  "runs": [
+    {
+      "equation_id": "eq1",
+      "domain": "A",
+      "seed": 42,
+      "parameters": {...},
+      "result": {...}
+    },
+    {
+      "equation_id": "eq1",
+      "domain": "A",
+      "seed": 99,
+      "parameters": {...},
+      "result": {...}
+    },
+    {
+      "equation_id": "eq1",
+      "domain": "B",
+      "seed": 42,
+      "parameters": {...},
+      "result": {...}
+    }
+  ]
+}
+Then analysis can decide whether to aggregate across seeds, domains, equations, etc.
+
+So I agree with your clarification: merge_shards.py was created for the multi-worker (NSHARDS) problem and should stay that way.
+The next step is to look at the actual structure/naming of the JSON files after merge_shards.py has finished, and design the second-stage merger around that. If you give me the relevant part of ci_analysis.yml (or I can inspect the uploaded file), I can identify the exact insertion point and propose the new script without touching the existing shard-merging logic.
+in general, merge_experiments is in a different way to merge_shards
+Yes. They are fundamentally different operations, even though both are called “merge.”
+merge_shards.py
+Purpose: reconstruct one experiment/run from parallel workers.
+same experiment
+    │
+    ├── shard 0
+    ├── shard 1
+    ├── shard 2
+    └── shard N
+          │
+          ▼
+    merge_shards.py
+          │
+          ▼
+    ONE complete result
+The key identity is essentially:
+experiment + configuration + run
+The shards are pieces of the same result.
+
+merge_experiments.py
+Purpose: collect independent experiment runs into one dataset.
+experiment run 1
+    equation=E1
+    domain=D1
+    seed=42
+    parameters=P1
+          │
+experiment run 2
+    equation=E1
+    domain=D1
+    seed=99
+    parameters=P1
+          │
+experiment run 3
+    equation=E1
+    domain=D2
+    seed=42
+    parameters=P1
+          │
+experiment run 4
+    equation=E2
+    domain=D1
+    seed=42
+    parameters=P2
+          │
+          ▼
+  merge_experiments.py
+          │
+          ▼
+  COMPLETE EXPERIMENT DATASET
+Here, the inputs are already complete results. We don't combine their internal worker pieces; we collect them as separate observations.
+The conceptual difference
+	merge_shards.py	merge_experiments.py
+Input	Partial results	Complete experiment results
+Why multiple files?	Parallelization / NSHARDS	Parameter/seed/domain/equation sweep
+Relationship	Files are pieces of one run	Files are different runs
+Output	One reconstructed result	Collection of independent results
+Deduplication	Usually shard-specific	Important
+Seed	Usually part of run config	A key experimental dimension
+Domain	Usually part of run config	A key experimental dimension
+Parameters	Configuration	A key experimental dimension
+Aggregation	Reconstruct	Usually do not aggregate yet
+Typical output	result_merged.json	experiments_merged.json
+The crucial point is:
+merge_shards combines horizontally partitioned data; merge_experiments combines vertically/experimentally different runs.
+For example, if equation E1 has 1000 equations/cases distributed over 4 workers:
+shard0 = cases 0..249
+shard1 = cases 250..499
+shard2 = cases 500..749
+shard3 = cases 750..999
+merge_shards should produce:
+E1 / domain=A / seed=42 / params=P
+    └── cases 0..999
+Then if you repeat it:
+E1 / domain=A / seed=42 / params=P
+E1 / domain=A / seed=99 / params=P
+E1 / domain=B / seed=42 / params=P
+E2 / domain=A / seed=42 / params=P
+...
+merge_experiments produces:
+{
+    "experiments": [
+        {...E1, A, 42, P...},
+        {...E1, A, 99, P...},
+        {...E1, B, 42, P...},
+        {...E2, A, 42, P...}
+    ]
+}
+No averaging, no selection of the best seed, no collapsing domains. Those are analysis operations that happen afterward.
+That distinction also fits your current pipeline: the existing workflow's shard merge is specifically associated with NSHARDS, while the experiments such as exp3b explicitly represent extended seed runs. 
+So I would name the second component something like:
+scripts/merge_experiments.py
+and keep:
+scripts/merge_shards.py
+completely independent.
+The next design question is what constitutes the identity of one experiment result. From what you've described, I'd make it:
+experiment_id
++ equation_id
++ domain
++ parameters
++ seed
+with method/model possibly included depending on how your JSONs are structured.
+when merge_shards.py is applied in the cases of an uniue paramater how will e worked ?
+If by “unique parameter” you mean that a run is defined by one particular parameter value — for example:
+equation = E1
+domain   = D1
+seed     = 42
+noise    = 0.05       ← unique parameter
+then merge_shards.py should treat that parameter as part of the identity of the run, but the way it merges shards does not fundamentally change.
+Example
+Suppose you run:
+noise = 0.05
+NSHARDS = 4
+and get:
+result_noise_005_shard0.json
+result_noise_005_shard1.json
+result_noise_005_shard2.json
+result_noise_005_shard3.json
+All four files represent:
+E1 + D1 + seed42 + noise0.05
+So:
+merge_shards.py
+        │
+        ├── shard 0
+        ├── shard 1
+        ├── shard 2
+        └── shard 3
+        │
+        ▼
+result_noise_005_merged.json
+The merged result should retain:
+{
+  "equation_id": "E1",
+  "domain": "D1",
+  "seed": 42,
+  "parameters": {
+    "noise": 0.05
+  },
+  "results": [...]
+}
+Now suppose you sweep the parameter
+You run:
+noise = 0.00
+noise = 0.01
+noise = 0.05
+noise = 0.10
+with 4 shards each.
+Then you have four independent merge operations:
+noise=0.00
+  shard0 ─┐
+  shard1 ─┤
+  shard2 ─┤ → merge_shards → merged_noise_000.json
+  shard3 ─┘
+
+noise=0.01
+  shard0 ─┐
+  shard1 ─┤
+  shard2 ─┤ → merge_shards → merged_noise_001.json
+  shard3 ─┘
+
+noise=0.05
+  shard0 ─┐
+  shard1 ─┤
+  shard2 ─┤ → merge_shards → merged_noise_005.json
+  shard3 ─┘
+
+noise=0.10
+  shard0 ─┐
+  shard1 ─┤
+  shard2 ─┤ → merge_shards → merged_noise_010.json
+  shard3 ─┘
+This is still merge_shards.py.
+Then, afterward:
+merged_noise_000.json
+merged_noise_001.json
+merged_noise_005.json
+merged_noise_010.json
+              │
+              ▼
+      merge_experiments.py
+              │
+              ▼
+       experiment_merged.json
+The key rule
+I would define merge_shards.py as:
+Merge files only when they have the same experiment configuration.
+So it should verify something like:
+run_identity = {
+    "experiment": experiment_id,
+    "equation": equation_id,
+    "domain": domain,
+    "seed": seed,
+    "parameters": parameters,
+}
+All shards must have the same identity:
+shard 0 → E1, D1, seed42, noise=.05
+shard 1 → E1, D1, seed42, noise=.05   ✓
+shard 2 → E1, D1, seed42, noise=.05   ✓
+shard 3 → E1, D1, seed42, noise=.05   ✓
+But this must not be accepted:
+shard 0 → E1, D1, seed42, noise=.05
+shard 1 → E1, D1, seed42, noise=.05
+shard 2 → E1, D1, seed42, noise=.10   ✗
+shard 3 → E1, D1, seed42, noise=.05
+because then you're accidentally merging two different experiments.
+So the clean architecture is:
+                 parameter sweep
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       P = .01      P = .05      P = .10
+          │            │            │
+       NSHARDS       NSHARDS       NSHARDS
+          │            │            │
+          ▼            ▼            ▼
+     merge_shards  merge_shards  merge_shards
+          │            │            │
+          ▼            ▼            ▼
+       run P=.01    run P=.05    run P=.10
+          │            │            │
+          └────────────┼────────────┘
+                       ▼
+              merge_experiments
+                       │
+                       ▼
+             complete experiment
+This is the distinction I would implement in your CI: merge_shards.py operates inside one parameter configuration; merge_experiments.py operates across parameter configurations.
+

@@ -1,0 +1,26 @@
+﻿Examined phase status and identified incomplete implementation tasks
+1) Is Phase 3 closed? — No.
+Per Phase03_Report.md, two of the three items are resolved, but one is explicitly not done:
+Item	Status
+
+
+2 (27/30 M4 provenance)	Resolved, but has an un-done low-risk verification step
+10a (900s vs 1100s)	Fully resolved (doc-only)
+10b (300s timeout enforcement)	"DIAGNOSIS UPDATED, FIX SCOPED, NOT YET IMPLEMENTED" — root cause is understood but the actual fix hasn't been written
+Since it's not closed, here's (3) the remaining task list:
+Must-do (blocking closure):
+    • 10b — implement the _proc_box fix. Thread a mutable handle for the real PySR subprocess (proc) up through symbolic_engine.py / hybrid_system_v50_2.py to the outer ThreadPoolExecutor timeout handler in run_comparative_suite_benchmark_v2_FIXED.py, so the 300s outer timeout can actually stop the inner work instead of abandoning an orphaned background thread.
+================================================================================
+
+    • 10b — verify with a wall-clock timing test, not a Julia process-tree check (Julia can't be installed in this sandbox — julialang-s3.julialang.org is network-blocked). Run the harness with a short outer --method-timeout against a case with a long inner PySR budget and confirm elapsed time tracks the outer timeout.
+Low-risk, non-blocking (nice to close out):
+
+=================================================================================
+    • Item 2 — confirm against the actual paper source. Check jmlr-hypatiax*.tex / Table 4 caption to verify (a) Table 4 is sourced from this same all_domains 30-test run, and (b) the table's M-column header confirms the "exclude registry idx 3, renumber" convention used to map registry index 5 (SymbolicEngineWithLLM) → table position M4. audit_nb04 is the pipeline step meant to catch this if wrong.
+
+    • Item 10a — align prose in both write-ups to cite 1100s as the PySR/FEYNMAN_TIMEOUT value (not 900s), with a one-line note that METHOD_TIMEOUT (900s) is a separate outer-budget knob. No code change needed — this is just an editorial pass on the write-ups themselves (not present in this file set, so I can't confirm they've been edited yet).
+
+Also worth noting, flagged in the report but not scoped as an action item: chemistry-domain PySR fits look like a general weak spot (Arrhenius R²=0.087, Henderson-Hasselbalch R²=0.886 in the M4/item-2 failure set) — same equation family as the 10b repro case, though the report is explicit there's no causal link, just a shared domain worth a separate look.
+
+
+Want me to draft the two concrete pieces of leftover work — a _proc_box implementation sketch for symbolic_engine.py/hybrid_system_v50_2.py, and/or the specific prose edits for the 10a write-ups — before we call this phase done and move to a JMLR report?

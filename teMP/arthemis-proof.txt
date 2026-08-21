@@ -1,0 +1,48 @@
+﻿Inside the hybrid result for Arrhenius, find the formula or expression HypatiaX actually output (not just the R² number). This is the real, physical thing you can sanity-check — a formula either looks like Arrhenius's equation (involving exp of a ratio) or it doesn't.   (CREATE A SCRIPT TO INVEStIGATE iT)
+
+Ran 2 commands, created a file · 1 note
+Works correctly — finds the task, pulls each arm's formula, and flags when a recomputed R² disagrees with the reported one. It also correctly skipped "Ideal Gas Law" and reported no-formula-found for the neural_network arm. Copying it to outputs.
+Ran a command, read a file
+How to use it:
+
+bash
+python3 investigate_arrhenius.py path/to/your_rerun_results.json
+If you also have the original run's raw JSON (the one behind the paper's table), run it on both:
+
+bash
+python3 investigate_arrhenius.py original_results.json rerun_results.json
+and compare the two "hybrid" blocks side by side — same command, two files, printed one after another.
+What it will tell you:
+    • The actual formula HypatiaX output for Arrhenius (not just the R² number) — you can eyeball whether it looks like A*exp(-Ea/(R*T))-ish or is nonsense
+    • The reported R² for each arm
+    • If the file also stores raw y_true/y_pred points, it recomputes R² itself and flags a mismatch if the recomputed value disagrees with the reported one — which is exactly the kind of thing that would explain "0.90 vs. −∞" (e.g., a scoring bug vs. a genuinely different model output)
+It's schema-agnostic (searches recursively, doesn't assume exact key names) since I don't know your rerun's exact JSON structure — if it can't find something, it says so explicitly rather than guessing. If you run it and paste me the output (or upload the JSON directly), I'll read the result and tell you which number is real.
+Investigate arrhenius
+PY 
+Download
+
+run_all.sh
+sh
+which experiment results dir path?
+
+Viewed 3 files, ran 3 commands
+Found it — traced through the exp1b step (which is what actually runs hypatiax_defi_benchmark_v3c.py, the script containing Arrhenius).
+Viewing file
+Now I have both paths. Here's where the Arrhenius raw results actually live:
+v3c results (the ones underlying subsec:extrapolation-protocol's "v3c" label and Table tab:llm_ablation's hybrid numbers):
+
+${RESULTS_DIR}/comparison_results/noise-noiseless/15/
+— files named like hypatiax_defi_benchmark_v3_results_seed{S}_shard{N}_seed{tag}.json (the _shard*_seed* suffix is only added by the move step, so a local/standalone run may just be hypatiax_defi_benchmark_v3_results_seed{S}.json, matching what we already saw in generate_table1.py's docstring).
+PCA-directed results (for cross-checking against the "PCA" split, not v3c):
+
+${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi_pca/
+And RESULTS_DIR itself defaults to:
+
+${REPO_ROOT}/hypatiax/data/results
+(overridable by a RESULTS_DIR env var — check what you actually set/exported when you ran it, since run_all.sh respects that override rather than always using the default).
+What to do: go look in ${REPO_ROOT}/hypatiax/data/results/comparison_results/noise-noiseless/15/ on the machine where you ran this, find the most recent hypatiax_defi_benchmark_v3_results_seed*.json file(s), and run the script I gave you on it:
+
+bash
+python3 investigate_arrhenius.py "hypatiax/data/results/comparison_results/noise-noiseless/15/*.json"
+That'll pull out whatever HypatiaX actually predicted for Arrhenius in your rerun. If you can upload that JSON (or just the relevant portion) here, I'll run it for you instead.
+

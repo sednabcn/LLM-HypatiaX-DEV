@@ -1,0 +1,117 @@
+﻿Here's the fix in short steps:
+10a — 900s vs 1100s (just a doc mix-up)
+    1. Check the sweep run's saved config file for the real PySR timeout. 
+    2. If it says 1100s → add a note that the sweep and Phase 3 runs use different timeouts. 
+    3. If it says 900s → delete the "1100s" number from the sweep table. 
+    4. Make both write-ups say the same number. 
+    5. No code change needed here. 
+10b — 300s limit but a 27,574s hang (real bug, already found and patched)
+The cause: killing the wrapper process didn't kill the Julia process inside it, so it kept running unseen.
+Fix already applied in run_comparative_suite_benchmark_v2_FIXED.py:
+    1. Start the subprocess in its own process group (start_new_session=True). 
+    2. On timeout, kill the whole group (wrapper + Julia), not just the wrapper. 
+    3. Remove the dead _kill_thread call (it referenced a function that was never defined, so it silently did nothing). 
+Steps to launch and verify:
+    1. Run the Arrhenius equation (test 4) alone with a short timeout, e.g.: 
+python run_comparative_suite_benchmark_v2_FIXED.py \
+  noiseless threshold 0.9999 \
+  nn-seeds 1 samples 200 \
+  method-timeout 30 \
+  pysr-timeout 30
+    2. While it runs, check for orphan processes: 
+ps -ef --forest | grep julia
+    3. Confirm the Julia process actually dies at 30s (not just the Python wrapper). 
+    4. If confirmed, re-run the full Phase 3 tests 1–18 with the fixed script. 
+    5. Update the reproducibility note to describe the real cause (orphaned subprocess), not just the symptom. 
+    6. Flag that tests 1–18 results may need rechecking, since an orphaned Arrhenius process could have starved CPU from other tests (e.g. Nernst/test 6). 
+One more thing worth noting: this timeout fix (10b) and the unseeded-NN fix (Issue 2) are in the same file — so any full re-run of Phase 3 numbers will pick up both fixes at once, and old results should be kept for a before/after comparison rather than discarded.
+Let me actually check whether GitHub-hosted Julia releases work here — GitHub domains are on the allowed list even though julialang.org isn't.julialang-s3.julialang.org is blocked (403 from the egress proxy), confirming it — Julia's installer doesn't go through GitHub at all, it's hosted on Julia's own S3 bucket, which isn't on the allowed domain list.Confirmed: x-deny-reason: host_not_allowed. Julia can't be installed here — no path around it through this sandbox's network policy.
+Where this leaves things:
+    • pip install pysr itself succeeds — PySR's Python package installs fine. 
+    • But import pysr immediately tries to fetch julialang-s3.julialang.org/bin/versions.json to resolve which Julia binary to install, and that domain is explicitly blocked (host_not_allowed), not just missing. 
+    • There's no GitHub-hosted mirror path for this — Julia's release infrastructure isn't on GitHub, it's Julia's own S3 bucket, so the fact that github.com is allowed here doesn't help. 
+So a literal Arrhenius test-4 run is genuinely not achievable in this environment — it's a hard network boundary, not a missing-package issue I can work around. The synthetic orphan-process verification from before is the closest confirmation available here.
+If you have access to a machine with network egress to julialang.org/julialang-s3.julialang.org (or Julia pre-installed), the actual command to run there is:
+python run_comparative_suite_benchmark_v2_FIXED.py \
+  noiseless threshold 0.9999 \
+  nn-seeds 1 samples 200 \
+  --only arrhenius \
+  --method-timeout 30 \
+  --pysr-timeout 30
+then, while it's running, watch for the orphan in another terminal:
+watch -n 1 'ps -ef --forest | grep -i julia'
+and confirm the julia process disappears within ~30s of the timeout firing, not 27,574s later. Want me to also add a --only <test-name> CLI flag to the harness if it doesn't already support isolating a single equation, so that run is easy to do?
+This is an important finding — symbolic_engine.py shows PySR is invoked via juliacall, which embeds Julia in-process (loads libjulia as a shared library into the same Python process) rather than shelling out to a separate julia binary. That directly touches the assumption Bug 1's diagnosis was built on. Let me check this carefully against the actual subprocess worker code.Good, the original harness is still there. Let's look at the actual _SUBPROCESS_WORKER code to see exactly what process model is used.This is a critical finding — the subprocess worker directly imports SymbolicEngineWithLLM / HybridDiscoverySystem, and PYTHON_JULIACALL_HANDLE_SIGNALS is a juliacall-specific setting. juliacall embeds Julia in-process via a shared library — it does not spawn a separate julia binary. That contradicts the premise Bug 1's diagnosis was built on. Let me check the two uploaded tool files and the rest of _run_pysr_in_subprocess to see what's really happening.Let's check whether either tool file actually spawns a separate julia binary anywhere else (not via PySR/juliacall), since that would still validate Bug 1's premise even if the main PySR path is in-process.I dug into these two files and found something that changes the diagnosis. Here's what the evidence actually shows:The original Bug 1 diagnosis rests on an assumption that these files disprove.
+observ-10.txt's Bug 1 write-up was explicitly conditional: "if that worker in turn launches Julia as its own OS subprocess (rather than loading libjulia in-process)..." The harness's own comment (line 2996–2998) repeats that same hedge.
+Now that we have the actual tool code, the answer to that "if" is settled — and it's the other branch:
+    • symbolic_engine.py's own comment says Julia loads via juliacall, which embeds Julia as a shared library (libjulia) inside the same process, not as a separate binary. 
+    • PYTHON_JULIACALL_HANDLE_SIGNALS is a juliacall-specific setting for in-process signal handoff — it only makes sense if Julia is embedded, not spawned externally. 
+    • Grepping both files for any subprocess call to an actual julia executable: zero matches. The only subprocess.Popen/subprocess.call in either file are a self-kill OOM guard (kill -9 $$) and a dead helper function (run_subprocess) that's never called anywhere. 
+    • hybrid_system_v50_2.py doesn't touch subprocess at all — it delegates to SymbolicEngineWithLLM internally. 
+Why this matters: SIGKILL can't be blocked by anything, including juliacall's signal handling. If Julia is embedded in the same OS process as the worker, then the original, unpatched proc.kill() — with no process-group isolation — should already have killed everything, Julia included. There's no separate PID to orphan.
+So Bug 1's fix (process-group isolation) is harmless but was very likely fixing a scenario that doesn't occur in this codebase. It doesn't explain the 27,574s hang.
+A more likely real cause, visible once you look at both timeout layers together:
+    • The outer layer (ThreadPoolExecutor + future.result(timeout=300)) is the one governing the 300s tests-1–18 limit. 
+    • The inner layer (_run_pysr_in_subprocess's own communicate(timeout=...)) uses a different, larger timeout — 900s/1100s per repro.yaml, visible in the subprocess worker's own defaults. 
+    • When the outer 300s fires, the harness returns a synthetic "timed out" result and moves on to the next test — but the background thread running underneath is never actually stopped, because _kill_thread never worked (that's the bug we already patched — but we only deleted the broken call; we never gave the outer timeout a way to actually reach the subprocess). 
+    • That means the abandoned thread's PySR subprocess keeps running with its own internal 900–1100s budget, invisible to the harness, silently competing for CPU with whatever test runs next — matching observ-10.txt's own speculation about Nernst (test 6) contending with an "orphaned Arrhenius process." 
+The structural gap: proc (the actual subprocess handle) is a local variable buried inside _run_pysr_in_subprocess, three call layers below the outer timeout handler. The outer code has no reference to it at all — that's why the original fix reached for the hacky thread-injection trick (_kill_thread) instead of just killing the subprocess directly.
+The real fix is to thread a shared handle out: have _run_pysr_in_subprocess register its proc into a mutable box passed down from the outer scope, so when the 300s method-timeout fires, the outer handler can call _kill_process_group() on the actual subprocess directly — no thread-killing needed at all.
+Want me to implement that? It touches the harness plus the call chain through symbolic_engine.py / hybrid_system_v50_2.py (both would need to accept and forward a _proc_box kwarg down to _run_pysr_in_subprocess).
+===========================================================================
+Two tiers make sense here: one you can run right now in any environment with zero dependencies (proves the wiring logic itself is correct), and one that needs the real hypatiax/PySR/Julia stack (proves it end-to-end on an actual test case). Let me build the first one now and actually run it to prove it works.
+Diagnosed subprocess pid capture issue, devised file-based solution
+Diagnosed subprocess pid capture issue, devised file-based solution
+The wiring test passes, but Test 1's orphan-detection is broken (I never captured the pre-fix subprocess's PID since the future's result is unreachable after abandonment) — let me fix that so the "before" comparison is honest, not just assumed:
+Edited 3 files, ran 2 commands
+Edited 3 files, ran 2 commands
+This now proves the actual claim honestly: without the fix the subprocess is orphaned and still running (pid 574, alive=True) after the outer handler gives up; with the fix it's dead (pid 576, alive=False) by the time the outer handler returns. Same elapsed time (3.0s) in both cases — the difference is purely whether the child process survives, exactly the bug in question.
+Ran a command, read a file
+Ran a command, read a file
+Two-tier test plan:
+Tier 1 — dependency-free, ran it above, passes. test_proc_box_wiring.py uses a byte-for-byte copy of the real _ProcBox/_kill_process_group code and reproduces the exact ThreadPoolExecutor + future.result(timeout=...) + except TimeoutError structure from the real file, but spawns sleep 9999 instead of PySR. It runs the same outer timeout (3s) against the same inner timeout (60s) twice — once with proc_box=None (old behavior) and once with the real fix wired in — and checks whether the child process is actually dead by the time the outer handler returns:
+    • Without the fix: subprocess orphaned, still alive. 
+    • With the fix: subprocess dead within the outer window. 
+This doesn't touch PySR/Julia/torch at all, so it runs anywhere, and it's testing exactly the mechanism that changed — not the PySR-specific behavior around it.
+Tier 2 — needs the real stack, to be run in your environment (this sandbox can't install Julia):
+bash
+python run_comparative_suite_benchmark_v2_FIXED.py \
+  --benchmark feynman --domain feynman_chemistry \
+  --method-timeout 30 --pysr-timeout 300 \
+  --noiseless --threshold 0.9999 --samples 200
+Deliberately invert the timeouts (outer=30s, inner=300s) so the outer fires first — same mismatch structure as the original bug, just compressed to make it fast to observe. Two things to check:
+    1. Wall clock: the harness should return around ~30s, not ~300s. Time the call. 
+    2. Process tree: ps -ef --forest | grep -i julia (or python) in a second terminal while it's running — after the harness returns, confirm nothing from that run is still alive. 
+If Tier 2 shows the harness still taking ~300s despite --method-timeout 30, that would mean something in the real environment defeats the wiring that Tier 1 confirms is structurally sound (e.g., _METHOD_TIMEOUT_SECS global not actually being set from --method-timeout before the method runs — worth double-checking that assignment path too, since it's a separate piece of plumbing from what we touched).
+Test proc box wiring
+PY 
+where store the script
+Examined repository structure to locate appropriate directory
+Examined repository structure to locate appropriate directory
+Based on the repo layout run_all.sh reveals, there's already a dedicated tests directory:
+${REPO_ROOT}/hypatiax/experiments/tests/
+— that's where suppA already runs test_enhanced_defi_extrapolation.py from. test_proc_box_wiring.py belongs right next to it:
+hypatiax/experiments/tests/test_proc_box_wiring.py
+Reasoning:
+    • It's a regression test for a bug in the harness code, not a benchmark experiment — it doesn't belong in hypatiax/experiments/benchmarks/ alongside run_comparative_suite_benchmark_v2_FIXED.py itself, since it never touches PySR/Feynman/DeFi data. 
+    • It's dependency-free by design (that's the whole point — no torch/pysr/juliacall), so it's also a good candidate to run in CI on every PR that touches run_comparative_suite_benchmark_v2_FIXED.py, unlike test_enhanced_defi_extrapolation.py which needs the full stack. Worth naming it so that's obvious, e.g. a test_proc_box_wiring.py docstring note or a # no-deps, safe for lightweight CI comment at the top (it already has an explanatory docstring, just flagging the placement implication). 
+    • If you want it to actually run automatically rather than sit there for manual use, it'd need a hook into run_all.sh's suppA step (or its own tiny CI job) the same way test_enhanced_defi_extrapolation.py is invoked — right now neither run_all.sh nor any CI YAML calls it, so it's a manual verification tool until wired in. 
+Want me to add an invocation for it into run_all.sh's suppA step (or a new lightweight step) so it actually runs as part of the pipeline instead of sitting unused?
+ci_runner_repro.yml
+yml
+ci_analysis.yml
+yml
+ci_postprocess.yml
+yml
+1) include it in suppA step 2)Updte ci_runner_repro 3)updte postprocess
+Architected three-step solution isolating test data cleanly
+Architected three-step solution isolating test data cleanly
+Now let's implement all three. First, run_all.sh's suppA step:
+Ran 2 commands
+Ran 2 commands
+Good, I have the working copy already. Let's view the suppA step exactly:
+Architected wiring test integration across multiple pipeline components
+Architected wiring test integration across multiple pipeline components
+Read run_all.sh
+Architected wiring test integration across multiple pipeline components.
+

@@ -1,0 +1,59 @@
+﻿Here's each point re-annotated with root-cause location, and whether it needs code/data investigation vs. is purely a stale-document reconciliation.
+1. Nguyen-12 Table 13 success counts (10/12, 7-actual, 4/12)
+    • Section: jmlr_paper_main_31071010.tex, §10.x "Nguyen-12 Benchmark (Standard SR Suite)" (subsec:nguyen12-benchmark-standard-sr-suite, tab:nguyen12). 
+    • Wrong result requiring code investigation? Partial. The Success row is a pure arithmetic error against the table's own printed per-equation cells — fixable by hand-recount alone. But given the pattern found elsewhere in this paper (Table 6 fabrication), the per-equation R² values themselves haven't been independently verified against raw result files, so a full fix should re-derive both the per-equation cells and the summary row from the raw JSON, not just re-tally the printed numbers. 
+    • Or discrepancy with old results? No — this is internal to one table, not a conflict with a prior run. 
+2. Supp Table 4 (30/30) vs. Abstract/Conclusion (27/30) on M4
+    • Section: supp_benchmark_report_31071010.tex, tab:overall (Six-method aggregate table) vs. its own Abstract and Conclusion. 
+    • Wrong result requiring code investigation? No — the audit trail (§1/2 of the consolidated audit) never touched this table, so its provenance is unverified either way; the fix is to regenerate tab:overall's HLLMNN row from whatever run produced the 27/30 figure quoted in the abstract, then confirm it's the same run, not two different ones. 
+    • Or discrepancy with old results? Yes — classic stale-data case: Table 4 reads like leftover v1 numbers never re-synced after the "27/30 (v2 corrected)" figure was adopted everywhere else in the same document. 
+3. EHSDeFi (M3) runtime 20.2 s vs. 841.4 s
+    • Section: supp_benchmark_report_31071010.tex, tab:overall (line ~415) vs. tab:time_noise (Sweep Results: Noise Robustness, line ~570). 
+    • Wrong result requiring code investigation? Yes — need to trace which script/run produced the 20.2 s figure, since 841.4 s is corroborated by the abstract's own "1.5–76×" range. If 20.2 s comes from a different hardware/config, that needs to be stated; if it's simply wrong, it needs regenerating from the same raw timing logs as tab:time_noise. 
+    • Or discrepancy with old results? Possibly both — could be a stale pre-correction number sitting in the summary table. 
+4. CI/SD statistical incompatibility
+    • Section: jmlr_paper_main_31071010.tex, §"Five-System Comparative Analysis (Feynman Core-15)" (subsec:fivesystem-comparative-analysis-feynman-, Table 1, line ~1233) vs. supp_benchmark_report_31071010.tex, Appendix G "Statistical Test Details" (app:statistical_tests, line ~1441). 
+    • Wrong result requiring code investigation? Yes — a CI this narrow given SD=1842%/n=13 indicates either the CI was computed with the wrong SD, wrong n, or a non-standard method not disclosed; needs re-running whatever CI computation code produced Table 1's figure and checking it against Appendix G's SD. 
+    • Or discrepancy with old results? No — both numbers are presented as current/final, not superseded. 
+5. "68 of 74" cited without seed/split
+    • Section: jmlr_paper_main_31071010.tex, Abstract (line ~223) and §"Overall Extrapolation Performance (DeFi v3.0)" (subsec:overall-extrapolation-performance-defi-v, line ~1011), referencing Table 5 in §"Runtime Analysis" (subsec:runtime-analysis/sec:timing). 
+    • Wrong result requiring code investigation? No — every underlying seed value in Table 5 is internally consistent; this is purely a writing/citation problem. 
+    • Or discrepancy with old results? No. 
+6. "v3c" vs. "PCA-directed" undefined as separate variants
+    • Section: jmlr_paper_main_31071010.tex, §"Extrapolation Protocol" (subsec:extrapolation-protocol/sec:split, line ~678) vs. §"Runtime Analysis" Table 5/6 captions (line ~1632). 
+    • Wrong result requiring code investigation? No — the numbers in both table variants are presumably real outputs of two real runs; the problem is purely that the methods section never explains what distinguishes them. 
+    • Or discrepancy with old results? No. 
+7. Remark 9 tier arithmetic (24/27/20→24/29/21 vs. "+3 Hard")
+    • Section: jmlr_paper_main_31071010.tex, benchmark task-difficulty remark immediately following the Easy/Medium/Hard definitions (line ~656, in the Benchmark Design section, unlabeled remark environment). 
+    • Wrong result requiring code investigation? No — pure text/arithmetic fix. 
+    • Or discrepancy with old results? No. 
+8. Figure 3 "DeFi AMM (Hard) = −78.04" untraceable + Impermanent Loss tier clash
+    • Section: jmlr_paper_main_31071010.tex, Figure 3 caption (fig:r2_heatmap_clipped, fig18_r2_heatmap_improved, line ~1289) vs. Table 8 (tab:llm_ablation, line ~1863) vs. the Medium-tier definition (line ~645). 
+    • Wrong result requiring code investigation? Yes, confirmed. The consolidated audit explicitly states Fig. 18's caption "was found to describe a different figure's structure entirely" — this is a known-bad figure/caption, not just an undiscovered issue. 
+    • Or discrepancy with old results? Also yes — the audit already has a fix source: regenerate this figure from the same _merged.json used to rebuild Table 8, rather than the process that produced −78.04. 
+9. Uncorrected mean R² (+0.8721) despite disclosed −141,000 masked failure
+    • Section: jmlr_paper_main_31071010.tex, §"Overall Extrapolation Performance (DeFi v3.0)" (subsec:overall-extrapolation-performance-defi-v, tab:main_results, line ~1275) and the footnote disclosure in the Abstract (line ~212). 
+    • Wrong result requiring code investigation? Yes, but explicitly pending, not something to guess at — the audit states the decision-attribution fix "has not been executed against a full live run." Recomputing mean R² requires that full corrected re-run, not a hand estimate from the disclosed outlier. 
+    • Or discrepancy with old results? No — it's not stale relative to a prior run; it's simply never been corrected at all. 
+10. Timeout contradiction (1100 s vs. 900 s; "300 s limit" but 27,574 s hang)
+    • Section: supp_benchmark_report_31071010.tex, Sweep hyperparameters (tab:sweeps, line ~309) vs. Reproducibility Statement, Phase 3 reproduction command (line ~990–1002, under §"Detailed Experimental Results"/Appendix D-equivalent). 
+    • Wrong result requiring code investigation? Yes for the second half — a "300 s limit" that allowed a 27,574 s hang implies the timeout enforcement itself is buggy (or was silently disabled for that run), worth checking in the harness code, not just the doc. 
+    • Or discrepancy with old results? Yes for the first half — 1100 s vs. 900 s reads like two different phases' configs bleeding into each other in the write-up, not a live bug. 
+11. Model/temperature mismatch across documents
+    • Section: supp_benchmark_report_31071010.tex, Appendix E-equivalent reproducibility table (line ~1045, ~1243) and supp_routing_improvements_31071010.tex, "Hardware and Software" (line ~756) vs. jmlr_paper_main_31071010.tex, Nguyen-12 reproducibility note (line ~2534). 
+    • Wrong result requiring code investigation? No — already done. The consolidated audit's §5 confirms the code-level root cause (hypatia.py hardcodes claude-sonnet-5/temp 0.25; the LLM_MODEL env var and repro.yaml field are dead code that nothing reads). 
+    • Or discrepancy with old results? Yes, now purely this — both supp appendix tables just need their stale claude-sonnet-4-20250514/temp 0.0 entries overwritten with the confirmed value. 
+12. Rounding slippage (1.21/0.36 = 3.36×, printed 3.40×)
+    • Section: jmlr_paper_main_31071010.tex, §"Runtime Analysis" (subsec:runtime-analysis/sec:timing), Table 5/6 pooled rows (line ~1659). 
+    • Wrong result requiring code investigation? Yes, but narrowly — generate_table1.py (already named in the paper as the regeneration script) is almost certainly dividing pre-rounded display values instead of full-precision ones; needs a one-line fix in that script plus a full table regen. 
+    • Or discrepancy with old results? No. 
+13. Near-duplicate task names across difficulty tiers
+    • Section: jmlr_paper_main_31071010.tex, §"The Hybrid Decision-Attribution Bug: Quantification" fabricated-success task list (sec:hybrid-attribution-bug, line ~1541) and §"Lending Protocols" task inventory (subsec:lending-protocols, line ~2972). 
+    • Wrong result requiring code investigation? No — both tasks are described as computing genuinely different formulas ("extended formulas accounting for funding rates" for the Hard version); this is a naming-clarity issue, not a data bug. 
+    • Or discrepancy with old results? No. 
+Summary by category:
+    • Needs live code/data re-investigation (results may be wrong): #3, #4, #8 (source identified — fix is mechanical), #9 (blocked on pending full re-run), #10 (enforcement bug), #12. 
+    • Already resolved at the code level, just needs doc propagation: #11. 
+    • Pure stale/reconciliation issues (no new code work, just sync text to already-correct data): #2. 
+    • Pure writing/text fixes (no code, no reconciliation needed): #1 (mostly), #5, #6, #7, #13. 
+

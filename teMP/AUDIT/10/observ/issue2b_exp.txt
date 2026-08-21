@@ -1,0 +1,101 @@
+﻿
+A few thoughts based on what's in the summary alone, though:
+"All evaluation strategies failed" is a different failure mode than nondeterminism. The report conflates two things: (1) hash-seeding nondeterminism in NN-based methods, and (2) PureLLM outright failing evaluation. A total evaluation failure for PureLLM is more likely caused by something orthogonal to the seeding fix — e.g., an API error (rate limit, malformed response, timeout), a parsing/extraction step that can't handle the LLM's output format, or a fallback chain where every strategy in turn throws. That's worth root-causing separately from Item 2b's core determinism claim, since "fails every time" and "gives inconsistent results across runs" point to different bugs.
+On --no-llm-cache and determinism: LLM APIs (including Anthropic's) are not guaranteed deterministic even at temperature 0 — sampling non-determinism from batching/kernel-level effects on the server side can produce different outputs for identical prompts. If PureLLM Baseline is expected to be bit-for-bit reproducible, that assumption may not hold regardless of code changes, and the design may need a tolerance-based comparison for LLM-based methods rather than exact-match reproducibility.
+If you can share:
+    • the repo URL (I can fetch it if public), or 
+    • upload the run_comparative_suite_benchmark_v2.py file and/or the artifact logs 
+I can actually trace the 7 hash() call sites, look at the PureLLM evaluation/error-handling path, and check the env-var export logic. What would you like to start with?
+Ran 3 commands, viewed a file
+Ran 3 commands, viewed a file
+Only one occurrence — let's see the surrounding context and also confirm what happened elsewhere with PureLLM across the other runs.
+Diagnosed transient API failure and floating-point precision discrepancy
+Diagnosed transient API failure and floating-point precision discrepancy
+This is a much clearer picture now — and it changes the diagnosis. Let me pull the actual source referenced by the failure to confirm.
+Identified logistic growth model inconsistency across systems
+Identified logistic growth model inconsistency across systems
+I dug through both the log and the harness script, and the picture that emerges is different from — and better than — what the summary suggests. Here's what's actually going on.
+The real root cause is not PureLLM — it's a much smaller residual issue in M3
+The gating check (check_issue2b_reproducibility.py) only ever evaluates two methods per the log: === PHASE A: 3 runs, --skip-pysr (HSL/M4 + EHD/M3 only need NN, no PySR/Julia) ===. PureLLM and ImprovedNN aren't part of the closed/open decision at all. The actual final verdict was:
+    • HybridSystemLLMNN (M4): DETERMINISTIC: identical R² across all 3 runs, every matched equation. ✅ fully fixed 
+    • EnhancedHybridSystemDeFi (M3): NON-DETERMINISTIC on 1 equation(s): spread=2.38e-10 biology: Logistic Growth: dPop/dt = r*Pop*(1-Po… r2=[1.000000, 1.000000, 1.000000] 
+So Item 2b is open because of one equation on one method, with a spread around 2.4e-10 — not because PureLLM is broken.
+The seeding fix and env pinning are already verified correct — no action needed there
+The preflight check at the top of the run confirms this directly:
+Live hash() calls (non-comment):  0  OK
+hashlib.sha256(...) call sites:   7 OK (matches 7-site patch)
+Determinism pinning: CUBLAS_WORKSPACE_CONFIG=:4096:8, OMP/MKL/OPENBLAS_NUM_THREADS=1, PYTHONHASHSEED=0
+Items 2 and 3 from the original solution list are done — I confirmed all 7 hashlib.sha256() sites in the script and they're correct. There's also already an in-process fix present at import time (torch.set_num_threads(1) + torch.use_deterministic_algorithms(True, warn_only=True)), with a code comment noting it closed a previous ~1e-6 R² spread down for M4. That fix worked — M4 is now bit-exact.
+Why M3 still has a tiny residual spread
+EnhancedHybridSystemDeFi.run() has a comment: "EnhancedHybridSystemDeFi delegates to PureLLMBaseline first" — it takes the LLM's formula/prediction, then trains a small MLP residual correction on top of it. Tracing equation-by-equation through the log, the flagged equation, "Logistic Growth: dPop/dt = r·Pop·(1-Pop/K)," is exactly the equation where PureLLM's own R² isn't bit-identical either (run 1: R²=-2.5050, RMSE=93.366760 vs runs 2 & 3: R²=-2.5116, RMSE=93.454578, matching each other but not run 1).
+So the chain is: PureLLM's raw prediction for that one equation isn't perfectly reproducible → M3 trains its residual-correction MLP on a slightly different input → tiny residual spread survives even with torch fully pinned to deterministic mode. The code comments elsewhere in the script explicitly flag the underlying assumption: "With temperature=0 the same prompt always produces the same formula." That assumption is what's breaking — Anthropic's API (like most LLM inference stacks) doesn't guarantee bit-exact output at temperature 0 due to server-side batching/kernel effects, and that's outside what hash()→sha256 or torch determinism flags can fix.
+The "All evaluation strategies failed" error is a separate, minor issue
+It hit PureLLM Baseline on the "Quadratic Discriminant" equation, once, in run 2 only (not runs 1 or 3) — a transient failure, not a reproducibility mismatch, and on a method that isn't part of the gate anyway. Worth a quick look at API error logs if it recurs, but it isn't blocking Item 2b.
+Recommendation
+    1. Don't re-run Phase A yet — re-running won't change anything, since the residual cause is upstream LLM non-determinism, not a missed code fix. 
+    2. Decide on tolerance policy for LLM-touching methods. TOL=0.0 (exact bit-match) is achievable for pure-NN methods (M4 already proves it) but may not be realistic for M3, which incorporates an LLM call in its pipeline. Consider either (a) accepting a small epsilon tolerance (e.g. 1e-8) specifically for methods that delegate to the LLM, or (b) caching the LLM's raw response per-equation across the 3 Phase A runs so M3 trains on identical input every time, isolating "is our own code deterministic" from "is the API deterministic." 
+    3. If you want, share hybrid_system_nn_defi_domain.py (where M3 and its residual-correction path live) and I can check whether there's a missed seeding site or non-deterministic reduction specific to that file. 
+hybrid_system_nn_defi_domain.py
+py
+fix all
+Investigated deterministic seeding conflicts and floating-point variance sources
+Investigated deterministic seeding conflicts and floating-point variance sources
+Good, still there. Let's inspect the outer harness's own _nn_residual_fit (the one wrapping M3's output) since that's the second place NN training happens for this method.
+Diagnosed nondeterminism sources and proposed concrete fixes
+Diagnosed nondeterminism sources and proposed concrete fixes
+Let me actually test a concrete hypothesis rather than speculate further — I can reproduce the NN training path in this sandbox and check for non-determinism directly.
+Ran 3 commands
+Ran 3 commands
+Good, torch installed. Let me also grab sklearn/scipy and run a direct empirical test of the ImprovedNN/train_nn_model path under the exact determinism settings the harness uses.
+Diagnosed determinism bugs and planned caching fixes
+Diagnosed determinism bugs and planned caching fixes
+I found and empirically verified something concrete. Let me test one more piece before making changes — whether the wall-clock-gated Stage-2 fitting loop is a real (if secondary) determinism hazard, then fix everything found.
+Mobilized to address comprehensive corrections
+Mobilized to address comprehensive corrections
+Now implementing fixes. First, the wall-clock-dependent Stage 2 fitting loop — a genuine determinism hazard I can prove is live:
+Analyzed variable latency impacts on candidate consumption patterns
+Analyzed variable latency impacts on candidate consumption patterns
+The log itself already proves wall-clock variance exists on this runner — the same equation shows different per-call durations across runs (e.g. PureLLM eq 0 took 5.4s / 5.1s / 6.9s across the three runs for identical work). That confirms the hazard is real, even though it doesn't affect this specific flagged equation (which resolves via the "nn" decision path, bypassing Stage 2's result). I'll fix it anyway since it's a live latent bug. Now implementing all fixes:
+Viewing file
+Viewing file
+Now let's rewrite this to be deterministic — bound by iteration/candidate counts, not wall-clock time, while keeping a generous safety valve that's logged (not silent) if it ever fires:
+Edited 2 files, ran a command
+Edited 2 files, ran a command
+Now update the curve_fit and DE loops to use deterministic gating instead of the wall-clock budget:
+Architected persistent cache mechanism to eliminate reproducibility issues
+Architected persistent cache mechanism to eliminate reproducibility issues
+Now the real fix — a persistent, cross-process LLM-formula cache. This is what closes the actual flagged gap: it eliminates the Anthropic API (which the code comments themselves note isn't guaranteed bit-exact even at temperature=0) as a variance source between the three Phase A subprocess runs.
+Editing file
+Editing file
+Now add the load/save helper methods and wire them into generate_llm_formula:
+Editing file
+Editing file
+Now wire in the write side at both places a formula result is produced (the PureLLMBaseline delegate path, and the local DeFi fallback path):
+Edited 2 files
+Edited 2 files
+Now let's verify the file is syntactically valid and sanity-check the changes:
+Ran a command
+Ran a command
+Let me also empirically test the frozen-cache mechanism to prove it actually closes the cross-process gap:
+Architected mock testing strategy for cache validation
+Architected mock testing strategy for cache validation
+Let me prove the frozen-cache mechanism actually solves the problem, by simulating two "process runs" against a mock LLM that returns different output each call (mimicking real API non-determinism) — the fix should still yield identical results.
+Ran 4 commands
+Ran 4 commands
+Confirmed: with the fix, all three "process" runs get bit-identical formula text even though the underlying (simulated) LLM call drifts on every fresh invocation — run 1 populates the frozen cache and runs 2 & 3 read from it instead of calling the API again. Now let's copy the fixed files to outputs and summarize.
+Ran a command, read a file
+Ran a command, read a file
+I fixed both real issues I found in this file, and empirically proved each one before shipping it.
+What was actually broken (and what wasn't)
+Not broken: the sha256 seeding of train_nn_model's weight init — I extracted the exact code and ran it in two separate processes with torch.use_deterministic_algorithms(True) in both normal and strict (warn_only=False) mode. Bit-identical hash both times. This part of the file was never the problem.
+Broken #1 — wall-clock-gated Stage 2 fitting. fit_formula_params decided how many curve_fit candidates to try, and whether differential_evolution ran at all, based on time.monotonic() elapsed since the fit started. That makes the actual sequence of optimizer calls depend on how loaded the CI runner happens to be at that moment — and the logs prove that timing jitter is real (the same equation's total time varied by several seconds across the three runs). Fix: always run the same fixed number of candidates and let maxfev/maxiter (already fixed constants) bound the cost. A generous 45s absolute safety valve remains for genuine runaway formulas, but now it logs loudly if it ever fires instead of silently changing the code path.
+Broken #2 — the actual flagged cause. The reproducibility check's one real complaint (spread=2.38e-10 on "Logistic Growth") traces to the Anthropic API not being guaranteed byte-identical at temperature=0 — the code's own comments already assumed it was. EnhancedHybridSystemDeFi.generate_llm_formula had only an in-memory cache, useless across the three separate phaseA_run1/2/3 processes. Fix: an opt-in, file-backed frozen cache (HYPATIAX_LLM_FREEZE_CACHE=<path>). Run 1 populates it on a miss; runs 2 and 3 read the identical formula text back instead of re-querying the API. I proved this works with a mock LLM that deliberately drifts on every fresh call — all three simulated runs still came back bit-identical.
+One more thing needed outside this file
+.github/scripts/run_issue2b_experiment.sh needs to export HYPATIAX_LLM_FREEZE_CACHE to the same path for all three Phase A subprocess invocations (e.g. $RUNS_DIR/llm_freeze_cache.json) for the fix to take effect. I don't have that script — if you upload it I'll wire it in directly.
+
+run_issue2b_experiment.sh
+243 lines
+sh
+Architected deterministic LLM caching strategy across experimental phases
+Architected deterministic LLM caching strategy across experimental phases
+Now wiring the frozen cache into the shell script — same pattern as the existing determinism pinning, since the mechanism is designed exactly for this multi-process use case.

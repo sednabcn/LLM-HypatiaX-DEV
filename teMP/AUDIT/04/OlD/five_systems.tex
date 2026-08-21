@@ -1,0 +1,352 @@
+% ============================================================================
+% five_systems.tex
+% Investigation report: Table 1 (tab:five_systems_full) data-source failure
+%
+% STATUS: PRE-PATCH INVESTIGATION REPORT. No change has been made to
+% generate_tables.py as a result of this document. This report exists to
+% record what was checked, what was found, and what remains unresolved,
+% so any future patch to gen_five_system() / _load_five_system_data() is
+% made with full knowledge of why the current fallback exists and why it
+% cannot simply be replaced with a "found the JSON" fix.
+%
+% Generated from an interactive debugging session tracing the CI failure
+% in ci_postprocess.yml (exp1_ablation postprocess step, missing
+% "five_system"/"system_comparison" key) through to its root cause.
+% ============================================================================
+
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{parskip}
+
+\newcommand{\finding}[1]{\par\noindent\textbf{\textcolor{red!60!black}{Finding: }}#1\par}
+\newcommand{\open}[1]{\par\noindent\textbf{\textcolor{orange!80!black}{Open question: }}#1\par}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Investigation Report: Table 1 (Five-System Comparison)\\
+       Data Source Cannot Be Reproduced}
+\author{CI debugging session --- \code{ci\_postprocess.yml} / \code{exp1\_ablation}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{Executive Summary}
+
+\code{generate\_tables.py}'s \code{gen\_five\_system()} produces Table~1
+(\code{tab:five\_systems\_full}, the Extrapolation Error vs.\ Interpolation
+$R^2$ comparison across five systems). When no JSON file with a
+\code{"five\_system"} or \code{"system\_comparison"} key is found, it silently
+falls back to a hardcoded constant, \code{FIVE\_SYSTEM\_PAPER\_ROWS}.
+
+This investigation set out to locate the real experiment that should feed
+this table and wire it in. It instead found that \textbf{no data source
+currently present in the repository reproduces the numbers in
+\code{FIVE\_SYSTEM\_PAPER\_ROWS}} --- not for any of the five rows, and not
+even in cases where sample sizes coincidentally match. Two structurally
+different experiment pipelines were found that plausibly contributed
+\emph{some} of the fallback's rows, using two incompatible metric
+definitions, on two different sets of test problems. Neither, on close
+inspection, reproduces the published numbers exactly.
+
+The practical conclusion: \textbf{Table 1 is not currently reproducible from
+any live pipeline in this repository.} This is a data-provenance problem,
+not a wiring bug, and should be resolved as a decision (what should this
+table measure, and from what source) before \code{generate\_tables.py} is
+patched to point at anything.
+
+\section{Background: How the Fallback Was Discovered}
+
+The CI job \code{ci\_postprocess.yml} runs \code{scripts/generate\_tables.py}
+for \code{experiment=exp1\_ablation}. Without \code{--allow-fallback}, the
+script's missing-JSON audit finds no file with a \code{"five\_system"} /
+\code{"system\_comparison"} key anywhere under its search candidates and
+exits non-zero, hard-blocking the CI step (no \code{|| true}, and the step
+runs under \code{set -euo pipefail}).
+
+\code{generate\_tables.py} searches, in order, every \code{*.json} file
+(not just the newest by mtime) under each of:
+
+\begin{itemize}
+  \item \code{ablation/exp1\_ablation/*.json} \hfill \textit{(unconfirmed as the right directory)}
+  \item \code{comparison\_results/five\_system/*.json}
+  \item \code{comparison\_results/system\_comparison/*.json}
+  \item \code{five\_system/*.json}
+  \item \code{system\_comparison/*.json}
+  \item \code{five\_system*.json} / \code{system\_comparison*.json} (repo root level)
+\end{itemize}
+
+None contain the required key. This is the documented, intentional
+fallback behavior (\code{Issue 4} in the script's own comments) --- the
+question this report investigates is \emph{where the real data should come
+from instead}.
+
+\section{Data Sources Examined}
+
+\subsection{\code{exp2} / Feynman 10-domain comparison (candidate A)}
+
+\textbf{Producer:} \code{run\_comparative\_suite\_benchmark\_v2.py
+--protocol all\_domains}, invoked per-domain by the \code{exp2} step in
+\code{run\_all.sh} across 10 domains (mechanics, thermodynamics,
+electromagnetism, fluid\_dynamics, optics, quantum, chemistry, biology,
+mathematics, economics).
+
+\textbf{Methods run (6, from \code{METHOD\_REGISTRY}):}
+\begin{center}
+\begin{tabular}{cll}
+\toprule
+\# & Class & JSON result key \\
+\midrule
+1 & \code{PureLLMBaselineMethod}   & \code{PureLLM Baseline (core)} \\
+2 & \code{ImprovedNNMethod}         & \code{ImprovedNN (core)} \\
+3 & \code{HybridDeFiMethod}         & \code{EnhancedHybridSystemDeFi (core)} \\
+4 & \code{HybridAllDomainsMethod}   & \code{HybridSystemLLMNN all-domains (core)} \\
+5 & \code{SymbolicEngineMethod}     & \code{SymbolicEngineWithLLM (tools)} \\
+6 & \code{HybridSystemV50\_2Method} & \code{HybridDiscoverySystem v50\_2 (tools)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Output files:}
+\begin{itemize}
+  \item \code{comparison\_results/feynman-tests/exp2\_multi/protocol\_core\_noiseless\_*.json}
+        --- 10 timestamped shards, in-distribution results (30 unique
+        (domain, test) records after dedup by latest timestamp).
+  \item \code{comparison\_results/feynman-tests/exp2\_extrap/benchmark\_results\_extrap.json}
+        --- 180 flat records (30 equations $\times$ 6 methods), produced by
+        the separate \code{exp2\_feynman\_extrap} step (\code{--extrap
+        --extrap-train-frac 0.8 --extrap-multiplier 2.0}).
+  \item Flat \code{benchmark\_results.json} (non-extrap): \textbf{never
+        produced} --- the export is wrapped in a bare
+        \code{try/except Exception} in the producer script and silently
+        failed; no file exists on disk. Not fatal, since the nested
+        \code{protocol\_core\_noiseless\_*.json} files carry the same data.
+\end{itemize}
+
+\finding{\code{compute\_extrap\_r2\_far()} --- the function that produces
+\code{extrap\_r2\_far} / \code{extrap\_error\_pct} --- only evaluates methods
+whose \code{formula} field is a re-evaluable symbolic expression string. Any
+method returning an NN architecture tag (\code{"ImprovedNN(...)"}), an
+\code{"[NN fallback"} tag, or \code{"N/A"} is skipped and receives
+\code{None} for all three extrapolation fields, per the function's own
+docstring: \emph{"Only SymbolicEngineWithLLM and HybridDiscoverySystem v50\_2
+produce formula strings and yield non-null values."} This is a structural
+property of the code, not a data gap: \textbf{Neural Network can never have
+extrapolation data from this pipeline, regardless of how many times it is
+re-run.}}
+
+\subsubsection*{Real per-method statistics (exp2 / exp2\_extrap)}
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Real method} & \textbf{Paper row} & \textbf{train\_r2\_mean} & \textbf{train n} & \textbf{extrap n} & \textbf{extrap median \%} \\
+\midrule
+PureLLM Baseline (core)              & Pure LLM               & 1.000 & 27/30 & 4  & 2157.2 \\
+ImprovedNN (core)                    & Neural Network          & 0.998 & 30/30 & \textbf{0}  & --- \\
+SymbolicEngineWithLLM (tools)        & System 2 Symbolic       & 1.000 & 30/30 & 18 & 112.2 \\
+HybridSystemLLMNN all-domains (core) & System 3 LLM+Fallback   & 1.000 & 30/30 & \textbf{0}  & --- \\
+HybridDiscoverySystem v50\_2 (tools) & Hybrid v50\_2           & 0.998 & 30/30 & 14 & 125.7 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{EnhancedHybridSystemDeFi (core)} (method \#3) is excluded from the
+above mapping: it is DeFi-domain-scoped (its module lives under
+\code{hybrid\_defi\_system/}), uses an \code{'ensemble'} decision strategy
+distinct from method \#4's explicit LLM-with-NN-fallback pattern, and does
+not correspond to any of the five paper row names.
+
+\textbf{extrap median \% is computed from the pre-existing
+\code{extrap\_error\_pct} field} in \code{benchmark\_results\_extrap.json}
+(defined as $\mathrm{RMSE_{far}} / \mathrm{RMSE_{train}} \times 100$ in
+\code{calculate\_extrapolation\_error()}); no metric was invented for this
+report. Raw (unclipped) means are dominated by catastrophic single-equation
+blowups --- e.g.\ Pure LLM's raw mean is $\approx 4.6\times10^{9}\%$ from
+one degenerate formula --- so only the median is reported here as
+representative.
+
+\subsection{\code{comparison\_results/extrapolation/} (near-duplicate of A)}
+
+A second, separately-dated (\code{2026-07-16} vs.\ exp2\_extrap's
+\code{2026-07-14}) \code{benchmark\_results\_extrap.json} exists at
+\code{comparison\_results/extrapolation/}, produced by the
+\code{all\_domains\_extrap\_v4} step in \code{run\_all.sh}. On inspection
+this is effectively a re-run of the same experiment: identical method set
+(6 methods), identical record count (180), and identical statistics ---
+e.g.\ Pure LLM's median error \% matches exp2\_extrap's to the decimal
+(2157.2). \finding{This directory is not an independent data source; it is
+a duplicate run of candidate A and does not resolve any discrepancy.}
+
+\subsection{\code{extrapolation\_73cases\_enhanced.json} (candidate B)}
+
+\textbf{Producer:} \code{run\_hybrid\_system\_benchmark.py}, an entirely
+separate harness from \code{run\_comparative\_suite\_benchmark\_v2.py}.
+
+\textbf{Domain:} DeFi/finance formulas (Value at Risk, options pricing,
+AMM arbitrage, impermanent loss, etc.) --- \textbf{not} the Feynman physics
+domains used by exp2.
+
+\textbf{Methods run (3, hardcoded):} \code{pure\_llm}, \code{neural\_network},
+\code{hybrid} --- a fundamentally different, coarser method set than exp2's
+six.
+
+\textbf{Metrics:} \code{test\_r2}, \code{extrapolation\_gap},
+\code{stability\_score} --- computed directly per-record, not via the
+RMSE-ratio \code{extrap\_error\_pct} used in candidate A. These are
+\textbf{not the same metric} even where both produce a percentage-like
+number.
+
+\textbf{Case pool:} \code{TOTAL\_EXTRAP\_CASES = 73}, of which 6 are
+excluded as \code{\_INTRACTABLE\_CASES} (piecewise/degenerate formulas
+where the test split collapses), leaving 67 "standard" cases.
+
+\subsubsection*{Why candidate B was suspected}
+
+The paper's fallback shows \code{Neural Network: n=13} and
+\code{Hybrid v50\_2: n=14} --- small counts inconsistent with exp2's 30-equation
+set, but plausibly consistent with a filtered subset of a 67-case DeFi
+pool. Candidate B's method names (\code{pure\_llm}, \code{neural\_network},
+\code{hybrid}) also linguistically match three of the five paper row names
+far more directly than exp2's verbose class-derived names.
+
+\subsubsection*{Why candidate B was ruled out}
+
+Counting non-\code{None} \code{test\_r2} values on the 67-case standard
+subset, exactly as \code{run\_hybrid\_system\_benchmark.py}'s own
+\code{\_collect()} helper does:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Method} & \textbf{n (standard subset, non-None test\_r2)} \\
+\midrule
+pure\_llm       & 67 \\
+neural\_network & 67 \\
+hybrid          & 67 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All three methods return 67, not 13 or 14. The report-generation function's
+own \code{\_robust\_stats()} was also checked directly for any additional
+filtering (a quality threshold, a clip-based exclusion, etc.) beyond NaN
+removal that might explain a further reduction from 67 down to 13--14:
+
+\begin{quote}\small
+\texttt{valid = [s for s in scores if not np.isnan(s)] \\
+\ldots \\
+n = len(valid)}
+\end{quote}
+
+No such filtering exists --- \code{n} is simply the count of non-NaN scores.
+\finding{Candidate B does not reproduce the paper's \code{n=13}/\code{n=14}
+counts under any filtering rule found in its own source code.}
+
+\section{Comparison: Real Data vs.\ Published Fallback}
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Row} & \multicolumn{2}{c}{\textbf{Paper (fallback)}} & \multicolumn{2}{c}{\textbf{Real (exp2, candidate A)}} & \\
+             & $n$ & extrap \% & $n$ & extrap median \% & \\
+\midrule
+Pure LLM               & 0  & --- & 4  & 2157.2 & \textit{paper has no data at all} \\
+Neural Network         & 13 & 86.7 & \textbf{0}  & --- & \textit{structurally impossible from exp2} \\
+System 2 Symbolic      & 0  & --- & 18 & 112.2 & \textit{paper has no data at all} \\
+System 3 LLM+Fallback  & 0  & --- & \textbf{0}  & --- & \textit{agrees (both empty), different reasons} \\
+Hybrid v50\_2          & 14 & 0.0 & 14 & 125.7 & \textit{$n$ matches; magnitude off by $10^2$--$10^3\times$} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\finding{Even the single closest match (Hybrid v50\_2, $n=14$ in both) shows
+a two-to-three-order-of-magnitude disagreement in the reported
+extrapolation error (0.0\% published vs.\ $\approx$125.7\% recomputed).
+A published value of exactly 0.0\% implies perfect extrapolation; the real
+recomputed value indicates far-region error comparable to or exceeding
+training error. This is not attributable to rounding, a different random
+seed, or a slightly different equation subset --- it indicates a different
+metric definition, a different (older or since-modified) code path, or
+numbers that were not machine-generated from the current pipeline at all.}
+
+\section{Root Cause Assessment}
+
+The evidence supports the following conclusion with moderate-to-high
+confidence:
+
+\begin{enumerate}
+  \item \textbf{The five-row table was assembled from at least two
+        structurally incompatible sources}, not from one coherent
+        experiment run: some subset resembling a DeFi/3-method/R\textsuperscript{2}-gap
+        harness (candidate B in spirit, though not an exact match), and
+        the remaining rows left entirely unpopulated (\code{"---"}) because
+        no source was ever wired up for them.
+  \item \textbf{The paper's own fallback already concedes this}: three of
+        five rows (Pure LLM, System 2 Symbolic, System 3 LLM+Fallback) are
+        \code{n=0}, \code{"---"} placeholders in \code{FIVE\_SYSTEM\_PAPER\_ROWS}
+        itself. This is not a regression introduced by this investigation
+        --- the hardcoded "paper-verified" constant was already
+        incomplete for 60\% of its extrapolation columns.
+  \item \textbf{No currently-existing script, if re-run today, would
+        reproduce the published Neural Network or Hybrid v50\_2 numbers
+        exactly}, despite exhaustive search across every JSON output
+        directory referenced by \code{run\_all.sh} for extrapolation-shaped
+        data (\code{exp2\_multi}, \code{exp2\_extrap},
+        \code{comparison\_results/extrapolation/},
+        \code{hybrid\_pysr/defi/}, and the standard
+        \code{\_FIVE\_SYSTEM\_CANDIDATES} search paths).
+\end{enumerate}
+
+\open{Where did the published \code{n=13} (Neural Network) /
+\code{n=14} (Hybrid v50\_2) / \code{0.0\%} (Hybrid v50\_2 error) numbers
+originate? Candidates not yet checked: an older git-history version of
+\code{run\_hybrid\_system\_benchmark.py} with a different
+\code{\_INTRACTABLE\_CASES} set or a different clip/threshold rule; a
+manually curated subset; or a run whose output file has since been deleted
+or was never committed. \code{git log -p} on
+\code{run\_hybrid\_system\_benchmark.py} and \code{generate\_tables.py}
+(specifically the commit that introduced \code{FIVE\_SYSTEM\_PAPER\_ROWS})
+would be the next step if this is pursued further.}
+
+\open{Is \code{train\_r2\_mean} in the paper's intended table meant to be
+full-dataset $R^2$ (as computed by the noiseless exp2 run) or
+training-split-only $R^2$ (as computed internally by the \code{--extrap}
+run before evaluating the far region)? This was never resolved and affects
+which of exp2's two output files is the correct source even for the columns
+that \emph{do} have real data.}
+
+\section{Recommendation}
+
+\textbf{Do not patch \code{\_load\_five\_system\_data()} /
+\code{\_rows\_from\_data()} to point at \code{exp2}/\code{exp2\_extrap}
+as a drop-in fallback replacement.} Doing so would silently swap one set
+of unverified numbers for a different, differently-computed set, without
+resolving why they disagree, and would misrepresent Table~1 as
+"regenerated from real data" when the real data measures a different
+metric on different problems for at least one row (Hybrid v50\_2) and
+cannot populate two rows at all (Neural Network, System 3 LLM+Fallback)
+under the current codebase.
+
+Suggested path forward, in order:
+\begin{enumerate}
+  \item Determine, from the paper text or its authors, what Table~1 is
+        actually meant to measure and over what problem set (Feynman-only,
+        DeFi-only, or a deliberate cross-domain comparison).
+  \item If cross-domain, consider whether Table~1 should be split into two
+        tables with clearly different scope, rather than one spliced table.
+  \item Locate or re-derive the true source of the published
+        Neural~Network/Hybrid~v50\_2 numbers (see open questions above)
+        before treating any current script's output as their replacement.
+  \item Only once (1)--(3) are resolved, patch \code{generate\_tables.py}
+        to read from the confirmed real source, and update
+        \code{FIVE\_SYSTEM\_PAPER\_ROWS}'s status from "paper-verified
+        fallback" to either "superseded by live data" or "confirmed
+        historical value, source: \ldots".
+\end{enumerate}
+
+\end{document}

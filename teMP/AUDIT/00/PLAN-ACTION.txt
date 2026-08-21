@@ -1,0 +1,84 @@
+﻿This numbered list matches exactly the 13 items I already traced through the source files and the consolidated audit trail — here's everything merged into one reference per item.
+1. Nguyen-12 Table 13 success counts (8/10/7/11/4 all disagree)
+    • Location: jmlr_paper_main_31071010.tex, §"Nguyen-12 Benchmark (Standard SR Suite)" (tab:nguyen12). 
+    • Audit status: Not addressed by the audit trail — its Nguyen-12 section only covers model identity, not this table's arithmetic. 
+    • Type: Internal arithmetic error, not a run-to-run discrepancy. Code investigation warranted mainly because the per-equation cells themselves are unverified against raw JSON (given the pattern in item 8/Table 6). 
+    • Fix: Recompute the Success row from the printed per-eq cells at one stated threshold; reconcile or delete the conflicting footnote; re-derive from raw results rather than hand-recount if possible. 
+2. Supp Table 4 (30/30) vs. Abstract/Conclusion (27/30) on M4
+    • Location: supp_benchmark_report_31071010.tex, tab:overall vs. its own Abstract/Conclusion. 
+    • Audit status: Not addressed. 
+    • Type: Stale data — abstract/conclusion agree with each other and name specific failures; Table 4 is the outlier. 
+    • Fix: Regenerate Table 4's HLLMNN row from the same run that produced 27/30; delete the "v2 achieves 30/30" footnote. 
+3. EHSDeFi (M3) runtime, ~40× gap (20.2 s vs. 841.4 s)
+    • Location: supp_benchmark_report_31071010.tex, tab:overall vs. tab:time_noise. 
+    • Audit status: Not addressed — the audit's runtime resolution (item 2 of the consolidated audit) covers the DeFi hybrid-vs-NN 1.73× claim, a different sweep entirely. 
+    • Type: Needs code/data investigation — trace which script produced 20.2 s; 841.4 s is corroborated by the abstract's own speedup range. 
+    • Fix: Regenerate both tables from the same raw timing logs; clarify if 20.2 s measures something genuinely different (e.g., warm vs. cold search). 
+4. CI/SD statistical incompatibility
+    • Location: jmlr_paper_main_31071010.tex Table 1 (§"Five-System Comparative Analysis") vs. supp_benchmark_report_31071010.tex Appendix G ("Statistical Test Details"). 
+    • Audit status: Not addressed anywhere in the audit trail. 
+    • Type: Computation error — needs code investigation into whatever produced the CI. 
+    • Fix: Recompute CI directly from SD=1842%, n=13 (≈[230%, 2233%] under normal approx, or bootstrap given the disclosed skew). 
+5. "68 of 74" cited without seed/split
+    • Location: Abstract + §"Overall Extrapolation Performance (DeFi v3.0)" vs. Table 5 in §"Runtime Analysis". 
+    • Audit status: Not addressed. 
+    • Type: Pure citation/writing issue — Table 5's underlying seed values are internally consistent. 
+    • Fix: Name the canonical seed/split explicitly everywhere, or state the range (68–69/74). 
+6. "v3c" vs. "PCA-directed" undefined as two variants
+    • Location: §"Extrapolation Protocol" (defines one method) vs. Table 5/6 captions (treat as two). 
+    • Audit status: Not addressed — the consolidated audit's own summary (§2) perpetuates the same "Aggressive (v3c) split... PCA-directed split..." framing without defining the relationship. 
+    • Type: Documentation gap, not a computational bug. 
+    • Fix: Add an explicit definitions note distinguishing (or equating) "v3c" and "PCA-directed." 
+7. Remark 9 tier arithmetic doesn't add up
+    • Location: Benchmark task-difficulty remark following the tier definitions. 
+    • Audit status: Not addressed. 
+    • Type: Text/arithmetic-only fix. 
+    • Fix: Correct to "+2 Medium, +1 Hard" and update the example task attribution. 
+8. Figure 3 "DeFi AMM (Hard) = −78.04" untraceable + Impermanent Loss tier clash
+    • Location: Figure 3 caption (fig18_r2_heatmap_improved) vs. Table 8 vs. Medium-tier definition (§6.2). 
+    • Audit status: Confirmed by the audit — explicitly states this figure's caption "was found to describe a different figure's structure entirely," and the underlying ablation table was independently rebuilt from _merged.json. 
+    • Type: Code/data investigation — but already resolved at the source level; a fix path exists. 
+    • Fix: Regenerate Figure 3 from _merged.json (same source as the rebuilt Table 8); resolve the Impermanent Loss tier conflict in favor of §6.2's Medium classification. 
+9. Uncorrected mean R² (+0.8721) despite disclosed −141,000 masked failure
+    • Location: Table 2 (tab:main_results, §"Overall Extrapolation Performance") + Abstract footnote. 
+    • Audit status: Partially addressed with explicit caveat — the audit confirms the pass-rate correction (60.8%/62.2%) but states the full corrected re-run "has not been executed against a full live run." 
+    • Type: Code investigation, but blocked/pending — do not estimate a corrected mean by hand from the disclosed outlier. 
+    • Fix: Wait for the full corrected re-run; until then, flag +0.8721 explicitly as known-invalid-but-not-yet-replaced. 
+10. Timeout contradiction (1100 s vs. 900 s; "300 s limit" but 27,574 s hang)
+    • Location: supp_benchmark_report_31071010.tex, sweep hyperparameters (tab:sweeps) vs. Phase 3 reproduction command. 
+    • Audit status: Not addressed. 
+    • Type: Mixed — the 1100/900 split is likely just two different phases' configs conflated in the writing (stale/reconciliation); the Arrhenius hang suggests an actual enforcement bug in the harness (code investigation). 
+    • Fix: Label each phase's timeout explicitly; investigate why the 300 s limit didn't fire for Arrhenius. 
+11. Model/temperature mismatch across documents
+    • Location: Supp Appendix E table + supp_routing_improvements_31071010.tex reproducibility table vs. main paper's Nguyen-12 note. 
+    • Audit status: Resolved by the audit. Confirms hypatia.py uses claude-sonnet-5 @ temp 0.25; the LLM_MODEL env var and repro.yaml field are dead code paths that explain the false "pinned" appearance. 
+    • Type: No further code investigation needed — this is now a pure stale-document sync issue. 
+    • Fix: Overwrite both stale appendix tables with the confirmed claude-sonnet-5 @ 0.25. 
+12. Rounding slippage (3.36× vs. printed 3.40×)
+    • Location: Table 5/6 pooled rows, §"Runtime Analysis". 
+    • Audit status: Not addressed. 
+    • Type: Code investigation — narrow, mechanical: generate_table1.py is dividing pre-rounded values. 
+    • Fix: Fix the script to divide full-precision values; regenerate. 
+13. Near-duplicate task names across tiers
+    • Location: §"The Hybrid Decision-Attribution Bug: Quantification" fabricated-success list vs. §"Lending Protocols" task inventory. 
+    • Audit status: Not addressed. 
+    • Type: Naming-clarity only — tasks are functionally distinct ("funding-adjusted" vs. basic formula). 
+    • Fix: Rename for disambiguation; add a one-line note confirming they're deliberately separate. 
+
+Net summary across all 13, folding in the audit trail:
+#	Needs code/data work	Blocked/pending	Resolved (needs doc sync only)	Pure text fix
+1	✓ (partial)			
+2			✓	
+3	✓			
+4	✓			
+5				✓
+6				✓
+7				✓
+8			✓ (fix source known)	
+9		✓		
+10	✓ (partial)			
+11			✓	
+12	✓			
+13				✓
+Five items (#5, 6, 7, 12→partly, 13) are pure writing fixes needing no new computation. Three (#3, 4, 12) need someone to actually re-run or re-derive numbers from raw logs. Two (#8, 11) already have their root cause nailed down by the audit and just need the fix applied to the LaTeX. One (#9) is explicitly gated on a pending full corrected re-run — don't guess at it. #10 splits across both categories.
+

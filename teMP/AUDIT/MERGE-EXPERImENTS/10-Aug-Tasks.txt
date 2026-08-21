@@ -1,0 +1,51 @@
+﻿1) RESULTS_DIR OF exp1, exp1b, hybrid_all_domains, suppA 2)Identify experiments and RESULTS DIR of That's Tables 9, 10, 11, 12, 13, 15, tab:hybrid_all, and Figures 9–13.
+
+Deciphered experiment directories and mapped result paths systematically
+1) RESULTS_DIR for each experiment
+Experiment	RESULTS_DIR (final output location)
+exp1	${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi
+exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+hybrid_all_domains	${RESULTS_DIR}/hybrid_llm_nn/all_domains
+suppA	${RESULTS_DIR}/hybrid_pysr/defi
+Notes on how each is derived in run_all.sh:
+    • exp1: _DEFI_TARGET='${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi' — the script writes directly here via --output-dir.
+    • exp1b: outputs are produced elsewhere then moved into dest15='${RESULTS_DIR}/comparison_results/noise-noiseless/15' (the "noise=15" dir, despite exp1b actually being the DeFi seed-sweep/portfolio-variance step).
+    • hybrid_all_domains: script has no --output-dir flag; it writes to a hardcoded hypatiax/data/results/, which the step then moves into ${RESULTS_DIR}/hybrid_llm_nn/all_domains/.
+    • suppA: run_hybrid_system_benchmark.py and related outputs are moved into ${RESULTS_DIR}/hybrid_pysr/defi/ (via the consolidated_hybrid_*.json glob move block).
+2) Table/Figure → Experiment → RESULTS_DIR mapping
+Per the STEP IDs header comment and the run step descriptions in run_all.sh:
+Paper item	Experiment	RESULTS_DIR
+Table 9	exp1	${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi
+Table 10	exp1	${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi
+Table 15	exp1	${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi
+Figure 9	exp1	${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi
+Figure 10	exp1	${RESULTS_DIR}/comparison_results/noise-noiseless/noiseless/defi
+Table 11	exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+Table 12	exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+Table 13	exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+Figure 11	exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+Figure 12	exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+Figure 13	exp1b	${RESULTS_DIR}/comparison_results/noise-noiseless/15
+tab:hybrid_all	hybrid_all_domains	${RESULTS_DIR}/hybrid_llm_nn/all_domains
+Source lines confirming this:
+    • run exp1 "Core extrapolation benchmark (Tab 9, 10, 15 - Fig 9, 10)" ...
+    • run exp1b "DeFi seed sweep + portfolio variance (Tab 11-13 - Fig 11-13)" ...
+    • hybrid_all_domains → hybrid LLM+NN all-domains run (§10.9 hybrid table — one-shot) and run hybrid_all_domains "Hybrid LLM+NN all-domains run -- 10 domains (SS10.9 hybrid)" ...
+Worth flagging: important note in the script's own comments — exp1b's directory is literally named 15 (i.e., "noise-noiseless/15") even though exp1b is not a noise-level-15 run per se; it's the historical "dest15" naming carried over from earlier CI conventions (per FIX-exp1b-2/3 comments), and Tables 11–13/Figures 11–13 (DeFi routing/portfolio variance) all live there.
+
+Directly affected
+1. tab:nguyen12 — main paper, §"Nguyen-12 Benchmark (Standard SR Suite)" (~line 2266–2340). This is ground zero:
+    • Bolding doesn't match the caption's own criterion (N‑3 and N‑10 bolded in the HypatiaX column despite being below 0.9999). 
+    • The "Success" row totals (10/12, 11/12) don't match a re-tally of the bolded cells (8/12, 9→7/12 once mis-bolds are dropped). 
+    • The caption's separate "4/12 (33.3%)" sentence doesn't reconcile with any of the other numbers. 
+    • Bigger issue (Tier 2, from the raw JSON): the per-equation extrap R² values themselves — the "catastrophic failures" for N‑3, N‑4, N‑12 — contradict the raw exp3_nguyen12_*.json outputs, which show near‑1.0 extrap R² across the board and byte-identical HypatiaX/PySR-only results. That's not a bolding bug, that's the underlying table data being wrong/fabricated-looking. 
+    • Note: I checked the current file — none of this has actually been applied yet. Lines 2336–2337 still show the old, unreconciled 10/12 (83.3%) / \textbf{11/12 (91.7%)}, and N‑3/N‑10 are still bolded in H. The notes describe fixes that were drafted but aren't in this .tex. 
+2. Two Mann–Whitney tests inside that same table (U=51.0, p=0.893 for H>P; U=113.0, p=0.0097 for P>N, lines ~2339–2340). These are computed from the same suspect extrap R² column, so they're downstream of the same problem — if the real per-equation values are ~1.0 for both H and P rather than showing catastrophic failures on N‑3/N‑4/N‑12, both the U-statistics and the significance call are stale too.
+3. Abstract, main paper, lines 194–195 — "HypatiaX achieves 11/12 recovery (91.7%) versus 10/12 for PySR-only and 0/12 for the neural baseline." Restates the same stale, uncorrected numbers.
+4. supp_benchmark_report.tex, lines 206–208 — restates "HypatiaX (11/12, 91.7%), PySR-only (10/12, 83.3%)" and explicitly asserts "This figure is current and unchanged since v4." That claim is now false on two counts (stale arithmetic, and the data-integrity finding it predates).
+5. supp_benchmark_report.tex, line 1216 — "The Nguyen-12 benchmark table in the main paper provides this comparison" (in the SNIP median-R² discussion). Doesn't restate numbers, but anchors an external comparison to the same compromised table.
+Not affected
+supp_routing_improvements.tex has zero Nguyen-12 mentions — clean. The Feynman-30 results (12/30, 13/30, §feynman30) and the DeFi hybrid-attribution-bug findings are separate, already-flagged issues with their own tracking, not entangled with this one.
+What this means practically
+Every place that cites "11/12 / 91.7%" traces back to one uncorrected table, and that table's own numbers may not be trustworthy at the source-data level (H≡P duplication, contradicted catastrophic-failure claims). A cosmetic re-tally fix (Tier 1) would make the abstract and supplementary consistent with the table, but per the notes' own conclusion, that risks publishing a clean-looking wrong number rather than an inconsistent one — the real fix requires re-deriving the table from audited, non-duplicated raw results before touching any of the four citing locations above.
+

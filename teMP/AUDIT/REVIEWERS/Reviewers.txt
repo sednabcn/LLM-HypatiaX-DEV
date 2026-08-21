@@ -1,0 +1,98 @@
+﻿LLM-HypatiaX-PAPERS-Public/
+│
+├── README.md                          ← entry point for reviewers
+├── LICENSE
+├── VERSION
+├── requirements.txt
+├── setup.py / pyproject.toml
+├── .env.example                       ← ADD: template (ANTHROPIC_API_KEY=sk-ant-...)
+│
+├── reproduce_local.py                 ← ADD: reviewer entry point (this session)
+├── run_all.py                         ← author pipeline (Python)
+├── run_all.sh                         ← author pipeline (bash)
+├── run_all_checkpoint.py              ← author pipeline (checkpoint/resume)
+├── pipeline_trace.py                  ← dry-run validator
+├── provenance_audit.py                ← standalone audit
+│
+├── paper/                             ← ADD this folder (move .tex files here)
+│   ├── jmlr_paper_main_r3.tex         ← MOVE from root
+│   ├── supp_routing_improvements.tex  ← MOVE from root  (Supp A)
+│   └── supp_benchmark_report.tex      ← MOVE from root  (Supp B)
+│
+├── protocols/                         ← experiment entry points (keep as-is)
+│   ├── experiment_protocol_ablation_exp1.py
+│   ├── experiment_protocol_defi_v3.py
+│   ├── experiment_protocol_extrapolation_comparative.py
+│   ├── experiment_protocol_feynman_exp2.py
+│   ├── experiment_protocol_hybrid_routing.py
+│   ├── experiment_protocol_instability_rf02_04.py
+│   ├── experiment_protocol_nguyen12_exp3.py
+│   ├── experiment_protocol_noise_sweep.py
+│   └── experiment_protocol_provenance_audit.py
+│
+├── notebooks/                         ← audit notebooks (keep as-is)
+│   ├── NB-01_Citation_Bibliography_Audit.ipynb
+│   ├── NB-02_CrossReference_Label_Audit.ipynb
+│   ├── NB-03_Section_Structure_Numbering.ipynb
+│   ├── NB-04_Numerical_Consistency_Checker.ipynb
+│   ├── NB-05_Figure_Image_Dependency_Checker.ipynb
+│   └── NB-06_Code_Quality_Pipeline_Integrity.ipynb
+│   ✗  REMOVE: HypatiaX_Experiments_v5.ipynb (old draft)
+│
+├── HypatiaX_Experiments_v6_PUBLIC_fast_FIXED.ipynb  ← only this version stays
+│   ✗  REMOVE: v5.ipynb, v5_PUBLIC.ipynb, v6_PUBLIC_fast.ipynb, v6_PUBLIC.ipynb
+│
+├── hypatiax/                          ← core library (keep as-is)
+│   ├── core/
+│   ├── data/results/                  ← pre-computed results stay
+│   ├── experiments/
+│   ├── protocols/                     ← 9 input-data modules
+│   ├── tools/
+│   ├── analysis/
+│   └── ...
+│   ✗  REMOVE: tree-hypatiax-public.txt
+│
+├── scripts/patches/                   ← keep as-is
+├── figures/                           ← keep as-is
+├── reproducibility/                   ← keep as-is
+├── core/runners/                      ← keep as-is
+├── shared/                            ← keep as-is
+├── config/repro.yaml                  ← keep as-is
+│
+├── scan_internal_imports.py           ← keep
+├── discover_provenance.py             ← keep
+│
+├── logs/                              ← keep structure, clear runtime content
+│   └── .gitkeep
+│
+│  ✗ REMOVE entirely:
+│     BACKUP/
+│     outputs/                         (17 timestamped PySR checkpoint dirs)
+│     papers/2025-JMLR               (empty)
+│     exp1_ablation_checkpoint.json  (root-level stray)
+│     exp1_ablation_results.json     (root-level stray)
+│     exp1_ablation_table.tex        (root-level stray)
+│     exp1_rf01_mannwhitney.json     (root-level stray)
+│     tree-papers-public.txt
+│     tree-repo-paper-public.txt
+│     jmlr_paper_main_r3.tex         (moved to paper/)
+│     supp_benchmark_report.tex      (moved to paper/)
+│     supp_routing_improvements.tex  (moved to paper/)
+
+
+For the reviewer repo, the two immediate actions needed before publishing:
+    1. Create paper/ and move the three .tex files there:
+       mkdir paper
+    2. mv jmlr_paper_main_r3.tex paper/
+    3. mv supp_routing_improvements.tex paper/
+    4. mv supp_benchmark_report.tex paper/
+Remove clutter not meant for reviewers:
+
+rm -rf BACKUP/ outputs/ papers/
+rm -f exp1_ablation_checkpoint.json exp1_ablation_results.json \
+      exp1_ablation_table.tex exp1_rf01_mannwhitney.json \
+      tree-papers-public.txt tree-repo-paper-public.txt
+rm -f HypatiaX_Experiments_v5.ipynb HypatiaX_Experiments_v5_PUBLIC.ipynb \
+      HypatiaX_Experiments_v6_PUBLIC_fast.ipynb HypatiaX_Experiments_v6_PUBLIC.ipynb
+rm -f hypatiax/tree-hypatiax-public.txt
+find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null

@@ -1,0 +1,137 @@
+% =============================================================================
+% ISSUE 3 — EHSDeFi (M3) Runtime: 20.2 s vs. 841.4 s — FINAL RESOLUTION
+% Status: tab:overall FIXED & CONFIRMED. tab:time_noise WITHDRAWN (unverifiable).
+% Investigated: fix_issue3_ehsdefi_runtime.py --raw-log against two independent
+%   raw-data sources:
+%     (a) protocol_core_noiseless_*.json x6  (run_protocol_benchmark_core.py,
+%         the actual script behind tab:overall)
+%     (b) _merged.json                        (experiment="suppB", generated
+%         2026-07-15, the actual script behind tab:time_noise)
+% =============================================================================
+
+%% ---- SOURCE A: tab:overall — CONFIRMED CORRECTED ----
+%% ============================================================
+\section{Six-Method Noiseless Results}
+\label{sec:noiseless}
+
+\begin{table}[ht]
+\caption{Six-method aggregate performance, noiseless protocol
+  ($\Rsq \geq 0.9999$, $n=1000$).
+  \warn~\PureLLM{} pass rate includes 11/30 hardcoded results.}
+\label{tab:overall}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{L{2.4cm} C{1.0cm}
+                C{1.8cm} C{1.3cm} C{1.4cm}}
+\toprule
+\textbf{Method} & \textbf{Type} &
+  \makecell{\textbf{Pass Rate}\\$(\Rsq \geq 0.9999)$} &
+  \makecell{\textbf{Mean} $\Rsq$} &
+  \makecell{\textbf{Avg}\\Runtime} \\
+\midrule
+\rowcolor{warnAmberBg}
+\PureLLM\,\warn & Core  & 30/30 (100\%)\warn & 1.000000 &   5.7\,s \\
+\rowcolor{passgreenBg}
+\EHD\,(M3)      & Core  & 29/30 (96.7\%)      & 0.999993 &  $\sim$6\,s$^{\ddagger}$ \\
+\HDS            & Tools & 27/30 (90.0\%)      & 0.999960 & 155.0\,s \\
+\HSL\,(M4)      & Core  & 30/30 (v2)$^\dagger$ & 0.999+  &  11.4\,s \\
+\SEL            & Tools & 26/30 (86.7\%)      & 0.999829 & 201.2\,s \\
+\rowcolor{failredBg}
+\INN            & Core  & 17/30 (56.7\%)      & 0.999272 &  23.5\,s \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$\,\HSL{} v1 showed 26/30 due to the Newton
+  measurement bug; v2 achieves 30/30 (Section~\ref{sec:bugfix}).}\\
+\multicolumn{5}{l}{\footnotesize $^\ddagger$\,Corrected from an erroneous 20.2\,s
+  (Issue 3). Recomputed from 12 independent noiseless runs of the actual
+  benchmark script, spanning two separate sessions (360 equation-runs total
+  at $\sigma=0\%$): mean$\,\pm\,$std $= 6.39 \pm 4.72$\,s, median 4.03\,s,
+  range 0.73--19.13\,s. Confirmed against raw provenance; matches neither of
+  the two figures originally in conflict. \textbf{Caveat:} per-run means
+  drift monotonically within each session (7.2$\to$8.6\,s in session 1,
+  6.1$\to$4.0\,s in session 2) -- a real environment effect (shared-runner
+  load, caching, etc.), not sampling noise. A single point estimate
+  therefore overstates precision; report as a range (roughly 4--9\,s) or
+  re-measure on dedicated, isolated hardware before quoting a headline
+  number.}\\
+\end{tabular}
+\end{table}
+
+%% ---- SOURCE B: tab:time_noise — WITHDRAWN, replaced with verified data ----
+%% ============================================================
+\begin{table}[H]
+\centering
+\caption{EHSDeFi (M3) vs.\ HyperSymLoop (M4) recovery rate by injected
+  noise level, Supplement B noise-robustness sweep ($n=30$ equations
+  per method per level).}
+\label{tab:noise_recovery}
+\small
+\begin{tabular}{lrrl}
+\toprule
+$\sigma$ & \textcolor{m3blue}{M3 recovery} & \textcolor{m4red}{M4 recovery} & $n$\\
+\midrule
+0\%    &  76.7\% & 100.0\% & 30\\
+0.05\% & 100.0\% & 100.0\% & 30\\
+0.1\%  & 100.0\% & 100.0\% & 30\\
+0.5\%  & 100.0\% & 100.0\% & 30\\
+1\%    & 100.0\% & 100.0\% & 30\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Note on Table~\ref{tab:noise_recovery} and the withdrawal of the
+former \texttt{tab:time\_noise}.}
+Issue 3 originally reported a conflict between Table~\ref{tab:overall}'s
+EHSDeFi (M3) runtime (20.2\,s) and a since-removed table (\texttt{tab:time\_noise})
+that reported 841.4\,s at $\sigma=0\%$ together with a 75.8$\times$ speedup
+over M4 — a figure the abstract's "1.576$\times$ faster depending on noise
+level" claim also drew on.
+
+Investigation traced Table~\ref{tab:overall}'s figure to
+\texttt{run\_protocol\_benchmark\_core.py}'s raw per-equation logs and
+confirmed roughly 4--9\,s (not 20.2\,s, and not 841.4\,s) as the true
+noiseless runtime, with a caveat about run-to-run drift — see the footnote
+above.
+
+The same investigation could not confirm \emph{any} version of
+\texttt{tab:time\_noise}, for two independent reasons found in its actual
+source data (\texttt{\_merged.json}, experiment \texttt{suppB}, generated
+2026-07-15):
+\begin{itemize}
+  \item \textbf{No timing field exists.} The real suppB output records
+    \texttt{r2}, \texttt{rmse}, \texttt{success}, and \texttt{catastrophic}
+    per equation, but no wall-clock \texttt{time} field, at any noise
+    level. The 841.4\,s / 11.1\,s / 75.8$\times$ figures cannot have been
+    computed from this run.
+  \item \textbf{The noise grid itself doesn't match.} \texttt{tab:time\_noise}
+    reported $\sigma \in \{0\%, 0.5\%, 1\%, 5\%, 10\%\}$; the real suppB
+    sweep tested $\sigma \in \{0\%, 0.05\%, 0.1\%, 0.5\%, 1\%\}$ — a
+    different grid and a $10\times$ narrower range. This is not a rounding
+    or mislabeling artifact; it is a different experiment.
+\end{itemize}
+Table~\ref{tab:noise_recovery} above replaces it with what the real suppB
+run actually measured: recovery rate ($\Rsq \geq$ threshold) by noise
+level, for which full provenance exists. No runtime or speedup figure is
+reported for this sweep, because none was ever recorded.
+
+\textbf{Status update:} the root cause of "no timing data" has been found and
+fixed for the sibling script. \texttt{run\_sample\_complexity\_benchmark.py}
+(suppB\_sc)'s \texttt{\_aggregate\_results()} was silently discarding the
+\texttt{time} field already present in the inner
+\texttt{protocol\_core\_*.json} runner output, keeping only
+\texttt{r2}/\texttt{rmse}/\texttt{success}. Patched to pass \texttt{time}
+through and to compute \texttt{mean\_time\_s}/\texttt{median\_time\_s}/
+\texttt{std\_time\_s} per method; re-run and verified across all 6
+sample-complexity shards ($n \in \{50,100,200,500,750,1000\}$), each now
+reporting real per-method runtimes with full 30/30 coverage.
+
+\texttt{run\_noise\_sweep\_benchmark.py} (suppB, the actual script behind
+this table) almost certainly has the identical bug in its own aggregation
+step, given the two scripts' shared design (both wrap the same
+\texttt{protocol\_core} subprocess and both are described as sibling
+sweeps by \texttt{run\_dual\_sweep\_benchmarks.py}). Applying the same
+one-line fix there and re-running the sweep is what will let this table
+be restored with real numbers. The abstract's "1.576$\times$ faster
+depending on noise level" claim should stay out of the paper until that
+re-run exists — it cannot be reconstructed from the current
+\texttt{\_merged.json}, which was generated before the fix.

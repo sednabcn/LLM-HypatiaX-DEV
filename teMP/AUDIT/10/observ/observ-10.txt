@@ -1,0 +1,92 @@
+﻿Identified missing code and structured multi-part solution framework
+Since I have the two issue write-ups (.md/.tex) and the Phase 3 backlog, but not the harness source (run_comparative_suite_benchmark_v2.py) or the raw run logs, here's what actually needs to happen, split the way Phase03.txt splits it:
+10a — 900s vs. 1100s (stale, doc-only fix)
+This is very likely not a real contradiction, just two different experiments described too close together:
+    1. Check what tab:sweeps is actually describing. It's the noise/sample-size sweep (11 conditions, 5 NN seeds) — a different run from the one behind tab:overall (the Phase 3 noiseless run, 3 NN seeds).
+    2. Find the actual command/config used for the sweep run (job scripts, saved argv, or the run's JSON output filename/metadata — e.g. protocol_core_*_<timestamp>.json should have the invocation args embedded). Confirm whether the sweep really used --pysr-timeout 1100.
+    3. If confirmed 1100s for the sweep and 900s for the Phase 3 run: this isn't a contradiction — add one clarifying sentence to the reproducibility statement noting the sweep table uses different timeouts than the Phase 3 tab:overall command, so a reader doesn't assume they're the same run.
+    4. If the 1100s in tab:sweeps is actually a leftover from an earlier draft and the sweep was also run at 900s: fix tab:sweeps' hyperparameter note to say 900s and drop the 1100s figure entirely.
+    5. Either way, close this out by making the two write-ups state the same number for the same run — no code change needed, just reconciling which config string is true.
+10b — 300s limit but a 27,574s hang (open, needs code)
+This one needs the actual harness file, which isn't in this upload set. Steps once you have it:
+    1. Get run_comparative_suite_benchmark_v2.py (or whatever version was live for the Phase 3 run) — I can't inspect enforcement logic without it.
+    2. Find where --method-timeout is consumed — grep for timeout and for how the Julia/PySR subprocess is invoked (likely subprocess.run(...), subprocess.Popen(...).communicate(timeout=...), or a signal.alarm/SIGALRM wrapper).
+    3. Check whether the timeout value actually reaches that call, specifically for tests 1–18 (the window when 300s was supposedly active). Likely failure modes to check for:
+        ◦ timeout kwarg silently not passed through a wrapper function (e.g. default parameter shadowing the CLI value),
+        ◦ timeout applied to the Python-side wrapper but not to the underlying Julia process (so Python's communicate(timeout=300) raises, but the orphaned Julia subprocess keeps running unkilled — this is a classic case: TimeoutExpired is caught but the child process is never .kill()ed),
+        ◦ an off-by-scope bug where the "upgrade to 900s at test 19" logic accidentally also suppressed enforcement for earlier tests.
+    4. Reproduce narrowly: run just the Arrhenius equation (test 4) with --method-timeout 300 and watch whether the Julia process is actually killed at 300s or keeps running. That's the fastest way to confirm the hypothesis without waiting 27,574s.
+    5. Once root-caused, fix + verify (same pattern as the patch_report_unseeded_nn_followup.md you already have): patch the enforcement code, note before/after in a similar patch report, and flag that any test 1–18 results from that run may need rechecking, not just this one hang.
+    6. Doc-side companion fix: once the enforcement bug is understood, update the "Note on timeout upgrade" text to describe the actual mechanism (currently it just reports the symptom).
+If you can upload the harness .py file (or point me to it), I can do the grep/trace for step 2–3 directly instead of leaving it as a manual instruction.
+
+run_comparative_suite_benchmark_v2.py
+py
+
+Diagnosed orphaned subprocess bug and traced cascading timeout failures
+I traced the actual timeout paths end-to-end. Found two real bugs — one of which is very likely the direct cause of the 27,574s Arrhenius hang.
+Bug 1 (root cause candidate): orphaned Julia process — proc.kill() doesn't reach it
+In _run_pysr_in_subprocess (line 2956):
+python
+proc = subprocess.Popen(
+    [sys.executable, "-c", _SUBPROCESS_WORKER],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    env=env,
+)
+...
+except subprocess.TimeoutExpired:
+    proc.kill()
+This spawns the worker with no process-group isolation (no start_new_session=True, no preexec_fn=os.setsid). proc.kill() sends SIGKILL only to that one direct child — the wrapper python -c ... process. If that worker in turn launches Julia as its own OS subprocess (rather than loading libjulia in-process), killing the wrapper does not kill Julia. Julia becomes an orphan and keeps running, with no timeout of its own, until someone notices and kills it manually — which matches the doc's own wording: "hung for 27574s before the Julia process was killed" (not "before the subprocess timed out"). The harness's own bookkeeping (_run_pysr_in_subprocess returning a timeout-failure dict on schedule) would look completely normal here — that's why this could hide for a whole run instead of throwing an obvious error.
+Fix: isolate the child in its own process group and kill the whole group (or all descendants) on timeout:
+python
+proc = subprocess.Popen(
+    [...],
+    stdin=..., stdout=..., stderr=...,
+    env=env,
+    start_new_session=True,   # new process group
+)
+...
+except subprocess.TimeoutExpired:
+    import signal, os as _os
+    try:
+        _os.killpg(_os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+(psutil is already imported elsewhere in the file — psutil.Process(proc.pid).children(recursive=True) is a good alternative if a process group isn't reliable in the target environment.)
+Bug 2 (dead safety net): _kill_thread is called but never defined
+python
+import ctypes          # for _kill_thread (hard timeout enforcement)   # line 63
+...
+_killed = _kill_thread(_worker_thread.ident)                            # line 3529
+_kill_thread is referenced twice (comment + call) and imported-for (ctypes) but there is no def _kill_thread anywhere in the file, and it isn't imported from elsewhere. The call sits inside:
+python
+try:
+    ...
+    _killed = _kill_thread(_worker_thread.ident)
+except Exception:
+    pass  # ctypes injection is best-effort; never crash the suite
+So every invocation raises NameError, which the blanket except Exception: pass silently swallows. The comments describe intended behavior ("inject SystemExit into the background thread") that has never actually run — this is the "last resort" kill that was supposed to catch exactly the runaway-thread case, and it's a no-op.
+Fix: either implement _kill_thread (the standard PyThreadState_SetAsyncExc pattern) or, better, delete this dead code path and rely on Bug 1's fix — since the real problem is the orphaned OS process, not the Python thread (killing the thread wouldn't touch the Julia process either; the thread is just blocked on communicate(), it isn't doing the hanging).
+Steps to close out 10b
+    1. Apply the process-group fix to _run_pysr_in_subprocess (Bug 1) — this is the one that plausibly explains 27,574s.
+    2. Remove or implement _kill_thread (Bug 2) so the fallback path doesn't silently no-op.
+    3. Re-run just Arrhenius (test 4) with a short --method-timeout/--pysr-timeout and, while it's running, check ps -ef --forest (or the psutil children list) for an orphaned julia process after the wrapper is killed — that confirms/refutes Bug 1 directly before trusting the fix.
+    4. Once confirmed, patch, and note in the reproducibility statement that tests 1–18 from that run may have had other silent resource contention (e.g. Nernst/test 6 timing out on a 2-core machine while an orphaned Arrhenius Julia process was still eating a core) — worth flagging as a caveat even if not re-run.
+This is independent of the patch_report_unseeded_nn_followup.md fixes — different bug, same file.
+
+1) Update the script  2)Tell me clearly how to launch  it
+
+Identified bug fixes and orchestrated launch instructions
+Now applying Bug 1 fix — process-group isolation so the kill reaches the orphaned Julia process:
+Fix Bug 1: isolate subprocess in its own process group and kill the whole group (including any grandchild Julia process) on timeout, instead of killing only the direct Python child
+Now adding the _kill_process_group helper right before _run_pysr_in_subprocess:
+Add _kill_process_group helper: SIGKILL the whole process group, with a psutil-based fallback for platforms/situations where the group signal doesn't reach every descendant
+
+Add _kill_process_group helper: SIGKILL the whole process group, with a psutil-based fallback for platforms/situations where the group signal doesn't reach every descendant
+run_comparative_suite_benchmark_v2_FIXED.py+38-1
+
+Done
+
+
+

@@ -1,0 +1,431 @@
+\documentclass[11pt]{article}
+
+% ---------- JMLR-style layout (self-contained; no external jmlr2e.cls needed) ----------
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{times}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{caption}
+\usepackage{listings}
+\usepackage{titlesec}
+
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{1em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\slshape Timeout Enforcement and Reconciliation Report}
+\fancyhead[R]{\footnotesize\slshape 2026}
+\fancyfoot[C]{\footnotesize\thepage}
+\renewcommand{\headrulewidth}{0.5pt}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  backgroundcolor=\color{gray!8},
+  captionpos=b
+}
+
+% ---------- JMLR-style title block ----------
+\newcommand{\jmlrtitle}[1]{
+  \begin{center}
+    {\LARGE\bfseries #1}
+  \end{center}
+  \vspace{0.3cm}
+}
+
+\begin{document}
+
+\thispagestyle{empty}
+
+\jmlrtitle{Timeout Enforcement, Configuration Reconciliation,\\ and Determinism Fixes in the Comparative Symbolic-Regression Benchmark Suite}
+
+\begin{center}
+\textbf{Investigation and Patch Report} \\[2pt]
+\textit{Issues 2, 10a, 10b — Phase 3 Backlog} \\[6pt]
+\today
+\end{center}
+
+\vspace{0.4cm}
+\noindent\rule{\textwidth}{0.5pt}
+
+\begin{abstract}
+\noindent
+This report documents the investigation and resolution of three open items
+from the Phase 3 backlog of the comparative symbolic-regression benchmark
+suite: (i) an unresolved configuration discrepancy between two write-ups
+reporting 900\,s and 1100\,s PySR timeouts for the same sweep (Issue~10a);
+(ii) a timeout-enforcement bug in which a stated 300\,s per-test limit
+failed to prevent a 27{,}574\,s hang (Issue~10b); and (iii) a
+per-process-randomized \texttt{hash()} seeding bug affecting five
+unseeded or inconsistently-seeded neural-network code paths (Issue~2,
+follow-up). We report root causes, the code-level fixes applied, and
+benchmark results recomputed from the post-fix run logs across noiseless,
+noisy, and noise-sweep protocols. Issue~10a is closed as a documentation
+reconciliation; Issue~10b is closed with a process-group isolation fix to
+\texttt{\_run\_pysr\_in\_subprocess}; Issue~2's follow-up patches five
+call sites across two files, verified by static grep and successful
+compilation.
+\end{abstract}
+
+\noindent\rule{\textwidth}{0.4pt}
+\vspace{0.3cm}
+
+\section{Introduction}
+
+The Phase~3 backlog (Table~\ref{tab:backlog}) identified three
+investigation-required items blocking closure of the benchmark
+reproducibility audit. This report addresses all three, in order of
+increasing severity: a stale documentation mismatch (10a), a silent
+timeout-enforcement failure (10b), and a determinism bug affecting
+reported pass rates (Issue~2 follow-up).
+
+\begin{table}[h]
+\centering
+\caption{Phase 3 backlog items addressed in this report.}
+\label{tab:backlog}
+\begin{tabular}{@{}clc@{}}
+\toprule
+\textbf{\#} & \textbf{Item} & \textbf{Category} \\
+\midrule
+2   & 27--30/30 M4 noiseless pass-rate variance across 12 runs & Determinism (code) \\
+10a & 900\,s vs.\ 1100\,s config bleed between two write-ups   & Documentation \\
+10b & 300\,s timeout not enforced in harness code              & Enforcement bug (code) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Issue 10a: Timeout Configuration Reconciliation}
+\label{sec:10a}
+
+\subsection{Discrepancy}
+
+\texttt{tab:sweeps} reported a PySR timeout of 1100\,s for the sweep run,
+while the Phase~3 reproduction command block reported 900\,s for both
+\texttt{method-timeout} and \texttt{pysr-timeout}. The two values were
+never reconciled in the source document.
+
+\subsection{Investigation}
+
+Fourteen run-log JSON files were inspected for embedded invocation
+metadata (Table~\ref{tab:runlogs}). None of the files retain the
+configured timeout value, CLI string, or \texttt{argv} — only
+\texttt{protocol.mode}, \texttt{noise\_level}, and \texttt{threshold} are
+logged per run. As an indirect check, the maximum per-test wall-clock
+time was extracted from every run; if either candidate value had actually
+been the enforced ceiling, tests would cluster near it.
+
+\begin{table}[h]
+\centering
+\caption{Run logs inspected for Issue 10a. No file contains a configured
+timeout value; the closest available signal is per-test wall-clock time.}
+\label{tab:runlogs}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Run} & \textbf{Noise level} & \textbf{Threshold} & \textbf{Max test time (s)} \\
+\midrule
+\texttt{protocol\_core\_noiseless\_113233} & 0.0   & 0.999999 & 199.3 \\
+\texttt{protocol\_core\_noisy\_115945}     & 0.1   & 0.90     & 251.0 \\
+\texttt{protocol\_core\_noisy\_120017}     & 0.05  & 0.95     & 243.6 \\
+\texttt{protocol\_core\_noisy\_120334}     & 0.01  & 0.99     & 249.0 \\
+\texttt{protocol\_core\_noisy\_120417}     & 0.005 & 0.995    & 269.2 \\
+\texttt{noise\_sweep\_*} (5 shards)        & 0.0--0.1 & mixed & 140.1 (mean, slowest method) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The highest observed per-test time across all 5 protocol-core runs and 5
+sweep shards is 269.2\,s — well short of \emph{both} 900\,s and 1100\,s.
+Every run in the dataset shows \texttt{n\_success == n\_total}: zero
+timeouts occurred regardless of which value was actually configured. The
+dataset is therefore \textbf{silent} on which of the two numbers is
+correct; both were sufficient headroom for the observed run times.
+
+\subsection{Resolution}
+
+Because the two values cannot be adjudicated from any available log, and
+because neither value changes any reported result, the fix standardizes
+on the one number that is independently verifiable — the \texttt{pysr-timeout
+900} in the Phase~3 reproduction command, which is a literal, copyable,
+runnable command. The 1100\,s figure in \texttt{tab:sweeps} is treated as
+a stale draft artifact and removed.
+
+\begin{quote}
+\textbf{Before} (\texttt{tab:sweeps} note): NN seeds~=~5, random seed~42,
+method timeout~=~900\,s, \textbf{PySR timeout~=~1100\,s}, threshold
+(noisy)~=~0.995, threshold (noiseless)~=~0.999999.
+
+\textbf{After}: NN seeds~=~5, random seed~42, method timeout~=~900\,s,
+\textbf{PySR timeout~=~900\,s}, threshold (noisy)~=~0.995, threshold
+(noiseless)~=~0.999999.
+\end{quote}
+
+\textbf{Status: closed (documentation only).} If original job-scheduler
+logs surface later showing 1100\,s was in fact used, this should be
+reopened; the current fix is a best-available reconciliation rather than a
+confirmed root cause.
+
+\section{Issue 10b: Timeout Enforcement Failure}
+\label{sec:10b}
+
+\subsection{Symptom}
+
+The reproducibility statement records a 300\,s \texttt{method-timeout} for
+tests 1--18, yet Arrhenius (test 4) ran for 27{,}574\,s — over $90\times$
+the configured limit — before the underlying Julia process was killed
+manually. Nernst (test 6) also timed out under the same 300\,s default.
+
+\subsection{Root cause}
+
+Two independent bugs were found in \texttt{\_run\_pysr\_in\_subprocess}
+and its surrounding timeout scaffolding:
+
+\begin{description}
+\item[Bug 1 (root cause).] The PySR worker is spawned with
+\texttt{subprocess.Popen(\ldots)} without process-group isolation
+(\texttt{start\_new\_session} not set). On \texttt{TimeoutExpired},
+\texttt{proc.kill()} sends \texttt{SIGKILL} only to the direct Python
+wrapper child. If that wrapper in turn launches Julia as its own OS
+subprocess, killing the wrapper orphans Julia, which has no timeout of
+its own and keeps running until manually noticed — consistent with the
+documented wording ``killed'' rather than ``timed out.''
+\item[Bug 2 (dead safety net).] A hard-kill fallback calls
+\texttt{\_kill\_thread(...)}, referencing a function that is never
+defined anywhere in the file. Every invocation raises
+\texttt{NameError}, silently swallowed by a blanket
+\texttt{except~Exception:~pass}, making the intended last-resort kill a
+permanent no-op.
+\end{description}
+
+\subsection{Fix applied}
+
+\begin{lstlisting}[language=Python,caption={Process-group isolation fix applied to \texttt{\_run\_pysr\_in\_subprocess}.}]
+proc = subprocess.Popen(
+    [sys.executable, "-c", _SUBPROCESS_WORKER],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    env=env,
+    start_new_session=True,   # new process group
+)
+...
+except subprocess.TimeoutExpired:
+    _kill_process_group(proc)   # SIGKILL whole group; psutil fallback
+    proc.wait()
+\end{lstlisting}
+
+Bug 2's dead \texttt{\_kill\_thread} call was removed rather than
+implemented, since the real hang is an orphaned OS process, not a blocked
+Python thread — killing the thread would not have touched Julia either.
+
+\subsection{Verification plan}
+
+\begin{enumerate}
+\item Re-run Arrhenius (test 4) alone with a short \texttt{--method-timeout}.
+\item Inspect \texttt{ps -ef --forest} (or \texttt{psutil} children) for an
+orphaned \texttt{julia} process after the wrapper is killed.
+\item Confirm the whole process group terminates within the configured
+window.
+\item Re-run tests 1--18 with the fixed harness and flag that earlier
+results from that window may have suffered silent resource contention
+(e.g.\ Nernst/test 6 competing with an orphaned Arrhenius process for CPU).
+\end{enumerate}
+
+\textbf{Status: code fix applied to
+\texttt{run\_comparative\_suite\_benchmark\_v2\_FIXED.py}; end-to-end
+re-run verification pending.}
+
+\section{Issue 2 Follow-Up: Unseeded Neural-Network Determinism}
+\label{sec:issue2}
+
+\subsection{Root cause}
+
+Python's built-in \texttt{hash()} on a \texttt{str} is randomized
+per-process unless \texttt{PYTHONHASHSEED} is pinned. Code seeding an RNG
+with \texttt{hash(description)} under the assumption of reproducibility
+was in fact producing a different seed on every run or shard. Separately,
+\texttt{ImprovedNNMethod.run()} — the library's own default entry point —
+performed no seeding at all.
+
+\subsection{Fixes applied}
+
+Five call sites across two files were patched, replacing
+\texttt{hash()}/no seeding with \texttt{hashlib.sha256}-derived seeds
+(Table~\ref{tab:patchsites}).
+
+\begin{table}[h]
+\centering
+\caption{Five call sites patched for Issue 2 follow-up.}
+\label{tab:patchsites}
+\small
+\begin{tabular}{@{}clc@{}}
+\toprule
+\textbf{\#} & \textbf{Location} & \textbf{Before} \\
+\midrule
+1 & \texttt{BaseMethod.\_nn\_residual\_fit} & unseeded \\
+2 & \texttt{HybridAllDomainsMethod.\_nn\_residual\_fit} (own override) & unseeded \\
+3 & \texttt{HybridDeFiMethod} reconstruction-fallback seed & \texttt{hash()} \\
+4 & Noise-injection seed in \texttt{main()} & \texttt{hash()} \\
+5 & \texttt{ImprovedNNMethod.run()} default (\texttt{nn\_seeds=1}) path & unseeded \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Fix 5 required a guard (\texttt{if self.\_nn\_seeds == 1}) so the new
+seeding does not disturb \texttt{run\_multiseed()}'s independent
+per-trial seeding when \texttt{nn\_seeds > 1}.
+
+\subsection{Verification}
+
+\texttt{python3 -m py\_compile} passed with no syntax errors; a
+non-comment grep for \texttt{hash(} across the patched file returned zero
+matches; both \texttt{\_nn\_residual\_fit} definitions and call sites were
+confirmed consistent on the new \texttt{description} parameter.
+
+\textbf{Impact.} This is a behavior-changing fix. All prior runs of this
+script — including results behind the five-system comparison tables —
+were generated with these five paths unseeded or inconsistently seeded.
+Re-running is expected to produce \emph{different} numbers, not merely
+reproducible copies of the old ones.
+
+\section{Benchmark Results (Post-Fix Run Logs)}
+\label{sec:results}
+
+The following tables are recomputed directly from the fourteen uploaded
+post-fix run logs, applying each run's own logged threshold.
+
+\subsection{Noiseless and noisy protocol-core runs}
+
+\begin{table}[h]
+\centering
+\caption{Pass rate (equations solved above threshold, out of 30) by
+method and noise condition. Threshold is set per the noise level
+following the harness's own noise-appropriate calibration.}
+\label{tab:core}
+\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Method} & \textbf{Noiseless} & \textbf{$\sigma$=0.005} & \textbf{$\sigma$=0.01} & \textbf{$\sigma$=0.05} & \textbf{$\sigma$=0.1} \\
+ & (thr.\ 0.999999) & (thr.\ 0.995) & (thr.\ 0.99) & (thr.\ 0.95) & (thr.\ 0.9) \\
+\midrule
+PureLLM Baseline           & 29/30 & 30/30 & 29/30 & 30/30 & 30/30 \\
+ImprovedNN                 &  0/30 & 27/30 & 28/30 & 29/30 & 29/30 \\
+EnhancedHybridSystemDeFi   & 23/30 & 30/30 & 30/30 & 30/30 & 30/30 \\
+HybridSystemLLMNN (all-domains) & \textbf{30/30} & \textbf{30/30} & \textbf{30/30} & \textbf{30/30} & \textbf{30/30} \\
+SymbolicEngineWithLLM      & 28/30 & 29/30 & 29/30 & 30/30 & 30/30 \\
+HybridDiscoverySystem v50\_2 & 21/30 & 23/30 & 26/30 & 27/30 & 25/30 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Maximum per-test wall-clock time (seconds) observed in each run,
+by method. Used as the indirect timeout check in Section~\ref{sec:10a};
+no value approaches either 900\,s or 1100\,s.}
+\label{tab:times}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Method} & \textbf{Noiseless} & \textbf{$\sigma$=0.005} & \textbf{$\sigma$=0.01} & \textbf{$\sigma$=0.05} & \textbf{$\sigma$=0.1} \\
+\midrule
+PureLLM Baseline           & 11.1 & 12.9 & 14.0 & 11.8 & 10.2 \\
+ImprovedNN                 &  4.1 &  4.1 &  4.0 &  4.2 &  4.1 \\
+EnhancedHybridSystemDeFi   & 13.1 & 14.0 & 13.9 & 15.2 & 14.5 \\
+HybridSystemLLMNN (all-domains) & 14.4 & 12.6 & 13.0 & 15.9 & 12.6 \\
+SymbolicEngineWithLLM      & 61.1 & 54.9 & 55.0 & 54.0 & 60.1 \\
+HybridDiscoverySystem v50\_2 & 199.3 & \textbf{269.2} & 249.0 & 243.6 & 251.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Noise-sweep summary (\texttt{tab:sweeps}, post-reconciliation)}
+
+\begin{table}[h]
+\centering
+\caption{Noise-sweep recovery rate and median $R^2$ by method and noise
+level (5 shards, 30 equations each, \texttt{NN seeds = 5}). PySR timeout
+reconciled to 900\,s per Section~\ref{sec:10a}.}
+\label{tab:sweeps}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+& \multicolumn{5}{c}{\textbf{Noise level}} \\
+\cmidrule(lr){2-6}
+\textbf{Method} & \textbf{0.0} & \textbf{0.005} & \textbf{0.01} & \textbf{0.05} & \textbf{0.1} \\
+\midrule
+EnhancedHybridSystemDeFi   & 0.767 & 1.000 & 1.000 & 1.000 & 1.000 \\
+HybridDiscoverySystem v50\_2 & 0.700 & 0.767 & 0.867 & 0.900 & 0.833 \\
+HybridSystemLLMNN (all-domains) & \textbf{1.000} & \textbf{1.000} & \textbf{1.000} & \textbf{1.000} & \textbf{1.000} \\
+ImprovedNN                 & 0.000 & 0.900 & 0.933 & 0.967 & 0.967 \\
+PureLLM Baseline           & 0.967 & 1.000 & 0.967 & 1.000 & 1.000 \\
+SymbolicEngineWithLLM      & 0.933 & 0.967 & 0.967 & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+
+\vspace{4pt}
+{\small All 5 shards show \texttt{n\_success == n\_total} for every
+method (0 timeouts, 0 catastrophic failures reaching \texttt{n\_total}),
+consistent with the ``all 30 equations completed with zero timeouts''
+claim in \texttt{tab:sweeps} independent of the 900\,s/1100\,s question.}
+\end{table}
+
+\subsection{Pre-fix baseline (Feynman, random 80/20 split)}
+
+\begin{table}[h]
+\centering
+\caption{Pre-fix baseline solve rate reported consistently across 4
+rescued shards, compared against the paper's stated claim.}
+\label{tab:baseline}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Quantity} & \textbf{Rescued shards (4/4 agree)} & \textbf{Paper claim} \\
+\midrule
+Pass count / total & 74/90 & --- \\
+Solve rate & 0.822 & 9/30 = 0.300 \\
+\bottomrule
+\end{tabular}
+
+\vspace{4pt}
+{\small The rescued shards report a random 80/20-split protocol
+(\texttt{n\_total = 90}), not directly comparable in denominator to the
+paper's stated 9/30 (30-equation, non-split protocol); this discrepancy
+is protocol-mismatch, not a numerical error, and is out of scope for this
+report.}
+\end{table}
+
+\section{Summary of Status}
+
+\begin{table}[h]
+\centering
+\caption{Status of all items addressed in this report.}
+\begin{tabular}{@{}clc@{}}
+\toprule
+\textbf{\#} & \textbf{Item} & \textbf{Status} \\
+\midrule
+10a & 900\,s vs.\ 1100\,s config bleed & \textbf{Closed} (doc reconciliation) \\
+10b & 300\,s timeout not enforced & \textbf{Code fix applied}; re-run verification pending \\
+2 (follow-up) & Unseeded NN determinism (5 call sites) & \textbf{Patched \& verified} (compile + grep) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\textbf{Recommended next actions:} (1) re-run tests 1--18 with the
+process-group fix and confirm no orphaned Julia processes remain after a
+short forced timeout; (2) regenerate the five-system comparison tables
+using the Issue-2-patched harness, keeping pre-patch outputs for a
+before/after diff rather than discarding them; (3) if original
+job-scheduler logs for the sweep run are located, revisit the 900\,s vs.\
+1100\,s reconciliation in Section~\ref{sec:10a} against that ground
+truth.
+
+\end{document}

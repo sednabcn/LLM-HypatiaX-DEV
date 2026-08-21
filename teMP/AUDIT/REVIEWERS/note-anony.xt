@@ -1,0 +1,17 @@
+pip install git-filter-repo --break-system-packages   # one-time dependency
+
+# Preview only, changes nothing
+./anonymize-repo.sh /path/to/your/repo --dry-run --redact-file redact-list.example.txt
+
+# Actually rewrite it
+./anonymize-repo.sh /path/to/your/repo --redact-file redact-list.example.txt --name "Anonymous" --email "anon@example.com"
+
+
+# 1. Dry run first — always
+./anonymize-repo.sh /path/to/your-repo --fresh-history --redact-file redact-list.txt --dry-run
+
+# 2. Inspect the throwaway copy it prints the path to:
+cd <that tmp path> && git log --oneline && git show --stat
+
+# 3. If it looks right, run for real
+./anonymize-repo.sh /path/to/your-repo --fresh-history --redact-file redact-list.txt

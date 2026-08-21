@@ -1,0 +1,96 @@
+﻿✅ Paper-quality values are preserved in BOTH pipelines
+Parameter	full-pipeline	slow-pipeline	Paper value
+FAST	"0"	"0"	0
+N_ITERATIONS	"1000"	"1000"	1000
+POPULATIONS	"30"	"30"	30
+PYSR_TIMEOUT	1100	1100	1100s
+METHOD_TIMEOUT	900	900	900s
+EQUATION_WALL_CLOCK	1200	1200	1200s
+PYSR_POPULATION_SIZE	33	33	33
+PYSR_PARSIMONY	0.01	0.01	0.01
+PYSR_MAXSIZE	30	30	30
+LLM_K_RUNS	"1"	"30"	30 for §10.9
+
+The one intentional difference between fast and slow
+LLM_K_RUNS is the only thing that differs:
+    • full-pipeline uses LLM_K_RUNS=1 globally, with the instability step overriding to 30 via env_extra in run_all_checkpoint.py (line 532). All other steps get K=1 — this is the deliberate design for speed without degrading PySR quality. 
+    • slow-pipeline sets LLM_K_RUNS=30 at the job level, so every step runs 30 LLM draws, not just instability. This is the archival/reviewer run. 
+The --one-equation smoke-test mode (which degrades N_ITERATIONS=200, POPULATIONS=10, PYSR_TIMEOUT=60) is only triggered by an explicit CLI flag — it is never active in CI's full-pipeline or slow-pipeline jobs. FAST in run_all_checkpoint.py is not read at all; it's only passed downstream to experiment scripts that may consume it directly.
+Bottom line for reviewers: both CI jobs run full paper-quality PySR. The only question is whether reviewers need K=30 on every step (use slow-pipeline, manual dispatch) or just on instability (use full-pipeline, runs on every push to main).
+You said: I need --one-equation or something lie this with PAPER-UALITY-VALUES AS WELL
+I need --one-equation or something lie this with PAPER-UALITY-VALUES AS WELL
+Now I have everything. The surgery is clear: add --one-equation-paper flag that keeps all N_TASKS=1 but preserves every paper-quality PySR value.
+Confirmed. Here's the exact contract of the two modes side by side:
+	--one-equation	--one-equation-paper
+Tasks per experiment	1	1
+N_ITERATIONS	200	1000 ✓
+POPULATIONS	10	30 ✓
+PYSR_TIMEOUT	60s	1100s ✓
+PYSR_POPULATION_SIZE	(default)	33 ✓
+PYSR_PARSIMONY	(default)	0.01 ✓
+PYSR_MAXSIZE	(default)	30 ✓
+PYSR_PARALLELISM	(default)	multithreading ✓
+LLM_K_RUNS	1	30 ✓
+METHOD_TIMEOUT	(default)	900s ✓
+EQUATION_WALL_CLOCK	(default)	1200s ✓
+Results match paper	✗	✓ for that equation
+Typical wall time	~1-2 min/step	~15-30 min/step
+Intended use	developer sanity check	reviewer verification
+Usage for a reviewer:
+bash
+python3 run_all_checkpoint.py --one-equation-paper
+# or target a single step:
+python3 run_all_checkpoint.py --one-equation-paper --only instability
+Run all checkpoint
+PY 
+You are out of free messages until 8:00 PM
+Get more
+
+1 
+
+
+
+
+3. Run Scripts with Paper-Quality Config
+For Fast Experiments Only (6-8 hours)
+bash
+Copy
+Download
+# Set paper-quality environment
+export PYSR_TIMEOUT=120
+export METHOD_TIMEOUT=360
+export POPULATIONS=30
+export N_ITERATIONS=1000
+
+# Run fast experiments
+python3 run_all_checkpoint.py --skip-slow
+For Full Pipeline (16-24 hours on Kaggle)
+bash
+Copy
+Download
+# Use paper-quality config
+python3 run_all_checkpoint.py
+For Slow Experiments One-by-One (Colab resume)
+bash
+Copy
+Download
+# After uploading checkpoint from fast run
+export PYSR_TIMEOUT=120
+export POPULATIONS=30
+export N_ITERATIONS=1000
+
+python3 run_all_checkpoint.py --resume --only exp2
+python3 run_all_checkpoint.py --resume --only suppB
+python3 run_all_checkpoint.py --resume --only instability
+4. Expected Paper Results (Validation Targets)
+Metric	Paper Target	Section	Config Dependency
+DeFi R²>0.99 rate	89.2%	§10.2	PYSR_TIMEOUT=120
+Catastrophic failures	0	§10.2	Any timeout
+Speedup (routed cases)	1.73×	§10.4	PYSR_TIMEOUT=120
+Portfolio P(H>P)	≈0.76	§10.5	Seeds [42,99,123,777,2024]
+MW U (Core-15)	126, p=0.295	§10.6	POPULATIONS=30
+Feynman success	9/30 (30%)	§10.7	PYSR_TIMEOUT=180
+Nguyen-12 H rate	11/12 (91.7%)	§10.8	PYSR_TIMEOUT=120, seed=42
+Spearman ρ	-0.70, p<0.001	§10.9	K=30, PYSR_TIMEOUT=90
+
+

@@ -1,0 +1,24 @@
+﻿Sequencing: #9 and #4 likely share the same statistical/reporting harness, so investigate them together even if you run them as separate jobs. #3 is a different subsystem (timing/runtime logging) and can run in parallel — no shared dependency, so don't block it on #9/#4.
+#9 — Mean R² masked-failure bug
+This is the long pole, so kick it off first.
+    1. Find the code path that sets success=True, R2≈1.0 regardless of the sub-method's actual result. It's almost certainly in whatever function does hybrid decision-attribution (routes to LLM/PySR/neural sub-methods and rolls up a final verdict). 
+    2. Confirm the bug mechanism: is it defaulting to "success" when a sub-method errors instead of propagating the sub-method's real test_r2? Or is it a stale/cached field that never gets overwritten? 
+    3. Fix the attribution logic so the 22 known-bad tasks (e.g. the Loan-to-Value pure_llm.test_r2 ≈ −141,000 case) report their true R2, not the masked one. 
+    4. Re-run the full suite (not a patch of just the 22 tasks — the abstract says this hasn't been executed yet, so don't hand-estimate from the one disclosed outlier). 
+    5. Recompute Mean R2 and the pass-rate columns from the corrected run, and check the new Mean R2 against the already-corrected pass-rate figure (60.8%) for internal consistency — they should move in the same direction. 
+#4 — CI/SD incompatibility
+Cheap to queue on the same infra as #9, but it's a separate, smaller check:
+    1. Locate the script that produced the [1087%, 1456%] CI in the main text. 
+    2. Check what SD and n it actually used. Appendix G says SD=1842%, n=13; if the script used a different (smaller) SD, a different n, or a non-standard CI method (e.g. bootstrap without disclosing it), that's your root cause. 
+    3. Recompute the standard t-based CI: t(0.975,12) × SD/√n ≈ 2.18 × 1842/√13 ≈ ±1114pp. If that's the right number, replace the main-text CI with it (or the corrected version once #9's re-run changes the underlying error distribution — check whether this CI depends on numbers #9 will also change). 
+    4. Document which SD/n/method was actually used, so this doesn't silently drift again. 
+#3 — EHSDeFi 20.2s vs 841.4s
+    1. Diff the two scripts/logs that produced tab:overall (20.2s) and tab:time_noise at σ=0% (841.4s) for the same method/condition. 
+    2. Check for: different hardware, different repeat/averaging counts, a units bug (e.g. one script logging per-equation time, the other logging total/batch time), or simply a stale cached value in one table. 
+    3. Cross-check against the abstract's own 1.576× claim (which implies 841.4s is the real one, since 841.4/11.1 ≈ 75.8×). If 20.2s turns out to be wrong, regenerate tab:overall's EHSDeFi row from the same raw timing logs that produced tab:time_noise, not from whatever produced the 20.2s figure. 
+    4. If it turns out to be a legitimate different-hardware/config number, state that explicitly in the table rather than presenting both as directly comparable. 
+Before you close any of these
+For each, don't just patch the printed number — confirm you're pulling from the same source-of-truth run for every downstream mention (table, abstract sentence, caption) so you don't create a fourteenth discrepancy. Given how many of the other 10 issues are pure doc-propagation drift, it's worth adding a single regeneration script per table that all three docs pull from, rather than hand-editing three files per fix.
+Want me to draft an actual checklist/tracking doc (e.g. a spreadsheet with status per issue, owner, and re-run dependencies) so you can track Phase 0 → Phase 1 progress?
+
+

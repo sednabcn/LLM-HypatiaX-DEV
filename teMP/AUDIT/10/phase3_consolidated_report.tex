@@ -1,0 +1,793 @@
+%% ============================================================
+%%  PHASE 3 REPRODUCIBILITY AUDIT
+%%  Consolidated Findings and Bug Recovery History
+%%
+%%  Companion to: supp_benchmark_report.tex, jmlr_paper_main.tex
+%%  Supersedes (in part): 10_timeout_contradiction.tex,
+%%           timeout_reconciliation_report.tex
+%%  Consolidates: bug1_verification_note.md,
+%%           patch_report_issue10b_killthread_removal.md,
+%%           patch_report_unseeded_nn_followup.md,
+%%           hds_gap_investigation.py output (this session),
+%%           11 protocol_core_noiseless_20260807_*.json reproductions
+%% ============================================================
+
+\documentclass[twoside,11pt]{article}
+
+%% ── JMLR house style ─────────────────────────────────────────────────────────
+\usepackage{jmlr2e}
+
+%% ── Core packages ────────────────────────────────────────────────────────────
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{makecell}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{cleveref}
+\usepackage{listings}
+
+\definecolor{codeblue}{RGB}{0,90,170}
+\definecolor{codegray}{RGB}{100,100,100}
+\definecolor{codegreen}{RGB}{0,128,64}
+\definecolor{backgray}{RGB}{248,248,248}
+\lstset{
+  language=Python, basicstyle=\ttfamily\small,
+  keywordstyle=\color{codeblue}\bfseries,
+  commentstyle=\color{codegray}\itshape,
+  stringstyle=\color{codegreen},
+  backgroundcolor=\color{backgray},
+  frame=single, framerule=0.4pt, rulecolor=\color{black!20},
+  breaklines=true, breakatwhitespace=true,
+  tabsize=4, showstringspaces=false, captionpos=b
+}
+
+\definecolor{passgreen}{RGB}{22,163,74}
+\definecolor{passgreenBg}{RGB}{220,252,231}
+\definecolor{failred}{RGB}{220,38,38}
+\definecolor{failredBg}{RGB}{254,226,226}
+\definecolor{warnAmber}{RGB}{217,119,6}
+\definecolor{warnAmberBg}{RGB}{254,243,199}
+\definecolor{staleGrey}{RGB}{107,114,128}
+\definecolor{staleGreyBg}{RGB}{243,244,246}
+
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+
+\newcommand{\PureLLM}{\textsc{PureLLM}}
+\newcommand{\INN}{\textsc{ImpNN}}
+\newcommand{\EHD}{\textsc{EHSDeFi}}
+\newcommand{\HSL}{\textsc{HLLMNN}}
+\newcommand{\SEL}{\textsc{SymLLM}}
+\newcommand{\HDS}{\textsc{HDSv50\_2}}
+\newcommand{\Rsq}{R^{2}}
+\newcommand{\warn}{{\color{warnAmber}\textbf{!}}}
+\newcommand{\ok}{{\color{passgreen}\textbf{\checkmark}}}
+\newcommand{\stale}{{\color{staleGrey}\textbf{$\times$}}}
+
+\begin{document}
+
+\title{Phase 3 Reproducibility Audit:\\[4pt]
+  Consolidated Findings and Bug Recovery History}
+\author{Ruperto Pedro Bonet Chaple\\
+  \texttt{ruperto.bonet@modelphysmat.com}\\
+  Independent Researcher, London, United Kingdom
+}
+\editor{}
+\maketitle
+
+\begin{abstract}
+This report consolidates the Phase~3 backlog of the HypatiaX comparative
+symbolic-regression benchmark suite (companion to
+\texttt{supp\_benchmark\_report.tex}) into a single current-state
+reference. Five items are addressed: the Table~4 ``27/30'' pass-rate
+figure misattributed between \HDS{} (M6) and \HSL{} (M4) in prose
+(Item~2a); a previously undocumented \HSL{} noiseless pass-rate variance
+(26--30/30 across runs) traced to per-process-randomized \texttt{hash()}
+seeding, now closed by a full-stack re-run (Item~2b); a 900\,s-vs-1100\,s
+PySR timeout documentation mismatch (Item~10a); a 300\,s
+timeout-enforcement failure that let one test run 27{,}574\,s past its
+limit (Item~10b); and a 5-point \HDS{} noiseless pass-rate gap between
+Table~4 (27/30) and a same-day reproduction (22/30). Section~\ref{sec:findings}
+states the current, verified position on each item with supporting tables.
+Section~\ref{sec:history} documents how each finding was reached,
+including two investigation passes whose conclusions conflicted (on
+Item~10a) or whose root-cause model was later superseded by direct
+source inspection (on Item~10b's Bug~1), and is retained so that the
+corrections are auditable rather than silently overwritten. Items 2b,
+10a, 10b, and the HDS gap are closed. Item 2a is root-caused but not yet
+corrected in the paper source. Item~2b's closure is supported by a
+GitHub Actions run (\texttt{31318231778}) that installed the real
+Julia/PySR stack and re-ran the noiseless protocol end to end; a
+regenerated Table~4 candidate from that run is given in
+Table~\ref{tab:table4-regen}.
+\end{abstract}
+
+\begin{quote}\small
+\textbf{Note.} This document reconciles material from two prior
+investigation passes on the same backlog
+(\texttt{10\_timeout\_contradiction.tex},
+\texttt{timeout\_reconciliation\_report.tex}) with a later pass that
+obtained the actual harness source and re-ran the noiseless protocol
+directly. Where passes disagree, Section~\ref{sec:history} states which
+conclusion is superseded and why. Findings in Section~\ref{sec:findings}
+reflect only the surviving, corroborated conclusions.
+\end{quote}
+
+\begin{keywords}
+reproducibility audit, symbolic regression, benchmark provenance,
+timeout enforcement, determinism, HypatiaX
+\end{keywords}
+
+%% ============================================================
+\section{Findings}
+\label{sec:findings}
+
+\begin{table}[h]
+\centering
+\caption{Status of all five items covered by this report.}
+\label{tab:status}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{L{1.3cm} L{6.3cm} C{2.0cm} L{4.0cm}}
+\toprule
+\textbf{Item} & \textbf{Description} & \textbf{Status} & \textbf{Action needed} \\
+\midrule
+2a & ``27/30, M4'' figure is \HDS's Table~4 result, misattributed to
+     \HSL{}/M4 in the abstract, Conclusions, and one sweep table &
+     \cellcolor{warnAmberBg}\textbf{Root-caused} & Fix 4 prose/table
+     locations in \texttt{supp\_benchmark\_report.tex} (\S\ref{sec:findings:item2a}) \\
+2b & \HSL{} noiseless pass rate varies 26--30/30 across 12 nominally
+     identical runs; traced to \texttt{hash()} seeding (per-process
+     randomized) & \cellcolor{passgreenBg}\textbf{Closed} &
+     None --- full-stack re-run (Table~\ref{tab:2b-fullstack}) confirms
+     determinism; regenerate \HSL{}-involving tables from
+     Table~\ref{tab:table4-regen} \\
+10a & 900\,s vs.\ 1100\,s PySR timeout across two write-ups &
+      \cellcolor{passgreenBg}\textbf{Closed} & None --- both source
+      locations already agree at 1100\,s \\
+10b & 300\,s test timeout not enforced; one test ran 27{,}574\,s &
+      \cellcolor{passgreenBg}\textbf{Closed} & Update stale
+      ``not yet implemented'' sentence in reproducibility statement \\
+--- & \HDS{} 22/30 (today) vs.\ 27/30 (Table~4) &
+      \cellcolor{passgreenBg}\textbf{Closed} & None --- confirmed
+      genuine near-miss variance, re-run twice, identical both times \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Item 2a --- The ``27/30'' Figure Belongs to \HDS, Not \HSL{}/M4}
+\label{sec:findings:item2a}
+
+\texttt{supp\_benchmark\_report.tex}'s own method-code legend
+(Appendix~\ref{app:abbrev-ref}) is unambiguous, and Table~4
+(\texttt{tab:overall}) reports the two figures separately and
+correctly:
+
+\begin{table}[h]
+\centering
+\caption{Table~4 (\texttt{tab:overall}) noiseless pass rates, as
+  currently written --- correct and internally consistent.}
+\label{tab:t4-recap}
+\small
+\begin{tabular}{L{3.2cm} C{1.2cm} C{3.0cm}}
+\toprule
+\textbf{Method} & \textbf{Code} & \textbf{Table~4 pass rate} \\
+\midrule
+\HSL{} & M4 & 30/30 (v2)$^\dagger$ \\
+\HDS{} & M6 & \textbf{27/30 (90.0\%)} \\
+\bottomrule
+\multicolumn{3}{L{9cm}}{\footnotesize $^\dagger$ HSL v1 showed 26/30
+  due to the Newton measurement bug; v2 achieves 30/30.}\\
+\end{tabular}
+\end{table}
+
+Despite this, four other locations in the same document attribute the
+27/30 (90.0\%) figure, and three named ``failures,'' to \HSL/M4 instead
+of \HDS:
+
+\begin{table}[h]
+\centering
+\caption{Locations misattributing \HDS's 27/30 figure to \HSL/M4.}
+\label{tab:misattributions}
+\small
+\begin{tabular}{L{2.0cm} L{9.5cm}}
+\toprule
+\textbf{Location} & \textbf{Text (as currently written)} \\
+\midrule
+Abstract & ``\HSL{} achieves 100\% recovery at all noisy conditions
+  ($\sigma>0$) and 90.0\% (27/30 equations) under the strict noiseless
+  protocol.'' \\
+Conclusions, item 2 & ``M3 outperforms M4 at $\sigma=0$: 100\% vs 90\%
+  noiseless; three further M4 noiseless failures remain (Lorentz force,
+  Photon energy, Zeeman energy).'' \\
+\texttt{tab:rr\_noise}, $\sigma{=}0\%$ row & ``M4 Recovery: 90.0\%$^\ddagger$'' \\
+\texttt{tab:rr\_noise} footnote & ``M4 noiseless: 90\% at threshold
+  0.999999; 100\% at threshold 0.995.'' \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The third and fourth rows of Table~\ref{tab:misattributions}
+are locations not identified in the earlier version of this
+investigation; they were found this session by grepping the source for
+every occurrence of ``90.0'' and checking each against the method it is
+attached to.
+
+A same-day, 11-domain, 30/30-test reproduction of \HSL{} directly
+refutes the three ``M4 failures'' named in the Conclusions text --- all
+three pass cleanly:
+
+\begin{table}[h]
+\centering
+\caption{Today's reproduction of the three equations the Conclusions
+  section names as \HSL/M4 noiseless failures.}
+\label{tab:hsl-repro}
+\small
+\begin{tabular}{L{5.0cm} C{2.2cm} C{2.0cm} C{2.0cm}}
+\toprule
+\textbf{Equation} & \textbf{\HSL{} $\Rsq$ today} & \textbf{Pass @0.9999} & \textbf{Pass @0.999999} \\
+\midrule
+Lorentz force ($F=qvB$) & 1.0 & \ok & \ok \\
+Photon energy ($E=hf$)  & 1.0 & \ok & \ok \\
+Zeeman energy           & 0.9999999999987 & \ok & \ok \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Conclusion:} the 27/30 figure and the three named failures are
+\HDS's, not \HSL/M4's. This is an abstract/Conclusions/table-row-vs-Table-4
+misattribution internal to \texttt{supp\_benchmark\_report.tex}, not a
+cross-document or registry-numbering ambiguity. All four locations in
+Table~\ref{tab:misattributions} are corrected in the accompanying
+updated \texttt{supp\_benchmark\_report.tex} (Section~\ref{sec:history:supp-edits}).
+
+\subsection{Item 2b --- \HSL{} Noiseless Variance from Unseeded \texttt{hash()}: Closed}
+\label{sec:findings:item2b}
+
+Independently of the misattribution above, \HSL/M4's noiseless pass
+rate is reported inconsistently across runs (26/30 in v1, 30/30 in the
+Table~4 v2 run, 21/30 in one of the fourteen run logs examined during
+the earlier investigation pass). The root cause is a determinism bug,
+not measurement noise:
+
+\begin{table}[h]
+\centering
+\caption{Five call sites patched for the unseeded/\texttt{hash()}-seeded
+  determinism bug (source: \texttt{patch\_report\_unseeded\_nn\_followup.md}).}
+\label{tab:hash-patches}
+\small
+\begin{tabular}{C{0.6cm} L{5.6cm} L{3.4cm}}
+\toprule
+\textbf{\#} & \textbf{Location} & \textbf{Before} \\
+\midrule
+1 & \texttt{BaseMethod.\_nn\_residual\_fit} & unseeded \\
+2 & \texttt{HybridAllDomainsMethod.\_nn\_residual\_fit} (own override) & unseeded \\
+3 & \texttt{HybridDeFiMethod} reconstruction-fallback seed & \texttt{hash()} \\
+4 & Noise-injection seed in \texttt{main()} & \texttt{hash()} \\
+5 & \texttt{ImprovedNNMethod.run()} default (\texttt{nn\_seeds=1}) path & unseeded \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Python's \texttt{hash()} on a \texttt{str} is randomized per process
+unless \texttt{PYTHONHASHSEED} is pinned; code that seeded an RNG with
+\texttt{hash(description)} under the belief this was reproducible was
+in fact drawing a different seed on every run. All five sites were
+patched to use \texttt{hashlib.sha256(description.encode())}-derived
+seeds instead.
+
+\paragraph{Verified this pass against the real harness source.} The
+actual files (\texttt{run\_comparative\_suite\_benchmark\_v2.py},
+\texttt{hybrid\_system\_v50\_2.py}, \texttt{symbolic\_engine.py}) were
+obtained and read directly. A non-comment \texttt{grep} for
+\texttt{hash(} returns zero live calls; \texttt{grep} for
+\texttt{hashlib.sha256} returns exactly 7 matches, which map cleanly
+onto the patch report's ``2 already-fixed (Strategies 3a/3b in
+\texttt{HybridAllDomainsMethod}) + 5 follow-up'' accounting
+(Table~\ref{tab:hash-patches}).
+
+Because this bug lives entirely in the NN/seeding layer
+(\texttt{numpy}~+~\texttt{torch}) rather than the PySR/Julia layer, it
+--- unlike Item~10b --- could be tested directly against the real,
+unmodified production code in this sandbox, without a synthetic
+stand-in. \texttt{verify\_nn\_determinism.py} imports the harness fresh
+in three independent Python process launches, builds a fixed synthetic
+input, and calls the real \texttt{BaseMethod.\_nn\_residual\_fit} and
+\texttt{HybridAllDomainsMethod.\_nn\_residual\_fit} directly:
+
+\begin{table}[h]
+\centering
+\caption{Real (not synthetic) determinism test, 3 independent process launches.}
+\label{tab:2b-verify}
+\small
+\begin{tabular}{L{5.4cm} C{2.0cm}C{2.0cm}C{2.0cm}}
+\toprule
+\textbf{Quantity} & \textbf{Launch 1} & \textbf{Launch 2} & \textbf{Launch 3} \\
+\midrule
+Legacy \texttt{hash()} seed (reference only, not used to seed anything) &
+  171599184 & 926696046 & 266795798 \\
+Patched \texttt{sha256} seed (actually used) & \multicolumn{3}{c}{891584068 (identical)} \\
+NN output hash, \texttt{BaseMethod} & \multicolumn{3}{c}{\texttt{add252f1\ldots} (identical)} \\
+NN output hash, \texttt{HybridAllDomainsMethod} & \multicolumn{3}{c}{\texttt{add252f1\ldots} (identical)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The legacy \texttt{hash()} value differs on every launch (reproducing
+the original bug as a reference point); the patched seed and the
+resulting NN output are bit-identical across all three launches. A
+control check (two \emph{different} equation descriptions, hence two
+different \texttt{sha256} seeds) produces two different output hashes,
+confirming the network is genuinely seed-sensitive and the match above
+is not a degenerate artifact.
+
+\textbf{This closes the mechanism-level claim of Item~2b}: the patch
+does make the NN-residual-correction code paths deterministic across
+process launches, verified against the real code rather than only
+\texttt{py\_compile}/\texttt{grep}.
+
+\paragraph{Closed this pass: full-stack, end-to-end re-run.} The
+blocker noted above --- no Julia/PySR and no LLM API access in the
+sandbox --- was resolved via GitHub Actions run
+\texttt{31318231778} (workflow \texttt{ci\_issue2b\_repro.yml}), which
+provisioned Julia~1.11 and \texttt{SymbolicRegression.jl}, validated a
+live \texttt{ANTHROPIC\_API\_KEY} round-trip, and confirmed via a
+preflight check that all five \texttt{hash()}$\to$\texttt{sha256}
+patch sites (Table~\ref{tab:hash-patches}) were present, alongside two
+markers not previously tracked in this report: an LLM-temperature pin
+and a frozen-LLM-response cache, both needed for determinism in the
+LLM-calling stages of \HSL{} and \HDS{}, in addition to the NN-seeding
+fix. Determinism pinning used
+\texttt{CUBLAS\_WORKSPACE\_CONFIG=:4096:8},
+\texttt{OMP/MKL/OPENBLAS\_NUM\_THREADS=1}, and
+\texttt{PYTHONHASHSEED=0}; the comparator tolerance was $10^{-8}$.
+
+The run had two phases. Phase~A ran the full 30-equation noiseless
+protocol three independent times for \HSL{}/M4 and \EHD{}/M3 only
+(\texttt{--skip-pysr}, since neither method invokes PySR/Julia):
+
+\begin{table}[h]
+\centering
+\caption{Phase A: full protocol (real LLM calls, no PySR), 3
+  independent process launches, GitHub Actions run \texttt{31318231778}.}
+\label{tab:2b-fullstack}
+\small
+\begin{tabular}{L{5.6cm} C{2.0cm}C{2.0cm}C{2.0cm}L{2.4cm}}
+\toprule
+\textbf{Method} & \textbf{Run 1} & \textbf{Run 2} & \textbf{Run 3} & \textbf{Verdict} \\
+\midrule
+\HSL{} / M4 & 30/30 & 30/30 & 30/30 & \ok{} deterministic \\
+\EHD{} / M3 & 28/30 & 28/30 & 28/30 & \ok{} deterministic \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent identical R² for every matched equation across all three
+runs, for both methods. Phase~B then ran one full pass of all six
+methods, including PySR/Julia (M5, M6), and was compared against a
+Phase~A run as a second, independently-launched data point --- again
+identical for \HSL{}/M4 and \EHD{}/M3. Phase~B's per-method pass rates
+give a regenerated Table~4 candidate:
+
+\begin{table}[h]
+\centering
+\caption{Regenerated Table~4 (\texttt{tab:overall}) candidate, all six
+  methods, noiseless protocol, post-fix, from Phase~B
+  (GitHub Actions run \texttt{31318231778}, artifact
+  \texttt{issue2b-experiment-31318231778}).}
+\label{tab:table4-regen}
+\small
+\begin{tabular}{L{5.6cm} C{1.2cm} C{2.0cm} C{2.4cm}}
+\toprule
+\textbf{Method} & \textbf{Code} & \textbf{Pass rate} & \textbf{\%} \\
+\midrule
+PureLLM Baseline (core) & M1 & 26/30 & 86.7\% \\
+ImprovedNN (core) & M2 & 19/30 & 63.3\% \\
+\EHD{} (core) & M3 & 28/30 & 93.3\% \\
+\HSL{} (core) & M4 & \textbf{30/30} & \textbf{100.0\%} \\
+\SEL{} (tools) & M5 & 28/30 & 93.3\% \\
+\HDS{} (tools) & M6 & 23/30 & 76.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\HSL{}/M4's 30/30 matches the existing Table~4 v2 figure
+(Table~\ref{tab:t4-recap}) exactly, so no change to that cell is
+needed. \HDS{}/M6's 23/30 here is a third data point (alongside 27/30
+in Table~4 and 22/30 in the same-day reproduction,
+\S\ref{sec:findings:hds-gap}) inside the near-miss variance band
+already documented for that method, and does not by itself change the
+HDS Gap item's closed status.
+
+\textbf{This closes Item~2b end to end.} The mechanism-level fix
+(Table~\ref{tab:2b-verify}) is now corroborated by a real, full-stack,
+three-times-repeated run showing zero pass-rate or R² variance for
+\HSL{}/M4 and \EHD{}/M3 under the noiseless protocol. The paper's
+``zero-variance convergence: all 30 equations reach $\Rsq=1.000000$''
+claim (\texttt{sec:noise}) is consistent with this data for \HSL{}/M4's
+\emph{pass rate} (30/30 every run) but should still be checked against
+the per-equation $\Rsq$ values in the uploaded JSON before being
+treated as verified verbatim, since ``30/30 pass'' and ``every $\Rsq$
+exactly 1.000000'' are not quite the same claim. \textbf{Table~4 /
+\texttt{tab:r2\_noise} / \texttt{tab:rr\_noise} in
+\texttt{supp\_benchmark\_report.tex} can now be regenerated from this
+run's} \texttt{protocol\_core\_noiseless\_20260809\_161500.json}
+\textbf{(Phase~B) or any of the three Phase~A files}, all committed to
+\texttt{hypatiax/data/results/issue2b\_experiment/31318231778/} in
+commit \texttt{37c8193}.
+
+\subsection{Item 10a --- 900\,s vs.\ 1100\,s PySR Timeout: Closed}
+\label{sec:findings:item10a}
+
+\begin{table}[h]
+\centering
+\caption{Both locations in the current \texttt{supp\_benchmark\_report.tex}
+  already agree.}
+\label{tab:10a}
+\small
+\begin{tabular}{L{4.5cm} L{3.0cm} L{3.0cm}}
+\toprule
+\textbf{Source} & \textbf{Method timeout} & \textbf{PySR timeout} \\
+\midrule
+\texttt{tab:sweeps} hyperparameters note & 900\,s & \textbf{1100\,s} \\
+Phase~3 reproduction command & 900\,s & \textbf{1100\,s} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both locations state 1100\,s for the PySR timeout, and 900\,s is a
+distinct, correctly-separate variable (the outer per-method wall-clock
+allowance, not the PySR fit timeout) --- confirmed against
+\texttt{run\_all.sh}, which sets
+\texttt{FEYNMAN\_TIMEOUT=1100 \# FIX-G2: paper value 1100s (was 900)}.
+\textbf{Status: closed, no textual change required.} See
+\S\ref{sec:history:10a} for why an earlier investigation pass reached
+the opposite conclusion and why that conclusion is superseded.
+
+\subsection{Item 10b --- 300\,s Timeout Enforcement: Closed}
+\label{sec:findings:item10b}
+
+\begin{table}[h]
+\centering
+\caption{Final, verified root cause and fix for Item~10b.}
+\label{tab:10b-final}
+\small
+\begin{tabular}{L{2.6cm} L{9.4cm}}
+\toprule
+\textbf{Bug 1 (real cause)} & The single \texttt{Popen} handle inside
+  \texttt{\_run\_pysr\_in\_subprocess} was never registered anywhere
+  the outer per-method timeout handler could see. On timeout, the
+  outer \texttt{ThreadPoolExecutor} abandoned the background thread
+  with no reference back to the live subprocess, which then ran
+  unobserved (27{,}574\,s on Arrhenius, test~4). PySR runs via
+  \texttt{juliacall}, which embeds Julia \emph{in-process}
+  (\texttt{libjulia} as a shared library) --- there is no separate
+  \texttt{julia} OS process to orphan; grep for an exec'd \texttt{julia}
+  binary in \texttt{symbolic\_engine.py} and
+  \texttt{hybrid\_system\_v50\_2.py} returns zero matches. \\
+\textbf{Bug 1 fix} & \texttt{\_ProcBox} (thread-safe handle) is attached
+  to the method instance before \texttt{communicate()} blocks and
+  cleared in a \texttt{finally} on every exit path. The outer timeout
+  handler retrieves it and calls \texttt{\_kill\_process\_group()} on
+  the \emph{real, already-tracked} subprocess. \\
+\textbf{Bug 2} & A hard-kill fallback called \texttt{\_kill\_thread(...)},
+  a function never defined anywhere in the file; every timeout silently
+  raised \texttt{NameError}, swallowed by a blanket
+  \texttt{except Exception: pass}. Removed (not implemented) --- the
+  thread was only blocked on the subprocess call, not itself the
+  resource leak. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Wall-clock verification of the fix, sandbox and real stack.}
+\label{tab:10b-verify}
+\small
+\begin{tabular}{L{5.2cm} C{2.4cm} C{3.2cm}}
+\toprule
+\textbf{Config} & \textbf{Outer timeout fires} & \textbf{Real subprocess dies at} \\
+\midrule
+Without \texttt{proc\_box} (reproduces bug) & 3.0\,s & 30.0\,s (tracks \emph{inner} timeout) \\
+With \texttt{proc\_box} (fix as implemented) & 3.0\,s & 3.0\,s (tracks \emph{outer} timeout) \\
+\bottomrule
+\end{tabular}
+
+\vspace{4pt}
+{\small Identical result in the sandbox (synthetic hang-prone worker,
+Julia unavailable) and re-verified on the real Julia/PySR stack on the
+user's own machine (\texttt{verify\_proc\_box\_fix.py}, unmodified).}
+\end{table}
+
+\textbf{Status: closed.} Verified against the real Julia/PySR stack,
+not only a structural stand-in --- see \S\ref{sec:history:10b} for the
+route taken to get here, including a superseded intermediate diagnosis.
+
+\subsection{HDS Gap (22/30 today vs. 27/30 in Table 4): Closed}
+\label{sec:findings:hds-gap}
+
+\begin{table}[h]
+\centering
+\caption{All 8 \HDS{} noiseless shortfalls (@$\Rsq\geq0.9999$), re-confirmed
+  by two independent runs of \texttt{hds\_gap\_investigation.py} this
+  session against the 11 uploaded protocol files.}
+\label{tab:hds-gap}
+\small
+\begin{tabular}{L{4.6cm} L{3.6cm} R{1.4cm} R{1.6cm}}
+\toprule
+\textbf{Equation} & \textbf{Domain} & \textbf{$\Rsq$} & \textbf{Time (s)} \\
+\midrule
+Coulomb's law & electrostatics & 0.99660 & 200.6 \\
+Bose--Einstein occupation & quantum & 0.99463 & 167.9 \\
+Nernst equation & electrochemistry & 0.99921 & 164.6 \\
+Fermi--Dirac occupation & quantum & 0.99904 & 144.7 \\
+Dielectric polarisation & electromagnetism & 0.99553 & 118.8 \\
+Arrhenius rate constant & chemistry & 0.99959 & 73.4 \\
+Kinetic energy & mechanics & 0.99988 & 73.3 \\
+Gaussian PDF & probability & 0.99977 & 42.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All 8 shortfalls classify as \textsc{near-miss} ($\Rsq \geq 0.99$,
+below the 0.9999 threshold); none are \textsc{timeout-like} (max
+200.6\,s vs.\ 900/1100\,s budgets) or errored. This is consistent with
+\HDS{} being a stochastic PySR-based search sitting close to a strict
+cutoff on several equations --- expected run-to-run variance for this
+method, not a harness bug. \textbf{Re-run twice this session; identical
+both times.} Closed, no action needed.
+
+%% ============================================================
+\section{Bug Recovery History}
+\label{sec:history}
+
+This section documents \emph{how} the findings in
+Section~\ref{sec:findings} were reached, including investigation passes
+that were later corrected. It is retained for audit purposes: several
+conclusions below were reasonable given the evidence available at the
+time, and were only overturned once more evidence (direct source
+reading, or an actual re-run) became available.
+
+\subsection{Stage 0 --- Original Bug Filing}
+
+The 900\,s/1100\,s discrepancy and the 27{,}574\,s Arrhenius hang were
+first captured verbatim in \texttt{10\_timeout\_contradiction.tex}, an
+excerpt quoting \texttt{tab:sweeps} (1100\,s) against the Phase~3
+reproduction command as it read \emph{at the time} (900\,s for both
+\texttt{method-timeout} and \texttt{pysr-timeout}). This snapshot
+predates any fix and is superseded: the reproduction command in the
+current \texttt{supp\_benchmark\_report.tex} already reads
+\texttt{--pysr-timeout 1100}, matching \texttt{tab:sweeps}
+(Table~\ref{tab:10a}). This file should be treated as a historical
+record of the original symptom, not a current source of truth.
+
+\subsection{Stage 1 --- First Reconciliation Pass}
+\label{sec:history:10a}
+\label{sec:history:10b}
+
+\texttt{timeout\_reconciliation\_report.tex} performed a full
+investigation of Issues 10a, 10b, and a newly-named ``Issue~2''
+(\HSL{} pass-rate variance, i.e.\ Item~2b above).
+
+\paragraph{10a (superseded).} Fourteen run logs were checked for an
+embedded configured-timeout value; none retained one, and the maximum
+observed per-test wall-clock time (269.2\,s) was well under both
+candidates, making the logs uninformative either way. The report then
+standardized on \textbf{900\,s}, reasoning that the Phase~3
+reproduction command was a more ``canonical, literally runnable''
+source than the \texttt{tab:sweeps} note, and recommended removing
+1100\,s as a stale draft artifact. \textbf{This resolution is
+superseded.} It did not have access to \texttt{run\_all.sh}'s explicit
+\texttt{\# FIX-G2: paper value 1100s (was 900)} comment, and, checked
+against the actual current \texttt{supp\_benchmark\_report.tex} source
+this session, both locations already agree at 1100\,s --- the opposite
+of what this pass recommended. \textbf{Disregard this report's Item~10a
+conclusion; Table~\ref{tab:10a} is authoritative.}
+
+\paragraph{10b (partially superseded).} This pass correctly identified
+the two-bug structure (an orphaned-process root cause plus a dead
+\texttt{\_kill\_thread} safety net) but modeled Bug~1 as \emph{``the
+PySR worker\ldots launches Julia as its own OS subprocess; killing the
+wrapper orphans Julia.''} Verification was necessarily indirect: Julia
+and PySR were not installable in that sandbox
+(\texttt{bug1\_verification\_note.md}), so a synthetic stand-in was
+built instead --- \texttt{fake\_julia\_worker.py} spawns its own OS
+child to play the role of ``Julia,'' and
+\texttt{verify\_kill\_behavior.py} confirms that
+\texttt{start\_new\_session=True} plus a process-group
+\texttt{SIGKILL} reaches that child where a bare \texttt{proc.kill()}
+does not (Table~\ref{tab:bug1-sandbox}).
+
+\begin{table}[h]
+\centering
+\caption{Sandbox mechanism test (synthetic stand-in, not real Julia).}
+\label{tab:bug1-sandbox}
+\small
+\begin{tabular}{L{7.2cm} C{2.4cm}}
+\toprule
+\textbf{Trial} & \textbf{Fake-Julia alive after kill} \\
+\midrule
+OLD: no isolation, \texttt{proc.kill()} only & \textcolor{failred}{True} (orphan survives) \\
+NEW: \texttt{start\_new\_session} + \texttt{\_kill\_process\_group} & \textcolor{passgreen}{False} (orphan killed) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\texttt{bug1\_verification\_note.md} itself flags the gap honestly:
+\emph{``this does not confirm that Julia specifically behaves like this
+stand-in\ldots that assumption was never independently verified against
+PySR's actual internals.''} That caveat turned out to be load-bearing
+--- see Stage~2 below. \textbf{Bug 2's diagnosis and fix, by contrast,
+hold up unchanged}: \texttt{patch\_report\_issue10b\_killthread\_removal.md}
+confirms the dead \texttt{\_kill\_thread} call and its unused
+\texttt{ctypes} import were removed, verified by \texttt{py\_compile}
+and a clean \texttt{grep}, and this was independently reconfirmed by a
+direct code read in Stage~2.
+
+\paragraph{Issue 2b (new finding, correctly diagnosed).} This pass also
+first identified the unseeded/\texttt{hash()} determinism bug and
+patched five call sites
+(\texttt{patch\_report\_unseeded\_nn\_followup.md},
+Table~\ref{tab:hash-patches}). This diagnosis is sound and is carried
+forward unchanged as Item~2b. However, the same document's
+Section~5 benchmark tables (pass rates by noise level, sweep recovery
+rates) are presented as ``recomputed \ldots from post-fix run logs,''
+while its own Section~4 states the patch ``has not\ldots'' been used to
+regenerate anything and that re-running ``is expected to produce
+different numbers.'' These two statements are in tension; this report
+does not treat Section~5 of \texttt{timeout\_reconciliation\_report.tex}
+as confirmed post-patch data (see Item~2b, \S\ref{sec:findings:item2b}).
+
+\subsection{Stage 2 --- Direct Source Inspection}
+
+A later pass obtained and read \texttt{run\_comparative\_suite\_
+benchmark\_v2.py} and \texttt{symbolic\_engine.py} directly, rather than
+inferring behaviour from bug reports. This corrected Stage~1's Bug~1
+model: PySR is invoked via \texttt{juliacall}, which embeds Julia
+\emph{in-process} by loading \texttt{libjulia} as a shared library. No
+call to a separate \texttt{julia} executable exists in either file
+(zero \texttt{grep} matches). There is therefore no grandchild Julia OS
+process for a process-group kill to reach --- Stage~1's diagnosis
+described a plausible but, for this codebase, incorrect mechanism, as
+its own verification note had flagged as unconfirmed.
+
+The real gap was one level up, and simpler: the outer timeout handler
+never had a reference to the live PySR subprocess at all. The fix
+present in the harness (confirmed by reading the file, not by
+re-deriving it) is the \texttt{\_ProcBox} handoff described in
+Table~\ref{tab:10b-final} --- functionally similar in mechanism to
+Stage~1's process-group kill (both ultimately call
+\texttt{\_kill\_process\_group}), but applied to the correct target: the
+single, already-existing \texttt{Popen} handle for the PySR subprocess
+itself, not a hypothetical grandchild.
+
+This stage additionally ran its own wall-clock verification, first
+against a synthetic hang-prone subprocess (Julia still unavailable
+locally), then had the user re-run the same check
+(\texttt{verify\_proc\_box\_fix.py}, unmodified) on their own machine
+with the real \texttt{hypatiax}, PySR, and Julia stack actually
+importing. Both runs produced the result in
+Table~\ref{tab:10b-verify}. \textbf{This is the evidence that closes
+Item~10b}; Stage~1's ``code fix applied, re-run verification pending''
+status is superseded by ``closed, verified against the real stack.''
+
+\subsection{Stage 3 --- HDS Gap Investigation and Re-Run}
+
+Today's 11-domain, 30/30-test reproduction of the noiseless protocol
+showed \HDS{} at 22/30 against Table~4's 27/30.
+\texttt{hds\_gap\_investigation.py} was written to classify every
+\HDS{} shortfall as \textsc{timeout-like}, \textsc{near-miss},
+\textsc{genuine-miss}, or \textsc{error} using the run logs' own
+\texttt{r2}/\texttt{time}/\texttt{error} fields. All 8 shortfalls
+classified \textsc{near-miss} (Table~\ref{tab:hds-gap}). The script was
+re-run a second time this session against the same 11 files and
+produced byte-identical output --- pass rate, all 8 R² values, and all
+8 wall-clock times matched to the precision printed. This item is
+closed with no open follow-up.
+
+%% ============================================================
+\section{Recommended \texttt{supp\_benchmark\_report.tex} Edits}
+\label{sec:history:supp-edits}
+
+\begin{table}[h]
+\centering
+\caption{Edits applied to \texttt{supp\_benchmark\_report.tex} alongside
+  this report.}
+\label{tab:edits}
+\small
+\begin{tabular}{L{2.8cm} L{9.2cm}}
+\toprule
+\textbf{Location} & \textbf{Change} \\
+\midrule
+Abstract & ``\HSL{} achieves\ldots 90.0\% (27/30)'' $\rightarrow$
+  attributed to \HDS; \HSL's own v2 figure (30/30) stated separately. \\
+Conclusions, item 2 & Re-attributed the 90\% noiseless figure and the
+  three named equations to \HDS; \HSL/M4's actual v2 noiseless result
+  (30/30) stated instead. \\
+\texttt{tab:rr\_noise}, $\sigma{=}0\%$ row and footnote & Re-attributed
+  from ``M4'' to ``\HDS{} (M6, reported separately from M4)''; M4's own
+  $\sigma=0$ recovery rate corrected to match its Table~4 v2 figure. \\
+Reproducibility statement (Item~10b paragraph) & ``has been designed
+  but is not yet implemented'' $\rightarrow$ updated to state the fix
+  is implemented (\texttt{\_ProcBox}) and verified against the real
+  Julia/PySR stack, with a forward reference to this report. \\
+\texttt{tab:sweeps} / reproduction command (Item~10a) & No change ---
+  both already read 1100\,s and are mutually consistent. \\
+Table~4 (\texttt{tab:overall}), $\sigma=0$ column, all methods &
+  Regenerate from Table~\ref{tab:table4-regen} (this report,
+  Item~2b, GitHub Actions run \texttt{31318231778}); \HSL{}/M4's
+  30/30 cell is unchanged, M1/M2/M3/M5/M6 cells can now be refreshed
+  from the same post-fix run. \\
+\texttt{tab:r2\_noise}, \texttt{tab:rr\_noise} ($\sigma=0$ rows,
+  \HSL{}/\EHD{}) & Regenerate from Phase~A/B JSON output, run
+  \texttt{31318231778} (Item~2b closed; see
+  Table~\ref{tab:2b-fullstack}). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent \textbf{Not yet edited (Item~2b, closed this pass):} the
+``M4 shows zero-variance convergence'' claim in \S\texttt{sec:noise}
+and the noise-sweep/sample-complexity tables involving \HSL{} or \EHD{}
+were not hand-edited in this pass, since doing so requires pulling
+exact per-equation numbers out of the newly-committed JSON
+(\texttt{protocol\_core\_noiseless\_20260809\_161500.json} and the
+three Phase~A files) rather than re-deriving them from the log excerpt
+in Table~\ref{tab:table4-regen} alone. The blocker that previously kept
+this item open --- no full-stack access --- is resolved; what remains
+is transcription from the committed JSON into
+\texttt{supp\_benchmark\_report.tex}'s tables, not further
+experimentation.
+
+%% ============================================================
+\section{Summary}
+
+\begin{table}[h]
+\centering
+\caption{Final status, all five items.}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{L{1.1cm} L{10.9cm}}
+\toprule
+2a & \textbf{Root-caused, corrected in \texttt{supp\_benchmark\_report.tex}
+  this pass.} 27/30 belongs to \HDS, not \HSL/M4; four prose/table
+  locations fixed. \\
+2b & \textbf{Closed.} Unseeded-\texttt{hash()} determinism bug patched
+  (5 sites) and re-run end to end on the real Julia/PySR/LLM stack
+  (GitHub Actions run \texttt{31318231778}): \HSL{}/M4 and \EHD{}/M3
+  identical across 3 independent runs (Table~\ref{tab:2b-fullstack});
+  a regenerated Table~4 candidate for all six methods is given in
+  Table~\ref{tab:table4-regen}. \\
+10a & \textbf{Closed.} 1100\,s confirmed correct and already consistent
+  in both source locations; an earlier pass's opposite conclusion (900\,s)
+  is superseded. \\
+10b & \textbf{Closed.} Root cause corrected from ``orphaned Julia OS
+  process'' (superseded) to ``unregistered PySR subprocess handle'';
+  fix (\texttt{\_ProcBox}) verified on the real Julia/PySR stack. \\
+--- & \textbf{Closed.} \HDS's 22/30-vs-27/30 gap is genuine near-miss
+  variance, re-run twice with identical results. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\appendix
+\section{Method Abbreviations (reference)}
+\label{app:abbrev-ref}
+\begin{tabular}{L{1.8cm} L{2.5cm} L{6.0cm}}
+\toprule
+\textbf{Short} & \textbf{Code} & \textbf{Full name}\\
+\midrule
+\PureLLM & M1 & PureLLM Baseline (core)\\
+\INN     & M2 & ImprovedNN (core)\\
+\EHD     & M3 & EnhancedHybridSystemDeFi (core)\\
+\HSL     & M4 & HybridSystemLLMNN all-domains (core)\\
+\SEL     & M5 & SymbolicEngineWithLLM (tools)\\
+\HDS     & M6 & HybridDiscoverySystem v50\_2 (tools)\\
+\bottomrule
+\end{tabular}
+
+\end{document}

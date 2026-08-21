@@ -1,0 +1,70 @@
+﻿wht do you need to update and correct the tex files ?
+
+Ran 8 commands
+Good — I've got a clear picture now. Here's the state of things across the three .tex files, and what's genuinely still open.
+Already patched in-place (visible, bracketed corrections):
+The files are full of \textbf{[flagged: corrected to X, see §Y]} annotations — these have already been fixed inline (e.g. the hybrid-attribution-bug corrections throughout §2.x, dropping the 90.5% figure to 59.5%/44-of-74 on seed 42, 74.6% 5-seed average). These don't need further action unless you want them cleaned up typographically (i.e. removed from bracketed flags into normal prose once you're satisfied they're correct).
+Genuinely still open — need source data I don't have:
+    1. Nguyen-12 table (§2490, tab:nguyen12) — the file currently has only the arithmetic reconciliation applied: the Success row now correctly reads 8/12 (P) / 7/12 (H), matching what's actually bolded in the table. But:
+        ◦ The caption's separate "4/12 (33.3%)" claim is still unreconciled — flagged, not resolved.
+        ◦ The 12 per-equation cells themselves were never checked against raw result data — the nguyen12-open.txt log you included describes a further pass where someone re-evaluated each recovered formula against raw X_extrap/y_extrap arrays from seed files (exp3_nguyen12_seed{99,123,777,2024}.json) and got a materially different answer — P 10/12, H 12/12 (11/11 independent) — but those JSON files aren't in this upload, only a text log describing that work. I can't verify or apply that version without the actual files.
+        ◦ The Neural MLP (N) column remains flagged unverified — no source file for it at all.
+    2. Supp benchmark report — several tie-rate and noise-sweep figures are marked [Unverified] pending "the exact comparison methodology used to generate" them (lines ~800, 824, 951) — these need either the methodology write-up or the underlying comparison script/output.
+    3. Supp routing improvements — smaller, just the "IL Breakeven flagged intractable" line item (2 spots) — looks like a minor open item, not a big数据 gap.
+What I'd need from you to close these out:
+    • The actual exp3_nguyen12_seed{99,123,777,2024}.json files (or seed 42's), so I can redo the Nguyen-12 table from source rather than trust the log's summary.
+    • Any Neural-MLP-on-Nguyen-12 result file, if one exists.
+    • The comparison-methodology doc or script for the supp-benchmark tie-rate claims.
+Want me to start with the Nguyen-12 table if you can upload those seed JSON files, or would you rather I tackle the supp-benchmark unverified items first?
+1) Updte tex files  2)check py related to  a Neural -MLP on Nguyen-12
+
+Ran 7 commands
+
+Inspect seed42 file structure
+
+Inspect results structure
+
+Check keys of each result entry
+
+Inspect evaluation field
+
+Check metadata keys and paired_comparison
+
+Identified data discrepancy and devised computational solution.
+
+Search for Neural MLP related code
+
+Confirm no neural system in results; list py functions
+Confirmed: this script only runs PySR and HypatiaX — there's no Neural-MLP baseline anywhere in it, and none of the five seed JSON files contain a third system. Let me check the LLM_MODEL env var issue too (relevant to the reproducibility note already in the paper), then build the real Nguyen-12 table.
+Ran 5 commands
+That checks out fine — no injection there, just the R2 numbers from my own computation. Continuing.
+With N9-N12 statistically identical between P and H, the U-test isn't very informative since most values are tied at 1.0. Let me now assemble the full corrected table and update the tex files.
+Ran 5 commands, viewed 2 files
+
+Get final formatted values for seed42 table
+
+Check precise train R2 values
+
+View full nguyen12 section with line numbers for editing
+
+Investigated unused environment variable and dead code connections.
+
+Check context around LLM_MODEL env var setdefault
+
+Identified model hardcoding issue and prepared table corrections.
+
+Check N8 details for dagger footnote accuracy
+
+Analyzed benchmark results and reconciled conflicting performance claims.
+
+Check all hypatiax entries method/copy flags for seed42
+
+Identified inaccurate footnotes and flagged unverified Neural MLP data.
+
+Check abstract/intro reference to nguyen12 success row
+=================================================================================
+bash
+cd /home/claude && python3 -c " s = open('jmlr_paper_main_patched.tex').read() print('braces balance:', s.count('{') - s.count('}')) " grep -n "hybrid_llm_only\|7.4" /home/claude/jmlr_paper_main_patched.tex diff /mnt/user-data/uploads/jmlr_paper_main_patched.tex /home/claude/jmlr_paper_main_patched.tex | head -100
+Output
+braces balance: 0 1261:Pure LLM & 0 & --- & --- & $-3.077$\tnote{e} & 13.774 & Recognition \\ 2395:Coulomb Force & Mechanics & 0.869 & $-7.43$ & $\ll{-}100$ \\ 2527: & 0.9993 & $-0.784$ \\ 2588: $\Rsq=1.000$) in 7.4\,s without invoking PySR. None of the 5 seed files 2596: any available file completes in anything close to 7.4\,s. This footnote 2520c2520 < \multicolumn{2}{c}{Neural MLP ($N$)} \\ --- > \multicolumn{2}{c}{Neural MLP ($N$)$^\S$} \\ 2584,2588c2584,2598 < \item[$\dag$] N-8 ($\sqrt{x}$): HypatiaX routed to \texttt{hybrid\_llm\_only} mode. < The LLM directly proposed $x^{0.5}$, which passed the trust gate with < train $\Rsq = 0.9999$ and achieved exact extrapolation ($\Rsq = 1.000$) < without invoking PySR. Wall-clock time: 7.4\,s vs.\ 301\,s for PySR-only --- < the only equation where the LLM warm-start fully bypassed evolutionary search. --- > \item[$\dag$] \textbf{[flagged: contradicted by source data, see > reconciliation note below]} N-8 ($\sqrt{x}$): this footnote previously > asserted that HypatiaX routed to \texttt{hybrid\_llm\_only} mode, with the > LLM's $x^{0.5}$ guess accepted directly (train $\Rsq=0.9999$, extrap > $\Rsq=1.000$) in 7.4\,s without invoking PySR. None of the 5 seed files > now available (\texttt{seed\{42,99,123,777,2024\}}) support this: every > seed records \texttt{effective\_method = pysr\_warm\_start} for N-8 --- > never \texttt{hybrid\_llm\_only} --- with HypatiaX elapsed times of > 240--366\,s (vs.\ PySR-only's 210--398\,s on the same seeds). The LLM's > candidate list did include \texttt{sqrt(x)} and \texttt{x\^{}0.5} among > seven proposals, but PySR search ran and refined a warm-started > expression rather than the guess being accepted directly, and no run in > any available file completes in anything close to 7.4\,s. This footnote > needs either a source file that actually shows the described run or a > correction/removal; it is retained here only as a flag pending that. 2602,2608c2612,2629 < \texttt{exp3\_nguyen12\_seed\{42,99,123,777,2024\}.json} files available < at the time of this correction were checked and ruled out as a source --- < they record a different, axis-aligned extrapolation split (the protocol < Section~\ref{subsec:extrapolation-protocol} states was superseded by the < PCA-directed split), and produce extrap $\Rsq\approx1.0$ for nearly every < equation and seed under that different protocol, which does not < reproduce this table's reported failures on N-3/N-4/N-7. The --- > \texttt{exp3\_nguyen12\_seed\{42,99,123,777,2024\}.json} files, now > available and evaluated programmatically against their own raw > \texttt{X\_extrap}/\texttt{y\_extrap} arrays, remain ruled out as a > source for this table, though not for the reason previously stated > here: they do \emph{not} give extrap $\Rsq\approx1.0$ for nearly every > cell. PySR-only fails extrapolation on N-4 in 4/5 seeds ($\Rsq$ ranging > from $-0.38$ to $-11491$) and on N-7 in 5/5 seeds ($\Rsq$ from $-0.68$ > to $0.99$) --- a pattern that qualitatively echoes this table's N-4/N-7 > failures. However, PySR-only succeeds on N-3 in all 5 seeds (never > reproducing this table's $-426.2$), and HypatiaX succeeds on 11--12/12 > equations in every seed (vs.\ 7/12 in this table), so the two datasets > still disagree substantially equation-by-equation and the axis-aligned > vs.\ PCA-directed protocol distinction remains the best available > explanation. Aggregate success under this axis-aligned split, pooled > over the 5 seeds $\times$ 12 equations: PySR-only 48/60 (80.0\,\%), > HypatiaX 59/60 (98.3\,\%) --- reported here only as a diagnostic of > what these files contain, \emph{not} as a substitute for this table's > PCA-directed figures or the caption's unreconciled 33.3\,\% figure. The 2610c2631,2641 < in this reconciliation and no source file was available to recompute them. --- > in this reconciliation and no PCA-directed source file was available to > recompute them. > \item[$\S$] \textbf{[flagged: unverified, no source file]} The Neural MLP > ($N$) column has no backing result file among the material available for > this correction pass: none of the 5 > \texttt{exp3\_nguyen12\_seed\{42,99,123,777,2024\}.json} files contain a > third system --- each file's \texttt{results} dict has only > \texttt{"pysr"} and \texttt{"hypatiax"} keys, and no > Neural-MLP-on-Nguyen-12 result file was supplied. The $N$ column's 24 > cells and the two Mann-Whitney rows that reference $N$ are retained > as-is pending that file.
+

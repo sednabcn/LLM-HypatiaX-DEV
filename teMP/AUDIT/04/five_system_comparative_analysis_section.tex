@@ -1,0 +1,235 @@
+\subsection{Five-System Comparative Analysis}\label{subsec:fivesystem-comparative-analysis-feynman-}
+\label{sec:five_systems}
+
+We compare five system configurations (Hybrid v50\_2, Neural Network, Pure
+LLM, System 2 Symbolic, System 3 LLM+Fallback) across two independent
+benchmark suites. \textbf{exp1\_five} uses the Core-15 Feynman equation set;
+\textbf{exp2\_five} uses a separate Feynman 10-domain suite. The two suites
+have different equations and different per-system sample sizes, so their
+results are reported as two separate experiments below rather than pooled
+into a single table.
+
+Within each table below, and within each regime sub-group where applicable
+(near/medium/far), we \textbf{bold} the winning (best) value among the five
+systems for each genuine performance column (extrapolation error, $R^2$,
+RMSE). The Std and 95\,\% CI columns are \emph{not} used to declare a winner,
+since their underlying computation is already flagged as unreliable (see the
+data-quality notes at the end of this section) -- bolding a value there would
+dress up a bug as a result. A column is left unbolded wherever fewer than two
+systems have a valid (non-\texttt{---}) value to compare.
+
+\subsubsection{Experiment 1: Core-15 Feynman (exp1\_five)}\label{subsubsec:five-system-exp1}
+
+Table~\ref{tab:five_systems_full} summarizes extrapolation error
+and interpolation $R^2$ for all five systems on Core-15. Tables~\ref{tab:five_systems_performance}
+and \ref{tab:five_systems_extrapolation} break interpolation and extrapolation
+performance down further; Appendix~\ref{app:statistical_tests} (below) reports
+the corresponding Mann-Whitney test and effect-size calculation.
+
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison: Extrapolation Error vs.\ Interpolation $R^2$.
+  95\% CI computed from each row's own Mean/Std/n
+  ($\mathrm{mean} \pm t_{0.975,\,n-1} \cdot \mathrm{std}/\sqrt{n}$); left
+  blank where Std or n is unavailable, never hand-entered.}
+\label{tab:five_systems_full}
+\begin{tabular}{lrrrrrrr}
+\toprule
+\textbf{System} & \textbf{n}
+  & \textbf{Extrap.\ Median (\%)} & \textbf{Extrap.\ Mean (\%)}
+  & \textbf{Train $R^2$ Mean} & \textbf{Std} & \textbf{95\% CI (\%)}
+  & \textbf{Design Focus} \\
+\midrule
+Hybrid v50\_2 & 11 & \textbf{3406.6} & 20978.0 & 0.997 & 0.0033 & [20978.0, 20978.0] & Extrapolation \\
+Neural Network & 15 & 11333.1 & 35134.8 & 0.977 & 0.0565 & [35134.8, 35134.8] & Baseline \\
+Pure LLM & 1 & 1305988428322989.5 & 1305988428322989.5 & -3.468 & 14.8351 & --- & Recognition \\
+System 2 Symbolic & 13 & 4781.5 & \textbf{11544.4} & \textbf{0.998} & 0.0005 & [11544.4, 11544.4] & Validation \\
+\midrule
+\multicolumn{8}{l}{\textit{Systems Without Extrapolation Testing}} \\
+System 3 LLM+Fallback & 0 & --- & --- & 1.000 & 0.0008 & --- & Robustness \\
+\bottomrule
+\end{tabular}
+\end{table}
+% Source: exp1_five
+
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison -- Performance (Core-15, interpolation).
+  95\% CI computed from raw per-equation train $R^2$/RMSE at generation time.}
+\label{tab:five_systems_performance}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{System} & \textbf{n} & \textbf{Train $R^2$ Mean}
+  & \textbf{Train $R^2$ 95\% CI} & \textbf{Train RMSE Mean}
+  & \textbf{Design Focus} \\
+\midrule
+Pure LLM & 13 & -3.468 & [-12.432, 5.497] & 303.9276 & Recognition \\
+Neural Network & 15 & 0.977 & [0.946, 1.008] & 2191.4222 & Baseline \\
+System 3 LLM+Fallback & 15 & \textbf{1.000} & [0.999, 1.000] & \textbf{2.6662} & Robustness \\
+System 2 Symbolic & 15 & 0.998 & [0.997, 0.998] & 241.7009 & Validation \\
+Hybrid v50_2 & 15 & 0.997 & [0.995, 0.998] & 238.7849 & Extrapolation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison -- Extrapolation (Core-15, near/medium/far
+  regimes as defined in exp1\_ablation.py's EXTRAP\_REGIMES).
+  95\% CI computed from raw per-equation extrapolation $R^2$/RMSE at
+  generation time.}
+\label{tab:five_systems_extrapolation}
+\begin{tabular}{llrrr}
+\toprule
+\textbf{System} & \textbf{Regime} & \textbf{n}
+  & \textbf{Extrap $R^2$ Mean} & \textbf{Extrap RMSE Mean} \\
+\midrule
+Pure LLM & near & 2 & --- & 6335728547091027353874296104974734005716609391578068128372883456.0000 \\
+Pure LLM & medium & 0 & --- & --- \\
+Pure LLM & far & 0 & --- & --- \\
+Neural Network & near & 14 & -3.476 & \textbf{1738.7456} \\
+Neural Network & medium & 14 & -0.957 & \textbf{9883.8931} \\
+Neural Network & far & 11 & -16.244 & \textbf{48503.9062} \\
+System 3 LLM+Fallback & near & 0 & --- & --- \\
+System 3 LLM+Fallback & medium & 0 & --- & --- \\
+System 3 LLM+Fallback & far & 0 & --- & --- \\
+System 2 Symbolic & near & 12 & \textbf{0.937} & 91883180.6730 \\
+System 2 Symbolic & medium & 12 & \textbf{0.534} & 4286809965.2727 \\
+System 2 Symbolic & far & 11 & -2.541 & 367699310.5751 \\
+Hybrid v50_2 & near & 11 & 0.899 & 246767.2774 \\
+Hybrid v50_2 & medium & 10 & -0.749 & 11730081494842620290007040.0000 \\
+Hybrid v50_2 & far & 8 & \textbf{-0.878} & 2690270.9102 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Experiment 2: Feynman 10-Domain Suite (exp2\_five)}\label{subsubsec:five-system-exp2}
+
+Table~\ref{tab:five_systems_full_exp2five} reports the same
+comparison on the exp2\_five suite. Tables~\ref{tab:five_systems_performance_exp2five}
+and \ref{tab:five_systems_extrapolation_exp2five} give the interpolation and
+extrapolation breakdowns for this suite.
+
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison (exp2\_five, Feynman 10-domain suite,
+  methods 1/2/4/5/6): Extrapolation Error vs.\ Interpolation $R^2$.
+  Same 95\% CI convention as Table~\ref{tab:five_systems_full}
+  ($\mathrm{mean} \pm t_{0.975,\,n-1} \cdot \mathrm{std}/\sqrt{n}$); a
+  separate table from tab:five\_systems\_full -- different equation suite
+  and sample sizes, not another view of the same data.}
+\label{tab:five_systems_full_exp2five}
+\begin{tabular}{lrrrrrrr}
+\toprule
+\textbf{System} & \textbf{n}
+  & \textbf{Extrap.\ Median (\%)} & \textbf{Extrap.\ Mean (\%)}
+  & \textbf{Train $R^2$ Mean} & \textbf{Std} & \textbf{95\% CI (\%)}
+  & \textbf{Design Focus} \\
+\midrule
+\midrule
+\multicolumn{8}{l}{\textit{Systems Without Extrapolation Testing}} \\
+Hybrid v50\_2 & 0 & --- & --- & 0.998 & 0.0070 & --- & Extrapolation \\
+Neural Network & 0 & --- & --- & 0.997 & 0.0097 & --- & Baseline \\
+Pure LLM & 0 & --- & --- & 0.861 & 0.7475 & --- & Recognition \\
+System 2 Symbolic & 0 & --- & --- & 0.969 & 0.1666 & --- & Validation \\
+System 3 LLM+Fallback & 0 & --- & --- & \textbf{1.000} & 0.0000 & --- & Robustness \\
+\bottomrule
+\end{tabular}
+\end{table}
+% Source: exp2_five own output (hypatiax/data/results/five_systems/exp2_five/protocol_core_noiseless_20260802_141745.json)
+
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison (exp2\_five) -- Performance (Feynman suite,
+  interpolation). 95\% CI computed from raw per-domain train $R^2$ at
+  generation time.}
+\label{tab:five_systems_performance_exp2five}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{System} & \textbf{n} & \textbf{Train $R^2$ Mean}
+  & \textbf{Train $R^2$ 95\% CI} & \textbf{Design Focus} \\
+\midrule
+Hybrid v50\_2 & 30 & 0.998 & [1.0, 1.0] & Extrapolation \\
+Neural Network & 30 & 0.997 & [1.0, 1.0] & Baseline \\
+Pure LLM & 29 & 0.861 & [0.6, 1.1] & Recognition \\
+System 2 Symbolic & 30 & 0.969 & [0.9, 1.0] & Validation \\
+System 3 LLM+Fallback & 30 & \textbf{1.000} & [1.0, 1.0] & Robustness \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Five-System Comparison (exp2\_five) -- Extrapolation (Feynman
+  suite). Median and IQR-clipped mean of per-domain extrapolation error \%.}
+\label{tab:five_systems_extrapolation_exp2five}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{System} & \textbf{n}
+  & \textbf{Extrap.\ Median (\%)} & \textbf{Extrap.\ Mean (\%)} \\
+\midrule
+Hybrid v50\_2 & 0 & --- & --- \\
+Neural Network & 0 & --- & --- \\
+Pure LLM & 0 & --- & --- \\
+System 2 Symbolic & 0 & --- & --- \\
+System 3 LLM+Fallback & 0 & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Statistical Test Details}
+\label{app:statistical_tests}
+
+\subsection*{Experiment 1 (exp1\_five, Core-15)}
+
+\subsection{Mann-Whitney U Test for Extrapolation Performance}
+
+For medium extrapolation regime (2$\times$ training range):
+
+\paragraph{Test Setup:}
+\begin{itemize}
+\item \textbf{Sample sizes}: $n_{\text{Hybrid v50\_2}} = 11$, $n_{\text{Neural Network}} = 15$
+\item \textbf{Null hypothesis}: $H_0: E_{\text{Hybrid v50\_2}} \geq E_{\text{Neural Network}}$ (Hybrid v50\_2 is not better)
+\item \textbf{Alternative hypothesis}: $H_1: E_{\text{Hybrid v50\_2}} < E_{\text{Neural Network}}$ (Hybrid v50\_2 is better)
+\item \textbf{Significance level}: $\alpha = 0.05$ (one-tailed test)
+\end{itemize}
+
+\paragraph{Descriptive Statistics:}
+\begin{itemize}
+\item \textbf{Hybrid v50\_2}: Mean = 865496363.6\%, Median = 3406.6\%, SD = 2819161054.2\%, Range = [0.0, 9364417961.6]
+\item \textbf{Neural Network}: Mean = 8935987.0\%, Median = 11333.1\%, SD = 33797954.7\%, Range = [171.6, 131098141.4]
+\end{itemize}
+
+\paragraph{Test Results:}
+\begin{itemize}
+\item \textbf{Test statistic}: $U = 68.0$
+\item \textbf{P-value}: $p = 2.34e-01$ (one-tailed, normal approximation with tie correction -- see \texttt{\_render\_stat\_test\_tex()} in \texttt{generate\_tables.py})
+\item \textbf{Conclusion}: $p \geq 0.05 \Rightarrow$ Fail to reject $H_0$ at $\alpha = 0.05$
+\end{itemize}
+
+\subsection{Effect Size Calculation (Cohen's $d$)}
+
+\begin{align}
+\mu_{\text{Neural Network}} &= 8935987.0\%, \quad \sigma_{\text{Neural Network}} = 33797954.7\% \\
+\mu_{\text{Hybrid v50\_2}} &= 865496363.6\%, \quad \sigma_{\text{Hybrid v50\_2}} = 2819161054.2\% \\
+s_{\text{pooled}} &= \sqrt{\frac{\sigma_{\text{Neural Network}}^2 + \sigma_{\text{Hybrid v50\_2}}^2}{2}} = 1993591150.6\% \\
+d &= \frac{8935987.0 - 865496363.6}{1993591150.6} = -0.43
+\end{align}
+
+\paragraph{Conservative Estimate:}
+Using only Neural Network standard deviation (most conservative approach):
+\begin{equation}
+d_{\text{conservative}} = \frac{8935987.0}{33797954.7} = -25.34 \quad \text{(interpret magnitude per Cohen 1988 conventions)}
+\end{equation}
+
+\paragraph{Alternative Calculation (Glass's $\Delta$):}
+Using only the control group (Neural Network) standard deviation:
+\begin{equation}
+\Delta = \frac{8935987.0 - 865496363.6}{33797954.7} = -25.34
+\end{equation}
+
+% Source: exp1_five_results.json (hypatiax/data/results/five_systems/exp1_five/exp1_five_results.json)
+
+\subsection*{Experiment 2 (exp2\_five, 10-domain suite)}
+
+\textit{No statistical test is reported for exp2\_five: the generator requires both Hybrid v50\_2 and Neural Network to have at least one successful, finite extrapolation-error measurement each, and exp2\_five currently has zero for both (see Tables~\ref{tab:five_systems_full_exp2five} and \ref{tab:five_systems_extrapolation_exp2five}).}

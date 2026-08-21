@@ -1,0 +1,57 @@
+% ISSUE 12 — Rounding Slippage: 1.21/0.36 = 3.36x, Printed 3.40x
+% Category: Open (narrow, mechanical script fix + regen)
+% Source: jmlr_paper_main.tex, subsec:runtime-analysis, tab:timing_full pooled PCA row, l.1613-1662
+% Note: the offending row is "PCA ALL SEEDS (pooled)" — mean Hybrid 1.21s / mean Neural MLP 0.36s
+%   -> 1.21/0.36 = 3.361x, but the table prints 3.40x. Full table included for context; every
+%   v3c-split row is internally consistent with its own printed columns.
+
+each; \textbf{that data-completeness concern is retracted here.} All ten
+raw result files (five seeds $\times$ two benchmark variants) were
+re-checked directly: each contains the full 74 tasks, and each task's
+internal \texttt{seed} field matches its source file with no
+cross-contamination. Table~\ref{tab:timing_full} below is the mechanically
+regenerated output of \texttt{generate\_table1.py} run against this
+complete, verified pool --- $5$ seeds $\times$ $74$ tasks $\times$ $2$
+splits $=$ $740$ tasks audited, with no manual number editing --- broken
+down by individual seed and by split, plus the pooled 5-seed / 370-task
+total for each split. It \textbf{replaces} both the originally reported
+single-row table and the six-reconstruction interim table from the
+previous audit.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Wall-clock time per task (seconds), mean / median, regenerated
+directly from the complete raw per-task result files by
+\texttt{generate\_table1.py} with no manual number editing. Rows are
+grouped by split (v3c = aggressive 40/60; PCA = PCA-directed 40/60), with
+one row per seed followed by the pooled 5-seed / 370-task total for that
+split (shaded). ``Speedup'' compares the neural MLP arm to the hybrid
+arm; every row shows the hybrid system slower, never faster. This table
+replaces both the originally reported single-row table
+($1.73\times$/$1.64\times$ speedup, opposite direction, unreproduced) and
+the interim six-reconstruction table from an earlier audit draft, which
+worked from a data pool later found to have been checked only partially.}
+\label{tab:timing_full}
+\begin{tabular}{lrrrrrl}
+\toprule
+Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speedup, all (mean) \\
+    &     & mean/median  & mean/median    & mean/median      & count      &  \\
+\midrule
+v3c seed42  & 74 & 8.85 / 7.75 & 0.36 / 0.36 & 2.54 / 1.49 & 69/74 & 7.05$\times$ slower \\
+v3c seed99  & 74 & 8.56 / 7.62 & 0.37 / 0.37 & 2.52 / 1.48 & 69/74 & 6.83$\times$ slower \\
+v3c seed123 & 74 & 8.46 / 7.30 & 0.36 / 0.36 & 2.53 / 1.58 & 68/74 & 7.06$\times$ slower \\
+v3c seed777 & 74 & 8.66 / 7.67 & 0.25 / 0.25 & 2.32 / 1.42 & 69/74 & 9.33$\times$ slower \\
+v3c seed2024 & 74 & 8.35 / 7.75 & 0.37 / 0.36 & 2.31 / 1.38 & 69/74 & 6.33$\times$ slower \\
+\rowcolor{black!8}
+\textbf{v3c ALL SEEDS (pooled)} & \textbf{370} & \textbf{8.57 / 7.65} & \textbf{0.34 / 0.36} & \textbf{2.44 / 1.46} & \textbf{344/370} & \textbf{7.18$\times$ slower} \\
+PCA seed42  & 74 & 8.44 / 7.37 & 0.36 / 0.36 & 2.18 / 1.40 & 68/74 & 6.11$\times$ slower \\
+PCA seed99  & 74 & 2.97 / 0.19 & 0.35 / 0.35 & 1.16 / 0.91 & 26/74 & 3.28$\times$ slower \\
+PCA seed123 & 74 & 0.21 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74  & 2.52$\times$ slower \\
+PCA seed777 & 74 & 0.19 / 0.17 & 0.36 / 0.35 & 0.91 / 0.88 & 0/74  & 2.55$\times$ slower \\
+PCA seed2024 & 74 & 0.24 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74 & 2.54$\times$ slower \\
+\rowcolor{black!8}
+\textbf{PCA ALL SEEDS (pooled)} & \textbf{370} & \textbf{2.41 / 0.18} & \textbf{0.36 / 0.35} & \textbf{1.21 / 0.89} & \textbf{94/370} & \textbf{3.40$\times$ slower} \\
+\bottomrule
+\end{tabular}
+\end{table}

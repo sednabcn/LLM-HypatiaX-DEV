@@ -1,0 +1,84 @@
+﻿what is the conclusion ?
+
+Ran 4 commands, viewed a file
+Confirmed — and I found the exact bug. Here's what's happening.
+Root cause: HypatiaX never actually gets the LLM warm-start
+Look at the "HypatiaX run" block (lines 478–498):
+python
+model_h = PySRRegressor(
+    **_pysr_kwargs,
+    warm_start=False,
+)
+if llm_exprs:
+    model_h.set_params(extra_sympy_mappings={})   # ← does nothing with llm_exprs
+    model_h.fit(X, y, variable_names=var_names)    # ← identical call to the else-branch
+else:
+    model_h.fit(X, y, variable_names=var_names)
+llm_exprs is fetched from get_llm_prior(...) earlier, but it is never passed into PySRRegressor or .fit(). The if llm_exprs: / else: branches call the exact same .fit(X, y, variable_names=var_names) either way — the LLM candidates are computed and then silently discarded. set_params(extra_sympy_mappings={}) is a no-op with respect to warm-starting (it just sets an empty dict).
+Combined with:
+    • identical _pysr_kwargs for both models (line 465, **_pysr_kwargs shared by both)
+    • same random_state=seed
+    • deterministic=True
+    • parallelism="serial"
+...model_h and model_p are running the literal same PySR search on the same data with the same seed, with nothing differentiating "HypatiaX" from "PySR-only." That's exactly why every expression and R² is byte-identical across all 12 equations, in every seed file — confirmed directly against exp3_nguyen12_seed42.json above (all 12 rows match exactly, including 15-decimal R² values).
+This is not the ground-truth leak pattern from run_all.sh (that's a different bug where the target formula leaks into the LLM prompt) — this is a warm-start injection bug where the LLM step runs but its output is thrown away, making the "HypatiaX" arm just a second identical PySR-only run.
+What this changes for your fix
+    • This explains the H≡P duplication cleanly — no need to suspect data corruption or leak in this file.
+    • Every H-column number in the paper table is invalid, not just the two mis-bolded cells — HypatiaX was never actually evaluated. There is currently no valid HypatiaX result anywhere in this pipeline.
+    • You still separately need to check get_llm_prior's prompt construction for the actual GT-leak pattern (since exp3 was never audited for that per run_all.sh), but that's now a secondary concern to fix #1.
+Next step
+I'd fix the warm-start injection so llm_exprs actually reaches PySR — typically via PySRRegressor(..., ).  doesn't take a warm-start-expression arg directly; HypatiaX likely needs to seed PySR's initial population (e.g. via guesses=/checkpoint injection, or seeding equation_file/import_expr, depending on the PySR version) or otherwise diverge model_h's config from model_p's. Want me to check get_llm_prior and NguYenProtocol (or whatever hypatia.py contains) to see what mechanism was intended for injecting the LLM candidates, so I can write the actual fix?
+
+updte all
+
+Acknowledged technical limitations and API uncertainties
+Now let me fix the actual bug — the discarded LLM warm-start:
+Fix: HypatiaX run was fetching llm_exprs but never passing them into PySR — both branches called the identical .fit(), so model_h and model_p ran the same deterministic search on the same seed and produced byte-identical results. Now llm_exprs are actually injected as warm-start guesses when present, so the two arms diverge as intended.
+Let me also add a visible flag to the saved results so future audits can immediately verify the two arms actually diverged, rather than requiring a byte-comparison of JSON files:
+Editing file
+Now let's build the updated .tex report reflecting the root-cause finding:
+Created a file, ran a command, read a file
+Root cause found and fixed:
+The bug: In exp3_nguyen12_hybrid50v_02.py, llm_exprs was fetched from get_llm_prior(...) but never passed into PySRRegressor/.fit() — both the if llm_exprs: and else: branches ran the exact same .fit() call. Combined with identical _pysr_kwargs (same random_state=seed, deterministic=True, parallelism="serial") for both arms, HypatiaX and PySR-only were mathematically guaranteed to produce identical output. Confirmed against exp3_nguyen12_seed42.json: all 12 rows match to 15 decimal places.
+This is a warm-start injection bug, not the ground-truth leak pattern flagged in run_all.sh — different mechanism, and exp3 still hasn't been separately audited for that leak.
+What I updated:
+    1. exp3_nguyen12_hybrid50v_02.py — llm_exprs now actually reaches PySR via the guesses parameter for the HypatiaX arm only, plus an llm_warm_start_used audit flag on each result record. Caveat noted in-code: hypatia.py (where get_llm_prior lives) wasn't in your upload, so I can't confirm guesses matches its intended API — verify once you locate that file.
+    2. .tex report — Tier-1 arithmetic fix retained (8/12 P, 7/12 H, orphaned caption number removed), but the H column is now marked INVALID with a full audit trail explaining why, plus a prioritized list of what's still blocking (verify guesses API → audit the GT-leak pattern for exp3 → reconcile _merged.json → rerun → restore table generation → patch prose mentions).
+Still open, in order: confirm the injection mechanism against hypatia.py, audit get_llm_prior's prompt for GT-leak, reconcile _merged.json, then rerun exp3 before any HypatiaX number gets cited again.
+Exp3 nguyen12 hybrid50v 02
+PY 
+Download
+01 nguyen12 success count arithmetic
+TEX 
+Download
+Download all
+
+hypatia.py
+368 lines
+py
+
+Ran a command
+Good — now that I have hypatia.py, I can properly audit both open items from the previous fix. Two things stand out.
+Verified formula integrity and confirmed absence of data leakage
+Two findings — one good, one a new bug in my own patch.
+1. GT-leak audit (item 2 from the remaining list) — clears exp3
+_build_prompt (line 251) only reads eq.get("formula_hint", ...). It never touches eq["formula"] — the "formula": meta["ground_truth"] key that exp3's eq_dict also carries is simply unused inside hypatia.py. So get_llm_prior does not leak the full ground-truth expression into the prompt the way run_all.sh documents for exp1/exp1b. That's a real difference from the documented leak pattern — good news, and it means item 2 is substantially resolved for this file (though I still can't see what formula_hint itself contains, since NguYenProtocol isn't uploaded — that's the one residual gap).
+2. My guesses=llm_exprs fix from last turn is actually broken
+hypatia.py's docstring claims the output is "compatible with PySR's populations_init / expression seeding," but the expressions it actually returns and validates (_parse_response, _build_prompt's rules) are plain Python/numpy syntax: "x**3 + x**2 + x", "np.sin(x) + x".
+PySR's operator config in exp3 is:
+python
+binary_operators=["+", "-", "*", "/", "^"],   # power is ^, not **
+unary_operators=["sin", "cos", "log", "sqrt", "exp"],  # bare names, no "np." prefix, no abs
+So passing llm_exprs straight into guesses as I did would hand PySR strings like x**3 and np.sin(x) that don't parse under its own operator set — ** isn't a configured operator and np.sin/np.abs aren't valid unary calls (abs isn't in the allowed list at all). That fix would likely error or silently no-op, not actually warm-start anything.
+Let me correct it:
+Edited 3 files, ran a command
+re isn't imported yet — needed for the syntax converter:
+Add missing re import needed by the new syntax converter
+Now update the .tex audit note to reflect both findings, and copy final files to outputs:
+Update tex audit note: hypatia.py has now been reviewed. Clears item 2 (no GT-leak via formula key) and documents the new syntax-mismatch bug found and fixed in the guesses= patch.
+
+Update tex audit note: hypatia.py has now been reviewed. Clears item 2 (no GT-leak via formula key) and documents the new syntax-mismatch bug found and fixed in the guesses= patch.
+01_nguyen12_success_count_arithmetic.tex+60-36
+
+Done
+

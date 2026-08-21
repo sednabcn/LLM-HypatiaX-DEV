@@ -1,0 +1,91 @@
+% ISSUE 6 — v3c vs. PCA-directed Never Defined as Two Variants
+% Category: Text (pure writing fix, both variants' numbers are real)
+% Source A: jmlr_paper_main.tex, subsec:extrapolation-protocol (sec:split), l.678-709
+% Source B: jmlr_paper_main.tex, tab:timing_full caption, l.1626-1662
+% Source C: jmlr_paper_main.tex, tab:timing_llm_routed_full caption, l.1712-1722
+
+%% ---- SOURCE A: Extrapolation Protocol ----
+\subsection{Extrapolation Protocol}\label{subsec:extrapolation-protocol}
+\label{sec:split}
+
+To rigorously assess out-of-distribution generalisation, we employ a
+\textbf{PCA-directed aggressive extrapolation split}:
+
+\begin{enumerate}[leftmargin=2em,label=\arabic*.]
+  \item For each task $i$, compute the first principal component direction
+    $v_1 \in \mathbb{R}^{d_i}$ of the input matrix $X \in \mathbb{R}^{N \times d_i}$.
+  \item Project all $N=200$ samples onto $v_1$, obtaining scalar projections
+    $z^{(j)} = \langle x^{(j)}, v_1 \rangle$.
+  \item Sort samples by $z^{(j)}$ in ascending order.
+  \item Assign the lowest 40\,\% of samples (by $z^{(j)}$) to the training set
+    $\mathcal{D}^{\mathrm{train}}_i$ and the highest 60\,\% to the test set
+    $\mathcal{D}^{\mathrm{test}}_i$, with a small overlapping band in the
+    quantile transition region to prevent abrupt boundary effects.
+\end{enumerate}
+
+This protocol has two important properties.  First, unlike axis-aligned splits,
+PCA-directed ordering ensures that extrapolation occurs along the dominant
+direction of variation in multivariate settings, reflecting the most
+challenging direction of distributional shift.  Second, the 40\,\%/60\,\%
+partition is substantially more aggressive than the 80\,\%/20\,\% train/test
+splits used in standard symbolic regression benchmarks, making this a stringent
+test of extrapolation capability.
+
+\begin{remark}[On the split design]
+The partial overlap in the quantile transition region is a deliberate design choice
+to avoid the ``cliff edge'' effect where a perfectly correct formula appears to
+fail due to numerical boundary issues.  This overlap is small ($\sim$5\,\% of
+samples) and does not substantially reduce the extrapolation challenge.
+\end{remark}
+
+%% ---- SOURCE B: tab:timing_full (caption defines v3c vs PCA as sibling splits) ----
+\begin{table}[htbp]
+\centering
+\small
+\caption{Wall-clock time per task (seconds), mean / median, regenerated
+directly from the complete raw per-task result files by
+\texttt{generate\_table1.py} with no manual number editing. Rows are
+grouped by split (v3c = aggressive 40/60; PCA = PCA-directed 40/60), with
+one row per seed followed by the pooled 5-seed / 370-task total for that
+split (shaded). ``Speedup'' compares the neural MLP arm to the hybrid
+arm; every row shows the hybrid system slower, never faster. This table
+replaces both the originally reported single-row table
+($1.73\times$/$1.64\times$ speedup, opposite direction, unreproduced) and
+the interim six-reconstruction table from an earlier audit draft, which
+worked from a data pool later found to have been checked only partially.}
+\label{tab:timing_full}
+\begin{tabular}{lrrrrrl}
+\toprule
+Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speedup, all (mean) \\
+    &     & mean/median  & mean/median    & mean/median      & count      &  \\
+\midrule
+v3c seed42  & 74 & 8.85 / 7.75 & 0.36 / 0.36 & 2.54 / 1.49 & 69/74 & 7.05$\times$ slower \\
+v3c seed99  & 74 & 8.56 / 7.62 & 0.37 / 0.37 & 2.52 / 1.48 & 69/74 & 6.83$\times$ slower \\
+v3c seed123 & 74 & 8.46 / 7.30 & 0.36 / 0.36 & 2.53 / 1.58 & 68/74 & 7.06$\times$ slower \\
+v3c seed777 & 74 & 8.66 / 7.67 & 0.25 / 0.25 & 2.32 / 1.42 & 69/74 & 9.33$\times$ slower \\
+v3c seed2024 & 74 & 8.35 / 7.75 & 0.37 / 0.36 & 2.31 / 1.38 & 69/74 & 6.33$\times$ slower \\
+\rowcolor{black!8}
+\textbf{v3c ALL SEEDS (pooled)} & \textbf{370} & \textbf{8.57 / 7.65} & \textbf{0.34 / 0.36} & \textbf{2.44 / 1.46} & \textbf{344/370} & \textbf{7.18$\times$ slower} \\
+PCA seed42  & 74 & 8.44 / 7.37 & 0.36 / 0.36 & 2.18 / 1.40 & 68/74 & 6.11$\times$ slower \\
+PCA seed99  & 74 & 2.97 / 0.19 & 0.35 / 0.35 & 1.16 / 0.91 & 26/74 & 3.28$\times$ slower \\
+PCA seed123 & 74 & 0.21 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74  & 2.52$\times$ slower \\
+PCA seed777 & 74 & 0.19 / 0.17 & 0.36 / 0.35 & 0.91 / 0.88 & 0/74  & 2.55$\times$ slower \\
+PCA seed2024 & 74 & 0.24 / 0.17 & 0.36 / 0.35 & 0.90 / 0.88 & 0/74 & 2.54$\times$ slower \\
+\rowcolor{black!8}
+\textbf{PCA ALL SEEDS (pooled)} & \textbf{370} & \textbf{2.41 / 0.18} & \textbf{0.36 / 0.35} & \textbf{1.21 / 0.89} & \textbf{94/370} & \textbf{3.40$\times$ slower} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ---- SOURCE C: tab:timing_llm_routed_full caption ----
+\begin{table}[htbp]
+\centering
+\small
+\caption{As Table~\ref{tab:timing_full}, restricted to tasks where the
+hybrid system's own \texttt{decision} field routed to the LLM rather than
+the NN --- the framing used for the previously reported $1.73\times$
+claim. No row supports that claim; the LLM-routed subset is slower than
+the neural baseline in every case with a nonzero routed count. Seeds with
+zero LLM-routed tasks under the PCA split (123, 777, 2024) are omitted
+here (undefined) and are covered by the ``all tasks'' framing above.}
+\label{tab:timing_llm_routed_full}

@@ -1,0 +1,254 @@
+\documentclass{jmlr}
+
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\jmlrvolume{--}
+\jmlryear{2026}
+\jmlrsubmitted{--}
+\jmlrpublished{--}
+
+\title{Reproducibility Audit and Regeneration of Table 1 (DeFi Runtime
+Comparison) in the HypatiaX Benchmark Report}
+
+\author{\Name{HypatiaX Benchmark Reproducibility Audit}}
+
+\editor{--}
+
+\begin{document}
+
+\jmlrmaketitle
+
+\begin{abstract}
+The manuscript's DeFi runtime table (``Table 1'') reports a neural-network
+(NN) baseline of 3.0\,s mean / 2.7\,s median, a hybrid arm of 6.8\,s mean /
+1.7\,s median, and a resulting 1.73$\times$ / 1.64$\times$ speedup of hybrid
+over NN. We regenerate this table mechanically, with no manual number
+editing, directly from every raw per-task result file supplied alongside
+the manuscript (\texttt{generate\_table1.py}), across six independent
+reconstructions of the underlying data pool. In all six, the reported
+direction of the effect reverses: the hybrid arm is 4.0$\times$--9.4$\times$
+\emph{slower} than the pure-NN arm, never faster, and the absolute NN and
+hybrid timings differ from the manuscript by roughly an order of magnitude.
+We further document a data-completeness defect in the raw files themselves
+(seeds other than 42 contain only 5 of 74 tasks, and the same 5 tasks in
+every file) that must be resolved before any pooled multi-seed statistic
+can be trusted. On the strength of this evidence we reclassify the
+1.73$\times$/1.64$\times$ speedup claim out of the ``no current
+contradiction, low-risk footnote'' bucket in which it was previously
+grouped (audit item 12) and into a primary, blocking finding. The remaining
+items originally grouped under item 12 --- the 89.2\%/62.2\% DeFi accuracy
+figures, the Planck blackbody cross-split divergence, PCA
+\texttt{random\_state} documentation, and the second \texttt{exp2\_run.log}
+--- are not touched by the data examined here and are retained as
+lower-risk open follow-up items, listed in a closing footnote.
+\end{abstract}
+
+\section{Scope}
+
+This note concerns exactly one artifact: the DeFi wall-clock runtime table
+in the manuscript (``Table 1''), and the thirteen raw JSON result files and
+one regeneration script supplied for the audit:
+
+\begin{itemize}
+\item \texttt{hypatiax\_defi\_benchmark\_v3\_results\_seed\{42,99,123,777,2024\}.json}
+  (``aggressive 40/60 split'', v3c benchmark),
+\item \texttt{hypatiax\_defi\_benchmark\_pca\_results\_seed\{42,99,123,777,2024\}.json}
+  and the unsuffixed \texttt{hypatiax\_defi\_benchmark\_pca\_results.json}
+  (``PCA-directed 40/60 split''),
+\item \texttt{generate\_table1.py}, a mechanical table-generation script
+  whose own header notes that the manuscript's numbers do not reproduce
+  from the two seed-42 files it was originally audited against.
+\end{itemize}
+
+No hand-editing of any number was performed anywhere in this note; every
+statistic below is the direct, unmodified console/LaTeX output of
+\texttt{generate\_table1.py} run against the files as supplied.
+
+\section{Data-completeness defect found in the raw files}
+\label{sec:completeness}
+
+Before regenerating the table, we checked task counts and task identity
+across files. Two things are true of every seed-suffixed file except
+seed 42, for \emph{both} benchmark variants:
+
+\begin{enumerate}
+\item Each contains only 5 tasks, versus 74 in the seed-42 files
+  (6.8\% coverage).
+\item All five are the \emph{same} five \texttt{equation\_id} values in
+  every file --- \textit{Annualised Portfolio tracking error, Portfolio
+  Sharpe Ratio, Portfolio VaR for two correlated, Correlated Portfolio VaR,
+  Portfolio Expected Shortfall for correlated} --- regardless of seed or
+  benchmark variant.
+\end{enumerate}
+
+This is not consistent with five independently-seeded full sweeps that
+happened to be interrupted at different points; it is consistent with a
+single truncated task ordering that a sweep across all five seeds hit and
+stopped at identically, every time. Whatever run produced these files, the
+seeds 99/123/777/2024 do not currently constitute evidence about
+run-to-run variance across the full 74-task suite --- only about five easy
+portfolio-risk tasks. \textbf{This should be treated as a blocking data
+gap for the multi-seed sweep recommended in \texttt{generate\_table1.py}'s
+own header, not folded into an aggregate statistic as if it were complete
+data.}
+
+A second, unrelated hazard: \texttt{hypatiax\_defi\_benchmark\_pca\_
+results.json} (no seed suffix) and \texttt{hypatiax\_defi\_benchmark\_pca\_
+results\_seed42.json} both report \texttt{seed=42}, but are not the same
+data --- the former has all 74 tasks, the latter only the same
+five-task truncated subset described above. A future reproduction attempt
+that assumes ``the seed-42 file'' is a unique, unambiguous artifact will
+silently pick up either a 74-task or a 5-task sample depending on which
+file it globs.
+
+\section{Regenerated Table 1, all reconstructions side by side}
+
+Given the ambiguity documented in Section~\ref{sec:completeness}, we did
+not pick a single ``correct'' pooling and report only that number.
+Instead we ran \texttt{generate\_table1.py} over every reconstruction of
+the data that a careful reader of the manuscript's methods section or of
+the script's own header could plausibly arrive at: single full seed-42
+runs for each variant, the exact multi-seed pooling recipe documented in
+the script's header (using the files exactly as named), and a pooling that
+substitutes the complete unsuffixed PCA file for its truncated
+seed-suffixed counterpart. Table~\ref{tab:timing} reports all six side by
+side; Table~\ref{tab:timing_llm_routed} restricts the hybrid arm to
+LLM-routed tasks only, matching how the manuscript's hybrid arm is
+presumably defined.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Wall-clock time per task (seconds), mean / median, regenerated
+directly from raw per-task result files with no manual editing. ``Speedup''
+compares the neural baseline to hybrid; the manuscript claims
+1.73$\times$/1.64$\times$ (hybrid faster). Every reconstruction here shows
+the opposite sign.}
+\label{tab:timing}
+\begin{tabular}{lrrrl}
+\toprule
+Reconstruction & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & Speedup (mean / median) \\
+\midrule
+v3, seed 42 only (full, $n{=}74$) & 8.94 / 8.01 & 0.36 / 0.36 & 2.03 / 1.56 & 5.59$\times$ / 4.28$\times$ SLOWER \\
+PCA, seed 42 only (full file, $n{=}74$) & 8.85 / 7.95 & 0.37 / 0.37 & 1.94 / 1.48 & 5.22$\times$ / 4.00$\times$ SLOWER \\
+PCA, seed 42 only (truncated file, $n{=}5$) & 7.68 / 7.19 & 0.27 / 0.27 & 2.35 / 2.28 & 8.68$\times$ / 8.51$\times$ SLOWER \\
+v3, multiseed pooled (recipe as documented, $n{=}94$) & 8.88 / 8.01 & 0.36 / 0.36 & 1.98 / 1.53 & 5.52$\times$ / 4.19$\times$ SLOWER \\
+PCA, multiseed pooled (recipe as documented, $n{=}25$) & 8.76 / 8.31 & 0.27 / 0.27 & 2.43 / 2.56 & 8.91$\times$ / 9.36$\times$ SLOWER \\
+PCA, multiseed pooled (full seed-42 file substituted, $n{=}94$) & 8.89 / 8.08 & 0.35 / 0.37 & 2.05 / 1.60 & 5.84$\times$ / 4.31$\times$ SLOWER \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{As Table~\ref{tab:timing}, restricted to tasks where the hybrid
+arm's own \texttt{decision} field routed to the LLM rather than the NN.}
+\label{tab:timing_llm_routed}
+\begin{tabular}{lrrl}
+\toprule
+Reconstruction ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
+\midrule
+v3, seed 42 only (69/74) & 0.36 / 0.36 & 1.79 / 1.54 & 4.91$\times$ / 4.23$\times$ SLOWER \\
+PCA, seed 42 only, full file (69/74) & 0.37 / 0.37 & 1.67 / 1.44 & 4.50$\times$ / 3.88$\times$ SLOWER \\
+PCA, seed 42 only, truncated file (5/5) & 0.27 / 0.27 & 2.35 / 2.28 & 8.68$\times$ / 8.51$\times$ SLOWER \\
+v3, multiseed pooled, documented recipe (89/94) & 0.36 / 0.36 & 1.78 / 1.49 & 4.98$\times$ / 4.09$\times$ SLOWER \\
+PCA, multiseed pooled, documented recipe (25/25) & 0.27 / 0.27 & 2.43 / 2.56 & 8.91$\times$ / 9.36$\times$ SLOWER \\
+PCA, multiseed pooled, full file substituted (89/94) & 0.35 / 0.37 & 1.85 / 1.53 & 5.27$\times$ / 4.12$\times$ SLOWER \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No timeouts were flagged on the NN arm in any file (\texttt{timed\_out}
+is \texttt{false} throughout), so the discrepancy is not an artifact of
+excluded failed runs.
+
+\section{Findings}
+
+\begin{enumerate}
+
+\item \textbf{The manuscript's absolute timings do not match any raw file.}
+The manuscript reports NN mean/median of 3.0\,s/2.7\,s. Every raw file
+audited shows NN times of 0.27--0.39\,s per task, roughly an order of
+magnitude faster. This is consistent with the version-drift hypothesis
+already recorded in \texttt{generate\_table1.py}'s header: the reported
+numbers plausibly came from a heavier, superseded NN implementation, not
+the NN training code currently shipped with the benchmark scripts. We find
+no defect in the current scripts' NN training code itself that would
+explain the gap.
+
+\item \textbf{The manuscript's speedup direction is wrong, robustly.} Across
+all six reconstructions in Table~\ref{tab:timing} --- spanning both
+benchmark variants, both seed-42 files where two exist, and both the
+literal documented pooling recipe and a corrected version of it --- the
+hybrid arm is slower than the pure-NN arm by a factor of 4.0$\times$ to
+9.4$\times$. It is never faster, in either the ``all tasks'' or
+``LLM-routed-only'' framing. This is not sensitive to which file happens
+to be used for seed 42, nor to whether the incomplete non-42 seed files are
+included.
+
+\item \textbf{The non-42 seed files are not fit for a variance claim.} As
+documented in Section~\ref{sec:completeness}, seeds 99/123/777/2024 each
+contain the identical 5-task truncated subset, for both benchmark variants.
+Any claim of stability or variance of the reported metrics across seeds
+that relies on these files should be withdrawn until the sweep is re-run to
+completion (74/74 tasks per seed, as the script's own documented recipe
+specifies).
+
+\item \textbf{Filename ambiguity is a reproducibility hazard.}
+\texttt{hypatiax\_defi\_benchmark\_pca\_results.json} and
+\texttt{hypatiax\_defi\_benchmark\_pca\_results\_seed42.json} share a seed
+value but not a task set (74 vs.\ 5 tasks). We recommend the re-run
+recipe write only seed-suffixed, task-count-stamped filenames going
+forward, so no two files can silently disagree about which one is
+canonical for a given seed.
+
+\end{enumerate}
+
+\section{Disposition of audit item 12}
+
+Item 12 of the prior audit pass grouped four loose ends together as
+``none currently contradicted, all lower-risk to leave as open follow-up
+items with a footnote'': the 1.73$\times$ speedup and 89.2\%/62.2\% DeFi
+figures, the Planck blackbody cross-split divergence, PCA
+\texttt{random\_state} documentation, and a second \texttt{exp2\_run.log}.
+That grouping is no longer accurate for one member of the group.
+
+The data examined in this note directly and repeatedly contradicts the
+1.73$\times$/1.64$\times$ DeFi speedup claim: it is not merely
+unverified, it is reproducibly false under every reconstruction of the raw
+data we could construct, including the literal recipe the benchmark
+scripts' own documentation recommends. \textbf{We therefore remove the
+1.73$\times$/1.64$\times$ speedup claim from item 12 and elevate it to a
+primary finding of this note (Table~\ref{tab:timing}, Findings 1--2
+above), requiring correction in the manuscript rather than a footnote.}
+
+We did not independently investigate the paired 89.2\%/62.2\% DeFi accuracy
+figures beyond what falls out of the same raw files (they are not runtime
+figures and are not computed by \texttt{generate\_table1.py}); we make no
+claim about them either way and leave them, along with the remaining three
+items, in the open-follow-up bucket.\footnote{Open follow-up items
+retained from audit item 12, unchanged by this note: (a) the
+89.2\%/62.2\% DeFi accuracy figures cited alongside the speedup claim --
+not examined here, as they fall outside the runtime files audited; (b) the
+Planck blackbody cross-split divergence; (c) documentation of the PCA
+benchmark's \texttt{random\_state} handling; (d) the status of a second,
+previously referenced \texttt{exp2\_run.log}. None of these four is
+contradicted by any evidence in this note; they remain open, lower-risk
+items pending a dedicated pass.}
+
+\section{Recommendation}
+
+Replace the manuscript's Table 1 with numbers regenerated by
+\texttt{generate\_table1.py} against a completed re-run: all five seeds,
+all 74 tasks each, for both the v3c and PCA-directed splits, using the
+exact invocation given in the script's own header. Until that re-run
+exists, the only currently supportable statement about relative NN/hybrid
+runtime is the one this note's data supports: \emph{hybrid is slower than
+the pure neural baseline, by roughly 4--9$\times$ depending on pooling,
+in every file available.}
+
+\end{document}

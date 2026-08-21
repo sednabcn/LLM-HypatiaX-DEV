@@ -1,0 +1,80 @@
+﻿How to fix Nguyen-12 success-count arithmetic (10/12, 7-actual, 4/12) | Stale + Open | jmlr_paper_main | 01_nguyen12_success_count_arithmetic.md |
+
+Diagnosed stale table data and reconciled arithmetic discrepancies
+Nice catch — I recounted against your own table and the arithmetic really doesn't hold up in three separate places at once. Here's what's actually going on and how I'd fix it.
+What's actually broken
+1. The row totals don't match the bolded cells that are already in the table.
+Counting \textbf{} cells in the extrap columns:
+    • P (PySR-only): N‑1, N‑2, N‑5, N‑6, N‑8, N‑9, N‑10, N‑11 → 8/12, not the printed 10/12.
+    • H (HypatiaX): N‑1, N‑2, N‑3, N‑5, N‑6, N‑8, N‑9, N‑10, N‑11 → 9 cells are bolded, not the printed 11/12.
+2. Two of HypatiaX's bolded cells fail the table's own stated criterion.
+The caption defines success as extrap R² ≥ 0.9999. But N‑3 = 0.9976 and N‑10 = 0.9997 are bolded anyway — both below threshold. Once you drop those two mis‑bolded cells, H's real total is 7/12, not 9 and not 11.
+3. The caption has a third, independently wrong number.
+Strict recovery (≥0.9999) yields 4/12 (33.3%) doesn't match 8/12, 7/12, 10/12, or 11/12 — it's not a rounding-convention artifact of any of the other numbers, it's just a fourth, disconnected figure. It reads like leftover text from an earlier draft of the paper that was never reconciled after the table was edited.
+Two tiers of fix
+Tier 1 — mechanical, doable right now from the table as given:
+    • Un-bold N‑3 and N‑10 in the HypatiaX column (they fail the stated ≥0.9999 test).
+    • Change the Success row to P: 8/12 (66.7%) and H: 7/12 (58.3%).
+    • Delete the caption's 4/12 (33.3%) sentence — nothing in the table supports it, and inventing a reconciliation for it would just be a fourth guess.
+Tier 2 — needs the actual data, not just re-tallying:
+The per-equation R² values themselves (0.9976, 0.9997, etc.) haven't been checked against the raw results — they could be transcription errors too. Normally you'd regenerate tab:nguyen12 straight from the exp3/exp3b JSON outputs (seed=42, extended seeds 99/123/777/2024), but run_all.sh's FIX NO-TABLES-FIGURES change means the pipeline no longer emits any .tex table at all — table generation was deliberately stripped out, and only .json/.csv numerical outputs are produced now. So the table in the paper is currently hand-maintained, disconnected from the pipeline that's supposed to be its source of truth. To really close this out, someone needs to pull RESULTS_DIR/extrapolation/*.json (exp3) directly and recompute the whole table from scratch — re-tallying the printed cells (Tier 1) fixes the visible inconsistency but doesn't confirm the underlying numbers are right.
+Here's the Tier‑1-corrected block:
+latex
+\caption{Nguyen-12 benchmark: train and extrapolation $\Rsq$ by equation.
+$P$ = PySR-only; $H$ = HypatiaX; $N$ = Neural MLP.
+Near-miss criterion: $\Rsq \ge 0.9999$ (4-decimal convention of
+\citealt{uy2011semantically}).}
+...
+N-3  & $x^5 + x^4 + x^3 + x^2 + x$
+  & 0.9999 & \emph{$-426.2$}
+  & 0.9999 & 0.9976
+  & 0.9986 & $-0.913$ \\
+...
+N-10 & $2\sin(x)\cos(y)$
+  & 0.9999 & \textbf{1.0000}
+  & 0.9999 & 0.9997
+  & 0.9995 & $-2.379$ \\
+...
+\multicolumn{2}{l}{Success ($\Rsq\ge0.9999$)}
+  & \multicolumn{2}{c}{8/12 (66.7\%)}
+  & \multicolumn{2}{c}{\textbf{7/12 (58.3\%)}}
+  & \multicolumn{2}{c}{0/12 (0\%)} \\
+Want me to also patch the two other spots the doc mentions (l. 220, 2503) that restate the stale 91.7% figure in prose, or produce a small verification script that would recompute this table from the exp3 JSON once you locate it?
+
+exp3_nguyen12_seed42.json
+json
+exp3_nguyen12_seed99_nshards01.json
+json
+exp3_nguyen12_seed123_nshards02.json
+json
+exp3_nguyen12_seed777_nshards03.json
+json
+exp3_nguyen12_seed2024_nshards04.json
+json
+_merged.json
+json
+updte the tex report
+
+Uncovered data inconsistencies and flagged critical integrity concerns
+I ran the numbers from the actual raw JSON, and this is bigger than an arithmetic bug — the source data doesn't just fail to match the printed table, it contradicts it outright, and in a way that looks like the same leak class already documented in run_all.sh.
+What I found in the JSON
+1. HypatiaX and PySR-only are byte-identical in every single result, in every file.
+Across exp3_nguyen12_seed42.json and all four extended-seed files (99/123/777/2024) and _merged.json, the hypatiax and pysr entries have the exact same expression string and the exact same R² to 15 decimal places, for all 12 equations, every time. Independent symbolic-regression runs don't converge to bit-identical floating-point constants — this is either a copy/overwrite bug in how results get saved, or both arms are being fed the same shortcut.
+2. The stored R² values contradict the published table.
+I confirmed the stored evaluation.r2 field really is the extrapolation R² (recomputed it independently from X_extrap/y_extrap for N1 and got a matching ~0.99999999997). But where the paper reports catastrophic extrapolation failures — N‑3: P=‑426.2, H=0.9976; N‑4: both ≪‑100; N‑12: both negative — the raw data shows near-1.0 extrap R² across the board for both systems, including N‑3 recovering the exact symbolic ground truth (x⁵+x⁴+x³+x²+x, difference = 0 after expansion) for both H and P.
+3. exp3 isn't in the FIX CRITICAL-GT-LEAK list.
+run_all.sh documents ground-truth leaking into LLM prompts in three locations, explicitly scoped to exp1, exp1b, and hybrid_all_domains, and says those must be rerun before any number is cited again. exp3 (Nguyen-12, use_llm=true) was never audited for this — and the symptom here (suspiciously perfect symbolic recovery, identical across arms) is the same signature.
+4. _merged.json doesn't even agree with exp3_nguyen12_seed42.json.
+Both claim to represent comparable results, but the recovered expressions for N1 differ between the two files entirely, while both still show the H≡P duplication pattern. So there isn't even a single trustworthy "seed 42" source right now.
+What this means for the fix
+I'm not going to launder a probable data-corruption/leak artifact into the paper as a shiny "12/12, 100% success" table — that would be worse than the arithmetic bug it's replacing. So I've updated the .tex with the Tier‑1 mechanical fix (bolding corrected, row counts re-tallied to 8/12 / 7/12, stray caption number removed) and added a visible audit note flagging the new finding as blocking, rather than silently overwriting per-equation cells with numbers I don't trust.
+Ran a command, created a file
+
+prep workspace
+
+Updated Nguyen-12 table fix with Tier-1 arithmetic correction and audit note about the new critical finding
+
+Checked and not applicable here:
+    1. Warm-start injection bug (llm_exprs fetched but never passed to PySRRegressor/.fit()) — that's in exp3_nguyen12_hybrid50v_02.py, which isn't in this file. This file has no PySRRegressor, llm_exprs, or guesses= calls at all. 
+    2. Ground-truth leak into hybrid LLM prompts — I grepped for ground_truth, Ground truth, Expected form, and any local _generate_prompt/_specialized_prompt logic: zero hits. The docstring's claim that this file's method classes "delegate to the actual core scripts rather than inlining their logic" checks out — HybridDeFiMethod.run() calls self._system.hybrid_predict(...) and just consumes the returned dict. The actual leak sites your report names (hypatiax_defi_benchmark_v3c.py line ~745,
+

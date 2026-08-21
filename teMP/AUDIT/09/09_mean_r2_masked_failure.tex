@@ -1,0 +1,51 @@
+% ISSUE 9 — Uncorrected Mean R2 (+0.8721) Despite Disclosed -141,000 Masked Failure
+% Category: Open (pending, not yet executed against a full live re-run)
+% Source A: jmlr_paper_main.tex, Abstract's masking-disclosure footnote, l.199-215
+% Source B: jmlr_paper_main.tex, subsec:overall-extrapolation-performance-defi-v, tab:main_results,
+%           l.1261-1285
+
+%% ---- SOURCE A: Abstract (masking-disclosure footnote) ----
+Across all 74 tasks, HypatiaX achieves a median test $\Rsq$ of $1.00$ and a
+near-perfect success rate ($\Rsq>0.99$) of \textbf{90.5\,\%}\footnote{This
+figure is computed from the hybrid system's own reported \texttt{success}/$\Rsq$
+fields without cross-checking the routing decision against the actual success
+of the sub-method it names. A code-level attribution bug inflates it; the
+corrected figure is 60.8\,\% (45/74), verified directly against
+\texttt{hypatiax\_defi\_benchmark\_v3\_results\_seed42.json}. See
+\S\ref{sec:hybrid-attribution-bug}.}---a $+28.3$
+percentage point gain over the LLM baseline and $+85.1$\,pp over the neural
+network---while \textbf{eliminating all catastrophic failures in HypatiaX's
+own reported output}\footnote{The underlying computation is not free of
+catastrophic failures: 22 of the 74 tasks route to a sub-method (typically
+the LLM proposal) that itself failed catastrophically (e.g.\
+\texttt{pure\_llm.test\_r2} $\approx -141{,}000$ on Loan-to-Value), but the
+hybrid system's own accounting reports \texttt{success=True},
+$\Rsq \approx 1.0$ regardless. The catastrophic failure is masked, not
+eliminated. See \S\ref{sec:hybrid-attribution-bug}.}.
+
+%% ---- SOURCE B: tab:main_results ----
+\subsection{Overall Extrapolation Performance (DeFi v3.0)}\label{subsec:overall-extrapolation-performance-defi-v}
+\label{sec:results_defi}
+
+Table~\ref{tab:main_results} presents the primary results across all 74 benchmark tasks.
+
+\begin{table}[h]
+\centering
+\caption{Aggregate extrapolation performance on the HypatiaX DeFi Benchmark (74 tasks).
+All $\Rsq$ values clipped to $[-10,1]$; fixed denominator of 74.
+Catastrophic: $\Rsq < -10$. \textbf{HypatiaX's $90.5\,\%$ figures are
+uncorrected} for the hybrid decision-attribution bug
+(\S\ref{sec:hybrid-attribution-bug}); the corrected overall near-perfect
+rate is $60.8\,\%$ (below Pure LLM's $62.2\,\%$). The Catastrophic column
+(0) is unaffected --- see the abstract's footnote for why.}
+\label{tab:main_results}
+\begin{tabular}{lrrrrr}
+\toprule
+Method & Median $\Rsq$ & Mean $\Rsq$ & $>0.99$ (\%) & $>0.9$ (\%) & Catastrophic \\
+\midrule
+Pure LLM      & 1.0000 & $-0.7571$ & 62.2 & 62.2 & 6 \\
+Neural MLP    & $-0.4675$ & $-0.9482$ & 5.4  & 12.2 & 0 \\
+HypatiaX      & 1.0000 & $+0.8721$ & \textbf{90.5} & \textbf{90.5} & \textbf{0} \\
+\bottomrule
+\end{tabular}
+\end{table}

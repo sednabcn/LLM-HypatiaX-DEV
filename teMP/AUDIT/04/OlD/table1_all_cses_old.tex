@@ -1,0 +1,36 @@
+\begin{table}[h]
+\centering
+\caption{Wall-clock time per task (seconds), regenerated directly from raw per-task result files by \texttt{generate\_table1.py}. Values are mean / median; ``speedup'' compares the neural baseline to hybrid (>1$\times$ = hybrid faster).}
+\label{tab:timing}
+\begin{tabular}{lrrrl}
+\toprule
+Split & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & Speedup (mean / median) \\
+\midrule
+v3, seed42 only (full n=74) & 8.94 / 8.01 & 0.36 / 0.36 & 2.03 / 1.56 & 5.59x SLOWER (hybrid) / 4.28x SLOWER (hybrid) \\
+PCA, seed42 only (full n=74, unsuffixed file) & 8.85 / 7.95 & 0.37 / 0.37 & 1.94 / 1.48 & 5.22x SLOWER (hybrid) / 4.00x SLOWER (hybrid) \\
+PCA, seed42 only (5-task seed-suffixed file) & 7.68 / 7.19 & 0.27 / 0.27 & 2.35 / 2.28 & 8.68x SLOWER (hybrid) / 8.51x SLOWER (hybrid) \\
+v3, multiseed pooled (documented recipe, n=94) & 8.88 / 8.01 & 0.36 / 0.36 & 1.98 / 1.53 & 5.52x SLOWER (hybrid) / 4.19x SLOWER (hybrid) \\
+PCA, multiseed pooled (documented recipe, all seed-suffixed files, n=25) & 8.76 / 8.31 & 0.27 / 0.27 & 2.43 / 2.56 & 8.91x SLOWER (hybrid) / 9.36x SLOWER (hybrid) \\
+PCA, multiseed pooled (full seed42 substituted, n=94) & 8.89 / 8.08 & 0.35 / 0.37 & 2.05 / 1.60 & 5.84x SLOWER (hybrid) / 4.31x SLOWER (hybrid) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% LLM-routed-only subset, for reference:
+\begin{table}[h]
+\centering
+\caption{As above, restricted to LLM-routed tasks only (\texttt{hybrid.decision == ``llm''}).}
+\label{tab:timing_llm_routed}
+\begin{tabular}{lrrl}
+\toprule
+Split & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
+\midrule
+v3, seed42 only (full n=74) ($n$=69/74) & 0.36 / 0.36 & 1.79 / 1.54 & 4.91x SLOWER (hybrid) / 4.23x SLOWER (hybrid) \\
+PCA, seed42 only (full n=74, unsuffixed file) ($n$=69/74) & 0.37 / 0.37 & 1.67 / 1.44 & 4.50x SLOWER (hybrid) / 3.88x SLOWER (hybrid) \\
+PCA, seed42 only (5-task seed-suffixed file) ($n$=5/5) & 0.27 / 0.27 & 2.35 / 2.28 & 8.68x SLOWER (hybrid) / 8.51x SLOWER (hybrid) \\
+v3, multiseed pooled (documented recipe, n=94) ($n$=89/94) & 0.36 / 0.36 & 1.78 / 1.49 & 4.98x SLOWER (hybrid) / 4.09x SLOWER (hybrid) \\
+PCA, multiseed pooled (documented recipe, all seed-suffixed files, n=25) ($n$=25/25) & 0.27 / 0.27 & 2.43 / 2.56 & 8.91x SLOWER (hybrid) / 9.36x SLOWER (hybrid) \\
+PCA, multiseed pooled (full seed42 substituted, n=94) ($n$=89/94) & 0.35 / 0.37 & 1.85 / 1.53 & 5.27x SLOWER (hybrid) / 4.12x SLOWER (hybrid) \\
+\bottomrule
+\end{tabular}
+\end{table}

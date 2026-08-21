@@ -1,0 +1,294 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\title{Addendum: Data-Provenance and Statistical Discrepancies\\
+Uncovered While Repairing the Table-Generation Pipeline}
+\author{Compiled during CI/CD pipeline audit --- \texttt{generate\_tables.py}}
+\date{2026-08-01}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+While tracing and fixing the code responsible for Issue~4 of the original
+audit (\emph{CI/SD Statistical Incompatibility}, \S10.1/Appendix~G), the
+repair surfaced a chain of data-provenance problems that are \emph{not} code
+bugs in the ordinary sense: several source-of-truth files in
+\texttt{hypatiax/data/results/ablation/exp1\_ablation/} report materially
+different values for the same underlying quantity, and at least one of
+these files can be shown to have a genuine label/index misattribution bug
+--- it is not merely stale, it is internally wrong. This addendum documents
+each discrepancy with its supporting evidence, gives a best-available
+reconciled table for Table~6 (LLM Ablation), and flags what still requires
+a human decision before anything is republished. Numbering continues from
+the original 13-issue audit as Issues~14--16.
+\end{abstract}
+
+\section*{Issue 14 --- Checkpoint-Key Collision in \texttt{exp1\_ablation.py} (Root Cause Confirmed, Fixed)}
+\textbf{Category: [RESOLVED --- root cause found in source, fix applied and verified]}
+
+\subsection*{Location}
+\texttt{hypatiax/experiments/benchmarks/exp1\_ablation.py}, function
+\texttt{run\_experiment()}, main sharded loop (originally
+\texttt{for eq\_idx, eq in enumerate(\_CORE\_15\_RUN)}).
+
+\subsection*{What was wrong}
+The original diagnosis (below, preserved for the record) found that
+\texttt{exp1\_rf01\_mannwhitney.json} pairs equation \emph{names} with far-$R^2$
+\emph{values} that belong to different equations. Tracing this into the
+actual source revealed the exact mechanism: the main experiment loop keyed
+each equation's checkpoint entry by its \emph{position within the
+shard-filtered list} (\texttt{eq\_idx} from \texttt{enumerate(\_CORE\_15\_RUN)}),
+not by its true index in the full \texttt{CORE\_15} list. Every shard's
+\texttt{eq\_idx} therefore restarts at 0, so two different shards' first
+equations both write to checkpoint key \texttt{"0"}, their second equations
+both write to key \texttt{"1"}, and so on. When shard checkpoints are
+combined into one \texttt{all\_results} dict, the shard merged in later
+silently overwrites the earlier shard's entries at every colliding key.
+
+This was confirmed with an exact, non-coincidental 3-for-3 match: the
+\texttt{"chemistry"} shard (\texttt{Arrhenius=local~0, Henderson-Hasselbalch=local~1,
+Rate~Law=local~2}) collided with the \texttt{"defi\_amm"} shard
+(\texttt{Impermanent~Loss=local~0, Price~Impact=local~1, Constant~Product=local~2}):
+
+\begin{center}
+\begin{tabular}{lrl}
+\toprule
+\textbf{rf01's label} & \textbf{rf01's value} & \textbf{Real owner of that value} \\
+\midrule
+"Arrhenius" (local 0)              & $-8259.31$            & \textbf{Impermanent Loss} (local 0) \\
+"Henderson-Hasselbalch" (local 1)  & $1.0$                 & \textbf{Price Impact} (local 1) \\
+"Rate Law" (local 2)               & $-1.85\times10^{46}$  & \textbf{Constant Product} (local 2) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Notably, the codebase already contained the correct fix, unused:
+\texttt{EQ\_ID~=~\{eq["name"]:~i~for~i,~eq~in~enumerate(CORE\_15)\}} exists (with a
+comment explicitly calling it a \emph{"Stable ID map --- checkpoint key never
+changes"}), but the main loop never called it, using the shard-local
+\texttt{enumerate()} index instead.
+
+\subsection*{Fix applied}
+Changed the loop to iterate \texttt{\_CORE\_15\_RUN} directly and look up each
+equation's true global index via the existing \texttt{EQ\_ID} map:
+\begin{quote}
+\ttfamily\small
+eq\_idx = EQ\_ID[eq["name"]] \\
+eq\_key = str(eq\_idx)
+\end{quote}
+Verified by simulation: reproducing the exact chemistry/defi\_amm shard
+collision with the old logic recreates the corruption (chemistry's entries
+vanish, overwritten); the same simulation with the fix applied preserves
+all 15 equations under their correct, unique, collision-free keys.
+
+\subsection*{Action still required}
+All checkpoint files and \texttt{exp1\_rf01\_mannwhitney.json} produced
+\emph{before} this fix were built from corrupted keys and cannot be
+salvaged or partially repaired --- they must be deleted (not resumed
+from) and \texttt{exp1\_ablation.py} re-run from a clean checkpoint state.
+Resuming from an old checkpoint after this fix would re-introduce the
+corruption for any equation already present under the wrong key.
+
+\section*{Issue 15 --- Four Independent Mann-Whitney Computations, Four Different Answers}
+\textbf{Category: [OPEN --- needs statistical re-analysis + author decision]}
+
+\subsection*{Location}
+\texttt{jmlr\_paper\_main.tex} (published claim) vs.\
+\texttt{exp1\_rf01\_mannwhitney.json} vs.\
+\texttt{\_analysis.json} (three internal tiers) vs.\
+\texttt{exp1\_ablation\_run.log}, line 453.
+
+\subsection*{What is wrong}
+No two of the four following sources agree on sample size, test
+statistic, or significance for the same nominal claim (``does HypatiaX
+beat PySR-only on far-extrapolation $R^2$''):
+
+\begin{center}
+\small
+\begin{tabular}{lccccl}
+\toprule
+\textbf{Source} & \textbf{$n$} & \textbf{$U$} & \textbf{$p$ (two-sided)} & \textbf{Significant?} & \textbf{Note} \\
+\midrule
+Paper (\S10.1, current)         & 15 & 0     & $1.11\times10^{-6}$ & Yes & Not reproduced by any raw file found \\
+\texttt{rf01\_mannwhitney.json} & 3  & 2.5   & 0.5066               & No  & Values internally mislabeled (Issue~14) \\
+\texttt{\_analysis.json} (all-$n$)     & 10 & 44.0 & 0.6735         & No  & \\
+\texttt{\_analysis.json} (excl.\ fail) & 10 & 44.0 & 0.6735         & No  & Identical to all-$n$ tier \\
+\texttt{\_analysis.json} (success subset) & 6 & 20.0 & 0.7976       & No  & Flagged by the file itself, see below \\
+\texttt{exp1\_ablation\_run.log} line 453 & 2\footnote{Log reports ``RF-01 pairs: 2'', skipping 13 equations including Henderson-Hasselbalch, which \texttt{rf01\_mannwhitney.json} instead treats as a valid, included pair (giving it $n=3$). The log and the JSON file produced on the same run day disagree with each other about which equations were even eligible.} & --- & --- & --- & Skip list disagrees with \texttt{rf01\_mannwhitney.json}'s own skip list \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every raw-data source that could be located agrees on one thing: the
+result is \textbf{not statistically significant} at $\alpha=0.05$. None
+reproduces the paper's current $U=0$, $p=1.11\times10^{-6}$ claim in any
+form, at any sample size.
+
+Most notably, \texttt{\_analysis.json} contains a self-generated warning
+that directly addresses this:
+\begin{quote}
+\small\ttfamily
+"WARN\_MW\_SUCCESS\_NOT\_SIGNIFICANT: Tier-3 (success-subset) Mann-Whitney
+one-sided p=0.3988 (n=6) --- not significant at $\alpha$=0.05. Primary
+paper claim (\S10.7) may be weaker than expected. Investigate."
+\end{quote}
+This is the pipeline's own analysis code flagging, at generation time,
+that the number intended for publication does not hold up --- and,
+per the log, that flag appears to have gone unactioned.
+
+\subsection*{Fix required}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Fix Issue~14 first (the mislabeling bug) --- \texttt{rf01\_mannwhitney.json}
+    cannot be trusted as-is.
+  \item Determine which of the two remaining sample-size conventions is the
+    intended one for \S10.1/\S10.7: the ``all equations, $n=10$'' tier or
+    the ``success subset, $n=6$'' tier in \texttt{\_analysis.json}. Both are
+    non-significant, so this doesn't change the qualitative conclusion, but
+    it changes which $U$/$p$ pair is quoted.
+  \item \S10.1 and \S10.7's prose (and the abstract, if it makes the same
+    claim) need to be rewritten to state the result is \textbf{not}
+    statistically significant, with the corrected $U$/$p$/$n$ and,
+    ideally, the rank-biserial effect size ($r=0.12$ for the all-$n$ tier)
+    for context. This is a substantive scientific-conclusion change, not a
+    number swap, and needs author sign-off before merging --- it is
+    explicitly out of scope for this pipeline fix to make unilaterally.
+\end{enumerate}
+
+\section*{Issue 16 --- Wrong Key Name in \texttt{run\_analysis.py} (Root Cause Confirmed, Fixed)}
+\textbf{Category: [RESOLVED --- root cause found in source, fix applied and verified]}
+
+\subsection*{Location}
+\texttt{run\_analysis.py}, line building \texttt{eq\_name} inside the main
+per-record loop that constructs \texttt{instability\_rows} and
+\texttt{skipped\_equations}.
+
+\subsection*{What was wrong}
+\begin{quote}
+\ttfamily\small
+eq\_name = r.get("equation\_name", r.get("equation\_id", "?"))
+\end{quote}
+The real per-equation record schema (confirmed directly from
+\texttt{\_merged.json}) uses the keys \texttt{"name"} and \texttt{"task\_id"}.
+Neither \texttt{"equation\_name"} nor \texttt{"equation\_id"} exists anywhere
+in the real data, so this line unconditionally fell through to the
+\texttt{"?"} placeholder for every single row, regardless of input. This is
+not a data-availability problem --- the real name was present in every
+record the whole time, just under a different key than the code checked
+for.
+
+\subsection*{Fix applied}
+\begin{quote}
+\ttfamily\small
+eq\_name = r.get("name", r.get("task\_id", "?"))
+\end{quote}
+Verified directly against the real \texttt{\_merged.json}: the old logic
+returns \texttt{"?"} for all 15 records; the new logic correctly resolves
+\texttt{"Allometric Scaling"}, \texttt{"Arrhenius"}, \texttt{"Constant
+Product"}, etc.
+
+\subsection*{Action still required}
+Re-run the analysis step (\texttt{run\_analysis.py}) once fresh,
+non-corrupted \texttt{\_merged.json} input is available from the Issue~14
+fix, to produce a \texttt{\_analysis.json} with both correct names
+\emph{and} correct values.
+
+\section*{Reconciled Table 6 (Best Available, Pending Issues 14--15)}
+The table below is what \texttt{generate\_tables.py} now produces from
+\texttt{\_merged.json} after this session's pipeline fix. It is the most
+reliable per-equation ablation data currently available, but the
+Mann-Whitney note at the bottom should be read subject to Issue~14: the
+$n=3$ figure is a real file's real output, but that file's internal
+consistency is not yet established.
+
+\begin{center}
+\tiny
+\begin{tabular}{llrrrrrrrrrr}
+\toprule
+ & & \multicolumn{2}{c}{Train $R^2$} & \multicolumn{2}{c}{Near $R^2$} & \multicolumn{2}{c}{Med $R^2$} & \multicolumn{2}{c}{Far $R^2$} & \multicolumn{2}{c}{Time (s)} \\
+Equation & Domain & P & H & P & H & P & H & P & H & P & H \\
+\midrule
+Allometric Scaling & Biology & 0.9977 & 0.9979 & 1.0000 & 0.9824 & 1.0000 & 0.9502 & 1.0000 & $-0.0644$ & 1116 & 415 \\
+Arrhenius & Chemistry & 0.9974 & 0.9979 & 0.9779 & 0.9977 & 0.4636 & 0.9957 & $-12.5552$ & 0.9028 & 1115 & 486 \\
+Constant Product & DeFi AMM & 0.9982 & 0.9985 & 0.9996 & $-18071.5$ & 1.0000 & $\ll{-100}$ & 0.9996 & $\ll{-100}$ & 1101 & 341 \\
+Gravitational Force & Physics & 0.9976 & 0.9889 & 0.9973 & $-\infty$ & 0.9998 & $-\infty$ & 0.9973 & $\ll{-100}$ & 1101 & 513 \\
+Henderson-Hasselbalch & Chemistry & 0.9339 & 0.9986 & 0.8004 & --- & 0.9850 & --- & 0.8004 & --- & 937 & 545 \\
+Ideal Gas Law & Physics & 0.9976 & 0.9980 & 1.0000 & 0.9988 & 1.0000 & 0.9999 & 1.0000 & 0.9993 & 1101 & 218 \\
+Impermanent Loss & DeFi AMM & 0.9971 & 0.9977 & 0.7703 & 0.9639 & $-2.7832$ & $-80.4327$ & $-157.0776$ & $\ll{-100}$ & 1115 & 395 \\
+Kinetic Energy & Physics & 0.9968 & 0.9968 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1115 & 4 \\
+Liquidation Price & DeFi Risk & 0.9974 & 0.9977 & 1.0000 & 0.9998 & 1.0000 & 0.9999 & 1.0000 & 0.9993 & 1101 & 346 \\
+Logistic Growth & Biology & 0.9975 & 0.9976 & 0.9997 & --- & 0.9998 & --- & 0.9996 & --- & 1101 & 439 \\
+Michaelis-Menten & Biology & 0.9975 & 0.9979 & 0.9890 & --- & 0.9951 & --- & 0.6471 & --- & 1101 & 399 \\
+Portfolio Std Dev & DeFi Risk & 0.9975 & 0.9975 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1101 & 159 \\
+Price Impact & DeFi AMM & 0.9976 & 0.9976 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1.0000 & 1101 & 5 \\
+Rate Law & Chemistry & 0.9977 & 0.9981 & 1.0000 & --- & 1.0000 & --- & 1.0000 & --- & 1101 & 515 \\
+Value at Risk & DeFi Risk & 0.9979 & 0.9979 & 0.9999 & 1.0000 & 1.0000 & 1.0000 & 0.9999 & 1.0000 & 1101 & 5 \\
+\bottomrule
+\end{tabular}
+\end{center}
+{\small P = PySR-only; H = HypatiaX. Mann-Whitney (far-$R^2$, subject to
+Issue 14): $U=2.5$, $p=0.5066$ (two-sided, $n=3$; 12 of 15 equations
+excluded).}
+
+\section*{Verification --- End-to-End Integration Test}
+\textbf{Category: [VERIFIED --- all three fixes tested together, exit code 0]}
+
+Because Issues~14 and~16 sit upstream of \texttt{generate\_tables.py} (whose
+own fixes were verified in isolation, against individually-uploaded real
+files, in earlier sessions), the three fixes had not previously been run
+\emph{together} as one pipeline. A synthetic-but-schema-accurate
+integration test was constructed to close that gap:
+
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{Simulated the fixed \texttt{exp1\_ablation.py} logic} across
+    five shards (chemistry, biology, physics, defi\_amm, defi\_risk), each
+    equation given a unique, distinguishable fake value. Asserted all 15
+    equations survive the merge under their correct global key with no
+    collisions --- \textbf{PASS}.
+  \item \textbf{Simulated the fixed \texttt{run\_analysis.py} logic}
+    (\texttt{r.get("name", r.get("task\_id", "?"))}) against the merged
+    output from step~1. Asserted zero \texttt{"?"} placeholders across all
+    15 rows, and that a synthetic \texttt{rf01\_mannwhitney.json} built from
+    the same corrected source now matches \texttt{\_merged.json} by name to
+    full precision (i.e.\ Issue~14's original symptom cannot recur once the
+    key collision is fixed upstream) --- \textbf{PASS}.
+  \item \textbf{Fed the resulting files through the actual, unmodified
+    \texttt{generate\_tables.py}} (not a simulation --- the real script) via
+    its normal \texttt{--experiment exp1\_ablation} entry point. The run
+    exited \textbf{code 0}, all three expected tables generated, the
+    pre-flight JSON audit correctly reported the file as found (no
+    fallback triggered), and the Mann-Whitney tablenote rendered correctly
+    from the synthetic-but-now-internally-consistent data.
+\end{enumerate}
+
+This confirms the three fixes are compatible with each other and with the
+existing pipeline plumbing. It does \emph{not} replace re-running the real
+experiment: the synthetic data here is schema-accurate but not a
+substitute for real PySR/HypatiaX output, and the actual significance
+question (Issue~15) can only be answered once \texttt{exp1\_ablation.py} is
+re-run for real, from a clean checkpoint state, using the fixed code.
+
+\section*{Summary of Required Actions}
+\begin{center}
+\small
+\begin{tabular}{clll}
+\toprule
+\# & Issue & Category & Status \\
+\midrule
+14 & \texttt{exp1\_ablation.py} checkpoint-key collision & Resolved (code) & Fixed + verified; needs clean re-run \\
+15 & Four disagreeing Mann-Whitney results & Open (needs author decision) & Awaiting clean re-run of \#14, then a \\
+   & & & sample-size/tier decision for \S10.1/\S10.7 \\
+16 & \texttt{run\_analysis.py} wrong key name & Resolved (code) & Fixed + verified; needs re-run after \#14 \\
+--- & End-to-end integration (all three together) & Verified & PASS, exit code 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

@@ -1,0 +1,59 @@
+--- /mnt/user-data/uploads/hybrid_system_nn_defi_domain.py	2026-08-08 15:28:02.768039000 +0000
++++ patched/hybrid_system_nn_defi_domain.py	2026-08-08 15:31:53.856078507 +0000
+@@ -10,6 +10,7 @@
+ """
+ 
+ import argparse
++import hashlib
+ import json
+ import os
+ import re
+@@ -70,6 +71,7 @@
+     hidden_dims: list[int] = None,
+     epochs: int = 1000,
+     lr: float = 0.003,
++    seed: int | None = None,
+ ) -> tuple[ImprovedNN, object, object]:
+     """Train NN; returns (model, scaler_X, scaler_y).
+ 
+@@ -80,9 +82,24 @@
+     - Early stopping with patience=100
+     - 1000 epochs (up from 500)
+     - Adaptive architecture by input dimensionality
++
++    FIX-ISSUE2B-UNSEEDED-NN: `seed`, when given, is passed to
++    torch.manual_seed() right before the model is constructed. Previously
++    this function had no seeding at all, so ImprovedNN's weight
++    initialization used whatever torch's global RNG state happened to be
++    -- fine within a single process, but not reproducible across the
++    separate process invocations used by the Item 2b reproducibility
++    check (phaseA_run1/run2/run3). The harness's own residual-correction
++    step and the HSL/M4 method already follow this same
++    sha256(description)-derived-seed pattern; this brings EHD/M3's
++    *primary* NN training step in line with it too, rather than leaving
++    it as the one unseeded stage in the pipeline.
+     """
+     from sklearn.preprocessing import StandardScaler
+ 
++    if seed is not None:
++        torch.manual_seed(seed)
++
+     scaler_X = StandardScaler()
+     scaler_y = StandardScaler()
+ 
+@@ -964,7 +981,14 @@
+         nn_train_r2 = 0.0
+ 
+         try:
+-            nn_model, scaler_X, scaler_y = train_nn_model(X_train, y_train)
++            # FIX-ISSUE2B-UNSEEDED-NN: same sha256(description)-derived-seed
++            # pattern used by the harness's own NN steps (see
++            # HybridDeFiMethod._nn_residual_fit / HybridAllDomainsMethod in
++            # run_comparative_suite_benchmark_v2.py) so this NN's weight
++            # init is reproducible across separate process runs of the
++            # same equation, not just within a single process.
++            _nn_seed = int(hashlib.sha256(description.encode()).hexdigest(), 16) % (2**31)
++            nn_model, scaler_X, scaler_y = train_nn_model(X_train, y_train, seed=_nn_seed)
+             nn_preds_train = nn_predict(nn_model, scaler_X, scaler_y, X_train)
+ 
+             if nn_preds_train is not None:

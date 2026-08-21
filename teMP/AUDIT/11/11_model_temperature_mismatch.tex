@@ -1,0 +1,129 @@
+% ISSUE 11 — Model/Temperature Mismatch Across Documents
+% Category: Already Resolved (doc propagation only) — root cause already found in
+%           jmlr_paper_main.tex; three stale entries remain in the supplementary files
+% Source A (CORRECTED, already fixed): jmlr_paper_main.tex, Nguyen-12 reproducibility note,
+%           l.2527-2560
+% Source B (STALE #1): supp_benchmark_report.tex, reproducibility table, l.1035-1050
+% Source C (STALE #2): supp_benchmark_report.tex, reproducibility table, l.1235-1265
+% Source D (STALE #3): supp_routing_improvements.tex, Hardware and Software, l.729-760
+
+%% ---- SOURCE A: jmlr_paper_main.tex (CORRECTED value: claude-sonnet-5, temperature=0.25) ----
+\paragraph{Reproducibility note: LLM model identity and a seed-123
+discrepancy (extends issue \texttt{FIX-N3}).} The language model actually
+invoked on this benchmark's call path is not pinned via any
+environment-variable or \texttt{repro.yaml} setting that is actually read
+at runtime, despite appearing to be: four traced source snapshots each
+hardcode a different \texttt{LLMConfig.model} default
+(\texttt{claude-sonnet-4-6}, \texttt{claude-sonnet-4-5}, and
+\texttt{claude-sonnet-4-20250514}), and none of them reads the
+\texttt{LLM\_MODEL} environment variable or the \texttt{repro.yaml}
+\texttt{llm\_model} field that a reader might otherwise assume controls
+it. The script that actually sits on the Nguyen-12 call path,
+\texttt{hypatia.py}, uses a fifth string, \texttt{claude-sonnet-5}, at
+\texttt{temperature=0.25}, with no sampling seed exposed on its
+\texttt{client.messages.create()} call. Both \texttt{claude-sonnet-4-6}
+and \texttt{claude-sonnet-5} are dateless identifiers, but --- per
+Anthropic's model-versioning documentation for the 4.6-and-later
+generation --- dateless IDs in that generation are pinned, fixed
+snapshots rather than drifting aliases, so model-version drift is not the
+explanation for an observed discrepancy: a recent seed-123 rerun recovers
+12/12 (100\,\%) against the 11/12 (91.7\,\%) originally documented for
+that seed. Cross-seed reruns under confirmed-identical parameters
+($n_{\text{tasks}}=12$, $\text{niterations}=1000$, $\text{populations}=30$,
+$\text{timeout}=1100$s) give 12/12 for every other seed tested (99, 123,
+777, 2024), which rules out an unlucky seed draw or a reduced sample size
+as explanations. A within-seed comparison at seed~123 across three
+timestamps narrows the likely window to a configuration change between
+late April and late May 2026, plausibly coinciding with an infrastructure
+migration; this is not yet confirmed. Sampling nondeterminism at the
+(unseeded, non-zero-temperature) LLM layer remains a contributing,
+independently verified factor regardless of which code path is in play,
+since the Claude API is not guaranteed to return bit-identical completions
+for identical prompts even at low temperature. None of this changes the
+91.7\,\%/33.3\,\% figures reported in Table~\ref{tab:nguyen12} and stated
+above, which already disclose both counting conventions directly; it
+
+%% ---- SOURCE B: supp_benchmark_report.tex (STALE #1, l.1035-1050) ----
+PySR             & 1.5.9 \\
+Julia runtime    & 1.12.2 \\
+juliacall        & 0.9.26 (Python$\leftrightarrow$Julia bridge used by PySR) \\
+NumPy            & 2.3.5 \\
+SciPy            & 1.16.3 \\
+SymPy            & 1.14.0 \\
+Pandas           & 2.3.3 \\
+Matplotlib       & 3.10.7 \\
+Seaborn          & 0.13.2 \\
+scikit-learn     & 1.7.2 \\
+Anthropic SDK    & 0.73.0 (\texttt{claude-sonnet-4-20250514},
+                   temperature~0.0) \\
+\midrule
+Hardware         & Intel Celeron T3100 @ 1.90\,GHz (2~cores);
+                   3\,GB DDR2; no GPU \\
+OS               & Kali GNU/Linux Rolling \\
+
+%% ---- SOURCE C: supp_benchmark_report.tex (STALE #2, l.1235-1265) ----
+& Optimizer & Adam \\
+& Learning rate & 0.01 \\
+& Batch size & Full batch (160 samples) \\
+& Epochs & 200 \\
+& Weight initialization & Xavier uniform \\
+& Dropout & None \\
+\midrule
+\multirow{7}{*}{Pure LLM}
+& Model & claude-sonnet-4-20250514 \\
+& Temperature & 0.0 (deterministic) \\
+& Max tokens & 1024 \\
+& Top-p & 1.0 \\
+& Few-shot examples & 2-3 per domain \\
+& Prompt template & Domain-specific \\
+& Retry on failure & 3 attempts \\
+\midrule
+\multirow{12}{*}{Hybrid v50\_2}
+& SR iterations & 50 \\
+& SR populations & 2 (hardware limit: 2-core CPU) \\
+& Binary operators & [+, -, *, /] \\
+& Unary operators & [exp, log, sqrt, sin, cos] \\
+& Parsimony coefficient & 0.01 \\
+& Tournament size & 10 \\
+& Mutation rate & 0.1 \\
+& Crossover rate & 0.9 \\
+& LLM candidates & 5 \\
+& LLM temperature & 0.3 \\
+& Max complexity & 30 \\
+& Validation threshold ($R^2$) & 0.99 \\
+\bottomrule
+\end{tabular}
+
+%% ---- SOURCE D: supp_routing_improvements.tex (STALE #3, l.729-760) ----
+\subsection{Hardware and Software}
+
+All experiments were run on a single machine: Intel Celeron T3100 @
+1.90\,GHz (2~cores), 3\,GB DDR2 RAM, no GPU, Kali GNU/Linux Rolling.
+Runtimes on modern multi-core hardware will be substantially lower; a GPU
+is \emph{not} required to reproduce the core results.
+
+\begin{table}[H]
+\centering
+\caption{Software environment (verified 18 March 2026).}
+\label{tab:runtime_reproducibility}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component} & \textbf{Version} & \textbf{Note} \\
+\midrule
+Python       & 3.12.2  & \\
+PySR         & 1.5.9   & \\
+Julia        & 1.12.2  & required by PySR \\
+juliacall    & 0.9.26  & Python$\leftrightarrow$Julia bridge \\
+NumPy        & 2.3.5   & \\
+SciPy        & 1.16.3  & \\
+SymPy        & 1.14.0  & \\
+Pandas       & 2.3.3   & \\
+Matplotlib   & 3.10.7  & \\
+Seaborn      & 0.13.2  & \\
+scikit-learn & 1.7.2   & \\
+Anthropic SDK & 0.73.0 & \texttt{claude-sonnet-4-20250514}, temp~0.0 \\
+\midrule
+PySR populations & 2 & hardware limit (2-core CPU) \\
+\bottomrule
+\end{tabular}

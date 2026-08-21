@@ -1,0 +1,61 @@
+% ISSUE 10 — Timeout Contradiction: 1100 s vs. 900 s; 300 s Limit but a 27,574 s Hang
+% Category: Open (enforcement bug, second half) / Stale (config bleed, first half)
+% Source A: supp_benchmark_report.tex, Sweep hyperparameters, tab:sweeps, l.291-312
+% Source B: supp_benchmark_report.tex, Reproducibility Statement, Phase 3 reproduction command,
+%           l.975-1004
+
+%% ---- SOURCE A: Sweep Evaluation Design / hyperparameters (tab:sweeps) ----
+\subsection{Sweep Evaluation Design (M3 vs.\ M4)}
+\label{sec:methods:sweep}
+
+\begin{table}[ht]
+\centering
+\caption{Sweep design.}
+\label{tab:sweeps}
+\begin{tabular}{L{2.5cm} L{4.3cm} L{2.5cm} C{2.0cm}}
+\toprule
+\textbf{Sweep} & \textbf{Axis varied} & \textbf{Fixed} & \textbf{Conditions}\\
+\midrule
+Noise       & $\sigma \in \{0, 0.5, 1, 5, 10\}\%$ & $n=200$       & 5 levels \\
+Sample size & $n \in \{50,100,200,500,750,1000\}$  & $\sigma=5\%$ & 6 sizes  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Hyperparameters:} NN seeds = 5, random seed 42,
+method timeout = 900\,s, PySR timeout = 1100\,s,
+threshold (noisy) = 0.995, threshold (noiseless) = 0.999999.
+All 30 equations completed with zero timeouts across all 11 conditions.
+
+
+%% ---- SOURCE B: Reproducibility Statement, Phase 3 ----
+document reports a noisy-protocol, six-method, 30-equation aggregate at the
+0.995 threshold --- the original \texttt{tab:feynman30} label does not exist
+anywhere in the paper or supplements. Please confirm whether this should
+point to a specific table (e.g.\ a per-equation noisy breakdown analogous to
+Table~\ref{tab:overall}) or be removed.]}}
+\begin{verbatim}
+python run_comparative_suite_benchmark_v2.py \
+    --methods 1 --samples 200 --no-llm-cache
+\end{verbatim}
+Output: \texttt{protocol\_core\_noisy\_<timestamp>.json}.
+The \texttt{--no-llm-cache} flag forces independent fresh API calls for all
+30 Pure~LLM evaluations; this was verified via cache-clearing.
+
+\paragraph{Phase~3 (noiseless, $R^2>0.9999$, Table~\ref{tab:overall}).}
+\begin{verbatim}
+python run_comparative_suite_benchmark_v2.py \
+    --noiseless --threshold 0.9999       \
+    --nn-seeds 3 --samples 200           \
+    --method-timeout 900                 \
+    --pysr-timeout 900
+\end{verbatim}
+Output: \texttt{protocol\_core\_noiseless\_20260304\_154510.json}
+(full run: 30/30 equations, all 6 methods, $\approx$1\,h\,13\,min wall-clock
+on Intel Celeron T3100, 2~cores; faster on modern multi-core hardware).
+
+\textbf{Note on timeout upgrade:} \texttt{--method-timeout} was set to 300\,s
+for tests 1--18 and upgraded to 900\,s for tests 19--30. Arrhenius (test~4)
+ran under the 300\,s limit and hung for 27574\,s before the Julia process was
+killed; this is recorded as a genuine failure independent of the v2 bug fix.
+Nernst (test~6) also timed out under the 300\,s default; counted as failure.

@@ -1,0 +1,112 @@
+﻿phase03 is fully closed?
+
+Validated phase three closure with documentation refinements needed
+No — two of three items are genuinely closed, but item 2 is not.
+Item 10a — Closed. run_all.sh is authoritative and unambiguous (FEYNMAN_TIMEOUT=1100 # FIX-G2: paper value 1100s (was 900)), and now that you've shown me the actual Source A/B contradiction: Source A (tab:sweeps) already says 1100s, Source B (the Phase 3 reproduction command block) says --pysr-timeout 900 — that's the one stale reference. Doc-only fix, no code change needed. Solid.
+Item 10b — Closed. Code fix (_ProcBox wiring) is implemented, and I didn't just read it — I ran a live regression test importing the actual _ProcBox/_kill_process_group from your real uploaded harness file, with a genuine subprocess standing in for a stuck PySR fit. It killed the process at t=2.10s against a 2s outer timeout (vs. a 300s inner duration), and a negative control confirmed the test isn't a rubber stamp — removing the _ProcBox wiring reproduced the exact orphaning bug. One honest caveat: this verifies the timeout-wiring mechanism precisely, using a synthetic sleeping subprocess rather than real Julia/PySR (which can't run in this sandbox — Julia's install domain is network-blocked). It's strong verification of the actual fix, not a full production end-to-end run.
+Item 2 — Not closed. This is the one gap that's still real, not just cautious hedging. What I can say:
+    • The six-method ground-truth table is fully verified — recomputed directly from all 10 raw shard files, and it matches Phase03_Report.md's numbers exactly (M5/SymbolicEngineWithLLM = 24/27/27 across thresholds, failing on Arrhenius, Henderson-Hasselbalch, Bernoulli).
+    • But the "27/30, M4" figure does not appear anywhere in jmlr_paper_main.tex's actual abstract — its real headline Feynman numbers are 12/30 and 13/30, for HypatiaX alone, under a different protocol entirely.
+    • The paper itself says the six-method comparison belongs to "the supplementary benchmark report" — a document I've never been given. Without it, I can't confirm the original claim (that the abstract cites 27/30 at M4) actually exists anywhere, or that the M1–M6 renumbering convention Phase03_Report.md assumed is the one that document actually uses.
+So: Phase 3 is two-thirds closed. Item 2 can be written up honestly as "premise not locatable in the main paper; verified ground-truth data provided regardless; redirect to the supplementary report if you can locate it" — but that's a redirect, not a resolution. If you have that supplementary report, that's the one thing that would actually close it. Otherwise I'd write the final section as open/redirected rather than claim it's resolved.
+
+wht doyou need to close Item2
+
+To actually close Item 2 — not redirect it — I need one of these:
+1. The supplementary benchmark report itself (the document jmlr_paper_main.tex cites at line ~2406–2407 as the source of "the six-method cross-comparison"). This is the single most direct fix. Specifically I'd need:
+    • Its abstract/summary text, to confirm whether it actually states a "27/30, M4" figure at all — right now that's an assumption inherited from Phase03.txt's original task description, never verified against a real document.
+    • Its own method-numbering convention (M1–M6 vs. M1–M5), so I can check whether the registry-index-3-exclusion renumbering Phase03_Report.md assumed is real or was reverse-engineered to fit.
+2. Failing that, one of these substitutes would still get me most of the way:
+    • exp1_five_system.py and/or provenance_map_exp1_five.json (referenced in run_all.sh's exp1_five step) — these define the actual M1–M5 mapping in code, which is stronger evidence than inference from file naming.
+    • generate_tables.py's _EXP2_METHOD_TO_ROW mapping (also referenced in run_all.sh near exp2_five) — this is the actual code that assigns registry indices to table-row labels, i.e. the ground truth for what "M4" means in this project's convention.
+    • The CI run artifacts for run 30258093290 / run 30329546386 (the exp2_feynman / exp2_feynman_extrap jobs jmlr_paper_main.tex cites at line 2394–2397) — these are the actual jobs that scored the six-method comparison; their logs or output JSON would show whether a "27/30" figure was ever actually produced and reported anywhere.
+3. Or, a decision from you that reframes the item rather than needing more files: if you tell me the "27/30, M4" figure was always describing this exact shard data (i.e., Phase03.txt's author was working from these same 10 files, not a separate supplementary report), then I already have everything — the ground-truth table is fully verified — and I can close it on that basis. That's a scope decision only you can make, not something I can infer safely.
+Short version: the supplementary report, exp1_five_system.py/provenance_map_exp1_five.json, or your confirmation that the shard data is the source — any one of those closes it. Without one of the three, the honest status stays "redirected, not resolved."
+
+supp_benchmark_report.tex
+tex
+exp1_five_system.py
+py
+provenance_map_exp1_five.json
+29 lines
+json
+write
+
+Uncovered corrected system mappings from supplementary documentation
+
+Search supplementary report for 27/30 M4 claim
+
+Uncovered corrected system mappings from supplementary documentation.
+
+Read the actual abstract of the supplementary report containing the 27/30 figure
+
+Done
+
+
+Examined phase status and identified incomplete implementation tasks
+1) Is Phase 3 closed? — No.
+Per Phase03_Report.md, two of the three items are resolved, but one is explicitly not done:
+Item	Status
+2 (27/30 M4 provenance)	Resolved, but has an un-done low-risk verification step
+10a (900s vs 1100s)	Fully resolved (doc-only)
+10b (300s timeout enforcement)	"DIAGNOSIS UPDATED, FIX SCOPED, NOT YET IMPLEMENTED" — root cause is understood but the actual fix hasn't been written
+Since it's not closed, here's (3) the remaining task list:
+Must-do (blocking closure):
+    • 10b — implement the _proc_box fix. Thread a mutable handle for the real PySR subprocess (proc) up through symbolic_engine.py / hybrid_system_v50_2.py to the outer ThreadPoolExecutor timeout handler in run_comparative_suite_benchmark_v2_FIXED.py, so the 300s outer timeout can actually stop the inner work instead of abandoning an orphaned background thread.
+    • 10b — verify with a wall-clock timing test, not a Julia process-tree check (Julia can't be installed in this sandbox — julialang-s3.julialang.org is network-blocked). Run the harness with a short outer --method-timeout against a case with a long inner PySR budget and confirm elapsed time tracks the outer timeout.
+Low-risk, non-blocking (nice to close out):
+    • Item 2 — confirm against the actual paper source. Check jmlr-hypatiax*.tex / Table 4 caption to verify (a) Table 4 is sourced from this same all_domains 30-test run, and (b) the table's M-column header confirms the "exclude registry idx 3, renumber" convention used to map registry index 5 (SymbolicEngineWithLLM) → table position M4. audit_nb04 is the pipeline step meant to catch this if wrong.
+    • Item 10a — align prose in both write-ups to cite 1100s as the PySR/FEYNMAN_TIMEOUT value (not 900s), with a one-line note that METHOD_TIMEOUT (900s) is a separate outer-budget knob. No code change needed — this is just an editorial pass on the write-ups themselves (not present in this file set, so I can't confirm they've been edited yet).
+Also worth noting, flagged in the report but not scoped as an action item: chemistry-domain PySR fits look like a general weak spot (Arrhenius R²=0.087, Henderson-Hasselbalch R²=0.886 in the M4/item-2 failure set) — same equation family as the 10b repro case, though the report is explicit there's no causal link, just a shared domain worth a separate look.
+Want me to draft the two concrete pieces of leftover work — a _proc_box implementation sketch for symbolic_engine.py/hybrid_system_v50_2.py, and/or the specific prose edits for the 10a write-ups — before we call this phase done and move to a JMLR report?
+
+jmlr_paper_main.tex
+tex
+repro.yaml
+180 lines
+yaml
+provenance_map_exp1.json
+44 lines
+json
+wall_clock_flags.json
+197 lines
+json
+1) write a jmlr tex report with the findings so far and a clear list of remaining tasks to close Phase 03 2) patch  them
+
+Ran 3 commands
+Copied fine this time. Let me retry the grep.
+Ran 2 commands
+Got it. Now let's search for the relevant sections.
+Architected targeted patches for timeout configuration and error messaging refinements
+Now I have enough context to do this precisely. Let me make the two authorized patches to supp_benchmark_report.tex (the 900→1100 fix from item 10a, and the corrected timeout-mechanism narrative from item 10b), and flag — but not silently rewrite — the new M4/27-30 attribution mismatch I found in tab:overall as an open item, since verifying it against source needs the same care item 2 already called for.
+Edited 4 files, viewed 3 files, ran a command
+Let me fix that cross-document reference — using \ref{} for a label in a different document won't resolve and will render as ??.
+Fix broken cross-document \ref (label doesn't exist in this file) -- use plain-text pointer to the companion audit document instead
+Now let's confirm no remaining stale 900 PySR-timeout references, and check the file compiles structurally.
+Verify all timeout references are now correctly reconciled
+All correctly reconciled now: --method-timeout/outer budget stays 900s, PySR/FEYNMAN_TIMEOUT is 1100s everywhere. Let's sanity-check the LaTeX still balances (braces) around my edits before moving to the new report.
+Sanity check brace balance in patched file
+Good — balanced. Now let's check the docx/pptx skill isn't needed (this is a tex report), but I should check if there's a LaTeX skill, and verify the jmlr2e.sty usage requirements before writing the new report.
+Ran 2 commands
+pdflatex is available — I'll write the report and actually compile it to catch errors. Let me check jmlr2e.sty's required commands/environments quickly.
+Ran 2 commands
+
+The new run artifacts actually resolve most of the ambiguity — here's what they show.
+What I found: These 9 files are fresh reproduction runs covering 25 of the 30 Feynman equations. Aggregating them at the paper's own threshold (R2≥0.9999):
+Method	Pass rate (of 25 tested)
+PureLLM Baseline	25/25
+EnhancedHybridSystemDeFi (M3)	25/25
+HybridSystemLLMNN all-domains (M4)	25/25
+SymbolicEngineWithLLM (M5)	22/25
+HybridDiscoverySystem v50_2 (M6)	18/25
+ImprovedNN	15/25
+Critically, the report itself (line 845) names three specific equations as M4's noiseless failures: Lorentz force, Photon energy, Zeeman energy. I checked those three directly against these fresh runs — M4 scores R2=1.0, 1.0, and 0.99999999999874 on them respectively. All pass.
+That, combined with the table's own footnote (line 420-421: "HSL v1 showed 26/30 due to the Newton measurement bug; v2 achieves 30/30"), makes the picture clear: tab:overall's 30/30 for M4 is the correct, current number. The abstract's "90.0% (27/30 equations)" attributed to M4, and the M3/M4 trade-off section's "three further M4 noiseless failures," are both stale v1-era text that never got updated after the bugfix — and the 27/30 figure genuinely belongs to HDS (M6), exactly as I flagged.
+What's still missing to call this fully closed: these 9 files cover 25 of 30 equations. I don't have fresh reproduction data for the remaining 5 (likely including Arrhenius, Henderson-Hasselbalch, Bernoulli, and two others — the report's chemistry-domain weak spots). To close this with full confidence rather than "strong partial evidence," I'd want one of:
+    1. The reproduction runs for the remaining 5 equations, or 
+    2. The original full protocol_core_noiseless_20260304_154510.json (the actual source run cited in the paper, referenced but never provided), or 
+    3. Your sign-off that 25/30 fresh-verified equations — including all 3 of the specifically-cited "failure" cases passing — is sufficient to overrule the stale abstract/trade-off text and correct them to match the table. 
+Any of those and I can go patch the abstract and the trade-off section (removing the stale "27/30 M4" and "three M4 failures" claims) with actual confidence rather than a guess.
+
+
+
