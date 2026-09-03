@@ -165,6 +165,17 @@ magnetism, mechanics, optics, probability, quantum, and thermodynamics ---
 which is \textbf{not} the Feynman-30 suite and includes no mathematics or
 economics domain. The real \HDS{} figure on this verified file is 70.0\%
 (21/30). See tablenote on \Cref{tab:overall}.]}
+\textbf{[Third correction, this pass: the 27/30 (90.0\%) figure itself has
+now been traced. It belongs to neither \HSL{} (30/30 on this file) nor
+\HDS{} (21/30, confirmed above) --- it exactly matches \SEL{}
+(\texttt{SymbolicEngineWithLLM (tools)}), independently recomputed from
+\texttt{protocol\_core\_noiseless\_20260812\_170344.json} at the same
+$\Rsq \ge 0.999999$ threshold as the other two figures: 27/30 (90.0\%),
+matching to the equation. The abstract's repeated 27/30 citation is
+therefore a persistent method-mislabeling across three correction passes
+(first attributed to \HDS{}, now identified as \SEL{}), not a data error;
+no table value changes as a result of this correction, only the
+attribution.]}
 All results in this document use the v2 corrected harness; v1 figures are
 retained in the repository commit history for audit purposes only.
 Both reach median $\Rsq=1.000000$ at $n = 50$ samples, though \EHD's
@@ -186,13 +197,6 @@ We additionally correct four methodological issues:
 undisclosed hardcoded \PureLLM{} results, scale-biased raw \rmse,
 missing Wilcoxon significance tests, and mismatched pass-rate thresholds.
 \end{abstract}
-
-\begin{quote}\small
-\textbf{Note.} A consolidated list of every unconfirmed, withdrawn, or
-stale claim identified across this file and its companion documents is
-maintained separately in \texttt{unconfirmed\_paper\_claims.tex}. Consult
-it before citing any figure flagged in this document.
-\end{quote}
 
 
 \begin{keywords}
@@ -230,9 +234,23 @@ to the following sections for context:
     than the noiseless recovery results reported in this supplementary
     (EHD: 76.7\%, HDS: 70.0\%); none of these figures are directly comparable.
   \item \textbf{The main paper's \emph{Nguyen-12 Benchmark (Standard SR Suite)} subsection} --- new section reporting
-    HypatiaX (11/12, 91.7\%), PySR-only (10/12, 83.3\%), and Neural MLP
+    PySR-only (8/12, 66.7\%), HypatiaX (7/12, 58.3\%), and Neural MLP
     (0/12) on the standard Nguyen-12 suite under the same extrapolation
-    protocol. This figure is current and unchanged since v4.
+    protocol. \textbf{Revised from the 11/12 (H) / 10/12 (P) figure
+    originally cited here}: those numbers did not match the main
+    table's own bold formatting and were corrected in the main paper
+    (Table~\ref{tab:nguyen12}, tablenote~\ddag, \S\ref{sec:nguyen12}).
+    \textbf{[Protocol correction (Sep-Issues01 Fix~01): the Nguyen-12
+    pipeline uses per-equation axis-aligned variable ranges, not
+    PCA-directed ordering; the earlier cross-reference to
+    ``PCA-directed'' protocol here was incorrect and has been removed.]}
+    The per-equation cells behind this row remain unverified against
+    the actual axis-aligned result file for this run. The caption's
+    previously flagged 4/12 (33.3\%) figure has been retracted in
+    the main paper as an error with no basis in the current data ---
+    see the main paper (Table~\ref{tab:nguyen12}, caption and
+    tablenote~\ddag, \S\ref{sec:nguyen12}) for the full retraction
+    notice and the operative figures (8/12~P, 7/12~H).
   \item \textbf{Section~7.4 Proposition~1 (Routing Cascade Convergence)} --- formal
     guarantee that Phase~2 warm-starting is monotonically non-degrading,
     complementing the routing improvements described in Supplementary~A.
@@ -698,7 +716,18 @@ $\sigma$ & M3 Recovery & M3 Catastrophic & M4 Recovery & M4 Catastrophic\\
 \begin{table}[H]
 \centering
 \caption{Average per-equation computation time (seconds) per noise level.
-\textbf{[Correction: regenerated from source, see tablenote on \Cref{tab:r2_noise}.]}}
+\textbf{[Correction: regenerated from source, see tablenote on \Cref{tab:r2_noise}.
+\textbf{Independently re-verified (Issue 3, closed):} every cell below was
+recomputed directly by averaging the per-equation \texttt{time} field across
+all 30 tests in the five matching raw runner logs ---
+\texttt{protocol\_core\_noiseless\_20260812\_170344.json} ($\sigma=0\%$) and
+\texttt{protocol\_core\_noisy\_20260812\_173425.json} ($\sigma=0.05\%$),
+\texttt{...\_172958.json} ($\sigma=0.1\%$),
+\texttt{...\_173523.json} ($\sigma=0.5\%$), and
+\texttt{...\_175318.json} ($\sigma=1\%$) --- and matches every value in this
+table to two decimal places. No file in this set contains an M3 time
+approaching 841\,s at any noise level; the maximum M3 value observed across
+all 150 equation-runs (5 files $\times$ 30 equations) is 7.77\,s.]}}
 \label{tab:time_noise}
 \small
 \begin{tabular}{lrrl}
@@ -723,7 +752,14 @@ smaller, and in line with every other noise level in
 exhaustive-search spike. There is no evidence in the source data for an
 841\,s noiseless cost at all; that figure and its rationalisation are
 removed rather than corrected to a new number, since nothing in the
-available files explains where 841\,s originally came from.]} Across all
+available files explains where 841\,s originally came from. \textbf{Update
+(Issue 3, closed):} this has now been independently re-derived from the raw
+runner logs themselves (see the verification note on
+\Cref{tab:time_noise}) rather than from the aggregate shard files alone;
+the recomputed per-equation averages agree with the table to two decimal
+places at all five noise levels, confirming both that 7.55\,s (not 841\,s)
+is the real $\sigma=0\%$ figure and that this is not an artifact of how the
+shard files were aggregated.]} Across all
 five real noise levels, M3 and M4 have comparable, stable per-equation
 runtimes (M3: 7.0--7.8\,s; M4: 6.3--6.9\,s), with M4 consistently
 $\sim$1.1--1.2$\times$ faster than M3 --- a far smaller and more uniform
@@ -1234,17 +1270,37 @@ Output: \texttt{protocol\_core\_noisy\_<timestamp>.json}.
 The \texttt{--no-llm-cache} flag forces independent fresh API calls for all
 30 Pure~LLM evaluations; this was verified via cache-clearing.
 
-\paragraph{Phase~3 (noiseless, $R^2>0.9999$, Table~\ref{tab:overall}).}
+\paragraph{Phase~3 (noiseless, $R^2\geq0.999999$, Table~\ref{tab:overall}).
+\textbf{[Correction: this block previously pointed to
+\texttt{run\_comparative\_suite\_benchmark\_v2.py} with
+\texttt{--threshold 0.9999}, producing
+\texttt{protocol\_core\_noiseless\_20260304\_154510.json} and describing it
+as "30/30 equations, all 6 methods" --- i.e.\ every method passing all 30
+tests. That file is not among the verified released artifacts, the
+threshold did not match \Cref{tab:overall}'s actual $\geq0.999999$ cutoff,
+and no run in this benchmark family has every method at 30/30 (only
+\PureLLM{} and \HSL{} do; see \Cref{tab:overall}). The command and output
+below are regenerated from the one verified noiseless source file supplied,
+\texttt{protocol\_core\_noiseless\_20260812\_170344.json}, whose internal
+\texttt{script} field is quoted directly.]}}
 \begin{verbatim}
-python run_comparative_suite_benchmark_v2.py \
-    --noiseless --threshold 0.9999       \
+python run_protocol_benchmark_core.py \
+    --noiseless --threshold 0.999999     \
     --nn-seeds 3 --samples 200           \
     --method-timeout 900                 \
     --pysr-timeout 1100
 \end{verbatim}
-Output: \texttt{protocol\_core\_noiseless\_20260304\_154510.json}
-(full run: 30/30 equations, all 6 methods, $\approx$1\,h\,13\,min wall-clock
-on Intel Celeron T3100, 2~cores; faster on modern multi-core hardware).
+Script version: \texttt{run\_protocol\_benchmark\_core.py v2.2 (sign-fix +
+log-widen + domain-guard + formula-hash + complexity-score + json-export +
+extrap\_r2\_far-fix)}, per the source file's own \texttt{script} field.\\
+Output: \texttt{protocol\_core\_noiseless\_20260812\_170344.json}
+(timestamp 2026-08-12T17:03:44; 30 equations across 11 non-Feynman domains
+--- biology, chemistry, electrochemistry, electromagnetism, electrostatics,
+magnetism, mechanics, optics, probability, quantum, thermodynamics --- run
+against all 6 methods, with per-method pass counts as reported in
+\Cref{tab:overall} (\PureLLM{} 30/30, \HSL{} 30/30, \SEL{} 28/30, \EHD{}
+23/30, \HDS{} 21/30, \INN{} 0/30); wall-clock and hardware not recorded in
+the source file, so no timing claim is made here.
 
 \textbf{Note on timeout upgrade:} \texttt{--method-timeout} was set to 300\,s
 for tests 1--18 and upgraded to 900\,s for tests 19--30. Arrhenius (test~4)
@@ -1317,8 +1373,14 @@ Pandas           & 2.3.3 \\
 Matplotlib       & 3.10.7 \\
 Seaborn          & 0.13.2 \\
 scikit-learn     & 1.7.2 \\
-Anthropic SDK    & 0.73.0 (\texttt{claude-sonnet-4-20250514},
-                   temperature~0.0) \\
+Anthropic SDK    & 0.73.0 (\texttt{claude-sonnet-5},
+                   temperature~0.25) \textbf{[Corrected: previously listed
+                   as \texttt{claude-sonnet-4-20250514}, temperature 0.0
+                   -- stale copy; \texttt{hypatia.py} hardcodes
+                   \texttt{claude-sonnet-5}/temp~0.25, confirmed the
+                   value actually used, since \texttt{LLM\_MODEL} and
+                   \texttt{repro.yaml}'s \texttt{llm\_model} field are
+                   dead code that nothing reads. See Issue 11.]} \\
 \midrule
 Hardware         & Intel Celeron T3100 @ 1.90\,GHz (2~cores);
                    3\,GB DDR2; no GPU \\
@@ -1527,8 +1589,10 @@ Numerical stability ($\alpha$) & 0.95 \\
 & Dropout & None \\
 \midrule
 \multirow{7}{*}{Pure LLM}
-& Model & claude-sonnet-4-20250514 \\
-& Temperature & 0.0 (deterministic) \\
+& Model & claude-sonnet-5 \textbf{[Corrected: was
+  claude-sonnet-4-20250514, a stale copy; see Issue 11]} \\
+& Temperature & 0.25 \textbf{[Corrected: was listed as 0.0
+  (deterministic); \texttt{hypatia.py} hardcodes temperature~0.25]} \\
 & Max tokens & 1024 \\
 & Top-p & 1.0 \\
 & Few-shot examples & 2-3 per domain \\
@@ -1703,12 +1767,26 @@ Portfolio Variance & $\sigma_p = \sqrt{\sigma_1^2 + \sigma_2^2 + 2\rho\sigma_1\s
 \end{table}
 
 % ============================================================================
-% APPENDIX D: STATISTICAL TEST DETAILS (CORRECTED VALUES)
+% APPENDIX D: STATISTICAL TEST DETAILS
 % ============================================================================
-
+% [Correction, Issue 4 (CI/SD statistical incompatibility): this appendix
+% previously reported Hybrid v50_2 n=14/0.0% error, Neural Network
+% n=13/1231% mean, U=0, p=1.11e-6 -- figures that could not be reproduced
+% from any data source currently available for this paper (see the
+% accompanying five-system Table 1 audit memo) and that were, independently,
+% statistically incompatible with the disclosed SD (a 95% CI six times
+% narrower than a standard t-interval on that SD/n would support). Per that
+% memo's Option D, this section is regenerated directly from the two real,
+% live Feynman benchmarks (exp1_five and exp2_five), matching
+% Section~\ref{sec:five_systems} in the main paper. A git-history search for
+% the original source of the n=14/n=13/0.0% figures was recommended by the
+% audit but could not be carried out in this pass (no git access); if still
+% wanted, see that memo for the suggested next step.]
 
 \section{Statistical Test Details}
 \label{app:statistical_tests}
+
+\subsection*{Experiment 1 (exp1\_five, Core-15)}
 
 \subsection{Mann-Whitney U Test for Extrapolation Performance}
 
@@ -1716,63 +1794,51 @@ For medium extrapolation regime (2$\times$ training range):
 
 \paragraph{Test Setup:}
 \begin{itemize}
-\item \textbf{Sample sizes}: $n_{\text{Hybrid}} = 14$, $n_{\text{NN}} = 13$ (CORRECTED)
-\item \textbf{Null hypothesis}: $H_0: E_{\text{hybrid}} \geq E_{\text{NN}}$ (Hybrid is not better)
-\item \textbf{Alternative hypothesis}: $H_1: E_{\text{hybrid}} < E_{\text{NN}}$ (Hybrid is better)
+\item \textbf{Sample sizes}: $n_{\text{Hybrid v50\_2}} = 11$, $n_{\text{Neural Network}} = 15$
+\item \textbf{Null hypothesis}: $H_0: E_{\text{Hybrid v50\_2}} \geq E_{\text{Neural Network}}$ (Hybrid v50\_2 is not better)
+\item \textbf{Alternative hypothesis}: $H_1: E_{\text{Hybrid v50\_2}} < E_{\text{Neural Network}}$ (Hybrid v50\_2 is better)
 \item \textbf{Significance level}: $\alpha = 0.05$ (one-tailed test)
 \end{itemize}
 
 \paragraph{Descriptive Statistics:}
 \begin{itemize}
-\item \textbf{Hybrid v50\_2}: Mean = 0.0\%, Median = 0.0\%, SD = 0.0\%, Range = [0.0, 0.0]
-\item \textbf{Neural Network}: Mean = 1231\%, Median = 86.7\%, SD = 1842\%, Range = [12.3, 5847\%] (CORRECTED)
+\item \textbf{Hybrid v50\_2}: Mean = 865496363.6\%, Median = 3406.6\%, SD = 2819161054.2\%, Range = [0.0, 9364417961.6]
+\item \textbf{Neural Network}: Mean = 8935987.0\%, Median = 11333.1\%, SD = 33797954.7\%, Range = [171.6, 131098141.4]
 \end{itemize}
 
 \paragraph{Test Results:}
 \begin{itemize}
-\item \textbf{Test statistic}: $U = 0$ (all Hybrid errors < all NN errors)
-\item \textbf{P-value}: $p = 1.11 \times 10^{-6}$ (CORRECTED)
-\item \textbf{Critical value}: $U_{0.05} = 45$ for one-tailed test with n=14 vs n=13
-\item \textbf{Conclusion}: $U < U_{0.05}$ $\Rightarrow$ Reject $H_0$ at $\alpha = 0.05$
-\item \textbf{Interpretation}: Complete rank separation --- on every tested equation, Hybrid v50\_2 extrapolation error is strictly less than Neural Network error ($U = 0$, $p = 1.11 \times 10^{-6}$)
+\item \textbf{Test statistic}: $U = 68.0$
+\item \textbf{P-value}: $p = 2.34e-01$ (one-tailed, normal approximation with tie correction -- see \texttt{\_render\_stat\_test\_tex()} in \texttt{generate\_tables.py})
+\item \textbf{Conclusion}: $p \geq 0.05 \Rightarrow$ Fail to reject $H_0$ at $\alpha = 0.05$
 \end{itemize}
 
-\subsection{Effect Size Calculation (Cohen's d)}
+\subsection{Effect Size Calculation (Cohen's $d$)}
 
 \begin{align}
-\mu_{\text{NN}} &= 1231.0\%, \quad \sigma_{\text{NN}} = 1842.0\% \quad \text{(CORRECTED)} \\
-\mu_{\text{Hybrid}} &= 0.0\%, \quad \sigma_{\text{Hybrid}} = 0.0\% \\
-s_{\text{pooled}} &= \sqrt{\frac{\sigma_{\text{NN}}^2 + \sigma_{\text{Hybrid}}^2}{2}} = 1302.5\% \\
-d &= \frac{1231.0 - 0.0}{1302.5} = 0.95
+\mu_{\text{Neural Network}} &= 8935987.0\%, \quad \sigma_{\text{Neural Network}} = 33797954.7\% \\
+\mu_{\text{Hybrid v50\_2}} &= 865496363.6\%, \quad \sigma_{\text{Hybrid v50\_2}} = 2819161054.2\% \\
+s_{\text{pooled}} &= \sqrt{\frac{\sigma_{\text{Neural Network}}^2 + \sigma_{\text{Hybrid v50\_2}}^2}{2}} = 1993591150.6\% \\
+d &= \frac{8935987.0 - 865496363.6}{1993591150.6} = -0.43
 \end{align}
 
 \paragraph{Conservative Estimate:}
-Using only NN standard deviation (most conservative approach):
+Using only Neural Network standard deviation (most conservative approach):
 \begin{equation}
-d_{\text{conservative}} = \frac{1231.0}{1842.0} = 0.67 \quad \text{(medium-to-large effect)}
+d_{\text{conservative}} = \frac{8935987.0}{33797954.7} = -25.34 \quad \text{(interpret magnitude per Cohen 1988 conventions)}
 \end{equation}
 
 \paragraph{Alternative Calculation (Glass's $\Delta$):}
-Using only the control group (NN) standard deviation:
+Using only the control group (Neural Network) standard deviation:
 \begin{equation}
-\Delta = \frac{1231.0 - 0.0}{1842.0} = 0.67
+\Delta = \frac{8935987.0 - 865496363.6}{33797954.7} = -25.34
 \end{equation}
 
-\paragraph{Interpretation Guidelines:}
-\begin{itemize}
-\item $d = 0.2$: Small effect
-\item $d = 0.5$: Medium effect
-\item $d = 0.8$: Large effect
-\item $d = 1.2$: Very large effect
-\item Our result: $d = 0.67-0.95$ (medium-to-large effect with full rank separation on this benchmark)
-\end{itemize}
+% Source: exp1_five_results.json (hypatiax/data/results/five_systems/exp1_five/exp1_five_results.json)
 
-\paragraph{Critical Note on Effect Size:} While the calculated Cohen's d appears moderate (0.67-0.95), this understates the true difference because:
-\begin{enumerate}
-\item Mann-Whitney $U = 0$ indicates full rank separation---every Hybrid error is strictly less than every NN error
-\item Effect size calculations assume normal distributions, but NN errors are highly skewed (median = 86.7\%, mean = 1231\%)
-\item The practical difference (near-zero vs 1,231\% mean error on this benchmark) is substantial and potentially critical for scientific applications
-\end{enumerate}
+\subsection*{Experiment 2 (exp2\_five, 10-domain suite)}
+
+\textit{No statistical test is reported for exp2\_five: the generator requires both Hybrid v50\_2 and Neural Network to have at least one successful, finite extrapolation-error measurement each, and exp2\_five currently has zero for both (see the corresponding tables in Section~\ref{sec:five_systems} of the main paper).}
 
 \subsection{Interpolation Performance Comparison}
 
@@ -2030,7 +2096,7 @@ The following supplementary materials are available:
 \begin{itemize}
 \item \textbf{S1: Pure LLM Baseline Results} (\texttt{S1\_pure\_llm\_results.csv}) --- Complete results from Pure LLM baseline experiments showing 60\% success rate across 40 tests.
 
-\item \textbf{S2: Extrapolation Test Data} (\texttt{S2\_extra\-polation\_data.csv}) --- Data comparing Hybrid v50\_2 extrapolation error (near-zero) versus Neural Network extrapolation error (1{,}231\% mean) on the Core 15 benchmark. Includes training R$^2$ scores, extrapolation errors at 1.2$\times$, 2$\times$, and 5$\times$ training ranges, and Mann-Whitney U-test results (U=0, p$<$10$^{-6}$).
+\item \textbf{S2: Extrapolation Test Data} (\texttt{S2\_extra\-polation\_data.csv}) --- \textbf{[Correction, Issue 4:]} this entry previously described the file as containing a near-zero Hybrid v50\_2 error versus a 1{,}231\% Neural Network mean error and a Mann-Whitney result of $U=0$, $p<10^{-6}$; those figures could not be reproduced from any data source currently available for this paper (see Section~\ref{sec:five_systems} and the accompanying Table 1 audit memo) and are not restated here pending resolution of that audit's open item on the file's original provenance. Training R$^2$ scores and extrapolation errors at 1.2$\times$, 2$\times$, and 5$\times$ training ranges are still included in the file as described.
 
 \item \textbf{S3: Validation Logs} (\texttt{S3\_validation\_logs.json}) --- Complete validation reports for all 131 tests showing the four-layer validation framework in action. Each entry includes dimensional analysis, physics constraints, numerical stability checks, prediction accuracy metrics, timing data, and failure mode classification. Includes validation layer rejection rates (12\%, 18\%, 23\%, 47\%).
 
@@ -2049,7 +2115,7 @@ The following supplementary materials are available:
 \item \texttt{figure3\_validation\_breakdown.csv} --- Four-layer validation effectiveness
 \item \texttt{figure4b\_domain\_breakdown.csv} --- Per-equation performance details
 \item \texttt{figure5\_method\_comparison.csv} --- Overall method comparison
-\item \texttt{figure\_5systems\_comparison.csv} --- Complete extrapolation data (1231\% vs 0\%)
+\item \texttt{figure\_5systems\_comparison.csv} --- Extrapolation data for the five-system comparison; see Section~\ref{sec:five_systems} regenerated tables (previously described here as ``1231\% vs 0\%'' -- see Issue 4 correction note above)
 \item \texttt{figure\_benchmark\_comparison.csv} --- Core 15 benchmark results
 \item \texttt{figure\_timing\_comparison.csv} --- Speed-accuracy tradeoff analysis
 \end{itemize}
