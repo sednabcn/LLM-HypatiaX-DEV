@@ -10,7 +10,7 @@ Tables generated  (main paper)
   defi_main.tex       tab:main_results   §10.2   ← results/defi/
   defi_tiers.tex      tab:difficulty     §10.3   ← results/defi/
   runtime.tex         tab:runtime        §10.4   ← results/defi/
-  portfolio_sweep.tex tab:portfolio_seed §10.5   ← portfolio_variance_seed_sweep.json
+  portfolio_sweep.tex tab:portfolio_seed_sweep §10.5 ← portfolio_variance_seed_sweep.json
   ablation.tex        tab:llm_ablation   §10.6   ← results/ablation/exp1_ablation/
   feynman.tex         tab:feynman        §10.7   ← results/feynman/
   nguyen12.tex        tab:nguyen12       §10.8   ← results/nguyen12/
@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 from datetime import datetime
@@ -2008,33 +2009,94 @@ def gen_five_system() -> None:
 def gen_runtime() -> None:
     """
     Tab 4 — Wall-clock time per task (seconds). Matches Table 4 in §10.4.
+
+    FIX ISSUE-RUNTIME (same class of bug as Table 2 pre-fix): the previous
+    version expected d["timing"]/d["runtime"] with pure_llm/neural_mlp/
+    hypatiax sub-dicts carrying mean_s/median_s. That shape never existed —
+    recover_issue17_runtime.py (which reads this exact file directly)
+    confirms the real per-case schema is d[i]["results"][method]["time_s"],
+    method in {"pure_llm", "neural_network", "hybrid"}, over the same flat
+    list of 74 cases Table 2 reads. isinstance(d, dict) failed on that list
+    every time, so this table always fell through to skip_table() — never
+    fabricated a number, but never populated either. Rewritten to match
+    Shape 3 exactly as gen_defi_main() does, including the LLM-routed-only
+    HypatiaX row (hybrid.decision == "llm"), mirroring
+    recover_issue17_runtime.py's analyze() function precisely.
+
+    SCOPE NOTE (do not wire this table to tab:timing_full): this table is
+    computed from ONE single-seed hypatiax_defi_benchmark_v3*results*.json
+    file (74 tasks). It is NOT the same table as \\ref{tab:timing_full} /
+    \\ref{tab:timing_llm_routed_full} in jmlr_paper_main_patched_CLEANED.tex
+    §10.4, which are produced by a *different* script (generate_table1.py,
+    not part of this file) from ALL FIVE seeds x two splits (740 tasks) and
+    are explicitly described in the paper's own reconciliation notes as
+    having REPLACED the original single-row/single-seed Table 4.
+    generate_table1.py is not present in either the LLM-HypatiaX-REPRO or
+    LLM-HypatiaX-DEV repos as of this audit, so its output cannot be
+    reconciled with this function's here.
+    config/paper_order.yml currently lists runtime.tex as source: generated
+    with expected label tab:timing (order 8) -- that label does not exist
+    anywhere in the compiled paper (which has tab:timing_full and
+    tab:timing_llm_routed_full only), so paper_order.yml's entry for this
+    table appears stale and should be corrected or removed, not used to
+    justify \\input{}-ing runtime.tex as-is. This table's own label
+    (tab:runtime) is left unreferenced anywhere in the paper for the same
+    reason -- it currently has no live home in the compiled document.
     """
     data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
                           extra_subdirs=["defi"])
 
     def _extract(d):
-        if not isinstance(d, dict):
+        if not (isinstance(d, list) and d and isinstance(d[0], dict) and "results" in d[0]):
             return []
-        timing = d.get("timing", d.get("runtime", {}))
+        nn_times, llm_times, hy_times = [], [], []
+        hy_routed_times = []
+        for rec in d:
+            cr = rec.get("results", {}) or {}
+            nn_t  = (cr.get("neural_network", {}) or {}).get("time_s")
+            llm_t = (cr.get("pure_llm", {}) or {}).get("time_s")
+            hy_t  = (cr.get("hybrid", {}) or {}).get("time_s")
+            if isinstance(nn_t, (int, float)):
+                nn_times.append(nn_t)
+            if isinstance(llm_t, (int, float)):
+                llm_times.append(llm_t)
+            if isinstance(hy_t, (int, float)):
+                hy_times.append(hy_t)
+                if (cr.get("hybrid", {}) or {}).get("decision") == "llm":
+                    hy_routed_times.append(hy_t)
+        if not (nn_times and llm_times and hy_times):
+            return []
+
+        def _mm(xs):
+            xs = sorted(xs)
+            n = len(xs)
+            mean = sum(xs) / n
+            median = xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+            return mean, median
+
+        nn_mean, nn_med = _mm(nn_times)
         rows = []
-        for name, key in [("Pure LLM", "pure_llm"), ("Neural MLP", "neural_mlp"),
-                          ("HypatiaX", "hypatiax")]:
-            t = timing.get(key, {})
-            rows.append((
-                name,
-                t.get("mean_s", t.get("mean_time_s", float("nan"))),
-                t.get("median_s", t.get("median_time_s", float("nan"))),
-                t.get("n", 74),
-                t.get("vs_nn", "---"),
-            ))
-        return rows if len(rows) >= 3 else []
+        for name, times, n_override in [
+            ("Pure LLM", llm_times, None),
+            ("Neural MLP", nn_times, None),
+            ("HypatiaX", hy_times, None),
+        ]:
+            mean, med = _mm(times)
+            vs_nn = f"{mean/nn_mean:.2f}\\texttimes\\ " + ("slower" if mean >= nn_mean else "faster")
+            rows.append((name, mean, med, len(times), vs_nn))
+        if hy_routed_times:
+            mean, med = _mm(hy_routed_times)
+            vs_nn = f"{mean/nn_mean:.2f}\\texttimes\\ " + ("slower" if mean >= nn_mean else "faster")
+            rows.append(("HypatiaX (LLM-routed only)", mean, med, len(hy_routed_times), vs_nn))
+        return rows
 
     rows = _extract(data) if data else []
     if not rows:
-        skip_table("runtime.tex", f"no parsable timing data found (src={src})")
+        skip_table("runtime.tex", f"no parsable timing data found in the real "
+                    f"flat-list schema (src={src})")
         return
 
-    def _t(v): return f"{v:.1f}" if isinstance(v, float) and v == v else "---"
+    def _t(v): return f"{v:.2f}" if isinstance(v, (int, float)) and v == v else "---"
 
     tex = header_comment(src) + r"""
 \begin{table}[t]
@@ -2064,6 +2126,13 @@ def gen_portfolio_seed_sweep() -> None:
     H recovers? = exact closed-form formula recovered.
     H wins?     = HypatiaX far-R² strictly > PySR-only.
     Matches Table 5 in §10.5.
+
+    FIX LABEL-PORTFOLIO: this table previously emitted \\label{tab:portfolio_seed},
+    which matches neither the paper's own \\ref{tab:portfolio_seed_sweep} calls
+    (jmlr_paper_main_patched_CLEANED.tex, §10.5) nor config/paper_order.yml's
+    declared label for portfolio_sweep.tex. Corrected to tab:portfolio_seed_sweep
+    so a future \\input{tables/portfolio_sweep.tex} resolves \\ref calls instead
+    of rendering "??".
     """
     # Try to find portfolio_variance_seed_sweep.json
     src_path = None
@@ -2117,7 +2186,7 @@ def gen_portfolio_seed_sweep() -> None:
 \caption{Portfolio Variance seed-sweep results.
   \textbf{H recovers?}: exact closed-form formula recovered.
   \textbf{H wins?}: HypatiaX far-$R^2$ strictly greater than PySR-only.}
-\label{tab:portfolio_seed}
+\label{tab:portfolio_seed_sweep}
 \begin{tabular}{rrrrrr}
 \toprule
 \textbf{Seed} & \textbf{P far-$R^2$} & \textbf{H far-$R^2$}
@@ -2652,78 +2721,188 @@ def gen_extrap_ood_table() -> None:
 
 def gen_nguyen12() -> None:
     """
-    Tab 8 — Nguyen-12 Benchmark: train and extrapolation R² by equation.
-    P = PySR-only, H = HypatiaX, N = Neural MLP.
-    Matches Table 8 in §10.8.
+    Tab 8 — Nguyen-12 Benchmark: mean R² by equation, HypatiaX vs. PySR-only.
+
+    FIX ISSUE-NGUYEN12 (wrong dirs, wrong shape, fabricated columns):
+    The previous version searched RESULTS/"" and RESULTS/"nguyen12" for a
+    file matching "exp3*nguyen12*.json" and expected each equation record to
+    carry flat pysr_train/pysr_extrap/hypatia_train/hypatia_extrap/nn_train/
+    nn_extrap keys. None of that matches reality:
+
+      - exp3 (seed=42, single-shard, per EXP_SHARD_TABLE in ci_runner.yml /
+        SINGLE_SHARD_EXPERIMENTS in ci_analysis.yml) writes its raw file
+        directly to RESULTS/extrapolation/ (RESULT_SUBDIR mapping in
+        ci_analysis.yml), named exp3_nguyen12_seed{seed}_temp{...}_run{...}.json
+        — never RESULTS root or RESULTS/nguyen12.
+      - exp3b (seeds 99/123/777/2024, 4-shard, MERGE_REQUIRED_EXPERIMENTS in
+        merge_shards.py) writes its merged file to
+        RESULTS/extrapolation/multi_seed/_merged.json.
+      - Neither raw exp3 output nor merge_shards.py's Shape-H reshaping
+        (extract_pysr_nguyen_rows()) ever produces pysr_train/hypatia_train/
+        etc. Raw exp3 is {"results": {"hypatiax": [...], "pysr": [...]}}
+        with each record's score at item["evaluation"]["r2"] (a single
+        aggregate value, not train/extrap). merge_shards.py's merged output
+        is a flat list of {"nguyen_id":, "seed":, "systems": {"hypatiax":
+        {"r2_raw":...}, "pysr": {"r2_raw":...}}} rows — again a single R²
+        per system, by explicit design (see extract_pysr_nguyen_rows()'s
+        docstring: "Deliberately does NOT map evaluation.r2 onto
+        extrap_r2_far/train_r2 ... there is nothing correct to alias them to
+        yet").
+      - No version of exp3_nguyen12_hybrid50v_*.py runs a Neural MLP
+        baseline for Nguyen-12 at all — the N Train/N Extrap columns have no
+        possible data source in this pipeline, at any stage.
+
+    This version reads both real sources (raw exp3 seed-42 file + exp3b's
+    merged file), aggregates the single available R² per system per
+    equation across every seed found, and reports only what is actually
+    measured: mean P (PySR-only) R² and mean H (HypatiaX) R² per equation,
+    plus how many seeds contributed. It does not fabricate a train/extrap
+    split or an N column. skip_table() fires if fewer than 12 equations end
+    up with any parsable data, exactly as before.
     """
-    # run_all.sh (exp3/exp3b) writes nguyen12 results to RESULTS_DIR root.
-    # Also check legacy nguyen12/ subdir.
-    data, src = load_best("", "exp3*nguyen12*.json",
-                          extra_subdirs=["nguyen12"])
+    raw42, src42 = load_best("extrapolation", "exp3_nguyen12_seed*.json")
+    merged, srcm = load_best("extrapolation/multi_seed", "_merged.json")
 
-    def _extract(d):
+    def _is_raw_shape_h(d):
         if not isinstance(d, dict):
-            return []
-        eqs = d.get("equations", d.get("results", []))
-        if not isinstance(eqs, list) or len(eqs) < 12:
-            return []
-        rows = []
-        for e in eqs:
-            rows.append((
-                e.get("name", "?"), e.get("formula", "?"),
-                e.get("pysr_train",    float("nan")),
-                e.get("pysr_extrap",   float("nan")),
-                e.get("hypatia_train", float("nan")),
-                e.get("hypatia_extrap",float("nan")),
-                e.get("nn_train",      float("nan")),
-                e.get("nn_extrap",     float("nan")),
-            ))
-        return rows
+            return False
+        results = d.get("results")
+        if not isinstance(results, dict) or not results:
+            return False
+        for recs in results.values():
+            if (isinstance(recs, list) and recs and isinstance(recs[0], dict)
+                    and isinstance(recs[0].get("metadata"), dict)
+                    and "evaluation" in recs[0]):
+                return True
+        return False
 
-    equations = _extract(data) if data else []
-    if not equations:
+    def _eq_id(meta):
+        for k in ("nguyen_id", "equation_name", "name"):
+            v = meta.get(k)
+            if v:
+                return str(v)
+        return None
+
+    # (eq_id, display_name, seed, system_name, r2)
+    rows: list[tuple] = []
+
+    if _is_raw_shape_h(raw42):
+        seed = (raw42.get("config") or {}).get("seed", 42)
+        for system_name, recs in raw42["results"].items():
+            if not isinstance(recs, list):
+                continue
+            for item in recs:
+                meta = item.get("metadata") if isinstance(item, dict) else None
+                if not isinstance(meta, dict):
+                    continue
+                eq_id = _eq_id(meta)
+                if not eq_id:
+                    continue
+                r2 = (item.get("evaluation") or {}).get("r2")
+                rows.append((eq_id, meta.get("name") or eq_id, seed, system_name, r2))
+
+    if isinstance(merged, list):
+        for row in merged:
+            if not isinstance(row, dict):
+                continue
+            eq_id = row.get("nguyen_id")
+            if not eq_id:
+                continue
+            seed = row.get("seed")
+            systems = row.get("systems") or {}
+            for system_name, sysrec in systems.items():
+                if isinstance(sysrec, dict):
+                    rows.append((eq_id, row.get("name") or eq_id, seed,
+                                 system_name, sysrec.get("r2_raw")))
+
+    if not rows:
         skip_table("nguyen12.tex",
-                    f"fewer than 12 parsable equations found (src={src})")
+                    f"no parsable Nguyen-12 results found "
+                    f"(exp3 seed42 src={src42}, exp3b merged src={srcm})")
         return
 
+    by_eq: dict[str, dict[str, list]] = {}
+    names: dict[str, str] = {}
+    seeds_seen: dict[str, set] = {}
+    for eq_id, name, seed, system_name, r2 in rows:
+        names[eq_id] = name
+        by_eq.setdefault(eq_id, {}).setdefault(system_name, [])
+        seeds_seen.setdefault(eq_id, set()).add(seed)
+        if isinstance(r2, (int, float)) and r2 == r2:  # finite check
+            by_eq[eq_id][system_name].append(r2)
+
+    eq_ids = sorted(by_eq.keys())
+    if len(eq_ids) < 12:
+        skip_table("nguyen12.tex",
+                    f"only {len(eq_ids)}/12 equations have parsable results "
+                    f"(exp3 seed42 src={src42}, exp3b merged src={srcm})")
+        return
+
+    def _mean(xs):
+        return sum(xs) / len(xs) if xs else None
+
     def _r(v, lo=-100):
-        if not isinstance(v, (int, float)) or v != v: return "---"
-        if v <= lo: return r"$\ll{-100}$"
-        if v >= 0.9999: return r"\textbf{" + f"{v:.4f}" + "}"
-        if v < 0: return r"\textit{" + f"{v:.3f}" + "}"
+        if v is None:
+            return "---"
+        if v <= lo:
+            return r"$\ll{-100}$"
+        if v >= 0.9999:
+            return r"\textbf{" + f"{v:.4f}" + "}"
+        if v < 0:
+            return r"\textit{" + f"{v:.3f}" + "}"
         return f"{v:.4f}"
 
-    tex = header_comment(src) + r"""
-\begin{table*}[t]
+    tex = (
+        "% Auto-generated by generate_tables.py\n"
+        f"% Source: exp3 seed42 raw={src42 or 'NOT FOUND'}; "
+        f"exp3b merged={srcm or 'NOT FOUND'}\n"
+        f"% Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        "% NOTE: exp3_nguyen12_hybrid50v_03.py and merge_shards.py's Shape-H\n"
+        "% path both produce only a single aggregate R^2 per equation per\n"
+        "% system (no train/extrap split) and never run a Neural MLP\n"
+        "% baseline for this benchmark. This table reports the mean R^2\n"
+        "% across every seed found for HypatiaX and PySR-only; it does not\n"
+        "% include Train/Extrap/N columns, since there is no data source for\n"
+        "% them anywhere in this pipeline (see gen_nguyen12() docstring).\n"
+        r"""
+\begin{table}[t]
 \centering
-\caption{Nguyen-12 benchmark: train and extrapolation $R^2$ by equation.
-  P = PySR-only; H = HypatiaX; N = Neural MLP.
-  Near-miss criterion: $R^2 \ge 0.9999$.
-  Bold: extrap $R^2 \ge 0.9999$. Italic: $R^2 < 0$.}
+\caption{Nguyen-12 benchmark: mean $R^2$ by equation, HypatiaX vs.\
+  PySR-only, averaged across all available seeds. P = PySR-only;
+  H = HypatiaX. Near-miss criterion: $R^2 \ge 0.9999$.
+  Bold: $R^2 \ge 0.9999$. Italic: $R^2 < 0$.
+  \textbf{No train/extrapolation split or Neural MLP baseline is available
+  for this benchmark} --- \texttt{exp3\_nguyen12\_hybrid50v\_03.py} reports a
+  single aggregate $R^2$ per equation per system and never runs an NN
+  baseline, so a six-column Train/Extrap$\times$P/H/N table cannot be
+  computed from any data this pipeline produces.}
 \label{tab:nguyen12}
-\small
-\begin{tabular}{llrrrrrr}
+\begin{tabular}{llrrr}
 \toprule
-\textbf{Eq.} & \textbf{Formula}
-  & \textbf{P Train} & \textbf{P Extrap}
-  & \textbf{H Train} & \textbf{H Extrap}
-  & \textbf{N Train} & \textbf{N Extrap} \\
+\textbf{Eq.} & \textbf{Name} & \textbf{P $R^2$} & \textbf{H $R^2$} & \textbf{n seeds} \\
 \midrule
 """
-    for (eq, form, pt, pe, ht, he, nt, ne) in equations:
-        tex += f"{eq} & ${form}$ & {_r(pt)} & {_r(pe,-500)} & {_r(ht)} & {_r(he)} & {_r(nt)} & {_r(ne)} \\\\\n"
+    )
+    n_p = n_h = 0
+    for eq_id in eq_ids:
+        p_r2 = _mean(by_eq[eq_id].get("pysr", []))
+        h_r2 = _mean(by_eq[eq_id].get("hypatiax", []))
+        n_seeds = len(seeds_seen[eq_id])
+        if isinstance(p_r2, float) and p_r2 >= 0.9999:
+            n_p += 1
+        if isinstance(h_r2, float) and h_r2 >= 0.9999:
+            n_h += 1
+        tex += f"{eq_id} & {names.get(eq_id, eq_id)} & {_r(p_r2)} & {_r(h_r2)} & {n_seeds} \\\\\n"
 
-    n_p = sum(1 for r in equations if isinstance(r[3], float) and r[3] >= 0.9999)
-    n_h = sum(1 for r in equations if isinstance(r[5], float) and r[5] >= 0.9999)
-    n_n = 0
-    tex += r"""\midrule
-""" + f"Success ($R^2 \\ge 0.9999$) & & \\multicolumn{{2}}{{c}}{{{n_p}/12 ({n_p/12*100:.1f}\\%)}}"
-    tex += f" & \\multicolumn{{2}}{{c}}{{{n_h}/12 ({n_h/12*100:.1f}\\%)}}"
-    tex += f" & \\multicolumn{{2}}{{c}}{{{n_n}/12 (0.0\\%)}} \\\\\n"
-
+    n_eq = len(eq_ids)
+    tex += (
+        r"\midrule" + "\n"
+        f"Success ($R^2 \\ge 0.9999$) & & {n_p}/{n_eq} "
+        f"({n_p/n_eq*100:.1f}\\%) & {n_h}/{n_eq} ({n_h/n_eq*100:.1f}\\%) & \\\\\n"
+    )
     tex += r"""\bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
 """
     write_table("nguyen12.tex", tex)
 
@@ -3655,6 +3834,1433 @@ def gen_suppb_noiseless() -> None:
               "will show '---' for this method until the source JSON includes it.")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ── NEWLY ADDED GENERATORS (this pass) ───────────────────────────────────────
+#
+# Added to close the coverage gap documented in table_wiring_plan.md: of the
+# ~76 \label{tab:...} entries across jmlr_paper_main / supp_benchmark_report /
+# supp_routing_improvements, only ~20 previously had a generator at all.
+#
+# Three buckets, by how each table's source data was determined:
+#
+#   (A) JSON-BACKED  — the paper's own correction footnote names a specific
+#       source file/shape (e.g. "regenerated directly from
+#       protocol_core_noiseless_20260812_170344.json"), so a real generator
+#       is written against that named source, with the same
+#       skip_table()-on-missing-data discipline as every existing generator.
+#       No number is ever fabricated if the file isn't present.
+#
+#   (B) STATIC/STABLE — the table's own content is definitional, historical,
+#       or environment metadata rather than a live measurement (matches the
+#       existing precedent of version_history.tex, explicitly called out as
+#       "hardcoded (stable)"). These are transcribed verbatim from the
+#       paper's own already-reviewed text, not invented. A few of this
+#       bucket are mechanically generated instead (figure/file manifests)
+#       since that's just listing what's actually on disk.
+#
+#   (C) INTENTIONALLY NOT AUTOMATED — tab:baseline, tab:projected, and
+#       tab:cost_accuracy_tradeoff all currently carry live
+#       "[VALUE REDACTED --- pending re-verification]" or disputed/
+#       provisional markers in the paper text itself. Auto-wiring a
+#       generator for these would do exactly what table_wiring_plan.md
+#       already warned against for tab:main_results/tab:llm_ablation:
+#       silently replacing carefully-flagged, pending-verification content
+#       with fresh, unreviewed numbers. These three are left for a human
+#       to resolve first; see the note in table_wiring_plan.md.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ── (A) Multi-seed timing (tab:timing_full / tab:timing_llm_routed_full) ─────
+#
+# The paper explicitly attributes these two tables to generate_table1.py
+# (not part of this file) run over 10 raw per-seed result files: v3c and PCA
+# variants, seeds {42,99,123,777,2024}, 74 tasks each (740 total). Rather
+# than shelling out to a script that isn't present in this repo snapshot,
+# this reads the same raw per-seed files gen_defi_main()/gen_runtime()
+# already know the schema for (Shape 3: flat list of
+# {"results": {"pure_llm":..., "neural_network":..., "hybrid":...}} dicts,
+# each carrying "time_s" and, for hybrid, "decision") and aggregates across
+# every seed file found for each variant. Filename convention assumed:
+# hypatiax_defi_benchmark_v3c_seed{N}_results*.json and
+# hypatiax_defi_benchmark_pca_seed{N}_results*.json under RESULTS/"" or
+# RESULTS/"defi" (same search roots as the single-seed reader) --- this
+# convention is inferred from the existing "hypatiax_defi_benchmark_v3*
+# results*.json" glob and the paper's "v3c seed42" / "PCA seed42" row
+# labels; if the real filenames differ, update _TIMING_SEED_GLOBS below
+# rather than the aggregation logic.
+_TIMING_SEED_GLOBS = {
+    "v3c": "hypatiax_defi_benchmark_v3c_seed*_results*.json",
+    "PCA": "hypatiax_defi_benchmark_pca_seed*_results*.json",
+}
+
+
+def _load_timing_multiseed() -> dict[str, list[tuple[str, list[dict]]]]:
+    """{'v3c': [(seed_label, records), ...], 'PCA': [...]} for every seed
+    file found for each variant, across PATCHED/RESULTS and the legacy
+    'defi' subdir, mirroring load_best()'s search roots."""
+    out: dict[str, list[tuple[str, list[dict]]]] = {"v3c": [], "PCA": []}
+    for variant, glob_pat in _TIMING_SEED_GLOBS.items():
+        seen_seeds: set[str] = set()
+        for base in (PATCHED, RESULTS):
+            for subdir in ("", "defi"):
+                d = base / subdir if subdir else base
+                if not d.exists():
+                    continue
+                for f in _filtered_glob(d, glob_pat):
+                    m = re.search(r"seed(\d+)", f.name)
+                    seed = m.group(1) if m else f.stem
+                    if seed in seen_seeds:
+                        continue
+                    try:
+                        data = json.loads(f.read_text())
+                    except Exception:
+                        continue
+                    if isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]:
+                        seen_seeds.add(seed)
+                        out[variant].append((seed, data))
+    return out
+
+
+def _timing_stats_for_records(records: list[dict]) -> dict | None:
+    """(nn_times, llm_times, hybrid_all_times, hybrid_routed_times, n_routed)
+    for one seed file, same Shape-3 field access as gen_runtime()."""
+    nn_t, llm_t, hy_t, hy_routed = [], [], [], []
+    for rec in records:
+        cr = rec.get("results", {}) or {}
+        nn = (cr.get("neural_network", {}) or {}).get("time_s")
+        llm = (cr.get("pure_llm", {}) or {}).get("time_s")
+        hy = (cr.get("hybrid", {}) or {}).get("time_s")
+        if isinstance(nn, (int, float)): nn_t.append(nn)
+        if isinstance(llm, (int, float)): llm_t.append(llm)
+        if isinstance(hy, (int, float)):
+            hy_t.append(hy)
+            if (cr.get("hybrid", {}) or {}).get("decision") in ("llm",):
+                hy_routed.append(hy)
+    if not (nn_t and llm_t and hy_t):
+        return None
+
+    def _mm(xs):
+        xs = sorted(xs)
+        n = len(xs)
+        mean = sum(xs) / n
+        med = xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+        return mean, med
+
+    return {
+        "n": len(records), "nn": _mm(nn_t), "llm": _mm(llm_t),
+        "hy_all": _mm(hy_t), "hy_routed": _mm(hy_routed) if hy_routed else None,
+        "n_routed": len(hy_routed),
+    }
+
+
+def gen_timing_full() -> None:
+    """tab:timing_full — per-seed + pooled timing, both variants."""
+    by_variant = _load_timing_multiseed()
+    if not by_variant["v3c"] and not by_variant["PCA"]:
+        skip_table("timing_full.tex",
+                    "no seed-suffixed hypatiax_defi_benchmark_{v3c,pca}_seed*"
+                    "_results*.json files found (see _TIMING_SEED_GLOBS)")
+        return
+
+    def _r(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "---"
+
+    tex = header_comment("multi-seed v3c/PCA result files") + r"""
+\begin{table}[htbp]
+\centering
+\small
+\caption{Wall-clock time per task (seconds), mean / median, regenerated
+  directly from the raw per-seed result files (Shape-3 schema, same as
+  Table~\ref{tab:runtime}). Pooled rows (shaded via bold text here) sum
+  every seed found for that variant.}
+\label{tab:timing_full}
+\begin{tabular}{lrrrrrl}
+\toprule
+Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speedup, all (mean) \\
+    &     & mean/median  & mean/median    & mean/median      & count      &  \\
+\midrule
+"""
+    for variant in ("v3c", "PCA"):
+        seeds = sorted(by_variant[variant], key=lambda t: t[0])
+        pooled = []
+        for seed, records in seeds:
+            st = _timing_stats_for_records(records)
+            if not st:
+                continue
+            pooled.extend(records)
+            spd = st["hy_all"][0] / st["nn"][0] if st["nn"][0] else float("nan")
+            tex += (f"{variant} seed{seed} & {st['n']} & {_r(st['llm'][0])} / {_r(st['llm'][1])}"
+                    f" & {_r(st['nn'][0])} / {_r(st['nn'][1])} & {_r(st['hy_all'][0])} / {_r(st['hy_all'][1])}"
+                    f" & {st['n_routed']}/{st['n']} & {spd:.2f}$\\times$ "
+                    + ("slower" if spd >= 1 else "faster") + " \\\\\n")
+        if pooled:
+            pst = _timing_stats_for_records(pooled)
+            if pst:
+                spd = pst["hy_all"][0] / pst["nn"][0] if pst["nn"][0] else float("nan")
+                tex += r"\rowcolor{black!8}" + "\n"
+                tex += (f"\\textbf{{{variant} ALL SEEDS (pooled)}} & \\textbf{{{pst['n']}}} & "
+                        f"\\textbf{{{_r(pst['llm'][0])} / {_r(pst['llm'][1])}}} & "
+                        f"\\textbf{{{_r(pst['nn'][0])} / {_r(pst['nn'][1])}}} & "
+                        f"\\textbf{{{_r(pst['hy_all'][0])} / {_r(pst['hy_all'][1])}}} & "
+                        f"\\textbf{{{pst['n_routed']}/{pst['n']}}} & "
+                        f"\\textbf{{{spd:.2f}$\\times$ " + ("slower" if spd >= 1 else "faster") + "}} \\\\\n")
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("timing_full.tex", tex)
+
+
+def gen_timing_llm_routed_full() -> None:
+    """tab:timing_llm_routed_full — same sources as tab:timing_full,
+    restricted to hybrid.decision == 'llm' rows only."""
+    by_variant = _load_timing_multiseed()
+    if not by_variant["v3c"] and not by_variant["PCA"]:
+        skip_table("timing_llm_routed_full.tex",
+                    "no seed-suffixed hypatiax_defi_benchmark_{v3c,pca}_seed*"
+                    "_results*.json files found (see _TIMING_SEED_GLOBS)")
+        return
+
+    def _r(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "---"
+
+    tex = header_comment("multi-seed v3c/PCA result files") + r"""
+\begin{table}[htbp]
+\centering
+\small
+\caption{As Table~\ref{tab:timing_full}, restricted to tasks where the
+  hybrid system's own \texttt{decision} field routed to the LLM.}
+\label{tab:timing_llm_routed_full}
+\begin{tabular}{lrrl}
+\toprule
+Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
+\midrule
+"""
+    for variant in ("v3c", "PCA"):
+        seeds = sorted(by_variant[variant], key=lambda t: t[0])
+        pooled = []
+        for seed, records in seeds:
+            st = _timing_stats_for_records(records)
+            if not st or not st["hy_routed"]:
+                continue
+            pooled.extend(records)
+            spd_mean = st["hy_routed"][0] / st["nn"][0] if st["nn"][0] else float("nan")
+            spd_med = st["hy_routed"][1] / st["nn"][1] if st["nn"][1] else float("nan")
+            tex += (f"{variant} seed{seed} ({st['n_routed']}/{st['n']}) & "
+                    f"{_r(st['nn'][0])} / {_r(st['nn'][1])} & "
+                    f"{_r(st['hy_routed'][0])} / {_r(st['hy_routed'][1])} & "
+                    f"{spd_mean:.2f}$\\times$ / {spd_med:.2f}$\\times$ "
+                    + ("slower" if spd_mean >= 1 else "faster") + " \\\\\n")
+        if pooled:
+            pst = _timing_stats_for_records(pooled)
+            if pst and pst["hy_routed"]:
+                spd_mean = pst["hy_routed"][0] / pst["nn"][0] if pst["nn"][0] else float("nan")
+                spd_med = pst["hy_routed"][1] / pst["nn"][1] if pst["nn"][1] else float("nan")
+                tex += r"\rowcolor{black!8}" + "\n"
+                tex += (f"\\textbf{{{variant} ALL SEEDS ({pst['n_routed']}/{pst['n']})}} & "
+                        f"\\textbf{{{_r(pst['nn'][0])} / {_r(pst['nn'][1])}}} & "
+                        f"\\textbf{{{_r(pst['hy_routed'][0])} / {_r(pst['hy_routed'][1])}}} & "
+                        f"\\textbf{{{spd_mean:.2f}$\\times$ / {spd_med:.2f}$\\times$ "
+                        + ("slower" if spd_mean >= 1 else "faster") + "}} \\\\\n")
+
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("timing_llm_routed_full.tex", tex)
+
+
+# ── (A) Hybrid decision-attribution bug breakdown (tab:hybrid-bug-breakdown) ─
+#
+# Caption names the exact source: hypatiax_defi_benchmark_v3_results_seed42.json.
+# Reuses gen_defi_main()'s _DECISION_TO_BASELINE / fabricated-success logic:
+# a case is a "fabricated success" if hybrid.test_r2 > 0.99 (or
+# hybrid.success is True) AND the sub-method the decision actually names
+# does NOT independently score > 0.99 on the same case. Broken down by the
+# same Easy/Medium/Hard tiers gen_defi_tiers() already reads.
+def gen_hybrid_bug_breakdown() -> None:
+    data, src = load_best("", "hypatiax_defi_benchmark_v3_results_seed42.json",
+                          extra_subdirs=["defi"])
+    if not data:
+        # fall back to whichever single-seed v3 file is newest, same as
+        # gen_defi_main(), in case the seed42-suffixed name isn't used verbatim
+        data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+                              extra_subdirs=["defi"])
+    if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
+        skip_table("hybrid_bug_breakdown.tex",
+                    f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
+        return
+
+    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network"}
+    tiers = {"Easy": [0, 0, 0], "Medium": [0, 0, 0], "Hard": [0, 0, 0]}  # [n, reported, fabricated]
+    for rec in data:
+        tier = rec.get("difficulty") or rec.get("tier")
+        if tier not in tiers:
+            continue
+        cr = rec.get("results", {}) or {}
+        hybrid = cr.get("hybrid", {}) or {}
+        reported_r2 = hybrid.get("test_r2")
+        reported_pass = isinstance(reported_r2, (int, float)) and reported_r2 > 0.99
+        tiers[tier][0] += 1
+        if reported_pass:
+            tiers[tier][1] += 1
+            decision = hybrid.get("decision", "")
+            baseline_key = _DECISION_TO_BASELINE.get(decision)
+            baseline_r2 = (cr.get(baseline_key, {}) or {}).get("test_r2") if baseline_key else reported_r2
+            if not (isinstance(baseline_r2, (int, float)) and baseline_r2 > 0.99):
+                tiers[tier][2] += 1
+
+    if sum(t[0] for t in tiers.values()) == 0:
+        skip_table("hybrid_bug_breakdown.tex", f"no records carried a recognised 'difficulty'/'tier' field (src={src})")
+        return
+
+    tex = header_comment(src) + r"""
+\begin{table}[h]
+\centering
+\caption{Hybrid decision-attribution bug: fabricated near-perfect successes by
+  difficulty tier, computed directly from the seed-42 result file.}
+\label{tab:hybrid-bug-breakdown}
+\begin{tabular}{lrrrr}
+\toprule
+Difficulty & $n$ & Reported ($\Rsq>0.99$) & Fabricated & Corrected successes \\
+\midrule
+"""
+    tot = [0, 0, 0]
+    for label in ("Easy", "Medium", "Hard"):
+        n, rep, fab = tiers[label]
+        tot[0] += n; tot[1] += rep; tot[2] += fab
+        tex += f"{label} & {n} & {rep} & {fab} & {rep - fab} \\\\\n"
+    tex += r"\midrule" + "\n"
+    tex += f"Overall & {tot[0]} & {tot[1]} & {tot[2]} & {tot[1]-tot[2]} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("hybrid_bug_breakdown.tex", tex)
+
+
+# ── (B) Static/historical: tab:provenance, tab:feynman30-legacy ─────────────
+#
+# Both tables are explicitly disclosure/history records in the paper's own
+# text ("Every PCA-split run date identified in this project's history" /
+# "retained only as a historical record of that earlier, superseded run"),
+# not live measurements — same category as version_history.tex, which this
+# file already treats as "hardcoded (stable)". Transcribed from the
+# already-reviewed paper text, not invented; update by hand if a new
+# run/date needs disclosing, same workflow as version_history.tex.
+def gen_provenance() -> None:
+    ROWS = [
+        ("June 4, 2026", r"\textbf{Discarded, pre-fix.} \texttt{HybridDiscoverySystem} "
+         "scores 0/30, all 30 equations flagged as environment/import failures. Not used."),
+        ("June 29, 2026", r"\textbf{Not located.} Named elsewhere as a canonical batch "
+         "but not recovered from any file set examined; does not affect the figures below."),
+        ("June 30, 2026", r"\textbf{Unverified, not used.} Source of a pooled $n_{\text{pass}}{=}142$, "
+         r"$n_{\text{total}}{=}180$ figure paired with the withdrawn ``9/30'' claim; treated as unconfirmed."),
+        (r"\textbf{July 22 / July 23, 2026}", r"\textbf{Canonical.} Source of every figure reported in this section."),
+    ]
+    tex = ("% Auto-generated by generate_tables.py — provenance record is hardcoded (stable);\n"
+           "% see gen_provenance() docstring for why this is not JSON-derived.\n"
+           f"% Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n" + r"""
+\begin{table}[h]
+\centering
+\caption{Every PCA-split run date identified in this project's history, and
+  its status with respect to Section~\ref{sec:feynman30}. Only the
+  July~22/23 pair is the source of the figures reported below.}
+\label{tab:provenance}
+\small
+\begin{tabular}{lp{9.3cm}}
+\toprule
+Run date & Status \\
+\midrule
+""")
+    for date, status in ROWS:
+        tex += f"{date} & {status} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("provenance.tex", tex)
+
+
+def gen_feynman30_legacy() -> None:
+    """tab:feynman30-legacy — withdrawn 9/30 legacy run, retained as a
+    historical record only (paper: 'not a per-equation breakdown of the
+    12/30 or 13/30 headline figures'). Static, same rationale as
+    gen_provenance(). If a real legacy JSON is ever located, replace this
+    with a JSON-backed reader; until then, transcribing an unlocated,
+    already-withdrawn run would not improve on the paper's own text."""
+    skip_table("feynman30_legacy.tex",
+               "withdrawn/historical run — source file not located (paper text: "
+               "'fixc3_baseline.json ... contains no computed values ... an "
+               "unmodified setup-script template stub'). Not auto-generated; "
+               "see gen_feynman30_legacy() docstring.")
+
+
+# ── (A) Random/PCA split per-equation Feynman-30 tables ──────────────────────
+#
+# tab:randomsplit / tab:pcasplit. Paper attributes these to per-test JSON
+# records for the canonical July 22/23 runs (same family as exp2's
+# protocol_core_noiseless_*.json — "tests": [{"domain", "description", or
+# "name", "results": {method: {"r2":...}}}], reusing the exact record shape
+# _load_exp2_five_system_rows() already parses). Filters to the
+# HybridDiscoverySystem/HypatiaX method's r2 per equation. The gating
+# self-check (14/14 or 13/13 exact-reproduction before trusting rescored
+# nulls) described in the paper is a one-time editorial verification step,
+# not something this generator can re-derive without the original null-set
+# audit trail — so this reader reports every equation's r2 as found, and
+# leaves the exact-reproduction claim to the surrounding paper prose rather
+# than re-asserting it here.
+_HYPATIAX_METHOD_KEYS = ("hypatiax", "HypatiaX", "HybridDiscoverySystem v50_2 (tools)",
+                          "hybrid", "HybridDiscoverySystem_v50_2")
+
+
+def _load_split_equations(glob_pat: str) -> tuple[list[tuple], Path | None]:
+    rows_by_name: dict[str, tuple] = {}
+    src = None
+    for base in (PATCHED, RESULTS):
+        for subdir in ("comparison_results/feynman-tests/exp2_multi", "exp2_multi", ""):
+            d = base / subdir if subdir else base
+            if not d.exists():
+                continue
+            for f in sorted(_filtered_glob(d, glob_pat)):
+                try:
+                    data = json.loads(f.read_text())
+                except Exception:
+                    continue
+                tests = data.get("tests") if isinstance(data, dict) else None
+                if not isinstance(tests, list):
+                    continue
+                src = src or f
+                for rec in tests:
+                    name = rec.get("description") or rec.get("name") or "?"
+                    domain = rec.get("domain", "?")
+                    res = rec.get("results", {}) or {}
+                    r2 = None
+                    for k in _HYPATIAX_METHOD_KEYS:
+                        if k in res and isinstance(res[k], dict):
+                            r2 = res[k].get("r2")
+                            break
+                    if r2 is not None:
+                        rows_by_name[name] = (domain, name, r2)
+    return sorted(rows_by_name.values(), key=lambda r: (r[0], r[1])), src
+
+
+def _status_for_r2(r2) -> tuple[str, str]:
+    if not isinstance(r2, (int, float)) or r2 != r2:
+        return "---", "unmeasured"
+    if r2 >= 0.999999:
+        return f"\\textbf{{{r2:.4f}}}", "pass"
+    if 0.999 <= r2 < 0.999999:
+        return f"{r2:.6f}", "near-miss"
+    if r2 <= -100 or r2 in (float("-inf"),):
+        return r"$-\infty$" if r2 == float("-inf") else f"{r2:.3g}", "catastrophic"
+    return f"{r2:.4f}", "fail (finite)"
+
+
+def gen_randomsplit() -> None:
+    rows, src = _load_split_equations("*random*80_20*.json")
+    if not rows:
+        rows, src = _load_split_equations("protocol_core_random_*.json")
+    if not rows:
+        skip_table("randomsplit.tex",
+                    f"no parsable random-80/20-split per-test JSON found (src={src})")
+        return
+    n_pass = sum(1 for r in rows if r[2] is not None and isinstance(r[2], (int, float)) and r[2] >= 0.999999)
+    tex = header_comment(src) + r"""
+\begin{longtable}{p{2.3cm}p{6.3cm}p{1.4cm}p{2.5cm}}
+\caption{Random 80/20 split, all equations found in the source file.
+  \textbf{Bold}: pass ($\Rsq \geq 0.999999$). Computed directly from
+  per-test JSON records; the paper's exact-reproduction gating check
+  against a prior null-set audit is an editorial step not re-derived here.}
+\label{tab:randomsplit}\\
+\toprule
+Domain & Equation & $\Rsq$ & Status \\
+\midrule
+\endfirsthead
+\toprule
+Domain & Equation & $\Rsq$ & Status \\
+\midrule
+\endhead
+"""
+    for domain, name, r2 in rows:
+        r2_s, status = _status_for_r2(r2)
+        tex += f"{domain} & {name} & {r2_s} & {status} \\\\\n"
+    tex += r"\midrule" + "\n"
+    tex += f"\\multicolumn{{4}}{{l}}{{Pass: {n_pass}/{len(rows)} ({n_pass/len(rows)*100:.1f}\\%).}} \\\\\n"
+    tex += r"""\bottomrule
+\end{longtable}
+"""
+    write_table("randomsplit.tex", tex)
+
+
+def gen_pcasplit() -> None:
+    rows, src = _load_split_equations("*pca*directed*.json")
+    if not rows:
+        rows, src = _load_split_equations("protocol_core_pca_*.json")
+    if not rows:
+        skip_table("pcasplit.tex",
+                    f"no parsable PCA-directed-split per-test JSON found (src={src})")
+        return
+    n_pass = sum(1 for r in rows if r[2] is not None and isinstance(r[2], (int, float)) and r[2] >= 0.999999)
+    tex = header_comment(src) + r"""
+\begin{longtable}{p{4.8cm}p{1.6cm}p{2.9cm}}
+\caption{PCA-directed 40/60 split, all equations found in the source file.}
+\label{tab:pcasplit}\\
+\toprule
+Equation & $\Rsq$ & Status \\
+\midrule
+\endfirsthead
+\toprule
+Equation & $\Rsq$ & Status \\
+\midrule
+\endhead
+"""
+    for domain, name, r2 in rows:
+        r2_s, status = _status_for_r2(r2)
+        tex += f"{name} & {r2_s} & {status} \\\\\n"
+    tex += r"\midrule" + "\n"
+    tex += f"\\multicolumn{{3}}{{l}}{{Pass: {n_pass}/{len(rows)} ({n_pass/len(rows)*100:.1f}\\%).}} \\\\\n"
+    tex += r"""\bottomrule
+\end{longtable}
+"""
+    write_table("pcasplit.tex", tex)
+
+
+# ── (B) Static six-method suite description (tab:methods, tab:sweeps) ───────
+def gen_suppb_methods() -> None:
+    ROWS = [
+        (r"\PureLLM", "Core", "Zero-shot LLM formula inference. No numerical fitting."),
+        (r"\EHD\,(M3)", "Core", "Ensemble-first system combining LLM-guided generation, NN ensemble scoring, and DeepFit optimisation."),
+        (r"\HSL\,(M4)", "Core", "LLM-first + NN residual correction."),
+        (r"\INN", "Core", r"Pure neural baseline ($1\!\to\!128\!\to\!64\!\to\!32\!\to\!1$, 3 seeds)."),
+        (r"\SEL", "Tools", "LLM-guided symbolic search with CAS verification."),
+        (r"\HDS", "Tools", r"HybridDiscoverySystem~v50\_2."),
+    ]
+    tex = ("% Auto-generated — static method roster (stable, not JSON-derived)\n"
+           f"% Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n" + r"""
+\begin{table}[ht]
+\caption{Methods under evaluation: six-method noiseless benchmark.}
+\label{tab:methods}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{L{2.1cm} L{1.3cm} L{8.0cm}}
+\toprule
+\textbf{Method} & \textbf{Type} & \textbf{Description} \\
+\midrule
+""")
+    for name, typ, desc in ROWS:
+        tex += f"{name} & {typ} & {desc} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("methods.tex", tex)
+
+
+def gen_suppb_sweeps() -> None:
+    tex = ("% Auto-generated — static sweep design (stable, not JSON-derived)\n"
+           f"% Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n" + r"""
+\begin{table}[ht]
+\centering
+\caption{Sweep design.}
+\label{tab:sweeps}
+\begin{tabular}{L{2.5cm} L{4.3cm} L{2.5cm} C{2.0cm}}
+\toprule
+\textbf{Sweep} & \textbf{Axis varied} & \textbf{Fixed} & \textbf{Conditions}\\
+\midrule
+Noise       & $\sigma \in \{0, 0.05, 0.1, 0.5, 1\}\%$ & $n=200$       & 5 levels \\
+Sample size & $n \in \{50,100,200,500,750,1000\}$  & $\sigma=5\%$ & 6 sizes  \\
+\bottomrule
+\end{tabular}
+\end{table}
+""")
+    write_table("sweeps.tex", tex)
+
+
+# ── (A) tab:hardcoded — is_hardcoded-flagged Pure LLM equations ─────────────
+def _load_noiseless_tests() -> tuple[list[dict], Path | None]:
+    noiseless_dir = RESULTS / "comparison_results" / "noise-noiseless" / "noiseless" / "defi"
+    candidates = sorted(_filtered_glob(noiseless_dir, "protocol_core_noiseless_*.json"),
+                        key=os.path.getmtime, reverse=True) if noiseless_dir.exists() else []
+    for c in candidates:
+        try:
+            data = json.loads(c.read_text())
+        except Exception:
+            continue
+        tests = data.get("tests", [])
+        if tests:
+            return tests, c
+    return [], None
+
+
+def gen_suppb_hardcoded() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("hardcoded.tex", "no protocol_core_noiseless_*.json tests found")
+        return
+    rows = []
+    for t in tests:
+        res = (t.get("results", {}) or {}).get("pure_llm") or (t.get("results", {}) or {}).get("PureLLM")
+        if isinstance(res, dict) and res.get("is_hardcoded"):
+            rows.append((t.get("description") or t.get("name", "?"), t.get("domain", "?"), res.get("r2")))
+    if not rows:
+        skip_table("hardcoded.tex", f"no pure_llm records carried is_hardcoded=True (src={src})")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Equations flagged \texttt{is\_hardcoded=True} for \PureLLM{}.}
+\label{tab:hardcoded}
+\small
+\begin{tabular}{L{6.0cm} L{3.2cm} C{1.5cm}}
+\toprule
+\textbf{Equation} & \textbf{Domain} & \textbf{$\Rsq$ (NL)} \\
+\midrule
+"""
+    for name, domain, r2 in rows:
+        r2_s = f"{r2:.7f}" if isinstance(r2, (int, float)) else "---"
+        tex += f"{name} & {domain} & {r2_s} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("hardcoded.tex", tex)
+
+
+# ── (A) tab:sota — this work's own rows from noiseless data + lit rows ──────
+def gen_suppb_sota() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("sota.tex", "no protocol_core_noiseless_*.json tests found for this work's own pass rates")
+        return
+    method_pass: dict[str, list[bool]] = {}
+    for t in tests:
+        for mname, res in (t.get("results", {}) or {}).items():
+            if not isinstance(res, dict):
+                continue
+            r2 = res.get("r2")
+            method_pass.setdefault(mname, []).append(isinstance(r2, (int, float)) and r2 >= 0.999999)
+
+    def _rate(keys):
+        for k in keys:
+            if k in method_pass:
+                vals = method_pass[k]
+                return sum(vals), len(vals)
+        return None
+
+    ehd = _rate(("EnhancedHybridSystemDeFi", "M3", "ehd"))
+    hds = _rate(("HybridDiscoverySystem v50_2 (tools)", "HDS", "hds"))
+    if ehd is None and hds is None:
+        skip_table("sota.tex", f"neither EHD nor HDS pass-rate found in noiseless tests (src={src})")
+        return
+
+    _LIT_ROWS = [
+        ("AI~Feynman~2.0", "Symbolic", 79.3, r"\citet{udrescu2020aifeynman2} (100-eq, SRBench)"),
+        ("NeSymReS", "Neural", 59.4, r"\citet{biggio2021neural} (100-eq, SRBench)"),
+        ("TPSR", "Transformer", 56.0, r"\citet{shojaee2023transformer} (100-eq, SRBench)"),
+        ("DSR", "Deep SR", 32.0, r"\citet{petersen2021deep} (100-eq, SRBench)"),
+    ]
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\caption{Performance of this work's methods on the custom noiseless
+  benchmark, shown alongside published SR systems' figures on the
+  unrelated, standard Feynman/SRBench suite for general context only ---
+  not a head-to-head comparison.}
+\label{tab:sota}
+\centering
+\small
+\begin{tabular}{L{4.2cm} L{2.0cm} C{1.5cm} L{3.5cm}}
+\toprule
+\textbf{System} & \textbf{Type} & \textbf{Pass Rate} & \textbf{Note} \\
+\midrule
+"""
+    if ehd:
+        tex += f"\\EHD{{}} (this work) & Hybrid & {ehd[0]}/{ehd[1]} ({ehd[0]/ehd[1]*100:.1f}\\%) & (this run) \\\\\n"
+    if hds:
+        tex += f"\\HDS{{}} (this work) & Hybrid & {hds[0]}/{hds[1]} ({hds[0]/hds[1]*100:.1f}\\%) & (this run) \\\\\n"
+    tex += r"\midrule" + "\n"
+    for name, typ, rate, note in _LIT_ROWS:
+        tex += f"{name} & {typ} & {rate:.1f}\\% & {note} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("sota.tex", tex)
+
+
+# ── (A) tab:nrmse — RMSE / NRMSE per method from noiseless tests ────────────
+def gen_suppb_nrmse() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("nrmse.tex", "no protocol_core_noiseless_*.json tests found")
+        return
+    rmse_by_method: dict[str, list[float]] = {}
+    r2_by_method: dict[str, list[float]] = {}
+    for t in tests:
+        for mname, res in (t.get("results", {}) or {}).items():
+            if not isinstance(res, dict):
+                continue
+            rmse = res.get("rmse")
+            r2 = res.get("r2")
+            if isinstance(rmse, (int, float)) and rmse == rmse and abs(rmse) != float("inf"):
+                rmse_by_method.setdefault(mname, []).append(rmse)
+            if isinstance(r2, (int, float)) and r2 == r2:
+                r2_by_method.setdefault(mname, []).append(r2)
+    if not rmse_by_method:
+        skip_table("nrmse.tex", f"no finite 'rmse' fields found in noiseless tests (src={src})")
+        return
+    import statistics as _st
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Raw RMSE vs.\ normalised RMSE ($\nrmse=\sqrt{1-\Rsq}$). Rows/cells
+  with non-finite raw RMSE (\texttt{inf}/\texttt{nan}/sentinel overflow) in
+  the source data are excluded from the Mean RMSE column, consistent with
+  \Cref{tab:nrmse}'s original per-method footnote convention.}
+\label{tab:nrmse}
+\small
+\begin{tabular}{L{3.0cm} C{2.6cm} C{2.0cm} C{2.0cm}}
+\toprule
+\textbf{Method} & \textbf{Mean RMSE} & \textbf{Mean NRMSE} & \textbf{Max NRMSE} \\
+\midrule
+"""
+    for mname in sorted(rmse_by_method):
+        rvals = rmse_by_method[mname]
+        mean_rmse = _st.mean(rvals) if rvals else None
+        nrmse_vals = [(1 - v) ** 0.5 if v <= 1 else float("nan")
+                      for v in r2_by_method.get(mname, []) if isinstance(v, (int, float))]
+        nrmse_vals = [v for v in nrmse_vals if v == v]
+        mean_n = _st.mean(nrmse_vals) if nrmse_vals else None
+        max_n = max(nrmse_vals) if nrmse_vals else None
+        tex += (f"{mname[:24]} & {mean_rmse:.4f} & " if mean_rmse is not None else f"{mname[:24]} & --- & ")
+        tex += (f"{mean_n:.4f} & {max_n:.4f} \\\\\n" if mean_n is not None else "--- & --- \\\\\n")
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("nrmse.tex", tex)
+
+
+# ── (A) tab:wilcoxon — pairwise Wilcoxon signed-rank on noiseless R^2 ────────
+def _wilcoxon_signed_rank(a: list[float], b: list[float]) -> dict | None:
+    """Two-sided Wilcoxon signed-rank test, normal approximation with tie
+    correction, stdlib-only (matches this file's existing _mann_whitney_
+    one_tailed() convention rather than adding a scipy dependency)."""
+    diffs = [x - y for x, y in zip(a, b) if (x - y) != 0]
+    n = len(diffs)
+    if n < 4:
+        return None
+    abs_diffs = sorted(range(len(diffs)), key=lambda i: abs(diffs[i]))
+    ranks = [0.0] * len(diffs)
+    i = 0
+    sorted_abs = sorted(abs(d) for d in diffs)
+    while i < n:
+        j = i
+        while j < n and sorted_abs[j] == sorted_abs[i]:
+            j += 1
+        avg_rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            ranks[abs_diffs[k]] = avg_rank
+        i = j
+    w_plus = sum(r for r, d in zip(ranks, diffs) if d > 0)
+    w_minus = sum(r for r, d in zip(ranks, diffs) if d < 0)
+    stat = min(w_plus, w_minus)
+    mu = n * (n + 1) / 4.0
+    sigma = (n * (n + 1) * (2 * n + 1) / 24.0) ** 0.5
+    if sigma == 0:
+        return None
+    z = (stat - mu) / sigma
+    p = 2 * (1 - _norm_cdf(abs(z)))
+    return {"stat": stat, "n": n, "p": p}
+
+
+def gen_suppb_wilcoxon() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("wilcoxon.tex", "no protocol_core_noiseless_*.json tests found")
+        return
+    per_method: dict[str, list[float]] = {}
+    for t in tests:
+        for mname, res in (t.get("results", {}) or {}).items():
+            if not isinstance(res, dict):
+                continue
+            r2 = res.get("r2")
+            per_method.setdefault(mname, []).append(r2 if isinstance(r2, (int, float)) and r2 == r2 else 0.0)
+    methods = sorted(per_method, key=lambda m: -len(per_method[m]))[:6]
+    if len(methods) < 2:
+        skip_table("wilcoxon.tex", f"fewer than 2 methods with r2 data (src={src})")
+        return
+    import itertools
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Wilcoxon signed-rank tests on noiseless $\Rsq$, all pairwise
+  comparisons (two-sided, normal approximation with tie correction;
+  invalid/\texttt{nan} $\Rsq$ treated as 0).}
+\label{tab:wilcoxon}
+\small
+\begin{tabular}{llrrl}
+\toprule
+\textbf{Method A} & \textbf{Method B} & \textbf{Statistic} & \textbf{$p$} & \textbf{Sig.} \\
+\midrule
+"""
+    alpha_star = 0.05 / 15
+    for a, b in itertools.combinations(methods, 2):
+        res = _wilcoxon_signed_rank(per_method[a], per_method[b])
+        if not res:
+            tex += f"{a[:16]} & {b[:16]} & --- & --- & --- \\\\\n"
+            continue
+        sig = "**" if res["p"] < alpha_star else ("*" if res["p"] < 0.05 else "n.s.")
+        tex += f"{a[:16]} & {b[:16]} & {res['stat']:.1f} & {res['p']:.4f} & {sig} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("wilcoxon.tex", tex)
+
+
+# ── (A) tab:noise_sensitivity — success rate vs. noise level ────────────────
+def gen_suppb_noise_sensitivity(noise_data: dict | None) -> None:
+    if not noise_data:
+        write_table("noise_sensitivity.tex", "% suppB noise_sweep data not available\n")
+        return
+    noise_levels = sorted(noise_data.get("noise_levels", []))
+    per_noise = noise_data.get("per_noise", {})
+    tex = header_comment("noise_sweep_*.json") + r"""
+\begin{table}[H]
+\centering
+\caption{Success rate vs.\ noise level (recovery rate, $R^2 \ge$ threshold).}
+\label{tab:noise_sensitivity}
+\small
+\begin{tabular}{lrr}
+\toprule
+$\sigma$ & M3 Success Rate & M4 Success Rate \\
+\midrule
+"""
+    for sigma in noise_levels:
+        pnd = per_noise.get(_sigma_str(sigma)) or {}
+        ms = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
+        m3 = _pick_method(ms, _M3_FRAG)
+        m4 = _pick_method(ms, _M4_FRAG)
+
+        def _rr(d):
+            v = d.get("recovery_rate")
+            return f"{v*100:.1f}\\%" if isinstance(v, float) else "---"
+
+        tex += f"{_label(sigma)} & {_rr(m3)} & {_rr(m4)} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("noise_sensitivity.tex", tex)
+
+
+# ── (A) tab:interpolation_stats / tab:domain_success_detailed ───────────────
+def gen_suppb_interpolation_stats() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("interpolation_stats.tex", "no protocol_core_noiseless_*.json tests found")
+        return
+    per_method: dict[str, list[float]] = {}
+    for t in tests:
+        for mname, res in (t.get("results", {}) or {}).items():
+            r2 = res.get("r2") if isinstance(res, dict) else None
+            if isinstance(r2, (int, float)) and r2 == r2:
+                per_method.setdefault(mname, []).append(r2)
+    if not per_method:
+        skip_table("interpolation_stats.tex", f"no finite r2 fields found (src={src})")
+        return
+    import statistics as _st
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Interpolation performance statistics by system (noiseless protocol).}
+\label{tab:interpolation_stats}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{System} & \textbf{n} & \textbf{Mean $R^2$} & \textbf{Median $R^2$} & \textbf{Std} \\
+\midrule
+"""
+    for mname in sorted(per_method):
+        vals = per_method[mname]
+        std = _st.stdev(vals) if len(vals) >= 2 else 0.0
+        tex += f"{mname[:24]} & {len(vals)} & {_st.mean(vals):.4f} & {_st.median(vals):.4f} & {std:.4f} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("interpolation_stats.tex", tex)
+
+
+def gen_suppb_domain_success_detailed() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("domain_success_detailed.tex", "no protocol_core_noiseless_*.json tests found")
+        return
+    by_domain: dict[str, dict[str, list[bool]]] = {}
+    for t in tests:
+        domain = t.get("domain", "?")
+        for mname, res in (t.get("results", {}) or {}).items():
+            r2 = res.get("r2") if isinstance(res, dict) else None
+            passed = isinstance(r2, (int, float)) and r2 >= 0.999999
+            by_domain.setdefault(domain, {}).setdefault(mname, []).append(passed)
+    if not by_domain:
+        skip_table("domain_success_detailed.tex", f"no domain-tagged tests found (src={src})")
+        return
+    methods = sorted({m for d in by_domain.values() for m in d})[:4]
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Success rate by domain and method (noiseless protocol, $\Rsq \geq 0.999999$).}
+\label{tab:domain_success_detailed}
+\small
+\begin{tabular}{l""" + "r" * len(methods) + r"""}
+\toprule
+\textbf{Domain} & """ + " & ".join(f"\\textbf{{{m[:14]}}}" for m in methods) + r""" \\
+\midrule
+"""
+    for domain in sorted(by_domain):
+        cells = []
+        for m in methods:
+            vals = by_domain[domain].get(m, [])
+            cells.append(f"{sum(vals)}/{len(vals)}" if vals else "---")
+        tex += f"{domain} & " + " & ".join(cells) + " \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("domain_success_detailed.tex", tex)
+
+
+# ── (A) tab:llm_detailed / tab:defi_detailed — per-case DeFi results ────────
+def gen_suppb_llm_detailed() -> None:
+    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json", extra_subdirs=["defi"])
+    if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
+        skip_table("llm_detailed.tex", f"no parsable DeFi benchmark results found (src={src})")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\small
+\caption{Pure LLM performance by test case.}
+\label{tab:llm_detailed}
+\begin{tabular}{L{6cm}rr}
+\toprule
+\textbf{Case} & \textbf{$R^2$} & \textbf{Time (s)} \\
+\midrule
+"""
+    for rec in data:
+        name = rec.get("name") or rec.get("case") or rec.get("description", "?")
+        res = (rec.get("results", {}) or {}).get("pure_llm", {}) or {}
+        r2 = res.get("test_r2")
+        t = res.get("time_s")
+        r2_s = f"{r2:.4f}" if isinstance(r2, (int, float)) else "---"
+        t_s = f"{t:.2f}" if isinstance(t, (int, float)) else "---"
+        tex += f"{name} & {r2_s} & {t_s} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("llm_detailed.tex", tex)
+
+
+def gen_suppb_defi_detailed() -> None:
+    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json", extra_subdirs=["defi"])
+    if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
+        skip_table("defi_detailed.tex", f"no parsable DeFi benchmark results found (src={src})")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\small
+\caption{DeFi-optimized HypatiaX performance by test case.}
+\label{tab:defi_detailed}
+\begin{tabular}{L{6cm}rrl}
+\toprule
+\textbf{Case} & \textbf{$R^2$} & \textbf{Time (s)} & \textbf{Decision} \\
+\midrule
+"""
+    for rec in data:
+        name = rec.get("name") or rec.get("case") or rec.get("description", "?")
+        res = (rec.get("results", {}) or {}).get("hybrid", {}) or {}
+        r2 = res.get("test_r2")
+        t = res.get("time_s")
+        dec = res.get("decision", "---")
+        r2_s = f"{r2:.4f}" if isinstance(r2, (int, float)) else "---"
+        t_s = f"{t:.2f}" if isinstance(t, (int, float)) else "---"
+        tex += f"{name} & {r2_s} & {t_s} & {dec} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("defi_detailed.tex", tex)
+
+
+# ── (A, best-effort) tab:arch — M3 vs M4 routing/decision distribution ──────
+#
+# UNCERTAIN SCHEMA: no confirmed source file for a routing/architecture
+# statistics JSON was found anywhere in this codebase's documented JSON
+# location map. Best-effort reader over the same noiseless per-test records
+# other suppB generators use, tallying each method's 'decision'/'strategy'
+# field if present. Always skip_table()s rather than guess a number if that
+# field isn't there — see the module-level note at the top of this block.
+def gen_suppb_arch() -> None:
+    tests, src = _load_noiseless_tests()
+    if not tests:
+        skip_table("arch.tex", "no protocol_core_noiseless_*.json tests found")
+        return
+    counts: dict[str, dict[str, int]] = {}
+    for t in tests:
+        for mname, res in (t.get("results", {}) or {}).items():
+            if not isinstance(res, dict):
+                continue
+            dec = res.get("decision") or res.get("strategy")
+            if dec:
+                counts.setdefault(mname, {}).setdefault(dec, 0)
+                counts[mname][dec] += 1
+    if not counts:
+        skip_table("arch.tex", f"no 'decision'/'strategy' fields found in noiseless tests (src={src})")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Internal routing statistics --- decision distribution per method.}
+\label{tab:arch}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Method} & \textbf{Decision} & \textbf{Count} \\
+\midrule
+"""
+    for mname in sorted(counts):
+        for dec, n in sorted(counts[mname].items(), key=lambda kv: -kv[1]):
+            tex += f"{mname[:20]} & {dec} & {n} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("arch.tex", tex)
+
+
+# ── (C — mechanical, always safe) tab:supplementary_files, tab:figlist ──────
+#
+# These two are manifests of what's actually on disk in this run's output
+# directories, not experiment measurements — generating them by listing the
+# real directory contents can never fabricate anything (worst case: an
+# empty list if nothing has been generated yet).
+def gen_suppb_supplementary_files() -> None:
+    tex = header_comment(TABLES_DIR) + r"""
+\begin{table}[ht]
+\centering
+\caption{Supplementary data files (auto-listed from the tables output directory).}
+\label{tab:supplementary_files}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Size (bytes)} \\
+\midrule
+"""
+    files = sorted(TABLES_DIR.glob("*.tex")) if TABLES_DIR.exists() else []
+    for f in files:
+        try:
+            size = f.stat().st_size
+        except Exception:
+            size = "---"
+        tex += f"\\texttt{{{f.name.replace('_', '\\_')}}} & {size} \\\\\n"
+    if not files:
+        tex += r"\multicolumn{2}{c}{\textit{No tables generated yet this run.}} \\" + "\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("supplementary_files.tex", tex)
+
+
+def gen_suppb_figlist() -> None:
+    figures_dir = RESULTS.parent / "figures" if RESULTS.exists() else None
+    files = sorted(figures_dir.glob("*")) if figures_dir and figures_dir.exists() else []
+    tex = header_comment(figures_dir) + r"""
+\begin{table}[ht]
+\centering
+\caption{Complete figure inventory; all files in \texttt{figures/} (auto-listed).}
+\label{tab:figlist}
+\small
+\begin{tabular}{l}
+\toprule
+\textbf{File} \\
+\midrule
+"""
+    for f in files:
+        tex += f"\\texttt{{{f.name.replace('_', '\\_')}}} \\\\\n"
+    if not files:
+        tex += r"\multicolumn{1}{c}{\textit{figures/ directory not found or empty.}} \\" + "\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("figlist.tex", tex)
+
+
+# ── (B) Static config/definitional/metadata tables ──────────────────────────
+#
+# tab:software_env, tab:runtime_reproducibility (supp_routing's own copy of
+# the same environment table), tab:hyperparameters, tab:hyperparameters_
+# complete, tab:formulas_detailed, tab:jmlr, tab:equation_prevalence,
+# tab:conceptual_complexity, tab:changes. None of these have any named JSON
+# source anywhere in the paper text (they describe environment/config/
+# ground-truth-definitions/checklists/changelogs, not measurements), so —
+# per the user's "generate from JSON where possible" instruction — each
+# FIRST tries a conventional config path (config/<name>.json under the repo
+# root, mirroring how _find_repo_root()/experiments.yml are referenced
+# elsewhere in this file) and only falls back to the paper's own
+# already-reviewed static text if no such file exists. This mirrors
+# gen_version_history()'s existing "hardcoded (stable)" precedent rather
+# than inventing new config-file conventions this codebase has never used.
+def _load_config_json(name: str) -> dict | None:
+    for cand in (_ROOT / "config" / f"{name}.json", _ROOT / "config" / f"{name}.yml"):
+        if cand.exists() and cand.suffix == ".json":
+            try:
+                return json.loads(cand.read_text())
+            except Exception:
+                pass
+    return None
+
+
+def gen_suppb_software_env() -> None:
+    cfg = _load_config_json("software_env")
+    ROWS_FALLBACK = [
+        ("Python", "3.11.x"), ("OS", "Linux (verified 18 March 2026 via hardware_info.py)"),
+        ("Key packages", "pip show — see repo requirements.txt"),
+    ]
+    rows = [(k, str(v)) for k, v in cfg.items()] if isinstance(cfg, dict) else ROWS_FALLBACK
+    src_note = "config/software_env.json" if cfg else "static (paper text; no config/software_env.json found)"
+    tex = header_comment(src_note) + r"""
+\begin{table}[ht]
+\centering
+\caption{Software and hardware environment for benchmark runs.}
+\label{tab:software_env}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Component} & \textbf{Value} \\
+\midrule
+"""
+    for k, v in rows:
+        tex += f"{k} & {v} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("software_env.tex", tex)
+
+
+def gen_routing_runtime_reproducibility() -> None:
+    """tab:runtime_reproducibility — supp_routing_improvements's own copy of
+    the software-environment table; same source resolution as
+    gen_suppb_software_env(), separate output file since it lives in a
+    different document."""
+    cfg = _load_config_json("software_env")
+    ROWS_FALLBACK = [
+        ("Python", "3.11.x"), ("OS", "Linux (verified 18 March 2026)"),
+    ]
+    rows = [(k, str(v)) for k, v in cfg.items()] if isinstance(cfg, dict) else ROWS_FALLBACK
+    src_note = "config/software_env.json" if cfg else "static (paper text; no config/software_env.json found)"
+    tex = header_comment(src_note) + r"""
+\begin{table}[ht]
+\centering
+\caption{Software environment.}
+\label{tab:runtime_reproducibility}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Component} & \textbf{Value} \\
+\midrule
+"""
+    for k, v in rows:
+        tex += f"{k} & {v} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("runtime_reproducibility.tex", tex)
+
+
+def gen_suppb_hyperparameters() -> None:
+    cfg = _load_config_json("hyperparameters")
+    ROWS_FALLBACK = [
+        ("NN seeds", "5"), ("Random seed", "42"), ("Method timeout", "900 s"),
+        ("PySR timeout", "1100 s"), ("Threshold (noisy)", "0.995"),
+        ("Threshold (noiseless)", "0.999999"),
+    ]
+    rows = [(k, str(v)) for k, v in cfg.items()] if isinstance(cfg, dict) else ROWS_FALLBACK
+    src_note = "config/hyperparameters.json" if cfg else "static (paper text; no config/hyperparameters.json found)"
+    tex = header_comment(src_note) + r"""
+\begin{table}[ht]
+\centering
+\caption{PySR configuration for symbolic regression.}
+\label{tab:hyperparameters}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+"""
+    for k, v in rows:
+        tex += f"{k} & {v} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("hyperparameters.tex", tex)
+
+
+def gen_suppb_hyperparameters_complete() -> None:
+    cfg = _load_config_json("hyperparameters_complete")
+    if not isinstance(cfg, dict):
+        skip_table("hyperparameters_complete.tex",
+                   "no config/hyperparameters_complete.json found; the "
+                   "single-block PySR config (tab:hyperparameters) is "
+                   "available as a static fallback but the full per-method "
+                   "spec is not, and is not transcribed here to avoid "
+                   "guessing values for methods this file has no config for")
+        return
+    tex = header_comment(_ROOT / "config" / "hyperparameters_complete.json") + r"""
+\begin{table}[ht]
+\centering
+\caption{Complete hyperparameter specifications for all methods.}
+\label{tab:hyperparameters_complete}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Method} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+"""
+    for method, params in cfg.items():
+        if isinstance(params, dict):
+            for k, v in params.items():
+                tex += f"{method} & {k} & {v} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("hyperparameters_complete.tex", tex)
+
+
+def gen_suppb_formulas_detailed() -> None:
+    cfg = _load_config_json("ground_truth_formulas")
+    if not isinstance(cfg, dict):
+        skip_table("formulas_detailed.tex",
+                   "no config/ground_truth_formulas.json (equation-definition "
+                   "catalog) found; ground-truth constants are not "
+                   "transcribed here without a source, to avoid silently "
+                   "diverging from whatever constants the benchmark actually "
+                   "used")
+        return
+    tex = header_comment(_ROOT / "config" / "ground_truth_formulas.json") + r"""
+\begin{table}[ht]
+\centering
+\caption{Ground truth formulas with exact constants.}
+\label{tab:formulas_detailed}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Equation} & \textbf{Formula} & \textbf{Constants} \\
+\midrule
+"""
+    for name, entry in cfg.items():
+        if isinstance(entry, dict):
+            tex += f"{name} & {entry.get('formula','---')} & {entry.get('constants','---')} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("formulas_detailed.tex", tex)
+
+
+def gen_suppb_jmlr() -> None:
+    cfg = _load_config_json("jmlr_readiness")
+    if not isinstance(cfg, dict):
+        skip_table("jmlr.tex",
+                   "no config/jmlr_readiness.json found; this is an editorial "
+                   "readiness checklist rather than a measurement, so it is "
+                   "left for manual authorship rather than guessed")
+        return
+    tex = header_comment(_ROOT / "config" / "jmlr_readiness.json") + r"""
+\begin{table}[ht]
+\centering
+\caption{JMLR readiness assessment.}
+\label{tab:jmlr}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Criterion} & \textbf{Status} \\
+\midrule
+"""
+    for k, v in cfg.items():
+        tex += f"{k} & {v} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("jmlr.tex", tex)
+
+
+def gen_suppb_additional_stats() -> None:
+    skip_table("additional_stats.tex",
+               "tab:additional_stats has no named source anywhere in the "
+               "paper text and no established JSON convention in this file "
+               "to guess from; left unimplemented rather than fabricated")
+
+
+def gen_suppb_validation_stats() -> None:
+    cfg = load_best("", "validation_log*.json", extra_subdirs=["validation"])
+    data, src = cfg
+    if not isinstance(data, dict):
+        skip_table("validation_stats.tex",
+                   "no validation_log*.json found under RESULTS/PATCHED "
+                   "('' or 'validation' subdir) — no other source is named "
+                   "anywhere in the paper text for this table")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Validation layer error detection statistics.}
+\label{tab:validation_stats}
+\small
+\begin{tabular}{lr}
+\toprule
+\textbf{Check} & \textbf{Count} \\
+\midrule
+"""
+    for k, v in data.items():
+        if isinstance(v, (int, float)):
+            tex += f"{k} & {v} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("validation_stats.tex", tex)
+
+
+# ── supp_routing_improvements: fix5_cases, changes (static/historical) ──────
+def gen_routing_fix5_cases() -> None:
+    data, src = load_best("", "fix5_cases*.json", extra_subdirs=["routing", "fixes"])
+    if not isinstance(data, (list, dict)):
+        skip_table("fix5_cases.tex",
+                   "no fix5_cases*.json found; case-level outcomes for a "
+                   "specific named code fix have no other documented "
+                   "source, so this is left for manual authorship")
+        return
+    rows = data if isinstance(data, list) else data.get("cases", [])
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Case-level outcomes resolved by Fix~5 and routing guard.}
+\label{tab:fix5_cases}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Case} & \textbf{Before} & \textbf{After} \\
+\midrule
+"""
+    for row in rows:
+        if isinstance(row, dict):
+            tex += f"{row.get('case','?')} & {row.get('before','---')} & {row.get('after','---')} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("fix5_cases.tex", tex)
+
+
+def gen_routing_changes() -> None:
+    skip_table("changes.tex",
+               "tab:changes is a hand-authored changelog of code edits "
+               "applied across two source files; there is no JSON source "
+               "for a changelog of this kind, so it is intentionally left "
+               "for manual authorship (like a git commit message, not a "
+               "measurement)")
+
+
+def gen_routing_timing_breakdown() -> None:
+    data, src = load_best("", "*timing_breakdown*.json", extra_subdirs=["routing"])
+    if not isinstance(data, dict):
+        skip_table("timing_breakdown.tex",
+                   "no *timing_breakdown*.json found under RESULTS/PATCHED")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Computational cost breakdown (average per test).}
+\label{tab:timing_breakdown}
+\small
+\begin{tabular}{lr}
+\toprule
+\textbf{Stage} & \textbf{Time (s)} \\
+\midrule
+"""
+    for k, v in data.items():
+        if isinstance(v, (int, float)):
+            tex += f"{k} & {v:.2f} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("timing_breakdown.tex", tex)
+
+
+def gen_routing_scalability() -> None:
+    data, src = load_best("", "scalability_*.json", extra_subdirs=["routing"])
+    if not isinstance(data, dict):
+        skip_table("scalability.tex",
+                   "no scalability_*.json found under RESULTS/PATCHED")
+        return
+    sizes = data.get("dataset_sizes", [])
+    per_size = data.get("per_size", {})
+    if not sizes:
+        skip_table("scalability.tex", f"'dataset_sizes' missing from source (src={src})")
+        return
+    tex = header_comment(src) + r"""
+\begin{table}[ht]
+\centering
+\caption{Scalability with dataset size.}
+\label{tab:scalability}
+\small
+\begin{tabular}{rrr}
+\toprule
+\textbf{n} & \textbf{Mean time (s)} & \textbf{Mean $R^2$} \\
+\midrule
+"""
+    for n in sizes:
+        d = per_size.get(str(n), {}) or {}
+        t = d.get("mean_time_s")
+        r2 = d.get("mean_r2")
+        t_s = f"{t:.2f}" if isinstance(t, (int, float)) else "---"
+        r2_s = f"{r2:.4f}" if isinstance(r2, (int, float)) else "---"
+        tex += f"{n} & {t_s} & {r2_s} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    write_table("scalability.tex", tex)
+
+
+def gen_routing_equation_prevalence() -> None:
+    skip_table("equation_prevalence.tex",
+               "tab:equation_prevalence ('estimated' training-data "
+               "memorization prevalence) is an estimate, not a "
+               "measurement, with no named source file in the paper text; "
+               "left for manual authorship rather than fabricated")
+
+
+def gen_routing_conceptual_complexity() -> None:
+    skip_table("conceptual_complexity.tex",
+               "tab:conceptual_complexity is a qualitative comparison "
+               "('Conceptual Requirements Comparison') with no JSON source "
+               "anywhere in the paper text; left for manual authorship")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -3726,9 +5332,19 @@ def main() -> None:
         ("exp2 all-30 multi-domain shards (all30_domain_summary / multi_domain_rank_table)",
          "", "*.json", "",
          ("exp2",)),
-        ("exp3 Nguyen-12 results (Tab 8)",
-         "", "exp3*nguyen12*.json", "nguyen12",
-         ("exp3", "exp3b")),
+        # FIX ISSUE-NGUYEN12: previously checked RESULTS/"" and
+        # RESULTS/"nguyen12" for "exp3*nguyen12*.json" — neither location is
+        # where exp3/exp3b actually write their output (see gen_nguyen12()
+        # docstring). Split into two rows since exp3 (raw, seed 42) and
+        # exp3b (merged, seeds 99/123/777/2024) live in different
+        # directories under different filenames and neither glob matches
+        # the other's location.
+        ("exp3 Nguyen-12 raw results, seed 42 (Tab 8)",
+         "extrapolation", "exp3_nguyen12_seed*.json", "",
+         ("exp3",)),
+        ("exp3b Nguyen-12 merged results, seeds 99/123/777/2024 (Tab 8)",
+         "extrapolation/multi_seed", "_merged.json", "",
+         ("exp3b",)),
         ("instability JSON or CSV (Tab 9 / §10.9)",
          "figures", "instability*.json", "instability",
          ("instability",)),
@@ -3881,6 +5497,14 @@ def main() -> None:
             lambda: gen_version_history(),
             lambda: gen_timing_detail(),
             lambda: gen_repro_macros(),
+            # ── newly added (this pass) ──
+            lambda: gen_timing_full(),
+            lambda: gen_timing_llm_routed_full(),
+            lambda: gen_hybrid_bug_breakdown(),
+            lambda: gen_provenance(),
+            lambda: gen_feynman30_legacy(),
+            lambda: gen_randomsplit(),
+            lambda: gen_pcasplit(),
         ])
 
     def _suppb_noise_section():
@@ -3889,6 +5513,7 @@ def main() -> None:
             lambda: gen_suppb_rr_noise(noise_data),
             lambda: gen_suppb_time_noise(noise_data),
             lambda: gen_suppb_noiseless(),
+            lambda: gen_suppb_noise_sensitivity(noise_data),
         ])
 
     def _suppb_sc_section():
@@ -3901,6 +5526,50 @@ def main() -> None:
     def _suppb_winrate_section():
         return ("── Supplement B — win rate (both sweeps) ───────────────────", [
             lambda: gen_suppb_winrate(noise_data, sc_data),
+        ])
+
+    def _suppb_extra_section():
+        # Newly added (this pass): the remainder of supp_benchmark_report.tex's
+        # tables that weren't previously covered at all. See the "(A)/(B)/(C)"
+        # classification comment above gen_timing_full() for how each was
+        # decided (JSON-backed / static-stable / intentionally-not-automated).
+        return ("── Supplement B — remaining tables (newly added) ───────────", [
+            lambda: gen_suppb_methods(),
+            lambda: gen_suppb_sweeps(),
+            lambda: gen_suppb_hardcoded(),
+            lambda: gen_suppb_sota(),
+            lambda: gen_suppb_nrmse(),
+            lambda: gen_suppb_wilcoxon(),
+            lambda: gen_suppb_arch(),
+            lambda: gen_suppb_jmlr(),
+            lambda: gen_suppb_figlist(),
+            lambda: gen_suppb_software_env(),
+            lambda: gen_suppb_hyperparameters(),
+            lambda: gen_suppb_hyperparameters_complete(),
+            lambda: gen_suppb_llm_detailed(),
+            lambda: gen_suppb_defi_detailed(),
+            lambda: gen_suppb_formulas_detailed(),
+            lambda: gen_suppb_interpolation_stats(),
+            lambda: gen_suppb_domain_success_detailed(),
+            lambda: gen_suppb_validation_stats(),
+            lambda: gen_suppb_supplementary_files(),
+            lambda: gen_suppb_additional_stats(),
+        ])
+
+    def _routing_section():
+        # Newly added (this pass): supp_routing_improvements_*.tex's tables.
+        # tab:baseline / tab:projected / tab:cost_accuracy_tradeoff are
+        # deliberately NOT included — see the "(C) INTENTIONALLY NOT
+        # AUTOMATED" note above gen_timing_full(): all three still carry
+        # live "[VALUE REDACTED]" / disputed markers in the paper text.
+        return ("── supp_routing_improvements tables (newly added) ──────────", [
+            lambda: gen_routing_fix5_cases(),
+            lambda: gen_routing_changes(),
+            lambda: gen_routing_runtime_reproducibility(),
+            lambda: gen_routing_timing_breakdown(),
+            lambda: gen_routing_scalability(),
+            lambda: gen_routing_equation_prevalence(),
+            lambda: gen_routing_conceptual_complexity(),
         ])
 
     # Single-JSON experiments: each maps to only the generator(s) that
@@ -3917,6 +5586,19 @@ def main() -> None:
             lambda: gen_timing_detail(),
             lambda: gen_version_history(),
         #    lambda: gen_repro_macros(),
+            lambda: gen_hybrid_bug_breakdown(),
+            lambda: gen_suppb_llm_detailed(),
+            lambda: gen_suppb_defi_detailed(),
+        ])],
+        # exp1_multiseed → 10 raw per-seed hypatiax_defi_benchmark_{v3c,pca}_
+        # seed*_results*.json files → timing_full.tex / timing_llm_routed_
+        # full.tex (Tab tab:timing_full / tab:timing_llm_routed_full). Kept
+        # as its own tag rather than folded into "exp1" since it needs all
+        # 5 seeds x 2 variants present, not just the single seed-42 file
+        # "exp1" runs against.
+        "exp1_multiseed": [("── exp1_multiseed: multi-seed timing tables ─────────────────", [
+            lambda: gen_timing_full(),
+            lambda: gen_timing_llm_routed_full(),
         ])],
         # exp1b → portfolio_variance_seed_sweep.json → portfolio_sweep (Tab 5 / Fig G)
         "exp1b": [("── exp1b: portfolio variance seed sweep ────────────────────", [
@@ -3957,6 +5639,16 @@ def main() -> None:
             lambda: gen_multi_domain_rank_table(),
             lambda: gen_five_system(),  # exp2/exp2_extrap is the secondary source
         ])],
+        # exp2_feynman30 → canonical July 22 (random 80/20) / July 23
+        # (PCA-directed 40/60) per-test JSON → randomsplit.tex / pcasplit.tex
+        # / provenance.tex (historical, static) / feynman30_legacy.tex
+        # (withdrawn run, no source located — always skip_table()s).
+        "exp2_feynman30": [("── exp2_feynman30: random/PCA split canonical tables ─────────", [
+            lambda: gen_randomsplit(),
+            lambda: gen_pcasplit(),
+            lambda: gen_provenance(),
+            lambda: gen_feynman30_legacy(),
+        ])],
         # exp2_five reuses exp2's script (run_comparative_suite_benchmark_v2.py,
         # --methods 1 2 4 5 6) but writes to its own directory
         # (five_systems/exp2_five/). Now has its own dedicated loader
@@ -3996,10 +5688,26 @@ def main() -> None:
         # suppB: noise-sweep + sample-complexity + win-rate only.
         "suppb": [_suppb_noise_section(), _suppb_sc_section(), _suppb_winrate_section()],
         "suppb_sc": [_suppb_sc_section(), _suppb_winrate_section()],
+        # suppb_extra: the newly-added remainder of supp_benchmark_report.tex
+        # (tab:methods, tab:hardcoded, tab:sota, tab:nrmse, tab:wilcoxon,
+        # tab:arch, tab:jmlr, tab:figlist, tab:software_env,
+        # tab:hyperparameters*, tab:llm_detailed, tab:defi_detailed,
+        # tab:formulas_detailed, tab:interpolation_stats,
+        # tab:domain_success_detailed, tab:validation_stats,
+        # tab:supplementary_files, tab:additional_stats). Kept as its own
+        # tag rather than merged into "suppb" since most of these read from
+        # the noiseless protocol_core file, not the noise/SC sweep JSONs
+        # "suppb" is built around.
+        "suppb_extra": [_suppb_extra_section()],
+        # routing: supp_routing_improvements_*.tex's newly-added tables.
+        # See _routing_section() for why tab:baseline/tab:projected/
+        # tab:cost_accuracy_tradeoff are excluded.
+        "routing": [_routing_section()],
         # "all" / unknown / suppa (ambiguous ownership): run everything,
         # matching the original behaviour.
         "all": [_main_paper_section(), _suppb_noise_section(),
-                _suppb_sc_section(), _suppb_winrate_section()],
+                _suppb_sc_section(), _suppb_winrate_section(),
+                _suppb_extra_section(), _routing_section()],
     }
     # PCA/extrap variants reuse their base experiment's generator set — same
     # source JSON, just a different --results-dir. exp2 (all-30
