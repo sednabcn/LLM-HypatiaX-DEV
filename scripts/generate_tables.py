@@ -198,7 +198,8 @@ SKIPPED_TABLES: list[str] = []
 #  Step          run_all.sh output path                           load_best subdir / glob
 #  ─────────────────────────────────────────────────────────────────────────────────────
 #  exp1          RESULTS_DIR/                                     ""  (root)  benchmark_results*.json
-#                  hypatiax_defi_benchmark_v3*results*.json         (defi fallback also checked)
+#                  hypatiax_defi_benchmark_v4*results*.json         (defi fallback also checked;
+#                                                                     was v3*/v3c* pre-rename)
 #  exp1b         RESULTS_DIR/                                     ""  (root)  portfolio_variance*.json
 #                  portfolio_variance_seed_sweep.json
 #  extrap        RESULTS_DIR/comparison_results/extrapolation/    "comparison_results/extrapolation"
@@ -391,8 +392,11 @@ def gen_defi_main() -> None:
     parsable result data is found — never falls back to a hardcoded value.
 
     FIX ISSUE-9 (masked-failure / uncorrected Mean R²):
-    The real on-disk file written by hypatiax_defi_benchmark_v3c.py /
-    hypatiax_defi_benchmark_pca.py is a flat LIST of 74 per-case dicts
+    UPDATED: hypatiax_defi_benchmark_v3c.py has been superseded by
+    hypatiax_defi_benchmark_v4.py (hypatiax_defi_benchmark_pca.py ->
+    hypatiax_defi_benchmark_v4_pca.py likewise); neither v3c.py nor the old
+    pca.py exist in this repo snapshot anymore. Their real on-disk output
+    is still a flat LIST of 74 per-case dicts
     (each `{"results": {"pure_llm": {...}, "neural_network": {...},
     "hybrid": {"test_r2":, "decision":, "success":}}}`) — see those files'
     _save_final(). It is NOT a dict with a "methods" list or named
@@ -408,9 +412,12 @@ def gen_defi_main() -> None:
     (pure_llm.test_r2 / neural_network.test_r2) is used instead, since that
     is the sub-method the routing decision actually names.
     """
-    # run_all.sh (exp1) writes hypatiax_defi_benchmark_v3*results*.json to RESULTS_DIR root.
+    # run_all.sh (exp1) writes hypatiax_defi_benchmark_v4*results*.json
+    # (was v3*/v3c* before the v3c.py -> v4.py rename -- see FIX ISSUE-9
+    # note above; the old "v3*" glob silently matched nothing against
+    # current output and always fell through to skip_table()/PAPER_ROWS).
     # Also check legacy defi/ subdir for backwards compatibility.
-    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
                           extra_subdirs=["defi"])
 
     # decision -> which independently-computed sub-method result actually
@@ -546,7 +553,7 @@ def gen_defi_tiers() -> None:
     Columns: Difficulty | n | Pure LLM (%) | HypatiaX (%) | Gain (pp)
     Paper-verified fallback values from Table 3 (v3.0).
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
                           extra_subdirs=["defi"])
 
     def _extract_tiers(d):
@@ -2024,8 +2031,9 @@ def gen_runtime() -> None:
     recover_issue17_runtime.py's analyze() function precisely.
 
     SCOPE NOTE (do not wire this table to tab:timing_full): this table is
-    computed from ONE single-seed hypatiax_defi_benchmark_v3*results*.json
-    file (74 tasks). It is NOT the same table as \\ref{tab:timing_full} /
+    computed from ONE single-seed hypatiax_defi_benchmark_v4*results*.json
+    file (74 tasks; was v3*/v3c* before the v3c.py -> v4.py rename). It is
+    NOT the same table as \\ref{tab:timing_full} /
     \\ref{tab:timing_llm_routed_full} in jmlr_paper_main_patched_CLEANED.tex
     §10.4, which are produced by a *different* script (generate_table1.py,
     not part of this file) from ALL FIVE seeds x two splits (740 tasks) and
@@ -2043,7 +2051,7 @@ def gen_runtime() -> None:
     (tab:runtime) is left unreferenced anywhere in the paper for the same
     reason -- it currently has no live home in the compiled document.
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
                           extra_subdirs=["defi"])
 
     def _extract(d):
@@ -2946,7 +2954,7 @@ def gen_timing_detail() -> None:
     Tab 11 — Detailed timing comparison and speedup calculations (Appendix C).
     Matches Table 11 (Appendix C).
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
                           extra_subdirs=["defi"])
 
     def _extract(d):
@@ -3085,7 +3093,7 @@ Regime & Definition & $n$ & Fraction \\
 
 def gen_repro_macros() -> None:
     macros: dict[str, str] = {}
-    data, _ = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+    data, _ = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
                         extra_subdirs=["defi"])
     if isinstance(data, dict):
         acc = data.get("accuracy", data.get("success_rate"))
@@ -3767,7 +3775,7 @@ def gen_suppb_noiseless() -> None:
     # FIX ISSUE-3 (EHSDeFi runtime 20.2s vs 841.4s): this loop previously
     # only read res["r2"], silently discarding res["time_s"] even though
     # every benchmark script in this codebase (see e.g.
-    # hypatiax_defi_benchmark_v3c.py's case_results[...]["time_s"]) stores
+    # hypatiax_defi_benchmark_v4.py's case_results[...]["time_s"]) stores
     # per-test wall-clock time in that exact key, right next to "r2", in
     # this exact per-method results dict shape. That means tab:overall's
     # "Avg Runtime" column was never actually computed by this generator —
@@ -3873,24 +3881,31 @@ def gen_suppb_noiseless() -> None:
 # ── (A) Multi-seed timing (tab:timing_full / tab:timing_llm_routed_full) ─────
 #
 # The paper explicitly attributes these two tables to generate_table1.py
-# (not part of this file) run over 10 raw per-seed result files: v3c and PCA
-# variants, seeds {42,99,123,777,2024}, 74 tasks each (740 total). Rather
-# than shelling out to a script that isn't present in this repo snapshot,
-# this reads the same raw per-seed files gen_defi_main()/gen_runtime()
-# already know the schema for (Shape 3: flat list of
+# (not part of this file) run over 10 raw per-seed result files: v3c/v4 and
+# PCA variants, seeds {42,99,123,777,2024}, 74 tasks each (740 total).
+# Rather than shelling out to a script that isn't present in this repo
+# snapshot, this reads the same raw per-seed files gen_defi_main()/
+# gen_runtime() already know the schema for (Shape 3: flat list of
 # {"results": {"pure_llm":..., "neural_network":..., "hybrid":...}} dicts,
 # each carrying "time_s" and, for hybrid, "decision") and aggregates across
-# every seed file found for each variant. Filename convention assumed:
-# hypatiax_defi_benchmark_v3c_seed{N}_results*.json and
-# hypatiax_defi_benchmark_pca_seed{N}_results*.json under RESULTS/"" or
-# RESULTS/"defi" (same search roots as the single-seed reader) --- this
-# convention is inferred from the existing "hypatiax_defi_benchmark_v3*
-# results*.json" glob and the paper's "v3c seed42" / "PCA seed42" row
-# labels; if the real filenames differ, update _TIMING_SEED_GLOBS below
-# rather than the aggregation logic.
+# every seed file found for each variant.
+#
+# UPDATED: hypatiax_defi_benchmark_v3c.py / _pca.py no longer exist in this
+# repo -- superseded by hypatiax_defi_benchmark_v4.py / _v4_pca.py. Their
+# actual multi-seed shard naming (confirmed directly from each script's
+# _configure_output_dir()/run loop) is "results_seed{N}", NOT "seed{N}_
+# results" as this block originally assumed -- the word order is reversed
+# from the old v3c convention, not just the version digit:
+#   v4:  hypatiax_defi_benchmark_v4_results_seed{N}.json
+#   pca: hypatiax_defi_benchmark_pca_results_seed{N}.json   (no "v4" in this
+#        one at all -- the pca script never puts a version number in its
+#        output filename, only "pca")
+# under RESULTS/"" or RESULTS/"defi" (same search roots as the single-seed
+# reader). Key renamed "v3c" -> "v4" throughout this file to match the row
+# labels actually printed (was mislabeling v4-sourced data "v3c").
 _TIMING_SEED_GLOBS = {
-    "v3c": "hypatiax_defi_benchmark_v3c_seed*_results*.json",
-    "PCA": "hypatiax_defi_benchmark_pca_seed*_results*.json",
+    "v4":  "hypatiax_defi_benchmark_v4_results_seed*.json",
+    "PCA": "hypatiax_defi_benchmark_pca_results_seed*.json",
 }
 
 
@@ -3898,7 +3913,7 @@ def _load_timing_multiseed() -> dict[str, list[tuple[str, list[dict]]]]:
     """{'v3c': [(seed_label, records), ...], 'PCA': [...]} for every seed
     file found for each variant, across PATCHED/RESULTS and the legacy
     'defi' subdir, mirroring load_best()'s search roots."""
-    out: dict[str, list[tuple[str, list[dict]]]] = {"v3c": [], "PCA": []}
+    out: dict[str, list[tuple[str, list[dict]]]] = {"v4": [], "PCA": []}
     for variant, glob_pat in _TIMING_SEED_GLOBS.items():
         seen_seeds: set[str] = set()
         for base in (PATCHED, RESULTS):
@@ -3956,15 +3971,15 @@ def _timing_stats_for_records(records: list[dict]) -> dict | None:
 def gen_timing_full() -> None:
     """tab:timing_full — per-seed + pooled timing, both variants."""
     by_variant = _load_timing_multiseed()
-    if not by_variant["v3c"] and not by_variant["PCA"]:
+    if not by_variant["v4"] and not by_variant["PCA"]:
         skip_table("timing_full.tex",
-                    "no seed-suffixed hypatiax_defi_benchmark_{v3c,pca}_seed*"
-                    "_results*.json files found (see _TIMING_SEED_GLOBS)")
+                    "no seed-suffixed hypatiax_defi_benchmark_{v4,pca}_results_"
+                    "seed*.json files found (see _TIMING_SEED_GLOBS)")
         return
 
     def _r(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "---"
 
-    tex = header_comment("multi-seed v3c/PCA result files") + r"""
+    tex = header_comment("multi-seed v4/PCA result files") + r"""
 \begin{table}[htbp]
 \centering
 \small
@@ -3979,7 +3994,7 @@ Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speed
     &     & mean/median  & mean/median    & mean/median      & count      &  \\
 \midrule
 """
-    for variant in ("v3c", "PCA"):
+    for variant in ("v4", "PCA"):
         seeds = sorted(by_variant[variant], key=lambda t: t[0])
         pooled = []
         for seed, records in seeds:
@@ -4015,15 +4030,15 @@ def gen_timing_llm_routed_full() -> None:
     """tab:timing_llm_routed_full — same sources as tab:timing_full,
     restricted to hybrid.decision == 'llm' rows only."""
     by_variant = _load_timing_multiseed()
-    if not by_variant["v3c"] and not by_variant["PCA"]:
+    if not by_variant["v4"] and not by_variant["PCA"]:
         skip_table("timing_llm_routed_full.tex",
-                    "no seed-suffixed hypatiax_defi_benchmark_{v3c,pca}_seed*"
-                    "_results*.json files found (see _TIMING_SEED_GLOBS)")
+                    "no seed-suffixed hypatiax_defi_benchmark_{v4,pca}_results_"
+                    "seed*.json files found (see _TIMING_SEED_GLOBS)")
         return
 
     def _r(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "---"
 
-    tex = header_comment("multi-seed v3c/PCA result files") + r"""
+    tex = header_comment("multi-seed v4/PCA result files") + r"""
 \begin{table}[htbp]
 \centering
 \small
@@ -4035,7 +4050,7 @@ def gen_timing_llm_routed_full() -> None:
 Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
 \midrule
 """
-    for variant in ("v3c", "PCA"):
+    for variant in ("v4", "PCA"):
         seeds = sorted(by_variant[variant], key=lambda t: t[0])
         pooled = []
         for seed, records in seeds:
@@ -4071,19 +4086,32 @@ Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup
 
 # ── (A) Hybrid decision-attribution bug breakdown (tab:hybrid-bug-breakdown) ─
 #
-# Caption names the exact source: hypatiax_defi_benchmark_v3_results_seed42.json.
+# Caption named the exact source as hypatiax_defi_benchmark_v3_results_
+# seed42.json ("File A"). UPDATED: v3c.py no longer exists; the current
+# script is hypatiax_defi_benchmark_v4.py, and its seed42 output can be
+# EITHER of two names depending on how it was invoked:
+#   hypatiax_defi_benchmark_v4_results_seed42.json   (multi-seed shard mode,
+#                                                       explicit --seed/shard)
+#   hypatiax_defi_benchmark_v4_results.json           (plain default run --
+#                                                       no seed suffix at all,
+#                                                       implicit seed 42)
+# Try the seed-suffixed name first (unambiguous), then the plain default
+# name, before falling back to "newest v4 file found" like gen_defi_main().
 # Reuses gen_defi_main()'s _DECISION_TO_BASELINE / fabricated-success logic:
 # a case is a "fabricated success" if hybrid.test_r2 > 0.99 (or
 # hybrid.success is True) AND the sub-method the decision actually names
 # does NOT independently score > 0.99 on the same case. Broken down by the
 # same Easy/Medium/Hard tiers gen_defi_tiers() already reads.
 def gen_hybrid_bug_breakdown() -> None:
-    data, src = load_best("", "hypatiax_defi_benchmark_v3_results_seed42.json",
+    data, src = load_best("", "hypatiax_defi_benchmark_v4_results_seed42.json",
                           extra_subdirs=["defi"])
     if not data:
-        # fall back to whichever single-seed v3 file is newest, same as
-        # gen_defi_main(), in case the seed42-suffixed name isn't used verbatim
-        data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json",
+        data, src = load_best("", "hypatiax_defi_benchmark_v4_results.json",
+                              extra_subdirs=["defi"])
+    if not data:
+        # fall back to whichever single-seed v4 file is newest, same as
+        # gen_defi_main(), in case neither exact name above is present
+        data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
                               extra_subdirs=["defi"])
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("hybrid_bug_breakdown.tex",
@@ -4735,7 +4763,7 @@ def gen_suppb_domain_success_detailed() -> None:
 
 # ── (A) tab:llm_detailed / tab:defi_detailed — per-case DeFi results ────────
 def gen_suppb_llm_detailed() -> None:
-    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json", extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json", extra_subdirs=["defi"])
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("llm_detailed.tex", f"no parsable DeFi benchmark results found (src={src})")
         return
@@ -4766,7 +4794,7 @@ def gen_suppb_llm_detailed() -> None:
 
 
 def gen_suppb_defi_detailed() -> None:
-    data, src = load_best("", "hypatiax_defi_benchmark_v3*results*.json", extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json", extra_subdirs=["defi"])
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("defi_detailed.tex", f"no parsable DeFi benchmark results found (src={src})")
         return
@@ -5290,6 +5318,14 @@ def main() -> None:
         "exp2_feynman", "exp2", "exp2_feynman_extrap", "exp2_feynman_pca",
         "exp3", "exp3b", "instability", "hybrid_all_domains", "extrap",
         "suppb", "suppb_sc",
+        # suppa now dispatches to _DISPATCH["routing"] (see main()'s _DISPATCH
+        # setup) instead of falling back to "all", so its audit can be scoped
+        # too -- see the two "suppa"-owned _AUDIT rows below. fix5_cases /
+        # changes / equation_prevalence / conceptual_complexity are excluded
+        # from the audit on purpose: they have no JSON source at all
+        # (gen_routing_changes() etc. are unconditional skip_table() calls),
+        # so there is nothing for a missing-JSON audit to check for them.
+        "suppa",
     }
 
     # ── Missing JSON audit ────────────────────────────────────────────────────
@@ -5299,7 +5335,7 @@ def main() -> None:
     _AUDIT: list[tuple[str, str, str, str, tuple[str, ...]]] = [
         # (label,  subdir,  glob,  extra_subdirs_csv,  owner_experiments)
         ("exp1 benchmark (Tab 2/3/4/11)",
-         "", "hypatiax_defi_benchmark_v3*results*.json", "defi",
+         "", "hypatiax_defi_benchmark_v4*results*.json", "defi",
          ("exp1", "exp1_pca")),
         ("exp1_ablation Core-15 per-equation data (Tab 6 + Fig F — the newest "
          "*.json in this dir by mtime)",
@@ -5376,6 +5412,16 @@ def main() -> None:
          "comparison_results/noise-noiseless/noiseless/defi",
          "protocol_core_noiseless_*.json", "",
          ("suppb",)),
+        # suppA / routing: mirrors gen_routing_timing_breakdown()'s and
+        # gen_routing_scalability()'s own load_best("", pattern,
+        # extra_subdirs=["routing"]) calls -- subdir="" (RESULTS itself),
+        # "routing" as the one extra subdir to also check.
+        ("suppA timing breakdown JSON (Tab 11 Appendix C / fig_suppA_timing_breakdown)",
+         "", "*timing_breakdown*.json", "routing",
+         ("suppa",)),
+        ("suppA scalability JSON (Tab 12 / fig_suppA_scalability)",
+         "", "scalability_*.json", "routing",
+         ("suppa",)),
     ]
 
     if _EXP in _SCOPED_EXPERIMENTS:
@@ -5575,7 +5621,8 @@ def main() -> None:
     # Single-JSON experiments: each maps to only the generator(s) that
     # actually consume that experiment's JSON, per the location-map comment.
     _DISPATCH = {
-        # exp1 → hypatiax_defi_benchmark_v3*results*.json → defi_main,
+        # exp1 → hypatiax_defi_benchmark_v4*results*.json → defi_main,
+        # (was v3*/v3c* before the v3c.py -> v4.py rename)
         # defi_tiers, runtime, timing_detail (Tab 2/3/4/11) + defi half of
         # repro_macros. version_history has no JSON dependency (hardcoded,
         # stable) so it's cheap to regenerate alongside exp1.
@@ -5718,7 +5765,19 @@ def main() -> None:
     _DISPATCH["exp2_feynman_extrap"] = _DISPATCH["exp2_feynman"]
     _DISPATCH["exp2_feynman_pca"] = _DISPATCH["exp2_feynman"]
     _DISPATCH["exp3b"] = _DISPATCH["exp3"]
-    _DISPATCH["suppa"] = _DISPATCH["all"]
+    # FIX (cross-ref against config/experiments.yml): suppA IS the routing
+    # experiment ("DeFi routing improvement experiments — Supplement A,
+    # Tab 11-13 routing" per run_all.sh's suppA step) -- generate_tables.py
+    # already has a purpose-built "routing" dispatch key for exactly this
+    # (_routing_section(), gen_routing_timing_breakdown/scalability/etc.).
+    # Falling back to "all" instead meant every suppA CI run (--experiment
+    # suppA, --results-dir .../hybrid_pysr/defi) regenerated the ENTIRE
+    # paper's table set -- main paper + suppB noise/SC/win-rate + suppB_extra
+    # -- into suppA's own tables_dir, none of which can find their source
+    # data under hybrid_pysr/defi and all silently warn-and-skip. Wasteful
+    # and misleading (a tables_dir full of near-empty generator output for
+    # experiments suppA doesn't own). "routing" is the correctly-scoped set.
+    _DISPATCH["suppa"] = _DISPATCH["routing"]
 
     sections = _DISPATCH.get(_EXP, _DISPATCH["all"])
     if _EXP not in _DISPATCH:

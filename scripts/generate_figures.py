@@ -3731,6 +3731,111 @@ if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
                 print("✓ fig_exp2_pca_r2_3way.png/.pdf")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# suppA — DeFi routing improvement experiments (Supplement A - Tab 11-13 routing)
+#
+# Companion figures for the "routing" table generators in generate_tables.py
+# (gen_routing_timing_breakdown / gen_routing_scalability): same source files
+# (*timing_breakdown*.json / scalability_*.json), same RESULTS + "routing"
+# subdir search order, same warn_and_skip-on-missing-data policy.
+#
+# Previously suppA had NO figure code path at all anywhere in this script —
+# config/experiments.yml declared generates_figures: true for it, but every
+# CI run silently produced zero figures (found by cross-referencing this
+# script against config/experiments.yml; see suppA's comment there).
+#
+# fix5_cases / changes / equation_prevalence / conceptual_complexity have no
+# JSON source at all (gen_routing_changes() etc. in generate_tables.py are
+# unconditional skip_table() calls — hand-authored content, not measurements),
+# so they have no figure counterpart either.
+# ══════════════════════════════════════════════════════════════════════════════
+if _EXPERIMENT == "suppA":
+    # Mirrors generate_tables.py's load_best("", pattern, extra_subdirs=["routing"]):
+    # check RESULTS_DIR itself, then its routing/ subdir, then the same two
+    # locations under PATCHED_DIR (generate_tables.py's PATCHED fallback).
+    _routing_search_dirs = [
+        _RESULTS_DIR,
+        os.path.join(_RESULTS_DIR, "routing"),
+        _PATCHED_DIR,
+        os.path.join(_PATCHED_DIR, "routing"),
+    ]
+
+    def _routing_glob(pattern):
+        for d in _routing_search_dirs:
+            hit = _latest_glob(os.path.join(d, pattern), exclude_substrings=())
+            if hit:
+                return hit
+        return None
+
+    # ── fig_suppA_scalability: dataset size vs. mean time / mean R² ───────────
+    _scalability_path = _routing_glob("scalability_*.json")
+    if _scalability_path is None:
+        print(f"  [SKIP] fig_suppA_scalability — no scalability_*.json found "
+              f"under {_RESULTS_DIR} (or its routing/ subdir) — same source "
+              f"gen_routing_scalability() in generate_tables.py looks for.")
+    else:
+        _scal = _load_json(_scalability_path, _scalability_path) or {}
+        _sizes = _scal.get("dataset_sizes", [])
+        _per_size = _scal.get("per_size", {})
+        if not _sizes:
+            print(f"  [SKIP] fig_suppA_scalability — 'dataset_sizes' missing from {_scalability_path}.")
+        else:
+            _n_vals, _t_vals, _r2_vals = [], [], []
+            for n in _sizes:
+                d = _per_size.get(str(n), {}) or {}
+                t = safe_float(d.get("mean_time_s"))
+                r2 = safe_float(d.get("mean_r2"))
+                if math.isnan(t) and math.isnan(r2):
+                    continue
+                _n_vals.append(n)
+                _t_vals.append(t)
+                _r2_vals.append(r2)
+            if not _n_vals:
+                print(f"  [SKIP] fig_suppA_scalability — no usable (mean_time_s, mean_r2) pairs in {_scalability_path}.")
+            else:
+                fig, ax1 = plt.subplots(figsize=(8, 5.5))
+                ax1.plot(_n_vals, _t_vals, "o-", color=C_HYB, label="Mean time (s)")
+                ax1.set_xlabel("Dataset size $n$")
+                ax1.set_ylabel("Mean time (s)", color=C_HYB)
+                ax1.tick_params(axis="y", labelcolor=C_HYB)
+                ax1.grid(axis="both", color=C_GRID, linewidth=0.6)
+                ax2 = ax1.twinx()
+                ax2.plot(_n_vals, _r2_vals, "s--", color=C_LLM, label="Mean $R^2$")
+                ax2.set_ylabel("Mean $R^2$", color=C_LLM)
+                ax2.tick_params(axis="y", labelcolor=C_LLM)
+                ax1.set_title("suppA — Scalability with Dataset Size", fontsize=12, fontweight="bold")
+                fig.tight_layout()
+                _savefig(fig, "fig_suppA_scalability", bbox_inches="tight")
+                plt.close(fig)
+                print("✓ fig_suppA_scalability.png/.pdf")
+
+    # ── fig_suppA_timing_breakdown: per-stage computational cost bar chart ────
+    _timing_path = _routing_glob("*timing_breakdown*.json")
+    if _timing_path is None:
+        print(f"  [SKIP] fig_suppA_timing_breakdown — no *timing_breakdown*.json "
+              f"found under {_RESULTS_DIR} (or its routing/ subdir) — same "
+              f"source gen_routing_timing_breakdown() in generate_tables.py looks for.")
+    else:
+        _timing = _load_json(_timing_path, _timing_path) or {}
+        _stages = [(k, v) for k, v in _timing.items() if isinstance(v, (int, float))]
+        if not _stages:
+            print(f"  [SKIP] fig_suppA_timing_breakdown — no numeric stage timings in {_timing_path}.")
+        else:
+            _stages.sort(key=lambda kv: kv[1], reverse=True)
+            _labels_t = [k for k, _ in _stages]
+            _times_t = [v for _, v in _stages]
+            fig, ax = plt.subplots(figsize=(8, 5.5))
+            ax.barh(_labels_t, _times_t, color=C_HYB, alpha=0.85, edgecolor="white")
+            ax.set_xlabel("Time (s)")
+            ax.invert_yaxis()
+            ax.set_title("suppA — Computational Cost Breakdown (avg per test)", fontsize=12, fontweight="bold")
+            ax.grid(axis="x", color=C_GRID, linewidth=0.6)
+            fig.tight_layout()
+            _savefig(fig, "fig_suppA_timing_breakdown", bbox_inches="tight")
+            plt.close(fig)
+            print("✓ fig_suppA_timing_breakdown.png/.pdf")
+
+
 # ── Final summary ─────────────────────────────────────────────────────────────
 all_pngs = sorted(glob.glob(os.path.join(_FIGURES_DIR, "*.png")))
 all_pdfs = {os.path.splitext(os.path.basename(f))[0]

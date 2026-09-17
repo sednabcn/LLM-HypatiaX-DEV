@@ -97,10 +97,15 @@ experiments:
     aliases: ["exp2_feyman_pca"]      # legacy typo (missing 'n') — kept for back-compat
     trigger_paths:
       - "hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060/**/*.json"
-    extra_stage_files:                # additional files Commit must stage beyond figures/+tables/
-      - "exp2_pca_comparison.tex"
-      - "exp2_pca_comparison.csv"
-      - "exp2_pca_comparison.md"
+    # extra_stage_files removed (cross-ref finding): previously listed
+    # exp2_pca_comparison.{tex,csv,md}, but neither generate_tables.py nor
+    # generate_figures.py writes any file by that name anywhere —
+    # generate_tables.py's _DISPATCH["exp2_feynman_pca"] is just an alias
+    # for _DISPATCH["exp2_feynman"] (Table 7), and generate_figures.py's
+    # exp2_feynman_pca block writes fig_exp2_pca_runtime_6way / fig_exp2_pca_r2_3way
+    # instead, both already covered by the ordinary figures_dir_abs `git add`.
+    # The stale entries were harmless (ci_postprocess.yml stages extra_stage_files
+    # with `check=False`, so a missing file just silently no-ops) but misleading.
 
   exp2:
     description: "all-30 multi-domain"
@@ -139,7 +144,13 @@ experiments:
     description: "hybrid PySR + DeFi"
     source_dir: "hybrid_pysr/defi"
     generates_tables: true
-    generates_figures: true
+    generates_figures: true    # RESTORED: scripts/generate_figures.py now has a real
+                                # `if _EXPERIMENT == "suppA":` block (fig_suppA_scalability,
+                                # fig_suppA_timing_breakdown), reading the same
+                                # scalability_*.json / *timing_breakdown*.json sources as
+                                # generate_tables.py's "routing" table generators. This was
+                                # temporarily set to false because no such code existed yet
+                                # (see prior cross-ref note, now resolved).
     trigger_paths:
       - "hypatiax/data/results/hybrid_pysr/**/*.json"
 
@@ -195,7 +206,9 @@ aggregates:
     trigger_paths:
       - "hypatiax/data/results/figures/**/*.json"
       - "scripts/generate_figures.py"   # script changes re-run the broadest figure set
-      - "scripts/generate_figures.py"
+      - "scripts/generate_tables.py"    # instability also generates_tables: true (Tab 9 / §10.9),
+                                         # sourced from generate_tables.py's "instability" audit row —
+                                         # this line was a copy-paste duplicate of the one above it
 
   figures_deploy:
     description: "Assemble final figures/ dir for the LaTeX build"
