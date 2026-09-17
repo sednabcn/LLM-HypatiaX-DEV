@@ -42,6 +42,11 @@ name: "HypatiaX - assemble paper figures + tables in manuscript order"
 permissions:
   contents: write
 
+# Prevent concurrent assembly runs from racing while pushing generated files.
+concurrency:
+  group: paper-assembly-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CONFIG_FILE: "config/experiments.yml"
   PAPER_ORDER_FILE: "config/paper_order.yml"
@@ -253,6 +258,7 @@ jobs:
       - name: Commit assembled paper figures/tables
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -260,10 +266,27 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "Nothing to commit — figures_tables_paper already in sync."
-          else
-            git commit -m "assemble(paper-order): sync figures_tables_paper/ to manuscript order [skip ci]"
-            git push
+            exit 0
           fi
+
+          git commit -m "assemble(paper-order): sync figures_tables_paper/ to manuscript order [skip ci]"
+          branch="${GITHUB_REF_NAME:-master}"
+
+          for attempt in 1 2 3; do
+            git fetch origin "$branch"
+            git rebase "origin/$branch"
+
+            if git push origin "HEAD:$branch"; then
+              echo "Assembly commit pushed successfully."
+              exit 0
+            fi
+
+            echo "Push race detected; retrying ($attempt/3)."
+            sleep $((attempt * 2))
+          done
+
+          echo "::error::Failed to push after three attempts."
+          exit 1
 
       - name: Step summary
         if: always()
