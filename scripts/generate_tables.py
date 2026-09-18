@@ -432,6 +432,11 @@ def gen_defi_main() -> None:
         "llm":         "pure_llm",
         "nn":          "neural_network",
         "nn_fallback": "neural_network",
+        "v4_llm":      "pure_llm",
+        "v4_nn":       "neural_network",
+        # v4_residual_nn intentionally omitted: no standalone baseline exists
+        # in the schema or in this codebase to check it against (confirmed
+        # by repo-wide search for "residual_nn" / "selected_candidate").
     }
 
     def _is_num(v) -> bool:
@@ -589,7 +594,7 @@ def gen_defi_tiers() -> None:
                     f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
         return
 
-    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network"}
+    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network", "v4_llm": "pure_llm", "v4_nn": "neural_network"}  # v4_residual_nn intentionally omitted: no standalone baseline exists
     tiers = {"Easy": [0, 0, 0], "Medium": [0, 0, 0], "Hard": [0, 0, 0]}  # [n, llm_pass, hyp_corrected_pass]
     for rec in data:
         tier = rec.get("difficulty") or rec.get("tier")
@@ -4161,7 +4166,7 @@ def gen_hybrid_bug_breakdown() -> None:
                     f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
         return
 
-    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network"}
+    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network", "v4_llm": "pure_llm", "v4_nn": "neural_network"}  # v4_residual_nn intentionally omitted: no standalone baseline exists
     tiers = {"Easy": [0, 0, 0], "Medium": [0, 0, 0], "Hard": [0, 0, 0]}  # [n, reported, fabricated]
     for rec in data:
         tier = rec.get("difficulty") or rec.get("tier")
@@ -4259,7 +4264,7 @@ def gen_abstract_macros() -> None:
                     f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
         return
 
-    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network"}
+    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network", "v4_llm": "pure_llm", "v4_nn": "neural_network"}  # v4_residual_nn intentionally omitted: no standalone baseline exists
     n_total = n_llm_pass = n_nn_pass = n_hyp_corrected_pass = 0
     for rec in data:
         cr = rec.get("results", {}) or {}
