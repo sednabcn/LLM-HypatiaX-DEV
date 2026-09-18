@@ -372,6 +372,30 @@ _TIER2_EXTRACTORS = [
         ),
         lambda d: [],   # no per-record data to validate
     ),
+    # PCA pooled-seed report, as produced by the postprocess script's
+    # cross-seed pooling step (e.g. hypatiax_defi_benchmark_pca_pooled_seed_report.json).
+    # Top-level dict with "n_seeds" (int) and "methods" (dict mapping method
+    # name -> pooled stats across seeds: seed_mean_raw, mean_of_seed_means_raw,
+    # sd_of_seed_means_raw, mean_of_seed_means_clip10, n_seed_means).
+    # The meaningful unit is one (method) pooled-summary row; "n_seeds" is
+    # hoisted onto every record for context.
+    #   { "n_seeds": 5,
+    #     "methods": { "pure_llm": { "seed_mean_raw": [...], "mean_of_seed_means_raw": ..., ... } } }
+    (
+        "pooled_seed_report",
+        lambda d: (
+            isinstance(d, dict)
+            and isinstance(d.get("n_seeds"), int)
+            and isinstance(d.get("methods"), dict)
+            and bool(d["methods"])
+            and all(isinstance(v, dict) for v in d["methods"].values())
+        ),
+        lambda d: [
+            {**mval, "method": method, "n_seeds": d.get("n_seeds")}
+            for method, mval in d["methods"].items()
+            if isinstance(mval, dict)
+        ],
+    ),
     # Top-level dict, no "results" wrapper, equation->generic dict (merge_shards.py output)
     (
         "toplevel_generic_dicts",
@@ -797,6 +821,36 @@ _SELF_TEST_CASES = [
             "known_caveat": "The 'Hybrid v50_2' row here is NOT expected to reproduce exp1_ablation's 'hypatia' row.",
         },
         expected_n=0, expected_fmt="provenance_map", tier=2,
+    ),
+    dict(
+        name="tier2 / pooled_seed_report  (hypatiax_defi_benchmark_pca_pooled_seed_report.json)",
+        payload={
+            "n_seeds": 5,
+            "methods": {
+                "pure_llm": {
+                    "seed_mean_raw": [-219981.77, -3189.74, -238625.57, -3192.38, -232643.03],
+                    "mean_of_seed_means_raw": -139526.50,
+                    "sd_of_seed_means_raw": 124638.55,
+                    "mean_of_seed_means_clip10": -0.688074495160725,
+                    "n_seed_means": 5,
+                },
+                "neural_network": {
+                    "seed_mean_raw": [-17.59, -46.53, -46.71, -38.61, -7.77],
+                    "mean_of_seed_means_raw": -31.44,
+                    "sd_of_seed_means_raw": 17.78,
+                    "mean_of_seed_means_clip10": -1.2781065855752136,
+                    "n_seed_means": 5,
+                },
+                "hybrid": {
+                    "seed_mean_raw": [0.42, 0.39, 0.39, -81.90, 0.20],
+                    "mean_of_seed_means_raw": -16.10,
+                    "sd_of_seed_means_raw": 36.78,
+                    "mean_of_seed_means_clip10": 0.3428418233045247,
+                    "n_seed_means": 5,
+                },
+            },
+        },
+        expected_n=3, expected_fmt="pooled_seed_report", tier=2,
     ),
     # ------------------------------------------------------------------
     # Error / no-match
