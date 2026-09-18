@@ -66,8 +66,17 @@ DECISION_TO_BASELINE = {
     "llm": "pure_llm",
     "nn": "neural_network",
     "nn_fallback": "neural_network",
+    "v4_llm": "pure_llm",
+    "v4_nn": "neural_network",
+    # v4_residual_nn is deliberately NOT mapped: it is unclear whether this
+    # names the same thing as "neural_network" or a distinct residual-fitting
+    # arm with no corresponding baseline field in the schema. Mapping it
+    # incorrectly would either wrongly clear a fabricated pass or wrongly
+    # flag a real one, so cases routed here fall through to the "no
+    # independent baseline" branch below and stay flagged for manual review
+    # until someone who knows the v4 routing logic confirms what it means.
 }
-KNOWN_DECISIONS = {"llm", "nn", "nn_fallback", "ensemble"}
+KNOWN_DECISIONS = {"llm", "nn", "nn_fallback", "ensemble", "v4_llm", "v4_nn", "v4_residual_nn"}
 KNOWN_TIERS = ("Easy", "Medium", "Hard")
 
 
@@ -113,7 +122,10 @@ def check_and_score(records: list[dict]) -> tuple[dict, list[str], list[dict]]:
                 warnings.append(f"record[{i}]: duplicate case id {case_id!r} -- check for double-counting.")
             seen_case_ids.add(case_id)
 
-        tier = rec.get("difficulty") or rec.get("tier")
+        tier_raw = rec.get("difficulty") or rec.get("tier")
+        tier = tier_raw.strip().capitalize() if isinstance(tier_raw, str) else tier_raw
+        if tier != tier_raw:
+            warnings.append(f"record[{i}] (case_id={case_id!r}): tier {tier_raw!r} normalised to {tier!r}.")
         if tier not in KNOWN_TIERS:
             warnings.append(f"record[{i}] (case_id={case_id!r}): tier {tier!r} not in {KNOWN_TIERS} -- excluded from the tier breakdown (but counted in n_total below).")
 
