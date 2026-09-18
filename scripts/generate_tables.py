@@ -18,6 +18,11 @@ Tables generated  (main paper)
   version_history.tex tab:version_hist   §App B  ← hardcoded (stable)
   timing_detail.tex   tab:timing_detail  §App C  ← results/defi/
   repro_macros.tex    \\newcommand macros for inline numbers
+  abstract_macros.tex \\newcommand macros for the abstract's near-perfect
+                       success rate and its two baseline deltas ← results/defi/
+                       (same seed-42 source + decision-attribution correction
+                       as defi_tiers.tex/hybrid_bug_breakdown.tex; never
+                       falls back to the old hardcoded 90.5%/62.2%/5.4% figures)
 
 Tables generated  (Supplement B — suppB / STEP 10 outputs)
   five_system.tex             tab:five_systems_full     App    ← five_systems/exp1_five/
@@ -551,52 +556,90 @@ def gen_defi_tiers() -> None:
     """
     Tab 3 — Near-perfect success rate (R²>0.99) by difficulty.
     Columns: Difficulty | n | Pure LLM (%) | HypatiaX (%) | Gain (pp)
-    Paper-verified fallback values from Table 3 (v3.0).
+
+    FIX ISSUE-DEFITIERS (Shape-3 mismatch, same class of bug as ISSUE-9):
+    this generator previously only understood a dict-with-per-tier-subdicts
+    shape (d.get("easy")/d.get("medium")/etc., each pre-aggregated with
+    llm_r99/hypatiax_r99 fields). Per gen_defi_main()'s FIX ISSUE-9 note, no
+    generator in this codebase actually produces that shape — the real
+    on-disk seed-42 output is the flat Shape-3 list of 74 per-case dicts.
+    Because `isinstance(d, dict)` was False for that list, _extract_tiers()
+    always returned [] and this table always fell straight to skip_table() —
+    meaning tab:difficulty's previously-published 58.1%/59.5% numbers were
+    never actually reproduced by a live run of this generator; they were
+    transcribed by hand. Rewritten to read the same Shape-3 schema and the
+    same decision-attribution correction gen_hybrid_bug_breakdown()/
+    gen_defi_main() use, so this table's HypatiaX column and Overall row
+    always match tab:hybrid-bug-breakdown's "Corrected successes" row, and
+    its Pure LLM column is the RAW (uncorrected — baselines have no routing
+    decision to correct) per-case pure_llm.test_r2 > 0.99 rate. Never falls
+    back to a hardcoded value; skip_table() if the schema isn't found.
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
+    data, src = load_best("", "hypatiax_defi_benchmark_v4_results_seed42.json",
                           extra_subdirs=["defi"])
+    if not data:
+        data, src = load_best("", "hypatiax_defi_benchmark_v4_results.json",
+                              extra_subdirs=["defi"])
+    if not data:
+        data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
+                              extra_subdirs=["defi"])
 
-    def _extract_tiers(d):
-        if not isinstance(d, dict):
-            return []
-        tiers = []
-        for label, key, n_default in [
-            ("Easy",    "easy",    24),
-            ("Medium",  "medium",  29),
-            ("Hard",    "hard",    21),
-            ("Overall", "overall", 74),
-        ]:
-            sub = d.get(key, {})
-            n   = sub.get("n", sub.get("count", n_default))
-            llm = sub.get("llm_r99", sub.get("pure_llm_success_rate_99",
-                  sub.get("llm_success_99", float("nan"))))
-            hyp = sub.get("hypatiax_r99", sub.get("hypatiax_success_rate_99",
-                  sub.get("hybrid_success_99", float("nan"))))
-            if isinstance(llm, float) and llm <= 1.0:
-                llm *= 100
-            if isinstance(hyp, float) and hyp <= 1.0:
-                hyp *= 100
-            gain = (hyp - llm) if isinstance(hyp, float) and isinstance(llm, float) else float("nan")
-            tiers.append((label, n, llm, hyp, gain))
-        return tiers
-
-    tiers = _extract_tiers(data) if data else []
-    if not tiers or any(t[2] != t[2] for t in tiers):   # NaN check
+    if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("defi_tiers.tex",
-                    f"no parsable/complete tier data found (src={src})")
+                    f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
         return
 
-    def _pct(v): return f"{v:.1f}" if isinstance(v, float) and not (v != v) else "---"
+    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network"}
+    tiers = {"Easy": [0, 0, 0], "Medium": [0, 0, 0], "Hard": [0, 0, 0]}  # [n, llm_pass, hyp_corrected_pass]
+    for rec in data:
+        tier = rec.get("difficulty") or rec.get("tier")
+        if tier not in tiers:
+            continue
+        cr = rec.get("results", {}) or {}
+        tiers[tier][0] += 1
+
+        llm_r2 = (cr.get("pure_llm", {}) or {}).get("test_r2")
+        if isinstance(llm_r2, (int, float)) and llm_r2 > 0.99:
+            tiers[tier][1] += 1
+
+        hybrid = cr.get("hybrid", {}) or {}
+        reported_r2 = hybrid.get("test_r2")
+        if isinstance(reported_r2, (int, float)) and reported_r2 > 0.99:
+            decision = hybrid.get("decision", "")
+            baseline_key = _DECISION_TO_BASELINE.get(decision)
+            baseline_r2 = (cr.get(baseline_key, {}) or {}).get("test_r2") if baseline_key else reported_r2
+            if isinstance(baseline_r2, (int, float)) and baseline_r2 > 0.99:
+                tiers[tier][2] += 1
+
+    if sum(t[0] for t in tiers.values()) == 0:
+        skip_table("defi_tiers.tex", f"no records carried a recognised 'difficulty'/'tier' field (src={src})")
+        return
+
+    def _rate(n, d): return (100.0 * n / d) if d else float("nan")
+    def _fmt(v): return f"{v:.1f}" if isinstance(v, float) and not (v != v) else "---"
     def _sgn(v):
         if not isinstance(v, float) or v != v:
             return "---"
         return f"+{v:.1f}" if v >= 0 else f"{v:.1f}"
 
+    rows = []
+    tot_n = tot_llm = tot_hyp = 0
+    for label in ("Easy", "Medium", "Hard"):
+        n, llm_pass, hyp_pass = tiers[label]
+        tot_n += n; tot_llm += llm_pass; tot_hyp += hyp_pass
+        llm_pct = _rate(llm_pass, n)
+        hyp_pct = _rate(hyp_pass, n)
+        rows.append((label, n, llm_pct, hyp_pct, hyp_pct - llm_pct))
+    overall_llm = _rate(tot_llm, tot_n)
+    overall_hyp = _rate(tot_hyp, tot_n)
+    rows.append(("Overall", tot_n, overall_llm, overall_hyp, overall_hyp - overall_llm))
+
     tex = header_comment(src) + r"""
 \begin{table}[t]
 \centering
 \caption{Near-perfect success rate ($R^2 > 0.99$) by difficulty.
-  Fixed denominator per tier; LLM and Hybrid use single-run evaluation.}
+  Fixed denominator per tier; LLM and Hybrid use single-run evaluation.
+  HypatiaX column is decision-attribution-corrected --- see \S\ref{sec:hybrid-attribution-bug}.}
 \label{tab:difficulty}
 \begin{tabular}{lcrrrr}
 \toprule
@@ -604,9 +647,9 @@ def gen_defi_tiers() -> None:
   & \textbf{Pure LLM (\%)} & \textbf{HypatiaX (\%)} & \textbf{Gain (pp)} \\
 \midrule
 """
-    for label, n, llm, hyp, gain in tiers:
+    for label, n, llm, hyp, gain in rows:
         sep = r"\midrule" + "\n" if label == "Overall" else ""
-        tex += f"{sep}{label} & {n} & {_pct(llm)} & {_pct(hyp)} & {_sgn(gain)} \\\\\n"
+        tex += f"{sep}{label} & {n} & {_fmt(llm)} & {_fmt(hyp)} & {_sgn(gain)} \\\\\n"
 
     tex += r"""\bottomrule
 \end{tabular}
@@ -4166,6 +4209,130 @@ Difficulty & $n$ & Reported ($\Rsq>0.99$) & Fabricated & Corrected successes \\
     write_table("hybrid_bug_breakdown.tex", tex)
 
 
+# ── Abstract headline numbers ────────────────────────────────────────────────
+#
+# Day 1 audit finding (see DAY01_findings.md): the abstract's previously-
+# hardcoded figures — 90.5% near-perfect success rate; "+28.3 percentage
+# point gain over the LLM baseline" (implying a 62.2% LLM baseline);
+# "+85.1pp over the neural network" (implying a 5.4% NN baseline) — are
+# internally self-consistent (62.2+28.3 == 5.4+85.1 == 90.5) but do NOT
+# match any reconciled source elsewhere in the paper: not the corrected
+# 44/74 (59.5%), not the raw hybrid.success flag (59/74 = 79.7%), not the
+# uncorrected >0.99 count (52/74 = 70.3%). Numbers that are self-consistent
+# with each other but untraceable to any source are the signature of a
+# hardcoded fallback, not a computed result — so this generator computes all
+# three abstract quantities live, from the same seed-42 Shape-3 file and the
+# same decision-attribution correction gen_hybrid_bug_breakdown()/
+# gen_defi_tiers() use, and never reads or checks against the old
+# 90.5/62.2/5.4/28.3/85.1 figures in any way.
+def gen_abstract_macros() -> None:
+    """
+    Writes abstract_macros.tex with:
+      \\abstractNearPerfectRate  — corrected HypatiaX >0.99 rate (matches
+                                    tab:hybrid-bug-breakdown's Overall
+                                    "Corrected successes" row)
+      \\abstractLLMBaseline      — raw Pure LLM >0.99 rate (baselines have no
+                                    routing decision to correct)
+      \\abstractNNBaseline       — raw Neural Network >0.99 rate
+      \\abstractDeltaLLM         — abstractNearPerfectRate - abstractLLMBaseline
+      \\abstractDeltaNN          — abstractNearPerfectRate - abstractNNBaseline
+
+    All five are computed over the same fixed denominator of 74 used
+    throughout this file. If the corrected HypatiaX rate does not actually
+    exceed a baseline, that baseline's delta macro is withheld (not written
+    as a negative or zero "gain") and the reason is recorded in
+    SKIPPED_TABLES, so the abstract's \\input shows a visibly undefined
+    macro rather than a silently wrong or reversed claim. If the source
+    file/schema isn't found at all, no macros are written.
+    """
+    data, src = load_best("", "hypatiax_defi_benchmark_v4_results_seed42.json",
+                          extra_subdirs=["defi"])
+    if not data:
+        data, src = load_best("", "hypatiax_defi_benchmark_v4_results.json",
+                              extra_subdirs=["defi"])
+    if not data:
+        data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
+                              extra_subdirs=["defi"])
+
+    if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
+        skip_table("abstract_macros.tex",
+                    f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
+        return
+
+    _DECISION_TO_BASELINE = {"llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network"}
+    n_total = n_llm_pass = n_nn_pass = n_hyp_corrected_pass = 0
+    for rec in data:
+        cr = rec.get("results", {}) or {}
+        n_total += 1
+
+        llm_r2 = (cr.get("pure_llm", {}) or {}).get("test_r2")
+        if isinstance(llm_r2, (int, float)) and llm_r2 > 0.99:
+            n_llm_pass += 1
+
+        nn_r2 = (cr.get("neural_network", {}) or {}).get("test_r2")
+        if isinstance(nn_r2, (int, float)) and nn_r2 > 0.99:
+            n_nn_pass += 1
+
+        hybrid = cr.get("hybrid", {}) or {}
+        reported_r2 = hybrid.get("test_r2")
+        if isinstance(reported_r2, (int, float)) and reported_r2 > 0.99:
+            decision = hybrid.get("decision", "")
+            baseline_key = _DECISION_TO_BASELINE.get(decision)
+            baseline_r2 = (cr.get(baseline_key, {}) or {}).get("test_r2") if baseline_key else reported_r2
+            if isinstance(baseline_r2, (int, float)) and baseline_r2 > 0.99:
+                n_hyp_corrected_pass += 1
+
+    if n_total == 0:
+        skip_table("abstract_macros.tex", f"seed-42 file parsed but contained zero cases (src={src})")
+        return
+
+    hyp_rate = 100.0 * n_hyp_corrected_pass / n_total
+    llm_rate = 100.0 * n_llm_pass / n_total
+    nn_rate  = 100.0 * n_nn_pass / n_total
+    delta_llm = hyp_rate - llm_rate
+    delta_nn  = hyp_rate - nn_rate
+
+    macros = {
+        "abstractNearPerfectRate": f"{hyp_rate:.1f}",
+        "abstractLLMBaseline":     f"{llm_rate:.1f}",
+        "abstractNNBaseline":      f"{nn_rate:.1f}",
+    }
+
+    flags = []
+    if delta_llm > 0:
+        macros["abstractDeltaLLM"] = f"{delta_llm:.1f}"
+    else:
+        flags.append(
+            f"abstractDeltaLLM withheld: corrected HypatiaX rate ({hyp_rate:.1f}%) is not "
+            f"an improvement over the computed LLM baseline ({llm_rate:.1f}%)."
+        )
+    if delta_nn > 0:
+        macros["abstractDeltaNN"] = f"{delta_nn:.1f}"
+    else:
+        flags.append(
+            f"abstractDeltaNN withheld: corrected HypatiaX rate ({hyp_rate:.1f}%) is not "
+            f"an improvement over the computed NN baseline ({nn_rate:.1f}%)."
+        )
+
+    lines = [
+        "% Auto-generated abstract macros -- see gen_abstract_macros() docstring.",
+        "% Usage in abstract.tex: \\abstractNearPerfectRate\\% near-perfect success rate,",
+        "%   a +\\abstractDeltaLLM pp gain over the LLM baseline (\\abstractLLMBaseline\\%)",
+        "%   and +\\abstractDeltaNN pp over the neural network (\\abstractNNBaseline\\%).",
+        f"% Source: {src}",
+        f"% Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"% n_total={n_total}, n_hypatiax_corrected_pass={n_hyp_corrected_pass}, "
+        f"n_llm_pass={n_llm_pass}, n_nn_pass={n_nn_pass}",
+    ]
+    for f in flags:
+        lines.append(f"% \u26a0 {f}")
+        SKIPPED_TABLES.append(f"abstract_macros.tex: {f}")
+    lines.append("")
+    for key, val in macros.items():
+        lines.append(f"\\newcommand{{\\{key}}}{{{val}}}")
+    write_table("abstract_macros.tex", "\n".join(lines) + "\n")
+
+
 # ── (B) Static/historical: tab:provenance, tab:feynman30-legacy ─────────────
 #
 # Both tables are explicitly disclosure/history records in the paper's own
@@ -5547,6 +5714,7 @@ def main() -> None:
             lambda: gen_timing_full(),
             lambda: gen_timing_llm_routed_full(),
             lambda: gen_hybrid_bug_breakdown(),
+            lambda: gen_abstract_macros(),
             lambda: gen_provenance(),
             lambda: gen_feynman30_legacy(),
             lambda: gen_randomsplit(),
@@ -5634,6 +5802,7 @@ def main() -> None:
             lambda: gen_version_history(),
         #    lambda: gen_repro_macros(),
             lambda: gen_hybrid_bug_breakdown(),
+            lambda: gen_abstract_macros(),
             lambda: gen_suppb_llm_detailed(),
             lambda: gen_suppb_defi_detailed(),
         ])],

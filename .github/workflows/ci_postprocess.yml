@@ -100,7 +100,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" matplotlib seaborn \
-                      "sympy>=1.12" "tabulate>=0.9" "PyYAML>=6.0"
+                      "sympy>=1.12" "tabulate>=0.9" "PyYAML>=6.0" "pytest>=8.0"
+
+      # ------------------------------------------------------------------
+      # Step 0a — run generate_tables.py's own regression suite BEFORE
+      # touching any real data. Unlike every other step in this job, this
+      # one is meant to actually fail the run: a red test here means a
+      # logic bug in the generator code itself (e.g. the defi_tiers/
+      # hybrid_bug_breakdown consistency property breaking, or one of the
+      # Day-2-audited generators regressing), not missing/unusable source
+      # data -- and generating tables from generator code that's currently
+      # failing its own tests is exactly the "trust the pipeline because it
+      # ran, not because it's right" mistake the Day 1/2 audits were about.
+      # All tests run against synthetic fixtures baked into the test files
+      # themselves; nothing here reads real result JSON, so this step's
+      # runtime doesn't depend on which experiment triggered the run.
+      # ------------------------------------------------------------------
+      - name: "Run generate_tables.py regression suite"
+        shell: bash
+        run: |
+          python3 -m pytest scripts/tests/test_generate_tables.py scripts/tests/test_generate_tables_day2.py -v
 
       # ------------------------------------------------------------------
       # Step 0 — fail loudly if this workflow's static dispatch/push lists
@@ -427,6 +446,65 @@ jobs:
             --experiment "${{ steps.resolve.outputs.id }}" \
             --results-dir "${{ steps.resolve.outputs.source_dir_abs }}" \
             --output-dir "${{ steps.resolve.outputs.tables_dir_abs }}"
+
+      # ------------------------------------------------------------------
+      # Step 3b — independent cross-check of the abstract's headline
+      # numbers, ONLY for whichever run just generated tables. This does
+      # NOT reuse generate_tables.py's own gen_abstract_macros()/
+      # gen_defi_tiers()/gen_hybrid_bug_breakdown() logic — it's a
+      # separately-written script (scripts/verify_abstract_numbers.py)
+      # re-deriving the same rates from the raw seed-42 JSON, so a bug
+      # shared across those three functions doesn't silently "match"
+      # itself here too. Never fails the job: if File A isn't present
+      # yet, or the file doesn't parse, this step reports it and exits 0,
+      # same convention as generate_tables.py / generate_figures.py.
+      # ------------------------------------------------------------------
+      - name: "Independently verify abstract numbers"
+        if: steps.resolve.outputs.generates_tables == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          FILE_A="$(python3 - <<'PY'
+          import glob, os
+          root = "${{ steps.resolve.outputs.source_dir_abs }}"
+          pats = [
+              "hypatiax_defi_benchmark_v4_results_seed42.json",
+              "hypatiax_defi_benchmark_v4_results.json",
+              "hypatiax_defi_benchmark_v4*results*.json",
+          ]
+          found = []
+          for pat in pats:
+              found += glob.glob(os.path.join(root, pat))
+              found += glob.glob(os.path.join(root, "defi", pat))
+          found = sorted(set(found), key=os.path.getmtime, reverse=True)
+          print(found[0] if found else "")
+          PY
+          )"
+
+          if [ -z "$FILE_A" ]; then
+            echo "::notice::verify_abstract_numbers.py: no seed-42 results file found under ${{ steps.resolve.outputs.source_dir_abs }} (or its defi/ subdir) — skipping independent verification, same as gen_abstract_macros() skipping abstract_macros.tex."
+            exit 0
+          fi
+
+          echo "Found $FILE_A — running independent cross-check..."
+          REPORT="$(python3 scripts/verify_abstract_numbers.py "$FILE_A" 2>&1)"
+          STATUS=$?
+          echo "$REPORT"
+
+          {
+            echo "#### Independent abstract-number cross-check — \`${{ steps.resolve.outputs.id }}\`"
+            echo '```'
+            echo "$REPORT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ $STATUS -ne 0 ]; then
+            echo "::warning::verify_abstract_numbers.py exited non-zero against $FILE_A — see the step log/summary above. Not failing the job (informational check only), but this should be looked at before the abstract numbers are trusted."
+          elif echo "$REPORT" | grep -q "warning(s) --"; then
+            echo "::warning::verify_abstract_numbers.py found data/schema anomalies in $FILE_A — see the step log/summary above."
+          fi
+          exit 0
 
       - name: "Generate figures"
         if: steps.resolve.outputs.generates_figures == 'true'
