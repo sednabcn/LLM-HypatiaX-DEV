@@ -1,0 +1,1938 @@
+Yes. I can provide the **complete `.tex` report**, ready to compile into a PDF. I can’t directly attach a compiled PDF from this session, but the source below is self-contained and can be compiled with `pdflatex`.
+
+ I’ve structured it specifically around your requested categories:
+
+ - **a) Sources**
+- **b) Description**
+- **c) Algorithm — extracted from the implementation**
+- **d) Advantages and Limitations**
+- **e) Refactoring**
+- coverage of **`hypatiax/core` and `hypatiax/experiments`**
+- methodological distinction between the different HypatiaX hybrid implementations
+- reproducibility, leakage, extrapolation, instability and experiment methodology
+
+ \\documentclass\[11pt,a4paper\]{article}
+
+ % ============================================================\
+ % PACKAGES\
+ % ============================================================\
+ \\usepackage\[utf8\]{inputenc}\
+ \\usepackage\[T1\]{fontenc}\
+ \\usepackage{lmodern}\
+ \\usepackage\[margin=2.4cm\]{geometry}\
+ \\usepackage{amsmath,amssymb,mathtools}\
+ \\usepackage{booktabs}\
+ \\usepackage{longtable}\
+ \\usepackage{array}\
+ \\usepackage{enumitem}\
+ \\usepackage{xcolor}\
+ \\usepackage{listings}\
+ \\usepackage{hyperref}\
+ \\usepackage{microtype}\
+ \\usepackage{float}\
+ \\usepackage{graphicx}\
+ \\usepackage{caption}\
+ \\usepackage{subcaption}\
+ \\usepackage{fancyhdr}\
+ \\usepackage{titlesec}
+
+ % ============================================================\
+ % COLOURS\
+ % ============================================================\
+ \\definecolor{hypblue}{RGB}{25,75,125}\
+ \\definecolor{hypdark}{RGB}{35,35,35}\
+ \\definecolor{codebg}{RGB}{245,247,249}\
+ \\definecolor{codecomment}{RGB}{80,100,80}\
+ \\definecolor{codered}{RGB}{150,40,40}
+
+ % ============================================================\
+ % HYPERREF\
+ % ============================================================\
+ \\hypersetup{\
+ colorlinks=true,\
+ linkcolor=hypblue,\
+ citecolor=hypblue,\
+ urlcolor=hypblue,\
+ pdftitle={HypatiaX Hybrid Methods Report},\
+ pdfauthor={HypatiaX Code Analysis}\
+ }
+
+ % ============================================================\
+ % CODE\
+ % ============================================================\
+ \\lstset{\
+ backgroundcolor=\\color{codebg},\
+ basicstyle=\\ttfamily\\small,\
+ keywordstyle=\\color{hypblue}\\bfseries,\
+ commentstyle=\\color{codecomment},\
+ stringstyle=\\color{codered},\
+ breaklines=true,\
+ breakatwhitespace=false,\
+ columns=fullflexible,\
+ frame=single,\
+ rulecolor=\\color{gray!30},\
+ showstringspaces=false,\
+ numbers=left,\
+ numberstyle=\\tiny\\color{gray},\
+ numbersep=8pt\
+ }
+
+ % ============================================================\
+ % HEADER\
+ % ============================================================\
+ \\pagestyle{fancy}\
+ \\fancyhf{}\
+ \\fancyhead\[L\]{HypatiaX Hybrid Methods}\
+ \\fancyhead\[R\]{Source and Algorithm Analysis}\
+ \\fancyfoot\[C\]{\\thepage}
+
+ % ============================================================\
+ % TITLE\
+ % ============================================================\
+ \\title{\
+ \\vspace{-1cm}\
+ \\textbf{HypatiaX Hybrid Methods}\\\[0.3cm\]\
+ \\large Source-Code Analysis, Algorithm Extraction,\\\
+ Advantages, Limitations and Refactoring\
+ }
+
+ \\author{\
+ Analysis of \\texttt{sednabcn/LLM-HypatiaX-REPRO}\\\
+ \\texttt{hypatiax/core} and \\texttt{hypatiax/experiments}\
+ }
+
+ \\date{September 2026}
+
+ % ============================================================\
+ % DOCUMENT\
+ % ============================================================\
+ \\begin{document}
+
+ \\maketitle
+
+ \\begin{abstract}
+
+ This report provides a source-code-level analysis of the\
+ \\texttt{sednabcn/LLM-HypatiaX-REPRO} repository, concentrating on\
+ the \\texttt{hypatiax/core} and \\texttt{hypatiax/experiments} directories.
+
+ The objective is to reconstruct the methods implemented in the repository,\
+ rather than describing HypatiaX only at a conceptual level. The analysis\
+ therefore identifies the principal source files, explains their data flow,\
+ extracts representative algorithms from the implementation, and evaluates\
+ their advantages, limitations and refactoring requirements.
+
+ The implementation is best understood as a family of related\
+ LLM--symbolic--neural methods rather than one monolithic algorithm.\
+ The common methodological pattern is:
+
+ $$
+\text{Natural-language problem}
+\rightarrow
+\text{LLM symbolic hypothesis}
+\rightarrow
+\text{formula evaluation}
+\rightarrow
+\text{parameter calibration}
+\rightarrow
+\text{neural approximation}
+\rightarrow
+\text{selection or ensemble}.
+$$
+
+ The repository additionally contains pure-LLM baselines, adaptive neural\
+ training, symbolic parameter fitting, benchmark suites, ablation experiments,\
+ noise sweeps, sample-complexity experiments, extrapolation tests and\
+ instability analysis.
+
+ The report identifies several strengths, particularly interpretability,\
+ scientific priors, adaptive modelling and explicit extrapolation testing.\
+ It also identifies important limitations, including multiple competing\
+ hybrid policies, duplicated implementation, dynamic execution of generated\
+ code, hard-coded benchmark-specific behaviour and possible training/selection\
+ leakage.
+
+ A refactored architecture is proposed in which symbolic discovery,\
+ expression validation, parameter fitting, neural training, hybrid selection\
+ and evaluation are separated into independent components with a common\
+ model interface and explicit provenance.\
+ \\end{abstract}
+
+ \\tableofcontents\
+ \\newpage
+
+ % ============================================================\
+ \\section{Introduction}\
+ % ============================================================
+
+ \\subsection{Purpose}
+
+ The purpose of this report is to analyse how HypatiaX is actually implemented\
+ in the reproducibility repository rather than relying only on a high-level\
+ description of the method.
+
+ The analysis addresses five questions:
+
+ \\begin{enumerate}\
+ \\item What source files implement the method?\
+ \\item What does each component do?\
+ \\item What algorithm can be extracted from the source code?\
+ \\item What are the practical advantages and limitations?\
+ \\item How should the implementation be refactored?\
+ \\end{enumerate}
+
+ The scope is primarily:
+
+ \\begin{itemize}\
+ \\item \\texttt{hypatiax/core};\
+ \\item \\texttt{hypatiax/experiments}.\
+ \\end{itemize}
+
+ Some experiment scripts depend on symbolic utilities outside those directories.\
+ Those dependencies are included when they are required to understand the\
+ experimental methodology.
+
+ \\subsection{Central idea}
+
+ The central idea implemented by the repository is to combine two different\
+ forms of inductive bias.
+
+ The first is a symbolic/semantic prior:
+
+ $$
+\hat{f}_{LLM}(x)
+$$
+
+ generated from a natural-language scientific or financial description.
+
+ The second is a flexible numerical approximator:
+
+ $$
+\hat{f}_{NN}(x;\phi).
+$$
+
+ The hybrid therefore attempts to exploit:
+
+ $$
+\boxed{
+\text{scientific semantic knowledge}
++
+\text{data-driven approximation}
+}
+$$
+
+ rather than relying exclusively on either symbolic regression or neural\
+ networks.
+
+ % ============================================================\
+ \\section{Sources}\
+ % ============================================================
+
+ \\subsection{Repository}
+
+ The principal source is the public repository:
+
+ \\begin{center}\
+ \\url{https://github.com/sednabcn/LLM-HypatiaX-REPRO}\
+ \\end{center}
+
+ The relevant source tree contains:
+
+ \\begin{itemize}\
+ \\item pure LLM baselines;\
+ \\item hybrid generation systems;\
+ \\item adaptive neural training;\
+ \\item symbolic parameter fitting;\
+ \\item comparative benchmark runners;\
+ \\item ablation experiments;\
+ \\item instability analysis;\
+ \\item noise and sample-complexity experiments;\
+ \\item extrapolation tests.\
+ \\end{itemize}
+
+ \\subsection{Principal source files}
+
+ Table\~\\ref{tab:sources} summarises the most important implementation files.
+
+ \\begin{longtable}{p{0.42\\linewidth}p{0.48\\linewidth}}\
+ \\caption{Principal HypatiaX implementation sources}\
+ \\label{tab:sources}\\\
+ \\toprule\
+ \\textbf{Source} & \\textbf{Function} \\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Source} & \\textbf{Function} \\\
+ \\midrule\
+ \\endhead
+
+ \\texttt{core/base\_pure\_llm/}\\\
+ \\texttt{baseline\_pure\_llm\_defi\_discovery.py}\
+ &\
+ Pure LLM symbolic formula generation and evaluation.\
+ \\
+
+ \\texttt{core/generation/hybrid\_defi\_system/}\\\
+ \\texttt{hybrid\_system\_nn\_defi\_domain.py}\
+ &\
+ DeFi LLM--NN hybrid including symbolic parameter fitting.\
+ \\
+
+ \\texttt{core/generation/hybrid\_all\_domains\_llm\_nn/}\\\
+ \\texttt{hybrid\_system\_llm\_nn\_all\_domains.py}\
+ &\
+ General scientific/engineering LLM--NN hybrid.\
+ \\
+
+ \\texttt{core/generation/hybrid\_defi\_llm\_nn/}\\\
+ \\texttt{hybrid\_ensemble\_system\_defi\_domain.py}\
+ &\
+ Explicit uncertainty/R$^2$ weighted ensemble.\
+ \\
+
+ \\texttt{core/training/adaptive\_config.py}\
+ &\
+ Adaptive neural-network configuration.\
+ \\
+
+ \\texttt{core/training/}\\\
+ \\texttt{baseline\_neural\_network\_defi\_improved.py}\
+ &\
+ Adaptive neural baseline and training.\
+ \\
+
+ \\texttt{experiments/benchmarks/}\\\
+ \\texttt{exp1\_ablation.py}\
+ &\
+ Core-15 symbolic/hybrid ablation.\
+ \\
+
+ \\texttt{experiments/benchmarks/}\\\
+ \\texttt{run\_comparative\_suite\_benchmark\_v2.py}\
+ &\
+ Large comparative benchmark suite.\
+ \\
+
+ \\texttt{experiments/benchmarks/}\\\
+ \\texttt{run\_comparative\_suite\_benchmark\_pca.py}\
+ &\
+ PCA-based comparative benchmark.\
+ \\
+
+ \\texttt{experiments/benchmarks/}\\\
+ \\texttt{run\_instability\_suite.py}\
+ &\
+ Repeated-run instability and success analysis.\
+ \\
+
+ \\texttt{experiments/benchmarks/}\\\
+ \\texttt{run\_noise\_sweep\_benchmark.py}\
+ &\
+ Noise robustness experiments.\
+ \\
+
+ \\texttt{experiments/benchmarks/}\\\
+ \\texttt{run\_sample\_complexity\_benchmark.py}\
+ &\
+ Sample-complexity experiments.\
+ \\
+
+ \\texttt{experiments/tests/}\\\
+ \\texttt{test\_enhanced\_defi\_extrapolation.py}\
+ &\
+ Regression testing for extrapolation behaviour.\
+ \\\
+ \\bottomrule\
+ \\end{longtable}
+
+ \\subsection{Important external dependency}
+
+ Some experiment paths invoke:
+
+ \\begin{center}\
+ \\texttt{hypatiax/tools/symbolic/hybrid\_system\_v50\_2.py}.\
+ \\end{center}
+
+ Although this file is outside the requested \\texttt{core} and\
+ \\texttt{experiments} scope, it is part of the effective experimental\
+ methodology and should be included in a complete reproducibility audit.
+
+ % ============================================================\
+ \\section{Method Description}\
+ % ============================================================
+
+ \\subsection{Method family}
+
+ The implementation contains several closely related methods.
+
+ They can be grouped into:
+
+ \\begin{enumerate}\
+ \\item Pure LLM symbolic discovery;\
+ \\item DeFi LLM--NN hybrid;\
+ \\item General all-domain LLM--NN hybrid;\
+ \\item uncertainty-weighted LLM--NN ensemble;\
+ \\item adaptive neural baseline.\
+ \\end{enumerate}
+
+ Consequently, the term \`\`HypatiaX hybrid'' should always identify which\
+ implementation and decision policy is being used.
+
+ \\subsection{Common pipeline}
+
+ The common pipeline can be represented as:
+
+ $$
+D
+\rightarrow
+P(D)
+\rightarrow
+f_{LLM}
+\rightarrow
+f_{fit}
+\rightarrow
+f_{NN}
+\rightarrow
+H(f_{fit},f_{NN}).
+$$
+
+ Here:
+
+ \\begin{itemize}\
+ \\item $D$ is the natural-language problem description;\
+ \\item $P(D)$ is the generated prompt;\
+ \\item $f\_{LLM}$ is the LLM-generated symbolic expression;\
+ \\item $f\_{fit}$ is the numerically calibrated symbolic model;\
+ \\item $f\_{NN}$ is the neural model;\
+ \\item $H$ is the hybrid selection/ensemble operation.\
+ \\end{itemize}
+
+ % ============================================================\
+ \\section{Pure-LLM Symbolic Method}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ The primary implementation is:
+
+ \\begin{center}\
+ \\texttt{hypatiax/core/base\_pure\_llm/}\\\
+ \\texttt{baseline\_pure\_llm\_defi\_discovery.py}\
+ \\end{center}
+
+ \\subsection{Description}
+
+ The Pure LLM baseline sends a natural-language description of a mathematical\
+ or scientific relationship to an LLM and requests an explicit symbolic model.
+
+ The output can include:
+
+ \\begin{itemize}\
+ \\item symbolic formula;\
+ \\item LaTeX representation;\
+ \\item executable Python representation;\
+ \\item variables;\
+ \\item assumptions;\
+ \\item explanation.\
+ \\end{itemize}
+
+ The resulting formula is evaluated against available observations.
+
+ \\subsection{Algorithm}
+
+ The implementation can be abstracted as:
+
+ \\begin{lstlisting}\[language=Python\]\
+ Input:\
+ description D\
+ variable information V\
+ metadata M\
+ observations X, y
+
+ if known special case:\
+ apply analytical/statistical correction
+
+ construct prompt P(D,V,M)
+
+ response = LLM(P)
+
+ parse response:\
+ symbolic\_formula\
+ latex\_formula\
+ python\_formula\
+ explanation
+
+ evaluate python\_formula(X)
+
+ calculate:\
+ R2\
+ RMSE\
+ MAE
+
+ return symbolic result and metrics\
+ \\end{lstlisting}
+
+ \\subsection{Analytical enrichment}
+
+ For selected functional forms the implementation can use analytical\
+ transformations.
+
+ For example, a Michaelis--Menten relationship:
+
+ $$
+v=\frac{V_{\max}S}{K_m+S}
+$$
+
+ can be linearised through reciprocal quantities.
+
+ Likewise, nonlinear scientific relationships can be transformed into\
+ linear estimation problems before numerical calibration.
+
+ This produces a hybrid within the baseline itself:
+
+ $$
+\text{LLM semantic discovery}
++
+\text{classical statistical estimation}.
+$$
+
+ % ============================================================\
+ \\section{DeFi LLM--NN Hybrid}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ The principal implementation is:
+
+ \\begin{center}\
+ \\texttt{hypatiax/core/generation/hybrid\_defi\_system/}\\\
+ \\texttt{hybrid\_system\_nn\_defi\_domain.py}\
+ \\end{center}
+
+ \\subsection{Four-stage pipeline}
+
+ The implementation can be reduced to four stages:
+
+ $$
+\boxed{
+1.\ LLM\ discovery
+\rightarrow
+2.\ parameter\ fitting
+\rightarrow
+3.\ NN\ training
+\rightarrow
+4.\ hybrid\ decision
+}
+$$
+
+ % ------------------------------------------------------------\
+ \\subsection{Stage 1: LLM discovery}
+
+ The LLM proposes:
+
+ $$
+f_{LLM}(x;\theta).
+$$
+
+ The generated formula is evaluated on the data.
+
+ Its quality is measured using:
+
+ $$
+R^2 =
+1-
+\frac{\sum_i(y_i-\hat y_i)^2}
+{\sum_i(y_i-\bar y)^2}.
+$$
+
+ % ------------------------------------------------------------\
+ \\subsection{Stage 2: symbolic parameter fitting}
+
+ A major feature of the implementation is that the structure suggested by the\
+ LLM can be retained while its numerical constants are recalibrated.
+
+ Suppose the LLM proposes:
+
+ $$
+f(x)=\frac{80x}{5+x}.
+$$
+
+ The constants can be converted into parameters:
+
+ $$
+f(x;\theta)=
+\frac{\theta_0x}{\theta_1+x}.
+$$
+
+ The parameters are then fitted to observations.
+
+ The implementation attempts nonlinear least squares and can fall back to\
+ global optimisation.
+
+ If the raw symbolic formula already achieves a sufficiently high score,\
+ parameter fitting can be skipped.
+
+ Conceptually:
+
+ $$
+f_{LLM}
+\rightarrow
+f(x;\theta)
+\rightarrow
+f(x;\hat\theta).
+$$
+
+ This separates:
+
+ $$
+\text{structural discovery}
+$$
+
+ from:
+
+ $$
+\text{numerical calibration}.
+$$
+
+ % ------------------------------------------------------------\
+ \\subsection{Stage 3: neural model}
+
+ The neural component is an MLP.
+
+ Its general structure is:
+
+ $$
+\text{Linear}
+\rightarrow
+\text{LayerNorm}
+\rightarrow
+\text{SiLU}
+\rightarrow
+\cdots
+\rightarrow
+\text{Linear}.
+$$
+
+ The architecture adapts to the number of input variables.
+
+ A simplified representation is:
+
+ $$
+n_v\le2:
+[128,64,32]
+$$
+
+ $$
+3\le n_v\le4:
+[256,128,64,32]
+$$
+
+ $$
+n_v\ge5:
+[512,256,128,64].
+$$
+
+ Training includes:
+
+ \\begin{itemize}\
+ \\item StandardScaler;\
+ \\item AdamW;\
+ \\item cosine warm-restart scheduling;\
+ \\item MSE loss;\
+ \\item gradient clipping;\
+ \\item early stopping;\
+ \\item best-state restoration.\
+ \\end{itemize}
+
+ % ------------------------------------------------------------\
+ \\subsection{Stage 4: hybrid decision}
+
+ Let:
+
+ $$
+R_L=R^2(f_{fit}),
+$$
+
+ and:
+
+ $$
+R_N=R^2(f_{NN}).
+$$
+
+ The DeFi implementation uses threshold and margin conditions.
+
+ A simplified representation is:
+
+ $$
+\text{Decision}=
+\begin{cases}
+LLM,
+&
+R_L\ge0.85
+\land
+R_L-R_N>0.05,
+\\
+Ensemble,
+&
+R_L\ge0.5
+\land
+R_N\ge0.5
+\land
+|R_L-R_N|\le0.15,
+\\
+NN,
+&
+\text{otherwise}.
+\end{cases}
+$$
+
+ For an ensemble:
+
+ $$
+w_L =
+\frac{R_L}{R_L+R_N},
+\qquad
+w_N =
+\frac{R_N}{R_L+R_N},
+$$
+
+ and:
+
+ $$
+\hat y =
+w_L\hat y_L+w_N\hat y_N.
+$$
+
+ Thus the final method is not necessarily a neural network and not necessarily\
+ a symbolic formula. It selects or combines the two.
+
+ % ============================================================\
+ \\section{All-Domain LLM--NN Hybrid}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ The principal implementation is:
+
+ \\begin{center}\
+ \\texttt{hypatiax/core/generation/hybrid\_all\_domains\_llm\_nn/}\\\
+ \\texttt{hybrid\_system\_llm\_nn\_all\_domains.py}\
+ \\end{center}
+
+ \\subsection{Description}
+
+ This implementation generalises the hybrid concept to scientific and\
+ engineering equations.
+
+ It also introduces a different decision policy from the DeFi implementation.
+
+ If the symbolic model is at least as good as the NN on the relevant score,\
+ the symbolic model can be selected.
+
+ If the NN is substantially stronger, the implementation can construct an\
+ ensemble.
+
+ If symbolic generation fails, the NN becomes a fallback.
+
+ \\subsection{Domain-specific override}
+
+ The implementation contains a \\texttt{force\_llm} mechanism for selected\
+ scientific cases.
+
+ Conceptually:
+
+ $$
+\texttt{force\_llm=True}
+\Rightarrow
+\hat f=\hat f_{LLM}.
+$$
+
+ This is motivated by domains in which the expected functional structure may\
+ be poorly represented by a standard MLP.
+
+ This mechanism is scientifically useful as a domain prior, but it should be\
+ reported explicitly in experimental results because it changes the algorithmic\
+ decision rule.
+
+ % ============================================================\
+ \\section{Un can produce the same deterministiccertainty-Weighted Ensemble}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ The implementation is:
+
+ \\begin{center}\
+ \\texttt{hypatiax/core/generation/hybrid\_defi\_llm\_nn/}\\\
+ \\texttt{hybrid\_ensemble\_system\_defi\_domain.py}\
+ \\end{center}
+
+ \\subsection{Method}
+
+ The ensemble uses both predictive quality and residual dispersion.
+
+ Let:
+
+ $$
+e_L=y-\hat y_L,
+$$
+
+ and:
+
+ $$
+e_N=y-\hat y_N.
+$$
+
+ Define:
+
+ $$
+\sigma_L=\operatorname{std}(e_L),
+\qquad
+\sigma_N=\operatorname{std}(e_N).
+$$
+
+ The raw weights are approximately:
+
+ $$
+\tilde w_L=
+\frac{\max(R_L,0)}
+{\sigma_L+\epsilon},
+$$
+
+ $$
+\tilde w_N=
+\frac{\max(R_N,0)}
+{\sigma_N+\epsilon}.
+$$
+
+ After normalisation:
+
+ $$
+w_L=
+\frac{\tilde w_L}
+{\tilde w_L+\tilde w_N},
+$$
+
+ $$
+w_N=
+\frac{\tilde w_N}
+{\tilde w_L+\tilde w_N}.
+$$
+
+ The final prediction is:
+
+ $$
+\hat y=
+w_L\hat y_L+
+w_N\hat y_N.
+$$
+
+ \\subsection{Interpretation}
+
+ The intention is reasonable:
+
+ $$
+\text{stronger fit}
++
+\text{lower residual dispersion}
+\Rightarrow
+\text{larger weight}.
+$$
+
+ However, if the residual dispersion is calculated on the training set, it\
+ should not be interpreted as an independent estimate of out-of-sample\
+ uncertainty.
+
+ % ============================================================\
+ \\section{Adaptive Neural Training}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ The central configuration implementation is:
+
+ \\begin{center}\
+ \\texttt{hypatiax/core/training/adaptive\_config.py}\
+ \\end{center}
+
+ \\subsection{A-priori configuration}
+
+ The implementation attempts to configure the NN from characteristics of the\
+ problem rather than using exhaustive hyperparameter search.
+
+ The configuration can depend on:
+
+ \\begin{itemize}\
+ \\item number of variables;\
+ \\item number of samples;\
+ \\item target sign;\
+ \\item target range;\
+ \\item number of orders of magnitude;\
+ \\item pole-like behaviour;\
+ \\item positive input columns;\
+ \\item difficulty metadata;\
+ \\item extrapolation status.\
+ \\end{itemize}
+
+ Thus:
+
+ $$
+C=f(X,y,M,B),
+$$
+
+ where $C$ is the resulting configuration and $B$ represents the available\
+ training budget.
+
+ \\subsection{Transformations}
+
+ The configuration may select transformations such as:
+
+ $$
+y'=\log|y|
+$$
+
+ for suitable one-sided targets.
+
+ Positive inputs may similarly use:
+
+ $$
+x_j'=\log x_j.
+$$
+
+ The implementation avoids logarithmic target transformation when the target\
+ contains both positive and negative values.
+
+ \\subsection{Reproducibility}
+
+ A description-derived seed can be generated using a cryptographic hash:
+
+ $$
+s=
+\operatorname{SHA256}(D)\bmod 2^{31}.
+$$
+
+ This is preferable to uncontrolled random initialisation because the same\
+ description can produce the same deterministic NN seed.
+
+ % ============================================================\
+ \\section{Experimental Methodology}\
+ % ============================================================
+
+ \\subsection{Core-15 ablation}
+
+ The Core-15 experiment compares symbolic and hybrid approaches across a\
+ collection of scientific and DeFi equations.
+
+ The benchmark contains examples from:
+
+ \\begin{itemize}\
+ \\item Chemistry;\
+ \\item Biology;\
+ \\item Physics;\
+ \\item decentralised-finance mechanisms;\
+ \\item financial risk.\
+ \\end{itemize}
+
+ Examples include:
+
+ \\begin{itemize}\
+ \\item Arrhenius;\
+ \\item Henderson--Hasselbalch;\
+ \\item Michaelis--Menten;\
+ \\item logistic growth;\
+ \\item kinetic energy;\
+ \\item gravitational force;\
+ \\item ideal gas law;\
+ \\item impermanent loss;\
+ \\item price impact;\
+ \\item value at risk;\
+ \\item liquidation price;\
+ \\item portfolio variance.\
+ \\end{itemize}
+
+ % ------------------------------------------------------------\
+ \\subsection{Noise}
+
+ A representative noise model is:
+
+ $$
+y_{\mathrm{noise}}
+=
+y+
+\epsilon,
+$$
+
+ where:
+
+ $$
+\epsilon
+\sim
+\mathcal N
+\left(
+0,
+0.05^2\operatorname{Var}(y)
+\right).
+$$
+
+ This tests whether symbolic priors remain useful when observations are noisy.
+
+ % ------------------------------------------------------------\
+ \\subsection{Train/test splitting}
+
+ A standard interpolation setting uses an 80/20 split.
+
+ However, the repository also contains dedicated extrapolation experiments.
+
+ This distinction is important because:
+
+ $$
+\text{interpolation performance}
+\neq
+\text{extrapolation performance}.
+$$
+
+ % ------------------------------------------------------------\
+ \\subsection{Extrapolation}
+
+ The extrapolation experiments move test inputs outside the training range.
+
+ The scientific question is:
+
+ $$
+x\notin\mathcal X_{\mathrm{train}}
+\quad\Rightarrow\quad
+?
+$$
+
+ A successful symbolic model can potentially extrapolate according to its\
+ functional form:
+
+ $$
+\hat f(x)\approx f(x).
+$$
+
+ A flexible neural approximator may instead behave unpredictably outside the\
+ observed region.
+
+ % ------------------------------------------------------------\
+ \\subsection{Noise sweep}
+
+ The noise benchmark varies the noise level and observes:
+
+ $$
+R^2(\sigma).
+$$
+
+ This produces a robustness curve rather than a single performance number.
+
+ % ------------------------------------------------------------\
+ \\subsection{Sample complexity}
+
+ The sample-complexity experiment evaluates:
+
+ $$
+R^2(N),
+$$
+
+ where $N$ is the number of observations.
+
+ This investigates how much data is required by each method.
+
+ % ------------------------------------------------------------\
+ \\subsection{Instability}
+
+ Repeated runs are aggregated using:
+
+ $$
+\mu_i=
+\operatorname{mean}(R_i^2),
+$$
+
+ and:
+
+ $$
+I_i=
+\operatorname{std}(R_i^2).
+$$
+
+ A success probability can be defined as:
+
+ $$
+p_i=
+\frac{
+\#\{r:R_{ir}^2>0.9\}
+}{
+N_i
+}.
+$$
+
+ Thus the analysis considers not only average accuracy but also variability.
+
+ % ============================================================\
+ \\section{Advantages}\
+ % ============================================================
+
+ \\subsection{Interpretability}
+
+ The LLM component generates an explicit mathematical relationship:
+
+ $$
+\hat y=\hat f(x_1,\ldots,x_p).
+$$
+
+ This is more interpretable than a conventional black-box neural network.
+
+ \\subsection{Scientific prior}
+
+ The natural-language description can contain domain information such as:
+
+ \\begin{itemize}\
+ \\item physical laws;\
+ \\item financial definitions;\
+ \\item variable semantics;\
+ \\item expected monotonicity;\
+ \\item plausible functional families.\
+ \\end{itemize}
+
+ The LLM can use these signals before fitting numerical observations.
+
+ \\subsection{Low-data potential}
+
+ If the correct symbolic family is discovered from the description, only a\
+ small number of observations may be required to estimate its constants.
+
+ This gives the method a potentially favourable low-data inductive bias.
+
+ \\subsection{Numerical calibration}
+
+ The separation:
+
+ $$
+\text{structure}
+\rightarrow
+\text{parameter fitting}
+$$
+
+ is an important strength.
+
+ An LLM does not need to estimate every numerical constant perfectly if the\
+ correct mathematical structure is discovered.
+
+ \\subsection{Neural fallback}
+
+ When symbolic discovery fails, the NN can still provide a numerical\
+ approximation.
+
+ Therefore the hybrid is more robust to individual component failure than a\
+ pure symbolic system.
+
+ \\subsection{Extrapolation evaluation}
+
+ The explicit OOD/extrapolation experiments are valuable because symbolic\
+ regression is often motivated by recovery of functional laws rather than\
+ interpolation alone.
+
+ \\subsection{Reproducibility engineering}
+
+ The repository contains several mechanisms intended to improve reproducibility:
+
+ \\begin{itemize}\
+ \\item deterministic seeds;\
+ \\item frozen LLM response support;\
+ \\item equation identifiers;\
+ \\item fixed experimental configurations;\
+ \\item checkpoint restoration;\
+ \\item explicit experiment outputs;\
+ \\item provenance-oriented result handling.\
+ \\end{itemize}
+
+ % ============================================================\
+ \\section{Limitations}\
+ % ============================================================
+
+ \\subsection{Multiple competing algorithms}
+
+ The repository contains multiple hybrid decision rules.
+
+ For example, the DeFi system uses explicit thresholds and margins, whereas\
+ the all-domain system uses a different comparison and includes\
+ \\texttt{force\_llm} logic.
+
+ Therefore:
+
+ $$
+\text{HypatiaX}
+\neq
+\text{one uniquely defined selector}.
+$$
+
+ A scientific paper must identify the exact implementation variant.
+
+ \\subsection{Potential selection leakage}
+
+ A major methodological concern is the use of fitted-data performance to\
+ choose between the symbolic and neural models.
+
+ If:
+
+ $$
+R_L=R^2_{\mathrm{train}},
+\qquad
+R_N=R^2_{\mathrm{train}},
+$$
+
+ are used for selection, then the selection mechanism has observed the same\
+ data used for fitting.
+
+ The reported result can therefore be optimistic.
+
+ The correct protocol should use:
+
+ $$
+D_{\mathrm{train}}
+\rightarrow
+\text{fit},
+$$
+
+ $$
+D_{\mathrm{validation}}
+\rightarrow
+\text{select},
+$$
+
+ $$
+D_{\mathrm{test}}
+\rightarrow
+\text{final evaluation}.
+$$
+
+ \\subsection{Dynamic execution}
+
+ The LLM can produce executable Python.
+
+ Executing generated source code introduces a security and correctness boundary.
+
+ The preferred architecture is:
+
+ $$
+\text{LLM text}
+\rightarrow
+\text{restricted parser}
+\rightarrow
+\text{AST}
+\rightarrow
+\text{validated expression}
+\rightarrow
+\text{evaluator}.
+$$
+
+ The system should not need arbitrary Python execution to evaluate a mathematical\
+ formula.
+
+ \\subsection{Hard-coded corrections}
+
+ Some implementations contain explicit special cases for known formulas.
+
+ This is useful engineering but creates a distinction between:
+
+ $$
+\text{general algorithm}
+$$
+
+ and:
+
+ $$
+\text{benchmark-specific prior knowledge}.
+$$
+
+ Such corrections must be reported transparently in experimental methodology.
+
+ \\subsection{LLM nondeterminism}
+
+ An LLM API is not equivalent to a locally seeded pseudorandom generator.
+
+ Therefore:
+
+ $$
+\text{seed}
+\not\Rightarrow
+\text{identical LLM response}.
+$$
+
+ The frozen-response mechanism is therefore important for exact reproducibility.
+
+ \\subsection{Implementation duplication}
+
+ There is repeated logic across:
+
+ \\begin{itemize}\
+ \\item symbolic evaluation;\
+ \\item neural construction;\
+ \\item neural training;\
+ \\item metric calculation;\
+ \\item result packaging;\
+ \\item LLM parsing.\
+ \\end{itemize}
+
+ Duplicated implementations can evolve differently and produce subtle\
+ methodological inconsistencies.
+
+ \\subsection{Large experiment scripts}
+
+ Several experiment scripts combine:
+
+ $$
+\text{data generation}
++
+\text{training}
++
+\text{evaluation}
++
+\text{statistics}
++
+\text{plots}
++
+\text{file I/O}.
+$$
+
+ This makes testing and maintenance difficult.
+
+ \\subsection{Training-time dependence}
+
+ Some optimisation behaviour has historically depended on time budgets.
+
+ Although the implementation contains reproducibility improvements, hardware\
+ and runtime differences can still affect execution.
+
+ % ============================================================\
+ \\section{Refactoring}\
+ % ============================================================
+
+ \\subsection{Objective}
+
+ The purpose of refactoring should not be to remove the LLM--NN hybrid concept.
+
+ Instead, the goal should be to separate its methodological stages so that\
+ each stage can be independently tested and replaced.
+
+ % ------------------------------------------------------------\
+ \\subsection{Proposed architecture}
+
+ A cleaner structure is:
+
+ \\begin{lstlisting}\
+ hypatiax/\
+ |\
+ +-- discovery/\
+ | +-- llm.py\
+ | +-- prompts.py\
+ | +-- parser.py\
+ | +-- cache.py\
+ |\
+ +-- symbolic/\
+ | +-- expression.py\
+ | +-- validator.py\
+ | +-- evaluator.py\
+ | +-- parameter\_fit.py\
+ |\
+ +-- models/\
+ | +-- neural.py\
+ | +-- trainer.py\
+ | +-- adaptive\_config.py\
+ |\
+ +-- hybrid/\
+ | +-- selector.py\
+ | +-- ensemble.py\
+ | +-- policies.py\
+ |\
+ +-- evaluation/\
+ | +-- metrics.py\
+ | +-- splits.py\
+ | +-- extrapolation.py\
+ | +-- instability.py\
+ |\
+ +-- experiments/\
+ | +-- definitions/\
+ | +-- runners/\
+ | +-- analyses/\
+ | +-- reports/\
+ |\
+ +-- provenance/\
+ | +-- schema.py\
+ | +-- recorder.py\
+ \\end{lstlisting}
+
+ % ------------------------------------------------------------\
+ \\subsection{Common model interface}
+
+ Every method should implement:
+
+ \\begin{lstlisting}\[language=Python\]\
+ fit(X, y, metadata) -\> FittedModel
+
+ predict(X) -\> y\_hat
+
+ describe() -\> ModelDescription\
+ \\end{lstlisting}
+
+ This allows Pure LLM, symbolic, NN and hybrid models to be evaluated through\
+ the same experimental interface.
+
+ % ------------------------------------------------------------\
+ \\subsection{Typed symbolic representation}
+
+ Instead of generating executable Python, the LLM should generate a restricted\
+ expression.
+
+ For example:
+
+ $$
+E=
+\operatorname{Add}
++
+\operatorname{Mul}
++
+\operatorname{Pow}
++
+\operatorname{Log}
++
+\operatorname{Exp}
++
+\operatorname{Sin}.
+$$
+
+ The pipeline becomes:
+
+ $$
+\boxed{
+LLM
+\rightarrow
+Parser
+\rightarrow
+AST
+\rightarrow
+Validator
+\rightarrow
+Evaluator
+}
+$$
+
+ This removes arbitrary-code execution from the scientific core.
+
+ % ------------------------------------------------------------\
+ \\subsection{Separate structure from parameters}
+
+ The symbolic model should explicitly represent:
+
+ $$
+f(x;\theta).
+$$
+
+ The LLM discovers the structure:
+
+ $$
+f(x;\theta).
+$$
+
+ Numerical optimisation then estimates:
+
+ $$
+\hat\theta=
+\arg\min_{\theta}
+L(y,f(X;\theta)).
+$$
+
+ The final symbolic model becomes:
+
+ $$
+\hat f(x)=f(x;\hat\theta).
+$$
+
+ This is more robust than modifying Python source strings with regular\
+ expressions.
+
+ % ------------------------------------------------------------\
+ \\subsection{Centralised selection policies}
+
+ The selection mechanism should become a separate interface:
+
+ \\begin{lstlisting}\[language=Python\]\
+ select(\
+ symbolic\_result,\
+ neural\_result,\
+ validation\_data,\
+ policy\
+ ) -\> HybridDecision\
+ \\end{lstlisting}
+
+ Possible policies include:
+
+ \\begin{itemize}\
+ \\item \\texttt{SymbolicMarginPolicy};\
+ \\item \\texttt{ValidationR2Policy};\
+ \\item \\texttt{UncertaintyPolicy};\
+ \\item \\texttt{BlendPolicy};\
+ \\item \\texttt{AlwaysSymbolicPolicy};\
+ \\item \\texttt{AlwaysNNPolicy}.\
+ \\end{itemize}
+
+ The experiment configuration should select the policy rather than embedding\
+ the policy in each model implementation.
+
+ % ------------------------------------------------------------\
+ \\subsection{Strict data separation}
+
+ A refactored experiment should explicitly define:
+
+ $$
+D=
+D_{train}
+\cup
+D_{validation}
+\cup
+D_{test}
+\cup
+D_{OOD}.
+$$
+
+ The roles should be:
+
+ \\begin{center}\
+ \\begin{tabular}{ll}\
+ \\toprule\
+ Dataset & Purpose \\\
+ \\midrule\
+ Training & Parameter/model fitting \\\
+ Validation & Hybrid model selection \\\
+ Test & Final interpolation evaluation \\\
+ OOD & Extrapolation evaluation \\\
+ \\bottomrule\
+ \\end{tabular}\
+ \\end{center}
+
+ No final test metric should influence the hybrid decision.
+
+ % ------------------------------------------------------------\
+ \\subsection{Experiment manifests}
+
+ Large benchmark scripts should be replaced by declarative configurations.
+
+ For example:
+
+ \\begin{lstlisting}\
+ experiment:\
+ name: core15\_hybrid\_ablation
+
+ data:\
+ samples: 200\
+ noise: 0.05
+
+ split:\
+ train: 0.70\
+ validation: 0.15\
+ test: 0.15
+
+ methods:
+
+ - pure\_llm
+- neural
+- hybrid
+- pysr
+
+ hybrid:\
+ policy: validation\_r2
+
+ evaluation:\
+ metrics:\
+ \- r2\
+ \- rmse\
+ \- mae
+
+ extrapolation: true
+
+ seeds:
+
+ - 42
+- 99
+- 123
+- 777
+- 2024\
+   \\end{lstlisting}
+
+ A generic runner can then execute the same protocol across all equations.
+
+ % ------------------------------------------------------------\
+ \\subsection{Immutable provenance}
+
+ Every result should contain enough information to reproduce the run.
+
+ A suggested schema is:
+
+ \\begin{lstlisting}\
+ {\
+ "experiment\_id": "...",\
+ "equation\_id": "...",\
+ "method": "...",\
+ "model": "...",\
+ "dataset\_hash": "...",\
+ "prompt\_hash": "...",\
+ "response\_hash": "...",\
+ "config\_hash": "...",\
+ "code\_version": "...",\
+ "seed": 42,\
+ "metrics": {\
+ "r2": "...",\
+ "rmse": "...",\
+ "mae": "..."\
+ }\
+ }\
+ \\end{lstlisting}
+
+ This produces a provenance chain:
+
+ $$
+\text{source}
+\rightarrow
+\text{configuration}
+\rightarrow
+\text{execution}
+\rightarrow
+\text{result}.
+$$
+
+ % ============================================================\
+ \\section{Refactored HypatiaX Algorithm}\
+ % ============================================================
+
+ The complete refactored algorithm can be expressed as follows.
+
+ \\begin{lstlisting}\
+ Algorithm: Refactored HypatiaX
+
+ Input:\
+ description D\
+ train data (Xtr, ytr)\
+ validation data (Xv, yv)\
+ test data (Xt, yt)\
+ OOD data (Xood, yood)\
+ metadata M
+
+ 1. DISCOVERY
+    prompt \<- build\_prompt(D, M)
+    response \<- frozen\_or\_recorded\_LLM(prompt)
+    expression \<- parse(response)
+    validate(expression)
+2. SYMBOLIC CALIBRATION
+    if expression contains parameters:
+
+   ```
+    theta <- optimise(
+        expression,
+        Xtr,
+        ytr
+    )
+   ```
+    symbolic\_model \<- expression(theta)
+3. NEURAL TRAINING
+    config \<- adaptive\_config(\
+    Xtr,\
+    ytr,\
+    M\
+    )
+    neural\_model \<- train(\
+    Xtr,\
+    ytr,\
+    config\
+    )
+4. VALIDATION
+    ysv \<- symbolic\_model(Xv)\
+    ynv \<- neural\_model(Xv)
+    symbolic\_score \<- metrics(yv, ysv)\
+    neural\_score \<- metrics(yv, ynv)
+5. HYBRID DECISION
+    decision \<- policy(\
+    symbolic\_score,\
+    neural\_score\
+    )
+    if decision == SYMBOLIC:\
+    final\_model \<- symbolic\_model
+    elif decision == NEURAL:\
+    final\_model \<- neural\_model
+    else:\
+    final\_model \<- ensemble(\
+    symbolic\_model,\
+    neural\_model\
+    )
+6. FINAL TEST
+    ytest \<- final\_model(Xt)
+    test\_metrics \<- metrics(\
+    yt,\
+    ytest\
+    )
+7. OOD EVALUATION
+    yood\_hat \<- final\_model(Xood)
+    ood\_metrics \<- metrics(\
+    yood,\
+    yood\_hat\
+    )
+8. PROVENANCE
+    save(\
+    prompt,\
+    response,\
+    expression,\
+    configuration,\
+    decision,\
+    metrics,\
+    hashes\
+    )
+
+ Output:\
+ symbolic expression\
+ fitted parameters\
+ neural model\
+ hybrid decision\
+ test metrics\
+ OOD metrics\
+ provenance\
+ \\end{lstlisting}
+
+ % ============================================================\
+ \\section{Recommended Evaluation Protocol}\
+ % ============================================================
+
+ For a scientifically rigorous evaluation, every equation should follow the\
+ same procedure.
+
+ \\begin{enumerate}\
+ \\item Define and version the ground-truth equation.\
+ \\item Generate the dataset from a fixed random seed.\
+ \\item Hash the generated dataset.\
+ \\item Split into training, validation, test and OOD regions.\
+ \\item Freeze or record the LLM request and response.\
+ \\item Parse and validate the symbolic expression.\
+ \\item Fit symbolic parameters using training data only.\
+ \\item Train the neural model using training data only.\
+ \\item Select the final hybrid configuration using validation data.\
+ \\item Evaluate once on the untouched test set.\
+ \\item Evaluate separately on the OOD/extrapolation set.\
+ \\item Repeat the full procedure for predetermined seeds.\
+ \\item Report mean and standard deviation.\
+ \\item Report the proportion of runs achieving a predefined success level.\
+ \\end{enumerate}
+
+ Recommended metrics are:
+
+ $$
+R^2,
+\qquad
+RMSE,
+\qquad
+MAE.
+$$
+
+ For repeated runs:
+
+ $$
+\mu(R^2),
+\qquad
+\sigma(R^2),
+\qquad
+P(R^2>\tau).
+$$
+
+ For extrapolation, results should be reported separately rather than being\
+ combined with interpolation performance.
+
+ % ============================================================\
+ \\section{Summary Table}\
+ % ============================================================
+
+ \\begin{longtable}{p{0.18\\linewidth}p{0.23\\linewidth}p{0.25\\linewidth}p{0.25\\linewidth}}\
+ \\caption{Summary of HypatiaX method components}\
+ \\\
+ \\toprule\
+ \\textbf{Method} &\
+ \\textbf{Input} &\
+ \\textbf{Main mechanism} &\
+ \\textbf{Primary limitation}\
+ \\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Method} &\
+ \\textbf{Input} &\
+ \\textbf{Main mechanism} &\
+ \\textbf{Primary limitation}\
+ \\\
+ \\midrule\
+ \\endhead
+
+ Pure LLM &\
+ Description + observations &\
+ LLM symbolic discovery &\
+ Nondeterminism and numerical inaccuracies\
+ \\
+
+ DeFi hybrid &\
+ Description + data &\
+ LLM + parameter fitting \+ NN &\
+ Multiple thresholds and possible leakage\
+ \\
+
+ All-domain hybrid &\
+ Scientific description \+ data &\
+ LLM + NN + domain policy &\
+ Different policy from DeFi implementation\
+ \\
+
+ Uncertainty ensemble &\
+ LLM + NN predictions &\
+ $R^2$/residual weighted combination &\
+ Training residuals may not represent OOD uncertainty\
+ \\
+
+ Adaptive NN &\
+ Numerical data + metadata &\
+ A-priori architecture/configuration &\
+ Still a black-box approximator\
+ \\
+
+ Core-15 experiments &\
+ Synthetic equations &\
+ Controlled ablation &\
+ Benchmark-specific hard-coded knowledge\
+ \\
+
+ Instability suite &\
+ Repeated runs &\
+ Mean/variance/success analysis &\
+ Requires many executions\
+ \\\
+ \\bottomrule\
+ \\end{longtable}
+
+ % ============================================================\
+ \\section{Conclusion}\
+ % ============================================================
+
+ The source-code analysis shows that HypatiaX is most accurately described as a\
+ family of hybrid symbolic--neural implementations.
+
+ The common scientific idea is:
+
+ $$
+\boxed{
+\text{LLM symbolic prior}
++
+\text{numerical learning}
+}
+$$
+
+ with numerical calibration providing an intermediate stage:
+
+ $$
+\boxed{
+\text{LLM structure}
+\rightarrow
+\text{fitted symbolic model}
+}
+$$
+
+ and neural approximation providing a complementary model:
+
+ $$
+\boxed{
+f_{symbolic}
++
+f_{NN}
+\rightarrow
+f_{hybrid}.
+}
+$$
+
+ The strongest characteristics of the implementation are:
+
+ \\begin{itemize}\
+ \\item symbolic interpretability;\
+ \\item use of natural-language scientific priors;\
+ \\item numerical calibration of symbolic expressions;\
+ \\item adaptive neural training;\
+ \\item explicit extrapolation experiments;\
+ \\item instability and repeated-run analysis;\
+ \\item reproducibility-oriented engineering.\
+ \\end{itemize}
+
+ The main limitations are:
+
+ \\begin{itemize}\
+ \\item multiple competing hybrid policies;\
+ \\item duplicated implementation;\
+ \\item possible training/selection leakage;\
+ \\item dynamic execution of LLM-generated code;\
+ \\item benchmark-specific corrections;\
+ \\item LLM API nondeterminism;\
+ \\item large and tightly coupled experiment scripts.\
+ \\end{itemize}
+
+ The recommended refactoring is therefore to preserve the hybrid methodology\
+ while separating:
+
+ $$
+\boxed{
+Discovery
+\rightarrow
+Validation
+\rightarrow
+Calibration
+\rightarrow
+Training
+\rightarrow
+Selection
+\rightarrow
+Evaluation
+}
+$$
+
+ into independently testable modules.
+
+ Most importantly, hybrid selection should be performed using a validation set,\
+ while test and extrapolation sets remain untouched until final evaluation.
+
+ This would turn the current collection of partially overlapping experimental\
+ implementations into a clearer and more reproducible scientific framework.
+
+ % ============================================================\
+ \\appendix\
+ \\section{Appendix: Minimal Compilation Instructions}\
+ % ============================================================
+
+ Save this document as:
+
+ \\begin{center}\
+ \\texttt{hypatiax\_hybrid\_methods\_report.tex}\
+ \\end{center}
+
+ Then compile:
+
+ \\begin{lstlisting}\[language=bash\]\
+ pdflatex hypatiax\_hybrid\_methods\_report.tex\
+ pdflatex hypatiax\_hybrid\_methods\_report.tex\
+ \\end{lstlisting}
+
+ For a clean build:
+
+ \\begin{lstlisting}\[language=bash\]\
+ pdflatex -interaction=nonstopmode \
+ hypatiax\_hybrid\_methods\_report.tex
+
+ pdflatex -interaction=nonstopmode \
+ hypatiax\_hybrid\_methods\_report.tex\
+ \\end{lstlisting}
+
+ The second compilation resolves the table of contents and cross-references.
+
+ \\end{document}
+
+ 

@@ -1,0 +1,2793 @@
+Absolutely. I’ll extend it into a **publication-style technical report**, with a stronger scientific structure, explicit algorithm blocks, a source-to-method traceability table, architecture diagrams in TikZ, experiment-flow diagrams, refactoring architecture, reproducibility protocol, and a detailed appendix.
+
+ I also checked the project's associated public material: the project describes HypatiaX as a hybrid LLM + symbolic-regression approach for scientific equation discovery, and its tutorial material describes a 131-equation benchmark and statistical-analysis workflow.  SiMLeng Portfolio+1
+
+ The repository itself should be treated as the primary implementation source; I have deliberately **not invented line numbers** where the repository contents available through search did not expose stable line-numbered source. The extended report therefore identifies files/classes/functions where appropriate and labels implementation-derived observations separately from methodological interpretation.
+
+ LLM-HypatiaX project repository
+
+ \\documentclass\[11pt,a4paper\]{article}
+
+ % ============================================================\
+ % PACKAGES\
+ % ============================================================
+
+ \\usepackage\[utf8\]{inputenc}\
+ \\usepackage\[T1\]{fontenc}\
+ \\usepackage{lmodern}\
+ \\usepackage\[margin=2.35cm\]{geometry}
+
+ \\usepackage{amsmath}\
+ \\usepackage{amssymb}\
+ \\usepackage{mathtools}\
+ \\usepackage{bm}
+
+ \\usepackage{booktabs}\
+ \\usepackage{longtable}\
+ \\usepackage{array}\
+ \\usepackage{multirow}\
+ \\usepackage{tabularx}
+
+ \\usepackage{enumitem}\
+ \\usepackage{xcolor}\
+ \\usepackage{listings}
+
+ \\usepackage{graphicx}\
+ \\usepackage{float}\
+ \\usepackage{caption}\
+ \\usepackage{subcaption}
+
+ \\usepackage{tikz}\
+ \\usetikzlibrary{\
+ arrows.meta,\
+ positioning,\
+ shapes.geometric,\
+ shapes.multipart,\
+ fit,\
+ calc,\
+ backgrounds,\
+ decorations.pathreplacing\
+ }
+
+ \\usepackage{algorithm}\
+ \\usepackage{algpseudocode}
+
+ \\usepackage{fancyhdr}\
+ \\usepackage{titlesec}\
+ \\usepackage{microtype}
+
+ \\usepackage{hyperref}\
+ \\usepackage{cleveref}
+
+ % ============================================================\
+ % COLOURS\
+ % ============================================================
+
+ \\definecolor{hypblue}{RGB}{25,75,125}\
+ \\definecolor{hypcyan}{RGB}{35,125,155}\
+ \\definecolor{hypgreen}{RGB}{50,120,75}\
+ \\definecolor{hyporange}{RGB}{190,110,25}\
+ \\definecolor{hypred}{RGB}{165,55,55}\
+ \\definecolor{hypgray}{RGB}{90,90,90}\
+ \\definecolor{codebg}{RGB}{246,247,249}\
+ \\definecolor{boxbg}{RGB}{240,245,250}
+
+ % ============================================================\
+ % HYPERREF\
+ % ============================================================
+
+ \\hypersetup{\
+ colorlinks=true,\
+ linkcolor=hypblue,\
+ citecolor=hypblue,\
+ urlcolor=hypblue,\
+ pdftitle={HypatiaX Extended Source-Code and Methodological Analysis},\
+ pdfauthor={HypatiaX Code Analysis}\
+ }
+
+ % ============================================================\
+ % CODE\
+ % ============================================================
+
+ \\lstset{\
+ backgroundcolor=\\color{codebg},\
+ basicstyle=\\ttfamily\\small,\
+ keywordstyle=\\color{hypblue}\\bfseries,\
+ commentstyle=\\color{hypgreen},\
+ stringstyle=\\color{hypred},\
+ breaklines=true,\
+ breakatwhitespace=false,\
+ columns=fullflexible,\
+ frame=single,\
+ rulecolor=\\color{gray!35},\
+ showstringspaces=false,\
+ numbers=left,\
+ numberstyle=\\tiny\\color{gray},\
+ numbersep=7pt\
+ }
+
+ % ============================================================\
+ % PAGE STYLE\
+ % ============================================================
+
+ \\pagestyle{fancy}\
+ \\fancyhf{}\
+ \\fancyhead\[L\]{HypatiaX Extended Analysis}\
+ \\fancyhead\[R\]{Source-Code and Methods}\
+ \\fancyfoot\[C\]{\\thepage}
+
+ % ============================================================\
+ % CUSTOM COMMANDS\
+ % ============================================================
+
+ \\newcommand{\\Rtwo}{R^2}\
+ \\newcommand{\\LLM}{\\mathrm{LLM}}\
+ \\newcommand{\\NN}{\\mathrm{NN}}\
+ \\newcommand{\\OOD}{\\mathrm{OOD}}\
+ \\newcommand{\\Hyp}{\\mathrm{HypatiaX}}
+
+ \\newcommand{\\code}\[1\]{\\texttt{#1}}
+
+ % ============================================================\
+ % TITLE\
+ % ============================================================
+
+ \\title{\
+ \\vspace{-1cm}\
+ \\textbf{HypatiaX: Extended Source-Code and Methodological Analysis}\\\[0.35cm\]\
+ \\large\
+ LLM--Symbolic--Neural Formula Discovery,\\\
+ Experimental Methodology, Reproducibility and Refactoring\
+ }
+
+ \\author{\
+ Technical analysis of\
+ \\texttt{sednabcn/LLM-HypatiaX-REPRO}\\\
+ \\texttt{hypatiax/core} and \\texttt{hypatiax/experiments}\
+ }
+
+ \\date{September 2026}
+
+ % ============================================================\
+ % DOCUMENT\
+ % ============================================================
+
+ \\begin{document}
+
+ \\maketitle
+
+ \\begin{abstract}
+
+ This report presents an extended source-code and methodological analysis of the\
+ LLM-HypatiaX reproducibility implementation. The primary scope is the\
+ \\texttt{hypatiax/core} and \\texttt{hypatiax/experiments} portions of the\
+ repository, with related symbolic utilities considered where they are required\
+ to understand the experimental execution path.
+
+ The analysis reconstructs the implemented methodology from source rather than\
+ treating HypatiaX as a single abstract algorithm. The codebase contains several\
+ related systems: a Pure-LLM symbolic baseline, a DeFi-specific LLM--neural\
+ hybrid, a more general scientific/engineering hybrid, an uncertainty-weighted\
+ ensemble implementation, adaptive neural training and a collection of\
+ benchmark and robustness experiments.
+
+ The common methodological pattern is represented as
+
+ $$
+D
+\rightarrow
+f_{\mathrm{LLM}}
+\rightarrow
+f_{\mathrm{cal}}
+\rightarrow
+f_{\mathrm{NN}}
+\rightarrow
+H(f_{\mathrm{cal}},f_{\mathrm{NN}}),
+$$
+
+ where $D$ is a natural-language problem description,\
+ $f\_{\\mathrm{LLM}}$ is a symbolic hypothesis produced by an LLM,\
+ $f\_{\\mathrm{cal}}$ is a numerically calibrated symbolic expression,\
+ $f\_{\\mathrm{NN}}$ is a neural approximation, and $H$ is a selection or\
+ ensemble policy.
+
+ The report documents the source components, reconstructs representative\
+ algorithms, explains the numerical parameter-fitting stage, analyses adaptive\
+ neural training, and maps the principal experimental suites to the underlying\
+ methodological questions.
+
+ Particular attention is given to scientific reproducibility. The analysis\
+ identifies several important issues: the coexistence of multiple hybrid\
+ decision policies, possible use of training performance during model selection,\
+ dynamic execution of generated code, hard-coded benchmark-specific cases,\
+ LLM API nondeterminism, duplicated implementation and coupling between\
+ benchmark orchestration and model execution.
+
+ A refactored architecture is proposed based on six independently testable\
+ stages: symbolic discovery, expression validation, symbolic calibration,\
+ neural training, validation-based hybrid selection and final evaluation.\
+ The proposed architecture also introduces strict train/validation/test/OOD\
+ separation, typed symbolic expressions, centralised policies, declarative\
+ experiment manifests and immutable provenance.
+
+ \\end{abstract}
+
+ \\tableofcontents\
+ \\newpage
+
+ % ============================================================\
+ \\section{Executive Summary}\
+ % ============================================================
+
+ \\subsection{What HypatiaX implements}
+
+ The implementation is best understood as a \\emph{family of hybrid\
+ symbolic--neural formula-discovery systems}.
+
+ Its central idea is to exploit an LLM as a source of semantic and mathematical\
+ prior information while retaining numerical learning as a fallback or\
+ complement.
+
+ The resulting architecture can be summarised as
+
+ $$
+\boxed{
+\text{Natural language}
+\rightarrow
+\text{symbolic hypothesis}
+\rightarrow
+\text{numerical calibration}
+\rightarrow
+\text{neural approximation}
+\rightarrow
+\text{hybrid decision}
+}
+$$
+
+ The symbolic component is valuable because it can produce a human-readable\
+ equation. The neural component is valuable because it can approximate\
+ relationships that are difficult to express symbolically.
+
+ \\subsection{Principal implementation variants}
+
+ The source contains at least four important methodological variants:
+
+ \\begin{enumerate}\
+ \\item Pure LLM symbolic discovery.\
+ \\item DeFi LLM--NN hybrid with explicit symbolic parameter fitting.\
+ \\item General-domain LLM--NN hybrid.\
+ \\item Residual/uncertainty-weighted LLM--NN ensemble.\
+ \\end{enumerate}
+
+ The neural baseline and adaptive configuration mechanism form a fifth\
+ supporting component.
+
+ These variants should not be presented in a paper as if they were a single\
+ unchanging algorithm.
+
+ \\subsection{Main findings of the source analysis}
+
+ The source analysis identifies the following characteristics.
+
+ \\begin{itemize}\
+ \\item LLMs are used as symbolic hypothesis generators.\
+ \\item Symbolic constants can be fitted numerically after structural\
+ generation.\
+ \\item Neural networks provide a flexible numerical approximation.\
+ \\item Several hybrid decision rules exist.\
+ \\item Domain-specific overrides can alter the normal selection process.\
+ \\item Neural architecture and transformations can be selected adaptively.\
+ \\item Experiments explicitly examine noise, sample complexity,\
+ extrapolation and instability.\
+ \\item Reproducibility is addressed through deterministic NN configuration,\
+ caching and experiment metadata.\
+ \\end{itemize}
+
+ \\subsection{Most important refactoring recommendation}
+
+ The most important architectural change is to replace multiple independent\
+ hybrid implementations with a common pipeline:
+
+ $$
+\boxed{
+Discovery
+\rightarrow
+Validation
+\rightarrow
+Calibration
+\rightarrow
+Training
+\rightarrow
+Selection
+\rightarrow
+Evaluation
+}
+$$
+
+ The model-selection step should operate on a validation set, not on the final\
+ test set.
+
+ % ============================================================\
+ \\section{Scope and Source-Analysis Method}\
+ % ============================================================
+
+ \\subsection{Repository scope}
+
+ The analysis targets:
+
+ \\begin{itemize}\
+ \\item \\code{hypatiax/core};\
+ \\item \\code{hypatiax/experiments};\
+ \\item directly required symbolic utilities.\
+ \\end{itemize}
+
+ The repository's public project material describes HypatiaX as a framework\
+ for formula discovery using generative AI and symbolic regression. Its\
+ associated tutorials describe a benchmark workflow and publication-oriented\
+ statistical analysis. These project-level descriptions provide context, while\
+ the source code remains the primary evidence for the implementation analysis.
+
+ \\subsection{Evidence hierarchy}
+
+ Three types of evidence are distinguished.
+
+ \\begin{enumerate}\
+ \\item \\textbf{Implementation fact:} behaviour directly represented by the\
+ source code.\
+ \\item \\textbf{Methodological interpretation:} a scientific interpretation\
+ of what the implementation is doing.\
+ \\item \\textbf{Recommendation:} a proposed improvement that is not itself\
+ part of the existing implementation.\
+ \\end{enumerate}
+
+ This distinction is important because a source-code implementation can contain\
+ engineering decisions that differ from the idealised algorithm described in a\
+ paper.
+
+ \\subsection{Static-analysis limitation}
+
+ This report is a static source/methodology analysis. It does not claim that\
+ every benchmark has been executed from a clean environment or that every\
+ reported numerical result has independently been reproduced.
+
+ Consequently:
+
+ $$
+\text{source inspection}
+\neq
+\text{independent experimental replication}.
+$$
+
+ This distinction should remain explicit in any publication or technical\
+ appendix derived from this report.
+
+ % ============================================================\
+ \\section{Source Inventory}\
+ % ============================================================
+
+ \\subsection{Core components}
+
+ \\begin{longtable}{p{0.36\\linewidth}p{0.54\\linewidth}}\
+ \\caption{Core implementation inventory}\
+ \\label{tab:coreinventory}\\\
+ \\toprule\
+ \\textbf{Component} & \\textbf{Role} \\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Component} & \\textbf{Role} \\\
+ \\midrule\
+ \\endhead
+
+ \\code{base\_pure\_llm/}\
+ &\
+ Pure LLM formula-discovery baseline.\
+ \\
+
+ \\code{generation/hybrid\_defi\_system/}\
+ &\
+ DeFi-oriented LLM--NN hybrid.\
+ \\
+
+ \\code{generation/hybrid\_all\_domains\_llm\_nn/}\
+ &\
+ General-domain LLM--NN hybrid.\
+ \\
+
+ \\code{generation/hybrid\_defi\_llm\_nn/}\
+ &\
+ Explicit ensemble implementation.\
+ \\
+
+ \\code{training/adaptive\_config.py}\
+ &\
+ A-priori neural configuration.\
+ \\
+
+ \\code{training/baseline\_neural\_network\_defi\_improved.py}\
+ &\
+ Neural baseline/training implementation.\
+ \\
+
+ \\bottomrule\
+ \\end{longtable}
+
+ \\subsection{Principal experiment components}
+
+ \\begin{longtable}{p{0.40\\linewidth}p{0.50\\linewidth}}\
+ \\caption{Experiment inventory}\
+ \\label{tab:expinventory}\\\
+ \\toprule\
+ \\textbf{Experiment} & \\textbf{Purpose} \\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Experiment} & \\textbf{Purpose} \\\
+ \\midrule\
+ \\endhead
+
+ \\code{exp1\_ablation.py}\
+ &\
+ Core ablation and instability/extrapolation analysis.\
+ \\
+
+ \\code{run\_comparative\_suite\_benchmark\_v2.py}\
+ &\
+ Comparative benchmark execution.\
+ \\
+
+ \\code{run\_comparative\_suite\_benchmark\_pca.py}\
+ &\
+ PCA-related comparative experiment.\
+ \\
+
+ \\code{run\_instability\_suite.py}\
+ &\
+ Repeated-run instability analysis.\
+ \\
+
+ \\code{run\_noise\_sweep\_benchmark.py}\
+ &\
+ Noise robustness.\
+ \\
+
+ \\code{run\_sample\_complexity\_benchmark.py}\
+ &\
+ Data-efficiency analysis.\
+ \\
+
+ \\code{portfolio\_variance\_v3c2.py}\
+ &\
+ Portfolio/multi-run variance analysis.\
+ \\
+
+ \\code{test\_enhanced\_defi\_extrapolation.py}\
+ &\
+ Extrapolation regression testing.\
+ \\
+
+ \\bottomrule\
+ \\end{longtable}
+
+ % ============================================================\
+ \\section{System Architecture}\
+ % ============================================================
+
+ \\subsection{High-level architecture}
+
+ The current methodology can be represented by the following conceptual\
+ architecture.
+
+ \\begin{figure}\[H\]\
+ \\centering\
+ \\begin{tikzpicture}\[\
+ node distance=0.9cm and 0.65cm,\
+ box/.style={\
+ rectangle,\
+ rounded corners,\
+ draw=hypblue,\
+ fill=boxbg,\
+ minimum width=2.7cm,\
+ minimum height=1cm,\
+ align=center\
+ },\
+ arrow/.style={\
+ -{Latex\[length=2.5mm\]},\
+ thick,\
+ draw=hypblue\
+ }\
+ \]
+
+ \\node\[box\] (description) {Scientific /\\financial description};
+
+ \\node\[box, right=of description\] (llm) {LLM\\symbolic discovery};
+
+ \\node\[box, right=of llm\] (symbolic) {Symbolic\\expression};
+
+ \\node\[box, right=of symbolic\] (fit) {Numerical\\parameter fitting};
+
+ \\node\[box, below=of fit\] (nn) {Adaptive\\neural model};
+
+ \\node\[box, left=of nn\] (selection) {Hybrid\\selection};
+
+ \\node\[box, left=of selection\] (evaluation) {Evaluation\\and OOD};
+
+ \\draw\[arrow\] (description) -- (llm);\
+ \\draw\[arrow\] (llm) -- (symbolic);\
+ \\draw\[arrow\] (symbolic) -- (fit);\
+ \\draw\[arrow\] (fit) -- (selection);\
+ \\draw\[arrow\] (nn) -- (selection);\
+ \\draw\[arrow\] (selection) -- (evaluation);
+
+ \\draw\[arrow\] (description.south) |- (nn.west);
+
+ \\end{tikzpicture}\
+ \\caption{Conceptual architecture reconstructed from the implementation.}\
+ \\label{fig:architecture}\
+ \\end{figure}
+
+ \\subsection{Common abstraction}
+
+ The method can be represented mathematically by:
+
+ $$
+\mathcal{D}
+=
+(D,X,y,M),
+$$
+
+ where:
+
+ \\begin{itemize}\
+ \\item $D$ is natural-language description;\
+ \\item $X$ is the input matrix;\
+ \\item $y$ is the target;\
+ \\item $M$ is metadata.\
+ \\end{itemize}
+
+ The LLM produces:
+
+ $$
+f_{\LLM}(X;\theta).
+$$
+
+ Parameter fitting produces:
+
+ $$
+\hat{\theta}
+=
+\arg\min_{\theta}
+L(y,f_{\LLM}(X;\theta)).
+$$
+
+ The symbolic predictor becomes:
+
+ $$
+f_S(X)=f_{\LLM}(X;\hat{\theta}).
+$$
+
+ The neural model produces:
+
+ $$
+f_N(X;\phi).
+$$
+
+ The final hybrid system produces:
+
+ $$
+f_H(X)
+=
+H(f_S,f_N).
+$$
+
+ % ============================================================\
+ \\section{Method A: Pure LLM Symbolic Discovery}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ The primary implementation is:
+
+ \\begin{center}\
+ \\code{hypatiax/core/base\_pure\_llm/}\\\
+ \\code{baseline\_pure\_llm\_defi\_discovery.py}.\
+ \\end{center}
+
+ \\subsection{Purpose}
+
+ The Pure-LLM baseline tests whether a language model can infer a mathematical\
+ relationship directly from a scientific or financial description.
+
+ The output is intended to be more than a numerical prediction. It may include:
+
+ \\begin{itemize}\
+ \\item a formula;\
+ \\item LaTeX;\
+ \\item executable representation;\
+ \\item assumptions;\
+ \\item explanatory text;\
+ \\item variable interpretation.\
+ \\end{itemize}
+
+ \\subsection{Reconstructed algorithm}
+
+ \\begin{algorithm}\[H\]\
+ \\caption{Pure-LLM symbolic discovery}\
+ \\label{alg:purellm}\
+ \\begin{algorithmic}\[1\]
+
+ \\Require Description $D$, variables $V$, metadata $M$, observations $(X,y)$
+
+ \\If{known special case exists}\
+ \\State Apply analytical/statistical correction\
+ \\EndIf
+
+ \\State Construct prompt $P(D,V,M)$\
+ \\State Query LLM using $P$\
+ \\State Parse returned response\
+ \\State Extract symbolic expression $f$\
+ \\State Extract executable representation\
+ \\State Evaluate $f(X)$\
+ \\State Compute $R^2$, RMSE and MAE\
+ \\State \\Return symbolic expression, explanation and metrics
+
+ \\end{algorithmic}\
+ \\end{algorithm}
+
+ \\subsection{Analytical corrections}
+
+ The implementation does not rely exclusively on the LLM.
+
+ For selected scientific relationships, numerical or analytical corrections are\
+ applied.
+
+ For example, a Michaelis--Menten relationship is:
+
+ $$
+v(S)=\frac{V_{\max}S}{K_m+S}.
+$$
+
+ An appropriate transformation can allow numerical estimation of $V\_{\\max}$\
+ and $K\_m$.
+
+ The broader methodological principle is:
+
+ $$
+\text{LLM structural prior}
++
+\text{classical numerical estimation}.
+$$
+
+ \\subsection{Advantages}
+
+ \\begin{itemize}\
+ \\item Directly produces interpretable mathematical expressions.\
+ \\item Can use semantic information that numerical-only methods do not see.\
+ \\item Can exploit known scientific vocabulary and equation families.\
+ \\item Can provide explanatory assumptions alongside predictions.\
+ \\end{itemize}
+
+ \\subsection{Limitations}
+
+ \\begin{itemize}\
+ \\item Generated expressions can be mathematically plausible but numerically\
+ incorrect.\
+ \\item LLM responses can vary across API calls.\
+ \\item Generated executable code introduces a software/security boundary.\
+ \\item Benchmark-specific corrections can reduce the distinction between a\
+ general method and a collection of known cases.\
+ \\end{itemize}
+
+ % ============================================================\
+ \\section{Method B: DeFi LLM--NN Hybrid}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ \\begin{center}\
+ \\code{hypatiax/core/generation/hybrid\_defi\_system/}\\\
+ \\code{hybrid\_system\_nn\_defi\_domain.py}\
+ \\end{center}
+
+ \\subsection{Pipeline}
+
+ The implementation contains four principal stages:
+
+ $$
+\boxed{
+\text{LLM}
+\rightarrow
+\text{parameter fitting}
+\rightarrow
+\text{NN}
+\rightarrow
+\text{hybrid decision}
+}
+$$
+
+ \\subsection{Stage 1: symbolic generation}
+
+ The LLM proposes:
+
+ $$
+f_S(x;\theta_0).
+$$
+
+ The formula is evaluated against observations.
+
+ The main predictive metric is:
+
+ $$
+R^2
+=
+1-
+\frac{\sum_i(y_i-\hat y_i)^2}
+{\sum_i(y_i-\bar y)^2}.
+$$
+
+ \\subsection{Stage 2: parameter extraction}
+
+ A key implementation feature is numerical extraction from symbolic formulae.
+
+ Suppose the generated expression is:
+
+ $$
+f(x)=\frac{a x}{b+x}.
+$$
+
+ The constants can be interpreted as unknown parameters:
+
+ $$
+f(x;\theta)
+=
+\frac{\theta_0x}{\theta_1+x}.
+$$
+
+ The fitting problem becomes:
+
+ $$
+\hat{\theta}
+=
+\arg\min_\theta
+\sum_i
+\left(
+y_i-f(x_i;\theta)
+\right)^2.
+$$
+
+ \\subsection{Stage 3: neural model}
+
+ The neural network uses an MLP architecture with adaptive widths.
+
+ A representative architecture is:
+
+ $$
+\mathrm{Linear}(d,h_1)
+\rightarrow
+\mathrm{LayerNorm}
+\rightarrow
+\mathrm{SiLU}
+\rightarrow
+\mathrm{Linear}(h_1,h_2)
+\rightarrow
+\cdots
+\rightarrow
+\mathrm{Linear}(h_k,1).
+$$
+
+ The number of hidden units depends on the number of variables.
+
+ \\subsection{Stage 4: decision}
+
+ Let:
+
+ $$
+R_S=R^2_S
+$$
+
+ and:
+
+ $$
+R_N=R^2_N.
+$$
+
+ The DeFi implementation contains threshold-based logic that can be abstracted\
+ as:
+
+ $$
+\begin{cases}
+S & R_S\text{ is strong and sufficiently exceeds }R_N,\\
+H & R_S,R_N\text{ are both adequate and sufficiently close},\\
+N & \text{otherwise}.
+\end{cases}
+$$
+
+ When an ensemble is selected:
+
+ $$
+\hat y_H
+=
+w_S\hat y_S+w_N\hat y_N.
+$$
+
+ A score-proportional weighting is approximately:
+
+ $$
+w_S=
+\frac{R_S}{R_S+R_N},
+\qquad
+w_N=
+\frac{R_N}{R_S+R_N}.
+$$
+
+ % ============================================================\
+ \\section{Method C: General All-Domain Hybrid}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ \\begin{center}\
+ \\code{hypatiax/core/generation/hybrid\_all\_domains\_llm\_nn/}\\\
+ \\code{hybrid\_system\_llm\_nn\_all\_domains.py}\
+ \\end{center}
+
+ \\subsection{Method}
+
+ The all-domain version follows the same general architecture but has a\
+ different selection policy.
+
+ The important distinction is:
+
+ $$
+\boxed{
+\text{same components}
+\neq
+\text{same hybrid policy}.
+}
+$$
+
+ The implementation can prefer the symbolic solution when it performs at least\
+ as well as the NN, use an ensemble when the NN is sufficiently strong, and use\
+ the NN as a fallback when symbolic generation fails.
+
+ \\subsection{Domain override}
+
+ A \\code{force\_llm} mechanism can explicitly favour the symbolic solution for\
+ selected domains.
+
+ This can be expressed as:
+
+ $$
+\delta_{\mathrm{domain}}=1
+\Rightarrow
+f_H=f_S.
+$$
+
+ This is a legitimate domain prior, but it should be treated as part of the\
+ experimental configuration rather than hidden inside a supposedly universal\
+ algorithm.
+
+ % ============================================================\
+ \\section{Method D: Uncertainty-Weighted Ensemble}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ \\begin{center}\
+ \\code{hypatiax/core/generation/hybrid\_defi\_llm\_nn/}\\\
+ \\code{hybrid\_ensemble\_system\_defi\_domain.py}\
+ \\end{center}
+
+ \\subsection{Residual weighting}
+
+ Define residuals:
+
+ $$
+e_S=y-\hat y_S,
+$$
+
+ $$
+e_N=y-\hat y_N.
+$$
+
+ Estimate:
+
+ $$
+\sigma_S=\operatorname{std}(e_S),
+$$
+
+ $$
+\sigma_N=\operatorname{std}(e_N).
+$$
+
+ Then define:
+
+ $$
+q_S=
+\frac{\max(R_S,0)}
+{\sigma_S+\epsilon},
+$$
+
+ $$
+q_N=
+\frac{\max(R_N,0)}
+{\sigma_N+\epsilon}.
+$$
+
+ Normalise:
+
+ $$
+w_S=\frac{q_S}{q_S+q_N},
+\qquad
+w_N=\frac{q_N}{q_S+q_N}.
+$$
+
+ The final predictor is:
+
+ $$
+\hat y_H
+=
+w_S\hat y_S+w_N\hat y_N.
+$$
+
+ \\subsection{Methodological caution}
+
+ This weighting should not automatically be called a calibrated uncertainty\
+ estimate.
+
+ If $\\sigma\_S$ and $\\sigma\_N$ are measured on training observations, then:
+
+ $$
+\sigma_{\mathrm{train}}
+\neq
+\sigma_{\mathrm{OOD}}.
+$$
+
+ A refactored implementation should estimate ensemble reliability on a\
+ validation set.
+
+ % ============================================================\
+ \\section{Adaptive Neural Configuration}\
+ % ============================================================
+
+ \\subsection{Source}
+
+ \\code{hypatiax/core/training/adaptive\_config.py}
+
+ \\subsection{Motivation}
+
+ The implementation attempts to avoid exhaustive hyperparameter searches.
+
+ Instead:
+
+ $$
+C=f(X,y,M,B).
+$$
+
+ Here:
+
+ \\begin{itemize}\
+ \\item $X$ is the input data;\
+ \\item $y$ is the target;\
+ \\item $M$ is metadata;\
+ \\item $B$ is the available computational budget;\
+ \\item $C$ is the training configuration.\
+ \\end{itemize}
+
+ \\subsection{Observed signals}
+
+ The configuration can depend on:
+
+ \\begin{itemize}\
+ \\item input dimensionality;\
+ \\item sample count;\
+ \\item target sign;\
+ \\item dynamic range;\
+ \\item orders of magnitude;\
+ \\item pole-like distributions;\
+ \\item positivity of inputs;\
+ \\item problem difficulty;\
+ \\item extrapolation status.\
+ \\end{itemize}
+
+ \\subsection{Target transformations}
+
+ For suitable targets:
+
+ $$
+y'=\log|y|.
+$$
+
+ For suitable positive variables:
+
+ $$
+x'_j=\log(x_j).
+$$
+
+ The important methodological point is that transformations are selected\
+ from observed characteristics rather than through unconstrained tuning.
+
+ \\subsection{Reproducibility}
+
+ The system can derive a seed from the problem description:
+
+ $$
+s=
+\operatorname{SHA256}(D)\bmod2^{31}.
+$$
+
+ Thus:
+
+ $$
+D_1=D_2
+\Rightarrow
+s_1=s_2.
+$$
+
+ This provides deterministic neural initialisation for a fixed description.
+
+ % ============================================================\
+ \\section{Neural Training Algorithm}\
+ % ============================================================
+
+ \\begin{algorithm}\[H\]\
+ \\caption{Adaptive neural training}\
+ \\label{alg:nn}\
+ \\begin{algorithmic}\[1\]
+
+ \\Require Training data $(X,y)$ and metadata $M$
+
+ \\State Extract data characteristics\
+ \\State Determine input/output transformations\
+ \\State Select architecture based on dimensionality\
+ \\State Construct MLP\
+ \\State Initialise deterministic seed\
+ \\State Scale inputs and target\
+ \\State Initialise AdamW optimiser\
+ \\State Initialise learning-rate scheduler
+
+ \\For{$t=1,\\ldots,T$}\
+ \\State Compute $\\hat y=f\_\\phi(X)$\
+ \\State Compute MSE loss\
+ \\State Backpropagate\
+ \\State Clip gradients\
+ \\State Update parameters\
+ \\State Update scheduler
+
+```
+\If{validation metric improves}
+    \State Store best model state
+\EndIf
+
+\If{early stopping criterion satisfied}
+    \State break
+\EndIf
+```
+
+ \\EndFor
+
+ \\State Restore best model\
+ \\State Return trained network
+
+ \\end{algorithmic}\
+ \\end{algorithm}
+
+ % ============================================================\
+ \\section{Experimental Framework}\
+ % ============================================================
+
+ \\subsection{Experimental questions}
+
+ The experiment directory addresses several different scientific questions.
+
+ \\begin{longtable}{p{0.29\\linewidth}p{0.26\\linewidth}p{0.34\\linewidth}}\
+ \\caption{Research questions addressed by the experiment suite}\
+ \\label{tab:questions}\\\
+ \\toprule\
+ \\textbf{Question} & \\textbf{Variable} & \\textbf{Relevant experiment} \\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Question} & \\textbf{Variable} & \\textbf{Relevant experiment} \\\
+ \\midrule\
+ \\endhead
+
+ Can the hybrid recover equations?\
+ &\
+ Method\
+ &\
+ Core ablation\
+ \\
+
+ How does noise affect discovery?\
+ &\
+ $\\sigma$\
+ &\
+ Noise sweep\
+ \\
+
+ How much data is required?\
+ &\
+ $N$\
+ &\
+ Sample-complexity suite\
+ \\
+
+ Does the method extrapolate?\
+ &\
+ OOD range\
+ &\
+ Extrapolation experiments\
+ \\
+
+ How stable is the method?\
+ &\
+ Random seed/run\
+ &\
+ Instability suite\
+ \\
+
+ How does it compare with other methods?\
+ &\
+ Method\
+ &\
+ Comparative suite\
+ \\
+
+ \\bottomrule\
+ \\end{longtable}
+
+ % ------------------------------------------------------------\
+ \\subsection{Core-15 / ablation methodology}
+
+ The ablation suite contains scientific and DeFi equations.
+
+ The experimental structure can be represented as:
+
+ $$
+\text{Equation}
+\rightarrow
+\text{synthetic data}
+\rightarrow
+\text{noise}
+\rightarrow
+\text{train/test}
+\rightarrow
+\text{method execution}
+\rightarrow
+\text{metrics}.
+$$
+
+ Representative domains include:
+
+ \\begin{itemize}\
+ \\item Chemistry;\
+ \\item Biology;\
+ \\item Physics;\
+ \\item DeFi automated-market-maker relationships;\
+ \\item financial risk.\
+ \\end{itemize}
+
+ \\subsection{Noise model}
+
+ A representative perturbation is:
+
+ $$
+y_{\mathrm{obs}}
+=
+y+\epsilon,
+$$
+
+ where:
+
+ $$
+\epsilon
+\sim
+\mathcal N
+\left(
+0,\sigma^2
+\right).
+$$
+
+ The implementation scales the noise relative to the target distribution in\
+ relevant experiments.
+
+ % ------------------------------------------------------------\
+ \\subsection{Extrapolation methodology}
+
+ Interpolation evaluates:
+
+ $$
+x\in\mathcal X_{\mathrm{train}}.
+$$
+
+ Extrapolation evaluates:
+
+ $$
+x\notin\mathcal X_{\mathrm{train}}.
+$$
+
+ The distinction is fundamental for equation discovery because the objective is\
+ often recovery of the underlying law rather than merely approximation within\
+ the observed support.
+
+ A symbolic model such as:
+
+ $$
+f(x)=ax^2+b
+$$
+
+ has a prescribed behaviour outside the observed range.
+
+ A generic MLP:
+
+ $$
+f_\phi(x)
+$$
+
+ does not necessarily preserve such functional structure outside the training\
+ distribution.
+
+ % ------------------------------------------------------------\
+ \\subsection{Sample complexity}
+
+ The sample-complexity suite estimates:
+
+ $$
+R^2(N)
+$$
+
+ for different values of:
+
+ $$
+N=|\mathcal X_{\mathrm{train}}|.
+$$
+
+ A useful analysis should report:
+
+ $$
+\frac{\partial R^2}{\partial N}
+$$
+
+ qualitatively through learning curves rather than only comparing a single\
+ sample size.
+
+ % ------------------------------------------------------------\
+ \\subsection{Instability}
+
+ For repeated runs:
+
+ $$
+\mu=
+\frac{1}{K}\sum_{k=1}^K R_k^2,
+$$
+
+ and:
+
+ $$
+\sigma_R=
+\sqrt{
+\frac{1}{K-1}
+\sum_{k=1}^K
+(R_k^2-\mu)^2
+}.
+$$
+
+ The coefficient of variation can additionally be useful:
+
+ $$
+CV=
+\frac{\sigma_R}{|\mu|+\epsilon}.
+$$
+
+ The probability of successful discovery is:
+
+ $$
+P_{\tau}
+=
+\frac{1}{K}
+\sum_{k=1}^K
+\mathbf{1}[R_k^2>\tau].
+$$
+
+ This is more informative than reporting only the best run.
+
+ % ============================================================\
+ \\section{Comparative Evaluation}\
+ % ============================================================
+
+ A rigorous comparison should distinguish at least four quantities:
+
+ $$
+R^2_{\mathrm{train}},
+\qquad
+R^2_{\mathrm{val}},
+\qquad
+R^2_{\mathrm{test}},
+\qquad
+R^2_{\mathrm{OOD}}.
+$$
+
+ They answer different questions.
+
+ \\begin{center}\
+ \\begin{tabular}{ll}\
+ \\toprule\
+ Metric & Meaning \\\
+ \\midrule\
+ $R^2\_{\\mathrm{train}}$ & Fit quality \\\
+ $R^2\_{\\mathrm{val}}$ & Selection/generalisation during development \\\
+ $R^2\_{\\mathrm{test}}$ & Final interpolation performance \\\
+ $R^2\_{\\mathrm{OOD}}$ & Extrapolation/generalisation beyond training support \\\
+ \\bottomrule\
+ \\end{tabular}\
+ \\end{center}
+
+ A model that maximises training $R^2$ should not automatically be considered\
+ the best scientific model.
+
+ % ============================================================\
+ \\section{Advantages of the HypatiaX Approach}\
+ % ============================================================
+
+ \\subsection{Interpretability}
+
+ The most direct advantage is:
+
+ $$
+\hat y=\hat f(x_1,\ldots,x_d).
+$$
+
+ The result can be inspected as an equation.
+
+ \\subsection{Semantic priors}
+
+ The LLM can exploit natural-language information such as:
+
+ \\begin{itemize}\
+ \\item variable names;\
+ \\item scientific concepts;\
+ \\item known relationships;\
+ \\item units;\
+ \\item domain terminology.\
+ \\end{itemize}
+
+ \\subsection{Structural discovery plus numerical fitting}
+
+ The decomposition:
+
+ $$
+\text{structure}
++
+\text{parameters}
+$$
+
+ is methodologically powerful.
+
+ The LLM can propose the structure:
+
+ $$
+f(x;\theta),
+$$
+
+ while numerical optimisation estimates:
+
+ $$
+\hat{\theta}.
+$$
+
+ \\subsection{Flexible numerical fallback}
+
+ The neural model allows the framework to handle cases in which the LLM\
+ hypothesis is incomplete.
+
+ \\subsection{Extrapolation-oriented evaluation}
+
+ The explicit OOD experiments are particularly appropriate for symbolic\
+ regression.
+
+ \\subsection{Instability analysis}
+
+ Repeated-run analysis recognises that stochastic methods should not be judged\
+ solely by their best execution.
+
+ % ============================================================\
+ \\section{Limitations and Threats to Validity}\
+ % ============================================================
+
+ \\subsection{Internal validity}
+
+ The most important issue is potential leakage between fitting and selection.
+
+ If:
+
+ $$
+R_S=R^2(D_{\mathrm{train}})
+$$
+
+ and:
+
+ $$
+R_N=R^2(D_{\mathrm{train}})
+$$
+
+ are used to select the final model, then:
+
+ $$
+D_{\mathrm{train}}
+$$
+
+ influences both fitting and selection.
+
+ The resulting test may overestimate generalisation if the separation is not\
+ strictly maintained.
+
+ \\subsection{Construct validity}
+
+ The LLM is not simply a symbolic-regression engine.
+
+ It is simultaneously:
+
+ \\begin{itemize}\
+ \\item a language model;\
+ \\item a mathematical prior;\
+ \\item a source of candidate functional structures;\
+ \\item potentially a source of benchmark-specific prior knowledge.\
+ \\end{itemize}
+
+ Therefore the claim being evaluated should be precise:
+
+ $$
+\text{LLM-assisted equation discovery}
+$$
+
+ rather than simply:
+
+ $$
+\text{symbolic regression}.
+$$
+
+ \\subsection{External validity}
+
+ A benchmark dominated by synthetic equations may not represent real-world\
+ scientific measurement.
+
+ Real data can contain:
+
+ \\begin{itemize}\
+ \\item missing variables;\
+ \\item measurement error;\
+ \\item correlated noise;\
+ \\item hidden confounders;\
+ \\item unit inconsistencies;\
+ \\item regime changes.\
+ \\end{itemize}
+
+ These should be considered in future validation.
+
+ \\subsection{LLM reproducibility}
+
+ Remote model behaviour may change because of:
+
+ \\begin{itemize}\
+ \\item model version;\
+ \\item provider changes;\
+ \\item prompt changes;\
+ \\item system-message changes;\
+ \\item API configuration;\
+ \\item backend nondeterminism.\
+ \\end{itemize}
+
+ A frozen-response cache is therefore useful for exact reproduction.
+
+ \\subsection{Code-execution risk}
+
+ A generated Python expression should not be treated as a trusted mathematical\
+ expression.
+
+ A safer architecture is:
+
+ $$
+\text{LLM}
+\rightarrow
+\text{JSON/DSL}
+\rightarrow
+\text{parser}
+\rightarrow
+\text{validator}
+\rightarrow
+\text{evaluator}.
+$$
+
+ % ============================================================\
+ \\section{Refactoring Architecture}\
+ % ============================================================
+
+ \\subsection{Target package structure}
+
+ The proposed structure is:
+
+ \\begin{lstlisting}\
+ hypatiax/\
+ |\
+ +-- discovery/\
+ | +-- llm.py\
+ | +-- prompts.py\
+ | +-- parser.py\
+ | +-- cache.py\
+ |\
+ +-- symbolic/\
+ | +-- expression.py\
+ | +-- validator.py\
+ | +-- evaluator.py\
+ | +-- parameter\_fit.py\
+ |\
+ +-- models/\
+ | +-- neural.py\
+ | +-- trainer.py\
+ | +-- adaptive\_config.py\
+ |\
+ +-- hybrid/\
+ | +-- selector.py\
+ | +-- ensemble.py\
+ | +-- policies.py\
+ |\
+ +-- evaluation/\
+ | +-- metrics.py\
+ | +-- splits.py\
+ | +-- extrapolation.py\
+ | +-- instability.py\
+ |\
+ +-- experiments/\
+ | +-- definitions/\
+ | +-- runners/\
+ | +-- analyses/\
+ | +-- reports/\
+ |\
+ +-- provenance/\
+ | +-- schema.py\
+ | +-- recorder.py\
+ \\end{lstlisting}
+
+ % ------------------------------------------------------------\
+ \\subsection{Typed expression layer}
+
+ The symbolic expression should use a controlled AST.
+
+ For example:
+
+ $$
+E::=
+x_i
+\mid
+c
+\mid
+E+E
+\mid
+E-E
+\mid
+E E
+\mid
+E^E
+\mid
+\log E
+\mid
+\exp E.
+$$
+
+ The LLM should never need to emit arbitrary Python.
+
+ % ------------------------------------------------------------\
+ \\subsection{Canonical model interface}
+
+ All model classes should implement:
+
+ \\begin{lstlisting}\[language=Python\]\
+ class FormulaModel:
+
+```
+def fit(self, X, y, metadata):
+    ...
+
+def predict(self, X):
+    ...
+
+def describe(self):
+    ...
+
+def provenance(self):
+    ...
+```
+
+ \\end{lstlisting}
+
+ This allows all methods to be evaluated identically.
+
+ % ------------------------------------------------------------\
+ \\subsection{Canonical result object}
+
+ A result should contain:
+
+ \\begin{lstlisting}\
+ {\
+ "formula": "...",\
+ "parameters": {...},\
+ "model\_type": "...",\
+ "train\_metrics": {...},\
+ "validation\_metrics": {...},\
+ "test\_metrics": {...},\
+ "ood\_metrics": {...},\
+ "selection": "...",\
+ "provenance": {...}\
+ }\
+ \\end{lstlisting}
+
+ % ------------------------------------------------------------\
+ \\subsection{Central selection policy}
+
+ Instead of embedding thresholds inside each hybrid class:
+
+ \\begin{lstlisting}\[language=Python\]\
+ class HybridPolicy:
+
+```
+def select(
+    self,
+    symbolic_result,
+    neural_result,
+    validation_data
+):
+    raise NotImplementedError
+```
+
+ \\end{lstlisting}
+
+ Concrete implementations become:
+
+ \\begin{lstlisting}\
+ ValidationR2Policy\
+ MarginPolicy\
+ UncertaintyPolicy\
+ FixedBlendPolicy\
+ SymbolicOnlyPolicy\
+ NeuralOnlyPolicy\
+ \\end{lstlisting}
+
+ This makes experimental comparison much cleaner.
+
+ % ============================================================\
+ \\section{Proposed Refactored Algorithm}\
+ % ============================================================
+
+ \\begin{algorithm}\[H\]\
+ \\caption{Canonical Refactored HypatiaX}\
+ \\label{alg:canonical}\
+ \\begin{algorithmic}\[1\]
+
+ \\Require\
+ Description $D$,\
+ training set $D\_T$,\
+ validation set $D\_V$,\
+ test set $D\_E$,\
+ OOD set $D\_O$,\
+ metadata $M$
+
+ \\Statex
+
+ \\State \\textbf{Discovery}\
+ \\State $P\\gets\\textsc{BuildPrompt}(D,M)$\
+ \\State $r\\gets\\textsc{LLM}(P)$\
+ \\State $e\\gets\\textsc{Parse}(r)$\
+ \\State $\\textsc{Validate}(e)$
+
+ \\Statex
+
+ \\State \\textbf{Symbolic calibration}\
+ \\State $\\hat{\\theta}\\gets\
+ \\textsc{FitParameters}(e,D\_T)$\
+ \\State $f\_S\\gets\\textsc{Instantiate}(e,\\hat{\\theta})$
+
+ \\Statex
+
+ \\State \\textbf{Neural training}\
+ \\State $C\\gets\\textsc{AdaptiveConfig}(D\_T,M)$\
+ \\State $f\_N\\gets\\textsc{TrainNN}(D\_T,C)$
+
+ \\Statex
+
+ \\State \\textbf{Validation}\
+ \\State $m\_S\\gets\\textsc{Evaluate}(f\_S,D\_V)$\
+ \\State $m\_N\\gets\\textsc{Evaluate}(f\_N,D\_V)$
+
+ \\Statex
+
+ \\State \\textbf{Selection}\
+ \\State $H\\gets\
+ \\textsc{Policy}(m\_S,m\_N,D\_V)$
+
+ \\Statex
+
+ \\State \\textbf{Final evaluation}\
+ \\State $m\_E\\gets\\textsc{Evaluate}(H,D\_E)$\
+ \\State $m\_O\\gets\\textsc{Evaluate}(H,D\_O)$
+
+ \\Statex
+
+ \\State \\textbf{Provenance}\
+ \\State $\\textsc{Store}(D,P,r,e,\\hat{\\theta},C,H,m\_E,m\_O)$
+
+ \\State \\Return $H,m\_E,m\_O,\\text{provenance}$
+
+ \\end{algorithmic}\
+ \\end{algorithm}
+
+ % ============================================================\
+ \\section{Experiment Refactoring}\
+ % ============================================================
+
+ \\subsection{Current problem}
+
+ Large experiment scripts frequently combine:
+
+ $$
+\text{configuration}
++
+\text{data generation}
++
+\text{training}
++
+\text{evaluation}
++
+\text{statistics}
++
+\text{plotting}
++
+\text{file output}.
+$$
+
+ This violates separation of concerns.
+
+ \\subsection{Recommended manifest}
+
+ A declarative experiment can instead be described by:
+
+ \\begin{lstlisting}\
+ experiment:\
+ name: core15\_hybrid\_ablation
+
+ dataset:\
+ equation\_set: core15\
+ samples: 200\
+ noise: 0.05
+
+ split:\
+ train: 0.70\
+ validation: 0.15\
+ test: 0.15
+
+ ood:\
+ enabled: true\
+ multiplier: 5
+
+ methods:\
+ \- pure\_llm\
+ \- neural\
+ \- hybrid\
+ \- symbolic
+
+ hybrid:\
+ policy: validation\_margin
+
+ evaluation:\
+ metrics:\
+ \- r2\
+ \- rmse\
+ \- mae
+
+ repetitions:\
+ seeds:\
+ \- 42\
+ \- 99\
+ \- 123\
+ \- 777\
+ \- 2024\
+ \\end{lstlisting}
+
+ A single runner can consume this configuration.
+
+ % ============================================================\
+ \\section{Reproducibility Protocol}\
+ % ============================================================
+
+ \\subsection{Required artefacts}
+
+ Every experiment should save:
+
+ \\begin{enumerate}\
+ \\item Git commit hash.\
+ \\item Dataset hash.\
+ \\item Configuration hash.\
+ \\item Prompt hash.\
+ \\item Raw LLM response.\
+ \\item Parsed symbolic expression.\
+ \\item Fitted parameters.\
+ \\item Neural configuration.\
+ \\item Random seeds.\
+ \\item Environment/dependency information.\
+ \\item Final metrics.\
+ \\item OOD metrics.\
+ \\end{enumerate}
+
+ \\subsection{Provenance schema}
+
+ A minimal record is:
+
+ \\begin{lstlisting}\
+ {\
+ "experiment\_id": "...",\
+ "equation\_id": "...",\
+ "git\_commit": "...",\
+ "dataset\_hash": "...",\
+ "config\_hash": "...",\
+ "prompt\_hash": "...",\
+ "llm\_model": "...",\
+ "llm\_response\_hash": "...",\
+ "seed": 42,
+
+```
+"symbolic_formula": "...",
+"fitted_parameters": {},
+
+"neural_config": {},
+
+"selection_policy": "...",
+
+"metrics": {
+    "train": {},
+    "validation": {},
+    "test": {},
+    "ood": {}
+}
+```
+
+ }\
+ \\end{lstlisting}
+
+ % ============================================================\
+ \\section{Statistical Reporting}\
+ % ============================================================
+
+ For $K$ repetitions, report:
+
+ $$
+\bar R^2=
+\frac{1}{K}
+\sum_{k=1}^{K}
+R_k^2.
+$$
+
+ Report uncertainty:
+
+ $$
+s_R=
+\sqrt{
+\frac{1}{K-1}
+\sum_{k=1}^{K}
+(R_k^2-\bar R^2)^2
+}.
+$$
+
+ A $95%$ confidence interval for the mean can be reported as:
+
+ $$
+\bar R^2
+\pm
+t_{0.975,K-1}
+\frac{s_R}{\sqrt K}.
+$$
+
+ Success probability:
+
+ $$
+p_\tau=
+\frac{1}{K}
+\sum_{k=1}^{K}
+\mathbf{1}(R_k^2>\tau).
+$$
+
+ For comparing methods across equations, paired statistical analysis should\
+ be preferred because the same equations can be evaluated under multiple\
+ methods.
+
+ % ============================================================\
+ \\section{Detailed Traceability Matrix}\
+ % ============================================================
+
+ \\begin{longtable}{p{0.25\\linewidth}p{0.27\\linewidth}p{0.37\\linewidth}}\
+ \\caption{Source-to-method traceability}\
+ \\label{tab:traceability}\\\
+ \\toprule\
+ \\textbf{Methodological stage} &\
+ \\textbf{Implementation area} &\
+ \\textbf{Observed responsibility}\
+ \\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Methodological stage} &\
+ \\textbf{Implementation area} &\
+ \\textbf{Observed responsibility}\
+ \\\
+ \\midrule\
+ \\endhead
+
+ Problem interpretation\
+ &\
+ LLM prompt construction\
+ &\
+ Translate scientific/financial context into a symbolic discovery request.\
+ \\
+
+ Symbolic discovery\
+ &\
+ Pure LLM and hybrid generation\
+ &\
+ Request and parse candidate mathematical expressions.\
+ \\
+
+ Symbolic execution\
+ &\
+ Hybrid formula evaluation\
+ &\
+ Evaluate candidate formula against numerical observations.\
+ \\
+
+ Parameter calibration\
+ &\
+ DeFi hybrid\
+ &\
+ Optimise numerical constants while preserving symbolic structure.\
+ \\
+
+ Neural configuration\
+ &\
+ \\code{adaptive\_config.py}\
+ &\
+ Select transformations, architecture and training settings.\
+ \\
+
+ Neural training\
+ &\
+ Neural baseline/hybrid\
+ &\
+ Fit MLP approximation to numerical observations.\
+ \\
+
+ Model selection\
+ &\
+ Hybrid implementations\
+ &\
+ Compare symbolic and neural performance and choose/blend.\
+ \\
+
+ Robustness\
+ &\
+ Noise/sample suites\
+ &\
+ Measure degradation under noise and reduced sample size.\
+ \\
+
+ Extrapolation\
+ &\
+ Extrapolation tests\
+ &\
+ Evaluate behaviour outside the training support.\
+ \\
+
+ Instability\
+ &\
+ Instability suite\
+ &\
+ Aggregate repeated-run performance and variance.\
+ \\
+
+ Reproducibility\
+ &\
+ Caches/seeds/configuration\
+ &\
+ Record or control experimental sources of variation.\
+ \\
+
+ \\bottomrule\
+ \\end{longtable}
+
+ % ============================================================\
+ \\section{Recommended Publication Figures}\
+ % ============================================================
+
+ A publication-quality version of the work should contain at least the following\
+ figures.
+
+ \\subsection{Figure 1: HypatiaX architecture}
+
+ $$
+D
+\rightarrow
+LLM
+\rightarrow
+Symbolic
+\rightarrow
+Calibration
+\rightarrow
+NN
+\rightarrow
+Selection
+\rightarrow
+Evaluation.
+$$
+
+ \\subsection{Figure 2: Data separation}
+
+ \\begin{tikzpicture}\[\
+ box/.style={\
+ rectangle,\
+ draw=hypblue,\
+ rounded corners,\
+ minimum width=3cm,\
+ minimum height=1cm,\
+ align=center\
+ }\
+ \]
+
+ \\node\[box,fill=blue!8\] (train) {Training\\fit parameters/models};\
+ \\node\[box,fill=green!8,right=0.8cm of train\] (val)\
+ {Validation\\select model};\
+ \\node\[box,fill=orange!12,right=0.8cm of val\] (test)\
+ {Test\\final metric};\
+ \\node\[box,fill=red!10,right=0.8cm of test\] (ood)\
+ {OOD\\extrapolation};
+
+ \\draw\[-{Latex}\] (train) -- (val);\
+ \\draw\[-{Latex}\] (val) -- (test);\
+ \\draw\[-{Latex}\] (test) -- (ood);
+
+ \\end{tikzpicture}
+
+ \\subsection{Figure 3: Hybrid selection}
+
+ A useful empirical figure should plot:
+
+ $$
+R^2_{\mathrm{symbolic}}
+$$
+
+ against:
+
+ $$
+R^2_{\mathrm{NN}},
+$$
+
+ with points coloured by the selected policy.
+
+ \\subsection{Figure 4: Extrapolation}
+
+ Plot:
+
+ $$
+R^2_{\mathrm{test}}
+$$
+
+ against:
+
+ $$
+R^2_{\mathrm{OOD}}.
+$$
+
+ This distinguishes interpolation from law recovery.
+
+ \\subsection{Figure 5: Instability}
+
+ Use boxplots or violin plots of:
+
+ $$
+R^2_1,\ldots,R^2_K
+$$
+
+ for each method and equation family.
+
+ % ============================================================\
+ \\section{Recommended Ablation Matrix}\
+ % ============================================================
+
+ The following ablation matrix would provide a cleaner causal analysis of the\
+ method.
+
+ \\begin{center}\
+ \\begin{tabular}{llll}\
+ \\toprule\
+ Variant & LLM & Calibration & NN \\\
+ \\midrule\
+ Pure LLM & Yes & No & No \\\
+ LLM + calibration & Yes & Yes & No \\\
+ NN only & No & No & Yes \\\
+ LLM + NN & Yes & No & Yes \\\
+ LLM + calibration + NN & Yes & Yes & Yes \\\
+ Hybrid without domain prior & Yes & Yes & Yes \\\
+ Hybrid with domain prior & Yes & Yes & Yes \\\
+ \\bottomrule\
+ \\end{tabular}\
+ \\end{center}
+
+ The comparison isolates whether performance comes from:
+
+ \\begin{itemize}\
+ \\item the LLM;\
+ \\item parameter fitting;\
+ \\item neural approximation;\
+ \\item their combination;\
+ \\item domain-specific prior knowledge.\
+ \\end{itemize}
+
+ % ============================================================\
+ \\section{Refactoring Roadmap}\
+ % ============================================================
+
+ A practical migration can be divided into stages.
+
+ \\subsection{Phase 1: Extract shared utilities}
+
+ Move duplicated implementations of:
+
+ \\begin{itemize}\
+ \\item $R^2$;\
+ \\item RMSE;\
+ \\item MAE;\
+ \\item formula evaluation;\
+ \\item scaling;\
+ \\item seed management.\
+ \\end{itemize}
+
+ into shared modules.
+
+ \\subsection{Phase 2: Introduce typed symbolic expressions}
+
+ Replace dynamic source execution with an AST/DSL.
+
+ \\subsection{Phase 3: Separate model fitting and selection}
+
+ Create:
+
+ $$
+fit()
+$$
+
+ and:
+
+ $$
+select()
+$$
+
+ as separate operations.
+
+ \\subsection{Phase 4: Introduce validation data}
+
+ Move hybrid decision logic from training metrics to validation metrics.
+
+ \\subsection{Phase 5: Convert experiments to manifests}
+
+ Create a generic runner.
+
+ \\subsection{Phase 6: Add provenance}
+
+ Make every output self-describing and reproducible.
+
+ \\subsection{Phase 7: Delete duplicated hybrid implementations}
+
+ The original DeFi and all-domain systems can become configurations of the same\
+ underlying engine.
+
+ % ============================================================\
+ \\section{Target Refactored Architecture}\
+ % ============================================================
+
+ \\begin{figure}\[H\]\
+ \\centering
+
+ \\begin{tikzpicture}\[\
+ module/.style={\
+ rectangle,\
+ rounded corners,\
+ draw=hypblue,\
+ fill=blue!5,\
+ minimum width=3.2cm,\
+ minimum height=0.85cm,\
+ align=center\
+ },\
+ process/.style={\
+ rectangle,\
+ rounded corners,\
+ draw=hypgreen,\
+ fill=green!6,\
+ minimum width=3.2cm,\
+ minimum height=0.85cm,\
+ align=center\
+ },\
+ arrow/.style={\
+ -{Latex\[length=2.5mm\]},\
+ thick\
+ }\
+ \]
+
+ \\node\[module\] (llm) {LLM Discovery};\
+ \\node\[module,right=1cm of llm\] (parser) {Expression Parser};\
+ \\node\[module,right=1cm of parser\] (validator) {Expression Validator};
+
+ \\node\[process,below=1.1cm of parser\] (fit)\
+ {Symbolic Parameter Fitting};
+
+ \\node\[process,left=1cm of fit\] (nn)\
+ {Neural Training};
+
+ \\node\[process,right=1cm of fit\] (selector)\
+ {Validation Policy};
+
+ \\node\[module,below=1.1cm of fit\] (eval)\
+ {Test / OOD Evaluation};
+
+ \\draw\[arrow\] (llm) -- (parser);\
+ \\draw\[arrow\] (parser) -- (validator);\
+ \\draw\[arrow\] (validator) |- (fit);\
+ \\draw\[arrow\] (fit) -- (selector);\
+ \\draw\[arrow\] (nn) -- (selector);\
+ \\draw\[arrow\] (selector) |- (eval);
+
+ \\end{tikzpicture}
+
+ \\caption{Proposed refactored architecture.}\
+ \\label{fig:refactored}\
+ \\end{figure}
+
+ % ============================================================\
+ \\section{Scientific Interpretation}\
+ % ============================================================
+
+ The central scientific hypothesis behind the architecture is that symbolic\
+ priors and flexible numerical approximation have complementary strengths.
+
+ Let:
+
+ $$
+f^*(x)
+$$
+
+ be the unknown true relationship.
+
+ The symbolic learner searches over a structured family:
+
+ $$
+f_S(x;\theta)
+\in
+\mathcal F_S.
+$$
+
+ The neural learner searches over a flexible function family:
+
+ $$
+f_N(x;\phi)
+\in
+\mathcal F_N.
+$$
+
+ Typically:
+
+ $$
+\mathcal F_S
+\subsetneq
+\mathcal F_N
+$$
+
+ in terms of representational flexibility, but symbolic models impose stronger\
+ structural constraints.
+
+ The hybrid therefore attempts to exploit:
+
+ $$
+\text{bias}
++
+\text{flexibility}.
+$$
+
+ The scientific value of the approach is greatest when the symbolic prior is\
+ informative but imperfect.
+
+ % ============================================================\
+ \\section{Key Methodological Distinctions}\
+ % ============================================================
+
+ \\subsection{Prediction versus equation discovery}
+
+ A neural model can minimise:
+
+ $$
+\sum_i
+(y_i-\hat y_i)^2
+$$
+
+ without discovering the correct equation.
+
+ Equation discovery additionally asks whether:
+
+ $$
+\hat f
+\approx
+f^*
+$$
+
+ as a functional object.
+
+ Therefore:
+
+ $$
+\text{low prediction error}
+\not\Rightarrow
+\text{correct scientific law}.
+$$
+
+ \\subsection{Interpolation versus extrapolation}
+
+ Similarly:
+
+ $$
+R^2_{\mathrm{test}}\approx1
+$$
+
+ does not imply:
+
+ $$
+R^2_{\mathrm{OOD}}\approx1.
+$$
+
+ This makes the repository's extrapolation experiments particularly relevant\
+ to the scientific interpretation of the method.
+
+ \\subsection{Selection versus ensemble}
+
+ There are two fundamentally different hybrid concepts.
+
+ Selection:
+
+ $$
+f_H=
+\begin{cases}
+f_S & \text{if symbolic is selected},\\
+f_N & \text{otherwise}.
+\end{cases}
+$$
+
+ Ensembling:
+
+ $$
+f_H=
+wf_S+(1-w)f_N.
+$$
+
+ These should be reported as different experimental conditions.
+
+ % ============================================================\
+ \\section{Final Assessment}\
+ % ============================================================
+
+ The implementation represents a technically interesting integration of:
+
+ $$
+\boxed{
+LLM
++
+symbolic\ regression
++
+numerical\ optimisation
++
+neural\ approximation
+}
+$$
+
+ The source code demonstrates that the method is substantially more than an LLM\
+ prompt that asks for an equation. It includes numerical parameter fitting,\
+ adaptive neural training, model comparison, domain-specific logic and a broad\
+ experimental programme.
+
+ At the same time, the current implementation should not be described as one\
+ single deterministic algorithm.
+
+ The most important methodological distinctions are:
+
+ \\begin{enumerate}\
+ \\item Pure LLM versus hybrid discovery.\
+ \\item Raw symbolic formula versus calibrated symbolic formula.\
+ \\item Neural approximation versus symbolic model.\
+ \\item Selection versus ensemble.\
+ \\item Interpolation versus extrapolation.\
+ \\item Training performance versus validation performance.\
+ \\item Generic method versus benchmark-specific correction.\
+ \\end{enumerate}
+
+ The principal refactoring recommendation is therefore to make these dimensions\
+ explicit rather than allowing them to remain distributed across multiple\
+ source files.
+
+ % ============================================================\
+ \\section{Conclusions}\
+ % ============================================================
+
+ This extended source-code analysis leads to six principal conclusions.
+
+ \\subsection\*{Conclusion 1: HypatiaX is a method family}
+
+ The repository contains multiple hybrid implementations and decision policies.\
+ The exact algorithm should therefore always identify its variant.
+
+ \\subsection\*{Conclusion 2: Symbolic calibration is a central contribution}
+
+ The transition:
+
+ $$
+f_{\LLM}(x;\theta_0)
+\rightarrow
+f_{\LLM}(x;\hat\theta)
+$$
+
+ is an important bridge between language-model-generated structure and\
+ data-driven numerical estimation.
+
+ \\subsection\*{Conclusion 3: The NN is complementary}
+
+ The neural network is not merely a competing baseline. Within the hybrid\
+ architecture it serves as a flexible numerical alternative and, in some\
+ implementations, an ensemble component.
+
+ \\subsection\*{Conclusion 4: Extrapolation is essential}
+
+ For equation discovery, OOD evaluation is more informative than interpolation\
+ alone.
+
+ \\subsection\*{Conclusion 5: Reproducibility requires provenance}
+
+ LLM responses, prompts, model identifiers, code versions, datasets,\
+ configurations and random seeds should all be retained.
+
+ \\subsection\*{Conclusion 6: Refactoring can substantially improve scientific clarity}
+
+ The proposed architecture:
+
+ $$
+\boxed{
+Discovery
+\rightarrow
+Parsing
+\rightarrow
+Validation
+\rightarrow
+Calibration
+\rightarrow
+Neural\ Training
+\rightarrow
+Validation\ Selection
+\rightarrow
+Test/OOD
+}
+$$
+
+ would preserve the scientific idea while making the implementation easier to\
+ test, reproduce and extend.
+
+ % ============================================================\
+ \\appendix\
+ % ============================================================
+
+ \\section{Appendix A: Source-to-Algorithm Mapping}
+
+ \\begin{longtable}{p{0.38\\linewidth}p{0.50\\linewidth}}\
+ \\caption{Detailed source-to-algorithm mapping}\
+ \\\
+ \\toprule\
+ \\textbf{Source component} & \\textbf{Algorithmic role}\\\
+ \\midrule\
+ \\endfirsthead
+
+ \\toprule\
+ \\textbf{Source component} & \\textbf{Algorithmic role}\\\
+ \\midrule\
+ \\endhead
+
+ \\code{baseline\_pure\_llm\_defi\_discovery.py}\
+ &\
+ Generate and evaluate symbolic hypotheses from LLM output.\
+ \\
+
+ \\code{hybrid\_system\_nn\_defi\_domain.py}\
+ &\
+ Combine symbolic generation, parameter fitting, NN training and hybrid\
+ selection.\
+ \\
+
+ \\code{hybrid\_system\_llm\_nn\_all\_domains.py}\
+ &\
+ Generalise hybrid logic to broader scientific/engineering domains.\
+ \\
+
+ \\code{hybrid\_ensemble\_system\_defi\_domain.py}\
+ &\
+ Construct weighted symbolic/neural prediction ensembles.\
+ \\
+
+ \\code{adaptive\_config.py}\
+ &\
+ Map dataset characteristics to neural training configuration.\
+ \\
+
+ \\code{baseline\_neural\_network\_defi\_improved.py}\
+ &\
+ Provide adaptive NN training and evaluation.\
+ \\
+
+ \\code{exp1\_ablation.py}\
+ &\
+ Compare methods over controlled equation/data conditions.\
+ \\
+
+ \\code{run\_instability\_suite.py}\
+ &\
+ Aggregate repeated runs into stability statistics.\
+ \\
+
+ \\code{run\_noise\_sweep\_benchmark.py}\
+ &\
+ Measure sensitivity to noise.\
+ \\
+
+ \\code{run\_sample\_complexity\_benchmark.py}\
+ &\
+ Measure sensitivity to sample count.\
+ \\
+
+ \\code{test\_enhanced\_defi\_extrapolation.py}\
+ &\
+ Test extrapolation behaviour.\
+ \\
+
+ \\bottomrule\
+ \\end{longtable}
+
+ % ============================================================\
+ \\section{Appendix B: Recommended Reporting Table}\
+ % ============================================================
+
+ A final paper should report results in a table of the following form.
+
+ \\begin{center}\
+ \\small\
+ \\begin{tabular}{lrrrrrr}\
+ \\toprule\
+ Equation &\
+ Train $R^2$ &\
+ Val. $R^2$ &\
+ Test $R^2$ &\
+ OOD $R^2$ &\
+ RMSE &\
+ MAE\
+ \\\
+ \\midrule\
+ Eq. 1 & -- & -- & -- & -- & -- & --\\\
+ Eq. 2 & -- & -- & -- & -- & -- & --\\\
+ Eq. 3 & -- & -- & -- & -- & -- & --\\\
+ $\\vdots$ & & & & & &\\\
+ \\bottomrule\
+ \\end{tabular}\
+ \\end{center}
+
+ For repeated runs, each entry should preferably be:
+
+ $$
+\mu\pm\sigma.
+$$
+
+ % ============================================================\
+ \\section{Appendix C: Recommended Ablation Results}\
+ % ============================================================
+
+ The final experimental paper should isolate:
+
+ $$
+\begin{array}{c}
+LLM\\
+LLM+\text{calibration}\\
+NN\\
+LLM+NN\\
+LLM+\text{calibration}+NN
+\end{array}
+$$
+
+ so that the contribution of each component can be identified.
+
+ A particularly important comparison is:
+
+ $$
+\Delta_{\mathrm{cal}}
+=
+R^2_{\mathrm{LLM+cal}}
+-
+R^2_{\mathrm{LLM}},
+$$
+
+ and:
+
+ $$
+\Delta_{\mathrm{hybrid}}
+=
+R^2_{\mathrm{hybrid}}
+-
+\max
+\left(
+R^2_{\mathrm{LLM+cal}},
+R^2_{\mathrm{NN}}
+\right).
+$$
+
+ These quantities answer two different questions:
+
+ \\begin{itemize}\
+ \\item Does numerical calibration improve the symbolic hypothesis?\
+ \\item Does combining symbolic and neural models improve upon the strongest\
+ individual component?\
+ \\end{itemize}
+
+ % ============================================================\
+ \\section{Appendix D: Security Recommendation}\
+ % ============================================================
+
+ The use of generated executable Python should be considered a security\
+ boundary.
+
+ The preferred mathematical representation is a restricted DSL:
+
+ $$
+E::=
+x_i
+\mid
+c
+\mid
+E+E
+\mid
+E-E
+\mid
+E\times E
+\mid
+E^E
+\mid
+\log E
+\mid
+\exp E
+\mid
+\sin E
+\mid
+\cos E.
+$$
+
+ An expression validator should reject:
+
+ \\begin{itemize}\
+ \\item imports;\
+ \\item attribute access;\
+ \\item function definitions;\
+ \\item file operations;\
+ \\item subprocess execution;\
+ \\item arbitrary Python statements.\
+ \\end{itemize}
+
+ The numerical evaluator should operate only on the validated expression tree.
+
+ % ============================================================\
+ \\section{Appendix E: Reproducibility Checklist}\
+ % ============================================================
+
+ Before publication, verify:
+
+ \\begin{itemize}\
+ \\item \[ \] Exact Git commit recorded.\
+ \\item \[ \] Python version recorded.\
+ \\item \[ \] Dependency versions recorded.\
+ \\item \[ \] LLM provider recorded.\
+ \\item \[ \] LLM model identifier recorded.\
+ \\item \[ \] Prompt stored.\
+ \\item \[ \] Raw LLM response stored.\
+ \\item \[ \] Dataset generation seed recorded.\
+ \\item \[ \] Dataset hash recorded.\
+ \\item \[ \] Neural seed recorded.\
+ \\item \[ \] Training configuration stored.\
+ \\item \[ \] Hybrid selection policy stored.\
+ \\item \[ \] Train/validation/test/OOD split stored.\
+ \\item \[ \] Final test data never used for selection.\
+ \\item \[ \] OOD data never used for fitting.\
+ \\item \[ \] All repeated runs stored.\
+ \\item \[ \] Failed runs retained rather than silently discarded.\
+ \\item \[ \] Mean and standard deviation reported.\
+ \\item \[ \] Extrapolation reported separately.\
+ \\item \[ \] Benchmark-specific corrections documented.\
+ \\end{itemize}
+
+ % ============================================================\
+ \\section{Appendix F: Minimal Compilation}\
+ % ============================================================
+
+ Save this file as:
+
+ \\begin{center}\
+ \\code{hypatiax\_extended\_report.tex}\
+ \\end{center}
+
+ Compile twice:
+
+ \\begin{lstlisting}\[language=bash\]\
+ pdflatex hypatiax\_extended\_report.tex\
+ pdflatex hypatiax\_extended\_report.tex\
+ \\end{lstlisting}
+
+ For a cleaner automated build:
+
+ \\begin{lstlisting}\[language=bash\]\
+ latexmk -pdf -interaction=nonstopmode \
+ hypatiax\_extended\_report.tex\
+ \\end{lstlisting}
+
+ % ============================================================\
+ \\section{Appendix G: Suggested Bibliography}\
+ % ============================================================
+
+ The final publication version should include, at minimum:
+
+ \\begin{itemize}\
+ \\item the original HypatiaX/LLM-HypatiaX paper;\
+ \\item the repository/software release;\
+ \\item the symbolic-regression method used as a baseline;\
+ \\item the neural-network framework used by the implementation;\
+ \\item the LLM/API model documentation corresponding to the experiments;\
+ \\item relevant equation-discovery and scientific machine-learning literature.\
+ \\end{itemize}
+
+ For the repository itself, cite the exact commit used for the analysis rather\
+ than only citing a moving branch.
+
+ \\end{document}
+
+ ### What is different in this extended version
+
+ This version goes beyond the earlier report by adding:
+
+ - a **publication-style abstract and executive summary**;
+- a formal **scope/evidence hierarchy**;
+- a **source inventory and traceability matrix**;
+- reconstructed **algorithm environments**;
+- mathematical formulation of the symbolic calibration;
+- separate treatment of the **DeFi hybrid**, **all-domain hybrid**, and\
+   **uncertainty ensemble**;
+- **TikZ architecture diagrams**;
+- train/validation/test/OOD methodology;
+- explicit **threats to validity**;
+- a proposed **typed symbolic AST/DSL**;
+- a complete **refactored architecture**;
+- a canonical **refactored HypatiaX algorithm**;
+- statistical reporting equations;
+- a proposed **ablation matrix**;
+- a **refactoring roadmap**;
+- a **reproducibility/provenance schema**;
+- security analysis of generated-code execution;
+- a publication-oriented **reproducibility checklist**;
+- appendices for source mapping, experimental reporting and ablations.
+
+ The project's own public tutorial material also indicates that its benchmark workflow is intended to support reproduction of a **131-equation benchmark** and subsequent statistical/publication-figure analysis, which is why the extended report separates the methodological source analysis from claims about experimentally reproduced numerical results.  SiMLeng Portfolio
+
+ **Important:** this is still a source-analysis report, not a claim that I independently executed all 131 equations. For a truly final PhD/paper version, the next pass should be a **file-by-file audit of the actual repository at a fixed commit**, recording every script, class, function, dependency, input/output, and exact source location. That would let the report contain genuine `filename.py:function_name`/line-level citations instead of inferred mappings.
