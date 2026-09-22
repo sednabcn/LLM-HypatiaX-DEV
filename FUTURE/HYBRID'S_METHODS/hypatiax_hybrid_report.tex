@@ -1,0 +1,1005 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Packages
+% ------------------------------------------------------------------
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\definecolor{hxblue}{RGB}{27,54,93}
+\definecolor{hxgrey}{RGB}{90,90,90}
+\definecolor{codebg}{RGB}{245,246,248}
+\definecolor{codekw}{RGB}{27,54,93}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{parskip}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=hxblue,
+  citecolor=hxblue,
+  urlcolor=hxblue,
+  pdftitle={HypatiaX Hybrid Methods --- Technical Report},
+  pdfauthor={Claude (Anthropic) -- Automated Code Analysis}
+}
+
+\titleformat{\section}{\Large\bfseries\color{hxblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{hxblue}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{hxgrey}}{\thesubsubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\lhead{\small\color{hxgrey} HypatiaX Hybrid Methods -- Technical Report}
+\rhead{\small\color{hxgrey}\thepage}
+
+\lstdefinestyle{py}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{hxgrey}\itshape,
+  stringstyle=\color{teal},
+  numbers=left,
+  numberstyle=\tiny\color{hxgrey},
+  numbersep=6pt,
+  frame=single,
+  rulecolor=\color{hxgrey!40},
+  breaklines=true,
+  showstringspaces=false,
+  language=Python,
+  captionpos=b,
+  xleftmargin=1em,
+}
+\lstset{style=py}
+
+\newcommand{\repolink}{\url{https://github.com/sednabcn/LLM-HypatiaX-REPRO}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\begin{document}
+
+% ------------------------------------------------------------------
+\begin{titlepage}
+\centering
+\vspace*{2cm}
+{\Huge\bfseries\color{hxblue} HypatiaX Hybrid Methods}\\[0.4cm]
+{\Large A Static-Analysis Report on the LLM~+~Neural-Network\\ Hybrid Symbolic Regression Pipeline}\\[1.2cm]
+{\large Reproducibility repository: \repolink}\\[0.3cm]
+{\large Directories analysed: \code{hypatiax/core/}, \code{hypatiax/experiments/},\\ \code{hypatiax/tools/} and \code{hypatiax/protocols/}}\\[0.3cm]
+{\large\color{hxgrey} Revision 2 --- extends the original \code{core/}$+$\code{experiments/} analysis with\\ \code{hypatiax/tools/} (symbolic engines, template regressor, four-layer validator)}\\[2cm]
+
+\begin{tikzpicture}[node distance=1.3cm and 2.4cm, every node/.style={font=\small}]
+  \node[draw, rounded corners, fill=hxblue!8, minimum width=3.2cm, align=center] (llm) {LLM\\Symbolic Prior};
+  \node[draw, rounded corners, fill=hxblue!8, minimum width=3.2cm, align=center, right=of llm] (nn) {Neural\\Network};
+  \node[draw, rounded corners, fill=hxblue!18, minimum width=4.2cm, below=1.4cm of $(llm)!0.5!(nn)$, align=center] (dec) {$R^2$-margin\\Decision Gate};
+  \node[draw, rounded corners, fill=hxblue!30, minimum width=4.6cm, below=1.4cm of dec, align=center] (out) {Symbolic / Ensemble / Neural\\Prediction};
+  \draw[-Latex] (llm) -- (dec);
+  \draw[-Latex] (nn) -- (dec);
+  \draw[-Latex] (dec) -- (out);
+\end{tikzpicture}
+
+\vfill
+{\large Prepared by: Claude (Anthropic), automated repository analysis}\\
+{\large \today}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ==================================================================
+\section{Scope and Method}
+% ==================================================================
+This report analyses the \textbf{hybrid symbolic-neural discovery methods}
+implemented in the \code{LLM-HypatiaX-REPRO} repository. It is a
+\textbf{revision} of an earlier report that covered only
+\code{hypatiax/core/} (the reusable method implementations) and
+\code{hypatiax/experiments/} (the benchmark and protocol scripts that
+exercise them); that revision reported \emph{four} hybridisation
+variants (\S\,``b) Description''). This revision re-fetches the repository
+at \code{master} in full (via a tarball of the entire tree, not individual
+file guesses) and additionally reads \code{hypatiax/tools/} and
+\code{hypatiax/experiments/benchmarks/}, per the request that prompted this
+update. One correction to the request as stated: the directory does
+\emph{not} exist at \code{hypatiax/core/tools/} -- it is
+\code{hypatiax/tools/}, a package \emph{sibling} of \code{core/}, not
+nested inside it (confirmed against the live repository tree). A further,
+previously-undocumented top-level package, \code{hypatiax/protocols/}, was
+also found and is summarised below for completeness, though it holds
+benchmark \emph{test-case data} rather than hybridisation logic.
+
+Cross-checking line-for-line against the previous report, every file
+previously read under \code{core/} (\code{[C1]}--\code{[C6]}) is
+\textbf{byte-identical in line count} to what was reported before (1{,}418 /
+1{,}090 / 267 / 1{,}804 / 713+872 / 328 lines respectively) -- the core
+hybrid-decision logic analysed previously (Variants 1--3, \S\,``c)
+Algorithm'') has \textbf{not changed}. What has changed is everything
+\emph{around} it: a substantial, previously unexamined \code{hypatiax/tools/}
+package (four symbolic-generation/regression engines, a four-layer
+expression-validation pipeline, and a PCA-split utility) and an expanded
+\code{experiments/benchmarks/} directory (PCA-directed OOD variants of the
+DeFi benchmark, an extracted extrapolation-ladder module, and a
+self-audit notebook that documents a genuine, still-open reliability
+discrepancy -- \S\,``f) Update'' below). All line counts, function
+signatures, decision-logic branches and inline engineering notes
+(``FIX-*'' comments) quoted below are taken verbatim from the source
+retrieved on \today, not inferred.
+
+The repository is a \emph{reproducibility companion} for a paper referenced
+in its own docstrings as:
+
+\begin{quote}\itshape
+``HypatiaX: A Hybrid Symbolic-Neural Framework for Extrapolation-Reliable
+Analytical Discovery'' (JMLR v3.0, Apr 2026)
+\end{quote}
+
+\noindent as stated in \code{hypatiax/core/metrics.py}. The codebase therefore
+mixes (a) production-style method code, (b) CI/benchmark orchestration, and
+(c) a dense trail of bug-fix comments documenting the evolution of the
+hybrid decision logic across paper revisions -- this trail is itself a
+primary source for Sections~4 and~6 below.
+
+% ==================================================================
+\section{a) Sources}
+% ==================================================================
+
+\subsection{Primary source}
+\begin{itemize}
+  \item \textbf{Repository:} \repolink\ (owner \code{sednabcn}, Apache-2.0
+        licence, \emph{``Original HypatiaX work \copyright\ PhD Ruperto P.
+        Bonet Chaple''}).
+  \item \textbf{Associated paper (as cited internally):} \emph{HypatiaX: A
+        Hybrid Symbolic-Neural Framework for Extrapolation-Reliable
+        Analytical Discovery}, JMLR, v3.0 (Apr 2026) --- cited in
+        \code{hypatiax/core/metrics.py} and referenced by section number
+        (e.g.\ \S10.2, \S10.6, \S10.9) throughout \code{hypatiax/experiments/}.
+\end{itemize}
+
+\subsection{Source files examined (hybrid method implementations)}
+\begin{itemize}[leftmargin=1.4cm]
+  \item[\code{[C1]}] \code{hypatiax/core/generation/hybrid\_defi\_system/}\\
+        \code{hybrid\_system\_nn\_defi\_domain.py} (1{,}418 lines) --- class
+        \code{EnhancedHybridSystemDeFi}: LLM-formula $+$ scipy refit $+$ NN,
+        DeFi domain.
+  \item[\code{[C2]}] \code{hypatiax/core/generation/hybrid\_all\_domains\_llm\_nn/}\\
+        \code{hybrid\_system\_llm\_nn\_all\_domains.py} (1{,}090 lines) ---
+        class \code{HybridSystemAllDomains}: same pattern generalised to
+        physics/chemistry/biology (Feynman-style) domains.
+  \item[\code{[C3]}] \code{hypatiax/core/generation/hybrid\_defi\_llm\_nn/}\\
+        \code{hybrid\_ensemble\_system\_defi\_domain.py} (267 lines) ---
+        worked example of \emph{uncertainty-weighted} LLM/NN ensembling
+        (\code{ensemble\_llm\_nn}).
+  \item[\code{[C4]}] \code{hypatiax/core/base\_pure\_llm/}\\
+        \code{baseline\_pure\_llm\_defi\_discovery.py} (1{,}804 lines) --- the
+        pure-LLM baseline (\code{PureLLMBaseline}) that both \code{[C1]} and
+        \code{[C2]} delegate to for formula generation.
+  \item[\code{[C5]}] \code{hypatiax/core/training/adaptive\_config.py}
+        (713 lines) and \code{baseline\_neural\_network\_defi\_improved.py}
+        (872 lines) --- a priori NN hyperparameter selection and the shared
+        NN baseline architecture.
+  \item[\code{[C6]}] \code{hypatiax/core/metrics.py} (328 lines) --- shared
+        $R^2$/MSE/RMSE/MAE and paper-specific metrics
+        (\code{compute\_near\_perfect\_rate}, \code{compute\_catastrophic\_rate}).
+  \item[\code{[E1]}] \code{hypatiax/experiments/benchmarks/hypatia.py}
+        (432 lines) --- \code{get\_llm\_prior()}: LLM-generated symbolic
+        candidates used as a \emph{warm start} for a genetic-programming
+        symbolic regressor (PySR), a fourth, distinct hybridisation
+        strategy.
+  \item[\code{[E2]}] \code{hypatiax/experiments/benchmarks/exp1\_ablation.py}
+        (1{,}771 lines) --- ablation of the LLM-prior contribution
+        (\S10.6/\S10.9 of the paper); dynamically loads its driving engine
+        from \code{tools/symbolic/hybrid\_system\_v50\_2.py} \code{[T1]}
+        (see the version-drift note in \S4).
+  \item[\code{[E3]}] \code{hypatiax/experiments/benchmarks/}\\
+        \code{run\_hybrid\_system\_benchmark.py} (576),
+        \code{run\_comparative\_suite\_benchmark\_v2.py} (5{,}492), \\
+        \code{run\_noise\_sweep\_benchmark.py} (964),
+        \code{run\_sample\_complexity\_benchmark.py} (1{,}131), \\
+        \code{run\_instability\_suite.py} (1{,}438),
+        \code{exp1\_five\_system.py} (518),
+        \code{exp3\_nguyen12\_consolidated.py} (1{,}487) --- orchestration/CI
+        wrappers that instantiate \code{[C1]}/\code{[C2]} across DeFi,
+        Feynman and Nguyen benchmark suites, with sharding, resume, and
+        result-merging logic.
+  \item[\code{[E4]}] \code{hypatiax/experiments/tests/}\\
+        \code{test\_enhanced\_defi\_extrapolation.py} (1{,}586 lines) ---
+        held-out extrapolation testing of the \code{[C1]} hybrid
+        \code{decision} output. Four further test modules were found
+        alongside it (\code{test\_defi\_benchmark\_v4\_selection.py},
+        \code{test\_defi\_benchmark\_v4\_smoke.py},
+        \code{test\_extrapolation\_helpers.py},
+        \code{test\_proc\_box\_wiring.py}) but were not read in full, being
+        harness/smoke tests rather than method logic.
+\end{itemize}
+
+\subsection{New in this revision: \code{hypatiax/tools/}}
+\begin{itemize}[leftmargin=1.4cm]
+  \item[\code{[T1]}] \code{hypatiax/tools/symbolic/hybrid\_system\_v50\_2.py}
+        (1{,}586 lines) --- class \code{HybridDiscoverySystem}, docstring-versioned
+        \textbf{v5.4} (not v5.1 -- see \S4): an \emph{orchestration wrapper}
+        around \code{[T2]}'s \code{SymbolicEngineWithLLM} (constructed at
+        line~427) that adds NaN/RMSE numerical-stability fixes, a
+        \code{PhysicsAwareRegressor} \code{[T3]} fallback tier, and
+        results-saving/statistics -- it does \emph{not} itself implement the
+        LLM/PySR decision logic (correction to the previous revision of
+        this report, which had misattributed that logic to this file; see
+        \S3/\S4).
+  \item[\code{[T2]}] \code{hypatiax/tools/symbolic/symbolic\_engine.py}
+        (3{,}235 lines) --- \code{SymbolicEngine} / \code{SymbolicEngineWithLLM}
+        (PySR-backed, ``v21''), \code{BayesianRanker} (``v22'', re-ranks the
+        PySR Pareto front by log-posterior rather than raw $R^2$), and
+        \code{SymbolicTreeEngine} (``v23'', a self-contained expression-tree
+        search with \emph{no} PySR/Julia dependency) -- three
+        interchangeable discovery back-ends unified in one module.
+        \textbf{\code{SymbolicEngineWithLLM} is the true implementer of the
+        four LLM-integration modes} (\code{none}/\code{seed}/\code{hybrid}/
+        \code{fallback}) that \code{[E2]} exercises via \code{[T1]}, with
+        its own genuine, independently-thresholded decision logic (\S3.4)
+        -- making it a hybridisation variant in its own right, not merely
+        an implementation detail of \code{[T1]}. This is confirmed by
+        direct inspection: \code{[T1]} line~427 reads
+        \code{self.symbolic\_engine: SymbolicEngine = SymbolicEngineWithLLM(...)}
+        and every LLM-mode branch dispatches into \code{[T2]}'s
+        \code{discover()}, not into any LLM-mode logic of its own.
+  \item[\code{[T3]}] \code{hypatiax/tools/symbolic/physics\_aware\_regressor.py}
+        (2{,}117 lines) --- class \code{PhysicsAwareRegressor} (v11.1): a
+        \emph{template-library} candidate generator (Michaelis-Menten,
+        competitive inhibition, Hill coefficients, Lineweaver-Burk,
+        Bernoulli energy forms, \ldots) with train/validation-split early
+        stopping and $L_2$-regularised constant fitting; instantiated by
+        \code{[T1]} as an explicit fallback path when the PySR search
+        underperforms (line 729, ``\code{[FALLBACK] Using
+        PhysicsAwareRegressor...}'').
+  \item[\code{[T4]}] \code{hypatiax/tools/symbolic/smart\_structure\_detector.py}
+        (620 lines) --- classes \code{SmartStructureDetector} and
+        \code{IntelligentEquationBuilder}: a \emph{template-free}
+        counterpart to \code{[T3]}, inferring additive/multiplicative
+        structure, per-variable term form and variable interactions
+        directly from data statistics rather than from a template library.
+  \item[\code{[T5]--[T8]}] \code{hypatiax/tools/validation/}\\
+        \code{symbolic\_validator.py} (896), \code{dimensional\_validator.py}
+        (804), \code{domain\_validator.py} (721),
+        \code{ensemble\_validator.py} (1{,}092) --- a four-layer expression
+        acceptance pipeline (Layer~3 syntax/SymPy $\to$ Layer~1 units via
+        Pint $\to$ Layer~2 domain constraints $\to$ Layer~4 numerical
+        stability), orchestrated by \code{EnsembleValidator} and detailed in
+        \S3.4.
+  \item[\code{[U1]}] \code{hypatiax/tools/utils/pca\_split\_utils.py}
+        (120 lines) --- \code{pca\_directed\_split()}: an alternative,
+        PCA-projected train/test split used by the new PCA benchmark
+        variants (\S6).
+\end{itemize}
+
+\subsection{New in this revision: \code{hypatiax/experiments/benchmarks/} additions}
+\begin{itemize}[leftmargin=1.4cm]
+  \item[\code{[E5]}] \code{hypatiax/experiments/benchmarks/extrap\_r2\_far.py}
+        (500 lines) --- \code{build\_extrap\_split()} and
+        \code{compute\_extrap\_r2\_far()}, extracted (per its own docstring,
+        \emph{``Extracted from run\_comparative\_suite\_benchmark\_v2.py''})
+        into a standalone module implementing a five-tier extrapolation
+        quality ladder.
+  \item[\code{[E6]}] \code{hypatiax\_defi\_benchmark\_v3.py} (2{,}322),
+        \code{\_v4.py} (2{,}639), and their PCA-split counterparts
+        \code{\_v3\_pca.py} (2{,}246), \code{\_v4\_pca.py} (2{,}689) ---
+        the \code{\_pca} variants replace the random train/test split with
+        \code{[U1]}'s \code{pca\_directed\_split()} as the sole protocol
+        split (\code{run\_comparative\_suite\_benchmark\_pca.py}, line~15:
+        \emph{``FIX-C3/DISCLOSURE: pca\_directed\_split is now the sole
+        protocol split''}).
+  \item[\code{[E7]}] \code{portfolio\_variance\_v3c2.py} /
+        \code{\_v4c2.py} (991 lines each) --- Colab-exported audit
+        notebooks-as-scripts that reconcile a specific reliability
+        discrepancy in the Portfolio Variance test case; discussed as a
+        limitation in \S4/\S6.
+\end{itemize}
+
+\subsection{New in this revision: \code{hypatiax/protocols/} (context only)}
+A fourth top-level package, not requested but encountered while resolving
+\code{[E2]}'s and \code{[E5]}'s imports, holds benchmark \emph{test-case
+generators} rather than hybridisation logic:
+\code{experiment\_protocol\_all\_30.py} (1{,}429, 30 multi-domain cases),
+\code{experiment\_protocol\_benchmark\_v2.py} (1{,}794, the Feynman SR
+subset), \code{experiment\_protocol\_defi.py} (2{,}020, DeFi/finance
+cases), \code{experiment\_protocol\_nguyen12.py} (928, the Nguyen-12
+suite). These are listed for completeness but not analysed further, since
+they define data rather than method.
+
+All quoted code, comments and identifiers in this report are reproduced
+from these files as retrieved on \today\ from the \code{master} branch
+(fetched as a full-repository tarball via \code{codeload.github.com}, not
+individually-guessed paths).
+
+% ==================================================================
+\section{b) Description}
+% ==================================================================
+
+HypatiaX's ``hybrid method'' is not a single algorithm but a \textbf{family
+of LLM+Neural-Network combination strategies}, all built around the same
+three ingredients:
+
+\begin{enumerate}
+  \item an \textbf{LLM symbolic prior} -- Claude (via the \code{anthropic}
+        Python SDK) is prompted to derive a closed-form formula for a
+        described physical/financial relationship and return it as an
+        executable \code{def formula(...):} block;
+  \item a \textbf{neural-network baseline} -- a small feed-forward MLP
+        (\code{ImprovedNN}: \code{Linear + LayerNorm + SiLU} blocks, trained
+        with \code{AdamW} and cosine-annealing-with-warm-restarts) fit
+        directly to the numeric data, with no symbolic structure imposed;
+  \item a \textbf{combination/decision layer} that chooses, per case,
+        whether to trust the symbolic formula, the network, or a blend of
+        both, based on comparative $R^2$ on the training data.
+\end{enumerate}
+
+Four concrete variants of this pattern exist in \code{core}/\code{experiments}:
+
+\begin{description}
+  \item[Variant~1 -- \code{EnhancedHybridSystemDeFi} \code{[C1]}] Adds a
+        \emph{second symbolic-refinement stage}: after the LLM proposes a
+        formula, its numeric constants are re-fit with
+        \code{scipy.optimize.curve\_fit} (\code{fit\_formula\_params}), so
+        the LLM only needs to get the \emph{functional form} right, not the
+        exact constants. The final choice among \{fitted-symbolic,
+        ensemble, NN\} uses a fixed $R^2$ threshold plus a margin test.
+  \item[Variant~2 -- \code{HybridSystemAllDomains} \code{[C2]}] Same
+        two-model skeleton, generalised to physics/chemistry/biology
+        ``Feynman-style'' equations, with a \code{force\_llm} override that
+        skips the NN entirely for domains where a power-law/exponential
+        symbolic form is known a priori to dominate a linear-space MLP.
+        Ties are broken in favour of the symbolic formula (\code{llm\_r2 >=
+        nn\_r2}); a genuine NN win only triggers a weighted blend, never a
+        silent NN-only fallback, unless the LLM failed outright.
+  \item[Variant~3 -- \code{ensemble\_llm\_nn} \code{[C3]}] A worked example
+        showing \emph{uncertainty-weighted} (rather than $R^2$-weighted)
+        combination: each model's weight is proportional to
+        $R^2_i/\sigma_i$, where $\sigma_i$ is the standard deviation of that
+        model's residuals -- i.e.\ a precision-weighted ensemble, closer in
+        spirit to inverse-variance weighting than to a hard decision gate.
+  \item[Variant~4 -- \code{SymbolicEngineWithLLM}'s four PySR modes
+        \code{[T2]}, exercised via \code{[E1]}/\code{[T1]}] A fundamentally
+        different hybridisation point from Variants~1--3: instead of
+        blending two independently-trained predictors, the LLM and a
+        genetic-programming symbolic regressor (PySR) take turns
+        \emph{proposing} and \emph{refining} the same candidate expression.
+        \code{[E1]}'s standalone \code{get\_llm\_prior()} illustrates the
+        simplest form of this (LLM candidates as a PySR seed population);
+        the actual implementer is the \code{SymbolicEngineWithLLM} class in
+        \code{[T2]}, which generalises it into \emph{four} selectable
+        modes chosen via an \code{llm\_mode} parameter, each with its own
+        decision logic (detailed in \S3.4): \code{none} (pure PySR),
+        \code{seed} (LLM hypothesis biases PySR's operator set and
+        warm-starts its population), \code{hybrid} (LLM proposes a formula
+        first; PySR refines it \emph{only} if the LLM's $R^2$ falls in
+        $[0.5, 0.95]$, with the better of the two kept), and
+        \code{fallback} (PySR runs first; the LLM is invoked only if PySR's
+        $R^2 \leq 0.90$, again keeping whichever result is better). ``Variant
+        4'' is therefore itself a small family of four strategies with
+        real, source-visible thresholds, not one fixed rule. It is
+        \emph{driven} by \code{HybridDiscoverySystem} \code{[T1]}
+        (docstring-versioned v5.4, exercised by \code{[E2]}), which
+        constructs a \code{SymbolicEngineWithLLM} instance and adds a
+        physics-template fallback (Variant~5) on top, but the LLM/PySR
+        decision logic itself lives in \code{[T2]}, not \code{[T1]}.
+  \item[Variant~5 -- Template-guided physics fallback \code{[T3]}/\code{[T4]}]
+        A hybridisation point below the LLM/NN layer entirely: when
+        \code{HybridDiscoverySystem} \code{[T1]}'s PySR search underperforms,
+        it falls back to \code{PhysicsAwareRegressor} \code{[T3]}, which
+        fits a \emph{library} of domain templates (Michaelis-Menten,
+        competitive inhibition, Bernoulli energy, \ldots) with regularised
+        constant optimisation rather than searching expression space from
+        scratch. \code{SmartStructureDetector} / \code{IntelligentEquationBuilder}
+        \code{[T4]} implement the template-\emph{free} counterpart --
+        additive/multiplicative structure and per-variable term form are
+        inferred statistically from the data rather than matched against a
+        template library -- so the two modules together offer both
+        \emph{prior-knowledge-driven} and \emph{data-driven} routes to a
+        symbolic candidate, independent of whether an LLM call is made at
+        all.
+\end{description}
+
+All four variants share the same evaluation vocabulary defined in
+\code{hypatiax/core/metrics.py} \code{[C6]}: $R^2$, RMSE, MAE, plus two
+paper-specific aggregate statistics --
+\code{compute\_near\_perfect\_rate} (fraction of cases with $R^2>0.99$) and
+\code{compute\_catastrophic\_rate} (fraction with $R^2<-1$, i.e.\ predictions
+worse than the mean baseline) -- reflecting the paper's stated concern with
+\emph{extrapolation reliability} rather than average in-distribution fit
+alone.
+
+% ==================================================================
+\section{c) Algorithm (extracted)}
+% ==================================================================
+
+\subsection{Core hybrid decision loop (Variant 1, \code{[C1]})}
+The following pseudocode is a faithful extraction of
+\code{EnhancedHybridSystemDeFi.hybrid\_predict()}
+(\code{hybrid\_system\_nn\_defi\_domain.py}, lines 1076--1262):
+
+\begin{algorithm}[H]
+\caption{\code{hybrid\_predict}(description, domain, $X_{train}$, $y_{train}$, vars, meta)}
+\begin{algorithmic}[1]
+\State $result_{llm} \gets$ \Call{GenerateLLMFormula}{description, domain, vars, meta}
+\State $r2_{llm} \gets 0$
+\If{$result_{llm}$.python\_code is valid}
+    \State $\hat{y}_{llm} \gets$ \Call{SafeExecFormula}{$result_{llm}$.code, $X_{train}$}
+    \If{$\hat{y}_{llm}$ finite} \State $r2_{llm} \gets R^2(y_{train}, \hat{y}_{llm})$ \EndIf
+\EndIf
+\Statex \textit{Stage 2 --- refit the LLM formula's numeric constants:}
+\State $(code_{fit}, r2_{fit}) \gets$ \Call{FitFormulaParams}{$result_{llm}$.code, $X_{train}$, $y_{train}$, vars}
+\If{$r2_{fit} > r2_{llm} + 0.001$} \State accept refit; else keep $code_{fit} \gets result_{llm}$.code, $r2_{fit}\gets r2_{llm}$
+\EndIf
+\Statex \textit{Stage 3 --- train NN baseline (seed $= \mathrm{sha256}(description) \bmod 2^{31}$):}
+\State $(model_{nn}, \hat{y}_{nn}) \gets$ \Call{TrainNNModel}{$X_{train}$, $y_{train}$, seed}
+\State $r2_{nn} \gets R^2(y_{train}, \hat{y}_{nn})$
+\Statex \textit{Stage 4 --- decision gate:}
+\State $margin \gets r2_{fit} - r2_{nn}$
+\If{$r2_{fit} \geq 0.85$ \textbf{and} $margin > 0.05$}
+    \State $decision \gets$ \texttt{fitted\_llm}; \quad $\hat{y} \gets \hat{y}_{fit}$
+\ElsIf{$r2_{fit}\geq 0.5$ \textbf{and} $r2_{nn}\geq 0.5$ \textbf{and} $|margin|\leq 0.15$}
+    \State $w \gets r2_{fit}/(r2_{fit}+r2_{nn})$
+    \State $decision \gets$ \texttt{ensemble}; \quad $\hat{y} \gets w\cdot\hat{y}_{fit} + (1-w)\cdot\hat{y}_{nn}$
+\Else
+    \State $decision \gets$ \texttt{nn}; \quad $\hat{y}\gets \hat{y}_{nn}$
+\EndIf
+\If{$\hat{y}$ not finite \textbf{and} $\hat{y}_{nn}$ finite} \State fall back to \texttt{nn} \EndIf
+\State \Return $\{decision, \hat{y}, R^2(y_{train},\hat{y}), model_{nn}, \dots\}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Decision gate (Variant 2, \code{[C2]})}
+\code{HybridSystemAllDomains.hybrid\_predict()} (lines 730--880) uses a
+\emph{tie-favours-symbolic} rule instead of a fixed threshold:
+
+\begin{lstlisting}[caption={Decision branch, \code{hybrid\_system\_llm\_nn\_all\_domains.py} (abridged, original code)}]
+if llm_ok and llm_r2 >= nn_r2:
+    decision = "llm"                      # symbolic wins or ties
+elif llm_ok and nn_r2 > llm_r2 and nn_r2 > 0.90:
+    # both strong: R2-weighted blend of predictions
+    w_llm, w_nn = max(llm_r2,0), max(nn_r2,0)
+    blend = (w_llm*llm_pred + w_nn*nn_pred) / (w_llm+w_nn)
+    decision = "ensemble"
+else:
+    decision = "nn"                       # LLM failed / R2<=0
+\end{lstlisting}
+
+A domain-level \code{force\_llm} flag (injected by the benchmark runner for
+Feynman physics domains) short-circuits this entirely and returns the LLM
+result directly whenever $r2_{llm}>0$, skipping NN training altogether --
+a deliberate domain prior encoded outside the model.
+
+\subsection{Uncertainty-weighted ensembling (Variant 3, \code{[C3]})}
+\begin{lstlisting}[caption={\code{ensemble\_llm\_nn()}, \code{hybrid\_ensemble\_system\_defi\_domain.py} (original code, condensed)}]
+llm_unc = std(llm_pred - y_true);  nn_unc = std(nn_pred - y_true)
+w_llm = (1/(llm_unc+eps)) * max(llm_r2, 0)
+w_nn  = (1/(nn_unc +eps)) * max(nn_r2,  0)
+w_llm, w_nn = w_llm/(w_llm+w_nn), w_nn/(w_llm+w_nn)
+ensemble = w_llm*llm_pred + w_nn*nn_pred
+\end{lstlisting}
+This is a precision-weighted (inverse-residual-std) combination rather than
+a hard \emph{select-one} decision, and is presented in the source as an
+illustrative alternative to Variants 1--2's threshold logic rather than as
+the production path.
+
+\subsection{Symbolic-parameter refitting (\code{fit\_formula\_params}, \code{[C1]})}
+A supporting routine used by Variant~1's Stage~2:
+\begin{enumerate}
+  \item \code{\_parametrize\_formula()} rewrites the LLM's Python formula
+        so that its literal numeric constants become free parameters
+        \code{\_P[i]} -- first by matching named assignments
+        (\code{Vmax = 80.0} $\to$ \code{Vmax = \_P[0]}), falling back to
+        replacing \emph{any} non-structural numeric literal
+        ($\notin\{0,1,2\}$) if no named assignments are found;
+  \item \code{scipy.optimize.curve\_fit} (with a \code{differential\_
+        evolution} fallback for hard cases) then fits \code{\_P} to
+        $(X_{train}, y_{train})$;
+  \item the refit is accepted only if it improves training $R^2$ by more
+        than $0.001$ over the LLM's original (unfitted) constants.
+\end{enumerate}
+
+\subsection{LLM-prior warm start for symbolic regression (\code{[E1]})}
+\begin{algorithm}[H]
+\caption{\code{get\_llm\_prior}(eq, $X_{train}$, $y_{train}$) $\to$ PySR \code{guesses}}
+\begin{algorithmic}[1]
+\State prompt $\gets$ \Call{BuildPrompt}{eq.description, variable names, sample data}
+\State response $\gets$ Claude.messages.create(prompt, temperature $=0$)
+\State candidates $\gets$ \Call{ParseExpressions}{response} \Comment{plain Python/numpy syntax, e.g.\ \texttt{x**3+x**2}}
+\State \Return candidates \Comment{caller must translate to its own PySR operator config before use}
+\end{algorithmic}
+\end{algorithm}
+These candidates are then supplied to a genetic-programming symbolic
+regressor (PySR) as an initial \emph{guess population}, so the LLM narrows
+the search space the evolutionary algorithm explores, rather than competing
+with it after the fact -- the same idea generalised into \code{[T2]}'s
+\code{seed} mode (\S4.6) and exercised throughout \code{[E2]} via
+\code{[T1]} (docstring-versioned v5.4, \emph{not} v5.1 -- \S5, Limitations).
+
+\subsection{\code{SymbolicEngineWithLLM}'s four PySR modes (\code{[T2]})}
+Unlike Variants~1--3's fixed $R^2$/margin gates, \code{[T2]}'s
+\code{SymbolicEngineWithLLM.discover()} dispatches on an \code{llm\_mode}
+parameter to one of four methods, each with its own, independently
+thresholded control flow (extracted directly from
+\code{\_discover\_with\_llm\_seed}, \code{\_discover\_hybrid} and
+\code{\_discover\_with\_fallback}, lines 2035--2312):
+\begin{itemize}
+  \item \code{none} -- pure PySR genetic-programming search; the LLM plays
+        no role at all.
+  \item \code{seed} -- an LLM hypothesis is generated first; its operators
+        are extracted and unioned into PySR's \code{extra\_unary\_/extra\_
+        binary\_operators}, and the hypothesis's own expression is passed
+        as a \code{seed\_expressions} warm start (only effective if the
+        installed \code{pysr} build exposes a \code{guesses} argument).
+  \item \code{hybrid} -- the LLM proposes a formula first. If its $R^2>0.95$,
+        that formula is returned directly and PySR never runs
+        (\code{"hybrid\_llm\_only"}). If $R^2<0.5$, the LLM prior is
+        discarded entirely and PySR runs cold (protecting PySR's seed
+        population from a bad LLM guess). Otherwise ($0.5\leq R^2\leq0.95$)
+        PySR is seeded/refined from the LLM candidate and the two results
+        are compared, keeping whichever has the higher $R^2$
+        (\code{"hybrid\_pysr\_better"} vs.\ \code{"hybrid\_llm\_better"}).
+  \item \code{fallback} -- PySR runs first at full budget. If
+        $R^2>0.90$ its result is returned immediately
+        (\code{"fallback\_pysr\_only"}); only if PySR is at or below that
+        threshold is the LLM invoked, and its hypothesis is kept only if it
+        beats PySR's $R^2$ (\code{"fallback\_llm\_better"} vs.\
+        \code{"fallback\_pysr\_better"}/\code{"fallback\_both\_failed"}).
+\end{itemize}
+\code{HybridDiscoverySystem} \code{[T1]} is the orchestrator that
+constructs a \code{SymbolicEngineWithLLM} with the requested mode and calls
+into it; when PySR/LLM together still underperform, \code{[T1]} falls
+further back to \code{PhysicsAwareRegressor} \code{[T3]} (Variant~5) rather
+than returning a failed result -- so the production failure-handling path
+is a chain of progressively simpler hybridisation strategies (LLM-guided
+PySR, implemented in \code{[T2]} $\to$ template-matched regression,
+implemented in \code{[T3]}), spanning two files, not one decision point in
+one class.
+
+\subsection{A five-version-long dead hybridisation path (\code{[T1]} bug history)}
+\code{[T1]}'s own docstring records an unusually long-lived latent bug that
+is directly relevant to how much weight Variant~4's benchmark history
+should be given: the \code{use\_llm} parameter was \emph{introduced} in
+v3.5, but \code{SymbolicEngineWithLLM} was never actually called --
+\emph{``Bug: neither provider was ever called; SymbolicEngineWithLLM never
+used''} (v3.5), and this is explicitly reconfirmed as \emph{``persisted''}
+across v3.8 and v4.1-PROD (\emph{``self.anthropic\_provider /
+self.google\_provider set but never read; SymbolicEngineWithLLM never
+imported; use\_llm flag never checked in method body''}) and v4.2/v4.2.1,
+before finally being repaired in v5.0's \emph{``LLM-wiring rewrite (FIX-1
+\ldots FIX-6)''}. In other words: for five consecutive documented versions
+spanning the project's own changelog, passing \code{use\_llm=True} silently
+produced pure-PySR behaviour with no error and no warning. Any benchmark
+result recorded against a pre-v5.0 build under an ostensibly ``hybrid''
+configuration would in fact reflect Variant~4 (none) rather than Variant~4
+(seed/hybrid/fallback) -- a concrete instance of the ``documentation vs.\
+behaviour'' drift this report already flags for the v5.1/v5.4 engine label
+(\S4), but considerably more consequential, since it affects what the
+numbers \emph{measured} rather than merely how they were labelled.
+
+\subsection{Four-layer expression validation (\code{[T5]--[T8]})}
+Independent of which variant generated a candidate symbolic expression,
+\code{EnsembleValidator} \code{[T8]} composes four checks in a fixed order,
+each producing a $0$--$100$ sub-score (paraphrased from the module
+docstrings):
+\begin{enumerate}
+  \item \textbf{Symbolic} (\code{[T5]}, weight 30\%) -- SymPy-based syntax
+        and mathematical-pathology checks (undefined variables, NaN/complex
+        infinity, division-by-zero risk, log/sqrt domain violations);
+        supports both string and LaTeX input.
+  \item \textbf{Dimensional} (\code{[T6]}, weight 30\%) -- Pint-based unit
+        consistency across the expression tree; degrades rather than aborts
+        on unit-parsing failures for individual variables, since PySR
+        output may have partially-known variable sets.
+  \item \textbf{Domain} (\code{[T7]}, weight 30\%) -- string/array-level
+        constraint checks specific to the target domain (DeFi, risk,
+        finance, ESG): positivity, probability bounds, AMM constant-product
+        and fee-bound invariants.
+  \item \textbf{Numerical} (\code{[T8]}, weight 10\%) -- \code{lambdify}s
+        the expression and evaluates it on held-out test data to catch
+        NaN/Inf/overflow/underflow that the purely symbolic checks above
+        cannot see.
+\end{enumerate}
+A domain-aware reconciliation step after Layers~1--3 downgrades
+false-positive division-by-zero errors from the symbolic layer when domain
+constraints already guarantee the relevant variable is strictly positive
+(the module's own example: Michaelis-Menten's $K_m>0$ by definition). The
+weighted score must clear \textbf{85.0/100} for the expression to be
+accepted. This pipeline sits \emph{alongside} rather than \emph{inside}
+Variants~1--3's $R^2$-based decision gates (\S4 notes the gates themselves
+have no such acceptance threshold), so a formula can win the $R^2$
+comparison in \code{[C1]}/\code{[C2]} and still be flagged as invalid by
+\code{[T8]} in a separate pass -- the two mechanisms are not currently
+composed into one decision.
+
+\subsection{Benchmark-side orchestration}
+\code{run\_hybrid\_system\_benchmark.py} \code{[E3]} chains together, per
+CI shard: (1) batch hybrid-system evaluation, (2) held-out extrapolation
+testing (73 cases, \code{[E4]}), (3) statistical/performance analysis, and
+(4) report generation, with resume-from-checkpoint support driven by
+\code{TASK\_IDS}/\code{SHARD\_IDS} environment variables forwarded to each
+subprocess.
+
+% ==================================================================
+\section{d) Advantages and Limitations}
+% ==================================================================
+
+\subsection{Advantages}
+\begin{itemize}
+  \item \textbf{Complementary failure modes.} The LLM path supplies
+        physically/financially interpretable closed-form structure (good
+        extrapolation, poor fit when the true form is unknown to the
+        model); the NN path fits arbitrary residual structure
+        in-distribution but is known to extrapolate poorly. Blending them
+        via an $R^2$-based gate lets the system fall back gracefully rather
+        than committing to either failure mode.
+  \item \textbf{Two-stage symbolic refinement.} Separating \emph{structure
+        discovery} (LLM) from \emph{constant fitting} (\code{scipy}) means
+        the LLM does not need to produce numerically exact constants --
+        only a plausible functional form -- which is a substantially
+        easier generation target and is explicitly designed to raise
+        $R^2$ post-hoc (\S ``Stage 2'' in \code{[C1]}).
+  \item \textbf{Domain-aware overrides.} The \code{force\_llm} mechanism in
+        \code{[C2]} encodes a defensible prior (symbolic power-laws beat a
+        linear-space MLP for known physics families) directly into the
+        pipeline, avoiding wasted NN training and avoiding a documented
+        regression (``previously flag was silently ignored... causing
+        Snell's/Zeeman regression'').
+  \item \textbf{Explicit reproducibility engineering.} NN weight
+        initialisation is deterministically seeded from
+        \code{sha256(description)}; an optional
+        \code{HYPATIAX\_LLM\_FREEZE\_CACHE} file makes LLM outputs
+        bit-identical across separate process invocations, addressing the
+        genuinely hard problem that the Anthropic API is not guaranteed to
+        return byte-identical completions at temperature$=0$ across
+        requests -- a limitation the code itself documents rather than
+        silently ignores.
+  \item \textbf{Numerically defensive execution.} \code{\_safe\_exec\_formula}
+        clips \code{exp}/\code{arcsin}/\code{arccos} domains, and every
+        decision path has an explicit non-finite-value guard that falls
+        back to the NN prediction, preventing a single bad LLM formula
+        (e.g.\ $R^2\approx -10^{78}$, observed and referenced in comments)
+        from corrupting benchmark output.
+  \item \textbf{Extrapolation-first evaluation.} Unlike a pure
+        in-distribution $R^2$ average, \code{compute\_near\_perfect\_rate}
+        / \code{compute\_catastrophic\_rate} in \code{[C6]} and the
+        dedicated 73-case extrapolation test \code{[E4]} directly target
+        the paper's stated failure mode of interest (silent catastrophic
+        extrapolation), which a single aggregate metric would hide.
+  \item \textbf{Layered, independent expression validation.} \code{[T5]--[T8]}
+        give the pipeline a domain-agnostic acceptance gate (syntax $\to$
+        units $\to$ domain constraints $\to$ numerical stability) that is
+        decoupled from any one hybrid variant's $R^2$ logic, so the same
+        four-layer check can be reused whichever of Variants~1--5 produced
+        the candidate expression.
+  \item \textbf{PCA-directed out-of-distribution evaluation.} The
+        \code{\_pca} benchmark variants \code{[E6]} replace a random
+        train/test split with \code{pca\_directed\_split()} \code{[U1]},
+        which sorts samples along the first principal component and holds
+        out the far end of that axis -- a genuinely out-of-distribution
+        test rather than a random subsample, complementing (not
+        replacing) the multiplier-based ``far'' extrapolation ladder in
+        \code{[E5]}.
+\end{itemize}
+
+\subsection{Limitations}
+\begin{itemize}
+  \item \textbf{Threshold logic is hand-tuned, not learned.} The
+        $R^2\geq0.85$/margin$>0.05$ (Variant~1) and $R^2>0.90$
+        (Variant~2) constants that govern the symbolic/ensemble/NN choice
+        are fixed literals in the source with no accompanying sensitivity
+        analysis in \code{core/}; small changes to these thresholds would
+        change which examples are classified \code{fitted\_llm} vs.\
+        \code{ensemble} vs.\ \code{nn} without any documented calibration
+        procedure.
+  \item \textbf{Decision made on training $R^2$, not held-out data.}
+        Both \code{[C1]}'s and \code{[C2]}'s \code{hybrid\_predict} choose
+        the final method using $R^2$ computed on $(X_{train}, y_{train})$
+        -- the same data both models were fit on -- so the gate itself has
+        no protection against a model (particularly the NN) that overfits
+        training data while extrapolating poorly; that protection is
+        pushed entirely onto the separate extrapolation test suite
+        \code{[E4]} rather than being part of the hybrid decision itself.
+  \item \textbf{LLM non-determinism only partially solved.} The frozen-cache
+        mechanism only removes cross-run variance \emph{for repeated
+        identical (description, domain, variables) keys}; a first-time
+        query to the API is still subject to the documented
+        \emph{``server-side batching/kernel effect''} non-determinism at
+        temperature$=0$, which no amount of local seeding can fix.
+  \item \textbf{Prompt-based ground-truth leakage was an active,
+        recently-fixed bug class.} Multiple comments (\code{FIX GT-LEAK},
+        \code{FIX GT-LEAK-2}) describe prior prompt versions that embedded
+        the expected answer or a near-complete pre-solved formula inside
+        the LLM prompt itself, inflating reported accuracy; these are
+        fixed in the current code but indicate the benchmark's reported
+        numbers have previously been vulnerable to this failure mode, and
+        no automated leakage check is present in \code{core/} to prevent
+        recurrence.
+  \item \textbf{Code-execution-based evaluation.} \code{\_safe\_exec\_formula}
+        and \code{execute\_python\_code\_get\_predictions} both call
+        Python's \code{exec()} directly on LLM-generated text. Sandboxing
+        is limited to a restricted namespace of numpy functions; there is
+        no process isolation, resource limiting, or static validation of
+        the LLM output before execution.
+  \item \textbf{Substantial functional duplication across variants.} The
+        API-call helper \code{\_create\_message\_deterministic} (temperature
+        fallback for models that deprecate the parameter) is
+        \emph{independently reimplemented} in \code{[C1]}, \code{[C2]}, and
+        \code{[C4]} rather than imported from one place -- an explicit,
+        acknowledged design choice (``per-file copies rather than
+        cross-module imports''), which trades a small amount of import
+        coupling for a real risk of the three copies drifting out of sync
+        under future edits (see \S6).
+  \item \textbf{Ensemble weighting is inconsistent across variants.}
+        Variant~1 weights by raw $R^2$ share; Variant~2 weights by
+        $\max(R^2,0)$ share; Variant~3 weights by $R^2/\sigma_{resid}$.
+        None of the three is derived from, or validated against, the
+        others, so the ``ensemble'' concept is not a single reusable
+        component but three separately-maintained formulas with different
+        statistical justifications.
+  \item \textbf{No uncertainty quantification on the LLM output itself.}
+        The LLM is treated as a point-estimate formula generator; nothing
+        in \code{core/} captures token-level or self-reported confidence,
+        so ``LLM $R^2$'' is the only signal available to the decision
+        gate, conflating \emph{formula correctness} with \emph{model
+        confidence}.
+  \item \textbf{Documented version drift between caller and engine.} The
+        driving engine's own docstring identifies it as
+        \textbf{v5.4} (\code{[T1]}), listing five rounds of NaN-RMSE fixes
+        (\code{RC-1}--\code{RC-5}) since v5.3 and v5.2; the caller
+        \code{[E2]} that loads it still refers to it as
+        \emph{``HybridDiscoverySystem v5.1''} in its own docstring, engine
+        label, and results dictionary (\code{"engine": "hybrid\_system\_v50\_2.py"}
+        with no version field). This is a documentation-hygiene gap rather
+        than a functional bug -- the loader resolves the file dynamically by
+        path, not by an asserted version -- but it means result artefacts
+        produced by \code{[E2]} do not self-report which of at least three
+        engine revisions (v5.2/v5.3/v5.4) actually produced them.
+  \item \textbf{Variant 4's hybridisation was dead code for five documented
+        versions.} More severe than the label drift above: \code{[T1]}'s
+        own changelog records that \code{use\_llm} was a silent no-op from
+        its introduction in v3.5 through v4.2.1 -- \code{SymbolicEngineWithLLM}
+        \code{[T2]} was ``never imported'' / ``never used'' despite the flag
+        existing in the public API -- and was only actually wired up in
+        v5.0. Any pre-v5.0 benchmark run requesting Variant~4's
+        seed/hybrid/fallback modes would have silently executed pure PySR
+        instead (full detail and exact quotes in \S3.5).
+  \item \textbf{An unresolved reliability discrepancy is under active
+        self-audit, not yet closed.} \code{[E7]} (\code{portfolio\_variance\_v3c2.py})
+        exists specifically to reconcile, in its own words, \emph{``The
+        DeFi benchmark table (HypatiaX $R^2=1.000$ on Portfolio Variance)
+        [vs.] The seed-sweep JSON (HypatiaX far-$R^2=-882.9$ at the
+        default seed 42)''} -- i.e.\ a published near-perfect in-sample
+        result for one test case coexists with a catastrophic
+        far-extrapolation failure for the \emph{same} case at the
+        \emph{same} seed. The notebook's presence shows this is being
+        actively investigated (seven audit sections culminating in a
+        rerun/validate/export protocol) but, as retrieved, it is a live
+        audit artefact rather than a closed, root-caused fix -- exactly the
+        catastrophic-extrapolation failure mode the paper's own metrics
+        (\code{compute\_catastrophic\_rate}, \S\,``b) Description'') are
+        designed to surface.
+  \item \textbf{A second, distinct leakage class was found and fixed in the
+        DeFi benchmark scripts.} \code{[E6]}'s own ``Fix 7'' comment
+        (\code{hypatiax\_defi\_benchmark\_v3.py}, line 62) records that an
+        earlier version computed ensemble uncertainty as
+        \code{std(pred - y\_test)} -- i.e.\ using \emph{test-set} residuals
+        to weight the ensemble -- and replaces it with a
+        training-residual-only estimate. This is a different leakage
+        mechanism from the prompt-embedded \code{GT-LEAK} bug class
+        recorded in \code{core/} (\S4 above), found in a different part of
+        the codebase (benchmark ensembling, not LLM prompting), reinforcing
+        that leakage has been a \emph{recurring} category of bug across
+        the project rather than a single fixed incident, and that -- as
+        with \code{GT-LEAK} -- no automated check prevents a third
+        occurrence.
+\end{itemize}
+
+% ==================================================================
+\section{e) Update -- What Changed in This Revision}
+% ==================================================================
+This section is a compact delta against the earlier \code{core/}$+$\code{experiments/}
+report, for a reader who has already seen it.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}p{3.4cm}p{7.6cm}p{3.9cm}@{}}
+\toprule
+\textbf{Area} & \textbf{Finding} & \textbf{Ref.} \\
+\midrule
+\code{core/} (Variants 1--3) & Unchanged -- identical line counts to the
+  prior report; no functional edits detected. & \code{[C1]--[C6]} \\
+\addlinespace
+\code{tools/symbolic/} & Previously unread. Houses \code{[T1]}
+  (\code{HybridDiscoverySystem}, v5.4 wrapper) and \code{[T2]}
+  (\code{symbolic\_engine.py}, whose \code{SymbolicEngineWithLLM} class is
+  the \emph{true} implementer of Variant 4's four LLM/PySR modes, not
+  \code{[T1]} -- corrected mid-revision, see \S3.4/\S3.5), plus the
+  template-based (Variant 5, \code{[T3]}) and template-free (\code{[T4]})
+  physics fallback. & \code{[T1]--[T4]} \\
+\addlinespace
+\code{tools/validation/} & Previously unread. A four-layer, weighted
+  expression-acceptance pipeline (85/100 threshold), decoupled from
+  Variants~1--3's $R^2$ gates. & \code{[T5]--[T8]} \\
+\addlinespace
+\code{tools/utils/} & Previously unread. PCA-directed OOD train/test
+  split, now the sole split in the \code{\_pca} benchmark variants. &
+  \code{[U1]} \\
+\addlinespace
+\code{experiments/benchmarks/} & Four new/renamed files: an extracted
+  extrapolation-ladder module, PCA-split counterparts of the v3/v4 DeFi
+  benchmarks, and a self-audit notebook exposing an open
+  in-sample-vs-far-extrapolation contradiction. & \code{[E5]--[E7]} \\
+\addlinespace
+\code{protocols/} & New top-level package, not requested; test-case data
+  generators only, not analysed further. & (context only) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Net effect on the report's earlier conclusions: the
+\textbf{four-variant} picture in the original ``b) Description'' undercounted
+the pipeline by one production-relevant strategy (Variant~5) and
+oversimplified Variant~4 (one mechanism $\to$ four selectable modes); the
+\textbf{Limitations} in \S4 gain four new, source-grounded entries (version
+drift, a five-version dead hybridisation path, an open reliability
+discrepancy, a second leakage class) that were not visible from
+\code{core/}/\code{experiments/} alone; and one of the original
+\textbf{Refactorization} recommendations below (``Promote
+ground-truth-leakage checks from comments to code'') turns out to be
+\emph{partially} already addressed -- \code{[T5]--[T8]} is exactly this
+kind of promoted, code-level check, just scoped to expression validity in
+general rather than to the specific \code{GT-LEAK} prompt bug. \textbf{One
+self-correction within this revision:} an earlier draft of this section
+attributed Variant~4's four-mode decision logic to \code{[T1]}
+(\code{HybridDiscoverySystem}); direct inspection of \code{[T2]}
+(\code{symbolic\_engine.py}) showed the logic actually lives in
+\code{SymbolicEngineWithLLM}, with \code{[T1]} acting only as an
+orchestrating wrapper -- corrected throughout \S3--\S6 above.
+
+% ==================================================================
+\section{f) Refactorization}
+% ==================================================================
+
+The codebase's own comments already flag several of the refactoring
+opportunities below; this section consolidates and extends them based on
+direct inspection of \code{core/}, \code{experiments/} and, in this
+revision, \code{tools/}.
+
+\subsection{Consolidate the duplicated API helper}
+\code{\_create\_message\_deterministic()} appears near-verbatim in
+\code{[C1]}, \code{[C2]} and \code{[C4]} (confirmed by direct comparison of
+all three definitions). The in-code comment explicitly acknowledges this is
+a deliberate ``per-file copies rather than cross-module imports''
+convention. \textbf{Recommendation:} extract to a single
+\code{hypatiax/core/llm\_client.py} module and import it in all three
+call sites; retain the current retry-on-deprecated-temperature behaviour
+verbatim so no functional change occurs. This removes the drift risk noted
+in \S4 without altering any decision logic.
+
+\subsection{Unify the ensemble-weighting strategies}
+Introduce a single \code{hypatiax/core/ensembling.py} exposing named
+strategies (\code{r2\_share}, \code{clamped\_r2\_share},
+\code{precision\_weighted}) corresponding to Variants~1--3's current
+inline formulas, selected by a \code{strategy=} parameter rather than
+being copy-pasted per hybrid class. This turns an implicit, undocumented
+inconsistency (\S4, \emph{Limitations}) into an explicit, testable choice,
+and enables a controlled ablation of ensembling strategy independent of
+domain (DeFi vs.\ all-domains).
+
+\subsection{Extract the shared \code{hybrid\_predict} skeleton}
+\code{EnhancedHybridSystemDeFi.hybrid\_predict} \code{[C1]} and
+\code{HybridSystemAllDomains.hybrid\_predict} \code{[C2]} implement the same
+four-stage skeleton (generate $\to$ evaluate $\to$ train NN $\to$ decide)
+with different constants and an extra symbolic-refit stage in \code{[C1]}.
+\textbf{Recommendation:} factor a \code{BaseHybridSystem} class in
+\code{hypatiax/core/generation/} with template-method hooks
+(\code{\_refine\_symbolic()}, \code{\_decision\_thresholds()},
+\code{\_domain\_override()}), and have both concrete classes subclass it.
+This would make the threshold values called out in \S4 (\code{0.85/0.05},
+\code{0.90}) into named, overridable class attributes instead of inline
+literals, directly enabling the sensitivity analysis that limitation
+currently lacks.
+
+\subsection{Centralise magic numbers following the \code{adaptive\_config.py} pattern}
+\code{hypatiax/core/training/adaptive\_config.py} already demonstrates the
+target pattern the rest of \code{core/} should follow: a single frozen
+dataclass built from observable signals, replacing scattered literals with
+one documented ``signal $\to$ parameter'' table. The decision-gate
+thresholds in \code{[C1]}/\code{[C2]} (\S4) are the clearest remaining
+candidates for migration into an analogous
+\code{DecisionThresholds} config object.
+
+\subsection{Promote ground-truth-leakage checks from comments to code}
+The \code{FIX GT-LEAK} / \code{FIX GT-LEAK-2} history (\S4) shows this bug
+class has recurred at least twice across different prompt-construction
+functions. \textbf{Recommendation:} add a small static check --
+e.g.\ asserting the rendered prompt string does not contain any token from
+the case's \code{ground\_truth}/\code{expected\_form} metadata -- run once
+in CI (\code{ci\_pipeline\_check.yml}) over every prompt-construction path
+in \code{core/}, rather than relying on manual code review to catch a
+recurrence.
+
+\subsection{Isolate LLM-generated code execution}
+\code{\_safe\_exec\_formula} and
+\code{execute\_python\_code\_get\_predictions} both \code{exec()} raw LLM
+text in-process. \textbf{Recommendation:} route formula evaluation through
+a single shared, sandboxed evaluator (e.g.\ AST-validated against an
+allow-list of numpy calls before \code{exec}, or executed in a
+subprocess/resource-limited worker), replacing the two independent
+namespace-construction blocks currently duplicated between \code{[C1]} and
+\code{[C3]}.
+
+\subsection{Compose the validation pipeline into the decision gate, not just alongside it}
+As \S3.4 notes, \code{EnsembleValidator} \code{[T8]} and Variants~1--3's
+$R^2$ gates currently run as two independent passes, so a formula can be
+selected by \code{hybrid\_predict} and separately fail the 85/100
+acceptance threshold with no interaction between the two outcomes.
+\textbf{Recommendation:} thread the validator's score into
+\code{hybrid\_predict}'s decision (e.g.\ as a multiplicative penalty on
+$r2_{fit}$, or a hard veto below some validator score) so an expression
+that is symbolically or dimensionally invalid cannot win the
+\texttt{fitted\_llm}/\texttt{llm} branch purely on training $R^2$.
+
+\subsection{Record the engine version in its own output, not just its docstring}
+\code{[T1]}'s docstring is versioned (v5.4, with a five-entry \code{RC-*}
+changelog) but its \code{save\_results()} output and the caller's
+(\code{[E2]}) results dictionary are not -- the version currently lives
+only in prose comments that have already drifted out of sync once (\S4).
+\textbf{Recommendation:} expose \code{HybridDiscoverySystem.VERSION}
+(already defined as a class attribute, \code{[T1]} line~249) in every
+results payload the engine returns, and have \code{[E2]} read that
+attribute for its own \code{"engine"} label instead of a hard-coded
+string, so result artefacts are self-describing and the v5.1/v5.4
+mismatch found in this revision cannot recur silently.
+
+\subsection{Reduce experiment-script duplication via composition, not copy-paste}
+\code{exp1\_five\_system.py} already states the intended pattern in its own
+docstring -- \emph{``Nothing in this file reimplements method logic\ldots
+reused, not reimplemented''} -- confirming the project's own stated
+direction. \textbf{Recommendation:} apply that same discipline
+retroactively to the other \code{run\_*\_benchmark.py} scripts in
+\code{experiments/benchmarks/}, several of which (per file sizes in \S2,
+e.g.\ \code{hypatiax\_defi\_benchmark\_v3.py} and \code{\_v4.py} both at
+2{,}322 lines) appear to be near-duplicate versioned copies rather than a
+single parameterised script -- a strong candidate for collapsing into one
+script with a \code{--benchmark-version} flag, reducing the maintenance
+surface for future \code{FIX-*} patches to one location instead of two.
+
+% ==================================================================
+\section{Summary}
+% ==================================================================
+\begin{center}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{3.1cm}p{4.6cm}p{3.6cm}p{3.6cm}@{}}
+\toprule
+\textbf{Variant} & \textbf{Combination rule} & \textbf{Domain} & \textbf{Location} \\
+\midrule
+1. Enhanced Hybrid DeFi & threshold gate + scipy refit & DeFi & \code{[C1]} \\
+2. Hybrid All-Domains & tie-favours-symbolic gate + force\_llm override & Physics/Chem/Bio & \code{[C2]} \\
+3. Ensemble example & inverse-residual-std weighting & DeFi (demo) & \code{[C3]} \\
+4. LLM-prior / PySR family & 4 modes: \texttt{none}/\texttt{seed}/\texttt{hybrid}/\texttt{fallback}, thresholds 0.5/0.90/0.95 & Nguyen/Feynman & \code{[T2]} (via \code{[T1]}/\code{[E1]}) \\
+5. Template physics fallback & template-library or template-free structure fit & Biology/Chem/Eng. & \code{[T3]}/\code{[T4]} \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Cross-cutting, applies to any variant's output:}} \\
+Expression validation & 4-layer weighted score, 85/100 threshold & all domains & \code{[T5]--[T8]} \\
+PCA-directed OOD split & held-out region beyond PC1 range & DeFi & \code{[U1]}/\code{[E6]} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.4cm}
+\noindent\textit{This report was produced entirely from static reading of
+the source files listed in \S2 (this revision: the full repository tree,
+fetched as one tarball from \code{codeload.github.com} at \code{master},
+plus the individual files listed in \S2.2--\S2.4); no code in the
+repository was executed during its preparation.}
+
+\end{document}

@@ -1762,7 +1762,16 @@ if RAW is not None:
         r = c["results"].get("hybrid", {})
         dec = r.get("decision", "unknown")
         decisions[dec] = decisions.get(dec, 0) + 1
-    d_colors = {"llm": C_LLM, "nn": C_NN, "nn_to_llm_rescue": C_WARN, "nn_fallback": C_FAIL}
+    # v4 decision vocabulary (v4_llm / v4_nn / v4_residual_nn / None), matching
+    # the _DECISION_TO_BASELINE fix applied in generate_tables.py. v4_residual_nn
+    # has no independent baseline (see v4_residual_decision writeup) so it gets
+    # its own warning color rather than silently falling back to gray.
+    d_colors = {
+        "v4_llm": C_LLM,
+        "v4_nn": C_NN,
+        "v4_residual_nn": C_WARN,
+        None: C_FAIL,
+    }
     labels_d = [f"{k} ({v})" for k, v in decisions.items()]
     colors_d = [d_colors.get(k, "gray") for k in decisions.keys()]
     ax.pie(list(decisions.values()), labels=labels_d, colors=colors_d,

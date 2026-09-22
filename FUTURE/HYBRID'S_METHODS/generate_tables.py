@@ -76,7 +76,6 @@ import json
 import os
 import re
 import statistics
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -113,29 +112,6 @@ def _parse_args() -> argparse.Namespace:
                    help="Experiment tag (e.g. exp2_feynman_pca).  When supplied, "
                         "only the tables relevant to that experiment are generated. "
                         "Omit (or pass 'all') to regenerate every table.")
-    # ── "abstract" experiment: launches the two external-repo audit
-    # scripts (evaluate_abstract_claims.py, rebuild_abstract_from_results.py)
-    # rather than reading RESULTS/PATCHED like every other generator here.
-    # See run_abstract_audit() / _find_abstract_scripts_dir() below.
-    p.add_argument("--abstract-scripts-dir", type=Path, default=None,
-                   dest="abstract_scripts_dir", metavar="PATH",
-                   help="Directory containing evaluate_abstract_claims.py and "
-                        "rebuild_abstract_from_results.py (default: "
-                        "LLM-HypatiaX-DEV/scripts, searched next to this "
-                        "repo's root; override with $HYPATIAX_ABSTRACT_SCRIPTS_DIR).")
-    p.add_argument("--abstract-repo", type=Path, default=None,
-                   dest="abstract_repo", metavar="PATH",
-                   help="Local checkout of LLM-HypatiaX-REPRO to pass as --repo "
-                        "to both abstract-audit scripts (default: "
-                        "<output-dir>/abstract/LLM-HypatiaX-REPRO, auto-cloned).")
-    p.add_argument("--abstract-repo-url", type=str, default=None,
-                   dest="abstract_repo_url", metavar="URL",
-                   help="Override the LLM-HypatiaX-REPRO clone URL passed as "
-                        "--repo-url to both abstract-audit scripts.")
-    p.add_argument("--refresh-abstract-repo", action="store_true",
-                   dest="refresh_abstract_repo",
-                   help="Pass --refresh to both abstract-audit scripts (git "
-                        "fetch/pull the LLM-HypatiaX-REPRO checkout before auditing).")
     p.add_argument("--allow-fallback", action="store_true", dest="allow_fallback",
                    help=argparse.SUPPRESS)  # deprecated no-op, kept only so old
                                              # CI invocations passing this flag
@@ -165,12 +141,6 @@ PATCHED    = _ARGS.patched_dir  or (_ROOT / "hypatiax" / "data" / "patched")
 RESULTS    = _ARGS.results_dir  or (_ROOT / "hypatiax" / "data" / "results")
 TABLES_DIR = _ARGS.output_dir   or (_ROOT / "paper" / "tables")
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
-
-# Output dir for the "abstract" experiment (run_abstract_audit()). Kept
-# under TABLES_DIR like everything else this script writes, but in its own
-# subfolder since its contents (a cloned external repo, CSV/MD/JSON audit
-# files from two independent scripts) aren't .tex table fragments.
-_ABSTRACT_OUT_DIR = TABLES_DIR / "abstract"
 
 # Optional explicit source for exp1_five Core-15 results.
 EXP1_FIVE_JSON = _ARGS.exp1_five_json
@@ -424,123 +394,6 @@ def _f6(v) -> str:
     if isinstance(v, (int, float)):
         return f"{v:.6f}"
     return "---"
-
-
-# ── "abstract" experiment: external-repo abstract-number audit ────────────────
-#
-# Unlike every generator below, this experiment does not read RESULTS/PATCHED
-# (this paper repo's own hypatiax/data/results). It audits a *separate*
-# repository, LLM-HypatiaX-REPRO, by launching two independent scripts that
-# live in LLM-HypatiaX-DEV/scripts/ (a different repo/checkout from this one):
-#
-#   1. evaluate_abstract_claims.py       — claim-by-claim evidence search
-#      (C1-C7, NV1-NV6) against the current abstract's stated numbers.
-#   2. rebuild_abstract_from_results.py  — rebuilds a fresh abstract straight
-#      from that repo's result JSONs, never from the old abstract's numbers.
-#
-# Both scripts share the same --repo/--repo-url/--refresh interface, so they
-# are pointed at the identical local checkout: the second script never
-# re-clones on its own account, it reuses whatever the first script just
-# cloned/refreshed. Same warn-and-skip convention as every other generator in
-# this file — a missing script, a clone failure, or a non-zero exit from
-# either script is reported via skip_table() and this function returns; it
-# never raises and never substitutes a fabricated/paper-verified number.
-
-
-def _find_abstract_scripts_dir() -> Path:
-    """Resolve the directory holding evaluate_abstract_claims.py and
-    rebuild_abstract_from_results.py.
-
-    Priority: --abstract-scripts-dir > $HYPATIAX_ABSTRACT_SCRIPTS_DIR >
-    LLM-HypatiaX-DEV/scripts found next to this paper repo's root (checked
-    both as a sibling of _ROOT and inside it, since dev/audit tooling is
-    sometimes checked out alongside the paper repo and sometimes nested
-    under it)."""
-    if _ARGS.abstract_scripts_dir:
-        return _ARGS.abstract_scripts_dir
-    env = os.environ.get("HYPATIAX_ABSTRACT_SCRIPTS_DIR")
-    if env:
-        return Path(env)
-    candidates = [
-        _ROOT.parent / "LLM-HypatiaX-DEV" / "scripts",
-        _ROOT / "LLM-HypatiaX-DEV" / "scripts",
-    ]
-    for c in candidates:
-        if (c / "evaluate_abstract_claims.py").exists():
-            return c
-    return candidates[0]  # best-effort default; run_abstract_audit() checks existence
-
-
-def run_abstract_audit() -> None:
-    """Launch evaluate_abstract_claims.py, then rebuild_abstract_from_results.py,
-    in that order, against the same LLM-HypatiaX-REPRO checkout."""
-    scripts_dir = _find_abstract_scripts_dir()
-    eval_script = scripts_dir / "evaluate_abstract_claims.py"
-    rebuild_script = scripts_dir / "rebuild_abstract_from_results.py"
-
-    missing = [p.name for p in (eval_script, rebuild_script) if not p.exists()]
-    if missing:
-        skip_table(
-            "abstract_audit",
-            f"script(s) not found under {scripts_dir}: {', '.join(missing)} "
-            "(set --abstract-scripts-dir or $HYPATIAX_ABSTRACT_SCRIPTS_DIR)",
-        )
-        return
-
-    out_dir = _ABSTRACT_OUT_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
-    repo_path = _ARGS.abstract_repo or (out_dir / "LLM-HypatiaX-REPRO")
-
-    common: list[str] = ["--repo", str(repo_path)]
-    if _ARGS.abstract_repo_url:
-        common += ["--repo-url", _ARGS.abstract_repo_url]
-    if _ARGS.refresh_abstract_repo:
-        common += ["--refresh"]
-
-    def _run(script: Path, extra: list[str], label: str) -> bool:
-        cmd = [sys.executable, str(script)] + common + extra
-        print(f"  \u2192 {label}")
-        print(f"    $ {' '.join(cmd)}")
-        try:
-            proc = subprocess.run(cmd, cwd=out_dir, text=True, capture_output=True)
-        except Exception as e:
-            skip_table("abstract_audit", f"{label} failed to launch: {e}")
-            return False
-        if proc.stdout:
-            print(proc.stdout)
-        if proc.returncode != 0:
-            if proc.stderr:
-                print(proc.stderr, file=sys.stderr)
-            skip_table(
-                "abstract_audit",
-                f"{label} exited {proc.returncode} — see log above; "
-                "no fallback numbers substituted",
-            )
-            return False
-        return True
-
-    print("  Abstract audit — evaluate claims, then rebuild from LLM-HypatiaX-REPRO")
-    print(f"  Scripts dir : {scripts_dir}")
-    print(f"  Repo        : {repo_path}")
-    print(f"  Output dir  : {out_dir}")
-    print()
-
-    # 1) Evaluate the CURRENT abstract's claims against repo evidence.
-    #    Writes abstract_claim_audit.{csv,md,json} into out_dir (cwd).
-    ok1 = _run(eval_script, [], "evaluate_abstract_claims.py (claim-by-claim audit)")
-
-    # 2) Rebuild a fresh abstract straight from the repo's result JSONs,
-    #    into its own subfolder so it doesn't collide with step 1's files.
-    ok2 = _run(
-        rebuild_script,
-        ["--out-dir", str(out_dir / "rebuild")],
-        "rebuild_abstract_from_results.py (repo-derived abstract)",
-    )
-
-    if ok1 and ok2:
-        print(f"  \u2705 abstract audit complete — see {out_dir}")
-    else:
-        print(f"  \u26a0\ufe0f  abstract audit finished with issues — see {out_dir} and the log above")
 
 
 # ── Main paper tables ─────────────────────────────────────────────────────────
@@ -6483,13 +6336,6 @@ def main() -> None:
         "exp2_feynman", "exp2", "exp2_feynman_extrap", "exp2_feynman_pca",
         "exp3", "exp3b", "instability", "hybrid_all_domains", "extrap",
         "suppb", "suppb_sc",
-        # "abstract" has no owned row in _AUDIT below (its evidence source is
-        # the external LLM-HypatiaX-REPRO repo cloned by run_abstract_audit(),
-        # not a JSON under RESULTS/PATCHED) -- same reasoning as the
-        # no-JSON-source suppa entries noted just below: scoping to it here
-        # just means the missing-JSON audit prints 0 relevant sources instead
-        # of auditing every other experiment's JSONs.
-        "abstract",
         # suppa now dispatches to _DISPATCH["routing"] (see main()'s _DISPATCH
         # setup) instead of falling back to "all", so its audit can be scoped
         # too -- see the two "suppa"-owned _AUDIT rows below. fix5_cases /
@@ -6924,15 +6770,6 @@ def main() -> None:
         # See _routing_section() for why tab:baseline/tab:projected/
         # tab:cost_accuracy_tradeoff are excluded.
         "routing": [_routing_section()],
-        # abstract: launches evaluate_abstract_claims.py then
-        # rebuild_abstract_from_results.py against LLM-HypatiaX-REPRO (see
-        # run_abstract_audit()). Deliberately NOT folded into "all" -- it
-        # clones/fetches an external repo over the network and is meant to
-        # be run on its own (--experiment abstract), not on every full pass.
-        "abstract": [("── abstract: evaluate + rebuild abstract numbers "
-                       "(external repo) ─────", [
-            lambda: run_abstract_audit(),
-        ])],
         # "all" / unknown / suppa (ambiguous ownership): run everything,
         # matching the original behaviour.
         "all": [_main_paper_section(), _suppb_noise_section(),

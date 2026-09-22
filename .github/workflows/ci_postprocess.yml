@@ -70,6 +70,16 @@ on:
           - instability
           - extrap
           - figures_deploy
+          # "abstract": evaluate_abstract_claims.py + rebuild_abstract_from_results.py
+          # (both in LLM-HypatiaX-DEV/scripts/, launched by generate_tables.py's
+          # run_abstract_audit() — see --experiment abstract). Audits/rebuilds the
+          # abstract's numbers against the external LLM-HypatiaX-REPRO repo, NOT
+          # against this repo's own hypatiax/data/results. Needs a matching
+          # "abstract" entry in config/experiments.yml (generates_tables: true,
+          # source_dir/tables_dir can point anywhere writable — the two scripts
+          # ignore --results-dir and clone their own repo) or the "Validate
+          # config sync" step below will fail the run.
+          - abstract
 
 permissions:
   contents: write
@@ -460,7 +470,15 @@ jobs:
       # same convention as generate_tables.py / generate_figures.py.
       # ------------------------------------------------------------------
       - name: "Independently verify abstract numbers"
-        if: steps.resolve.outputs.generates_tables == 'true'
+        # Skipped for the "abstract" experiment itself: that experiment's own
+        # two scripts (evaluate_abstract_claims.py / rebuild_abstract_from_
+        # results.py, launched by the "Generate tables" step above via
+        # run_abstract_audit()) already do this cross-check against
+        # LLM-HypatiaX-REPRO. This step instead re-derives numbers from THIS
+        # repo's own seed-42 defi benchmark JSON, which "abstract" doesn't
+        # read or produce -- running it here would just print a harmless but
+        # confusing "no seed-42 results file found" notice every time.
+        if: steps.resolve.outputs.generates_tables == 'true' && steps.resolve.outputs.id != 'abstract'
         shell: bash
         run: |
           set -uo pipefail
