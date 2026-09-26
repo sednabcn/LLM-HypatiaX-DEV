@@ -246,8 +246,12 @@ SKIPPED_TABLES: list[str] = []
 #  exp1          RESULTS_DIR/                                     ""  (root)  benchmark_results*.json
 #                  hypatiax_defi_benchmark_v4*results*.json         (defi fallback also checked;
 #                                                                     was v3*/v3c* pre-rename)
-#  exp1b         RESULTS_DIR/                                     ""  (root)  portfolio_variance*.json
-#                  portfolio_variance_seed_sweep.json
+#  exp1b         RESULTS_DIR/comparison_results/noise-noiseless/  ""  (root of that resolved dir)
+#                  15/  hypatiax_defi_benchmark_v4_results_seed*.json    hypatiax_defi_benchmark_v4_results_seed*.json  ✓
+#                  (FIX EXP1B-WRONG-SOURCE: exp1b was repurposed from the old
+#                   portfolio-variance seed sweep to this noise-robust multi-seed
+#                   DeFi run; gen_portfolio_seed_sweep() [portfolio_variance*.json]
+#                   is stale for exp1b — see gen_exp1b_noise_robust_defi())
 #  extrap        RESULTS_DIR/comparison_results/extrapolation/    "comparison_results/extrapolation"
 #                  all_domains_extrap_v4_*.json
 #  hybrid_all    RESULTS_DIR/hybrid_llm_nn/all_domains/           "hybrid_llm_nn/all_domains"
@@ -819,6 +823,237 @@ def gen_defi_tiers() -> None:
 \end{table}
 """
     write_table("defi_tiers.tex", tex)
+
+
+def gen_exp1b_noise_robust_defi() -> None:
+    """
+    Tab 11 — Noise-robust DeFi benchmark, multi-seed (§ exp1b).
+
+    FIX EXP1B-WRONG-SOURCE: exp1b was originally a *portfolio-variance
+    seed-sweep* experiment (gen_portfolio_seed_sweep(), reading
+    portfolio_variance_seed_sweep.json). It has since been repurposed --
+    per run_all.sh's own step list/comments and config/experiments.yml's
+    source_dir for "exp1b" -- to mean the noise-robust, multi-seed run of
+    the HypatiaX DeFi benchmark, whose --results-dir is resolved to
+    comparison_results/noise-noiseless/15/ and which writes
+    hypatiax_defi_benchmark_v4_results_seed*.json (one file per seed;
+    scripts/verify_abstract_numbers.py already reads this exact schema
+    independently, per-seed, as a cross-check). gen_portfolio_seed_sweep()
+    was never updated for the rename, so it always globbed for a
+    portfolio_variance* file that doesn't exist under that directory and
+    silently skip_table()'d every run -- 0 tables, 0 figures, every time,
+    with no error (on_missing_data: warn_and_skip). This generator reads
+    the ACTUAL exp1b source data instead.
+
+    Columns mirror gen_defi_tiers() (Tab 3, single-seed exp1): per
+    difficulty tier, n / Pure LLM pass rate / HypatiaX (decision-
+    attribution-corrected) pass rate -- but aggregated as mean ± std
+    across every discovered seed file, since exp1b's whole point is
+    noise robustness across seeds, not a single run.
+
+    Tier field normalisation: the raw records use a lowercase
+    "difficulty"/"tier" value ("easy"/"medium"/"hard"), unlike exp1's
+    seed-42 file which gen_defi_tiers() reads case-sensitively as-is.
+    Title-cased here (same normalisation verify_abstract_numbers.py
+    already applies) so records aren't silently dropped for casing alone.
+
+    Decision-attribution correction: identical policy to gen_defi_tiers()/
+    gen_defi_main() for decisions with a known independent baseline
+    (llm/nn/nn_fallback/v4_llm/v4_nn). For decisions with NO independent
+    baseline in the schema (v4_residual_nn, v4_linear_fallback,
+    v4_linear_fallback_local, v4_blend, or any other unrecognised value),
+    a reported hybrid pass is counted as corrected_pass=True at face value
+    -- the SAME convention scripts/verify_abstract_numbers.py uses -- but
+    is flagged in this table's footer count so it's visible how many of
+    the "corrected" passes for this run rest on that convention rather
+    than an independently re-derived baseline.
+
+    FIX EXP1B-WRONG-SOURCE / exp1b_pca: this generator is reused for
+    exp1b_pca too (see _DISPATCH["exp1b_pca"] = _DISPATCH["exp1b"] below).
+    exp1b_pca's --results-dir resolves to its own PCA source directory and
+    its seed files follow hypatiax_defi_benchmark_v4_pca_results_seed*.json
+    (per hypatiax_defi_benchmark_v4_pca.py, the PCA counterpart of
+    hypatiax_defi_benchmark_v4.py — same naming relationship gen_defi_main()
+    already relies on for exp1_pca via the wildcard "v4*results*" glob).
+    The glob below is likewise widened to "v4*results_seed*" rather than the
+    literal "v4_results_seed*" so both variants match; RESULTS already
+    points at the correct (non-PCA vs. PCA) directory per --results-dir, so
+    no experiment-specific branching is needed here beyond the glob.
+    """
+    _DECISION_TO_BASELINE = {
+        "llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network",
+        "v4_llm": "pure_llm", "v4_nn": "neural_network",
+    }
+    _TIERS = ("Easy", "Medium", "Hard")
+
+    def _norm_tier(raw) -> str | None:
+        if not isinstance(raw, str):
+            return None
+        t = raw.strip().title()
+        return t if t in _TIERS else None
+
+    def _is_num(v) -> bool:
+        return isinstance(v, (int, float)) and v == v  # excludes NaN
+
+    # Seed files live directly under the resolved --results-dir for exp1b /
+    # exp1b_pca (comparison_results/noise-noiseless/15/ or its PCA
+    # counterpart), same subdir="" search gen_defi_tiers()/gen_defi_main()
+    # use for exp1's single seed-42 file. Pattern widened to "v4*results_seed*"
+    # (not the literal "v4_results_seed*") so it also matches
+    # hypatiax_defi_benchmark_v4_pca_results_seed*.json for exp1b_pca.
+    seed_files: list[Path] = []
+    for base in (PATCHED, RESULTS):
+        if base.exists():
+            seed_files.extend(_filtered_glob(
+                base, "hypatiax_defi_benchmark_v4*results_seed*.json"))
+            # legacy defi/ subdir, mirroring load_best()'s extra_subdirs
+            if (base / "defi").exists():
+                seed_files.extend(_filtered_glob(
+                    base / "defi", "hypatiax_defi_benchmark_v4*results_seed*.json"))
+    # de-dupe while preserving discovery order (PATCHED before RESULTS)
+    seen_paths = set()
+    seed_files = [p for p in seed_files
+                  if not (p.resolve() in seen_paths or seen_paths.add(p.resolve()))]
+
+    if not seed_files:
+        skip_table("defi_noise_robust.tex",
+                    "no hypatiax_defi_benchmark_v4*results_seed*.json files found "
+                    "(exp1b/exp1b_pca's noise-robust multi-seed source)")
+        return
+
+    # Per-seed corrected/LLM/NN-baseline pass counts, overall and per tier.
+    per_seed_overall: list[tuple] = []   # (seed_label, n, llm_pass, hyp_pass, uncorrectable_pass_count)
+    per_seed_tier: dict[str, list[tuple]] = {t: [] for t in _TIERS}
+    n_records_total = 0
+    n_files_used = 0
+
+    for path in sorted(seed_files):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        if not (isinstance(data, list) and data and isinstance(data[0], dict)
+                and "results" in data[0]):
+            continue
+        n_files_used += 1
+        m = re.search(r"seed(\d+)", path.name)
+        seed_label = m.group(1) if m else path.stem
+
+        tier_counts = {t: [0, 0, 0] for t in _TIERS}  # [n, llm_pass, hyp_pass]
+        overall_n = overall_llm = overall_hyp = overall_uncorrectable = 0
+
+        for rec in data:
+            tier = _norm_tier(rec.get("difficulty") or rec.get("tier"))
+            cr = rec.get("results", {}) or {}
+            n_records_total += 1
+            overall_n += 1
+            if tier is not None:
+                tier_counts[tier][0] += 1
+
+            llm_r2 = (cr.get("pure_llm", {}) or {}).get("test_r2")
+            llm_hit = _is_num(llm_r2) and llm_r2 > 0.99
+            if llm_hit:
+                overall_llm += 1
+                if tier is not None:
+                    tier_counts[tier][1] += 1
+
+            hybrid = cr.get("hybrid", {}) or {}
+            reported_r2 = hybrid.get("test_r2")
+            if _is_num(reported_r2) and reported_r2 > 0.99:
+                decision = hybrid.get("decision", "")
+                baseline_key = _DECISION_TO_BASELINE.get(decision)
+                if baseline_key:
+                    baseline_r2 = (cr.get(baseline_key, {}) or {}).get("test_r2")
+                    hyp_hit = _is_num(baseline_r2) and baseline_r2 > 0.99
+                else:
+                    # No independent baseline for this decision (e.g.
+                    # v4_residual_nn / v4_linear_fallback*/v4_blend) --
+                    # counted as a pass at face value, same convention as
+                    # verify_abstract_numbers.py; tallied separately below
+                    # so the table can disclose how many passes rest on it.
+                    hyp_hit = True
+                    overall_uncorrectable += 1
+                if hyp_hit:
+                    overall_hyp += 1
+                    if tier is not None:
+                        tier_counts[tier][2] += 1
+
+        per_seed_overall.append(
+            (seed_label, overall_n, overall_llm, overall_hyp, overall_uncorrectable))
+        for t in _TIERS:
+            per_seed_tier[t].append(tuple(tier_counts[t]))
+
+    if not per_seed_overall:
+        skip_table("defi_noise_robust.tex",
+                    f"{len(seed_files)} candidate file(s) found but none parsed into the "
+                    f"expected Shape-3 schema (src={seed_files[0] if seed_files else None})")
+        return
+
+    def _rate(n, d):
+        return (100.0 * n / d) if d else float("nan")
+
+    def _mean_std(values: list[float]) -> tuple[float, float]:
+        vals = [v for v in values if v == v]  # drop NaN
+        if not vals:
+            return float("nan"), float("nan")
+        mean = sum(vals) / len(vals)
+        std = statistics.pstdev(vals) if len(vals) > 1 else 0.0
+        return mean, std
+
+    def _fmt(mean, std):
+        if mean != mean:
+            return "---"
+        return f"{mean:.1f} $\\pm$ {std:.1f}"
+
+    overall_llm_rates = [_rate(llm, n) for _, n, llm, _, _ in per_seed_overall]
+    overall_hyp_rates = [_rate(hyp, n) for _, n, _, hyp, _ in per_seed_overall]
+    llm_mean, llm_std = _mean_std(overall_llm_rates)
+    hyp_mean, hyp_std = _mean_std(overall_hyp_rates)
+    total_uncorrectable = sum(u for *_, u in per_seed_overall)
+    total_hyp_passes = sum(hyp for _, _, _, hyp, _ in per_seed_overall)
+
+    tier_rows = []
+    for t in _TIERS:
+        counts = per_seed_tier[t]
+        n_vals = [c[0] for c in counts]
+        avg_n = sum(n_vals) / len(n_vals) if n_vals else 0
+        llm_rates = [_rate(c[1], c[0]) for c in counts]
+        hyp_rates = [_rate(c[2], c[0]) for c in counts]
+        l_mean, l_std = _mean_std(llm_rates)
+        h_mean, h_std = _mean_std(hyp_rates)
+        tier_rows.append((t, avg_n, l_mean, l_std, h_mean, h_std))
+
+    src_desc = f"{n_files_used} seed file(s) under {seed_files[0].parent}"
+    tex = header_comment(src_desc) + r"""
+\begin{table}[t]
+\centering
+\caption{Noise-robust DeFi benchmark, multi-seed (\S exp1b). Near-perfect success
+  rate ($R^2 > 0.99$) by difficulty, reported as mean $\pm$ std across
+  """ + str(len(per_seed_overall)) + r""" seeds. HypatiaX column is
+  decision-attribution-corrected --- see \S\ref{sec:hybrid-attribution-bug}.}
+\label{tab:defi_noise_robust}
+\begin{tabular}{lcrr}
+\toprule
+\textbf{Difficulty} & \textbf{n (avg)}
+  & \textbf{Pure LLM (\%)} & \textbf{HypatiaX (\%)} \\
+\midrule
+"""
+    for t, avg_n, l_mean, l_std, h_mean, h_std in tier_rows:
+        tex += f"{t} & {avg_n:.1f} & {_fmt(l_mean, l_std)} & {_fmt(h_mean, h_std)} \\\\\n"
+    tex += r"\midrule" + "\n"
+    tex += f"Overall & {n_records_total / len(per_seed_overall):.1f} & " \
+           f"{_fmt(llm_mean, llm_std)} & {_fmt(hyp_mean, hyp_std)} \\\\\n"
+    tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+% Seeds included: """ + ", ".join(s for s, *_ in per_seed_overall) + r"""
+% Of """ + str(total_hyp_passes) + r""" total HypatiaX passes (summed across seeds), """ \
+        + str(total_uncorrectable) + r""" rest on a hybrid.decision with no independent
+% baseline to cross-check (v4_residual_nn / v4_linear_fallback* / v4_blend / other) and
+% are counted as passes at face value -- same convention as
+% scripts/verify_abstract_numbers.py. Flagged here for manual review, not excluded.
+"""
+    write_table("defi_noise_robust.tex", tex)
 
 
 def _load_core15_ablation() -> tuple[dict | None, "Path | str | None"]:
@@ -6707,6 +6942,7 @@ def main() -> None:
             lambda: gen_defi_main(),
             lambda: gen_defi_tiers(),
             lambda: gen_runtime(),
+            lambda: gen_exp1b_noise_robust_defi(),
             lambda: gen_portfolio_seed_sweep(),
             lambda: gen_ablation(),
             lambda: gen_feynman_results(),
@@ -6821,8 +7057,19 @@ def main() -> None:
             lambda: gen_timing_full(),
             lambda: gen_timing_llm_routed_full(),
         ])],
-        # exp1b → portfolio_variance_seed_sweep.json → portfolio_sweep (Tab 5 / Fig G)
-        "exp1b": [("── exp1b: portfolio variance seed sweep ────────────────────", [
+        # exp1b → hypatiax_defi_benchmark_v4_results_seed*.json (multi-seed,
+        # noise-robust) → defi_noise_robust (Tab 11). FIX EXP1B-WRONG-SOURCE:
+        # exp1b used to mean the portfolio-variance seed sweep and read
+        # portfolio_variance_seed_sweep.json -- that file no longer exists
+        # under exp1b's resolved --results-dir (comparison_results/
+        # noise-noiseless/15/), so gen_portfolio_seed_sweep() always
+        # skip_table()'d silently (0 tables, every run). Kept in the list
+        # (harmless skip_table() if truly absent) in case a legacy
+        # portfolio_variance_seed_sweep.json is ever restored elsewhere,
+        # but gen_exp1b_noise_robust_defi() is the generator that actually
+        # matches exp1b's real, current source data.
+        "exp1b": [("── exp1b: noise-robust DeFi benchmark (multi-seed) ─────────", [
+            lambda: gen_exp1b_noise_robust_defi(),
             lambda: gen_portfolio_seed_sweep(),
         ])],
         # exp1_ablation → exp1_ablation/*.json → ablation (Tab 6 + Fig F)

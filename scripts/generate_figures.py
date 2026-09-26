@@ -67,6 +67,12 @@ instability_per_case hypatiax_instability_per_case             (primary CASES ar
 Supp-B              fig1_r2_vs_noise … fig_comparative_table
                                                                noise_sweep_*.json (latest by glob) +
                                                                sample_complexity_*.json (latest by glob)
+exp1b               fig_exp1b_noise_robust_defi                hypatiax_defi_benchmark_v4_results_seed*.json
+exp1b_pca           fig_exp1b_pca_noise_robust_defi            hypatiax_defi_benchmark_v4_pca_results_seed*.json
+                                                               (FIX EXP1B-WRONG-SOURCE: exp1b/exp1b_pca no
+                                                                longer read portfolio_variance_seed_sweep.json —
+                                                                see the exp1b/exp1b_pca block near the end of
+                                                                this file)
 """
 
 import argparse, json, os, math, warnings, glob, sys, re
@@ -3738,6 +3744,140 @@ if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
                 _savefig(fig, "fig_exp2_pca_r2_3way", bbox_inches="tight")
                 plt.close(fig)
                 print("✓ fig_exp2_pca_r2_3way.png/.pdf")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# exp1b / exp1b_pca — noise-robust DeFi benchmark, multi-seed
+#
+# FIX EXP1B-WRONG-SOURCE: exp1b used to mean the portfolio-variance seed
+# sweep (fig21_portfolio_variance_sweep / fig1_seed_sweep, both reading
+# portfolio_variance_seed_sweep.json via DATA_PORTFOLIO_SW, gated on
+# _EXP1_ABLATION_GROUP). It has since been repurposed to the noise-robust
+# multi-seed DeFi run, whose --results-dir is resolved to
+# comparison_results/noise-noiseless/15/ (or its PCA counterpart for
+# exp1b_pca) and which writes hypatiax_defi_benchmark_v4_results_seed*.json
+# / hypatiax_defi_benchmark_v4_pca_results_seed*.json (same schema
+# scripts/verify_abstract_numbers.py and generate_tables.py's
+# gen_exp1b_noise_robust_defi() read; the "v4*results_seed*" glob below
+# matches both the plain and _pca_ variants, same relationship gen_defi_main()
+# already relies on for exp1 vs. exp1_pca). Neither DATA_MAIN
+# (exp1_ablation_results.json, exp1b_pca is already excluded from needing
+# it via _EXPERIMENTS_WITHOUT_ABLATION) nor DATA_PORTFOLIO_SW exist under
+# either directory, so both experiments previously produced zero figures
+# every run, with no error (warn_and_skip). This block reads the actual
+# source data directly, independent of DATA_MAIN/DATA_PORTFOLIO_SW.
+# ══════════════════════════════════════════════════════════════════════════════
+if _EXPERIMENT in ("exp1b", "exp1b_pca"):
+    _exp1b_seed_files = sorted(set(
+        glob.glob(os.path.join(_RESULTS_DIR, "hypatiax_defi_benchmark_v4*results_seed*.json"))
+        + glob.glob(os.path.join(_RESULTS_DIR, "defi", "hypatiax_defi_benchmark_v4*results_seed*.json"))
+    ))
+    _exp1b_seed_files = [p for p in _exp1b_seed_files
+                         if not any(s in os.path.basename(p) for s in _SWEEP_EXCLUDE_SUBSTRINGS)]
+    _exp1b_stem = "fig_exp1b_pca_noise_robust_defi" if _EXPERIMENT == "exp1b_pca" \
+        else "fig_exp1b_noise_robust_defi"
+    _exp1b_title_tag = "exp1b_pca" if _EXPERIMENT == "exp1b_pca" else "exp1b"
+
+    if not _exp1b_seed_files:
+        print(f"  [SKIP] {_exp1b_stem} — no "
+              f"hypatiax_defi_benchmark_v4*results_seed*.json found under "
+              f"{_RESULTS_DIR} (or its defi/ subdir).")
+    else:
+        _EXP1B_TIERS = ("Easy", "Medium", "Hard")
+        _EXP1B_DECISION_TO_BASELINE = {
+            "llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network",
+            "v4_llm": "pure_llm", "v4_nn": "neural_network",
+        }
+
+        def _exp1b_norm_tier(raw):
+            if not isinstance(raw, str):
+                return None
+            t = raw.strip().title()
+            return t if t in _EXP1B_TIERS else None
+
+        def _exp1b_is_num(v):
+            return isinstance(v, (int, float)) and v == v
+
+        # seed_label -> {tier: [n, llm_pass, hyp_pass]}
+        _exp1b_per_seed = {}
+        for _path in _exp1b_seed_files:
+            _data = _load_json(_path, _path)
+            if not (isinstance(_data, list) and _data and isinstance(_data[0], dict)
+                    and "results" in _data[0]):
+                continue
+            _m = re.search(r"seed(\d+)", os.path.basename(_path))
+            _seed_label = _m.group(1) if _m else os.path.splitext(os.path.basename(_path))[0]
+            _tier_counts = {t: [0, 0, 0] for t in _EXP1B_TIERS}
+            for _rec in _data:
+                _tier = _exp1b_norm_tier(_rec.get("difficulty") or _rec.get("tier"))
+                if _tier is None:
+                    continue
+                _cr = _rec.get("results", {}) or {}
+                _tier_counts[_tier][0] += 1
+
+                _llm_r2 = (_cr.get("pure_llm", {}) or {}).get("test_r2")
+                if _exp1b_is_num(_llm_r2) and _llm_r2 > 0.99:
+                    _tier_counts[_tier][1] += 1
+
+                _hybrid = _cr.get("hybrid", {}) or {}
+                _reported_r2 = _hybrid.get("test_r2")
+                if _exp1b_is_num(_reported_r2) and _reported_r2 > 0.99:
+                    _decision = _hybrid.get("decision", "")
+                    _baseline_key = _EXP1B_DECISION_TO_BASELINE.get(_decision)
+                    if _baseline_key:
+                        _baseline_r2 = (_cr.get(_baseline_key, {}) or {}).get("test_r2")
+                        _hyp_hit = _exp1b_is_num(_baseline_r2) and _baseline_r2 > 0.99
+                    else:
+                        # No independent baseline (v4_residual_nn /
+                        # v4_linear_fallback* / v4_blend / etc.) — counted
+                        # as a pass at face value, same convention as
+                        # generate_tables.py's gen_exp1b_noise_robust_defi()
+                        # and scripts/verify_abstract_numbers.py.
+                        _hyp_hit = True
+                    if _hyp_hit:
+                        _tier_counts[_tier][2] += 1
+            if sum(c[0] for c in _tier_counts.values()) > 0:
+                _exp1b_per_seed[_seed_label] = _tier_counts
+
+        if not _exp1b_per_seed:
+            print(f"  [SKIP] {_exp1b_stem} — {len(_exp1b_seed_files)} candidate "
+                  f"file(s) found but none parsed into the expected schema.")
+        else:
+            _tier_llm_means, _tier_llm_stds = [], []
+            _tier_hyp_means, _tier_hyp_stds = [], []
+            for _t in _EXP1B_TIERS:
+                _llm_rates, _hyp_rates = [], []
+                for _counts in _exp1b_per_seed.values():
+                    _n, _l, _h = _counts[_t]
+                    if _n:
+                        _llm_rates.append(100.0 * _l / _n)
+                        _hyp_rates.append(100.0 * _h / _n)
+                _tier_llm_means.append(np.mean(_llm_rates) if _llm_rates else np.nan)
+                _tier_llm_stds.append(np.std(_llm_rates) if len(_llm_rates) > 1 else 0.0)
+                _tier_hyp_means.append(np.mean(_hyp_rates) if _hyp_rates else np.nan)
+                _tier_hyp_stds.append(np.std(_hyp_rates) if len(_hyp_rates) > 1 else 0.0)
+
+            _x = np.arange(len(_EXP1B_TIERS))
+            _w = 0.35
+            fig, ax = plt.subplots(figsize=(7.5, 5.5))
+            ax.bar(_x - _w / 2, _tier_llm_means, _w, yerr=_tier_llm_stds,
+                   label="Pure LLM", color=C_LLM, alpha=0.85, capsize=4)
+            ax.bar(_x + _w / 2, _tier_hyp_means, _w, yerr=_tier_hyp_stds,
+                   label="HypatiaX (corrected)", color=C_HYB, alpha=0.85, capsize=4)
+            ax.set_xticks(_x)
+            ax.set_xticklabels(_EXP1B_TIERS)
+            ax.set_ylabel(r"Near-perfect success rate ($R^2 > 0.99$), \%")
+            ax.set_ylim(0, 105)
+            ax.set_title(
+                f"{_exp1b_title_tag} — Noise-robust DeFi benchmark ({len(_exp1b_per_seed)} seeds, "
+                f"mean $\\pm$ std)", fontsize=12, fontweight="bold")
+            ax.grid(axis="y", color=C_GRID, linewidth=0.6)
+            ax.legend()
+            fig.tight_layout()
+            _savefig(fig, _exp1b_stem, bbox_inches="tight")
+            plt.close(fig)
+            print(f"✓ {_exp1b_stem}.png/.pdf "
+                  f"({len(_exp1b_per_seed)} seed file(s): {', '.join(sorted(_exp1b_per_seed))})")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
