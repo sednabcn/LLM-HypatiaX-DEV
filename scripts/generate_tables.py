@@ -247,11 +247,14 @@ SKIPPED_TABLES: list[str] = []
 #                  hypatiax_defi_benchmark_v4*results*.json         (defi fallback also checked;
 #                                                                     was v3*/v3c* pre-rename)
 #  exp1b         RESULTS_DIR/comparison_results/noise-noiseless/  ""  (root of that resolved dir)
-#                  15/  hypatiax_defi_benchmark_v4_results_seed*.json    hypatiax_defi_benchmark_v4_results_seed*.json  ✓
-#                  (FIX EXP1B-WRONG-SOURCE: exp1b was repurposed from the old
+#                  15/  hypatiax_defi_benchmark_v4_results_seed*.json    hypatiax_defi_benchmark_*results_seed*.json  ✓
+#  exp1b_pca     RESULTS_DIR/comparison_results/noise-noiseless/  ""  (root of that resolved dir)
+#                  15_pca/  hypatiax_defi_benchmark_pca_results_seed*.json  hypatiax_defi_benchmark_*results_seed*.json  ✓
+#                  (confirmed against a real run: no "v4" segment in this filename)
+#                  (FIX EXP1B-WRONG-SOURCE: exp1b/exp1b_pca were repurposed from the old
 #                   portfolio-variance seed sweep to this noise-robust multi-seed
 #                   DeFi run; gen_portfolio_seed_sweep() [portfolio_variance*.json]
-#                   is stale for exp1b — see gen_exp1b_noise_robust_defi())
+#                   is stale for both — see gen_exp1b_noise_robust_defi())
 #  extrap        RESULTS_DIR/comparison_results/extrapolation/    "comparison_results/extrapolation"
 #                  all_domains_extrap_v4_*.json
 #  hybrid_all    RESULTS_DIR/hybrid_llm_nn/all_domains/           "hybrid_llm_nn/all_domains"
@@ -870,15 +873,21 @@ def gen_exp1b_noise_robust_defi() -> None:
 
     FIX EXP1B-WRONG-SOURCE / exp1b_pca: this generator is reused for
     exp1b_pca too (see _DISPATCH["exp1b_pca"] = _DISPATCH["exp1b"] below).
-    exp1b_pca's --results-dir resolves to its own PCA source directory and
-    its seed files follow hypatiax_defi_benchmark_v4_pca_results_seed*.json
-    (per hypatiax_defi_benchmark_v4_pca.py, the PCA counterpart of
-    hypatiax_defi_benchmark_v4.py — same naming relationship gen_defi_main()
-    already relies on for exp1_pca via the wildcard "v4*results*" glob).
-    The glob below is likewise widened to "v4*results_seed*" rather than the
-    literal "v4_results_seed*" so both variants match; RESULTS already
-    points at the correct (non-PCA vs. PCA) directory per --results-dir, so
-    no experiment-specific branching is needed here beyond the glob.
+    exp1b_pca's --results-dir resolves to its own PCA source directory
+    (comparison_results/noise-noiseless/15_pca/, confirmed against a real
+    run) whose seed files are named hypatiax_defi_benchmark_pca_results_
+    seed*.json -- NOT hypatiax_defi_benchmark_v4_pca_results_seed*.json as
+    first assumed; there is no "v4" segment in the PCA variant's filename
+    at all. Confirmed schema-identical to the non-PCA file (same
+    results.{pure_llm,neural_network,hybrid} shape, same lowercase
+    difficulty field, same hybrid.decision vocabulary e.g. "v4_llm") by
+    inspecting a real exp1b_pca record, so no parsing-logic changes were
+    needed -- only the glob. Widened to "hypatiax_defi_benchmark_*results_
+    seed*.json" (matches both "..._v4_results_seed42.json" and
+    "..._pca_results_seed42.json") rather than trying to enumerate every
+    variant name explicitly. This is deliberately narrower than a bare
+    "*results_seed*" glob so it doesn't also pick up unrelated per-seed
+    result files from other experiments that might land in a shared dir.
     """
     _DECISION_TO_BASELINE = {
         "llm": "pure_llm", "nn": "neural_network", "nn_fallback": "neural_network",
@@ -896,20 +905,20 @@ def gen_exp1b_noise_robust_defi() -> None:
         return isinstance(v, (int, float)) and v == v  # excludes NaN
 
     # Seed files live directly under the resolved --results-dir for exp1b /
-    # exp1b_pca (comparison_results/noise-noiseless/15/ or its PCA
+    # exp1b_pca (comparison_results/noise-noiseless/15/ or its 15_pca/
     # counterpart), same subdir="" search gen_defi_tiers()/gen_defi_main()
-    # use for exp1's single seed-42 file. Pattern widened to "v4*results_seed*"
-    # (not the literal "v4_results_seed*") so it also matches
-    # hypatiax_defi_benchmark_v4_pca_results_seed*.json for exp1b_pca.
+    # use for exp1's single seed-42 file. Pattern matches both
+    # "hypatiax_defi_benchmark_v4_results_seed*.json" (exp1b) and
+    # "hypatiax_defi_benchmark_pca_results_seed*.json" (exp1b_pca).
     seed_files: list[Path] = []
     for base in (PATCHED, RESULTS):
         if base.exists():
             seed_files.extend(_filtered_glob(
-                base, "hypatiax_defi_benchmark_v4*results_seed*.json"))
+                base, "hypatiax_defi_benchmark_*results_seed*.json"))
             # legacy defi/ subdir, mirroring load_best()'s extra_subdirs
             if (base / "defi").exists():
                 seed_files.extend(_filtered_glob(
-                    base / "defi", "hypatiax_defi_benchmark_v4*results_seed*.json"))
+                    base / "defi", "hypatiax_defi_benchmark_*results_seed*.json"))
     # de-dupe while preserving discovery order (PATCHED before RESULTS)
     seen_paths = set()
     seed_files = [p for p in seed_files
@@ -917,7 +926,7 @@ def gen_exp1b_noise_robust_defi() -> None:
 
     if not seed_files:
         skip_table("defi_noise_robust.tex",
-                    "no hypatiax_defi_benchmark_v4*results_seed*.json files found "
+                    "no hypatiax_defi_benchmark_*results_seed*.json files found "
                     "(exp1b/exp1b_pca's noise-robust multi-seed source)")
         return
 

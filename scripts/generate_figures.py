@@ -68,7 +68,7 @@ Supp-B              fig1_r2_vs_noise … fig_comparative_table
                                                                noise_sweep_*.json (latest by glob) +
                                                                sample_complexity_*.json (latest by glob)
 exp1b               fig_exp1b_noise_robust_defi                hypatiax_defi_benchmark_v4_results_seed*.json
-exp1b_pca           fig_exp1b_pca_noise_robust_defi            hypatiax_defi_benchmark_v4_pca_results_seed*.json
+exp1b_pca           fig_exp1b_pca_noise_robust_defi            hypatiax_defi_benchmark_pca_results_seed*.json
                                                                (FIX EXP1B-WRONG-SOURCE: exp1b/exp1b_pca no
                                                                 longer read portfolio_variance_seed_sweep.json —
                                                                 see the exp1b/exp1b_pca block near the end of
@@ -3754,13 +3754,17 @@ if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
 # portfolio_variance_seed_sweep.json via DATA_PORTFOLIO_SW, gated on
 # _EXP1_ABLATION_GROUP). It has since been repurposed to the noise-robust
 # multi-seed DeFi run, whose --results-dir is resolved to
-# comparison_results/noise-noiseless/15/ (or its PCA counterpart for
-# exp1b_pca) and which writes hypatiax_defi_benchmark_v4_results_seed*.json
-# / hypatiax_defi_benchmark_v4_pca_results_seed*.json (same schema
-# scripts/verify_abstract_numbers.py and generate_tables.py's
-# gen_exp1b_noise_robust_defi() read; the "v4*results_seed*" glob below
-# matches both the plain and _pca_ variants, same relationship gen_defi_main()
-# already relies on for exp1 vs. exp1_pca). Neither DATA_MAIN
+# comparison_results/noise-noiseless/15/ (exp1b) or .../15_pca/ (exp1b_pca,
+# confirmed against a real run) and which writes
+# hypatiax_defi_benchmark_v4_results_seed*.json (exp1b) or
+# hypatiax_defi_benchmark_pca_results_seed*.json (exp1b_pca -- NOT
+# "v4_pca_results_seed*" as first assumed; there is no "v4" segment in the
+# PCA variant's filename). Confirmed schema-identical to the non-PCA file
+# by inspecting a real exp1b_pca record (same results.{pure_llm,
+# neural_network,hybrid} shape, same lowercase difficulty field, same
+# hybrid.decision vocabulary), so only the glob differs. The
+# "hypatiax_defi_benchmark_*results_seed*.json" pattern below matches both
+# variants without enumerating each name. Neither DATA_MAIN
 # (exp1_ablation_results.json, exp1b_pca is already excluded from needing
 # it via _EXPERIMENTS_WITHOUT_ABLATION) nor DATA_PORTFOLIO_SW exist under
 # either directory, so both experiments previously produced zero figures
@@ -3769,8 +3773,8 @@ if _EXPERIMENT in ("exp2_feynman_pca", "exp2_feyman_pca"):
 # ══════════════════════════════════════════════════════════════════════════════
 if _EXPERIMENT in ("exp1b", "exp1b_pca"):
     _exp1b_seed_files = sorted(set(
-        glob.glob(os.path.join(_RESULTS_DIR, "hypatiax_defi_benchmark_v4*results_seed*.json"))
-        + glob.glob(os.path.join(_RESULTS_DIR, "defi", "hypatiax_defi_benchmark_v4*results_seed*.json"))
+        glob.glob(os.path.join(_RESULTS_DIR, "hypatiax_defi_benchmark_*results_seed*.json"))
+        + glob.glob(os.path.join(_RESULTS_DIR, "defi", "hypatiax_defi_benchmark_*results_seed*.json"))
     ))
     _exp1b_seed_files = [p for p in _exp1b_seed_files
                          if not any(s in os.path.basename(p) for s in _SWEEP_EXCLUDE_SUBSTRINGS)]
@@ -3780,7 +3784,7 @@ if _EXPERIMENT in ("exp1b", "exp1b_pca"):
 
     if not _exp1b_seed_files:
         print(f"  [SKIP] {_exp1b_stem} — no "
-              f"hypatiax_defi_benchmark_v4*results_seed*.json found under "
+              f"hypatiax_defi_benchmark_*results_seed*.json found under "
               f"{_RESULTS_DIR} (or its defi/ subdir).")
     else:
         _EXP1B_TIERS = ("Easy", "Medium", "Hard")
