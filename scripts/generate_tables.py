@@ -166,11 +166,17 @@ RESULTS    = _ARGS.results_dir  or (_ROOT / "hypatiax" / "data" / "results")
 TABLES_DIR = _ARGS.output_dir   or (_ROOT / "paper" / "tables")
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
 
-# Output dir for the "abstract" experiment (run_abstract_audit()). Kept
-# under TABLES_DIR like everything else this script writes, but in its own
-# subfolder since its contents (a cloned external repo, CSV/MD/JSON audit
-# files from two independent scripts) aren't .tex table fragments.
-_ABSTRACT_OUT_DIR = TABLES_DIR / "abstract"
+# Output dir for the "abstract" experiment (run_abstract_audit()). This used
+# to be TABLES_DIR / "abstract" (a namespacing subfolder, since this
+# generator's output — a cloned external repo, CSV/MD/JSON audit files from
+# two independent scripts — isn't .tex table fragments like everything else
+# this script writes). But config/experiments.yml's "abstract" entry already
+# gives this experiment its own isolated --output-dir
+# (hypatiax/data/results/abstract/tables) via ci_postprocess.yml, so adding
+# another "abstract" subfolder here just duplicates isolation the caller
+# already provides, landing output one level deeper than intended
+# (.../abstract/tables/abstract/... instead of .../abstract/tables/...).
+_ABSTRACT_OUT_DIR = TABLES_DIR
 
 # Optional explicit source for exp1_five Core-15 results.
 EXP1_FIVE_JSON = _ARGS.exp1_five_json
@@ -494,9 +500,10 @@ def run_abstract_audit() -> None:
         )
         return
 
-    out_dir = _ABSTRACT_OUT_DIR
+    out_dir = _ABSTRACT_OUT_DIR.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    repo_path = _ARGS.abstract_repo or (out_dir / "LLM-HypatiaX-REPRO")
+    repo_path = (_ARGS.abstract_repo.resolve() if _ARGS.abstract_repo
+                 else (out_dir / "LLM-HypatiaX-REPRO"))
 
     common: list[str] = ["--repo", str(repo_path)]
     if _ARGS.abstract_repo_url:
