@@ -188,6 +188,23 @@ experiments:
     trigger_paths:
       - "hypatiax/data/results/comparison_results/extrapolation/**/*.json"
 
+  abstract:
+    description: "Abstract claim audit (external LLM-HypatiaX-REPRO cross-check)"
+    # Dispatch-only: not driven by any file under hypatiax/data/results. This
+    # experiment's evidence source is the external LLM-HypatiaX-REPRO repo,
+    # cloned fresh by evaluate_abstract_claims.py / rebuild_abstract_from_results.py
+    # (launched via generate_tables.py's run_abstract_audit(), see --experiment
+    # abstract). Both scripts ignore --results-dir and clone their own repo, so
+    # source_dir here is never actually read for input data — it only exists to
+    # satisfy ci_postprocess.yml's "Resolve experiment from config" step, which
+    # unconditionally derives figures_dir/tables_dir from source_dir and creates
+    # them, whether or not generates_figures is true.
+    source_dir: "abstract"
+    generates_tables: true
+    generates_figures: false   # no figure generator exists for this experiment —
+                                # generate_figures.py has no "abstract" block
+    trigger_paths: []          # intentionally empty: no push trigger, dispatch-only
+
 # ------------------------------------------------------------------------------
 # Aggregate entries — these don't own a single experiment's source data.
 # They read across multiple experiments' canonical output dirs and either
