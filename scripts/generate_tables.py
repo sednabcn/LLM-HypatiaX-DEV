@@ -74,6 +74,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import re
 import statistics
 import subprocess
@@ -127,7 +128,7 @@ def _parse_args() -> argparse.Namespace:
                    dest="abstract_repo", metavar="PATH",
                    help="Local checkout of LLM-HypatiaX-REPRO to pass as --repo "
                         "to both abstract-audit scripts (default: "
-                        "<output-dir>/abstract/LLM-HypatiaX-REPRO, auto-cloned).")
+                        "~/.cache/hypatiax/LLM-HypatiaX-REPRO or $HYPATIAX_REPRO_DIR, auto-cloned).")
     p.add_argument("--abstract-repo-url", type=str, default=None,
                    dest="abstract_repo_url", metavar="URL",
                    help="Override the LLM-HypatiaX-REPRO clone URL passed as "
@@ -515,7 +516,16 @@ def run_abstract_audit() -> None:
     out_dir = _ABSTRACT_OUT_DIR.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     repo_path = (_ARGS.abstract_repo.resolve() if _ARGS.abstract_repo
-                 else (out_dir / "LLM-HypatiaX-REPRO"))
+                 else Path(os.environ.get(
+                     "HYPATIAX_REPRO_DIR",
+                     Path.home() / ".cache" / "hypatiax" / "LLM-HypatiaX-REPRO",
+                 )).resolve())
+    # Never keep the clone inside the tables dir (it gets committed as a
+    # gitlink). Remove a stale one left behind by older versions.
+    _stale = out_dir / "LLM-HypatiaX-REPRO"
+    if _stale.is_dir() and _stale != repo_path:
+        shutil.rmtree(_stale, ignore_errors=True)
+        print(f"  Removed stale nested clone: {_stale}")
 
     common: list[str] = ["--repo", str(repo_path)]
     if _ARGS.abstract_repo_url:
