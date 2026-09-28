@@ -34,7 +34,7 @@ WHAT IT DOES NOT DO:
     - It does not emit a pass/fail verdict.
 
 USAGE
-    python3 verify_abstract_numbers.py path/to/hypatiax_defi_benchmark_v4_results_seed42.json
+    python3 verify_abstract_numbers.py path/to/hypatiax_defi_benchmark_results_seed42.json
     python3 verify_abstract_numbers.py FILE.json --sample 5      # print 5 random cases in full, for hand-checking
     python3 verify_abstract_numbers.py FILE.json --json          # machine-readable output (for CI)
 
