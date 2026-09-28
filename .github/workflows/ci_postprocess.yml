@@ -843,6 +843,19 @@ jobs:
             git add "${{ steps.resolve.outputs.tables_dir_abs }}" 2>/dev/null || true
           fi
 
+          # The "abstract" experiment auto-clones the external LLM-HypatiaX-REPRO
+          # repo INSIDE its tables dir. `git add` on the tables dir stages that
+          # nested clone as a bare gitlink (mode 160000) with no .gitmodules
+          # entry, which later makes actions/checkout's post-step cleanup fail
+          # with "No url found for submodule path ... (exit code 128)". Never
+          # commit it: unstage any newly-added gitlink under the staged dirs.
+          git diff --cached --raw --no-renames \
+            | awk '$2 == "160000" && $5 == "A" {print $6}' \
+            | while IFS= read -r gl; do
+                echo "Unstaging accidental gitlink (nested clone): $gl"
+                git rm --cached -f -q -- "$gl"
+              done
+
           python3 - <<'PY'
           import json, subprocess, os
           extra = json.loads('''${{ steps.resolve.outputs.extra_stage_files }}''')
