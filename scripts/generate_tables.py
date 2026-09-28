@@ -250,10 +250,10 @@ SKIPPED_TABLES: list[str] = []
 #  Step          run_all.sh output path                           load_best subdir / glob
 #  ─────────────────────────────────────────────────────────────────────────────────────
 #  exp1          RESULTS_DIR/                                     ""  (root)  benchmark_results*.json
-#                  hypatiax_defi_benchmark_v4*results*.json         (defi fallback also checked;
-#                                                                     was v3*/v3c* pre-rename)
+#                  hypatiax_defi_benchmark*results*.json         (defi fallback also checked;
+#                                                                     no version segment -- never re-add v3*/v4*)
 #  exp1b         RESULTS_DIR/comparison_results/noise-noiseless/  ""  (root of that resolved dir)
-#                  15/  hypatiax_defi_benchmark_v4_results_seed*.json    hypatiax_defi_benchmark_*results_seed*.json  ✓
+#                  15/  hypatiax_defi_benchmark*_results_seed*.json    hypatiax_defi_benchmark_*results_seed*.json  ✓
 #  exp1b_pca     RESULTS_DIR/comparison_results/noise-noiseless/  ""  (root of that resolved dir)
 #                  15_pca/  hypatiax_defi_benchmark_pca_results_seed*.json  hypatiax_defi_benchmark_*results_seed*.json  ✓
 #                  (confirmed against a real run: no "v4" segment in this filename)
@@ -315,8 +315,17 @@ def _filtered_glob(d: Path, glob_pat: str) -> list[Path]:
             if not any(s in p.name for s in _EXCLUDE_SUBSTRINGS)]
 
 
+# Basename fragment of the PCA-variant output files
+# (hypatiax_defi_benchmark_pca_results_seed*.json). The un-versioned defi glob
+# "hypatiax_defi_benchmark*results*.json" matches PCA files too; single-file
+# readers (gen_defi_main/tiers/...) pass exclude=_PCA_EXCL so a newer PCA file
+# can never be picked up as the "main" non-PCA run.
+_PCA_EXCL = ("_pca_",)
+
+
 def load_best(subdir: str, glob_pat: str,
-              extra_subdirs: list[str] | None = None) -> tuple[dict | None, Path | None]:
+              extra_subdirs: list[str] | None = None,
+              exclude: tuple[str, ...] = ()) -> tuple[dict | None, Path | None]:
     """Return (data, path) for the newest matching JSON.
 
     Search order:
@@ -334,7 +343,10 @@ def load_best(subdir: str, glob_pat: str,
     for d in search_dirs:
         if not d.exists():
             continue
-        candidates = sorted(_filtered_glob(d, glob_pat), key=os.path.getmtime, reverse=True)
+        candidates = sorted(
+            (p for p in _filtered_glob(d, glob_pat)
+             if not any(x in p.name for x in exclude)),
+            key=os.path.getmtime, reverse=True)
         if candidates:
             try:
                 return json.loads(candidates[0].read_text()), candidates[0]
@@ -569,10 +581,10 @@ def gen_defi_main() -> None:
     parsable result data is found — never falls back to a hardcoded value.
 
     FIX ISSUE-9 (masked-failure / uncorrected Mean R²):
-    UPDATED: hypatiax_defi_benchmark_v3c.py has been superseded by
-    hypatiax_defi_benchmark_v4.py (hypatiax_defi_benchmark_pca.py ->
-    hypatiax_defi_benchmark_v4_pca.py likewise); neither v3c.py nor the old
-    pca.py exist in this repo snapshot anymore. Their real on-disk output
+    UPDATED: the defi benchmark script is now the un-versioned
+    hypatiax_defi_benchmark.py (formerly v3c / v4), and the PCA variant is
+    hypatiax_defi_benchmark_pca.py; the versioned v3c/v4 script names no
+    longer exist in this repo snapshot. Their real on-disk output
     is still a flat LIST of 74 per-case dicts
     (each `{"results": {"pure_llm": {...}, "neural_network": {...},
     "hybrid": {"test_r2":, "decision":, "success":}}}`) — see those files'
@@ -589,13 +601,15 @@ def gen_defi_main() -> None:
     (pure_llm.test_r2 / neural_network.test_r2) is used instead, since that
     is the sub-method the routing decision actually names.
     """
-    # run_all.sh (exp1) writes hypatiax_defi_benchmark_v4*results*.json
-    # (was v3*/v3c* before the v3c.py -> v4.py rename -- see FIX ISSUE-9
-    # note above; the old "v3*" glob silently matched nothing against
-    # current output and always fell through to skip_table()/PAPER_ROWS).
+    # run_all.sh (exp1) writes hypatiax_defi_benchmark*results*.json
+    # (no version segment: old "v3*" and "v4*" globs silently matched
+    # nothing once the script was renamed and always fell through to
+    # skip_table()/PAPER_ROWS -- do NOT re-introduce a version in this glob.
+    # The pattern also matches the PCA files, so exclude=_PCA_EXCL keeps the
+    # non-PCA run).
     # Also check legacy defi/ subdir for backwards compatibility.
-    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                          extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*results*.json",
+                          extra_subdirs=["defi"], exclude=_PCA_EXCL)
 
     # decision -> which independently-computed sub-method result actually
     # backs that routing decision. "ensemble" has no separate baseline arm
@@ -752,14 +766,14 @@ def gen_defi_tiers() -> None:
     decision to correct) per-case pure_llm.test_r2 > 0.99 rate. Never falls
     back to a hardcoded value; skip_table() if the schema isn't found.
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v4_results_seed42.json",
-                          extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*_results_seed42.json",
+                          extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not data:
-        data, src = load_best("", "hypatiax_defi_benchmark_v4_results.json",
-                              extra_subdirs=["defi"])
+        data, src = load_best("", "hypatiax_defi_benchmark*_results.json",
+                              extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not data:
-        data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                              extra_subdirs=["defi"])
+        data, src = load_best("", "hypatiax_defi_benchmark*results*.json",
+                              extra_subdirs=["defi"], exclude=_PCA_EXCL)
 
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("defi_tiers.tex",
@@ -846,7 +860,7 @@ def gen_exp1b_noise_robust_defi() -> None:
     source_dir for "exp1b" -- to mean the noise-robust, multi-seed run of
     the HypatiaX DeFi benchmark, whose --results-dir is resolved to
     comparison_results/noise-noiseless/15/ and which writes
-    hypatiax_defi_benchmark_v4_results_seed*.json (one file per seed;
+    hypatiax_defi_benchmark*_results_seed*.json (one file per seed;
     scripts/verify_abstract_numbers.py already reads this exact schema
     independently, per-seed, as a cross-check). gen_portfolio_seed_sweep()
     was never updated for the rename, so it always globbed for a
@@ -915,7 +929,7 @@ def gen_exp1b_noise_robust_defi() -> None:
     # exp1b_pca (comparison_results/noise-noiseless/15/ or its 15_pca/
     # counterpart), same subdir="" search gen_defi_tiers()/gen_defi_main()
     # use for exp1's single seed-42 file. Pattern matches both
-    # "hypatiax_defi_benchmark_v4_results_seed*.json" (exp1b) and
+    # "hypatiax_defi_benchmark*_results_seed*.json" (exp1b) and
     # "hypatiax_defi_benchmark_pca_results_seed*.json" (exp1b_pca).
     seed_files: list[Path] = []
     for base in (PATCHED, RESULTS):
@@ -1518,7 +1532,7 @@ def _vc_identity() -> dict:
     chk("V3", "every import of ensemble_llm_nn in the result-writing script resolves",
         bool(writers) and all(c["resolves"] for c in writers))
     ev["V3"]["silent_max_fallback_present"] = "test_r2 = max(" in t73
-    v4b = _vc_read("experiments/benchmarks/hypatiax_defi_benchmark_v4.py") or ""
+    v4b = _vc_read("experiments/benchmarks/hypatiax_defi_benchmark.py") or ""
     ev["V3"]["v4_benchmark_uses_private_reimplementation"] = (
         bool(re.search(r"^def\s+_ensemble_llm_nn\b", v4b, re.M))
         and not re.search(r"import[^\n]*\bensemble_llm_nn\b", v4b))
@@ -1626,8 +1640,8 @@ def _vc_v4_decisions() -> tuple["_Counter", int]:
         d = base / "comparison_results" / "noise-noiseless"
         if not d.exists():
             continue
-        for p in sorted(d.rglob("hypatiax_defi_benchmark_v4_results_seed*.json")):
-            if any(s in p.name for s in _EXCLUDE_SUBSTRINGS):
+        for p in sorted(d.rglob("hypatiax_defi_benchmark*_results_seed*.json")):
+            if any(s in p.name for s in _EXCLUDE_SUBSTRINGS) or "_pca_" in p.name:
                 continue
             try:
                 data = json.loads(p.read_text())
@@ -3278,8 +3292,8 @@ def gen_runtime() -> None:
     recover_issue17_runtime.py's analyze() function precisely.
 
     SCOPE NOTE (do not wire this table to tab:timing_full): this table is
-    computed from ONE single-seed hypatiax_defi_benchmark_v4*results*.json
-    file (74 tasks; was v3*/v3c* before the v3c.py -> v4.py rename). It is
+    computed from ONE single-seed hypatiax_defi_benchmark*results*.json
+    file (74 tasks; un-versioned glob, PCA files excluded). It is
     NOT the same table as \\ref{tab:timing_full} /
     \\ref{tab:timing_llm_routed_full} in jmlr_paper_main_patched_CLEANED.tex
     §10.4, which are produced by a *different* script (generate_table1.py,
@@ -3298,8 +3312,8 @@ def gen_runtime() -> None:
     (tab:runtime) is left unreferenced anywhere in the paper for the same
     reason -- it currently has no live home in the compiled document.
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                          extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*results*.json",
+                          extra_subdirs=["defi"], exclude=_PCA_EXCL)
 
     def _extract(d):
         if not (isinstance(d, list) and d and isinstance(d[0], dict) and "results" in d[0]):
@@ -4246,8 +4260,8 @@ def gen_timing_detail() -> None:
     Tab 11 — Detailed timing comparison and speedup calculations (Appendix C).
     Matches Table 11 (Appendix C).
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                          extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*results*.json",
+                          extra_subdirs=["defi"], exclude=_PCA_EXCL)
 
     def _extract(d):
         if not isinstance(d, dict):
@@ -4323,12 +4337,29 @@ def gen_instability() -> None:
                 import csv as _csv
                 rows = list(_csv.DictReader(open(csv_candidates[0])))
                 regime_counts: dict[str, int] = {}
+                observed_k_runs: set = set()
                 for row in rows:
                     r = row.get("regime", "?")
                     regime_counts[r] = regime_counts.get(r, 0) + 1
+                    # Read k_runs/n_runs per-row if the CSV provides it, rather
+                    # than assuming a fixed sweep size. Per this function's own
+                    # policy, we never fall back to a hardcoded value.
+                    row_k = row.get("k_runs", row.get("n_runs"))
+                    if row_k not in (None, ""):
+                        try:
+                            observed_k_runs.add(int(row_k))
+                        except (TypeError, ValueError):
+                            pass
+                # Only proceed if every row agrees on a single k_runs value;
+                # otherwise this table can't honestly claim one sweep size,
+                # so leave k_runs unset and let the missing-field check below
+                # skip the table.
+                inferred_k_runs = (
+                    observed_k_runs.pop() if len(observed_k_runs) == 1 else None
+                )
                 data = {"regime_counts": regime_counts,
                         "total_tasks": len(rows),
-                        "k_runs": 30}
+                        "k_runs": inferred_k_runs}
                 src = csv_candidates[0]
             except Exception:
                 pass
@@ -4385,8 +4416,8 @@ Regime & Definition & $n$ & Fraction \\
 
 def gen_repro_macros() -> None:
     macros: dict[str, str] = {}
-    data, _ = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                        extra_subdirs=["defi"])
+    data, _ = load_best("", "hypatiax_defi_benchmark*results*.json",
+                        extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if isinstance(data, dict):
         acc = data.get("accuracy", data.get("success_rate"))
         total_cases = data.get("total_cases")
@@ -5067,7 +5098,7 @@ def gen_suppb_noiseless() -> None:
     # FIX ISSUE-3 (EHSDeFi runtime 20.2s vs 841.4s): this loop previously
     # only read res["r2"], silently discarding res["time_s"] even though
     # every benchmark script in this codebase (see e.g.
-    # hypatiax_defi_benchmark_v4.py's case_results[...]["time_s"]) stores
+    # hypatiax_defi_benchmark.py's case_results[...]["time_s"]) stores
     # per-test wall-clock time in that exact key, right next to "r2", in
     # this exact per-method results dict shape. That means tab:overall's
     # "Avg Runtime" column was never actually computed by this generator —
@@ -5183,12 +5214,12 @@ def gen_suppb_noiseless() -> None:
 # every seed file found for each variant.
 #
 # UPDATED: hypatiax_defi_benchmark_v3c.py / _pca.py no longer exist in this
-# repo -- superseded by hypatiax_defi_benchmark_v4.py / _v4_pca.py. Their
+# repo -- superseded by hypatiax_defi_benchmark.py / hypatiax_defi_benchmark_pca.py. Their
 # actual multi-seed shard naming (confirmed directly from each script's
 # _configure_output_dir()/run loop) is "results_seed{N}", NOT "seed{N}_
 # results" as this block originally assumed -- the word order is reversed
 # from the old v3c convention, not just the version digit:
-#   v4:  hypatiax_defi_benchmark_v4_results_seed{N}.json
+#   v4:  hypatiax_defi_benchmark_results_seed{N}.json (older runs: ..._v4_results_seed{N}.json)
 #   pca: hypatiax_defi_benchmark_pca_results_seed{N}.json   (no "v4" in this
 #        one at all -- the pca script never puts a version number in its
 #        output filename, only "pca")
@@ -5196,7 +5227,7 @@ def gen_suppb_noiseless() -> None:
 # reader). Key renamed "v3c" -> "v4" throughout this file to match the row
 # labels actually printed (was mislabeling v4-sourced data "v3c").
 _TIMING_SEED_GLOBS = {
-    "v4":  "hypatiax_defi_benchmark_v4_results_seed*.json",
+    "v4":  "hypatiax_defi_benchmark*_results_seed*.json",   # un-versioned; PCA files skipped below
     "PCA": "hypatiax_defi_benchmark_pca_results_seed*.json",
 }
 
@@ -5214,6 +5245,8 @@ def _load_timing_multiseed() -> dict[str, list[tuple[str, list[dict]]]]:
                 if not d.exists():
                     continue
                 for f in _filtered_glob(d, glob_pat):
+                    if variant != "PCA" and "_pca_" in f.name:
+                        continue  # un-versioned glob also matches the PCA files
                     m = re.search(r"seed(\d+)", f.name)
                     seed = m.group(1) if m else f.stem
                     if seed in seen_seeds:
@@ -5380,11 +5413,11 @@ Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup
 #
 # Caption named the exact source as hypatiax_defi_benchmark_v3_results_
 # seed42.json ("File A"). UPDATED: v3c.py no longer exists; the current
-# script is hypatiax_defi_benchmark_v4.py, and its seed42 output can be
+# script is hypatiax_defi_benchmark.py, and its seed42 output can be
 # EITHER of two names depending on how it was invoked:
-#   hypatiax_defi_benchmark_v4_results_seed42.json   (multi-seed shard mode,
+#   hypatiax_defi_benchmark*_results_seed42.json   (multi-seed shard mode,
 #                                                       explicit --seed/shard)
-#   hypatiax_defi_benchmark_v4_results.json           (plain default run --
+#   hypatiax_defi_benchmark*_results.json           (plain default run --
 #                                                       no seed suffix at all,
 #                                                       implicit seed 42)
 # Try the seed-suffixed name first (unambiguous), then the plain default
@@ -5395,16 +5428,16 @@ Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup
 # does NOT independently score > 0.99 on the same case. Broken down by the
 # same Easy/Medium/Hard tiers gen_defi_tiers() already reads.
 def gen_hybrid_bug_breakdown() -> None:
-    data, src = load_best("", "hypatiax_defi_benchmark_v4_results_seed42.json",
-                          extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*_results_seed42.json",
+                          extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not data:
-        data, src = load_best("", "hypatiax_defi_benchmark_v4_results.json",
-                              extra_subdirs=["defi"])
+        data, src = load_best("", "hypatiax_defi_benchmark*_results.json",
+                              extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not data:
         # fall back to whichever single-seed v4 file is newest, same as
         # gen_defi_main(), in case neither exact name above is present
-        data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                              extra_subdirs=["defi"])
+        data, src = load_best("", "hypatiax_defi_benchmark*results*.json",
+                              extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("hybrid_bug_breakdown.tex",
                     f"no parsable seed-42 results found in the Shape-3 schema (src={src})")
@@ -5494,14 +5527,14 @@ def gen_abstract_macros() -> None:
     macro rather than a silently wrong or reversed claim. If the source
     file/schema isn't found at all, no macros are written.
     """
-    data, src = load_best("", "hypatiax_defi_benchmark_v4_results_seed42.json",
-                          extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*_results_seed42.json",
+                          extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not data:
-        data, src = load_best("", "hypatiax_defi_benchmark_v4_results.json",
-                              extra_subdirs=["defi"])
+        data, src = load_best("", "hypatiax_defi_benchmark*_results.json",
+                              extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not data:
-        data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json",
-                              extra_subdirs=["defi"])
+        data, src = load_best("", "hypatiax_defi_benchmark*results*.json",
+                              extra_subdirs=["defi"], exclude=_PCA_EXCL)
 
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("abstract_macros.tex",
@@ -6179,7 +6212,7 @@ def gen_suppb_domain_success_detailed() -> None:
 
 # ── (A) tab:llm_detailed / tab:defi_detailed — per-case DeFi results ────────
 def gen_suppb_llm_detailed() -> None:
-    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json", extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*results*.json", extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("llm_detailed.tex", f"no parsable DeFi benchmark results found (src={src})")
         return
@@ -6210,7 +6243,7 @@ def gen_suppb_llm_detailed() -> None:
 
 
 def gen_suppb_defi_detailed() -> None:
-    data, src = load_best("", "hypatiax_defi_benchmark_v4*results*.json", extra_subdirs=["defi"])
+    data, src = load_best("", "hypatiax_defi_benchmark*results*.json", extra_subdirs=["defi"], exclude=_PCA_EXCL)
     if not (isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]):
         skip_table("defi_detailed.tex", f"no parsable DeFi benchmark results found (src={src})")
         return
@@ -6758,7 +6791,7 @@ def main() -> None:
     _AUDIT: list[tuple[str, str, str, str, tuple[str, ...]]] = [
         # (label,  subdir,  glob,  extra_subdirs_csv,  owner_experiments)
         ("exp1 benchmark (Tab 2/3/4/11)",
-         "", "hypatiax_defi_benchmark_v4*results*.json", "defi",
+         "", "hypatiax_defi_benchmark*results*.json", "defi",
          ("exp1", "exp1_pca")),
         ("exp1_ablation Core-15 per-equation data (Tab 6 + Fig F — the newest "
          "*.json in this dir by mtime)",
@@ -7046,8 +7079,8 @@ def main() -> None:
     # Single-JSON experiments: each maps to only the generator(s) that
     # actually consume that experiment's JSON, per the location-map comment.
     _DISPATCH = {
-        # exp1 → hypatiax_defi_benchmark_v4*results*.json → defi_main,
-        # (was v3*/v3c* before the v3c.py -> v4.py rename)
+        # exp1 → hypatiax_defi_benchmark*results*.json → defi_main,
+        # (no version segment in the glob; PCA files excluded)
         # defi_tiers, runtime, timing_detail (Tab 2/3/4/11) + defi half of
         # repro_macros. version_history has no JSON dependency (hardcoded,
         # stable) so it's cheap to regenerate alongside exp1.
@@ -7073,7 +7106,7 @@ def main() -> None:
             lambda: gen_timing_full(),
             lambda: gen_timing_llm_routed_full(),
         ])],
-        # exp1b → hypatiax_defi_benchmark_v4_results_seed*.json (multi-seed,
+        # exp1b → hypatiax_defi_benchmark*_results_seed*.json (multi-seed,
         # noise-robust) → defi_noise_robust (Tab 11). FIX EXP1B-WRONG-SOURCE:
         # exp1b used to mean the portfolio-variance seed sweep and read
         # portfolio_variance_seed_sweep.json -- that file no longer exists
