@@ -487,10 +487,12 @@ jobs:
           FILE_A="$(python3 - <<'PY'
           import glob, os
           root = "${{ steps.resolve.outputs.source_dir_abs }}"
+          # Matches v3/v4/... seed-42 output (on disk this is currently
+          # ..._v3_results_seed42.json). The "v*" prefix deliberately
+          # excludes ..._pca_results_seed42.json, and the _seed42 pin keeps
+          # other seeds from being picked up by accident.
           pats = [
-              "hypatiax_defi_benchmark_v4_results_seed42.json",
-              "hypatiax_defi_benchmark_v4_results.json",
-              "hypatiax_defi_benchmark_v4*results*.json",
+              "hypatiax_defi_benchmark_v*_results_seed42.json",
           ]
           found = []
           for pat in pats:
