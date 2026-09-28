@@ -479,7 +479,11 @@ jobs:
         # repo's own seed-42 defi benchmark JSON, which "abstract" doesn't
         # read or produce -- running it here would just print a harmless but
         # confusing "no seed-42 results file found" notice every time.
-        if: steps.resolve.outputs.generates_tables == 'true' && steps.resolve.outputs.id != 'abstract'
+        # Also skipped for the PCA variants (exp1_pca / exp1b_pca): the abstract's
+        # headline numbers come from the non-PCA seed-42 file, and the PCA
+        # output (..._pca_results_seed42.json) is a different variant, so
+        # there is nothing here to cross-check against the abstract.
+        if: steps.resolve.outputs.generates_tables == 'true' && steps.resolve.outputs.id != 'abstract' && !endsWith(steps.resolve.outputs.id, '_pca')
         shell: bash
         run: |
           set -uo pipefail
