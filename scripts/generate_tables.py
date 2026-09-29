@@ -94,6 +94,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--results-dir",  type=Path, default=None, dest="results_dir",
                    metavar="PATH",
                    help="Root of hypatiax/data/results (auto-detected if omitted).")
+    p.add_argument("--defi-pin", type=str, dest="defi_pin",
+                   default="hypatiax_defi_benchmark_v3_results_seed42.json",
+                   help="Exact filename of the DeFi seed-42 result file used by every "
+                        "single-file DeFi table (default: v3; v4 carries the "
+                        "attribution-flag bug, Item C4).")
+    p.add_argument("--nguyen12-seed", type=str, dest="nguyen12_seed", default="42",
+                   help="Seed used for tab:nguyen12 (default 42 = the paper's headline "
+                        "definition; 'all' = mean across every seed found).")
+    p.add_argument("--defi-n", type=int, dest="defi_n", default=74,
+                   help="Required record count for the pinned DeFi file (default 74).")
     p.add_argument("--output-dir",   type=Path, default=None, dest="output_dir",
                    metavar="PATH",
                    help="Output dir for .tex files (default: <repo>/paper/tables).")
@@ -335,6 +345,15 @@ def load_best(subdir: str, glob_pat: str,
       3. Each path in extra_subdirs (checked as RESULTS / extra)
     An empty-string subdir means search directly under the base directory.
     """
+    # Section-3 fix: every NON-PCA single-file DeFi reader is pinned to ONE file
+    # (default v3, seed 42) and must hold the full 74 records.  The old
+    # un-versioned glob picked the newest mtime: a v4 file or one of the 5-record
+    # non-42 seed files, which made tab:main_results (73.0%) disagree with
+    # tab:difficulty / tab:hybrid-bug-breakdown (59.5%).
+    _pinned = (glob_pat.startswith("hypatiax_defi_benchmark") and "_pca" not in glob_pat
+               and "_pca_" in exclude)
+    if _pinned:
+        glob_pat = _ARGS.defi_pin
     search_dirs: list[Path] = []
     for base in [PATCHED, RESULTS]:
         search_dirs.append(base / subdir if subdir else base)
@@ -350,10 +369,43 @@ def load_best(subdir: str, glob_pat: str,
             key=os.path.getmtime, reverse=True)
         if candidates:
             try:
-                return json.loads(candidates[0].read_text()), candidates[0]
+                _d = json.loads(candidates[0].read_text())
             except Exception:
                 continue
+            if _pinned and not (isinstance(_d, list) and len(_d) == _ARGS.defi_n):
+                print(f"  [pin] {candidates[0]} has "
+                      f"{len(_d) if hasattr(_d, '__len__') else '?'} records, "
+                      f"need {_ARGS.defi_n} -- ignored", file=sys.stderr)
+                continue
+            return _d, candidates[0]
     return None, None
+
+
+def load_noiseless_tests() -> tuple[list[dict], Path | None]:
+    """Merge every protocol_core_noiseless_*.json shard (11 shards = the 30-test
+    noiseless set) instead of reading only the newest file. Key = (domain,
+    description); newest mtime wins. Returns (tests, newest_shard)."""
+    base = RESULTS / "comparison_results"
+    roots = [base / "noise-noiseless" / "noiseless" / "defi",
+             base / "noise-noiseless" / "noiseless",
+             base / "feynman-tests" / "exp2"]
+    files: list[Path] = []
+    for r in roots:
+        if r.exists():
+            files.extend(_filtered_glob(r, "protocol_core_noiseless_*.json"))
+    files = sorted({f.resolve(): f for f in files}.values(), key=os.path.getmtime)
+    merged: dict[tuple, dict] = {}
+    used: list[Path] = []
+    for f in files:
+        try:
+            tests = json.loads(f.read_text()).get("tests", [])
+        except Exception:
+            continue
+        for t in tests:
+            merged[(t.get("domain"), t.get("description"))] = t
+        if tests:
+            used.append(f)
+    return list(merged.values()), (used[-1] if used else None)
 
 
 # ── Five-system table source resolution (superseded guess-based approach) ──
@@ -4136,6 +4188,8 @@ def gen_nguyen12() -> None:
                     rows.append((eq_id, row.get("name") or eq_id, seed,
                                  system_name, sysrec.get("r2_raw")))
 
+    if _ARGS.nguyen12_seed != "all":
+        rows = [r for r in rows if str(r[2]) == str(_ARGS.nguyen12_seed)]
     if not rows:
         skip_table("nguyen12.tex",
                     f"no parsable Nguyen-12 results found "
@@ -4207,6 +4261,9 @@ def gen_nguyen12() -> None:
 \midrule
 """
     )
+    if _ARGS.nguyen12_seed != "all":
+        tex = tex.replace("averaged across all available seeds",
+                          f"seed {_ARGS.nguyen12_seed} only (the paper's headline definition)")
     n_p = n_h = 0
     for eq_id in eq_ids:
         p_r2 = _mean(by_eq[eq_id].get("pysr", []))
@@ -5087,18 +5144,8 @@ def gen_suppb_noiseless() -> None:
     # EXP1_SUBDIR="comparison_results/noise-noiseless/noiseless/defi" in
     # ci_postprocess.yml. Without it this glob searches one level too
     # shallow and never finds the file, even after exp1 has run.
-    noiseless_dir = RESULTS / "comparison_results" / "noise-noiseless" / "noiseless" / "defi"
-    candidates = sorted(noiseless_dir.glob("protocol_core_noiseless_*.json"),
-                        key=os.path.getmtime, reverse=True) if noiseless_dir.exists() else []
-    data = None
-    src  = None
-    for c in candidates:
-        try:
-            data = json.loads(c.read_text())
-            src  = c
-            break
-        except Exception:
-            continue
+    _tests, src = load_noiseless_tests()
+    data = {"tests": _tests} if _tests else None
 
     if not data:
         write_table("suppb_noiseless.tex", "% suppB noiseless data not available\n")
@@ -5866,18 +5913,7 @@ Sample size & $n \in \{50,100,200,500,750,1000\}$  & $\sigma=5\%$ & 6 sizes  \\
 
 # ── (A) tab:hardcoded — is_hardcoded-flagged Pure LLM equations ─────────────
 def _load_noiseless_tests() -> tuple[list[dict], Path | None]:
-    noiseless_dir = RESULTS / "comparison_results" / "noise-noiseless" / "noiseless" / "defi"
-    candidates = sorted(_filtered_glob(noiseless_dir, "protocol_core_noiseless_*.json"),
-                        key=os.path.getmtime, reverse=True) if noiseless_dir.exists() else []
-    for c in candidates:
-        try:
-            data = json.loads(c.read_text())
-        except Exception:
-            continue
-        tests = data.get("tests", [])
-        if tests:
-            return tests, c
-    return [], None
+    return load_noiseless_tests()
 
 
 def gen_suppb_hardcoded() -> None:

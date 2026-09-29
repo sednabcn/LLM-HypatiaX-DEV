@@ -23,6 +23,9 @@ on:
       - "config/experiments.yml"
       - "scripts/generate_figures.py"
       - "scripts/generate_tables.py"
+      - "scripts/check_paper_tables.py"
+      - "paper/*.tex"
+      - "paper/paper_table_exceptions.json"
       - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi/**/*.json"
       - "hypatiax/data/results/comparison_results/noise-noiseless/15/**/*.json"
       - "hypatiax/data/results/comparison_results/noise-noiseless/noiseless/defi_pca/**/*.json"
@@ -210,6 +213,9 @@ jobs:
               "config/experiments.yml",
               "scripts/generate_figures.py",
               "scripts/generate_tables.py",
+              "scripts/check_paper_tables.py",
+              "paper/*.tex",
+              "paper/paper_table_exceptions.json",
           }
 
           declared_push_paths = set(on_block.get("push", {}).get("paths", []))
@@ -350,7 +356,9 @@ jobs:
               infra_files = {os.environ["CONFIG_FILE"], "scripts/generate_figures.py",
                              "scripts/generate_tables.py", ".github/workflows/ci_postprocess.yml"}
               if changed:
-                  if all(p in infra_files for p in changed):
+                  _is_infra = lambda p: (p in infra_files or p.startswith("paper/")
+                                         or p == "scripts/check_paper_tables.py")
+                  if all(_is_infra(p) for p in changed):
                       if "figures_deploy" in all_entries:
                           exp_id = "figures_deploy"
                       else:
@@ -961,3 +969,85 @@ jobs:
             echo "| Tables | ${TAB_NEW} | ${TAB_MOD} | ${TAB_TOTAL} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+
+  # ======================================================================
+  # Job 2 -- paper-vs-generated table check (strict NOSOURCE).
+  #
+  # The per-experiment job above only writes ITS experiment's tables, so it
+  # cannot judge the whole paper. This job re-generates EVERY table
+  # (generate_tables.py without --experiment) into a scratch dir from the
+  # committed result files, then compares each \\label{tab:*} in paper/*.tex
+  # with check_paper_tables.py --strict-nosource:
+  #   DIFF / PARTIAL / NOSOURCE  -> job fails
+  #   EXCEPTION / UNVERIFIED     -> listed, never fails (paper/paper_table_exceptions.json,
+  #                                 every entry needs a written reason)
+  # Runs after `postprocess` (so the bot's commit is included) even if that
+  # job was skipped/failed, but not when the run was cancelled.
+  # ======================================================================
+  paper_check:
+    needs: postprocess
+    if: ${{ always() && needs.postprocess.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout (latest, including the postprocess bot commit)
+        uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install "numpy>=1.26" "scipy>=1.11" "pandas>=2.0" "sympy>=1.12" \
+                      "tabulate>=0.9" "PyYAML>=6.0"
+
+      - name: Regenerate ALL tables into a scratch dir
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(python3 -c "import yaml;print(yaml.safe_load(open('config/experiments.yml'))['results_root'])")"
+          mkdir -p "$RUNNER_TEMP/tables"
+          python3 scripts/generate_tables.py \
+            --results-dir "$ROOT" \
+            --output-dir "$RUNNER_TEMP/tables"
+          echo "Generated $(ls "$RUNNER_TEMP/tables"/*.tex 2>/dev/null | wc -l) table file(s)."
+
+      - name: "Check paper tables (strict NOSOURCE)"
+        id: check
+        shell: bash
+        run: |
+          set +e
+          EXC=""
+          [ -f paper/paper_table_exceptions.json ] && EXC="--exceptions paper/paper_table_exceptions.json"
+          python3 scripts/check_paper_tables.py \
+            --tables "$RUNNER_TEMP/tables" \
+            --docs paper/*.tex \
+            $EXC \
+            --strict-nosource \
+            --report "$RUNNER_TEMP/paper_table_report.md" \
+            --emit-template "$RUNNER_TEMP/todo_exceptions.json"
+          RC=$?
+          {
+            echo "### Paper tables vs generated tables (strict NOSOURCE)"
+            echo ""
+            cat "$RUNNER_TEMP/paper_table_report.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          exit $RC
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-table-report
+          path: |
+            ${{ runner.temp }}/paper_table_report.md
+            ${{ runner.temp }}/todo_exceptions.json
+          if-no-files-found: ignore
