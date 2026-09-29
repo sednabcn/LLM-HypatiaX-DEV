@@ -4091,8 +4091,21 @@ def gen_nguyen12() -> None:
     split or an N column. skip_table() fires if fewer than 12 equations end
     up with any parsable data, exactly as before.
     """
+    def _as_rows(m):
+        """merge_shards.py writes exp3b as a DICT keyed 'N10__seed123' (value =
+        {nguyen_id, seed, systems:{hypatiax:{r2_raw}, pysr:{r2_raw}}}); older
+        code paths assumed a flat list. Accept both; None if nothing usable."""
+        if isinstance(m, list):
+            return m or None
+        if isinstance(m, dict):
+            rows_ = [v for k, v in m.items()
+                     if not str(k).startswith("_") and isinstance(v, dict)]
+            return rows_ or None
+        return None
+
     raw42, src42 = load_best("extrapolation", "exp3_nguyen12_seed*.json")
     merged, srcm = load_best("extrapolation/multi_seed", "_merged.json")
+    merged = _as_rows(merged)
 
     # FIX SEARCH-PATH-MERGED (same class of bug as gen_ablation()): exp3b's
     # _merged.json is produced by merge_shards.py but was deleted from the tree
@@ -4106,6 +4119,7 @@ def gen_nguyen12() -> None:
     raw_multi: list[tuple[Path, dict]] = []
     if not isinstance(merged, list):
         _canon, _srcc = load_best("extrapolation/multi_seed", "exp3b_results.json")
+        _canon = _as_rows(_canon)
         if isinstance(_canon, list):
             merged, srcm = _canon, _srcc
     if not isinstance(merged, list):
@@ -4182,6 +4196,8 @@ def gen_nguyen12() -> None:
             if not eq_id:
                 continue
             seed = row.get("seed")
+            if seed in _seeds_ingested:      # never double-count a seed already read from a raw file
+                continue
             systems = row.get("systems") or {}
             for system_name, sysrec in systems.items():
                 if isinstance(sysrec, dict):
@@ -4264,6 +4280,40 @@ def gen_nguyen12() -> None:
     if _ARGS.nguyen12_seed != "all":
         tex = tex.replace("averaged across all available seeds",
                           f"seed {_ARGS.nguyen12_seed} only (the paper's headline definition)")
+    if _ARGS.nguyen12_seed == "all":
+        # Multi-seed table: a MEAN of R^2 is meaningless when one seed gives -inf or
+        # -4e23 (seen in exp3b), so report the MEDIAN plus per-equation success
+        # counts (seeds with R^2 >= 0.9999 / seeds run). Missing/NaN counts as a miss.
+        import statistics as _stm
+        tex = tex.replace(r"\begin{tabular}{llrrr}", r"\begin{tabular}{llrrrrr}")
+        tex = tex.replace(r"\textbf{P $R^2$} & \textbf{H $R^2$} & \textbf{n seeds} \\",
+                          r"\textbf{P median $R^2$} & \textbf{H median $R^2$} & "
+                          r"\textbf{P ok} & \textbf{H ok} & \textbf{n seeds} \\")
+        tex = tex.replace("mean $R^2$ by equation", "median $R^2$ by equation")
+        tex = tex.replace("averaged across all available seeds",
+                          "aggregated over all available seeds (ok = seeds with $R^2 \\ge 0.9999$)")
+        tp = th = tot = 0
+        for eq_id in eq_ids:
+            pv = by_eq[eq_id].get("pysr", [])
+            hv = by_eq[eq_id].get("hypatiax", [])
+            ns = len(seeds_seen[eq_id])
+            pk = sum(1 for v in pv if v >= 0.9999)
+            hk = sum(1 for v in hv if v >= 0.9999)
+            tp += pk; th += hk; tot += ns
+            pm = _stm.median(pv) if pv else None
+            hm = _stm.median(hv) if hv else None
+            tex += (f"{eq_id} & {names.get(eq_id, eq_id)} & {_r(pm)} & {_r(hm)} & "
+                    f"{pk}/{ns} & {hk}/{ns} & {ns} \\\\\n")
+        tex += (r"\midrule" + "\n"
+                f"Success cells ($R^2 \\ge 0.9999$) & & & & {tp}/{tot} ({tp/tot*100:.1f}\\%) "
+                f"& {th}/{tot} ({th/tot*100:.1f}\\%) & \\\\\n")
+        tex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+        write_table("nguyen12.tex", tex)
+        return
+
     n_p = n_h = 0
     for eq_id in eq_ids:
         p_r2 = _mean(by_eq[eq_id].get("pysr", []))
