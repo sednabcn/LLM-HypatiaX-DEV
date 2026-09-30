@@ -47,6 +47,7 @@ LABEL = re.compile(r"\\label\{(tab:[^}]+)\}")
 
 
 def _strip_tex(t: str) -> str:
+    t = re.sub(r"(?<=\d)\{,\}(?=\d)", "", t)  # TeX thousands separator: 2{,}740.0 -> 2740.0
     t = t.replace("\u2212", "-").replace("\u2013", "--").replace("\u2014", "---")  # unicode minus / dashes
     t = re.sub(r"(?<!\\)%.*", "", t)                                 # comments
     # 1.852\times10^{46}  ->  1.852e46   (else mantissa, 10 and 46 count as 3 numbers)

@@ -6102,9 +6102,9 @@ def gen_suppb_sota() -> None:
 \midrule
 """
     if ehd:
-        tex += f"\\EHD{{}} (this work) & Hybrid & {ehd[0]}/{ehd[1]} ({ehd[0]/ehd[1]*100:.1f}\\%) & (this run) \\\\\n"
+        tex += f"\\EHD{{}} (this work) & Hybrid & \\textbf{{{ehd[0]/ehd[1]*100:.1f}\\%}} & ${ehd[0]/ehd[1]*100-_LIT_ROWS[0][2]:+.1f}$\\,pp vs AI Feynman (different sets) \\\\\n"
     if hds:
-        tex += f"\\HDS{{}} (this work) & Hybrid & {hds[0]}/{hds[1]} ({hds[0]/hds[1]*100:.1f}\\%) & (this run) \\\\\n"
+        tex += f"\\HDS{{}} (this work) & Hybrid & \\textbf{{{hds[0]/hds[1]*100:.1f}\\%}} & ${hds[0]/hds[1]*100-_LIT_ROWS[0][2]:+.1f}$\\,pp vs AI Feynman (different sets) \\\\\n"
     tex += r"\midrule" + "\n"
     for name, typ, rate, note in _LIT_ROWS:
         tex += f"{name} & {typ} & {rate:.1f}\\% & {note} \\\\\n"
@@ -6129,7 +6129,7 @@ def gen_suppb_nrmse() -> None:
                 continue
             rmse = res.get("rmse")
             r2 = res.get("r2")
-            if isinstance(rmse, (int, float)) and rmse == rmse and abs(rmse) != float("inf"):
+            if isinstance(rmse, (int, float)) and rmse == rmse and abs(rmse) < 1e100:
                 rmse_by_method.setdefault(mname, []).append(rmse)
             if isinstance(r2, (int, float)) and r2 == r2:
                 r2_by_method.setdefault(mname, []).append(r2)
