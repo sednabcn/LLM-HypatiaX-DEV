@@ -6198,6 +6198,17 @@ def _wilcoxon_signed_rank(a: list[float], b: list[float]) -> dict | None:
         return None
     z = (stat - mu) / sigma
     p = 2 * (1 - _norm_cdf(abs(z)))
+    # Mirror scipy.stats.wilcoxon(method="auto"): exact null distribution when there
+    # are no zero differences and no tied |d|; normal approximation otherwise.
+    has_zero = n < min(len(a), len(b))
+    has_tie = len({abs(d) for d in diffs}) < n
+    if not has_zero and not has_tie and n <= 50:
+        cnt = [0] * (n * (n + 1) // 2 + 1)
+        cnt[0] = 1
+        for r in range(1, n + 1):
+            for s_ in range(len(cnt) - 1, r - 1, -1):
+                cnt[s_] += cnt[s_ - r]
+        p = min(1.0, 2 * sum(cnt[: int(stat) + 1]) / 2 ** n)
     return {"stat": stat, "n": n, "p": p}
 
 
@@ -6222,7 +6233,7 @@ def gen_suppb_wilcoxon() -> None:
 \begin{table}[ht]
 \centering
 \caption{Wilcoxon signed-rank tests on noiseless $\Rsq$, all pairwise
-  comparisons (two-sided, normal approximation with tie correction;
+  comparisons (two-sided, exact distribution when there are no zero differences or ties, normal approximation otherwise;
   invalid/\texttt{nan} $\Rsq$ treated as 0).}
 \label{tab:wilcoxon}
 \small
