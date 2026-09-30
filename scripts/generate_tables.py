@@ -362,6 +362,12 @@ def load_best(subdir: str, glob_pat: str,
     if _pinned:
         # 74-record noiseless DeFi sweep lives here (not directly under RESULTS)
         search_dirs.append(RESULTS / "comparison_results" / "noise-noiseless" / "noiseless" / "defi")
+        # v4 layout: the DeFi result files live under hypatiax_v4/noise-noiseless-v4/
+        # (either inside RESULTS or next to it).  Non-existent dirs are skipped above,
+        # so these two entries are harmless on layouts that do not have them.
+        for _v4 in (RESULTS / "hypatiax_v4" / "noise-noiseless-v4",
+                    RESULTS.parent / "hypatiax_v4" / "noise-noiseless-v4"):
+            search_dirs.append(_v4)
 
     for d in search_dirs:
         if not d.exists():
