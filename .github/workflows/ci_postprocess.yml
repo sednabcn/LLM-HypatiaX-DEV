@@ -1017,15 +1017,26 @@ jobs:
           set -euo pipefail
           ROOT="$(python3 -c "import yaml;print(yaml.safe_load(open('config/experiments.yml'))['results_root'])")"
           mkdir -p "$RUNNER_TEMP/tables"
+          LOG="$RUNNER_TEMP/generate_tables.log"
+          : > "$LOG"
           python3 scripts/generate_tables.py \
             --results-dir "$ROOT" \
-            --output-dir "$RUNNER_TEMP/tables"
+            --output-dir "$RUNNER_TEMP/tables" 2>&1 | tee -a "$LOG"
           # five-seed Nguyen-12 tables (tab:nguyen12_fiveseed, tab:nguyen12_byeq): standalone
           # generator, independent of gen_nguyen12(); writes nothing if a seed is incomplete.
           python3 scripts/generate_nguyen12_fiveseed.py \
             --results-dir "$ROOT" \
-            --output-dir "$RUNNER_TEMP/tables"
+            --output-dir "$RUNNER_TEMP/tables" 2>&1 | tee -a "$LOG"
           echo "Generated $(ls "$RUNNER_TEMP/tables"/*.tex 2>/dev/null | wc -l) table file(s)."
+
+          # Surface every skipped table (and its reason) in the job summary so a
+          # NOSOURCE row can be traced to a missing path/file without opening the raw log.
+          {
+            echo "### Tables the generators skipped (reason per table)"
+            echo '```'
+            grep -E "SKIP" "$LOG" || echo "(none)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: "Check paper tables (strict NOSOURCE)"
         id: check
@@ -1058,4 +1069,5 @@ jobs:
           path: |
             ${{ runner.temp }}/paper_table_report.md
             ${{ runner.temp }}/todo_exceptions.json
+            ${{ runner.temp }}/generate_tables.log
           if-no-files-found: ignore
