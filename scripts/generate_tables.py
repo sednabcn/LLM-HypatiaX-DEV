@@ -390,14 +390,22 @@ def load_best(subdir: str, glob_pat: str,
     return None, None
 
 
-def load_noiseless_tests() -> tuple[list[dict], Path | None]:
+# Tables whose manuscript caption names the ten protocol_core_noiseless_20260812_*.json
+# shards (verified: these reproduce the paper's Wilcoxon W values) read exp2_multi/.
+PAPER_STATS_SOURCE = ("feynman-tests/exp2_multi",)
+
+
+def load_noiseless_tests(source_subdirs: tuple[str, ...] | None = None) -> tuple[list[dict], Path | None]:
     """Merge every protocol_core_noiseless_*.json shard (11 shards = the 30-test
     noiseless set) instead of reading only the newest file. Key = (domain,
     description); newest mtime wins. Returns (tests, newest_shard)."""
     base = RESULTS / "comparison_results"
-    roots = [base / "noise-noiseless" / "noiseless" / "defi",
-             base / "noise-noiseless" / "noiseless",
-             base / "feynman-tests" / "exp2"]
+    if source_subdirs:
+        roots = [base / sd for sd in source_subdirs]
+    else:
+        roots = [base / "noise-noiseless" / "noiseless" / "defi",
+                 base / "noise-noiseless" / "noiseless",
+                 base / "feynman-tests" / "exp2"]
     files: list[Path] = []
     for r in roots:
         if r.exists():
@@ -6005,8 +6013,8 @@ Sample size & $n \in \{50,100,200,500,750,1000\}$  & $\sigma=5\%$ & 6 sizes  \\
 
 
 # ── (A) tab:hardcoded — is_hardcoded-flagged Pure LLM equations ─────────────
-def _load_noiseless_tests() -> tuple[list[dict], Path | None]:
-    return load_noiseless_tests()
+def _load_noiseless_tests(source_subdirs: tuple[str, ...] | None = None) -> tuple[list[dict], Path | None]:
+    return load_noiseless_tests(source_subdirs)
 
 
 def gen_suppb_hardcoded() -> None:
@@ -6109,7 +6117,7 @@ def gen_suppb_sota() -> None:
 
 # ── (A) tab:nrmse — RMSE / NRMSE per method from noiseless tests ────────────
 def gen_suppb_nrmse() -> None:
-    tests, src = _load_noiseless_tests()
+    tests, src = _load_noiseless_tests(PAPER_STATS_SOURCE)
     if not tests:
         skip_table("nrmse.tex", "no protocol_core_noiseless_*.json tests found")
         return
@@ -6194,7 +6202,7 @@ def _wilcoxon_signed_rank(a: list[float], b: list[float]) -> dict | None:
 
 
 def gen_suppb_wilcoxon() -> None:
-    tests, src = _load_noiseless_tests()
+    tests, src = _load_noiseless_tests(PAPER_STATS_SOURCE)
     if not tests:
         skip_table("wilcoxon.tex", "no protocol_core_noiseless_*.json tests found")
         return
