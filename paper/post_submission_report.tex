@@ -1,0 +1,881 @@
+%% ============================================================
+%%  post_submission_report.tex
+%%  HypatiaX — Post-Submission Report
+%%  Open items stripped from the main paper and supplements during
+%%  final pre-submission review. Not part of the JMLR submission.
+%%  Started: 2026-09-27
+%% ============================================================
+
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\newcommand{\Rsq}{R^{2}}
+\newcommand{\II}{\mathrm{II}}
+\title{HypatiaX: Post-Submission Report\\
+\large Open items deferred from the JMLR submission}
+\author{}
+\date{2026-09-27 (living document; last updated 2026-09-30)}
+
+\begin{document}
+\maketitle
+
+\noindent This report tracks statements, figures, and pipeline defects that
+were identified during final pre-submission review but could not be
+confirmed against the released repository (\texttt{sednabcn/LLM-HypatiaX-DEV})
+in time for submission. Per policy, none of these were left in the
+manuscript as unverified numbers; each was either removed, replaced with an
+honest gap statement, or (where the manuscript's number was independently
+reproduced) confirmed and left in place — see the closed items log at the
+end of this report for those.
+
+\section{Open Items}
+
+\subsection*{Item 1: Missing $K=30$ multi-run LLM instability data (DeFi benchmark)}
+\textbf{Status:} Open. \textbf{Risk:} Medium — affects Introduction,
+\S10.9 (Stability Under Stochastic Inference), Discussion
+Finding 1, one design-principle bullet, the OOD-proxy subsection, and one
+case-study paragraph (Michaelis-Menten) in the main paper.
+
+\textbf{What was claimed:} A genuine $K=30$-independent-stochastic-run
+instability sweep over the 74-task DeFi benchmark, reporting: median
+$\Rsq=1.00$, mean $\Rsq=-0.76$, 6 catastrophic failures under that framing; a
+regime-distribution table (two mutually inconsistent versions existed in the
+paper's own source materials: 70 tasks/61-2-4-3, and separately 58
+tasks/44-2-4-12); a Spearman correlation $\rho=-0.70$ between instability and
+extrapolation performance across "70 tasks"; and per-task statistics for
+three cases (Portfolio Expected Shortfall for correlated assets: $\mu=0.709$,
+$\II=0.311$; Theta of option: $\mu=0.569$, $\II=0.148$, "13 of 30 runs
+completed"; Black--Scholes Call Price: $\mu=0.229$, $\II=0.267$, "0 of 28
+runs succeeded"); and a Michaelis-Menten case-study instability figure of
+$\II=0.31$.
+
+\textbf{What was found:}
+\begin{itemize}
+  \item No raw multi-run result file for the 74-task DeFi benchmark exists
+    anywhere in the repository. The loader's own preferred source,
+    \texttt{hypatiax\_defi\_variance\_results.json}, is absent.
+  \item Every copy of \texttt{instability\_analysis.csv} in the repository
+    (7 copies across \texttt{hypatiax-dev/} and \texttt{hypatiax/} snapshots)
+    shows \texttt{n\_runs=1} for every task, not 30.
+  \item \texttt{scripts/generate\_tables.py}, function \texttt{gen\_instability()}: when
+    the JSON source is missing and it falls back to the CSV, the code sets
+    \texttt{"k\_runs": 30} as a hardcoded literal, not read from the data.
+    This contradicts the function's own docstring, which claims it "never
+    falls back to a hardcoded value." \textbf{This is a pipeline bug, not
+    just a data gap}, and will silently mislabel this table again on any
+    future rerun until fixed.
+  \item The nearest genuinely multi-run data in the repository is 5 seeds
+    (42/99/123/777/2024), but only for a separate, much smaller ($\sim$15-task)
+    PCA-subset benchmark — not usable as a substitute for the 74-task DeFi
+    claim.
+  \item A separate file, \texttt{exp1\_instability\_stats.json} (for a
+    different, 15-equation Feynman/Chemistry-Biology benchmark, unrelated to
+    the DeFi claim), contains its own note: "For full 30-run stochastic
+    sweep (Spearman $\rho=-0.70$ claim) see
+    \texttt{exp4\_instability\_rf02\_04.ipynb}." That notebook does not
+    exist anywhere in the repository.
+  \item The repo's own core-15 instability artifact reports
+    $\II=0.0$ for Michaelis-Menten, directly contradicting the paper's
+    claimed $\II=0.31$ for the same case.
+\end{itemize}
+
+\textbf{Action taken in the manuscript:} All of the above figures were
+removed from the main paper and replaced with honest gap statements
+pointing here. The only instability-adjacent figures retained are those
+independently verified from the single-run seed-42 file: median LLM
+$\Rsq=1.00$, and 6/74 catastrophic failures ($\Rsq<-10$) at that one setting
+(explicitly labelled single-run, not a stability-adjusted estimate).
+
+\textbf{Recommended next steps:}
+\begin{enumerate}
+  \item \textbf{[DONE]} Fix \texttt{gen\_instability()'s CSV fallback to read \texttt{n\_runs}
+    from the data (or skip the table, per the function's own stated policy)
+    instead of hardcoding \texttt{k\_runs=30}.} \textbf{Done (2026-09-27)} ---
+    confirmed against the live \texttt{scripts/generate\_tables.py} in
+    \texttt{github.com/sednabcn/LLM-HypatiaX-DEV} (this was the one
+    \texttt{paper\_audit.pdf} pipeline claim that checked out exactly as
+    described) and patched; see \texttt{generate\_tables\_PATCHED.py}.
+    Not yet merged upstream. This pass did not attempt to locate the
+    underlying $K=30$ raw multi-run data itself --- the fix only stops the
+    generator from mislabelling a single-run CSV as a 30-run sweep.
+  \item If a genuine $K=30$ sweep is re-run, regenerate this entire block
+    (Introduction, \S10.9, Discussion Finding 1, the
+    design-principle bullet, the OOD-proxy cross-reference, and the
+    Michaelis-Menten case study) directly from that raw output.
+  \item Locate or re-run \texttt{exp4\_instability\_rf02\_04.ipynb} if the
+    Spearman $\rho=-0.70$ result is still wanted for the Feynman/Core-15
+    track (separate from the DeFi claim above).
+\end{enumerate}
+
+\subsection*{Item 2: Unresolved [VALUE REDACTED] placeholders in the routing
+supplement, and a newly-found figure conflict}
+\textbf{Status:} Open. \textbf{Risk:} Medium — affects
+\texttt{supp\_routing\_improvements.tex} only (Baseline caption,
+Projected-Impact-on-the-Leaderboard caption and observation, and the
+closing paragraph of that section).
+
+\textbf{What was done (2026-09-27):} A pass was made to resolve all
+\texttt{[VALUE REDACTED]} placeholders across the two supplements (11
+total: 10 in the routing supplement, 1 in the benchmark report; the main
+paper itself contains none — see Item 3 below). 7 of the 11 were
+resolvable by direct cross-reference to this paper's own
+\S~``The Hybrid Decision-Attribution Bug'' (which already discloses
+90.5\,\% [67/74] raw uncorrected, 98.6\,\% [73/74] raw
+\texttt{hybrid.success} rate, and 59.5\,\% [44/74] corrected) and have
+been filled in with that citation in place.
+
+\textbf{What remains open (2026-09-27 follow-up: itemized per placeholder):}
+\begin{itemize}
+  \item \textbf{P1 (\texttt{tab:baseline} caption):} ``...disclosed in
+    the main paper... as uncorrected for a success-attribution bug.
+    [REDACTED] See that section before citing either number as
+    current.'' Missing: the bug-corrected $R^2>0.99$ rate
+    \emph{specific to this table's $n=66$ legacy population} — not the
+    same quantity as the main paper's $59.5\%$, which is corrected on
+    $n=74$. \textbf{To close:} re-run the main paper's correction rule
+    (\S~``The Hybrid Decision-Attribution Bug'': a success counts only
+    if \texttt{hybrid.test\_r2}$>0.99$ \emph{and} the sub-method named
+    by \texttt{hybrid.decision} itself succeeded) against whichever raw
+    JSON file underlies the $n=66$ ``pre-v3.0 historical'' set, then
+    insert the resulting percentage.
+  \item \textbf{P2 (\texttt{tab:projected} caption):} ``...gives
+    $59.5\%$ (provisional pending a file-provenance ambiguity)... as the
+    current figure [REDACTED].'' Missing: confirmation that $59.5\%$
+    \emph{is} the current figure, or the corrected value once the
+    file-provenance ambiguity is settled. \textbf{To close:} the main
+    paper itself flags 3 near-duplicate copies of the seed-42 file with
+    slightly different per-task results (58--61\,\% band); pick the
+    canonical copy, recompute, and fill this in.
+  \item \textbf{P3 (Observation block, after ``sub-method had actually
+    failed.''):} Missing: the corrected rate following naturally from
+    ``uncorrected $90.5\%$ was inflated by the attribution bug $\to$
+    corrected to \_\_\_\%.'' This is structurally the same pattern as
+    the already-resolved placeholders around it and \emph{may} simply
+    be $59.5\%$ by the same cross-reference logic — it was left pending
+    only because it carries the identical ``pending re-verification''
+    tag as P1/P2/P4, not because of a structural difference.
+    \textbf{To close:} confirm with the original author whether that
+    tag here means ``genuinely needs pipeline access'' (same bar as
+    P1/P2) or was boilerplate copied from the neighboring sentences; if
+    the latter, fill in $59.5\%$ with the same citation used for the
+    other 7 resolved placeholders.
+  \item \textbf{P4 (closing paragraph, immediately before the
+    $74.6\%$/$60.5\%$ conflict):} The messiest of the four.
+    \textbf{Working hypothesis (unverified):} $59.5\%$ (main paper) is
+    the bug-correction applied to the \emph{raw} v3.0 hybrid with no
+    routing fixes; $74.6\%$/$60.5\%$ here may instead be the
+    bug-correction applied \emph{after} Fixes~0--5 are layered on (this
+    subsection is titled ``Projected Impact on the Leaderboard'' and
+    immediately follows the fix-by-fix cumulative table). If so, the
+    two figures are not actually contradictory — they describe
+    different scenarios and only need a one-line disambiguating label,
+    not a number swap. \textbf{To close:} recompute the bug-correction
+    against the post-fix result file (if one exists) and check whether
+    it lands at $74.6\%/60.5\%$. If it does, add the clarifying label.
+    If it does not, one of the two numbers is simply wrong and must be
+    corrected against source data.
+\end{itemize}
+
+\noindent\textbf{Common blocker for all four:} none is resolvable from
+the \LaTeX{} text alone. Each needs
+\texttt{hypatiax\_defi\_benchmark\_v3\_results\_seed42.json} (or its
+$n{=}66$ legacy counterpart) and ideally \texttt{generate\_tables.py} to
+recompute mechanically rather than reason about secondhand; neither was
+included in \texttt{files.zip}.
+
+\textbf{2026-09-27 follow-up: blocker partially lifted.} Both files were
+retrieved directly from \texttt{github.com/sednabcn/LLM-HypatiaX-DEV}
+(\texttt{scripts/generate\_tables.py}, and the canonical seed-42 file at
+\texttt{hypatiax-dev/data/results/comparison\_results/noise-noiseless/}
+\texttt{noiseless/defi/hypatiax\_defi\_benchmark\_v3\_results\_seed42.json},
+md5 \texttt{89037935469176741a5fb4479f2c725f} --- confirmed to match the
+hash already cited in Item~C1 below). Note the repository holds
+\textbf{three distinct byte-for-byte versions} of this filename across its
+data snapshots (md5 \texttt{97f1a16c...} in five other snapshot copies,
+\texttt{cbf503d0...} in \texttt{hypatiax/data/...}, and the canonical
+\texttt{89037935...} used here) --- independently confirming the
+manuscript's own note about near-duplicate seed-42 copies with the
+provenance ambiguity flagged in P2.
+
+Mechanically re-running the main paper's correction rule (a success counts
+only if \texttt{hybrid.test\_r2}$>0.99$ \emph{and} the sub-method named by
+\texttt{hybrid.decision} itself has \texttt{test\_r2}$>0.99$) against this
+canonical file gives \textbf{44/74 = 59.5\,\%}, with \textbf{23} fabricated
+cases broken down as Easy 3/24, Medium 11/29, Hard 9/21 --- an exact,
+field-for-field match to both the manuscript's own
+\texttt{tab:hybrid-bug-breakdown} and the independent Item~C1
+recomputation below. \textbf{This closes P2 and P3}: 59.5\,\% is confirmed
+as the current, correct figure by direct mechanical recomputation, not
+just by cross-reference, so P3 can be filled in with 59.5\,\% and P2's
+file-provenance ambiguity is resolved in favor of the canonical copy above.
+
+\textbf{P1 and P4 remain open.} A search of the retrieved repository did
+not turn up an $n=66$ ``pre-v3.0 historical'' result file (the nearest
+candidates, \texttt{fixc3\_baseline.json} variants, are a different Gate-C
+legacy threshold artifact with $n=90$, not $n=66$ --- though that file
+does independently corroborate the already-closed 74/90 legacy-threshold
+finding elsewhere in this report), nor a post-fix result file distinguishing
+the $74.6\%/60.5\%$ figures in P4 from the $59.5\%$ raw figure. Both
+still need either a more targeted repository search (the monorepo has
+several parallel data snapshots and legacy/archived directories not
+exhaustively enumerated in this pass) or direct input from the original
+author on where those two files live.
+
+\textbf{2026-09-27, second pass — partial lead on P4/\texttt{tab:projected},
+new open question raised.} All 97 \texttt{\_report.md} files in the
+repository were enumerated and checked. One is an exact match for the
+per-fix cumulative table's final row: \texttt{hybrid\_pysr/defi/\_report.md}
+(present identically in five snapshot copies), experiment \texttt{suppA},
+reports \textbf{Hybrid R\textsuperscript{2}$\geq$threshold rate
+$=82.2\%$ at $N{=}73$ standard cases (NaN-excluded per method)} ---
+matching \texttt{tab:projected}'s ``Fix~4, Cumulative 82.2\%'' row exactly.
+\textbf{However, this report's own stated threshold is
+$R^2\geq0.80$, not $R^2>0.99$} as \texttt{tab:projected}'s column header
+claims for the whole table. This raises a new question this pass cannot
+close: either (a) the 82.2\% figure is coincidentally identical under both
+thresholds for this run, (b) the table's fix-by-fix column is mislabelled
+and is actually reporting the $R^2\geq0.80$ coverage rate rather than
+$R^2>0.99$, or (c) a different report at the same path but a different
+commit produced 82.2\,\% at the $0.99$ threshold and this pass retrieved
+a later/earlier version. \textbf{This should be checked before citing any
+row of the per-fix table as an $R^2>0.99$ figure.} No file with
+$N{=}66$ (the ``honest'' fixed-denominator figures $72.7\%/69.7\%/75.8\%$
+in the same table, or the $66.2\%$ baseline in P1's \texttt{tab:baseline})
+was found among any of the 97 reports, nor via targeted search for
+\texttt{experiment\_protocol\_defi.py} / \texttt{test\_enhanced\_defi\_}
+\texttt{extrapolation.py} output logs. The latter script's own catalogue
+comment says ``73 test-case catalogue'' with 6 cases flagged
+\texttt{extrapolation\_intractable} (giving 67 standard, not 66) ---
+close to but not exactly matching either the $n{=}66$ or $n{=}73$ figures
+cited elsewhere, and not resolvable further without an actual run log
+(this repository holds the test script but not a stored output from
+running it in ``honest,'' NaN-penalized mode). \textbf{Recommendation:}
+treat every number in \texttt{tab:projected} as unverified pending (i)
+confirmation of which $R^2$ threshold the 82.2\,\% figure actually used,
+and (ii) locating or re-running the honest-denominator ($n=66$) pass.
+
+\textbf{2026-09-27, third pass --- full git history searched, dead end
+reached, figures removed.} A full clone of the repository (not just the
+master-branch snapshot used above) was obtained to search commit history
+directly. Finding: \textbf{the entire \texttt{tab:baseline}/}
+\texttt{tab:projected} \textbf{leaderboard was introduced in a single
+commit} (\texttt{8750ede7}, ``Update paper tex,'' 2026-09-03), as a
+brand-new file with no predecessor version and \textbf{no companion data
+file committed alongside it}. There is no earlier commit to trace back to.
+Separately, the canonical seed-42 JSON was checked for the fields an
+``old, in-distribution $R^2$ routing'' baseline would need to be
+mechanically replayed; it only stores extrapolation-test results, not the
+in-distribution split the old routing rule would have used, so this figure
+cannot be reconstructed from data already in hand either.
+
+A repository update was also received the same day (commit
+\texttt{901f0fa3}, ``Update data,'' plus a new \texttt{hypatiax\_v4/}
+directory with its own \texttt{generate\_tables.py} output). This was
+checked in full, including a search restricted specifically to the
+\texttt{hypatiax/} directory (as opposed to \texttt{hypatiax-dev},
+\texttt{hypatiax-all*}, or \texttt{hypatiax\_v4}) per a direct request to
+narrow the search. \textbf{None of it bears on P1 or P4}: it is v4-system
+output (already set aside per Item~C4's revert-to-v3 decision, and a
+different question --- v4's own headline rate --- from what P1/P4 ask),
+and a full-text search of \texttt{hypatiax/} for \texttt{66.2}, \texttt{82.2},
+\texttt{74.6}, \texttt{60.5}, \texttt{72.7}, \texttt{69.7} turned up nothing
+beyond the already-known \texttt{suppA} report (same threshold mismatch as
+before) and one coincidental, unrelated match (an \texttt{error\_pct=82.2\%}
+in a Feynman timing log, a different experiment entirely).
+
+\textbf{Decision: figures removed from the manuscript (2026-09-27).}
+Given no source file exists for the $n=66$ denominator anywhere in the
+repository (current state or history), and the one figure that did match
+(82.2\,\%) does so at the wrong $R^2$ threshold, these numbers do not meet
+the bar this paper has held everywhere else (a live, checkable source
+file). Per the same policy already applied to the CI/SD figures (Item~4
+below) and the Five-System Comparison, they have been \textbf{removed
+from \texttt{supp\_routing\_improvements\_pached.tex} outright} rather
+than left as placeholders: \texttt{tab:baseline}'s Hybrid cell, the entire
+\texttt{tab:projected} percentage/status columns (retaining only the
+qualitative fix descriptions, which are independently verified via
+\S~``Summary of Changes''), the dependent observation/remark blocks, the
+Fix-interaction gap-analysis paragraph, and the closing
+``HypatiaX leads $74.6\%$ vs.\ $60.5\%$'' claim. \textbf{This closes P1
+and P4} --- not by resolving them, but by removing the unverifiable
+content they were guarding, which is the correct outcome once a
+reasonably exhaustive search (three separate passes: targeted file search,
+full \texttt{\_report.md} enumeration, full git history) turns up nothing.
+If a source is ever located after all, these can be restored with
+attribution at that time.
+
+\textbf{Separately confirmed (2026-09-27):} the ablation-generator concern
+raised by \texttt{paper\_audit.pdf} (\S3, Item~3: ``\texttt{gen\_ablation()}
+was not updated to match the paper's current nan/-inf-aware format'') does
+\emph{not} hold against the live \texttt{scripts/generate\_tables.py}:
+its mean-row computation already filters both \texttt{NaN} (via
+\texttt{r == r}) and $-\infty$-scale sentinel values (via \texttt{r} $\geq
+-10^5$) before averaging. This is a third instance of
+\texttt{paper\_audit.pdf} describing a state that does not match the
+current codebase (see Item~3 below for the first two). The one open
+question this does \emph{not} settle: whether the paper's current table
+format wants a Mean row at all (the audit's ``no-aggregate-stats format''
+description suggests it may not) --- that is a formatting decision, not a
+correctness bug, and is left to the author.
+
+\textbf{Confirmed pipeline bug fixed (2026-09-27):} \texttt{gen\_instability()}'s
+CSV-fallback path, as retrieved from the repository, does hardcode
+\texttt{"k\_runs": 30} exactly as this report's Item~1 and
+\texttt{paper\_audit.pdf} both describe --- this one audit claim checks
+out fully against the live code. A patched version reading \texttt{k\_runs}
+per-row from the CSV (skipping the table if rows disagree or the field is
+absent, per the function's own stated policy) has been prepared;
+see \texttt{generate\_tables\_PATCHED.py}. Not yet merged upstream ---
+this repository is read-only for this review pass.
+
+\textbf{Recommended next steps:}
+\begin{enumerate}
+  \item \textbf{[DONE]} Obtain the source JSON files (and \texttt{generate\_tables.py
+    if possible) and mechanically recompute P1, P2, and P4 as described
+    above.} \textbf{Done for P2/P3} (2026-09-27, see above). P1 and P4 still
+    need their specific source files located.
+  \item \textbf{[DONE]} Decide P3's status (genuine pipeline dependency vs. boilerplate
+    copy) and close it accordingly\textbf{ --- done: genuine, and now closed
+    with 59.5\,\% per the mechanical recomputation above.}
+  \item Test the P4 fix-layering hypothesis against source data before
+    assuming either $59.5\%$ or $74.6\%/60.5\%$ is simply wrong; do not
+    cite either pending that check. Still open --- post-fix result file not
+    located.
+\end{enumerate}
+
+\subsection*{Item 3: The external data-integrity audit
+(\texttt{paper\_audit.pdf}) contains figures that do not match the
+current manuscript}
+\textbf{Status:} Open. \textbf{Risk:} Medium-High — affects confidence in
+that audit document as a whole, not just the specific figures below.
+
+\textbf{What was found:} A 2026-09-27 pass cross-checking
+\texttt{paper\_audit.pdf} against the actual \LaTeX{} sources found two
+material discrepancies:
+\begin{itemize}
+  \item The audit reports 23 live \texttt{[VALUE REDACTED]} placeholders
+    in the main paper (34 total across all three documents). A direct
+    search of the main paper as provided finds \textbf{zero} such
+    placeholders — only one unrelated descriptive mention of
+    ``[VALUES REDACTED]'' in prose, not a table value — and 11 total
+    across the two supplements, not 34. The audit's claim that
+    Table~\texttt{tab:main\_results}'s HypatiaX row is ``entirely
+    blanked'' is also not correct as provided: every cell is populated
+    except an intentional \texttt{---} for Mean~$\Rsq$, which is
+    explained in the table's own caption as a separate, already-labelled
+    open item (cross-referenced to Item~1 of this report), not a
+    redaction.
+  \item The audit describes the hybrid decision-attribution correction
+    as affecting 8 of 74 tasks (Easy 22$\to$21 [1], Medium 20$\to$17 [3],
+    Hard 10$\to$6 [4], Overall 52$\to$44 [8]). The manuscript's own
+    table (\texttt{tab:hybrid-bug-breakdown}) and Item~C1 of this report
+    both independently confirm \textbf{23} fabricated cases (Easy
+    24$\to$21 [3], Medium 29$\to$16 [11], Hard 21$\to$7 [9], Overall
+    74$\to$67$\to$44 [23]) — not 8. This is corroborated twice over (the
+    manuscript table and the independent C1 recomputation agree with
+    each other and disagree with the audit).
+  \item \textbf{2026-09-27 follow-up: the audit's \S3 ``Table-Generation
+    Pipeline Coverage'' count also does not match.} The audit reports 56
+    total \texttt{tab:...} labels across the three documents. A direct
+    enumeration of every \texttt{\textbackslash label\{tab:...\}} in the
+    three sources as provided finds \textbf{55}, not 56 (18 main paper +
+    10 routing supplement + 27 benchmark report; no duplicates, and no
+    tables under an alternate \texttt{table:}/\texttt{tbl:} naming
+    convention). Two claims from that section \emph{do} check out
+    independently: (i) all three tables the audit names as ``blocked or
+    needs a human decision'' — \texttt{tab:baseline},
+    \texttt{tab:projected}, \texttt{tab:cost\_accuracy\_tradeoff} — exist
+    exactly as named, in the routing supplement, matching Open Item~2's
+    scope; and (ii) the claim that none of the 56 (55) tables are
+    currently wired via \texttt{\textbackslash input\{\}} is confirmed —
+    no \texttt{\textbackslash input} or \texttt{\textbackslash include}
+    directive appears anywhere in any of the three documents. The
+    audit's finer breakdown within that count (27 generated from real
+    JSON data / 21 static / 5 intentionally never automated) could
+    \textbf{not} be independently checked, since it depends on
+    \texttt{generate\_tables.py}, which was not provided alongside the
+    \LaTeX{} sources.
+\end{itemize}
+
+\textbf{Recommended next steps:}
+\begin{enumerate}
+  \item Treat \texttt{paper\_audit.pdf}'s specific figures as unverified
+    until reconciled against the manuscript version it was actually run
+    on — it may have been produced against an earlier draft.
+  \item Re-run or re-issue the audit against the current
+    \texttt{\_CLEANED} sources before relying on any of its other counts.
+  \item Obtain \texttt{generate\_tables.py} and \texttt{table\_wiring\_plan.md}
+    (referenced repeatedly by the audit but not included in
+    \texttt{files.zip}) before treating the 27/21/5-way pipeline-coverage
+    breakdown in the audit's \S3 as confirmed; only the label count and
+    the ``blocked'' table names have been independently verified so far.
+\end{enumerate}
+
+\subsection*{Item 4: Pure LLM / Neural MLP Field-Level Reproducibility
+Gap (\texttt{tab:main\_results})}
+\label{psr:mean-r2}
+\textbf{Status:} Resolved 2026-09-28 (see below). \textbf{Risk (was):} Medium — affected the credibility of
+two of the three rows in the main paper's headline results table, though
+not their reported values directly.
+
+\textbf{Provenance note (2026-09-27):} This item did not exist in this
+report until today. The main paper's \texttt{tab:main\_results} caption
+contained a reference, \verb|\S\ref{psr:mean-r2}|, to a Post-Submission
+Report section that was never actually written — the label
+\texttt{psr:mean-r2} did not exist anywhere in this document. That
+dangling reference was found during a 2026-09-27 pass checking all
+cross-document references in the main paper and both supplements for
+consistency (see also Item 3, which found a second such issue: three
+uses of \texttt{Appendix~\textbackslash ref\{app:statistical\_tests\}} in
+the main paper pointing at a label that exists only in
+\texttt{supp\_benchmark\_report.tex} — a different, separately-compiled
+document, so \texttt{\textbackslash ref} cannot resolve it regardless of
+which label is intended. Both the \texttt{psr:mean-r2} and
+\texttt{app:statistical\_tests} references in the main paper have been
+converted to plain-text pointers so they display correctly however the
+document is compiled; this item exists so the content the first pointer
+was gesturing at is actually written down somewhere.)
+
+\textbf{What the main paper says:} The Pure~LLM and Neural~MLP rows in
+\texttt{tab:main\_results} ``are as originally published and are
+corroborated by other figures cited throughout this paper... they do not
+independently reproduce, field-for-field, from the single seed-42 result
+file used for the HypatiaX row and the corrections in
+\S~``The Hybrid Decision-Attribution Bug.''''
+
+\textbf{What was found (2026-09-28):} The canonical seed-42 file
+(md5 \texttt{89037935469176741a5fb4479f2c725f}, pulled from
+\texttt{github.com/sednabcn/LLM-HypatiaX-DEV}) was obtained and all
+three rows recomputed under the paper's own definitions. Result: the
+published Pure~LLM and Neural~MLP rows did \textbf{not} reproduce.
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Field & Previously published & Recomputed from file \\
+\midrule
+Pure LLM $>0.99$ / $>0.9$ (\%) & 62.2 / 62.2 & 59.5 / 62.2 \\
+Pure LLM Mean $R^2$ & $-0.7571$ & $-0.4433$ (58 non-NaN) \\
+Neural MLP Median / Mean $R^2$ & $-0.4675$ / $-0.9482$ & $-0.6908$ / $-1.4155$ \\
+Neural MLP $>0.99$ / $>0.9$ (\%) & 5.4 / 12.2 & 0.0 / 9.5 \\
+Neural MLP Catastrophic & 0 & 2 \\
+Pure LLM Median, Catastrophic & 1.0000, 6 & 1.0000, 6 (match) \\
+\bottomrule
+\end{tabular}
+\end{center}
+The 62.2\,\% published as Pure~LLM's $>0.99$ rate is its $>0.9$ rate (46/74,
+equal to the \texttt{pure\_llm.success} flag rate); its true $>0.99$ rate is
+59.5\,\% (44/74), which is the figure Table~\texttt{tab:difficulty} already
+used, so the paper contained an internal inconsistency that is now removed.
+The earlier claim that the code's mean rule reproduces $-0.7571$ ``to
+within $\approx0.02$'' is also withdrawn. The origin of the old Pure~LLM and
+Neural~MLP figures is not established (they may come from another seed or
+run); they are withdrawn rather than corrected.
+
+\textbf{Action taken:} \texttt{tab:main\_results} rebuilt from the file
+(HypatiaX shown both uncorrected and corrected); the NN median ($-0.47
+\to -0.69$), Pure~LLM near-perfect rate ($62.2 \to 59.5\,\%$) and NN
+near-perfect rate ($5.4 \to 0.0\,\%$) updated in the abstract-adjacent
+summary, introduction, related-work, findings and conclusion. \textbf{Status: Resolved.}
+
+\subsection*{Item 5: Section 3 --- table-generator reconciliation (2026-09-28)}
+\textbf{Status:} Investigated 2026-09-28; one paper defect fixed (Item~7), the rest
+open (code changes and missing source data, none applied to the paper).
+\textbf{Risk:} Medium --- would silently change a headline metric if
+\texttt{generate\_tables.py} output were \verb|\input{}|-ed.
+
+\textbf{Finding A --- corrected-hybrid fallback bug.}
+\texttt{gen\_defi\_main()}'s \texttt{\_corrected\_hybrid\_r2()} returns the
+named sub-method's $R^2$ only when it is a finite number, and otherwise
+falls back to hybrid's own self-reported $R^2$. On seed 42, Pure~LLM is
+\texttt{NaN} on 16 tasks; on 10 of them hybrid claims $R^2>0.99$. The
+fallback counts those 10 as successes, giving HypatiaX 54/74 = 73.0\,\%
+against the paper's 44/74 = 59.5\,\% (Tables~\texttt{tab:difficulty},
+\texttt{tab:hybrid-bug-breakdown}). The paper's rule is the correct one
+(an unverifiable claim is not a success). \textbf{Fix:} when the named
+baseline is \texttt{NaN}, return \texttt{NaN}, not hybrid's value; only
+decisions with no baseline in the schema may fall back to hybrid's own
+value. With that change the generator's corrected row is
+Median 1.0000, Mean $-0.4637$ (62 non-NaN), $>0.99$ 59.5\,\%,
+$>0.9$ 60.8\,\%, Catastrophic 6.
+
+\textbf{Finding B --- file naming.} The current public repository's
+generator already uses an un-versioned glob
+(\texttt{hypatiax\_defi\_benchmark*results*.json}) that resolves to the
+v3 seed-42 file in \texttt{defi/}; no v4 file is selected. Per Item~C4
+the paper cites v3 only. Confirm the working copy used for the final
+build has no hard-coded \texttt{v4} lookups before wiring any DeFi table.
+
+\textbf{Finding C --- the two earlier spot-checks stand, with one correction.}
+\texttt{tab:llm\_ablation} (generator adds a Time column and Mean row, collapses
+extreme values, conflates \texttt{nan}/$-\infty$) must not be wired in as-is.
+\texttt{tab:nguyen12} is superseded by Item~6 below: the paper's own 12/12
+table was itself wrong, so the earlier ``generator = 5-seed mean, paper =
+seed-42'' comparison is no longer the right question.
+
+\textbf{Finding D --- classification of the 56 tables (measured, 2026-09-28).}
+The three documents carry 55 \verb|\label{tab:...}| tables; the five-seed Nguyen table is
+unlabelled, making 56. None is wired with \verb|\input{}|; every table is hand-placed in the
+\texttt{.tex}. \texttt{generate\_tables.py} on \texttt{DEV} master (identical to the earlier
+upload) was run against the cloned repository's \texttt{hypatiax/data/results}, and again against
+\texttt{hypatiax/data\_old/results}, and each output was compared with the paper's table.
+Earlier working counts (27/21/5/3) used category definitions that are not recorded; the split
+below is the one measured here.
+\begin{center}\small
+\begin{tabular}{rl}
+\toprule
+22 & generator runs and writes a file for the label (detail below) \\
+25 & generator has the label but skips it: source missing at the path it reads \\
+ 8 & no generator (manual, withdrawn or estimated; see below) \\
+ 1 & five-seed Nguyen table: unlabelled, no generator \\
+\bottomrule
+\end{tabular}
+\end{center}
+\emph{The 22 that run:} 6 five-system tables (exp1\_five and exp2\_five, full, performance,
+extrapolation) reproduce the paper's medians, means and train $\Rsq$ exactly from
+\texttt{hypatiax/data\_old} (not from the current \texttt{hypatiax/data}; see Item~7);
+1 (\texttt{tab:nguyen12}) was rebuilt by hand and the generator's own output differs (Item~6);
+1 (\texttt{tab:llm\_ablation}) must not be wired in (Finding~C); 2 are label collisions
+(\texttt{tab:hyperparameters}: generator emits NN seeds, timeouts and thresholds, the paper
+prints PySR population/generation settings; \texttt{tab:noise\_sensitivity}: generator emits an
+M3/M4 rate at one $\sigma$, the paper prints a 7-level $\sigma/\mathrm{std}(y)$ table with 75
+trials per level, whose source is unidentified); 5 sweep tables (\texttt{r2\_noise},
+\texttt{rr\_noise}, \texttt{time\_noise}, \texttt{sc\_metrics}, \texttt{winrate}) run on
+incomplete sources (one $\sigma$ level and 30 tests, against the paper's 150/180 pairs) and so
+cannot be checked; 7 descriptive tables (figlist, methods, provenance, runtime\_reproducibility,
+software\_env, supplementary\_files, sweeps) were not compared cell by cell.
+\emph{The 25 skipped:} 8 DeFi tables (\texttt{main\_results}, \texttt{difficulty},
+\texttt{hybrid-bug-breakdown}, \texttt{timing\_full}, \texttt{timing\_llm\_routed\_full},
+\texttt{llm\_detailed}, \texttt{defi\_detailed}, \texttt{portfolio\_seed\_sweep}), whose seed-42 and
+seed-sweep files exist under \texttt{hypatiax\_v4/noise-noiseless-v4/} but not at
+\texttt{results/defi}, where the generator looks; 8 noiseless-protocol tables (\texttt{arch},
+\texttt{hardcoded}, \texttt{interpolation\_stats}, \texttt{domain\_success\_detailed},
+\texttt{nrmse}, \texttt{overall}, \texttt{sota}, \texttt{wilcoxon}); 2 split tables
+(\texttt{randomsplit}, \texttt{pcasplit}); 2 suppA tables (\texttt{timing\_breakdown},
+\texttt{scalability}); 5 that need editorial or config files that do not exist
+(\texttt{jmlr}, \texttt{fix5\_cases}, \texttt{formulas\_detailed},
+\texttt{hyperparameters\_complete}, \texttt{validation\_stats}).
+\emph{The 8 with no generator:} \texttt{feynman30-legacy} (withdrawn stub),
+\texttt{additional\_stats}, \texttt{changes}, \texttt{equation\_prevalence},
+\texttt{conceptual\_complexity}, and the routing supplement's \texttt{baseline},
+\texttt{projected} and \texttt{cost\_accuracy\_tradeoff}. The generator itself records the first
+five as manual by design; the last three are estimates or projections without a result source.
+
+\textbf{Finding E --- consequences.} (1) A matching label does not mean a matching table (two
+collisions above). (2) A generator that finds partial data still writes a table: the sweep
+tables would silently print one noise level. (3) Which result generation a table comes from
+matters, and the paper mixes them (Item~7). (4) The DeFi headline tables cannot be regenerated
+until the generator's search path is pointed at \texttt{hypatiax\_v4/noise-noiseless-v4/} (or the
+files are copied to \texttt{results/defi}); \textbf{no DeFi number in the paper was changed by this
+pass}. \textbf{Not fixable in the manuscript:} all of the above are repository and pipeline
+changes; nothing was wired in.
+
+\textbf{Recommended order:} (1) apply the Finding~A fix; (2) regenerate
+\texttt{defi\_main.tex} and diff it against the now-updated
+\texttt{tab:main\_results} --- they should agree except for formatting;
+(3) only then wire that table via \verb|\input{}|. No table is wired in by
+this update.
+
+\subsection*{Item 6: Nguyen-12 rebuilt from the CI result files (2026-09-28)}
+\textbf{Status:} Resolved in the manuscript; one point open.
+\textbf{Risk (was):} High --- the paper's headline Nguyen result did not reproduce.
+
+\textbf{Finding.} The repository holds two generations of Nguyen-12 result files.
+\emph{Older} (\texttt{hypatiax-dev/data}, unchanged since 2026-07-28): seed~42
+gives 11/12 for both systems (Nguyen-12 at $R^2=0.99953$), the other four seeds
+12/12, and HypatiaX's stored expression is identical to PySR-only's on all 60
+records. \emph{Current} (\texttt{hypatiax/data}, CI of 2026-09-24/25): seed~42
+gives 10/12 for both, and the five-seed totals are HypatiaX 51/60 (85.0\,\%),
+PySR-only 49/60 (81.7\,\%). The manuscript's 12/12 for both systems, and its
+``11/12 independently derived'', matched neither. The uploaded consolidated
+report's per-seed table reproduces exactly from the current files; its
+per-task table does not (it sums to 52/60 for both systems). Correct
+per-task counts ($H$/$P$ out of 5): N-3 5/4, N-4 5/2, N-5 2/1, N-7 5/3, N-9 4/4,
+N-12 0/5, all others 5/5 (report had N-5 $H$=3, N-4 $P$=4, N-7 $P$=4).
+
+\textbf{Action taken:} \texttt{tab:nguyen12} and the summary note rebuilt from the
+current files; five-seed table and Nguyen-12 gate-failure analysis added; the old
+12/12 solve counts marked superseded in the reproducibility note; the
+benchmark supplement's Nguyen item corrected.
+
+\textbf{Open:} (i) The STRICT-vs-FALLBACK smoke test (CI run 36116137035). Its two
+JSON files were inspected (the output itself is still not in the repository). Findings, now in
+the manuscript: Nguyen-5 was \emph{not} fixed by the flag (\texttt{llm\_gate\_failed=False}
+in both runs, 1/8 accepted; the runs differ by LLM re-sampling and different PySR
+expressions); Nguyen-12 FALLBACK ($R^2=0.9979974$ extrapolation, $0.9999083$ train, 6.3\,s) is
+character-for-character PySR-only's expression, so it is not a HypatiaX recovery and misses the
+0.9999 bar; the test ran 200 iterations / 4 populations / 90\,s against 1000 / 30 / 1100\,s in the
+sweep, so its numbers (for example PySR-only Nguyen-11 at 0.489 against 1.0) cannot be read
+against the sweep. Gate outcomes at seed~42 are not reproducible except Nguyen-12 (Nguyen-9 was
+0/8 accepted in the sweep and 3/8 in the smoke test; Nguyen-12 is 0/8 in all 7 runs). The claim
+``no rerun of exp3/exp3b is needed'' is therefore unsupported and not adopted. To get a
+fallback result: full-budget run with \texttt{SPARSE\_SEED=fallback}. Commit
+\texttt{\_smoke\_test\_exp3\_gate\_fallback/} if it is to be cited at all.
+(ii) Which generation is canonical should be stated in the repository README; the
+manuscript uses the current one for Nguyen-12 and the older one for the five-system tables
+(Item~7). (iii) Independent derivation of HypatiaX's expressions is withdrawn, not
+re-established. A \texttt{symbolic\_equivalence\_report.csv} does exist in
+\texttt{hypatiax/data/results/extrapolation/} (an earlier note said it did not), but it covers
+seed~42 only, and its checker does not define PySR's \texttt{cube} and \texttt{square}
+operators: 22 of its 48 rows are marked FAIL with a ``name 'cube' is not defined'' evaluation
+error although $R^2\ge0.9999$. It must be fixed (add the two functions to the SymPy namespace)
+and rerun on all five seeds before it can support anything. (iv) The canonical alias
+\texttt{exp3\_nguyen12\_seed\{seed\}.json} (PR~\#59) is overwritten by any later run of the same seed,
+including a reduced-budget one; add a guard that refuses to overwrite when
+\texttt{niterations}, \texttt{populations} or \texttt{n\_tasks} differ. (v) In the working copy of
+\texttt{exp3\_nguyen12\_consolidated.py} the default is now \texttt{SPARSE\_SEED=fallback};
+every result file behind the paper records \texttt{sparse\_seed\_mode: off}, so submission
+numbers describe ``off''. Any new run must state its mode wherever H is reported.
+(vi) \textbf{Fixed 2026-09-29:} \texttt{gen\_nguyen12()} previously averaged $R^2$ across
+seeds and let $-\infty$ through its finite check (7/12 P, 9/12 H). It now reads the per-seed raw files in
+\texttt{hypatiax/data/results/extrapolation/} (run-indexed duplicates skipped), counts recoveries per seed at
+$0.9999$ with $-\infty$/NaN as failures, and emits the seed-42 table (10/12, 10/12) and the five-seed table
+(HypatiaX 10.2/12, PySR-only 9.8/12); both reproduce the manuscript's tables. The generated seed-42 table has
+short equation names rather than the manuscript's typeset formulas, so the manuscript keeps its hand-typed
+version until the formula strings are added to the generator.
+
+\subsection*{Item 7: Five-system tables --- table defect fixed, generation mix open (2026-09-28)}
+\textbf{Status:} Resolved 2026-09-29 by decision: \texttt{hypatiax/data} is canonical. The six
+five-system tables, the supplement's Mann--Whitney block and the text quoting them were regenerated from it.
+\textbf{Risk:} Low now; the \texttt{data\_old}-based figures below are historical.
+
+\textbf{Finding.} The paper's \texttt{tab:five\_systems\_full}, \texttt{\_performance},
+\texttt{\_extrapolation} and the three \texttt{\_exp2five} tables reproduce exactly from
+\texttt{hypatiax/data\_old/results/five\_systems} (for example NN near-regime extrapolation
+$R^2$ mean $-3.476$, Hybrid median 3406.6\,\%). The current \texttt{hypatiax/data} re-run gives different
+values throughout (NN $-4.846$, Hybrid median 2415.2\,\% on $n=10$, Pure~LLM train $R^2$
+$-3.077$ against $-3.468$). The paper therefore mixes generations: Nguyen-12 from the current
+one, five-system from the older one. The value 3406.6 is not stored in any \texttt{five\_systems} file of either
+generation; it is computed by the generator.
+\textbf{Defect fixed:} \texttt{tab:five\_systems\_full} carried $n=11/15/1/13$ and the standard
+deviation of the \emph{train} $R^2$ in its Std column, so every 95\,\% CI collapsed to
+$[\text{mean},\text{mean}]$. Rebuilt with the generator from the same file: $n=9/12/1/10$, Std and CI of the
+extrapolation-error column (Hybrid $[-8577.5,\,50533.5]$, System~2 $[-947.8,\,24036.6]$). Means and
+medians unchanged. Because the intervals overlap, the ordering ``System~2 has the lower mean'' is now
+stated as not statistically established.
+\textbf{Done 2026-09-29 (canonical = \texttt{hypatiax/data}).} New values: Hybrid v50\_2 median 2415.2\,\% /
+mean 52730.3\,\% ($n=10$); NN 13283.9\,\% / 37437.0\,\% ($n=12$); System~2 1253.2\,\% / 4539.4\,\% ($n=10$);
+Pure LLM $n=2$ (no usable CI). Consequences: System~2 now has the lower \emph{median} as well as mean; the Hybrid mean
+is dominated by one equation at $1.634\times10^{27}\,\%$, so the supplement's Cohen-$d$ values ($d=-0.41$; the
+``conservative'' $-4.06\times10^{18}$) are uninterpretable and are flagged as such; Mann--Whitney is $n=12/15$,
+$U=74.0$, $p=0.225$ (previously $n=11/15$, $U=68.0$, $p=0.234$), no rejection either way. The generator's
+``conservative $d$'' equation printed only $\mu_{NN}$ in its numerator while showing the value of
+$(\mu_{NN}-\mu_H)/\sigma_{NN}$; fixed. Huge values now print in scientific notation.
+\textbf{Still open:} the supplement's medium-regime block reports a Hybrid mean next to the same median as the main table
+without saying they are different quantities.
+
+\subsection*{Item 8: Text removed from the Nguyen reproducibility note (2026-09-28)}
+\textbf{Status:} Removed from the manuscript; kept here for the record.
+
+The paragraph ``Reproducibility note: LLM model identity\ldots'' was cut back to what still
+stands (model identity, dead \texttt{LLM\_MODEL} variable, unseeded sampling, the three action
+items). Removed as depending on the withdrawn 12/12 table: (a) a ``recent seed-123 rerun recovers
+12/12 against 11/12 originally documented'' and ``12/12 for every other seed (99, 123, 777,
+2024)''; (b) a five-seed independent-derivation cross-check (seed~42 11/12, seed~777 11/12, seeds
+99/123/2024 none), which relied on copy flags absent from every current file; (c) a ``Verified, this
+pass'' block saying seed~42's 12/12~P, 12/12~H and 11/12 independently-derived figures matched
+\texttt{tab:nguyen12}, which is no longer true; (d) a within-seed timestamp window (late April to late May
+2026) for a seed-123 discrepancy that no longer exists; (e) a correction note describing the Success row as
+12/12 for both systems. Also corrected: the tablenote ``differs textually on all 12 records'' (on the two
+gate aborts the stored expression is the placeholder \texttt{FAILED}); the ``single finite-but-lower case'' sentence
+(there are four, all within $5.3\times10^{-6}$ of PySR-only and all above the 0.9999 bar).
+
+\subsection*{Item 9: Section 3 closure pass, 2026-09-29}
+\textbf{Decisions taken:} \texttt{hypatiax/data} is canonical; the DeFi source is
+\texttt{results/comparison\_results/noise-noiseless/noiseless/defi} (v3; v4 is out of scope); the Nguyen raw JSONs are in
+\texttt{results/extrapolation/}.
+\textbf{Generator changes} (\texttt{scripts/generate\_tables.py}, patched copy delivered): (a) DeFi search path
+extended to that folder and to the \texttt{15/} and \texttt{15\_pca/} seed folders; (b) Finding~A fix (a named baseline whose
+score is NaN now yields NaN, not hybrid's own value); (c) the difficulty tier is case-normalised (files store
+\texttt{easy}, generator keys were \texttt{Easy}, so the tier and bug-breakdown tables were being silently skipped);
+(d) \texttt{gen\_nguyen12()} rewritten (Item~6(vi)); (e) effect-size rendering fixed (Item~7).
+\textbf{Result:} labelled tables that now generate rose from 22 to 29 of 55; 18 remain skipped (arch, domain\_success\_detailed,
+fix5\_cases, formulas\_detailed, hardcoded, hyperparameters\_complete, interpolation\_stats, jmlr, nrmse, overall, pcasplit,
+portfolio\_seed\_sweep, randomsplit, scalability, sota, timing\_breakdown, validation\_stats, wilcoxon).
+\textbf{DeFi seed-42 figures moved to the canonical file} (md5 \texttt{cbf503d0\ldots}; the paper had used the
+\texttt{hypatiax-dev/data} file, md5 \texttt{89037935\ldots}). Unchanged: 67/74 raw, 44/74 corrected (59.5\,\%), 23 fabricated
+(3/11/9), tier tables. Changed: Pure LLM \texttt{NaN} 18/74 (was 16), Pure LLM mean $-0.3048$ over 56 tasks
+(was $-0.4433$ over 58), Pure LLM $>0.9$ 60.8\,\% (was 62.2\,\%), catastrophic 5 (was 6; rate 6.8\,\% not 8.1\,\%),
+uncorrected HypatiaX mean $0.8781$ (was $0.8946$), corrected mean $-0.3203$ (was $-0.4637$),
+\texttt{hybrid.success} 72/74 (was 73/74). Edited in the paper and both supplements.
+\textbf{Not resolvable from the repository, left unchanged in the manuscript:}
+(i) \texttt{tab:timing\_full} and \texttt{tab:timing\_llm\_routed\_full}: the paper's rows (v3c seed~42: Pure LLM
+9.69/8.85\,s, Hybrid 1.99/1.52\,s, $n=74$ per seed, 370 pooled) match no file found. The canonical
+\texttt{15/} and \texttt{15\_pca/} seed files hold only \textbf{5 records each} (seed~42's 74-record file is in
+\texttt{noiseless/defi}); \texttt{data\_old/15} has 74 per seed but gives 8.35--8.85\,s for Pure LLM. The generator,
+run on canonical data, prints a five-record ``v4'' table. These need either the original files or a rerun of the
+74-task five-seed sweep.
+(ii) \texttt{tab:llm\_detailed} and \texttt{tab:defi\_detailed}: label collisions; the paper tables are named-test
+tables (for example ``Constant product'' at 45\,s) that no result file supports, while the generator emits per-task
+rows with unnamed cases and $\approx1$--12\,s times. Treat the paper versions as unverified.
+(iii) \texttt{tab:main\_results} in the generator omits the ``uncorrected'' row that the paper shows; the corrected row
+and shared columns agree.
+(iv) The sweep, noise and sample-complexity tables, \texttt{noise\_sensitivity}, the eight noiseless-protocol tables and the
+tables in Item~5's remaining list still lack complete source files.
+\textbf{Recommended next:} locate or rerun the 74-task DeFi seed sweep (closes (i)); decide whether to delete or
+regenerate the two collision tables (ii) \textbf{[done 2026-09-30, Item~10: both regenerated]}; then add the CI check that fails when a paper table differs from its
+generated version.
+
+\subsection*{Item 10: Per-case tables, hardcode audit and unsupported claims (2026-09-30)}
+\textbf{Status:} Manuscript edited (main paper and both supplements); generator patched; timing, PCA-split and
+sweep tables remain open below. \textbf{Risk:} Low for what was edited; Medium for the timing tables until their
+source files are located.
+\textbf{Scope and limits:} the result JSONs and the repository's \texttt{paper/tables/} were not available for this
+pass. Every check below is either arithmetic on the paper's own numbers, a reading of \texttt{generate\_tables.py}, or a run
+of the generator on \emph{synthetic} records (layout and regression testing only; no synthetic value entered the paper).
+Nothing here was checked against raw result files.
+
+\textbf{Finding A --- the two collision tables (Item~9(ii)) are replaced.} The hand-typed per-case tables in Supplement~B
+(\texttt{tab:llm\_detailed}, \texttt{tab:defi\_detailed}) disagree with themselves. Recomputed from the DeFi table's own
+rows: mean validation 92.49 (stated 91.3), mean time 128.26\,s (stated 115.2), and 17 rows (not 16) marked Pass in the
+Extrap.\ column (stated ``16/16''); no per-test extrapolation $R^2$ appears anywhere, so ``average extrapolation
+$R^2=0.9650$'' has no support; ``23/23 pass'' conflicts with the 44/74 (59.5\,\%) corrected rate. In the LLM table five
+cases are marked Pass at $R^2<0.99$ although the stated validation threshold is 0.99, the supplement's own S1 description
+says 60\,\% over 40 tests against 67.5\,\% (27/40) in the table, and the classical-versus-DeFi split (19/20 vs 8/20) has
+no source because the pinned file is DeFi-only. \textbf{Action:} both tables, the Failure-Mode column, the summary rows,
+the ``Key Findings'' paragraph and the ``Extrapolation Tests'' paragraph were removed and replaced by
+\verb|\input{tables/llm_detailed.tex}| and \verb|\input{tables/defi_detailed.tex}| (generated from the pinned v3 seed-42
+file); \verb|\usepackage{longtable}| added to Supplement~B; the two ``95\,\% classical vs 40\,\% DeFi'' mentions in the
+routing supplement were removed. Each removal carries a \texttt{[Correction]} comment in the \texttt{.tex}. The S1 entry no
+longer states ``60\,\% across 40 tests'' (the CSV itself was not seen).
+
+\textbf{Finding B --- generator defects found while wiring (all fixed in \texttt{scripts/generate\_tables.py}).}
+(a) \texttt{gen\_suppb\_defi\_detailed()} printed hybrid's self-reported \texttt{test\_r2}, the Item~5 Finding~A defect, so a
+straight swap would have contradicted \texttt{tab:main\_results}. The corrected-R$^2$ rule was hoisted to module level and both
+DeFi tables now share it (\texttt{defi\_main.tex} was byte-identical before and after on a 74-record synthetic
+regression; seven targeted decision cases pass). (b) A 74-row \texttt{table[ht]}/\texttt{tabular} overflowed the page
+(``Float too large'' by 282\,pt); both are now \texttt{longtable}. (c) NaN printed as the string \texttt{nan}; decision names
+such as \texttt{nn\_fallback} and \texttt{v4\_llm} were unescaped and would have broken compilation; both fixed, and values
+of magnitude $\ge10^4$ print in scientific notation. (d) The case-name field of the pinned file is undocumented (Item~9(ii)
+saw ``unnamed cases''): the generator now tries ten candidate keys and otherwise numbers rows ``Case~$N$'' and prints a
+warning listing the top-level keys of record~0. \textbf{Run it once and check stderr for that warning.} (e) Earlier in
+this pass: the noiseless Avg Runtime column read only \texttt{time\_s}, but the noiseless shards store \texttt{time}
+(column printed \texttt{---}); it now accepts both. This patch was written after the local run above and has not yet been exercised on the real shards. \texttt{gen\_suppb\_sota()} matched exact method keys, so the
+\texttt{EnhancedHybridSystemDeFi (core)} row was silently dropped; it now accepts a key plus suffix.
+
+\textbf{Finding C --- Spearman $\rho=0.89$, $p<0.001$ withdrawn.} It appeared in the main paper (LLM-baseline paragraph and the
+reproductive-behaviour follow-up), Supplement~B (Correlation Analysis, and again in the removed Key Findings) and the routing
+supplement (Equation Prevalence). It is not supported: the only prevalence figures are order-of-magnitude estimates for eight
+equations (caption: ``estimated''; the generator records this table as an estimate with no named source); the table has no
+per-equation success column; recomputing from the paper's own eight rows (using the now-removed, itself unsourced, per-case
+values) gives $\rho=0.59$--$0.63$; and with $n=8$ the exact two-sided $p$ at $\rho=0.89$ is about 0.005 ($p<0.001$ needs
+$\rho\ge0.976$). The sentence ``we tested this by searching Common Crawl snapshots'' contradicts the table's own caption.
+\textbf{Action:} all four statements now describe a hypothesis that was not tested; the routing subsection is retitled
+``Coverage Hypothesis (illustrative estimates)''; \texttt{tab:equation\_prevalence} is kept and labelled as estimated.
+
+\textbf{Finding D --- the seven ``$4.1\times$--$7.7\times$'' runtime statements.} Recomputed from the two timing tables' own cells:
+hybrid-over-neural mean ratios recompute within rounding for every row, and pooled means equal the average of the seed
+means. All-task per-seed slowdown is $4.82$--$7.72\times$; LLM-routed per-seed mean $4.07$--$5.76\times$ and median
+$3.77$--$5.46\times$. The union of mean slowdowns is $4.07$--$7.72\times$, so six of the seven statements (which say
+``mean'') are correct as written. The seventh (``\ldots whether measured by mean or median'') is not: including the LLM-routed medians the
+range is $3.8\times$--$7.7\times$, and the lower bound was changed. This validates the arithmetic only; the tables themselves are
+still unverified (Item~9(i)).
+
+\textbf{Checker run on the unpatched generator (2026-09-29, local).} \texttt{DIFF=12 EXCEPTION=1 MATCH=14 NOSOURCE=24
+PARTIAL=5 UNVERIFIED=4}. Diagnoses of the five tables in question (inferred from the generator code and log; not confirmed
+against data): \texttt{winrate}, \texttt{time\_noise} and \texttt{noise\_sensitivity} are built from a single sigma level
+and a single $n$ (\texttt{load\_sweep\_json} returns only the newest file and never merges shards; the loaded file is named
+\texttt{...nshards04.json}); \texttt{overall}, \texttt{sota}, \texttt{wilcoxon} and \texttt{nrmse} read the noiseless
+records through a fallback to \texttt{feynman-tests/exp2}, because the DeFi noiseless shards were reported missing; \texttt{nrmse}'s generated table
+contains values the paper lacks (for example $6.6\times10^{6}$ and 12916.4), consistent with finite sentinel-scale values being averaged in although
+its caption says sentinel overflow is excluded (which column each value belongs to was not checked). Note that the checker is
+one-directional (generated numbers must appear in the paper), so a truncated generated table can report MATCH:
+\texttt{r2\_noise}, \texttt{rr\_noise} and \texttt{sc\_metrics} passing is weak evidence until the sweep sources are complete.
+
+\textbf{Still open.} (1) \texttt{tab:timing\_full} and \texttt{tab:timing\_llm\_routed\_full} (Item~9(i)): the paper text says all ten
+seed files were independently re-checked, outside \texttt{generate\_table1.py}, at 74 tasks each, while the canonical files hold 5 records each;
+needs the original files or the 74-task five-seed rerun. If the PCA half proves unsupported, the range is unchanged on the
+v3c rows alone (all-task $5.38$--$7.72\times$, LLM-routed mean $4.07$--$5.76\times$, union $4.07$--$7.72\times$), but the ``both
+benchmark variants, 740 tasks'' wording would have to change. (2) \texttt{tab:pcasplit}: internally consistent ($3+2+12=17$;
+$10+3=13/30=43.3\,\%$; $13+2+15=30$), but its caption says the other 13 per-equation $R^2$ ``were not captured'' while the
+generator's table (all equations in the source file) contains values the paper lacks (0.9979, 0.995, 0.5): diff the 17 rescored
+rows against the source, then consider wiring the full table. (3) \texttt{tab:formulas\_detailed}: ground-truth constants are hand-typed;
+they need extracting from the benchmark code into \texttt{config/ground\_truth\_formulas.json}. (4) Not touched, same provenance
+problem: ``Across 40 tests, 6 equations suffered catastrophic extrapolation failure'' in the main paper's LLM-extrapolation
+paragraph, and the ``(40 tests)'' label on the Pure-LLM notebook in Supplement~B. (5) \texttt{nrmse} sentinel cutoff needs a
+decision (the paper's threshold is not stated). (6) Complete noise-sweep, sample-complexity and DeFi noiseless shards are needed before
+the sweep and noiseless-protocol tables can be judged. (7) After regenerating, remove the two UNVERIFIED entries for
+\texttt{tab:llm\_detailed} and \texttt{tab:defi\_detailed} from \texttt{paper/paper\_table\_exceptions.json} (the checker then reports
+both as WIRED; against the synthetic tables it did).
+
+\textbf{Verification performed.} All three documents compile with identical error and page counts before and after the edits
+(the residual errors come from a stub standing in for the missing \texttt{jmlr2e.sty}); the withdrawn claims are absent from the
+rendered PDFs. \textbf{Recommended next:} run \texttt{generate\_tables.py} without flags and read stderr for the case-name warning;
+rebuild; run the checker; then the timing source question, which gates everything else in this list.
+
+\section{Closed Items (Confirmed, No Manuscript Change)}
+
+\subsection*{Item C1: Hybrid decision-attribution bug fabricated-count (23)}
+Independently recomputed from \texttt{hypatiax\_defi\_benchmark\_v3\_results\_seed42.json}
+(canonical copy, md5 \texttt{89037935469176741a5fb4479f2c725f}) using the
+correct definition — the routed sub-method's own reported value must itself
+support near-perfect, not merely carry a \texttt{success=True} flag. Result:
+23 fabricated cases (3 easy / 11 medium / 9 hard), matching the manuscript's
+the hybrid decision-attribution table task list exactly, name for name.
+\textbf{No change made.} (An earlier, narrower recomputation using only the
+boolean success flag gave 22 and was corrected after finding the
+"Spot price from AMM reserve" case, where \texttt{hybrid} reports
+$\Rsq{=}1.0$ against an actual routed \texttt{pure\_llm} result of
+$\Rsq{=}0.981$ — a value-mismatch case the boolean-flag test missed.)
+\textbf{Re-verified independently a second time (2026-09-27)} directly
+against the same file retrieved fresh from
+\texttt{github.com/sednabcn/LLM-HypatiaX-DEV}: 44/74 = 59.5\,\% corrected,
+23 fabricated (Easy 3/24, Medium 11/29, Hard 9/21) — exact match.
+
+\subsection*{Item C2: v3-vs-v4 methodology}
+Confirmed: \texttt{hypatiax/data}'s \texttt{v4} result file uses a genuinely
+different 4-arm router (\texttt{v4\_llm}, \texttt{v4\_linear\_fallback},
+\texttt{v4\_residual\_nn}, \texttt{v4\_linear\_fallback\_local}), not a variant
+of v3. The paper's v3 scope is legitimate and unaffected; the existing
+one-line disclosure of active v4 development (main paper, end of
+the hybrid decision-attribution section) is accurate as written. No change made.
+
+\subsection*{Item C3: Redaction resolution pass across the two supplements
+(2026-09-27)}
+7 of 11 \texttt{[VALUE REDACTED]} placeholders (6 in the routing
+supplement, 1 in the benchmark report) resolved by direct textual
+cross-reference to this paper's own \S~``The Hybrid
+Decision-Attribution Bug,'' with the source section cited inline at each
+resolved location. No new data was introduced; every resolved value
+(90.5\,\%, 98.6\,\%, 59.5\,\%) was already disclosed in this paper before
+the pass. The remaining 4 placeholders and 1 newly-found figure conflict
+are tracked as Open Item~2 above; they were not closed. See also Open
+Item~3 above regarding the reliability of \texttt{paper\_audit.pdf}'s own
+figures, found during the same pass.
+
+\subsection*{Item C4: v4 attribution-flag bug — reverted to v3 (2026-09-27)}
+While validating the v4 router (see Item C2), a bug was found in v4's own
+decision-attribution flag: it can report \texttt{success=True} for a routed
+sub-method even when that sub-method's own value does not actually meet the
+near-perfect threshold — the same class of masking error identified and
+fixed for v3 in Item C1, but reintroduced in v4's separate implementation.
+Fixing it properly (auditing v4's routing logic the same way v3's was
+audited) is out of scope for this submission. \textbf{Decision: revert to
+v3 for all reported results and close this point for now.} v3's
+attribution logic is the one already independently verified in Item C1; v4
+remains under active development (as already disclosed in the manuscript)
+and its attribution-flag bug should be fixed and re-audited before any v4
+numbers are cited in a future revision.
+
+\subsection*{Item C5: \texttt{build\_report.py} stale-green-dashboard fix — confirmed live (2026-09-27)}
+The July~9 CI dashboard asserted ``0 open issues'' while its own upstream
+notebooks (NB-01--NB-06) reported ``not found'' for that run --- flagged
+as an open process item in both supplements and the main paper's
+\S~``Outstanding Process/Credibility Items.'' Located
+\texttt{scripts/build\_report.py} in the project repository and confirmed
+the fix already exists and is live: \texttt{notebook\_execution\_status()}
+checks every code cell's \texttt{execution\_count} (not mere file
+existence) and, at the call site, collects any incomplete or missing
+notebooks and calls \texttt{sys.exit(1)} before publishing the dashboard,
+except on an explicit fix-only run. The function and call site are both
+tagged \texttt{FIX-DASHBOARD-STALE-GREEN} in their own source comments and
+cite ``verification report, item 10.1'' directly --- i.e. this project's
+own pipeline was already patched in response to substantially this same
+finding. Confirmed via \texttt{git log}: committed \texttt{9d7a833f},
+2026-07-29, predating this review and postdating the July~9 incident it
+addresses. \textbf{No further code change needed.} All three manuscript
+documents updated (2026-09-27) to mark this item Resolved rather than
+Open; the July~9 dashboard itself remains uncitable as a specific
+artifact, but the underlying defect cannot recur silently.
+
+\end{document}

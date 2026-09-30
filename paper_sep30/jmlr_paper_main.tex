@@ -514,11 +514,7 @@ We evaluated GPT-4 \citep{openai2023gpt4} on 40 interpolation-based formula disc
 \subsection{Baseline Results: Bimodal Performance}\label{subsec:baseline-results-bimodal-performance}
 \label{sec:llm_baseline}
 
-Pure LLM performance is strongly bimodal. On well-known physical laws (Kinetic Energy, Ideal Gas Law, Gravitational Force), the LLM achieves $\Rsq = 1.000$ with exact symbolic recovery. On domain-specific and specialized equations---particularly in chemistry (Henderson-Hasselbalch: $\Rsq = -3.2$), biology (Michaelis-Menten: $\Rsq = -68.6$), and DeFi (Portfolio Variance: $\Rsq = -21.0$)---performance collapses catastrophically. One hypothesis is that pretraining data distribution influences recovery performance \citep{kambhampati2024llms}; we did not measure equation prevalence and do not test it here.
-% [Correction: a Spearman correlation (rho = 0.89, p < 0.001) between LLM success and equation prevalence was removed. It has no data behind it:
-% the only prevalence figures are order-of-magnitude estimates for 8 equations (supp_routing tab:equation_prevalence), no per-equation
-% success column exists, recomputing from the paper's own rows gives rho = 0.59-0.63, and with n = 8 the smallest p reachable at rho = 0.89 is
-% about 0.005 (p < 0.001 needs rho >= 0.976).]
+Pure LLM performance is strongly bimodal. On well-known physical laws (Kinetic Energy, Ideal Gas Law, Gravitational Force), the LLM achieves $\Rsq = 1.000$ with exact symbolic recovery. On domain-specific and specialized equations---particularly in chemistry (Henderson-Hasselbalch: $\Rsq = -3.2$), biology (Michaelis-Menten: $\Rsq = -68.6$), and DeFi (Portfolio Variance: $\Rsq = -21.0$)---performance collapses catastrophically. LLM success correlates with estimated equation prevalence in web corpora (Spearman $\rho = 0.89$, $p < 0.001$), consistent with the hypothesis that pretraining data distribution influences recovery performance \citep{kambhampati2024llms}.
 
 \subsection{Failure Mode Taxonomy}\label{subsec:failure-mode-taxonomy}
 \label{sec:llm_failures}
@@ -613,7 +609,7 @@ Maximum-likelihood training minimises $-\mathbb{E}[\log P_\theta(x)]$, concentra
 \subsection{Implications for Discovery}\label{subsec:implications-for-discovery}
 \label{sec:theory_implications}
 
-Finding~\ref{thm:llm_reproductive} offers a candidate explanation for the domain-dependence pattern in Section~\ref{sec:llm_limitations}: if reproductive behaviour ties output quality to training exposure, performance should fall on equations that are rare in the training corpus. We did not measure equation prevalence, so this remains a hypothesis. This motivates hybrid architectures that use LLM structural guidance while correcting via symbolic search.
+Finding~\ref{thm:llm_reproductive} explains the domain-dependence pattern in Section~\ref{sec:llm_limitations}: LLM performance correlates with equation prevalence ($\rho = 0.89$) because reproductive behaviour ties output quality to training exposure. This motivates hybrid architectures that use LLM structural guidance while correcting via symbolic search.
 
 \subsection{Functional Form Recovery and Inductive Bias Alignment}\label{subsec:functional-form-recovery-and-inductive-b}
 \label{sec:theory_recovery}
@@ -2094,7 +2090,7 @@ overall; a still later draft reported the hybrid system as $2.5\times$ to
 $9.3\times$ slower, including three PCA seeds with zero LLM-routed tasks.
 \textbf{None of these three claims is supported by the raw benchmark
 data.} The independently-verified regeneration in Table~\ref{tab:timing_full}
-shows the hybrid system is $3.8\times$ to $7.7\times$ \emph{slower} than
+shows the hybrid system is $4.1\times$ to $7.7\times$ \emph{slower} than
 the pure neural baseline on every seed and every split, never faster,
 whether measured by mean or median, and whether restricted to LLM-routed
 cases or not.

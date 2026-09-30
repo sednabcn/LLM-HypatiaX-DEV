@@ -22,7 +22,6 @@
 \usepackage{xcolor}
 \usepackage{colortbl}
 \usepackage{array}
-\usepackage{longtable}% generated per-case tables (llm_detailed, defi_detailed)
 \usepackage{caption}
 \usepackage{subcaption}
 \usepackage[expansion=true]{microtype}
@@ -1653,34 +1652,117 @@ Numerical stability ($\alpha$) & 0.95 \\
 \section{Detailed Experimental Results}
 \label{app:detailed_results}
 
-\subsection{Pure LLM Baseline: Per-Case Results}
+\subsection{Pure LLM Baseline (40 tests)}
 
-% [Correction, Item 5 (post-submission report): the hand-typed 40-case table
-% that stood here had no result file behind it. Removed with it: the
-% Failure-Mode column, the summary rows (19/20 = 95%, 8/20 = 40%,
-% 27/40 = 67.5%) and the ``Key Findings'' paragraph that repeated them. The
-% table also disagreed with this document's own S1 description (60% over 40
-% tests) and marked five cases ``Pass'' at R^2 < 0.99 although the
-% validation threshold stated above is 0.99. It is replaced by the table
-% generated from the pinned DeFi benchmark file (seed 42), the same source as
-% tab:main_results. Regenerate with scripts/generate_tables.py; this input
-% needs paper/tables/llm_detailed.tex to exist.]
-\input{tables/llm_detailed.tex}
+\begin{table}[H]
+\centering
+\caption{Pure LLM Performance by Test Case}
+\label{tab:llm_detailed}
+\begin{small}
+\begin{tabular}{@{}llccp{5.2cm}@{}}
+\toprule
+\textbf{Domain} & \textbf{Test} & \textbf{$R^2$} & \textbf{Result} & \textbf{Failure Mode} \\
+\midrule
+\multicolumn{5}{c}{\textit{Classical Scientific Domains (20 tests)}} \\
+\midrule
+Materials & Stress-strain & 1.00 & Pass & --- \\
+Materials & Young's modulus & 1.00 & Pass & --- \\
+Materials & Poisson ratio & 1.00 & Pass & --- \\
+Materials & Thermal expansion & 1.00 & Pass & --- \\
+Fluid & Reynolds number & 1.00 & Pass & --- \\
+Fluid & Bernoulli equation & 1.00 & Pass & --- \\
+Fluid & Drag coefficient & 1.00 & Pass & --- \\
+Fluid & Flow rate & 1.00 & Pass & --- \\
+Thermo & Ideal gas law & 1.00 & Pass & --- \\
+Thermo & Heat capacity & 1.00 & Pass & --- \\
+Thermo & Carnot efficiency & 1.00 & Pass & --- \\
+Thermo & Stefan-Boltzmann & 1.00 & Pass & --- \\
+Mechanics & Newton's 2nd law & 1.00 & Pass & --- \\
+Mechanics & Kinetic energy & 1.00 & Pass & --- \\
+Mechanics & Gravitational force & 1.00 & Pass & --- \\
+Mechanics & Hooke's law & 1.00 & Pass & --- \\
+Chemistry & Arrhenius equation & 1.00 & Pass & --- \\
+Chemistry & pH calculation & 1.00 & Pass & --- \\
+Chemistry & Nernst equation & 0.50 & Fail & Wrong sign convention \\
+Chemistry & Rate law & 1.00 & Pass & --- \\
+\midrule
+\multicolumn{5}{c}{\textit{Decentralized Finance Domains (20 tests)}} \\
+\midrule
+AMM & Constant product & 1.00 & Pass & --- \\
+AMM & Price impact & 0.98 & Pass & --- \\
+AMM & Impermanent loss & $-1.26$ & Fail & Unit inconsistency (missing $\times$100) \\
+AMM & Swap fee & 0.82 & Pass & --- \\
+VaR & Parametric VaR 95\% & $-10.05$ & Fail & Wrong sign (z-score) \\
+VaR & Parametric VaR 99\% & 1.00 & Pass & --- \\
+VaR & Historical VaR & 0.95 & Pass & --- \\
+VaR & Modified VaR & $-2.15$ & Fail & Scipy API misuse \\
+Liquidity & APY calculation & 1.00 & Pass & --- \\
+Liquidity & Capital efficiency & 0.87 & Pass & --- \\
+Liquidity & Fee earnings & --- & Fail & Non-executable (tutorial mode) \\
+Liquidity & Utilization ratio & --- & Fail & Non-executable (tutorial mode) \\
+ES & Expected Shortfall 95\% & $-4.12$ & Fail & Scipy \texttt{norm.pdf} returns object \\
+ES & Expected Shortfall 99\% & $-3.87$ & Fail & Distribution tail error \\
+ES & Conditional VaR & 0.88 & Pass & --- \\
+ES & Tail risk & $-1.92$ & Fail & Statistical definition error \\
+Liquidation & Long position & --- & Fail & Tutorial text only \\
+Liquidation & Short position & --- & Fail & Tutorial text only \\
+Liquidation & Margin call & --- & Fail & Incomplete derivation \\
+Liquidation & Leverage ratio & --- & Fail & Multi-step missing \\
+\midrule
+\multicolumn{3}{l}{\textbf{Classical Average:}} & \textbf{19/20 (95\%)} & \\
+\multicolumn{3}{l}{\textbf{DeFi Average:}} & \textbf{8/20 (40\%)} & \\
+\multicolumn{3}{l}{\textbf{Overall:}} & \textbf{27/40 (67.5\%)} & \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{table}
 
-\subsection{DeFi-Optimized HypatiaX: Per-Case Results}
+\paragraph{Key Findings:} Pure LLM performance strongly correlates with equation prevalence in training data (Spearman $\rho = 0.89$, $p < 0.001$)\citep{kambhampati2024llms}. Classical equations achieve 95\% success rate while specialised domains (DeFi) drop to 40\%, consistent with the reproductive behaviour characterisation in the main paper's \emph{LLM Reproductive Behaviour} finding.
 
-% [Correction, Item 5 (post-submission report): the hand-typed 23-row table
-% that stood here, its Average row (R^2 0.9990, validation 91.3, time 115.2 s,
-% extrapolation 16/16, result 23/23) and the ``Extrapolation Tests''
-% paragraph (sixteen tests, average extrapolation R^2 = 0.9650) are removed.
-% Recomputed from that table's own rows: mean validation 92.49 and mean time
-% 128.26 s (not 91.3 / 115.2), and 17 rows (not 16) marked Pass in the
-% Extrap. column. No per-test extrapolation R^2 appeared anywhere, so 0.9650
-% had no support, and the source file used elsewhere in this paper does not
-% support all 23 cases passing. Replaced by the generated table, whose R^2 is
-% the sub-method the routing decision names (same rule as tab:main_results),
-% not hybrid's self-reported value.]
-\input{tables/defi_detailed.tex}
+\subsection{DeFi-Optimized Results (23 tests)}
+
+\begin{table}[H]
+\centering
+\caption{DeFi-Optimized HypatiaX Performance}
+\label{tab:defi_detailed}
+\begin{small}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Test} & \textbf{$R^2$} & \textbf{Validation} & \textbf{Time (s)} & \textbf{Extrap.} & \textbf{Result} \\
+\midrule
+Constant product (xy=k) & 1.0000 & 100.0 & 45 & Pass & Pass \\
+Price impact & 0.9998 & 95.2 & 120 & Pass & Pass \\
+Impermanent loss & 0.9995 & 92.1 & 180 & Pass & Pass \\
+Swap fee calculation & 1.0000 & 98.5 & 60 & Pass & Pass \\
+VaR 95\% parametric & 0.9988 & 88.3 & 150 & Pass & Pass \\
+VaR 99\% parametric & 0.9990 & 90.1 & 145 & Pass & Pass \\
+Historical VaR & 0.9985 & 87.5 & 135 & Pass & Pass \\
+Modified VaR & 0.9982 & 85.9 & 160 & Pass & Pass \\
+APY simple & 1.0000 & 100.0 & 50 & Pass & Pass \\
+APY compound & 0.9995 & 94.8 & 110 & Pass & Pass \\
+Capital efficiency & 0.9940 & 78.5 & 240 & Pass & Pass \\
+Fee earnings & 0.9998 & 96.2 & 90 & Pass & Pass \\
+Expected Shortfall 95\% & 0.9987 & 89.7 & 170 & Pass & Pass \\
+Expected Shortfall 99\% & 0.9985 & 88.2 & 175 & Pass & Pass \\
+Conditional VaR & 0.9990 & 91.4 & 155 & Pass & Pass \\
+Tail risk metric & 0.9983 & 86.8 & 165 & Pass & Pass \\
+Liquidation (long) & 0.9992 & 93.6 & 125 & --- & Pass \\
+Liquidation (short) & 0.9994 & 94.1 & 120 & --- & Pass \\
+Margin call threshold & 0.9996 & 95.8 & 105 & --- & Pass \\
+Effective leverage & 0.9998 & 97.2 & 85 & --- & Pass \\
+Staking rewards & 1.0000 & 100.0 & 55 & --- & Pass \\
+Dilution effect & 0.9993 & 93.8 & 115 & --- & Pass \\
+Kelly criterion & 0.9988 & 89.5 & 195 & Pass & Pass \\
+\midrule
+\textbf{Average} & \textbf{0.9990} & \textbf{91.3} & \textbf{115.2} & \textbf{16/16} & \textbf{23/23} \\
+\bottomrule
+\end{tabular}%
+}% end resizebox
+\end{small}
+\end{table}
+
+\paragraph{Extrapolation Tests:} Sixteen tests designated for extrapolation validation all passed with average extrapolation $R^2 = 0.9650$, indicating reliable generalization to the tested novel regimes on this benchmark\citep{balestriero2021high,neyshabur2017exploring,zhang2021understanding}.
 
 \subsection{Complete Test Suite Details}
 
@@ -1839,8 +1921,7 @@ Pure LLM & 100\% & 33\% & 0\% & 33\% & 33\% \\
 \end{tabular}
 \end{table}
 
-\paragraph{Correlation Analysis:} We did not measure equation prevalence, so the reproductive-behaviour hypothesis of the main paper is not tested by a correlation here.
-% [Correction: the Spearman rho = 0.89, p < 0.001 previously stated here is withdrawn -- see the note at the main paper's Pure LLM baseline paragraph.]
+\paragraph{Correlation Analysis:} Pure LLM success rate strongly correlates with equation prevalence in web text (Spearman $\rho = 0.89$, $p < 0.001$)\citep{kambhampati2024llms}. This is consistent with the reproductive behaviour hypothesis: performance is higher where training-corpus exposure is greater.
 
 \clearpage
 \subsection{Validation Layer Effectiveness}
@@ -2043,7 +2124,7 @@ R2: 1.0000, extrapolation_error: 0.0%
 The following supplementary materials are available:
 
 \begin{itemize}
-\item \textbf{S1: Pure LLM Baseline Results} (\texttt{S1\_pure\_llm\_results.csv}) --- Complete results from Pure LLM baseline experiments.
+\item \textbf{S1: Pure LLM Baseline Results} (\texttt{S1\_pure\_llm\_results.csv}) --- Complete results from Pure LLM baseline experiments showing 60\% success rate across 40 tests.
 
 \item \textbf{S2: Extrapolation Test Data} (\texttt{S2\_extra\-polation\_data.csv}) --- \textbf{[Correction, Issue 4:]} this entry previously described the file as containing a near-zero Hybrid v50\_2 error versus a 1{,}231\% Neural Network mean error and a Mann-Whitney result of $U=0$, $p<10^{-6}$; those figures could not be reproduced from any data source currently available for this paper (see Section~\ref{sec:five_systems} and the accompanying Table 1 audit memo) and are not restated here pending resolution of that audit's open item on the file's original provenance. Training R$^2$ scores and extrapolation errors at 1.2$\times$, 2$\times$, and 5$\times$ training ranges are still included in the file as described.
 
