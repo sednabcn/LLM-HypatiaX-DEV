@@ -393,6 +393,8 @@ def load_best(subdir: str, glob_pat: str,
 # Tables whose manuscript caption names the ten protocol_core_noiseless_20260812_*.json
 # shards (verified: these reproduce the paper's Wilcoxon W values) read exp2_multi/.
 PAPER_STATS_SOURCE = ("feynman-tests/exp2_multi",)
+# tab:overall: the sigma=0 run of the noise sweep (verified: reproduces the paper's pass counts 30/23/21/28/0 of 30)
+OVERALL_SOURCE = ("feynman-tests/noise-sweep",)
 
 
 def load_noiseless_tests(source_subdirs: tuple[str, ...] | None = None) -> tuple[list[dict], Path | None]:
@@ -5230,7 +5232,7 @@ def gen_suppb_noiseless() -> None:
     # EXP1_SUBDIR="comparison_results/noise-noiseless/noiseless/defi" in
     # ci_postprocess.yml. Without it this glob searches one level too
     # shallow and never finds the file, even after exp1 has run.
-    _tests, src = load_noiseless_tests()
+    _tests, src = load_noiseless_tests(OVERALL_SOURCE)
     data = {"tests": _tests} if _tests else None
 
     if not data:
@@ -5286,15 +5288,16 @@ def gen_suppb_noiseless() -> None:
 \small
 \begin{tabular}{lrrrr}
 \toprule
-\textbf{Method} & \textbf{Median $R^2$} & \textbf{Recovery Rate} & \textbf{Avg Runtime} & \textbf{n} \\
+\textbf{Method} & \textbf{Mean $\Rsq$ (valid tests)} & \textbf{Recovery Rate} & \textbf{Avg Runtime} & \textbf{n} \\
 \midrule
 """
     for mname, vals in sorted(method_r2.items()):
-        med = _st.median(vals)
+        _fin = [v for v in vals if _math.isfinite(v)]
+        med = _st.mean(_fin) if _fin else float("nan")
         rr  = sum(1 for v in vals if v >= 0.999999) / len(vals)
         tvals = method_time.get(mname, [])
         t_str = f"{_st.mean(tvals):.1f}\\,s" if tvals else "---"
-        tex += f"{mname[:38]} & {med:.6f} & {rr*100:.1f}\\% & {t_str} & {len(vals)} \\\\\n"
+        tex += f"{mname[:38]} & {med:.6f} & {sum(1 for v in vals if v >= 0.999999)}/{len(vals)} ({rr*100:.1f}\\%) & {t_str} & {len(vals)} \\\\\n"
 
     tex += r"""\bottomrule
 \end{tabular}
