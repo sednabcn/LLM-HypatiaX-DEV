@@ -2147,6 +2147,10 @@ _T_CRIT_95 = {
 }
 
 
+# A t-interval from <3 observations is not meaningful (df=1 -> t=12.706).
+MIN_N_FOR_CI = 3
+
+
 def _ci95(mean, std, n) -> str | None:
     """
     95% CI for a sample mean, computed from that sample's own mean/std/n via
@@ -2164,7 +2168,8 @@ def _ci95(mean, std, n) -> str | None:
         n = int(n)
     except (TypeError, ValueError):
         return None
-    if n < 2 or std < 0:
+    import math
+    if n < MIN_N_FOR_CI or std < 0 or not (math.isfinite(mean) and math.isfinite(std)):
         return None
     df = n - 1
     t_crit = _T_CRIT_95.get(df, 1.960)  # normal approx beyond the table
