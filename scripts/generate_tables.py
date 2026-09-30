@@ -6404,7 +6404,8 @@ def _longtable_per_case(fname: str, label: str, caption: str, colspec: str,
 # of the post-submission report saw 'unnamed cases'), so try several and warn
 # loudly rather than silently printing '?' for all 74 rows.
 _CASE_NAME_KEYS = ("name", "description", "task", "task_name", "test_name",
-                   "test", "case", "case_name", "equation", "title")
+                   "test", "case", "case_name", "equation", "title",
+                   "equation_id")
 
 
 def _per_case_name(rec: dict, idx: int) -> str:
