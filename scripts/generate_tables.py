@@ -326,6 +326,14 @@ def _filtered_glob(d: Path, glob_pat: str) -> list[Path]:
             if not any(s in p.name for s in _EXCLUDE_SUBSTRINGS)]
 
 
+def _det_key(p: Path) -> tuple[str, str]:
+    """Deterministic 'age' key for result files: basename, then full path.
+    Replaces os.path.getmtime (which differs between a git checkout and a
+    working tree). Shard names carry a YYYYMMDD_HHMMSS stamp, so name order is
+    chronological order on every machine. Use reverse=True for newest-first."""
+    return (p.name, str(p))
+
+
 # Basename fragment of the PCA-variant output files
 # (hypatiax_defi_benchmark_pca_results_seed*.json). The un-versioned defi glob
 # "hypatiax_defi_benchmark*results*.json" matches PCA files too; single-file
@@ -375,7 +383,7 @@ def load_best(subdir: str, glob_pat: str,
         candidates = sorted(
             (p for p in _filtered_glob(d, glob_pat)
              if not any(x in p.name for x in exclude)),
-            key=os.path.getmtime, reverse=True)
+            key=_det_key, reverse=True)
         if candidates:
             try:
                 _d = json.loads(candidates[0].read_text())
@@ -412,7 +420,7 @@ def load_noiseless_tests(source_subdirs: tuple[str, ...] | None = None) -> tuple
     for r in roots:
         if r.exists():
             files.extend(_filtered_glob(r, "protocol_core_noiseless_*.json"))
-    files = sorted({f.resolve(): f for f in files}.values(), key=os.path.getmtime)
+    files = sorted({f.resolve(): f for f in files}.values(), key=_det_key)
     merged: dict[tuple, dict] = {}
     used: list[Path] = []
     for f in files:
@@ -460,7 +468,7 @@ def load_sweep_json(explicit: Path | None, subdir: str, glob_pat: str) -> dict |
     # auto-detect: newest matching file under noise-sweep subdir
     sweep_dir = RESULTS / subdir
     if sweep_dir.exists():
-        candidates = sorted(_filtered_glob(sweep_dir, glob_pat), key=os.path.getmtime, reverse=True)
+        candidates = sorted(_filtered_glob(sweep_dir, glob_pat), key=_det_key, reverse=True)
         for c in candidates:
             try:
                 return json.loads(c.read_text())
@@ -469,7 +477,7 @@ def load_sweep_json(explicit: Path | None, subdir: str, glob_pat: str) -> dict |
     # also try the parent comparison_results level
     alt_dir = RESULTS / "comparison_results" / "feynman-tests" / "noise-sweep"
     if alt_dir.exists():
-        candidates = sorted(_filtered_glob(alt_dir, glob_pat), key=os.path.getmtime, reverse=True)
+        candidates = sorted(_filtered_glob(alt_dir, glob_pat), key=_det_key, reverse=True)
         for c in candidates:
             try:
                 return json.loads(c.read_text())
@@ -1866,7 +1874,7 @@ def _vc_panel_defi73(idn: dict) -> dict | None:
     for sub in ("hybrid_pysr/defi", "comparison_results/extrapolation", "extrapolation", ""):
         fs = _vc_paths(sub, "extrapolation_73cases_enhanced*.json")
         if fs:
-            d = max(fs, key=os.path.getmtime)
+            d = max(fs, key=_det_key)
             break
     if d is None:
         return None
@@ -3508,7 +3516,7 @@ def gen_portfolio_seed_sweep() -> None:
     for base in [PATCHED, RESULTS]:
         for cand in [base / "portfolio_variance_seed_sweep.json",
                      *sorted(base.glob("portfolio_variance*.json"),
-                             key=lambda p: p.stat().st_mtime, reverse=True)]:
+                             key=_det_key, reverse=True)]:
             if cand.exists():
                 src_path = cand
                 break
