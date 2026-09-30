@@ -52,7 +52,8 @@ SCRIPT = REPO_ROOT / "scripts" / "generate_tables.py"
 
 
 def _run(tmp_path: Path, experiment: str,
-          files: dict[str, object] | None = None) -> tuple[subprocess.CompletedProcess, Path]:
+          files: dict[str, object] | None = None,
+          extra_args: list[str] | None = None) -> tuple[subprocess.CompletedProcess, Path]:
     """files: {relative_path_under_results_dir: json-serializable content}"""
     results_dir = tmp_path / "results"
     output_dir = tmp_path / "tables"
@@ -66,7 +67,8 @@ def _run(tmp_path: Path, experiment: str,
         [sys.executable, str(SCRIPT),
          "--experiment", experiment,
          "--results-dir", str(results_dir),
-         "--output-dir", str(output_dir)],
+         "--output-dir", str(output_dir),
+         *(extra_args or [])],
         capture_output=True, text=True, timeout=120,
     )
     return proc, output_dir
@@ -88,11 +90,11 @@ def test_arch_parses_either_decision_or_strategy_field(tmp_path, field_name):
     """
     noiseless = {
         "tests": [
-            {"results": {
+            {"domain": "d1", "description": "test 1", "results": {
                 "MethodA": {field_name: "route_x"},
                 "MethodB": {field_name: "route_y"},
             }},
-            {"results": {
+            {"domain": "d2", "description": "test 2", "results": {
                 "MethodA": {field_name: "route_x"},
                 "MethodB": {field_name: "route_x"},
             }},
@@ -270,10 +272,13 @@ def test_nguyen12_parses_merged_exp3b_shape(tmp_path):
                 "nguyen_id": e, "name": e, "seed": seed,
                 "systems": {"pysr": {"r2_raw": 0.93}, "hypatiax": {"r2_raw": 0.999}},
             })
-    proc, output_dir = _run(tmp_path, "exp3", {"extrapolation/multi_seed/_merged.json": merged})
+    # Script defaults to --nguyen12-seed 42 and filters rows by seed, so the
+    # 99/123 rows are dropped unless we ask for "all".
+    proc, output_dir = _run(tmp_path, "exp3", {"extrapolation/multi_seed/_merged.json": merged},
+                            extra_args=["--nguyen12-seed", "all"])
     assert proc.returncode == 0, proc.stderr
     tex = _read(output_dir, "nguyen12.tex")
-    assert tex is not None, f"stderr:\n{proc.stderr}"
+    assert tex is not None, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     # every equation should show exactly 2 seeds contributing (99, 123)
     assert tex.count(" & 2 \\\\") == 12
 

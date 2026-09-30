@@ -405,7 +405,10 @@ def load_noiseless_tests() -> tuple[list[dict], Path | None]:
         except Exception:
             continue
         for t in tests:
-            merged[(t.get("domain"), t.get("description"))] = t
+            _k = (t.get("domain"), t.get("description") or t.get("name"))
+            if _k == (None, None):
+                _k = ("__unkeyed__", f"{f.name}#{len(merged)}")  # never collapse records lacking identity fields
+            merged[_k] = t
         if tests:
             used.append(f)
     return list(merged.values()), (used[-1] if used else None)

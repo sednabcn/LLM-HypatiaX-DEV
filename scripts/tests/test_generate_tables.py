@@ -56,10 +56,18 @@ def _make_case(tier: str, llm_r2: float, nn_r2: float, hybrid_r2: float,
     }
 
 
+# generate_tables.py's load_best() pins every non-PCA DeFi reader to ONE
+# filename (--defi-pin, default v3) holding exactly --defi-n records (default
+# 74). A fixture named anything else (e.g. v4) is never even opened. Keep the
+# fixture name and the CLI pin in sync via these constants.
+DEFI_PIN = "hypatiax_defi_benchmark_v3_results_seed42.json"
+DEFI_N = 74
+
+
 def _write_seed42(results_dir: Path, records: list[dict]) -> Path:
     defi_dir = results_dir / "defi"
     defi_dir.mkdir(parents=True, exist_ok=True)
-    path = defi_dir / "hypatiax_defi_benchmark_v4_results_seed42.json"
+    path = defi_dir / DEFI_PIN
     path.write_text(json.dumps(records))
     return path
 
@@ -141,7 +149,8 @@ def _run_generate_tables(tmp_path: Path, records: list[dict] | None,
         [sys.executable, str(SCRIPT),
          "--experiment", experiment,
          "--results-dir", str(results_dir),
-         "--output-dir", str(output_dir)],
+         "--output-dir", str(output_dir),
+         "--defi-pin", DEFI_PIN, "--defi-n", str(len(records) if records is not None else DEFI_N)],
         capture_output=True, text=True, timeout=120,
     )
     return proc, output_dir
@@ -297,7 +306,7 @@ def test_abstract_macros_withholds_delta_when_no_real_gain(tmp_path, no_real_gai
     assert proc.returncode == 0, proc.stderr
 
     abstract_tex = _read(output_dir, "abstract_macros.tex")
-    assert abstract_tex is not None
+    assert abstract_tex is not None, f"abstract_macros.tex was not written.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
 
     # abstractNearPerfectRate/LLMBaseline/NNBaseline are always written...
     assert _macro_value(abstract_tex, "abstractNearPerfectRate") is not None
@@ -344,7 +353,7 @@ def test_defi_tiers_skipped_on_legacy_dict_shape(tmp_path):
         "hard":    {"n": 21, "llm_r99": 0.5, "hypatiax_r99": 0.6},
         "overall": {"n": 74, "llm_r99": 0.5, "hypatiax_r99": 0.6},
     }
-    (defi_dir / "hypatiax_defi_benchmark_v4_results_seed42.json").write_text(json.dumps(legacy_shape))
+    (defi_dir / DEFI_PIN).write_text(json.dumps(legacy_shape))
 
     output_dir = tmp_path / "tables"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -352,7 +361,8 @@ def test_defi_tiers_skipped_on_legacy_dict_shape(tmp_path):
         [sys.executable, str(SCRIPT),
          "--experiment", "exp1",
          "--results-dir", str(results_dir),
-         "--output-dir", str(output_dir)],
+         "--output-dir", str(output_dir),
+         "--defi-pin", DEFI_PIN],
         capture_output=True, text=True, timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
