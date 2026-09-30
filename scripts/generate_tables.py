@@ -5846,7 +5846,7 @@ _HYPATIAX_METHOD_KEYS = ("hypatiax", "HypatiaX", "HybridDiscoverySystem v50_2 (t
                           "hybrid", "HybridDiscoverySystem_v50_2")
 
 
-def _load_split_equations(glob_pat: str) -> tuple[list[tuple], Path | None]:
+def _load_split_equations(glob_pat: str, r2_field: str | None = None) -> tuple[list[tuple], Path | None]:
     rows_by_name: dict[str, tuple] = {}
     src = None
     for base in (PATCHED, RESULTS):
@@ -5872,6 +5872,9 @@ def _load_split_equations(glob_pat: str) -> tuple[list[tuple], Path | None]:
                         if k in res and isinstance(res[k], dict):
                             r2 = res[k].get("r2")
                             break
+                    if r2_field:   # e.g. 'pca_test_r2': per-method held-out R2; the paper prints the HDS entry
+                        _d = rec.get(r2_field) or {}
+                        r2 = next((v for k, v in _d.items() if k.startswith("HybridDiscovery")), None)
                     if r2 is not None:
                         rows_by_name[name] = (domain, name, r2)
     return sorted(rows_by_name.values(), key=lambda r: (r[0], r[1])), src
@@ -5926,11 +5929,11 @@ Domain & Equation & $\Rsq$ & Status \\
 
 
 def gen_pcasplit() -> None:
-    rows, src = _load_split_equations("*pca*directed*.json")
+    rows, src = _load_split_equations("*pca*directed*.json", "pca_test_r2")
     if not rows:
-        rows, src = _load_split_equations("protocol_core_pca_*.json")
+        rows, src = _load_split_equations("protocol_core_pca_*.json", "pca_test_r2")
     if not rows:
-        rows, src = _load_split_equations("protocol_core_noiseless_pca_2*.json")
+        rows, src = _load_split_equations("protocol_core_noiseless_pca_2*.json", "pca_test_r2")
     if not rows:
         skip_table("pcasplit.tex",
                     f"no parsable PCA-directed-split per-test JSON found (src={src})")
@@ -5938,7 +5941,7 @@ def gen_pcasplit() -> None:
     n_pass = sum(1 for r in rows if r[2] is not None and isinstance(r[2], (int, float)) and r[2] >= 0.999999)
     tex = header_comment(src) + r"""
 \begin{longtable}{p{4.8cm}p{1.6cm}p{2.9cm}}
-\caption{PCA-directed 40/60 split, all equations found in the source file.}
+\caption{PCA-directed 40/60 split, all equations found in the source file; $\Rsq$ is the HybridDiscoverySystem held-out (test-set) $R^2$ (\texttt{pca\_test\_r2}).}
 \label{tab:pcasplit}\\
 \toprule
 Equation & $\Rsq$ & Status \\
