@@ -5410,7 +5410,9 @@ def _load_timing_multiseed() -> dict[str, list[tuple[str, list[dict]]]]:
         for base in (PATCHED, RESULTS):
             for subdir in ("", "defi",
                            "comparison_results/noise-noiseless/noiseless/defi",
-                           "comparison_results/noise-noiseless/noiseless/defi/multi-seeds"):
+                           "comparison_results/noise-noiseless/noiseless/defi/multi-seeds",
+                           "comparison_results/noise-noiseless/noiseless/defi_pca",
+                           "comparison_results/noise-noiseless/noiseless/defi_pca/multi-seeds"):
                 d = base / subdir if subdir else base
                 if not d.exists():
                     continue
