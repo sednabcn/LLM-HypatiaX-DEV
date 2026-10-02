@@ -328,9 +328,15 @@ def _filtered_glob(d: Path, glob_pat: str) -> list[Path]:
 
 def _det_key(p: Path) -> tuple[str, str]:
     """Deterministic 'age' key for result files: basename, then full path.
-    Replaces os.path.getmtime (which differs between a git checkout and a
-    working tree). Shard names carry a YYYYMMDD_HHMMSS stamp, so name order is
-    chronological order on every machine. Use reverse=True for newest-first."""
+
+    Replaces os.path.getmtime as the newest-file selector. On a fresh git
+    checkout (CI, fetch-depth: 1) every mtime is the checkout time, so mtime
+    order is just write order and differs from a local working tree, which
+    flipped tab:noise_sensitivity / tab:time_noise between local and CI.
+    Result shards carry a YYYYMMDD_HHMMSS stamp in their name, so
+    lexicographic basename order == chronological order, identically on
+    every machine. Use with reverse=True for newest-first.
+    """
     return (p.name, str(p))
 
 
@@ -408,7 +414,7 @@ OVERALL_SOURCE = ("feynman-tests/noise-sweep",)
 def load_noiseless_tests(source_subdirs: tuple[str, ...] | None = None) -> tuple[list[dict], Path | None]:
     """Merge every protocol_core_noiseless_*.json shard (11 shards = the 30-test
     noiseless set) instead of reading only the newest file. Key = (domain,
-    description); newest mtime wins. Returns (tests, newest_shard)."""
+    description); newest (by filename stamp, see _det_key) wins. Returns (tests, newest_shard)."""
     base = RESULTS / "comparison_results"
     if source_subdirs:
         roots = [base / sd for sd in source_subdirs]
@@ -5380,15 +5386,16 @@ def gen_suppb_noiseless() -> None:
 # _configure_output_dir()/run loop) is "results_seed{N}", NOT "seed{N}_
 # results" as this block originally assumed -- the word order is reversed
 # from the old v3c convention, not just the version digit:
-#   v4:  hypatiax_defi_benchmark_results_seed{N}.json (older runs: ..._v4_results_seed{N}.json)
-#   pca: hypatiax_defi_benchmark_pca_results_seed{N}.json   (no "v4" in this
+#   v3c: hypatiax_defi_benchmark_v3*_results_seed{N}.json  (ONLY v3-named files; v4-named and
+#        un-versioned files are deliberately NOT read -- v4 results were removed and the paper's
+#        tables are the v3c run)
+#   pca: hypatiax_defi_benchmark_pca_results_seed{N}.json   (no version in this
 #        one at all -- the pca script never puts a version number in its
 #        output filename, only "pca")
 # under RESULTS/"" or RESULTS/"defi" (same search roots as the single-seed
-# reader). Key renamed "v3c" -> "v4" throughout this file to match the row
-# labels actually printed (was mislabeling v4-sourced data "v3c").
+# reader). Variant key and printed row labels are "v3c", matching the paper.
 _TIMING_SEED_GLOBS = {
-    "v4":  "hypatiax_defi_benchmark*_results_seed*.json",   # un-versioned; PCA files skipped below
+    "v3c": "hypatiax_defi_benchmark_v3*_results_seed*.json",   # v3/v3c only; never v4 or un-versioned
     "PCA": "hypatiax_defi_benchmark_pca_results_seed*.json",
 }
 
@@ -5397,7 +5404,7 @@ def _load_timing_multiseed() -> dict[str, list[tuple[str, list[dict]]]]:
     """{'v3c': [(seed_label, records), ...], 'PCA': [...]} for every seed
     file found for each variant, across PATCHED/RESULTS and the legacy
     'defi' subdir, mirroring load_best()'s search roots."""
-    out: dict[str, list[tuple[str, list[dict]]]] = {"v4": [], "PCA": []}
+    out: dict[str, list[tuple[str, list[dict]]]] = {"v3c": [], "PCA": []}
     for variant, glob_pat in _TIMING_SEED_GLOBS.items():
         seen_seeds: set[str] = set()
         for base in (PATCHED, RESULTS):
@@ -5420,7 +5427,7 @@ def _load_timing_multiseed() -> dict[str, list[tuple[str, list[dict]]]]:
                         continue
                     if isinstance(data, list) and data and isinstance(data[0], dict) and "results" in data[0]:
                         # non-PCA timing must use the full sweep, never 5-record subsets
-                        if variant != "PCA" and len(data) != _ARGS.defi_n:
+                        if len(data) != _ARGS.defi_n:
                             continue
                         seen_seeds.add(seed)
                         out[variant].append((seed, data))
@@ -5462,15 +5469,15 @@ def _timing_stats_for_records(records: list[dict]) -> dict | None:
 def gen_timing_full() -> None:
     """tab:timing_full — per-seed + pooled timing, both variants."""
     by_variant = _load_timing_multiseed()
-    if not by_variant["v4"] and not by_variant["PCA"]:
+    if not by_variant["v3c"] and not by_variant["PCA"]:
         skip_table("timing_full.tex",
-                    "no seed-suffixed hypatiax_defi_benchmark_{v4,pca}_results_"
+                    "no seed-suffixed hypatiax_defi_benchmark_{v3*,pca}_results_"
                     "seed*.json files found (see _TIMING_SEED_GLOBS)")
         return
 
     def _r(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "---"
 
-    tex = header_comment("multi-seed v4/PCA result files") + r"""
+    tex = header_comment("multi-seed v3c/PCA result files") + r"""
 \begin{table}[htbp]
 \centering
 \small
@@ -5485,8 +5492,8 @@ Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speed
     &     & mean/median  & mean/median    & mean/median      & count      &  \\
 \midrule
 """
-    for variant in ("v4", "PCA"):
-        seeds = sorted(by_variant[variant], key=lambda t: t[0])
+    for variant in ("v3c", "PCA"):
+        seeds = sorted(by_variant[variant], key=lambda t: (int(t[0]) if str(t[0]).isdigit() else 10**9, str(t[0])))
         pooled = []
         for seed, records in seeds:
             st = _timing_stats_for_records(records)
@@ -5508,7 +5515,7 @@ Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speed
                         f"\\textbf{{{_r(pst['nn'][0])} / {_r(pst['nn'][1])}}} & "
                         f"\\textbf{{{_r(pst['hy_all'][0])} / {_r(pst['hy_all'][1])}}} & "
                         f"\\textbf{{{pst['n_routed']}/{pst['n']}}} & "
-                        f"\\textbf{{{spd:.2f}$\\times$ " + ("slower" if spd >= 1 else "faster") + "}} \\\\\n")
+                        f"\\textbf{{{spd:.2f}$\\times$ " + ("slower" if spd >= 1 else "faster") + "} \\\\\n")
 
     tex += r"""\bottomrule
 \end{tabular}
@@ -5521,15 +5528,15 @@ def gen_timing_llm_routed_full() -> None:
     """tab:timing_llm_routed_full — same sources as tab:timing_full,
     restricted to hybrid.decision == 'llm' rows only."""
     by_variant = _load_timing_multiseed()
-    if not by_variant["v4"] and not by_variant["PCA"]:
+    if not by_variant["v3c"] and not by_variant["PCA"]:
         skip_table("timing_llm_routed_full.tex",
-                    "no seed-suffixed hypatiax_defi_benchmark_{v4,pca}_results_"
+                    "no seed-suffixed hypatiax_defi_benchmark_{v3*,pca}_results_"
                     "seed*.json files found (see _TIMING_SEED_GLOBS)")
         return
 
     def _r(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "---"
 
-    tex = header_comment("multi-seed v4/PCA result files") + r"""
+    tex = header_comment("multi-seed v3c/PCA result files") + r"""
 \begin{table}[htbp]
 \centering
 \small
@@ -5541,8 +5548,8 @@ def gen_timing_llm_routed_full() -> None:
 Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
 \midrule
 """
-    for variant in ("v4", "PCA"):
-        seeds = sorted(by_variant[variant], key=lambda t: t[0])
+    for variant in ("v3c", "PCA"):
+        seeds = sorted(by_variant[variant], key=lambda t: (int(t[0]) if str(t[0]).isdigit() else 10**9, str(t[0])))
         pooled = []
         for seed, records in seeds:
             st = _timing_stats_for_records(records)
@@ -5566,7 +5573,7 @@ Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup
                         f"\\textbf{{{_r(pst['nn'][0])} / {_r(pst['nn'][1])}}} & "
                         f"\\textbf{{{_r(pst['hy_routed'][0])} / {_r(pst['hy_routed'][1])}}} & "
                         f"\\textbf{{{spd_mean:.2f}$\\times$ / {spd_med:.2f}$\\times$ "
-                        + ("slower" if spd_mean >= 1 else "faster") + "}} \\\\\n")
+                        + ("slower" if spd_mean >= 1 else "faster") + "} \\\\\n")
 
     tex += r"""\bottomrule
 \end{tabular}

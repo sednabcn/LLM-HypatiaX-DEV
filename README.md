@@ -11,7 +11,7 @@ system for scientific equation discovery combining symbolic regression
 > ⚠️ **This is the working/dev repo, not the public release.** It contains
 > experimental branches, multiple orchestration backends, legacy code, and
 > in-progress CI infrastructure. For the clean, reproducible JMLR paper
-> artifact, see **`LLM-HypatiaX-PAPERS-Public`**.
+> artifact, see **`LLM-HypatiaX-REPRO`**.
 
 ---
 

@@ -15,7 +15,7 @@
 \title{HypatiaX: Post-Submission Report\\
 \large Open items deferred from the JMLR submission}
 \author{}
-\date{2026-09-27 (living document; last updated 2026-09-30)}
+\date{2026-09-27 (living document; last updated 2026-10-01)}
 
 \begin{document}
 \maketitle
@@ -789,19 +789,101 @@ v3c rows alone (all-task $5.38$--$7.72\times$, LLM-routed mean $4.07$--$5.76\tim
 benchmark variants, 740 tasks'' wording would have to change. (2) \texttt{tab:pcasplit}: internally consistent ($3+2+12=17$;
 $10+3=13/30=43.3\,\%$; $13+2+15=30$), but its caption says the other 13 per-equation $R^2$ ``were not captured'' while the
 generator's table (all equations in the source file) contains values the paper lacks (0.9979, 0.995, 0.5): diff the 17 rescored
-rows against the source, then consider wiring the full table. (3) \texttt{tab:formulas\_detailed}: ground-truth constants are hand-typed;
+rows against the source, then consider wiring the full table. \textbf{[Diffed; see Item~11 Finding~E.]} (3) \texttt{tab:formulas\_detailed}: ground-truth constants are hand-typed;
 they need extracting from the benchmark code into \texttt{config/ground\_truth\_formulas.json}. (4) Not touched, same provenance
 problem: ``Across 40 tests, 6 equations suffered catastrophic extrapolation failure'' in the main paper's LLM-extrapolation
 paragraph, and the ``(40 tests)'' label on the Pure-LLM notebook in Supplement~B. (5) \texttt{nrmse} sentinel cutoff needs a
 decision (the paper's threshold is not stated). (6) Complete noise-sweep, sample-complexity and DeFi noiseless shards are needed before
 the sweep and noiseless-protocol tables can be judged. (7) After regenerating, remove the two UNVERIFIED entries for
 \texttt{tab:llm\_detailed} and \texttt{tab:defi\_detailed} from \texttt{paper/paper\_table\_exceptions.json} (the checker then reports
-both as WIRED; against the synthetic tables it did).
+both as WIRED; against the synthetic tables it did). \textbf{[Done; CI reports both as WIRED, see Item~11.]}
 
 \textbf{Verification performed.} All three documents compile with identical error and page counts before and after the edits
 (the residual errors come from a stub standing in for the missing \texttt{jmlr2e.sty}); the withdrawn claims are absent from the
 rendered PDFs. \textbf{Recommended next:} run \texttt{generate\_tables.py} without flags and read stderr for the case-name warning;
 rebuild; run the checker; then the timing source question, which gates everything else in this list.
+
+\subsection*{Item 11: Paper-table CI check live; file-selection defect fixed (2026-10-01)}
+\textbf{Status:} The CI check recommended in Item~9 exists and passes; one generator defect found and fixed
+(local result $\ne$ CI result); the remaining open work is data, not code. \textbf{Risk:} Low for what was
+changed; the 25 UNVERIFIED tables below are paper numbers with no data behind them.
+
+\textbf{Finding A --- the check.} Job \texttt{paper\_check} in \texttt{.github/workflows/ci\_postprocess.yml}
+regenerates every table from the committed result files into a scratch directory
+(\texttt{generate\_tables.py} and \texttt{generate\_nguyen12\_fiveseed.py}, using \texttt{results\_root} from
+\texttt{config/experiments.yml}) and runs \texttt{check\_paper\_tables.py --strict-nosource} against
+\texttt{paper/*.tex} and \texttt{paper/paper\_table\_exceptions.json}. DIFF, PARTIAL and NOSOURCE rows fail the job;
+EXCEPTION and UNVERIFIED rows are listed and never fail. Result of run 36777213622 (60 labels):
+\textbf{MATCH=22, EXCEPTION=11, UNVERIFIED=25, WIRED=2}; no DIFF, PARTIAL or NOSOURCE; regression suite 23 passed;
+the generator reports 2 skipped tables (\texttt{timing\_detail} is one). This supersedes the local counts in Item~5
+Finding~D and the unpatched-generator run recorded in Item~10. The rows are:
+\begin{itemize}\small
+\item \textbf{MATCH (22):} difficulty, hybrid-bug-breakdown, main\_results, methods, nguyen12\_byeq,
+  nguyen12\_fiveseed, noise\_sensitivity (see Finding~C), nrmse, overall, provenance, r2\_noise, rr\_noise,
+  sc\_metrics, sota, sweeps, wilcoxon, and the six five-systems tables (full, performance, extrapolation, each for
+  exp1\_five and exp2\_five).
+\item \textbf{WIRED (2):} defi\_detailed, llm\_detailed (pulled in with \verb|\input{}|, cannot drift; Item~10(7) is done).
+\item \textbf{EXCEPTION (11):} figlist, figlist\_complete, figlist\_main, figlist\_supplementary,
+  runtime\_reproducibility, software\_env, supplementary\_files (descriptive, change every run); hyperparameters
+  (label collision); llm\_ablation; nguyen12 (Item~6); pcasplit.
+\item \textbf{UNVERIFIED (25):} additional\_stats, arch, baseline, changes, conceptual\_complexity,
+  cost\_accuracy\_tradeoff, domain\_success\_detailed, equation\_prevalence, feynman30-legacy, fix5\_cases,
+  formulas\_detailed, hardcoded, hyperparameters\_complete, interpolation\_stats, jmlr, portfolio\_seed\_sweep,
+  projected, randomsplit, scalability, time\_noise, timing\_breakdown, timing\_full, timing\_llm\_routed\_full,
+  validation\_stats, winrate.
+\end{itemize}
+
+\textbf{Finding B --- defect: newest file chosen by modification time.} Six places in
+\texttt{scripts/generate\_tables.py} picked the ``newest'' result file with \texttt{os.path.getmtime} or
+\texttt{st\_mtime} (\texttt{load\_best}, \texttt{load\_noiseless\_tests}, both branches of \texttt{load\_sweep\_json},
+the DeFi-73 extrapolation lookup in \texttt{\_vc\_panel\_defi73}, and the portfolio-variance lookup). On a fresh
+\texttt{git} checkout (CI, \texttt{fetch-depth: 1}) every mtime is the checkout time, so the choice differs from a
+working tree. Observed: \texttt{tab:noise\_sensitivity} was UNVERIFIED 67\,\% locally (0.5 missing) but MATCH 100\,\%
+in CI, and \texttt{tab:time\_noise} was missing 7.8 and 6.6 locally but 7.7 and 6.6 in CI. \textbf{Fix:} a helper
+\texttt{\_det\_key(p) = (p.name, str(p))} replaces mtime at all six sites; result shards carry a \texttt{YYYYMMDD\_HHMMSS}
+stamp, so name order is chronological order on every machine. \textbf{Verified locally:} regenerating before and
+after the change differs in exactly one row (\texttt{noise\_sensitivity}: UNVERIFIED 67\,\% $\to$ MATCH 100\,\%);
+the after-report and the CI report differ in no row. \textbf{[CI re-run after the push: to be recorded here.]}
+A duplicate-record scan showed that all 30 noiseless tests appear, with differing contents, in many shards
+(\texttt{exp2}, \texttt{exp2\_pca\_4060} and its \texttt{\_saved} copy, \texttt{noise-sweep}, six
+\texttt{sample-complexity} files), so any reader that merges across those roots is order-dependent; the change made
+no table differ except the one above, including \texttt{arch} and \texttt{hardcoded}, which read through that loader.
+
+\textbf{Finding C --- \texttt{tab:noise\_sensitivity} MATCH is not verification.} Its exception says the generator emits
+an M3/M4 rate at one $\sigma$ while the paper prints a 7-level $\sigma/\mathrm{std}(y)$ table whose source is
+unidentified. A MATCH means only that the small generated table is contained in the larger paper table. The checker
+applies exceptions only to PARTIAL, DIFF and NOSOURCE rows, so a coincidental MATCH overrides an UNVERIFIED
+exception. \textbf{Open decision:} keep as is, or make an exception whose reason starts with \texttt{UNVERIFIED}
+win over MATCH so the row reads UNVERIFIED on every machine.
+
+\textbf{Finding D --- limits of the checker (for interpreting the table above).} It is one-directional (generated numbers
+must appear in the paper), so a truncated generated table can MATCH. The tolerance is $\max(5\cdot10^{-4},
+5\cdot10^{-4}|b|)$, so typos below that size are invisible: the \texttt{tab:pcasplit} Ideal gas cell (paper 0.9999999933,
+data 0.9999999993) is treated as equal and can only be fixed by hand. The wording of two exceptions was stale:
+\texttt{tab:time\_noise} and \texttt{tab:winrate} cited ``the same incomplete-source problem as \texttt{tab:r2\_noise}'',
+although \texttt{r2\_noise} now MATCHes; both now cite the actual cause (Item~5 Finding~D: one $\sigma$ level and 30 tests
+against the paper's 150/180 pairs).
+
+\textbf{Finding E --- \texttt{tab:pcasplit}.} The exception records why the row is EXCEPTION at 84\,\%: all 17 paper rows
+reproduce from the generator's \texttt{pca\_test\_r2}; the paper omits three equations that fail in the data
+(Newton's gravitational force 0.397, kinetic energy $-1.913$, Fermi--Dirac 0.278); the generator's ``Pass $k$/30'' row has no
+counterpart in the paper; and the 0.5 that Item~10 listed among values the paper lacks is read from equation names
+($E=0.5CV^2$, $KE=0.5mv^2$), not from data. This resolves the diff asked for in Item~10 ``Still open''~(2).
+
+\textbf{Still open before submission.}
+(1) \texttt{tab:pcasplit}: correct the Ideal gas cell to 0.9999999993, state in the caption that the column is HDS
+held-out $\Rsq$ and how the 17 of 30 rows were chosen, then delete the last sentence of its exception.
+(2) \texttt{tab:wilcoxon} caption: it says ``normal approximation with tie correction'', but the printed $p$-values match an
+exact test when there are no zero differences or ties; state the method actually used.
+(3) The 25 UNVERIFIED tables, by cause: no result file in the repository (timing\_breakdown, scalability, randomsplit,
+portfolio\_seed\_sweep, timing\_full, timing\_llm\_routed\_full); generator needs a config file that does not exist
+(validation\_stats, jmlr, formulas\_detailed, hyperparameters\_complete, fix5\_cases); legacy tables with no source
+(interpolation\_stats, domain\_success\_detailed); hardcoded and arch (the noiseless records read carry no
+\texttt{is\_hardcoded} or \texttt{decision}/\texttt{strategy} fields); manual or estimated by design (baseline, projected,
+cost\_accuracy\_tradeoff, changes, conceptual\_complexity, equation\_prevalence, additional\_stats, feynman30-legacy);
+incomplete sweep sources (time\_noise, winrate); noise\_sensitivity (source unidentified). For each: locate or rerun the source,
+or remove the table or its numbers from the paper (policy in the preamble).
+(4) Record the CI result of the file-selection fix (Finding~B).
 
 \section{Closed Items (Confirmed, No Manuscript Change)}
 
