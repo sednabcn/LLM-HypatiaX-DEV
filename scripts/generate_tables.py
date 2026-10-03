@@ -3596,7 +3596,7 @@ def gen_portfolio_seed_sweep() -> None:
     """
     # Try to find portfolio_variance_seed_sweep.json
     src_path = None
-    for base in [PATCHED, RESULTS]:
+    for base in [PATCHED, RESULTS, RESULTS / "portfolio_variance_audit"]:
         for cand in [base / "portfolio_variance_seed_sweep.json",
                      *sorted(base.glob("portfolio_variance*.json"),
                              key=_det_key, reverse=True)]:
@@ -3616,6 +3616,21 @@ def gen_portfolio_seed_sweep() -> None:
     def _extract(d):
         if not isinstance(d, dict):
             return []
+        if isinstance(d.get("pysr_only"), list) and isinstance(d.get("hypatia"), list):
+            # layout of portfolio_variance_audit/portfolio_variance_seed_sweep.json
+            _p = {r.get("seed"): r for r in d["pysr_only"] if isinstance(r, dict)}
+            _rows = []
+            for h in d["hypatia"]:
+                if not isinstance(h, dict):
+                    continue
+                p = _p.get(h.get("seed"), {})
+                pf = p.get("far_r2", float("nan"))
+                hf = h.get("far_r2", float("nan"))
+                _rows.append((h.get("seed", "?"), pf, hf, h.get("expr", "?"),
+                              isinstance(hf, float) and hf >= 0.999999,
+                              isinstance(hf, float) and isinstance(pf, float) and hf > pf))
+            _rows.sort(key=lambda r: (not isinstance(r[0], int), r[0] if isinstance(r[0], int) else 0))
+            return _rows if len(_rows) >= 5 else []
         seeds = d.get("seeds", d.get("results", []))
         if not isinstance(seeds, list) or len(seeds) < 5:
             return []
