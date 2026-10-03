@@ -61,6 +61,14 @@ Tables generated  (Supplement B — suppB / STEP 10 outputs)
   suppb_sc_metrics.tex    tab:sc_metrics  §sc     ← sample_complexity_*.json
   suppb_winrate.tex       tab:winrate     §winrate← both JSONs
   suppb_noiseless.tex     tab:overall     §noiseless ← protocol_core_noiseless_*.json
+  arch.tex                tab:arch        §arch   ← protocol_core_*.json (noiseless + noisy runs;
+                                                    M3/M4 routing from metadata.decision)
+  noise_sensitivity.tex   tab:noise_sensitivity  ← protocol_core_*.json, solved = r2 >= each run's
+                                                    own protocol.threshold
+  noise_sensitivity_fixed_<t>.tex  same, one fixed threshold t at every noise level
+                                                    (--fixed-threshold, default 0.99; comparable and
+                                                    valid to pool). Noise level is read from
+                                                    protocol.noise_level, never from the file name.
 
 Usage
 -----
@@ -147,6 +155,18 @@ def _parse_args() -> argparse.Namespace:
                    dest="refresh_abstract_repo",
                    help="Pass --refresh to both abstract-audit scripts (git "
                         "fetch/pull the LLM-HypatiaX-REPRO checkout before auditing).")
+    p.add_argument("--core-sweep-dir", type=Path, default=None, dest="core_sweep_dir",
+                   metavar="PATH",
+                   help="Dir holding the protocol_core_*.json noise runs used by tab:arch and "
+                        "tab:noise_sensitivity (default: <results>/comparison_results/"
+                        "feynman-tests/noise-sweep).")
+    p.add_argument("--fixed-threshold", type=float, action="append", default=None,
+                   dest="fixed_threshold", metavar="T",
+                   help="Also write noise_sensitivity_fixed_<T>.tex, solved = r2 >= T at every "
+                        "noise level. Repeatable. Default: 0.99.")
+    p.add_argument("--inspect-core", action="store_true", dest="inspect_core",
+                   help="Print the layout of the protocol_core files (protocol block, methods, "
+                        "record keys) and exit.")
     p.add_argument("--allow-fallback", action="store_true", dest="allow_fallback",
                    help=argparse.SUPPRESS)  # deprecated no-op, kept only so old
                                              # CI invocations passing this flag
@@ -4980,8 +5000,8 @@ $\sigma$ & M3 avg (s) & M4 avg (s) & Speedup\\
         t3 = m3.get("mean_time_s", timing.get("m3_mean_s"))
         t4 = m4.get("mean_time_s", timing.get("m4_mean_s"))
 
-        t3_str = f"{t3:.1f}" if isinstance(t3, float) else "---"
-        t4_str = f"{t4:.1f}" if isinstance(t4, float) else "---"
+        t3_str = f"{t3:.2f}" if isinstance(t3, float) else "---"
+        t4_str = f"{t4:.2f}" if isinstance(t4, float) else "---"
         if isinstance(t3, float) and isinstance(t4, float) and t4 > 0:
             spd = f"${t3/t4:.1f}\\times$"
         else:
@@ -5366,9 +5386,9 @@ def gen_suppb_winrate(noise_data: dict | None, sc_data: dict | None) -> None:
 \textbf{Outcome} & \textbf{Noise} & \textbf{SC} & \textbf{Consistent?}\\
 \midrule
 """ + \
-    f"M3 strictly higher $R^2$ & {_pct2(n3n,totn)} & {_pct2(n3s,tots)} & \\\\\n" + \
-    f"M4 strictly higher $R^2$ & {_pct2(n4n,totn)} & {_pct2(n4s,tots)} & \\\\\n" + \
-    f"Tied ($R^2 > 0.9999$)    & {_pct2(tn,totn)}  & {_pct2(ts,tots)}  & \\checkmark\\\\\n" + \
+    f"M3 strictly higher $\\Rsq$ & {_pct2(n3n,totn)} & {_pct2(n3s,tots)} & \\\\\n" + \
+    f"M4 strictly higher $\\Rsq$ & {_pct2(n4n,totn)} & {_pct2(n4s,tots)} & \\\\\n" + \
+    f"Tied ($\\Rsq > 0.9999$)    & {_pct2(tn,totn)}  & {_pct2(ts,tots)}  & \\checkmark\\\\\n" + \
     r"""\bottomrule
 \end{tabular}
 \end{table}
@@ -6003,11 +6023,12 @@ _HYPATIAX_METHOD_KEYS = ("hypatiax", "HypatiaX", "HybridDiscoverySystem v50_2 (t
                           "hybrid", "HybridDiscoverySystem_v50_2")
 
 
-def _load_split_equations(glob_pat: str, r2_field: str | None = None) -> tuple[list[tuple], Path | None]:
+def _load_split_equations(glob_pat: str, r2_field: str | None = None,
+                          subdirs: tuple | None = None) -> tuple[list[tuple], Path | None]:
     rows_by_name: dict[str, tuple] = {}
     src = None
     for base in (PATCHED, RESULTS):
-        for subdir in ("comparison_results/feynman-tests/exp2_multi", "comparison_results/feynman-tests/exp2_pca_4060", "exp2_multi", ""):
+        for subdir in (subdirs or ("comparison_results/feynman-tests/exp2_multi", "comparison_results/feynman-tests/exp2_pca_4060", "exp2_multi", "")):
             d = base / subdir if subdir else base
             if not d.exists():
                 continue
@@ -6053,6 +6074,11 @@ def gen_randomsplit() -> None:
     rows, src = _load_split_equations("*random*80_20*.json")
     if not rows:
         rows, src = _load_split_equations("protocol_core_random_*.json")
+    if not rows:
+        # fallback: exp2 random-80/20 per-domain runs (one file per domain, same record shape).
+        # The result differs from the July 22/23 runs the paper cites if any method is non-deterministic.
+        rows, src = _load_split_equations("protocol_core_noiseless_2*.json",
+                                          subdirs=("comparison_results/feynman-tests/exp2",))
     if not rows:
         skip_table("randomsplit.tex",
                     f"no parsable random-80/20-split per-test JSON found (src={src})")
@@ -6418,39 +6444,243 @@ def gen_suppb_wilcoxon() -> None:
 
 
 # ── (A) tab:noise_sensitivity — success rate vs. noise level ────────────────
-def gen_suppb_noise_sensitivity(noise_data: dict | None) -> None:
-    if not noise_data:
-        write_table("noise_sensitivity.tex", "% suppB noise_sweep data not available\n")
+# ── protocol_core sweep: tab:arch + tab:noise_sensitivity ───────────────────
+# Source: protocol_core_*.json (one noiseless + several noisy runs). Rules, stated
+# so the captions can quote them:
+#   noise level = protocol.noise_level (never the file name)
+#   solved      = r2 >= protocol.threshold of that run  (per-run table) or r2 >= T
+#                 (fixed-threshold tables)
+#   routed to X = record.metadata.decision == X ; the `success` flag is NOT used
+#                 (M3/M4 hardcode success=True when no exception is raised)
+# Merged from regenerate_tables.py / regenerate_tables_v2.py.
+_CORE_SWEEP_SYSTEMS = (
+    ("PureLLM",                  r"\PureLLM"),
+    ("ImprovedNN",               r"\INN"),
+    ("EnhancedHybridSystemDeFi", r"\EHD\,(M3)"),
+    ("HybridSystemLLMNN",        r"\HSL\,(M4)"),
+    ("SymbolicEngineWithLLM",    r"\SEL"),
+    ("HybridDiscoverySystem",    r"\HDS"),
+)
+_CORE_M3, _CORE_M4 = "EnhancedHybridSystemDeFi", "HybridSystemLLMNN"
+
+
+def _core_sweep_dir() -> Path:
+    return _ARGS.core_sweep_dir or (RESULTS / "comparison_results" / "feynman-tests" / "noise-sweep")
+
+
+def _load_core_sweep() -> tuple[list[dict], list[Path], list[str]]:
+    """Return (records, files_used, problems). Any problem (unreadable file, missing
+    noise level, duplicate (noise, test, method) record) makes the callers skip the
+    table rather than silently double-count."""
+    d = _core_sweep_dir()
+    files = sorted(_filtered_glob(d, "protocol_core_*.json"), key=_det_key) if d.exists() else []
+    rows: list[dict] = []
+    seen: set = set()
+    used: list[Path] = []
+    problems: list[str] = []
+    for f in files:
+        try:
+            j = json.loads(f.read_text())
+        except Exception as e:
+            problems.append(f"{f.name}: unreadable ({e})")
+            continue
+        p = j.get("protocol") if isinstance(j.get("protocol"), dict) else {}
+        noise, thr = p.get("noise_level"), p.get("threshold")
+        if not isinstance(noise, (int, float)) or isinstance(noise, bool):
+            problems.append(f"{f.name}: no numeric protocol.noise_level")
+            continue
+        used.append(f)
+        for t in j.get("tests", []) or []:
+            desc = t.get("description") or t.get("name")
+            for method, rec in (t.get("results") or {}).items():
+                if not isinstance(rec, dict):
+                    continue
+                key = (float(noise), desc, method)
+                if key in seen:
+                    problems.append(f"{f.name}: duplicate record {key}")
+                    continue
+                seen.add(key)
+                r2 = rec.get("r2")
+                md = rec.get("metadata") if isinstance(rec.get("metadata"), dict) else {}
+                rows.append(dict(
+                    noise=float(noise),
+                    thr=float(thr) if isinstance(thr, (int, float)) and not isinstance(thr, bool) else None,
+                    method=method,
+                    r2=float(r2) if isinstance(r2, (int, float)) and not isinstance(r2, bool) else float("-inf"),
+                    decision=md.get("decision"), nn=md.get("nn_applied")))
+    return rows, used, problems
+
+
+def _core_methods(rows: list[dict]) -> list[tuple[str, str]]:
+    """[(full method name, LaTeX label)] in paper order, unknown methods last."""
+    names = sorted({r["method"] for r in rows})
+    out, taken = [], set()
+    for pre, macro in _CORE_SWEEP_SYSTEMS:
+        for n in names:
+            if n.startswith(pre) and n not in taken:
+                out.append((n, macro)); taken.add(n)
+    out += [(n, _tex_escape_text(n)) for n in names if n not in taken]
+    return out
+
+
+def _core_levels(rows: list[dict]) -> list[float]:
+    lv = sorted({r["noise"] for r in rows})
+    for missing in (0.02, 0.05, 0.10, 0.20):
+        if missing not in lv:
+            print(f"     note: noise level {missing:g} is not present in the protocol_core files")
+    return lv
+
+
+def _inspect_core_sweep() -> None:
+    d = _core_sweep_dir()
+    files = sorted(_filtered_glob(d, "protocol_core_*.json"), key=_det_key) if d.exists() else []
+    print(f"protocol_core dir: {d}  ({len(files)} files)")
+    for f in files:
+        try:
+            j = json.loads(f.read_text())
+        except Exception as e:
+            print(f"  {f.name}: unreadable ({e})"); continue
+        tests = j.get("tests", []) or []
+        print(f"\n  {f.name}\n    protocol: {json.dumps(j.get('protocol'))[:300]}")
+        print(f"    tests: {len(tests)}  methods: {j.get('methods')}")
+        if tests:
+            res = tests[0].get("results") or {}
+            for m, rec in list(res.items())[:6]:
+                md = rec.get("metadata") if isinstance(rec, dict) else None
+                print(f"    {m}: keys={sorted(rec) if isinstance(rec, dict) else type(rec).__name__}"
+                      f" metadata={sorted(md) if isinstance(md, dict) else None}")
+
+
+def _core_pct(lv: float) -> str:
+    """noise_level (fraction) -> sigma in percent, as the supplement writes it (0, 0.05, 0.1, 0.5, 1)."""
+    return f"{round(lv * 100, 6):g}"
+
+
+def _core_cell(c: int, n: int, pct: bool = True) -> str:
+    return f"{c}/{n}" + (f" ({100 * c / n:.1f}\\%)" if pct and n else "")
+
+
+def gen_suppb_arch() -> None:
+    rows, files, problems = _load_core_sweep()
+    if problems or not rows:
+        skip_table("arch.tex", "; ".join(problems[:3]) if problems else
+                   f"no protocol_core_*.json records under {_core_sweep_dir()}")
         return
-    noise_levels = sorted(noise_data.get("noise_levels", []))
-    per_noise = noise_data.get("per_noise", {})
-    tex = header_comment("noise_sweep_*.json") + r"""
-\begin{table}[H]
-\centering
-\caption{Success rate vs.\ noise level (recovery rate, $R^2 \ge$ threshold).}
-\label{tab:noise_sensitivity}
-\small
-\begin{tabular}{lrr}
-\toprule
-$\sigma$ & M3 Success Rate & M4 Success Rate \\
-\midrule
-"""
-    for sigma in noise_levels:
-        pnd = per_noise.get(_sigma_str(sigma)) or {}
-        ms = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
-        m3 = _pick_method(ms, _M3_FRAG)
-        m4 = _pick_method(ms, _M4_FRAG)
+    levels = _core_levels(rows)
+    recs = {}
+    for key, pre in (("M3", _CORE_M3), ("M4", _CORE_M4)):
+        recs[key] = [r for r in rows if r["method"].startswith(pre)]
+        if not recs[key]:
+            skip_table("arch.tex", f"no {pre} records found"); return
+        if any(r["decision"] is None for r in recs[key]):
+            skip_table("arch.tex", f"{pre}: records without metadata.decision"); return
 
-        def _rr(d):
-            v = d.get("recovery_rate")
-            return f"{v*100:.1f}\\%" if isinstance(v, float) else "---"
+    def cnt(key, dec, noise=None):
+        return sum(r["decision"] == dec and (noise is None or r["noise"] == noise) for r in recs[key])
 
-        tex += f"{_label(sigma)} & {_rr(m3)} & {_rr(m4)} \\\\\n"
-    tex += r"""\bottomrule
-\end{tabular}
-\end{table}
-"""
-    write_table("noise_sensitivity.tex", tex)
+    def nlev(key, noise):
+        return sum(r["noise"] == noise for r in recs[key])
+
+    lab = {"ensemble": ("ensemble-first", "ensemble"), "llm": ("LLM-first", "LLM"), "nn": ("NN-first", "NN")}
+    cells = {}
+    for key in ("M3", "M4"):
+        n = len(recs[key])
+        order = sorted(((d, cnt(key, d)) for d in lab if cnt(key, d) > 0), key=lambda x: -x[1])
+        (pd, pc), rest = order[0], order[1:]
+        prim = f"{_core_cell(pc, n)} {lab[pd][0]}"
+        alt = "; ".join(f"{_core_cell(c, n)} {lab[d][1]}" for d, c in rest) or "---"
+        cells[key] = (prim, alt)
+    n_eq = nlev("M3", levels[0])
+    lvl = r"$\sigma\in\{" + ", ".join(_core_pct(lv) for lv in levels) + r"\}\%$"
+    caption = (r"Internal routing statistics --- evidence that M3 and M4 are genuinely distinct architectures. "
+               r"Regenerated by \texttt{generate\_tables.py} from the " + str(len(files)) +
+               r" \texttt{protocol\_core} result files (" + lvl + f"; {n_eq} equations per run, so "
+               f"{len(recs['M3'])} records per system). ``Ensemble-first'' (M3) and ``LLM-first'' (M4) denote the "
+               r"share of records whose recorded \texttt{metadata.decision} routed to that branch; this is a routing "
+               r"share, not a solve rate, and the \texttt{success} flag is not used. The pool mixes the noiseless "
+               r"run with the noisy runs.")
+    tex = header_comment(_core_sweep_dir() / "protocol_core_*.json") + (
+        "\\begin{table}[H]\n\\centering\n\\caption{" + caption + "}\n\\label{tab:arch}\n\\small\n"
+        "\\begin{tabular}{L{3.5cm} r r}\n\\toprule\n"
+        "\\textbf{Decision path} & \\textbf{M3 (\\EHD)} & \\textbf{M4 (\\HSL)}\\\\\n\\midrule\n"
+        f"Primary path (routing share) & {cells['M3'][0]} & {cells['M4'][0]}\\\\\n"
+        f"Alternative path & {cells['M3'][1]} & {cells['M4'][1]}\\\\\n"
+        "Secondary path & NN refinement & NN residual correction\\\\\n"
+        "Architecture type & Ensemble-first & LLM-first + NN-refinement\\\\\n"
+        "\\bottomrule\n\\end{tabular}\n\\end{table}\n")
+    write_table("arch.tex", tex)
+
+    bn = header_comment(_core_sweep_dir() / "protocol_core_*.json") + (
+        "\\begin{table}[H]\n\\centering\n\\caption{Routing by noise level (" + f"{n_eq}" + r" equations per level), "
+        r"same source as \Cref{tab:arch}; $\sigma$ is the run's \texttt{protocol.noise\_level} in percent.}"
+        "\n\\label{tab:arch_by_noise}\n\\small\n\\begin{tabular}{l r r r r}\n\\toprule\n"
+        "$\\sigma$ (\\%) & M3 ensemble & M3 NN & M4 LLM & M4 ensemble\\\\\n\\midrule\n")
+    for lv in levels:
+        bn += (f"{_core_pct(lv)} & {cnt('M3','ensemble',lv)} & {cnt('M3','nn',lv)} & "
+               f"{cnt('M4','llm',lv)} & {cnt('M4','ensemble',lv)}\\\\\n")
+    bn += (f"\\midrule\nTotal & {cnt('M3','ensemble')} & {cnt('M3','nn')} & {cnt('M4','llm')} & "
+           f"{cnt('M4','ensemble')}\\\\\n\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n")
+    write_table("arch_by_noise.tex", bn)
+    print(f"     arch: M3 ensemble {cnt('M3','ensemble')}/{len(recs['M3'])}, M4 llm {cnt('M4','llm')}/{len(recs['M4'])}")
+
+
+def _core_noise_table(rows, levels, thr_fn, label, fname, caption, tau_row) -> None:
+    methods = _core_methods(rows)
+    cols = "@{}l" + "c" * len(levels) + "r@{}"
+    tex = header_comment(_core_sweep_dir() / "protocol_core_*.json") + (
+        "\\begin{table}[H]\n\\centering\n\\caption{" + caption + "}\n\\label{" + label + "}\n\\footnotesize\n"
+        "\\begin{tabular}{" + cols + "}\n\\toprule\n\\textbf{System, $\\sigma$ (\\%)} & "
+        + " & ".join(f"\\textbf{{{_core_pct(lv)}}}" for lv in levels) + " & \\textbf{Pooled}\\\\\n")
+    if tau_row:
+        taus = []
+        for lv in levels:
+            t = next(r["thr"] for r in rows if r["noise"] == lv)
+            taus.append(f"$\\tau{{=}}{t:g}$")
+        tex += " & " + " & ".join(taus) + " & \\\\\n"
+    tex += "\\midrule\n"
+    for name, macro in methods:
+        cells, ps, pn = [], 0, 0
+        for lv in levels:
+            sub = [r for r in rows if r["method"] == name and r["noise"] == lv]
+            s = sum(r["r2"] >= thr_fn(r) for r in sub)
+            cells.append(f"{s}/{len(sub)}"); ps += s; pn += len(sub)
+        tex += f"{macro} & " + " & ".join(cells) + f" & {_core_cell(ps, pn)}\\\\\n"
+        print(f"     {fname[:-4]:32s} {name[:34]:34s}", " | ".join(cells), f"| {ps}/{pn}")
+    tex += "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    write_table(fname, tex)
+
+
+def gen_suppb_noise_sensitivity(noise_data: dict | None = None) -> None:
+    # noise_data (the merged noise_sweep_*.json) is intentionally unused: the paper's table is
+    # built from protocol_core_*.json. Kept in the signature so existing dispatch lambdas work.
+    rows, files, problems = _load_core_sweep()
+    if problems or not rows:
+        skip_table("noise_sensitivity.tex", "; ".join(problems[:3]) if problems else
+                   f"no protocol_core_*.json records under {_core_sweep_dir()}")
+        return
+    levels = _core_levels(rows)
+    common = (r"Equations solved (out of @NT@) per noise level, @NF@ runs, noise level read from each file's "
+              r"\texttt{protocol.noise\_level}; the \texttt{success} flag is not used. Columns give the noise level $\sigma$ in percent. ")
+    common = (common.replace("@NT@", str(max(sum(r["method"] == m and r["noise"] == lv for r in rows)
+                                         for m, _ in _core_methods(rows) for lv in levels)))
+                    .replace("@NF@", str(len(files))))
+    # per-run thresholds
+    if all(any(r["noise"] == lv and r["thr"] is not None for r in rows) for lv in levels):
+        cap = (common + r"Solved means $\Rsq \geq \tau$ for the threshold $\tau$ recorded in that run's protocol "
+               r"block, so counts are comparable across systems within a column but \emph{not} across columns, "
+               r"and the pooled column adds counts taken under different thresholds. Noisy runs have an "
+               r"$\Rsq$ ceiling of about $0.9982$ and cannot meet the noiseless threshold.")
+        _core_noise_table(rows, levels, lambda r: r["thr"], "tab:noise_sensitivity",
+                          "noise_sensitivity.tex", cap, tau_row=True)
+    else:
+        skip_table("noise_sensitivity.tex", "a run has no protocol.threshold")
+    # fixed thresholds
+    for t in (_ARGS.fixed_threshold or [0.99]):
+        cap = (common + rf"Solved means $\Rsq \geq {t:g}$ at every noise level, so counts are comparable across "
+               r"columns and the pooled column is valid.")
+        tag = f"{t:g}".replace(".", "p")
+        _core_noise_table(rows, levels, lambda r, t=t: t, ("tab:noise_sensitivity_fixed" if tag == "0p99" else f"tab:noise_sensitivity_fixed_{tag}"),
+                          f"noise_sensitivity_fixed_{tag}.tex", cap, tau_row=False)
 
 
 # ── (A) tab:interpolation_stats / tab:domain_success_detailed ───────────────
@@ -6660,44 +6890,6 @@ def gen_suppb_defi_detailed() -> None:
 # other suppB generators use, tallying each method's 'decision'/'strategy'
 # field if present. Always skip_table()s rather than guess a number if that
 # field isn't there — see the module-level note at the top of this block.
-def gen_suppb_arch() -> None:
-    tests, src = _load_noiseless_tests()
-    if not tests:
-        skip_table("arch.tex", "no protocol_core_noiseless_*.json tests found")
-        return
-    counts: dict[str, dict[str, int]] = {}
-    for t in tests:
-        for mname, res in (t.get("results", {}) or {}).items():
-            if not isinstance(res, dict):
-                continue
-            dec = res.get("decision") or res.get("strategy")
-            if dec:
-                counts.setdefault(mname, {}).setdefault(dec, 0)
-                counts[mname][dec] += 1
-    if not counts:
-        skip_table("arch.tex", f"no 'decision'/'strategy' fields found in noiseless tests (src={src})")
-        return
-    tex = header_comment(src) + r"""
-\begin{table}[ht]
-\centering
-\caption{Internal routing statistics --- decision distribution per method.}
-\label{tab:arch}
-\small
-\begin{tabular}{lll}
-\toprule
-\textbf{Method} & \textbf{Decision} & \textbf{Count} \\
-\midrule
-"""
-    for mname in sorted(counts):
-        for dec, n in sorted(counts[mname].items(), key=lambda kv: -kv[1]):
-            tex += f"{mname[:20]} & {dec} & {n} \\\\\n"
-    tex += r"""\bottomrule
-\end{tabular}
-\end{table}
-"""
-    write_table("arch.tex", tex)
-
-
 # ── (C — mechanical, always safe) tab:supplementary_files, tab:figlist ──────
 #
 # These two are manifests of what's actually on disk in this run's output
@@ -7119,6 +7311,9 @@ def gen_routing_conceptual_complexity() -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    if _ARGS.inspect_core:
+        _inspect_core_sweep()
+        return
     print("═" * 65)
     print("  Table Generator — HypatiaX JMLR + Supplement B")
     print("═" * 65)
@@ -7244,8 +7439,12 @@ def main() -> None:
          ("suppb", "suppb_sc")),
         ("noiseless protocol JSON (suppB tab:overall)",
          "comparison_results/noise-noiseless/noiseless/defi",
-         "protocol_core_noiseless_*.json", "",
+         "protocol_core_noiseless_*.json", "comparison_results/feynman-tests/exp2",
          ("suppb",)),
+        ("protocol_core noise runs (tab:arch, tab:noise_sensitivity)",
+         "comparison_results/feynman-tests/noise-sweep",
+         "protocol_core_*.json", "",
+         ("suppb", "suppb_extra")),
         # suppA / routing: mirrors gen_routing_timing_breakdown()'s and
         # gen_routing_scalability()'s own load_best("", pattern,
         # extra_subdirs=["routing"]) calls -- subdir="" (RESULTS itself),
