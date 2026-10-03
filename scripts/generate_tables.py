@@ -494,6 +494,63 @@ def load_sweep_json(explicit: Path | None, subdir: str, glob_pat: str) -> dict |
 
 
 
+def load_sweep_json_merged(explicit: Path | None, subdir: str, glob_pat: str,
+                           levels_key: str, list_key: str) -> dict | None:
+    """Like load_sweep_json(), but merges EVERY matching shard.
+
+    FIX ISSUE-SHARD-MERGE: each sweep shard holds a single sigma level or a
+    single sample size, so loading only the newest file produced one-row
+    tables. levels_key is "per_noise" or "per_n"; list_key is "noise_levels"
+    or "sample_sizes". If the same level appears in several shards, the block
+    with more per_equation records wins (ties: later file name).
+    An explicit path is still honoured on its own (no merging).
+    """
+    if explicit and explicit.exists():
+        try:
+            return json.loads(explicit.read_text())
+        except Exception:
+            pass
+    dirs = [RESULTS / subdir,
+            RESULTS / "comparison_results" / "feynman-tests" / "noise-sweep"]
+    files: list[Path] = []
+    for d in dirs:
+        if d.exists():
+            files = sorted(_filtered_glob(d, glob_pat), key=_det_key)
+            if files:
+                break
+    if not files:
+        return None
+    merged: dict = {}
+    blocks: dict = {}
+    for f in files:
+        try:
+            d = json.loads(f.read_text())
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        for k, v in d.items():
+            if k not in (levels_key, list_key):
+                merged[k] = v
+        for lk, blk in (d.get(levels_key) or {}).items():
+            n_new = len((blk or {}).get("per_equation") or {}) if isinstance(blk, dict) else 0
+            old = blocks.get(lk)
+            n_old = len((old or {}).get("per_equation") or {}) if isinstance(old, dict) else -1
+            if n_new >= n_old:
+                blocks[lk] = blk
+    if not blocks:
+        return None
+    merged[levels_key] = blocks
+    lv = []
+    for k in blocks:
+        try:
+            lv.append(float(k) if list_key == "noise_levels" else int(float(k)))
+        except ValueError:
+            pass
+    merged[list_key] = sorted(set(lv))
+    return merged
+
+
 def write_table(name: str, content: str) -> None:
     global GENERATED
     out = TABLES_DIR / name
@@ -4720,6 +4777,27 @@ def _pick_method_key(method_summary: dict, frags: tuple[str, ...]) -> str | None
     return None
 
 
+def _min_r2_from_per_equation(level: dict, method_key: str | None) -> float | None:
+    """Minimum finite per-equation R^2 for one method at one sweep level.
+
+    FIX SC-MIN-R2: method_summary has no min_r2, so tab:sc_metrics used to
+    print '---' in both Min R^2 columns.  per_equation carries every
+    equation's r2, so the true minimum is computed from it.
+    """
+    if not method_key or not isinstance(level, dict):
+        return None
+    per_eq = level.get("per_equation")
+    if not isinstance(per_eq, dict) or not per_eq:
+        return None
+    vals = []
+    for eq_methods in per_eq.values():
+        entry = eq_methods.get(method_key) if isinstance(eq_methods, dict) else None
+        v = entry.get("r2") if isinstance(entry, dict) else None
+        if isinstance(v, (int, float)) and v == v and abs(v) != float("inf"):
+            vals.append(float(v))
+    return min(vals) if vals else None
+
+
 def _median_rmse_from_per_equation(level: dict, method_key: str | None) -> float | None:
     """Median rmse for one method across every equation in level["per_equation"].
 
@@ -4752,6 +4830,17 @@ def _median_rmse_from_per_equation(level: dict, method_key: str | None) -> float
         return None
     import statistics
     return statistics.median(vals)
+
+
+def _n_cap(sweep_data: dict | None) -> str:
+    """Caption text for the per-equation sample size.
+
+    FIX NOISE-N-HARDCODED: run_noise_sweep_benchmark.py now records n_samples in
+    every shard; use it when present.  Shards from before that change carry no
+    n_samples and fall back to the historic n=200 (the CI default).
+    """
+    n = (sweep_data or {}).get("n_samples")
+    return f"$n={int(n)}$" if isinstance(n, (int, float)) and n == n else "$n=200$"
 
 
 def gen_suppb_r2_noise(noise_data: dict | None) -> None:
@@ -4790,16 +4879,26 @@ $\sigma$ & Median & Min & Std & Median & Min & Std\\
             v = d.get(k)
             return f"{v:.7f}" if isinstance(v, float) else "---"
 
+        def _min(frags):
+            vals = []
+            for _eq, _meths in ((pnd.get("per_equation") if isinstance(pnd, dict) else None) or {}).items():
+                for _mn, _res in (_meths or {}).items():
+                    if any(f in _norm_method(_mn) for f in frags) and isinstance(_res, dict):
+                        _r = _res.get("r2")
+                        if isinstance(_r, (int, float)) and _math.isfinite(_r):
+                            vals.append(float(_r))
+            return f"{min(vals):.7f}" if vals else "---"
+
         tex += (
-            f"{_label(sigma)} & {_v(m3,'median_r2')} & --- & {_v(m3,'std_r2')}"
-            f" & {_v(m4,'median_r2')} & --- & {_v(m4,'std_r2')} \\\\\n"
+            f"{_label(sigma)} & {_v(m3,'median_r2')} & {_min(("enhancedhybridsystemdefi",))} & {_v(m3,'std_r2')}"
+            f" & {_v(m4,'median_r2')} & {_min(("hybridsystemllmnn",))} & {_v(m4,'std_r2')} \\\\\n"
         )
 
     tex += r"""\bottomrule
 \end{tabular}
 \end{table}
 """
-    write_table("suppb_r2_noise.tex", tex)
+    write_table("suppb_r2_noise.tex", tex.replace("$n=200$", _n_cap(noise_data)))
 
 
 def gen_suppb_rr_noise(noise_data: dict | None) -> None:
@@ -4845,7 +4944,7 @@ $\sigma$ & M3 Recovery & M3 Catastrophic & M4 Recovery & M4 Catastrophic\\
 \end{tabular}
 \end{table}
 """
-    write_table("suppb_rr_noise.tex", tex)
+    write_table("suppb_rr_noise.tex", tex.replace("$n=200$", _n_cap(noise_data)))
 
 
 def gen_suppb_time_noise(noise_data: dict | None) -> None:
@@ -4920,7 +5019,7 @@ def gen_suppb_sc_metrics(sc_data: dict | None) -> None:
     tex = header_comment(src) + r"""
 \begin{table}[H]
 \centering
-\caption{$R^2$ and RMSE per sample size ($\sigma=5\%$, 30 equations).}
+\caption{$R^2$ and RMSE per sample size (noiseless, 30 equations).}
 \label{tab:sc_metrics}
 \renewcommand{\arraystretch}{1.2}
 \small
@@ -4952,9 +5051,13 @@ $n$ & Med $R^2$ & Min $R^2$ & Med RMSE & Med $R^2$ & Min $R^2$ & Med RMSE\\
             v = _median_rmse_from_per_equation(pnd, method_key)
             return f"{v:.4f}" if isinstance(v, (int, float)) else "---"
 
+        def _minr2(method_key):
+            v = _min_r2_from_per_equation(pnd, method_key)
+            return f"{v:.4f}" if isinstance(v, (int, float)) else "---"
+
         tex += (
-            f"{n:4d} & {_v(m3,'median_r2')} & --- & {_rmse(m3_key)}"
-            f" & {_v(m4,'median_r2')} & --- & {_rmse(m4_key)} \\\\\n"
+            f"{n:4d} & {_v(m3,'median_r2')} & {_minr2(m3_key)} & {_rmse(m3_key)}"
+            f" & {_v(m4,'median_r2')} & {_minr2(m4_key)} & {_rmse(m4_key)} \\\\\n"
         )
 
     tex += r"""\bottomrule
@@ -5026,9 +5129,10 @@ def gen_suppb_sc_summary(sc_data: dict | None) -> None:
         # Recovery rate at the largest sample size tested
         final_n   = max(r2s.keys()) if r2s else None
         final_rr  = rrs.get(final_n, float("nan")) if final_n else float("nan")
+        _thr_pct = f"{threshold*100:.0f}\\%"   # FIX SC-SUMMARY-PCT: unescaped % commented out the row end
         note = (
-            f"≥{threshold:.0%} at n={best_n_rr}" if best_n_rr is not None
-            else f"<{threshold:.0%} at all n"
+            f"$\\geq$ {_thr_pct} at $n={best_n_rr}$" if best_n_rr is not None
+            else f"$<$ {_thr_pct} at all $n$"
         )
         rows.append((mname, best_n_rr, max_r2, max_rr, final_rr, note))
 
@@ -5042,19 +5146,20 @@ def gen_suppb_sc_summary(sc_data: dict | None) -> None:
     tex = header_comment(src) + r"""
 \begin{table}[H]
 \centering
-\caption{Sample-complexity sweep aggregate summary ($\sigma=5\%$, 30 equations).
-  \textbf{Best n}: smallest $n$ achieving recovery rate $\ge """ + f"{threshold:.0%}" + r"""$.
+\caption{Sample-complexity sweep aggregate summary (noiseless, 30 equations).
+  \textbf{Best n}: smallest $n$ achieving recovery rate $\ge """ + f"{threshold*100:.0f}" + r"""\%$.
   \textbf{Max Med $R^2$}: peak median $R^2$ across all $n$.
   \textbf{Final RR}: recovery rate at the largest $n$ tested.}
 \label{tab:sc_summary}
 \small
-\begin{tabular}{l r r r r l}
+\begin{tabular}{p{5.2cm} r r r r l}
 \toprule
 \textbf{Method} & \textbf{Best $n$} & \textbf{Max Med $R^2$} & \textbf{Max RR} & \textbf{Final RR} & \textbf{Data Efficiency} \\
 \midrule
 """
     for (mname, best_n, max_r2, max_rr, final_rr, note) in rows:
-        short = mname[:32]
+        # FIX SC-SUMMARY-NAME: no truncation; escape LaTeX specials (v50_2 has an underscore)
+        short = mname.replace("_", r"\_").replace("&", r"\&")
         tex += f"{short} & {_n(best_n)} & {_r(max_r2)} & {_pct(max_rr)} & {_pct(final_rr)} & {note} \\\\\n"
 
     tex += r"""\bottomrule
@@ -5117,7 +5222,9 @@ def gen_suppb_sc_by_sample(sc_data: dict | None) -> None:
     def _short(name: str) -> str:
         name = name.replace("EnhancedHybridSystemDeFi", "EHD")
         name = name.replace("HybridSystemLLMNN all-domains", "HSL")
-        return name[:18]
+        if len(name) > 22:
+            name = name[:21] + "\u2026"
+        return name.replace("&", "\\&").replace("_", "\\_")
 
     n_methods = len(all_methods)
     col_spec = "r" + " rrrrr" * n_methods
@@ -5126,7 +5233,7 @@ def gen_suppb_sc_by_sample(sc_data: dict | None) -> None:
 \begin{table}[H]
 \centering
 \caption{Full sample-complexity results by sample size and method
-  ($\sigma=5\%$, 30 equations). Each method block: Med $R^2$, Mean $R^2$, Std, RR, Success.}
+  (noiseless, 30 equations). Each method block: Med $R^2$, Mean $R^2$, Std, RR, Success.}
 \label{tab:sc_by_sample}
 \renewcommand{\arraystretch}{1.1}
 \scriptsize
@@ -5173,45 +5280,75 @@ def gen_suppb_sc_by_sample(sc_data: dict | None) -> None:
     write_table("suppb_sc_by_sample.tex", tex)
 
 
+def _norm_method(name: str) -> str:
+    return name.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+
+def _pair_counts_per_equation(sweep_dir, glob_pat: str, thr: float = 0.9999,
+                              levels_key=("per_noise", "per_n")):
+    """Per-equation M3 vs M4 win counts, merged over EVERY shard matching glob_pat.
+
+    FIX ISSUE-WINRATE: the previous implementation compared the aggregate
+    recovery_rate of the single newest shard and credited all 30 equations of
+    that level to the winner, so the table reported 30 comparisons, 0% ties
+    and 30/30 M4. Pairs are now (level, equation) matched across all shards;
+    a pair is tied when BOTH R^2 > thr, otherwise the strictly higher R^2 wins.
+    Returns (m3_wins, m4_wins, ties, total); (0, 0, 0, 0) if no data.
+    """
+    sweep_dir = Path(sweep_dir)
+    if not sweep_dir.exists():
+        return 0, 0, 0, 0
+    pairs = {}
+    for f in sorted(sweep_dir.glob(glob_pat)):
+        try:
+            d = json.loads(f.read_text())
+        except Exception:
+            continue
+        for lk in levels_key:
+            for lvl, blk in (d.get(lk) or {}).items():
+                for eq, meths in ((blk or {}).get("per_equation") or {}).items():
+                    r3 = r4 = None
+                    for mname, res in meths.items():
+                        n = _norm_method(mname)
+                        r2 = res.get("r2") if isinstance(res, dict) else None
+                        if not isinstance(r2, (int, float)) or not _math.isfinite(r2):
+                            continue
+                        if "enhancedhybridsystemdefi" in n:
+                            r3 = float(r2)
+                        elif "hybridsystemllmnn" in n:
+                            r4 = float(r2)
+                    if r3 is not None and r4 is not None:
+                        pairs[(str(lvl), eq)] = (r3, r4)
+    m3 = m4 = ties = 0
+    for r3, r4 in pairs.values():
+        if r3 > thr and r4 > thr:
+            ties += 1
+        elif r3 > r4:
+            m3 += 1
+        elif r4 > r3:
+            m4 += 1
+        else:
+            ties += 1
+    return m3, m4, ties, len(pairs)
+
+
 def gen_suppb_winrate(noise_data: dict | None, sc_data: dict | None) -> None:
-    """tab:winrate — Head-to-head win rates M3 vs M4 (noise + SC sweeps)."""
+    """tab:winrate — Head-to-head win rates M3 vs M4 (noise + SC sweeps).
+
+    Counts per-equation pairs merged over all shards (see
+    _pair_counts_per_equation); noise_data / sc_data are only used to decide
+    whether the sweeps exist.
+    """
     if not noise_data and not sc_data:
         write_table("suppb_winrate.tex", "% suppB data not available\n")
         return
 
-    def _count_wins(sweep_data: dict | None) -> tuple[int, int, int, int]:
-        """Returns (m3_wins, m4_wins, ties, total)."""
-        if not sweep_data:
-            return 0, 0, 0, 0
-        m3_w = m4_w = ties = total = 0
-        key = "noise_levels" if "noise_levels" in sweep_data else "sample_sizes"
-        levels = sorted(sweep_data.get(key, []))
-        pn_key = "per_noise" if "per_noise" in sweep_data else "per_n"
-        per = sweep_data.get(pn_key, {})
-        for lvl in levels:
-            lk  = _sigma_str(lvl) if key == "noise_levels" else str(lvl)
-            pnd = per.get(lk) or {}
-            ms  = pnd.get("method_summary", {}) if isinstance(pnd, dict) else {}
-            m3  = _pick_method(ms, _M3_FRAG)
-            m4  = _pick_method(ms, _M4_FRAG)
-            n3  = m3.get("n_total", 0) or 0
-            n4  = m4.get("n_total", 0) or 0
-            # use n_success as a proxy for wins vs per-equation comparison
-            s3  = m3.get("recovery_rate") or 0
-            s4  = m4.get("recovery_rate") or 0
-            n_eq = max(n3, n4, 30)
-            total += n_eq
-            eps = 1e-6
-            if s3 > s4 + eps:
-                m3_w += n_eq
-            elif s4 > s3 + eps:
-                m4_w += n_eq
-            else:
-                ties += n_eq
-        return m3_w, m4_w, ties, total
-
-    n3n, n4n, tn, totn = _count_wins(noise_data)
-    n3s, n4s, ts, tots = _count_wins(sc_data)
+    _sw = RESULTS / "comparison_results" / "feynman-tests"
+    n3n, n4n, tn, totn = _pair_counts_per_equation(_sw / "noise-sweep", "noise_sweep_*.json")
+    n3s, n4s, ts, tots = _pair_counts_per_equation(_sw / "sample-complexity", "sample_complexity_*.json")
+    if totn == 0 and tots == 0:
+        skip_table("suppb_winrate.tex", "no per_equation records found in sweep shards")
+        return
 
     def _pct2(a, b):
         return f"{a}/{b} ({a/b*100:.1f}\\%)" if b > 0 else "---"
@@ -6027,7 +6164,7 @@ def gen_suppb_sweeps() -> None:
 \textbf{Sweep} & \textbf{Axis varied} & \textbf{Fixed} & \textbf{Conditions}\\
 \midrule
 Noise       & $\sigma \in \{0, 0.05, 0.1, 0.5, 1\}\%$ & $n=200$       & 5 levels \\
-Sample size & $n \in \{50,100,200,500,750,1000\}$  & $\sigma=5\%$ & 6 sizes  \\
+Sample size & $n \in \{50,100,200,500,750,1000\}$  & noiseless & 6 sizes  \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -7175,15 +7312,17 @@ def main() -> None:
     # ── End audit ─────────────────────────────────────────────────────────────
 
     # ── Load suppB sweep JSONs (once, shared across generators) ───────────────
-    noise_data = load_sweep_json(
+    noise_data = load_sweep_json_merged(
         _ARGS.noise_sweep,
         "comparison_results/feynman-tests/noise-sweep",
         "noise_sweep_*.json",
+        "per_noise", "noise_levels",
     )
-    sc_data = load_sweep_json(
+    sc_data = load_sweep_json_merged(
         _ARGS.sample_complexity,
         "comparison_results/feynman-tests/sample-complexity",
         "sample_complexity_*.json",
+        "per_n", "sample_sizes",
     )
 
     if noise_data:

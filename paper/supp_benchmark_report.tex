@@ -1,7 +1,7 @@
 %% ============================================================
 %%  SUPPLEMENTARY MATERIAL B
 %%  HypatiaX: Noise Robustness, Sample Complexity, and Convergence
-%%  of Hybrid LLM–Neural Symbolic Regression on the Feynman Benchmark
+%%  of Hybrid LLM–Neural Symbolic Regression on a Custom 30-Equation Benchmark
 %%
 %%  Companion to: jmlr_paper_main.tex
 %%  Sources: six-method noiseless comparison (clean report)  +
@@ -117,7 +117,7 @@
 \title{%
   Supplementary Material B\\[6pt]
   HypatiaX: Noise Robustness, Sample Complexity, and Convergence\\
-  of Hybrid LLM--Neural Symbolic Regression on the Feynman Benchmark
+  of Hybrid LLM--Neural Symbolic Regression on a Custom 30-Equation Benchmark
 }
 \author{Ruperto Pedro Bonet Chaple\\
   \texttt{ruperto.bonet@modelphysmat.com}\\
@@ -128,7 +128,7 @@
 
 \begin{abstract}
 We present an extended evaluation of the HypatiaX symbolic regression
-framework on 30 Feynman benchmark equations, integrating a six-method
+framework on a custom 30-equation benchmark, integrating a six-method
 noiseless comparison with a comprehensive noise robustness sweep
 ($\sigma \in \{0, 0.05, 0.1, 0.5, 1\}\%$, \textbf{[Correction: previously
 stated as $\{0, 0.5, 1, 5, 10\}\%$, off by $10\times$ per level; see
@@ -160,19 +160,25 @@ attributed to \HDS{} (real figure on the verified
 independent re-parse of every raw per-equation record in
 \texttt{protocol\_core\_noiseless\_20260812\_170344.json}, method by
 method (30 tests $\times$ 6 methods, no reliance on any script's own
-\texttt{success} flag), reproduces \Cref{tab:overall}'s six pass rates
-\textbf{exactly}: \PureLLM{} 30/30, \INN{} 0/30, \EHD{} 23/30, \HSL{}
+\texttt{success} flag), reproduces the six pass rates in that file
+\textbf{exactly} (\Cref{tab:overall} now shows \PureLLM{} as 29/30 from the later recount): \PureLLM{} 30/30, \INN{} 0/30, \EHD{} 23/30, \HSL{}
 30/30, \SEL{} 28/30, \HDS{} 21/30. \textbf{27/30 matches none of the six
-methods at this threshold and has no basis in this source file.} The
-figure is retracted with no replacement; \Cref{tab:overall}'s existing
-28/30 for \SEL{} (93.3\%) is confirmed correct and requires no change.
+methods at this threshold and has no basis in this source file} (it is
+\SEL's count in \texttt{benchmark\_results.json}, a different file; see the
+tablenote on \Cref{tab:overall}). The
+figure is retracted as a property of this file; \Cref{tab:overall}'s
+28/30 for \SEL{} (93.3\%) is confirmed as that file's count.
 This item is closed.]}
 All results in this document use the v2 corrected harness; v1 figures are
 retained in the repository commit history for audit purposes only.
-Both reach median $\Rsq=1.000000$ at $n = 50$ samples, though \EHD's
+Both reach median $\Rsq=1.000000$ at $n = 50$ samples (noiseless sample-complexity
+sweep; noisy $n>50$ runs are not available), though \EHD's
 recovery rate dips to 96.7\% at larger $n$ (\Cref{tab:sc_metrics}).
-\EHD{} offers exact symbolic interpretability; \HSL{} is $1.5$--$76\times$
-faster depending on noise level.
+\EHD{} offers exact symbolic interpretability; \HSL{} is $\sim$1.1--1.2$\times$
+faster at every noise level \textbf{[Correction: previously
+``$1.5$--$76\times$ faster depending on noise level''; the per-equation
+timings in all five noise-sweep shards give $1.1$--$1.2\times$,
+\Cref{tab:time_noise}]}.
 
 On this 30-equation custom benchmark (\textbf{not} a Feynman subset ---
 see correction above), \EHD{} achieves 76.7\% recovery and \HDS{} achieves
@@ -192,7 +198,7 @@ missing Wilcoxon significance tests, and mismatched pass-rate thresholds.
 
 \begin{keywords}
 symbolic regression, scientific discovery, large language models,
-neural networks, Feynman benchmark, noise robustness, sample complexity,
+neural networks, equation-recovery benchmark, noise robustness, sample complexity,
 hybrid systems, reproducibility
 \end{keywords}
 
@@ -210,20 +216,22 @@ The main paper has been updated since this supplementary was written, and
 again since the v4 cross-reference below was added. Readers are directed
 to the following sections for context:
 \begin{itemize}
-  \item \textbf{The main paper's \emph{Feynman Extrapolation Benchmark ($n=30$)} subsection (Results section)} --- the
-    9/30 (30.0\,\%) figure previously cited here has been superseded twice.
-    It first referred to a since-withdrawn run; the main paper now reports
-    \textbf{12/30 (40.0\,\%)} under the random 80/20 split and
-    \textbf{13/30 (43.3\,\%)} under the PCA-directed 40\,\%/60\,\% split
-    described immediately below (the split this cross-reference note
-    originally intended to point to). Both figures carry their own
-    disclosed caveats in the main paper (near-misses, unmeasured
-    placeholder-token equations, and pending full-production-rerun
-    confirmation of two evaluator defects) --- see the main paper's
-    ``Remaining limitations'' discussion before citing either number.
-    This is a different and more stringent evaluation protocol
-    than the noiseless recovery results reported in this supplementary
-    (EHD: 76.7\%, HDS: 70.0\%); none of these figures are directly comparable.
+  \item \textbf{The main paper's \emph{Protocol-30 Extrapolation Benchmark ($n=30$)} subsection (Results section)} --- the
+    earlier 9/30, 12/30 and 13/30 figures are withdrawn. The main paper now
+    reports the 2026-08-12 results: \textbf{21/30 (70.0\,\%)} for
+    HybridDiscoverySystem v50\_2 under the random 80/20 split and
+    \textbf{18/30 (60.0\,\%)} under the PCA-directed 40\,\%/60\,\% split, at
+    the strict $\Rsq \geq 0.999999$ threshold on the method-reported $\Rsq$ (13/30 on the
+    held-out 60\,\% for the PCA split). The same
+    runs give PureLLM 29/30 and 29/30, ImprovedNN 0/30 and 3/30,
+    EnhancedHybridSystemDeFi 23/30 and 23/30, HybridSystemLLMNN 30/30 and
+    30/30 (all routed to the LLM), and SymbolicEngineWithLLM 27/30 and 23/30.
+    These are per-equation pass counts on the same 30 equations, read from
+    \texttt{benchmark\_results.json} and \texttt{benchmark\_results\_pca\_4060.json}
+    rather than from the file behind \Cref{tab:overall}. The counts for
+    EnhancedHybridSystemDeFi (23/30, 76.7\%) and HybridDiscoverySystem
+    (21/30, 70.0\%) coincide with that table. SymbolicEngineWithLLM is 27/30
+    here and 28/30 there; see the tablenote on \Cref{tab:overall}.
   \item \textbf{The main paper's \emph{Nguyen-12 Benchmark (Standard SR Suite)} subsection} --- reports
     PySR-only and HypatiaX on the standard Nguyen-12 suite under an axis-aligned
     extrapolation protocol. \textbf{Figures revised 2026-09-28} and rebuilt from
@@ -247,18 +255,21 @@ document remain valid and unchanged.
 
 Symbolic regression (SR) aims to discover closed-form analytical expressions
 from data without prior knowledge of the functional form.  The Feynman SR
-Benchmark~\citep{udrescu2020ai} provides a canonical evaluation suite spanning
-30 physics equations from 11 scientific domains.
+Benchmark~\citep{udrescu2020ai} provides a canonical evaluation suite of
+100 physics equations (the standard set used under SRBench).
 
 This supplementary integrates two complementary evaluations:
 \begin{enumerate}
   \item A \textbf{six-method noiseless comparison} (corrected from the
     companion report) establishing the state-of-the-art context. \textbf{[Note:
-    this evaluation uses a custom 30-equation benchmark, not the Feynman-30
-    suite cited above. Its 10 domains are mechanics, thermodynamics,
-    electromagnetism, fluid dynamics, optics, quantum, chemistry, biology,
-    mathematics, and economics --- the last two are outside physics and
-    outside the Feynman benchmark's scope entirely. See
+    this evaluation uses a custom 30-equation benchmark, not a subset of the
+    Feynman suite described above. Its 11 domains are biology, chemistry,
+    electrochemistry, electromagnetism, electrostatics, magnetism, mechanics,
+    optics, probability, quantum, and thermodynamics; several of these
+    (biology, chemistry, electrochemistry, probability) are outside the
+    Feynman benchmark's scope. An earlier version of this note listed ten
+    domains including mathematics and economics; that list does not match
+    the source files. See
     \Cref{sec:noiseless} and the source-file note on \Cref{tab:overall}.]}
   \item A \textbf{sweep evaluation} (v2, post bug-fix, 16 March 2026)
     covering \EHD{} (M3) and \HSL{} (M4) across noise levels and sample
@@ -316,11 +327,11 @@ is a general contribution to SR benchmarking practice.
   Zero-shot LLM formula inference.  No numerical fitting.
   \textbf{\warn~11/30 results flagged hardcoded (Section~\ref{sec:integrity}).} \\
 \EHD\,(M3) & Core &
-  Ensemble-first system (92.7\% of decisions) combining LLM-guided generation,
+  Ensemble-first system (140/150 = 93.3\% of routing decisions; \Cref{tab:arch}) combining LLM-guided generation,
   NN ensemble scoring, and DeepFit optimisation. \\
 \HSL\,(M4) & Core &
-  LLM-first + NN residual correction (74.7\% LLM-first decisions);
-  $1.5$--$76\times$ faster than M3. \\
+  LLM-first + NN residual correction (123/150 = 82.0\% LLM-first routing decisions; \Cref{tab:arch});
+  $\sim$1.1--1.2$\times$ faster than M3 (\Cref{tab:time_noise}). \\
 \INN & Core &
   Pure neural baseline ($1\!\to\!128\!\to\!64\!\to\!32\!\to\!1$, 3 seeds). \\
 \SEL & Tools &
@@ -353,42 +364,53 @@ $\{0,0.5,1,5,10\}\%$, off by $10\times$ per level; see}}\\
 
 \noindent\textbf{Hyperparameters:} NN seeds = 5, random seed 42,
 method timeout = 900\,s, PySR timeout = 1100\,s,
-threshold (noisy) = 0.995, threshold (noiseless) = 0.999999.
+threshold (noise sweep) = 0.999999 at $\sigma=0$, $0.995$ at
+$\sigma\in\{0.05,0.1,0.5\}\%$ and $0.99$ at $\sigma=1\%$
+(sample-complexity sweep, noiseless: $0.999$ at $n=50$, $0.9995$ at
+$n=100$, $0.9999$ at $n\geq200$).
 All 30 equations completed with zero timeouts across all 11 conditions.
 
 \subsection{Integrity Annotation: Hardcoded Results}
 \label{sec:integrity}
 
-Following~\citet{memorization2024audit}, each \PureLLM{} noiseless result
-is annotated with \texttt{is\_hardcoded} based on cross-seed consistency.
-\textbf{[Correction: an earlier revision of this document disputed the
-11/30 figure below, claiming it did not match the source data. That
-dispute was itself incorrect: \texttt{protocol\_core\_noiseless\_20260812\_170344.json}
-(the only verified noiseless source file supplied) flags exactly these
-11 equations, all of which are confirmed present in the 30-equation set.
-No ten-shard file set exists in the released artifacts.]}
-11 of 30 \PureLLM{} noiseless passes are flagged (Table~\ref{tab:hardcoded}).
+Following~\citet{memorization2024audit}, each \PureLLM{} noiseless row is audited for whether the language model
+was called. The \texttt{is\_hardcoded} flag is set when the baseline returns
+\texttt{method="pure\_llm\_hardcoded"}, i.e.\ when \texttt{\_try\_hardcoded\_formula} in
+\texttt{baseline\_pure\_llm\_defi\_discovery.py} returns a formula without any LLM call. It is a record of
+that code path, not a statistical memorisation test. Two kinds of bypass exist: eight equations return the
+benchmark's own ground-truth expression (GT in Table~\ref{tab:hardcoded}), and three use a fixed functional form whose parameters are fitted to the
+data by least squares (Fit). A twelfth branch (Arrhenius) did not fire. We call the remaining 19 rows \emph{live}.
+\textbf{[Correction: an earlier revision described the flag as ``based on cross-seed consistency'' and later
+disputed the 11/30 figure against \texttt{protocol\_core\_noiseless\_20260812\_170344.json}. A recount
+with \texttt{recount\_hardcoded.py} over the eleven per-domain
+\texttt{protocol\_core\_noiseless\_20260812\_*.json} files (30 \PureLLM{} rows in total), the consolidated
+\texttt{benchmark\_results.json} and \texttt{benchmark\_results\_pca\_4060.json} finds the same 11 equations in every
+source: flagged in the per-domain files, identified by timing (0.5--1.6\,ms) in the two flat files, which carry no flag. The
+\texttt{170344} file was not part of the recount.]}
+11 of 30 \PureLLM{} noiseless rows bypassed the model (Table~\ref{tab:hardcoded}).
 
 \begin{table}[ht]
 \centering
-\caption{Equations flagged \texttt{is\_hardcoded=True} for \PureLLM{}.}
+\caption{Equations for which \PureLLM{} bypassed the language model (flagged \texttt{is\_hardcoded=True}).
+  GT: the benchmark's ground-truth expression is returned; Fit: fixed form with least-squares parameters fitted to the data.
+  $\Rsq$ as recorded in the recount; every bypassed row passes.}
 \label{tab:hardcoded}
 \small
-\begin{tabular}{L{6.0cm} L{3.2cm} C{1.5cm}}
+\begin{tabular}{L{5.4cm} L{3.0cm} C{1.0cm} C{1.7cm}}
 \toprule
-\textbf{Equation} & \textbf{Domain} & \textbf{$\Rsq$ (NL)} \\
+\textbf{Equation} & \textbf{Domain} & \textbf{Type} & \textbf{$\Rsq$ (NL)} \\
 \midrule
-Michaelis--Menten enzyme kinetics       & Biology          & 1.0000000 \\
-Logistic growth rate                    & Biology          & 1.0000000 \\
-Allometric scaling law                  & Biology          & 1.0000000 \\
-Nernst equation (electrode potential)   & Electrochemistry & 1.0000000 \\
-Clausius--Mossotti effective field      & Electrostatics   & 1.0000000 \\
-Lorentz force: $F = qvB$                & Magnetism        & 1.0000000 \\
-Gaussian/normal distribution PDF        & Probability      & 1.0000000 \\
-Zeeman energy (electron spin)           & Quantum          & 0.9999999... \\
-Bose--Einstein occupation number        & Quantum          & 1.0000000 \\
-Planck blackbody spectral radiance      & Thermodynamics   & 1.0000000 \\
-Fourier's law of heat conduction        & Thermodynamics   & 1.0000000 \\
+Michaelis--Menten enzyme kinetics       & Biology          & Fit & 1.0000000 \\
+Logistic growth rate                    & Biology          & Fit & 1.0000000 \\
+Allometric scaling law                  & Biology          & Fit & 1.0000000 \\
+Nernst equation (electrode potential)   & Electrochemistry & GT  & 1.0000000 \\
+Clausius--Mossotti effective field      & Electrostatics   & GT  & 1.0000000 \\
+Lorentz force: $F = qvB$                & Magnetism        & GT  & 1.0000000 \\
+Gaussian/normal distribution PDF        & Probability      & GT  & 1.0000000 \\
+Zeeman energy (electron spin)           & Quantum          & GT  & 1.0000000 \\
+Bose--Einstein occupation number        & Quantum          & GT  & 1.0000000 \\
+Planck blackbody spectral radiance      & Thermodynamics   & GT  & 1.0000000 \\
+Fourier's law of heat conduction        & Thermodynamics   & GT  & 1.0000000 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -448,17 +470,20 @@ Wilcoxon signed-rank tests for all pairwise comparisons, Bonferroni corrected
   ($\Rsq \geq 0.999999$, 30 equations).
   \warn~\PureLLM{} pass rate includes 11/30 hardcoded results.
   \textbf{[Correction: regenerated directly from
-  \texttt{protocol\_core\_noiseless\_20260812\_170344.json} (the only
-  verified noiseless source file supplied; no ten-shard set exists in
-  the released artifacts, and the prior claim that it did was itself
-  unverified). This is a custom benchmark, not
+  \texttt{protocol\_core\_noiseless\_20260812\_170344.json}, except for the
+  \PureLLM{} row (below). The released artifacts also contain eleven per-domain
+  \texttt{protocol\_core\_noiseless\_20260812\_*.json} files, one per domain,
+  which supply the \PureLLM{} recount; earlier text citing a ``ten-shard set''
+  was wrong, since there are eleven. This is a custom benchmark, not
   the Feynman-30 suite (\Cref{suppb:intro}): its 11 domains are biology,
   chemistry, electrochemistry, electromagnetism, electrostatics,
   magnetism, mechanics, optics, probability, quantum, and thermodynamics
   --- no mathematics or economics domain is present.
-  \PureLLM{} has \textbf{zero} failures of any kind on this file: all 30
-  results pass at $\Rsq\geq0.999999$ (11 of them via disclosed
-  hardcoding, \Cref{tab:hardcoded}). The previously claimed ``Kinetic
+  The \PureLLM{} row shows the recount figure: 29/30 over all rows,
+  of which 11 are bypassed rows (\Cref{tab:hardcoded}) that all pass, and 18/19 on the
+  \emph{live} rows where the model was called; the source file named above reports
+  30/30 and was not part of the recount (the one-test difference is Curie's law, which returned no formula in
+  \texttt{benchmark\_results.json} and passes in the 170344 file). The previously claimed ``Kinetic
   Energy'' catastrophic failure, ``Logistic Growth'' truncation, and
   ``Thin Lens''/``Diffraction'' below-threshold cases do not appear in
   this source file at all (the latter two equations are not even among
@@ -477,17 +502,18 @@ Wilcoxon signed-rank tests for all pairwise comparisons, Bonferroni corrected
   \makecell{\textbf{Avg}\\Runtime} \\
 \midrule
 \rowcolor{warnAmberBg}
-\PureLLM\,\warn\dagger & Core  & 30/30 (100.0\%)\warn & 1.000000 &   4.7\,s \\
+\PureLLM\,\warn$^\dagger$ & Core  & 29/30 (96.7\%)\warn & --- &   4.7\,s \\
 \rowcolor{passgreenBg}
 \EHD\,(M3)      & Core  & 23/30 (76.7\%)      & 0.999998 &   7.6\,s \\
 \HDS            & Tools & 21/30 (70.0\%)      & 0.999473 &  75.3\,s \\
 \HSL\,(M4)      & Core  & 30/30 (100.0\%)     & 1.000000  &   6.9\,s \\
-\SEL            & Tools & 28/30 (93.3\%)      & 0.999711 &  39.1\,s \\
+\SEL\,$^\ddagger$ & Tools & 28/30 (93.3\%)      & 0.999711 &  39.1\,s \\
 \rowcolor{failredBg}
 \INN            & Core  & 0/30 (0.0\%)        & 0.999222 &   2.5\,s \\
 \bottomrule
-\multicolumn{5}{l}{\footnotesize $^\dagger$\,No \texttt{nan} or truncated
-  results in this source file; \PureLLM{} passes all 30 tests.}\\
+\multicolumn{5}{l}{\footnotesize $^\dagger$\,Recount: 29/30 over all rows, 18/19 live rows, 11/11 bypassed rows. Mean $\Rsq$
+  and runtime were not recomputed; the 4.7\,s average includes bypassed rows, which take under 2\,ms.}\\
+\multicolumn{5}{p{8.4cm}}{\footnotesize $^\ddagger$\,Read from the 170344 file. The main paper's random-split table, built from \texttt{benchmark\_results.json}, gives 27/30 for \SEL{} (mean $\Rsq$ 0.999868; 23/30 on the PCA split). The two files also differ for \INN{} (mean 0.999222 here, 0.999323 there; 0/30 in both) and for \PureLLM{} (30/30 in the 170344 file, 29/30 in the recount). Means for \EHD, \HDS{} and \HSL{} agree to six decimals. The \PureLLM{} difference is Curie's law, which returned no formula ($\Rsq=0$) in \texttt{benchmark\_results.json}; the \SEL{} difference is Arrhenius ($\Rsq=0.999921$ there, $0.9999999987$ here, threshold $0.999999$), and \SEL{} is not deterministic across runs; \INN{} differs through seed variation. Neither file supersedes the other.}\\
 \end{tabular}
 \end{table}
 
@@ -545,9 +571,9 @@ equation with a finite $\Rsq$ since it is derived directly from $\Rsq$.
 \caption{Raw RMSE vs.\ normalised RMSE ($\nrmse=\sqrt{1-\Rsq}$), 30 equations.
 \textbf{[Correction:
 \texttt{protocol\_core\_noiseless\_20260812\_203510.json} does not exist
-in the released artifacts. Regenerated from the ten verified
-\texttt{protocol\_core\_noiseless\_20260812\_*.json} shard files, the same
-source as \Cref{tab:overall}. No previously printed row matched this
+in the released artifacts. Regenerated from the eleven per-domain
+\texttt{protocol\_core\_noiseless\_20260812\_*.json} files (not the 170344 file
+that supplies five rows of \Cref{tab:overall}; see its tablenote). No previously printed row matched this
 source.]}}
 \label{tab:nrmse}
 \small
@@ -582,41 +608,50 @@ source.]}}
 
 \begin{table}[ht]
 \centering
-\caption{Wilcoxon signed-rank tests on noiseless $\Rsq$, all pairwise
-         comparisons (two-sided, $n=30$, Bonferroni $\alpha^*=0.0033$).
+\caption{Wilcoxon signed-rank tests on noiseless $\Rsq$, all pairwise comparisons (two-sided,
+         30 equations; $n_{\mathrm{eff}}$ is the number of non-zero paired differences,
+         Bonferroni $\alpha^*=0.0033$).
          **$\alpha^*$; *$\alpha=0.05$ only; n.s.~not significant.
-         \textbf{[Correction: recomputed from the verified ten
-         \texttt{protocol\_core\_noiseless\_20260812\_*.json} shard files
-         (same source as \Cref{tab:overall}); invalid/\texttt{nan} $\Rsq$
-         values are treated as 0 for the paired test. No previously
-         printed row matched this source.]}}
+         \textbf{[Correction: recomputed from the eleven per-domain noiseless files (the source of the
+         \PureLLM{} recount in \Cref{tab:overall}; its other rows come from the 170344 file); invalid/\texttt{nan} $\Rsq$ values are treated as 0 for the paired test.
+         The earlier caption stated $n=30$ for every pair; $n_{\mathrm{eff}}$ is below 30 where
+         methods tie.]}}
 \label{tab:wilcoxon}
 \small
-\begin{tabular}{llrrl}
+\begin{tabular}{llrrrl}
 \toprule
-\textbf{Method A} & \textbf{Method B} & \textbf{Statistic} &
+\textbf{Method A} & \textbf{Method B} & \textbf{Statistic} & $\boldsymbol{n_{\mathrm{eff}}}$ &
   \textbf{$p$-value} & \textbf{Sig.} \\
 \midrule
-\PureLLM & \INN  &  99.0 &  0.0050  & *  \\
-\PureLLM & \EHD  & 112.0 &  0.0120  & *  \\
-\PureLLM & \HSL  &   2.0 &  0.0422  & *  \\
-\PureLLM & \SEL  &  87.0 &  0.3219  & n.s. \\
-\PureLLM & \HDS  &  90.0 &  0.1443  & n.s. \\
+\PureLLM & \INN  &  99.0 & 30 &  0.0050  & *  \\
+\PureLLM & \EHD  & 112.0 & 30 &  0.0120  & *  \\
+\PureLLM & \HSL  &   2.0 &  7 &  0.0422  & *  \\
+\PureLLM & \SEL  &  87.0 & 21 &  0.3219  & n.s. \\
+\PureLLM & \HDS  &  90.0 & 23 &  0.1443  & n.s. \\
 \midrule
-\INN     & \EHD  &  52.0 &  0.0001  & ** \\
-\INN     & \HSL  &   0.0 & $<0.001$ & ** \\
-\INN     & \SEL  &  78.0 &  0.0010  & ** \\
-\INN     & \HDS  & 146.0 &  0.0767  & n.s. \\
+\INN     & \EHD  &  52.0 & 30 &  0.0001  & ** \\
+\INN     & \HSL  &   0.0 & 30 & $<0.001$ & ** \\
+\INN     & \SEL  &  78.0 & 30 &  0.0010  & ** \\
+\INN     & \HDS  & 146.0 & 30 &  0.0767  & n.s. \\
 \midrule
-\EHD     & \HSL  &  74.0 &  0.0007  & ** \\
-\EHD     & \SEL  & 154.0 &  0.1094  & n.s. \\
-\EHD     & \HDS  & 196.0 &  0.4645  & n.s. \\
+\EHD     & \HSL  &  74.0 & 30 &  0.0007  & ** \\
+\EHD     & \SEL  & 154.0 & 30 &  0.1094  & n.s. \\
+\EHD     & \HDS  & 196.0 & 30 &  0.4645  & n.s. \\
 \midrule
-\HSL     & \SEL  &  58.0 &  0.0262  & *  \\
-\HSL     & \HDS  &  43.0 &  0.0022  & ** \\
-\SEL     & \HDS  &  81.0 &  0.0487  & *  \\
+\HSL     & \SEL  &  58.0 & 22 &  0.0262  & *  \\
+\HSL     & \HDS  &  43.0 & 24 &  0.0022  & ** \\
+\SEL     & \HDS  &  81.0 & 24 &  0.0487  & *  \\
 \bottomrule
 \end{tabular}
+
+\smallskip
+{\footnotesize \textit{Notes.} (i) Pairs with $n_{\mathrm{eff}}=30$ have exact $p$-values; pairs with
+$n_{\mathrm{eff}}<30$ use the normal approximation, which is unreliable at $n_{\mathrm{eff}}=7$.
+(ii) Three starred results are sensitive to the approximation: with a continuity correction,
+\PureLLM{} vs.\ \HSL{} gives $p=0.052$ and \SEL{} vs.\ \HDS{} gives $p=0.050$ (both would be not significant at
+$\alpha=0.05$), while \HSL{} vs.\ \SEL{} stays at $p=0.027$. None of the three survives the Bonferroni correction.
+(iii) \PureLLM{} rows include the 11 bypassed equations (\Cref{tab:hardcoded}); comparisons involving \PureLLM{}
+therefore do not measure an unaided language model.}
 \end{table}
 
 %% ============================================================
@@ -678,6 +713,10 @@ previously and incorrectly reported --- see \S\ref{tab:rr_noise} below.
 \begin{table}[H]
 \centering
 \caption{Recovery rate and catastrophic failure count per noise level ($n=200$).
+Recovery uses each shard's recorded threshold: $\Rsq\geq0.999999$ at
+$\sigma=0\%$, $\Rsq\geq0.995$ at $\sigma=0.05$, $0.1$ and $0.5\%$, and
+$\Rsq\geq0.99$ at $\sigma=1\%$, so rates are not on a single scale across
+rows.
 \textbf{[Correction: regenerated from source, see tablenote on \Cref{tab:r2_noise}.]}}
 \label{tab:rr_noise}
 \small
@@ -758,7 +797,9 @@ gap than the $1.6\times$--$75.8\times$ range previously reported.
 
 \begin{table}[H]
 \centering
-\caption{$\Rsq$ and RMSE per sample size (noiseless, 30 equations).
+\caption{$\Rsq$ and RMSE per sample size (noiseless, 30 equations;
+recovery thresholds used by the runner: $0.999$ at $n=50$, $0.9995$ at
+$n=100$, $0.9999$ at $n\geq200$).
 \textbf{[Correction: previously captioned $\sigma=5\%$ with values that
 did not match any provided source at the time. All six sample-size
 shards have since been supplied
@@ -803,7 +844,7 @@ M3 shows stable convergence: $\Rsq$ std $\leq 0.001$ for $\sigma>0$.
 M4 exhibits zero-variance convergence (std($\Rsq$) = 0.000) at all noise
 levels in v2.
 
-Both methods reach median $\Rsq=1.000000$ by $n=50$ (all six sample-size
+Both methods reach median $\Rsq=1.000000$ by $n=50$ in the noiseless sweep (all six sample-size
 shards now verified; \Cref{tab:sc_metrics}).
 
 \paragraph{Convergence boundary.}
@@ -818,53 +859,99 @@ The following conditions are needed for comprehensive generalisation claims:
 
 \begin{table}[H]
 \centering
-\caption{Head-to-head win rates (M3 vs.\ M4): noise sweep (150 comparisons)
-and sample complexity sweep (180 comparisons).
-\textbf{[Unverified: direct computation from all 5 noise-sweep shards and
-all 6 sample-complexity shards finds M3 (\EHD) \emph{never} strictly
-exceeds M4 (\HSL) on $\Rsq$ in either sweep (0/150 and 0/180), under
-either a $>0.9999$-tie rule or exact-value comparison at several
-tolerances. The ``M3 strictly higher'' row below (13.3\% in both sweeps)
-does not reproduce from the supplied data by any tie-rule tried; the
-``M4 strictly higher'' and ``Tied'' rows are similarly inconsistent
-(computed: M4 higher 18.7\%/150 and 4.4--47.8\%/180 depending on
-tie-tolerance, vs.\ 20.7\%/20.0\% claimed). This table should be treated
-as unverified pending the exact comparison methodology used to generate
-it.]}}
+\caption{Head-to-head win rates (M3 vs.\ M4) on $\Rsq$. Noise sweep: 150 paired
+comparisons (5 noise levels $\times$ 30 equations; pairs matched by shard and
+test description). Sample-complexity (SC) sweep: 180 paired comparisons (6 sample
+sizes $\times$ 30 equations; pairs matched by sample size and equation, from the
+six \texttt{sample\_complexity\_*.csv} shards). Regenerated with
+\texttt{compute\_winrate.py}. A pair is \emph{tied} if both systems have
+$\Rsq>0.9999$ (the paper's original tie rule); otherwise the higher $\Rsq$ wins.
+\textbf{[Corrected: the earlier noise-sweep figures (M3 13.3\%, M4 20.7\%, tie
+66.0\%) did not reproduce and are superseded; the earlier SC column (30
+comparisons, 30/30 M4, 0\% ties) came from a per-level proxy on aggregate
+recovery rates rather than per-equation pairs, and is replaced.]}}
 \label{tab:winrate}
 \small
-\begin{tabular}{l r r r}
+\begin{tabular}{l r r}
 \toprule
-\textbf{Outcome} & \textbf{Noise} & \textbf{SC} & \textbf{Consistent?}\\
+\textbf{Outcome} & \textbf{Noise sweep} & \textbf{SC sweep}\\
 \midrule
-M3 strictly higher $\Rsq$ & 20/150 (13.3\%) & 24/180 (13.3\%) & \checkmark\\
-M4 strictly higher $\Rsq$ & 31/150 (20.7\%) & 36/180 (20.0\%) & \checkmark\\
-Tied ($\Rsq > 0.9999$)    & 99/150 (66.0\%) & 120/180 (66.7\%) & \checkmark\\
+M3 strictly higher $\Rsq$ & 0/150 (0.0\%) & 0/180 (0.0\%)\\
+M4 strictly higher $\Rsq$ & 28/150 (18.7\%) & 8/180 (4.4\%)\\
+Tied (both $\Rsq>0.9999$)  & 122/150 (81.3\%) & 172/180 (95.6\%)\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{[Unverified: the specific tie-rate percentages above do not
-reproduce from the supplied source files, see tablenote on
-\Cref{tab:winrate}. What direct computation does confirm: M4 (\HSL)
-never loses to M3 (\EHD) on $\Rsq$ in either sweep --- M3 is strictly
-higher on $0/150$ noise-sweep and $0/180$ sample-complexity comparisons
---- consistent with the qualitative claim that M4 wins more head-to-head
-comparisons, even though the exact percentages need re-derivation.]}
+\paragraph{Sensitivity to the tie rule.}
+The split depends strongly on how ties are defined (noise sweep, $n=150$).
+Under exact floating-point comparison M3 is nominally higher on 88 pairs and M4 on
+62, but most of these differences are below $10^{-9}$ and reflect numerical noise
+rather than a real accuracy gap. With an absolute tolerance of $10^{-6}$, M3 is
+higher on 0, M4 on 35 (23.3\%) and 115 are tied (76.7\%); at $10^{-4}$ the figures
+are 0 / 23 (15.3\%) / 127 (84.7\%); at $10^{-3}$ they are 0 / 19 (12.7\%) /
+131 (87.3\%). Under no tolerance of $10^{-6}$ or looser does M3 exceed M4 on any
+pair, and M4 is strictly higher on 12.7--23.3\% of pairs depending on the
+tolerance. M4 therefore never loses to M3 beyond numerical noise on the noise
+sweep, and most comparisons are ties.
+
+The sample-complexity sweep ($n=180$) shows the same pattern. Under exact
+comparison M3 is higher on 0 pairs, M4 on 179 and 1 is tied; with an absolute
+tolerance of $10^{-6}$ the figures are 0 / 38 (21.1\%) / 142 (78.9\%); at
+$10^{-4}$ they are 0 / 8 (4.4\%) / 172 (95.6\%); at $10^{-3}$ they are 0 / 1
+(0.6\%) / 179 (99.4\%). M4's 8 strict wins under the $\Rsq>0.9999$ rule fall at
+$n=50$ (2), $n=100$ (3), $n=200$ (0), $n=500$ (1), $n=750$ (1) and $n=1000$ (1).
+M3 is never higher than M4 under any tie rule, including exact comparison.
 
 \begin{table}[H]
 \centering
-\caption{Internal routing statistics — evidence that M3 and M4 are genuinely
-         distinct architectures.}
+\caption{Internal routing statistics --- evidence that M3 and M4 are genuinely
+         distinct architectures. Regenerated from the five noise-sweep shards
+         ($5$ noise levels $\times$ $30$ equations $= 150$ records per system;
+         \texttt{regenerate\_tables.py}). ``Ensemble-first'' (M3) and
+         ``LLM-first'' (M4) denote the share of records whose recorded
+         \texttt{metadata.decision} routed to that branch; this is a routing
+         share, not a solve rate, and the \texttt{success} flag is not used.
+         The pool mixes one noiseless run ($\sigma=0$) with four noisy runs.
+         These counts supersede the earlier $92.7\%$/$74.7\%$ figures
+         ($139/150$, $112/150$), which could not be reproduced from any
+         available result file under any routing, \texttt{nn\_applied}, or
+         $\Rsq$-threshold rule tried.}
 \label{tab:arch}
 \small
 \begin{tabular}{L{3.5cm} r r}
 \toprule
 \textbf{Decision path} & \textbf{M3 (\EHD)} & \textbf{M4 (\HSL)}\\
 \midrule
-Primary path    & 92.7\% ensemble-first  & 74.7\% LLM-first\\
-Secondary path  & NN refinement          & NN residual correction\\
-Architecture type & Ensemble-first       & LLM-first + NN-refinement\\
+Primary path (routing share)
+                & 140/150 (93.3\%) ensemble-first & 123/150 (82.0\%) LLM-first\\
+Alternative path
+                & 10/150 (6.7\%) NN              & 27/150 (18.0\%) ensemble\\
+Secondary path  & NN refinement                  & NN residual correction\\
+Architecture type & Ensemble-first               & LLM-first + NN-refinement\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Routing by noise level (30 equations per level), same source as
+         \Cref{tab:arch}. M3 routes identically at every level; M4 routes all
+         noiseless records to the LLM but $20$--$27\%$ of noisy records to the
+         ensemble.}
+\label{tab:arch_by_noise}
+\small
+\begin{tabular}{l r r r r}
+\toprule
+$\sigma/\mathrm{std}(y)$ & M3 ensemble & M3 NN & M4 LLM & M4 ensemble\\
+\midrule
+0      & 28 & 2 & 30 & 0\\
+0.0005 & 28 & 2 & 22 & 8\\
+0.001  & 28 & 2 & 24 & 6\\
+0.005  & 28 & 2 & 23 & 7\\
+0.01   & 28 & 2 & 24 & 6\\
+\midrule
+Total  & 140 & 10 & 123 & 27\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -938,25 +1025,21 @@ from unity.  The relative threshold fix should be adopted as standard practice.
 
 \subsection{Hardcoding and LLM Benchmark Integrity}
 
-Of \PureLLM{}'s 30 noiseless attempts, 11 (36.7\%) are attributable to
-memorisation; the reported pass rate of 100\% (30/30, \Cref{tab:overall})
-includes these. Among the 19 equations \emph{not} flagged hardcoded, all
-19 pass (100\%): the source file
-(\texttt{protocol\_core\_noiseless\_20260812\_170344.json}) records zero
-catastrophic failures, zero truncated formulas, and zero below-threshold
-results for \PureLLM{} anywhere in the 30-equation set. The
-genuine-inference pass rate is therefore 100\% (19/19), not 84.6\%.
-\textbf{[Correction: this paragraph previously reported 4/30 (13\%)
-hardcoded with a fabricated ``Kinetic Energy'' catastrophic failure,
-``Logistic Growth'' truncation, and ``Thin Lens''/``Diffraction''
-below-threshold cases --- none of which appear in the verified source
-file (two of the four named equations are not even part of this
-30-equation set). A separate, contradictory version of this document
-also claimed 11/30 hardcoded but attached it to a fictitious ``Total
-mechanical energy'' catastrophic failure; that equation is present in
-the source file and passes cleanly ($\Rsq=1.0$), with no hardcoding
-flag. Regenerated directly from the one verified noiseless source file
-supplied. See tablenote on \Cref{tab:overall}.]}
+Of \PureLLM{}'s 30 noiseless rows, 11 (36.7\%) did not call the language model: 8 return the benchmark's own
+ground-truth expression and 3 use a fixed form with parameters fitted to the data
+(\Cref{tab:hardcoded}). In the 170344 file, \EHD{}'s returned formula is character-for-character identical to \PureLLM{}'s on all 11 of these bypassed rows, and on only 2 of the 19 live rows; the same holds in \texttt{benchmark\_results.json} (11 of 11 bypassed, 3 of 19 live). The cause is in the code: \EHD{} delegates formula generation to \texttt{PureLLMBaseline.generate\_formula}, which tries the hardcoded formulas before any language-model request; \EHD{}'s pass count on the bypassed rows (6 of 11, against 17 of 19 on live rows) also depends on its NN and ensemble logic. The all-domains LLM+NN hybrid delegates in the same way, but its stored output has no formula, so whether the bypass fired for it cannot be checked from the JSON. \PureLLM{} passes 29 of 30 rows (96.7\%) overall, 11 of 11 bypassed rows and 18 of 19
+(94.7\%) \emph{live} rows, i.e.\ rows where the model was actually called. The live figure is not an unbiased
+estimate of unaided performance: according to comments in the baseline source, the bypass branches were added for
+equations on which the model had repeatedly failed, so excluding them favours \PureLLM{}. Counting every bypassed
+row as a failure gives 18/30, so the unaided pass count lies between 18/30 and 29/30; the baseline has not been rerun
+with the bypass disabled.
+\textbf{[Correction: this paragraph previously reported a 100\% pass rate (30/30) and a genuine-inference rate of
+100\% (19/19), taken from \texttt{protocol\_core\_noiseless\_20260812\_170344.json}, and earlier versions reported
+4/30 hardcoded with failures that do not appear in any source file. The recount over the per-domain files,
+\texttt{benchmark\_results.json} and \texttt{benchmark\_results\_pca\_4060.json} gives 29/30 and 18/19 on both splits.
+The \texttt{170344} file was not part of the recount; the one \PureLLM{} row below threshold in \texttt{benchmark\_results.json} is Curie's law, which returned no
+formula there ($\Rsq=0$, a failed or empty generation) and passes in the \texttt{170344} file. This identifies the cause; which file
+is primary has not been decided.]}
 Explicit hardcoding audits should be standard in any
 benchmark involving LLM-based SR.
 
@@ -971,10 +1054,13 @@ The distinction is: M3 is interpretability-optimised (exact symbolic
 formulas); M4 is efficiency-optimised ($\sim$1.1--1.2$\times$ faster,
 near-zero RMSE).
 
-\textbf{[Unverified: the ``66\% tie rate across 330 equation-condition
-pairs'' claim does not reproduce from the supplied source files; see
-tablenote on \Cref{tab:winrate}.]} Direct computation does confirm M4
-never loses to M3 on $\Rsq$ across either sweep.
+The earlier ``66\% tie rate across 330 equation-condition pairs'' claim is
+withdrawn: under the $\Rsq>0.9999$ rule the tie rate is $81.3\%$ on the noise
+sweep (122/150) and $95.6\%$ on the sample-complexity sweep (172/180), or
+$89.1\%$ over the 330 pairs combined (\Cref{tab:winrate}). Direct computation
+confirms that, on the noise sweep, M4 never loses to M3 on $\Rsq$ beyond
+numerical noise ($|\Delta\Rsq|\le10^{-6}$), and that on the sample-complexity
+sweep M3 is never higher than M4 under any tie rule.
 
 %% ============================================================
 \section{Limitations}
@@ -1022,10 +1108,10 @@ never loses to M3 on $\Rsq$ across either sweep.
 
 \noindent\textbf{Note (v3.0 update, July 2026).}
 The readiness metrics in Table~\ref{tab:jmlr} below are based on the v2
-benchmark run (30 Feynman equations, noiseless/noise sweep protocol).
+benchmark run (30 benchmark equations, noiseless/noise sweep protocol).
 The main paper (\texttt{jmlr\_paper\_main.tex}) now reports v3.0
-results on 74 DeFi tasks under the PCA-directed aggressive extrapolation
-split: HypatiaX's near-perfect-success figures are \textbf{90.5\,\%} (67/74) raw
+results on 74 DeFi tasks under a 40\,\%/60\,\% aggressive extrapolation
+split (the result file does not record whether the single-axis or PCA-directed variant was used): HypatiaX's near-perfect-success figures are \textbf{90.5\,\%} (67/74) raw
 uncorrected / \textbf{59.5\,\%} (44/74) corrected --- resolved by
 cross-reference to the main paper's Hybrid Decision-Attribution Bug
 section (\texttt{jmlr\_paper\_main.tex}, \S~``The Hybrid
@@ -1039,12 +1125,12 @@ seed-42 file retrieved from
 \texttt{github.com/sednabcn/LLM-HypatiaX-DEV} (md5
 \texttt{cbf503d0b3985b4c1bccf7ed18e0316b}, canonical \texttt{hypatiax/data}; recomputed 2026-09-29); see also Post-Submission
 Report, \S~``Item 2.'' These are a \emph{different and more stringent}
-evaluation than the noiseless recovery metrics here; the v2 Feynman readiness
+evaluation than the noiseless recovery metrics here; the v2 benchmark readiness
 assessment remains valid for this document's scope.
 
 \begin{table}[ht]
 \centering
-\caption{JMLR readiness assessment (v2 Feynman results, post bug-fix).
+\caption{JMLR readiness assessment (v2 benchmark results, post bug-fix).
   See note above for v3.0 DeFi results reported in the main paper.}
 \label{tab:jmlr}
 \small
@@ -1058,13 +1144,13 @@ Accuracy ($\Rsq$)       & \textcolor{passgreen}{\textbf{PASS}} & \textcolor{pass
 Noise robustness        & \textcolor{warnAmber}{\textbf{COND.}} & \textcolor{passgreen}{\textbf{STRONG}} &
   \textbf{[Corrected: was ``STRONG/STRONG, M3 100\% all $\sigma$'']} M3 76.7\% at $\sigma{=}0$, 96.7--100\% at $\sigma>0$ (\Cref{tab:rr_noise}); M4 100\% at all $\sigma$\\
 Data efficiency         & \textcolor{passgreen}{\textbf{STRONG}} & \textcolor{passgreen}{\textbf{STRONG}} &
-  Convergence at $n=50$ for both\\
+  Convergence at $n=50$ for both (noiseless only)\\
 Catastrophic failures   & \textcolor{passgreen}{\textbf{CLEAN}} & \textcolor{passgreen}{\textbf{CLEAN}} &
   0/30 for both; document Newton bug\\
 Computational cost      & \textcolor{passgreen}{\textbf{STRONG}} & \textcolor{passgreen}{\textbf{STRONG}} &
   \textbf{[Corrected: was ``COND., M3: frame 841\,s/eq as offline search'']} Both $<8$\,s/eq across all $\sigma$ (\Cref{tab:time_noise}); no evidence of an offline-search spike\\
 Statistical significance & \textcolor{passgreen}{\textbf{PASS}} & \textcolor{passgreen}{\textbf{PASS}} &
-  Add Wilcoxon test; tie-rate figure needs re-derivation (\S\ref{sec:winrate})\\
+  Add Wilcoxon test; tie rates recomputed in \S\ref{sec:winrate} (81.3\% noise, 95.6\% SC)\\
 Hardcoding disclosure   & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{REQUIRED}}} &
   \PureLLM: disclose 11/30 hardcoded\\
 Process/CI credibility  & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{OPEN}}} &
@@ -1112,8 +1198,10 @@ Process/CI credibility  & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{OPEN}
     verified noiseless source file supplied), is 70.0\% (21/30) with the
     nine-equation failing set listed above. See tablenote on
     \Cref{tab:overall}.]}
-  \item \textbf{M4 is $1.5$--$76\times$ faster} with near-zero RMSE; for
-    production sweeps its throughput advantage is decisive.
+  \item \textbf{M4 is $\sim$1.1--1.2$\times$ faster} with near-zero RMSE
+    \textbf{[Correction: previously $1.5$--$76\times$; see
+    \Cref{tab:time_noise}]}; the throughput advantage is modest, not
+    decisive.
   \item \textbf{\EHD{} sits close to AI~Feynman~2.0's published figure}:
     76.7\% vs.\ 79.3\% ($-2.6$\,pp) on this work's own custom 30-equation
     benchmark. \textbf{\HDS{} falls further below it}: 70.0\% ($-9.3$\,pp).
@@ -1123,10 +1211,10 @@ Process/CI credibility  & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{OPEN}
     matches any verified source ---
     \texttt{protocol\_core\_noiseless\_20260812\_203510.json} does not
     exist in the released artifacts, and this work's 30-equation set is
-    not a Feynman subset at all (it includes mathematics and economics
-    equations); see tablenote on \Cref{tab:overall}. Regenerated from the
-    verified ten \texttt{protocol\_core\_noiseless\_20260812\_*.json}
-    shard files.]}  Published baselines were evaluated on all 100
+    not a Feynman subset at all (its 11 domains include biology, chemistry,
+    electrochemistry and probability); see tablenote on \Cref{tab:overall}. Regenerated from the
+    eleven per-domain \texttt{protocol\_core\_noiseless\_20260812\_*.json}
+    files.]}  Published baselines were evaluated on all 100
     Feynman equations under SRBench, a different equation set entirely;
     the AI Feynman figure is shown for general context only, not as a
     head-to-head comparison.
@@ -1218,26 +1306,22 @@ submission package.
 Required in any JMLR submission including \PureLLM{} results:
 
 \begin{quote}
-\textit{The PureLLM Baseline returns pre-stored formulas for 11 of 30
-benchmark equations (\texttt{is\_hardcoded: true}); its reported pass rate
-of 100\% (30/30) includes these cases and does not solely reflect
-numerical regression from data.  Among the 19 non-hardcoded equations,
-the genuine-inference pass rate is 100\% (19/19): the verified source
-file records no catastrophic failures, truncated formulas, or
-below-threshold results for \PureLLM{} on this benchmark.}
-\textbf{[Correction: this box previously stated 4/30 hardcoded, 86.7\%
-(26/30) reported, and 84.6\% (22/26) genuine-inference, citing fabricated
-per-equation failures. A separate revision of this document stated
-96.7\% (29/30) and 94.7\% (18/19). Neither matches
-\texttt{protocol\_core\_noiseless\_20260812\_170344.json}, the only
-verified noiseless source file supplied; regenerated directly from it.
-See tablenote on \Cref{tab:overall}.]}
+\textit{The PureLLM Baseline does not call the language model for 11 of 30
+benchmark equations (\texttt{is\_hardcoded: true}): for 8 it returns the benchmark's own
+ground-truth formula and for 3 a fixed form whose parameters are fitted to the data by
+least squares. Its pass rate is 29/30 over all rows and 18/19 on the 19 live rows
+(where the model was called). The live figure favours PureLLM because the bypass
+was added for equations on which the model had failed, so the unaided pass count
+lies between 18/30 and 29/30; the baseline has not been rerun with the bypass disabled.}
+\textbf{[Correction: this box previously stated 100\% (30/30) and 100\% (19/19), and before that
+4/30 hardcoded, 86.7\% (26/30) and 84.6\% (22/26). The current figures are from the recount
+described in Section~\ref{sec:integrity}.]}
 \end{quote}
 
 % ====================================================================
 % NEW APPENDICES (extracted from jmlr_paper_main.tex)
 % ====================================================================
-\section{Feynman Benchmark Reproducibility Statement}
+\section{Benchmark Reproducibility Statement}
 \label{app:repro_statement}
 
 \subsection*{Code, Data, and Protocol}
@@ -1252,9 +1336,10 @@ levels, and recovery thresholds as class constants and is self-documenting:
 python experiment_protocol_benchmark_v2.py --describe
 \end{verbatim}
 
-\noindent The 30-equation Feynman subset is defined in
-\texttt{\_build\_feynman\_equations()} (lines 480--953 of the protocol file).
-Each equation specifies its Feynman ID, ground-truth formula, variable
+\noindent The 30-equation benchmark is defined in
+\texttt{\_build\_feynman\_equations()} (lines 480--953 of the protocol file; the
+function name uses the label ``feynman'', but the set is custom, not a Feynman subset).
+Each equation specifies its identifier, ground-truth formula, variable
 ranges, and generating function; data are produced analytically, eliminating
 external dataset dependencies for the physics equations.
 
@@ -1283,7 +1368,7 @@ as "30/30 equations, all 6 methods" --- i.e.\ every method passing all 30
 tests. That file is not among the verified released artifacts, the
 threshold did not match \Cref{tab:overall}'s actual $\geq0.999999$ cutoff,
 and no run in this benchmark family has every method at 30/30 (only
-\PureLLM{} and \HSL{} do; see \Cref{tab:overall}). The command and output
+\HSL{} does in \Cref{tab:overall}; \PureLLM{} is 30/30 in the 170344 file but 29/30 in the recount). The command and output
 below are regenerated from the one verified noiseless source file supplied,
 \texttt{protocol\_core\_noiseless\_20260812\_170344.json}, whose internal
 \texttt{script} field is quoted directly.]}}
@@ -1301,8 +1386,8 @@ Output: \texttt{protocol\_core\_noiseless\_20260812\_170344.json}
 (timestamp 2026-08-12T17:03:44; 30 equations across 11 non-Feynman domains
 --- biology, chemistry, electrochemistry, electromagnetism, electrostatics,
 magnetism, mechanics, optics, probability, quantum, thermodynamics --- run
-against all 6 methods, with per-method pass counts as reported in
-\Cref{tab:overall} (\PureLLM{} 30/30, \HSL{} 30/30, \SEL{} 28/30, \EHD{}
+against all 6 methods, with per-method pass counts as read from that file, which
+\Cref{tab:overall} reproduces except for \PureLLM{} (29/30 there, from the recount) (\PureLLM{} 30/30, \HSL{} 30/30, \SEL{} 28/30, \EHD{}
 23/30, \HDS{} 21/30, \INN{} 0/30); wall-clock and hardware not recorded in
 the source file, so no timing claim is made here.
 
@@ -1385,7 +1470,7 @@ Nernst (test~6) also timed out under the 300\,s default; counted as failure.
 
 \begin{table}[H]
 \centering
-\caption{Software and hardware environment for Feynman benchmark runs
+\caption{Software and hardware environment for benchmark runs
          (verified 18 March 2026 via \texttt{hardware\_info.py} and
          \texttt{pip show}).}
 \label{tab:software_env}
@@ -1503,23 +1588,19 @@ for the final submission figures.
 
 \subsection*{PureLLM Disclosure}
 
-Following~\citet{memorization2024audit}, each PureLLM noiseless pass
-was audited for memorisation. \textbf{11 of 30 PureLLM passes are
-flagged \texttt{is\_hardcoded=True}}: Michaelis--Menten, Logistic growth,
+Following~\citet{memorization2024audit}, each PureLLM noiseless row was audited for whether the
+language model was called. \textbf{11 of 30 PureLLM rows bypass the model
+(\texttt{is\_hardcoded=True})}: Michaelis--Menten, Logistic growth,
 Allometric scaling, Nernst, Clausius--Mossotti, Lorentz force, Gaussian PDF,
-Zeeman energy, Bose--Einstein, Planck radiance, and Fourier heat. These
-equations return the ground-truth formula verbatim with zero cross-seed
-variation, consistent with training-data recall rather than inference.
-The genuine-inference pass rate (19 of 19 non-hardcoded equations) is
-100\%: no catastrophic failures, truncated formulas, or below-threshold
-results appear anywhere in the verified source file.
-\textbf{[Correction: a prior revision claimed 94.7\% (18/19) citing a
-catastrophic failure on ``Total mechanical energy: spring potential +
-kinetic''; that equation is present in the 30-equation set and passes
-cleanly ($\Rsq=1.0$, not hardcoded). See tablenote on
-\Cref{tab:overall}.]}
-PureLLM is therefore listed for completeness in all tables but excluded
-from all scientific comparisons (the main paper's Results section).
+Zeeman energy, Bose--Einstein, Planck radiance, and Fourier heat. Eight of these
+return the benchmark's ground-truth formula; Michaelis--Menten, Logistic growth and Allometric scaling use a fixed form with
+least-squares parameters fitted to the data. PureLLM passes 29/30 over all rows and 18/19 on the 19 live rows
+(where the model was called); because the bypass was added for equations on which the model had failed,
+the live figure favours PureLLM and the unaided pass count lies between 18/30 and 29/30.
+\textbf{[Correction: a prior revision claimed 100\% (19/19) for the non-hardcoded equations and described the
+hardcoded rows as consistent with training-data recall; the bypass is a code path, not recall, and the recount
+gives 18/19.]}
+PureLLM is listed in all tables, and the main paper reports its comparisons with and without the bypassed rows.
 
 A controlled re-run with \texttt{--no-llm-cache} confirmed that all
 30 equations issued independent API calls and produced identical scores
@@ -1791,16 +1872,22 @@ the test does not reject $H_0$. (Recomputed 2026-09-29 from the canonical \textt
 \subsection{Interpolation Performance Comparison}
 
 \paragraph{Kruskal-Wallis H Test:}
-\begin{itemize}
-\item \textbf{Test statistic}: $H = 42.3$
-\item \textbf{P-value}: $p < 0.001$
-\item \textbf{Interpretation}: Significant differences exist across methods
-\end{itemize}
+\textbf{[Removed: a Kruskal-Wallis statistic ($H = 42.3$, $p < 0.001$) and the
+``significant differences across methods'' interpretation previously stated here.
+No data or script behind them was located, and the per-system sample sizes in the
+table below are unequal and unverified. Withdrawn pending recomputation from
+source data.]}
 
 \paragraph{System Comparisons:}
 \begin{table}[H]
 \centering
-\caption{Interpolation Performance Statistics by System}
+\caption{Interpolation Performance Statistics by System.
+  \textbf{[Unverified: no source data located for these summary statistics; not
+  compared against result files (see the Post-Submission Report). Cross-check against the
+  main paper's regenerated Table~\texttt{tab:five\_systems\_performance} (Core-15): System~3 has
+  $n=15$ there, not $30$; Pure PySR is absent there; and the Hybrid v50\_2 and Neural Network
+  means ($0.931$, $0.940$) differ from the regenerated train-$R^2$ means ($0.997$, $0.982$).
+  These rows appear to predate the regeneration.]}}
 \label{tab:interpolation_stats}
 \begin{tabular}{lccccc}
 \toprule
@@ -1822,7 +1909,10 @@ Success rate defined as R$^{2}$ $> 0.95$:
 
 \begin{table}[H]
 \centering
-\caption{Success Rate by Domain and Method}
+\caption{Success Rate by Domain and Method.
+  \textbf{[Unverified: not regenerated from result files; the percentages (multiples
+  of 33\%) imply about three tasks per domain. Only the column averages were
+  checked.]}}
 \label{tab:domain_success_detailed}
 \begin{tabular}{lccccc}
 \toprule
@@ -1849,7 +1939,9 @@ Error detection breakdown across four-layer validation framework:
 
 \begin{table}[H]
 \centering
-\caption{Validation Layer Error Detection Statistics}
+\caption{Validation Layer Error Detection Statistics.
+  \textbf{[Unverified: error counts not regenerated from result files; only the
+  percentages and cumulative column were checked for internal consistency.]}}
 \label{tab:validation_stats}
 \begin{tabular}{@{}lcccp{3cm}@{}}
 \toprule
@@ -2074,10 +2166,13 @@ All supplementary materials are provided in both synthetic versions (matching re
 
 \subsection{Supplementary Data Files}
 
-All supplementary data are available at:
+Post-processed results, tables and the paper sources are available in the
+post-processing and pre-submission repository:
 \begin{center}
-{\small\url{https://github.com/sednabcn/LLM-HypatiaX-PAPERS}}
+{\small\url{https://github.com/sednabcn/LLM-HypatiaX-DEV}}
 \end{center}
+The raw benchmark runs are produced and archived in the reproduction
+repository, \url{https://github.com/sednabcn/LLM-HypatiaX-REPRO}.
 
 \begin{table}[H]
 \centering
@@ -2112,8 +2207,10 @@ Complete step-by-step tutorials for reproducing all experiments are available at
 \item \href{https://sednabcn.github.io/ai-llm-blog/tutorials/hypatiax/extensions/}{Tutorial 4: Custom Applications and Extensions} (45 min)
 \end{itemize}
 
-All source code and data generation scripts are available at:
-\url{https://github.com/sednabcn/LLM-HypatiaX-PAPERS}
+All source code, experimental protocols and data generation scripts are available at:
+\url{https://github.com/sednabcn/LLM-HypatiaX-REPRO}
+(reproduction repository: all tests and benchmarks are run from there;
+\url{https://github.com/sednabcn/LLM-HypatiaX-DEV} holds post-processing and pre-submission material only).
 
 \subsection{Reproducibility Artifacts}
 
@@ -2127,23 +2224,19 @@ All source code and data generation scripts are available at:
 \paragraph{Source Code:}
 All Python scripts and experimental protocols are available at:
 \begin{center}
-{\small\url{https://github.com/sednabcn/LLM-HypatiaX-PAPERS/tree/master/papers/2025-JMLR/hypatiax}}
+{\small\url{https://github.com/sednabcn/LLM-HypatiaX-REPRO/tree/master/hypatiax}}
 \end{center}
 
  
 \paragraph{Jupyter Notebooks:}
-\begin{itemize}
-\item \texttt{01\_data\_generation.ipynb} - Synthetic data generation for 15 equations
-\item \texttt{02\_pure\_llm\_experiments.ipynb} - Pure LLM baseline (40 tests)
-\item \texttt{03\_hybrid\_experiments.ipynb} - Hybrid v50\_2 experiments (30 tests)
-\item \texttt{04\_extrapolation\_analysis.ipynb} - Extrapolation tests and statistical analysis
-\item \texttt{05\_figure\_generation.ipynb} - Reproduction of all 8 figures
-\item \texttt{06\_statistical\_tests.ipynb} - Mann-Whitney U, Kruskal-Wallis, effect sizes
-\end{itemize}
-
-All Python Jupyter notebooks are available at:
+\textbf{[Corrected: the six experiment notebooks previously listed here
+(\texttt{01\_data\_generation} to \texttt{06\_statistical\_tests}) were not
+found in either repository and have been removed from this list.]}
+The notebooks that do exist are the six paper-integrity audit notebooks
+\texttt{NB-01} to \texttt{NB-06} (citation, cross-reference, section numbering,
+numerical consistency, figure dependency, and code-quality checks), available at:
 \begin{center}
-{\footnotesize\url{https://github.com/sednabcn/LLM-HypatiaX-PAPERS/tree/master/papers/2025-JMLR/hypatiax/notebooks}}
+{\footnotesize\url{https://github.com/sednabcn/LLM-HypatiaX-DEV/tree/master/notebooks}}
 \end{center}
 
 
@@ -2161,25 +2254,38 @@ Available at: \url{https://sednabcn.github.io/ai-llm-blog/tutorials/hypatiax/}
 
 \begin{table}[H]
 \centering
-\caption{Additional Statistical Tests}
+\caption{Additional Statistical Tests.
+  \textbf{[Unverified, manually entered: no script or data located that reproduces
+  these test statistics or $p$-values; do not cite as computed results.]}}
 \label{tab:additional_stats}
 {\small\begin{tabular}{@{}lccl@{}}
 \toprule
 \textbf{Comparison} & \textbf{Test} & \textbf{Result} & \textbf{Interpretation} \\
 \midrule
-Hybrid v50\_2 vs Pure PySR & Mann-Whitney & $U = 89$, $p = 0.18$ & No significant difference \\
-System 3 vs Hybrid v50\_2 & Mann-Whitney & $U = 156$, $p = 0.03$ & System 3 better (interp.) \\
-Classical vs DeFi (LLM) & Fisher's Exact & $p < 0.001$ & Domain effect significant \\
-Run-to-run variability & Friedman & $\chi^2 = 34.2$, $p < 0.001$ & High variability \\
+Hybrid v50\_2 vs Pure PySR & Mann-Whitney\textsuperscript{$\dagger$} & $U = 89$, $p = 0.18$ & No significant difference \\
+System 3 vs Hybrid v50\_2 & Mann-Whitney\textsuperscript{$\dagger$} & $U = 156$, $p = 0.03$ & System 3 better (interp.) \\
+Classical vs DeFi (LLM) & Fisher's Exact\textsuperscript{$\dagger$} & $p < 0.001$ & Domain effect significant \\
+Run-to-run variability & Friedman\textsuperscript{$\dagger$} & $\chi^2 = 34.2$, $p < 0.001$ & High variability \\
 \bottomrule
 \end{tabular}}
+
+\smallskip
+{\footnotesize\textbf{[$^\dagger$Not reproducible.]} No raw per-equation values or script
+reproducing these four rows were located. (i)~The two Mann-Whitney rows disagree with this
+file's own sample sizes (\Cref{tab:interpolation_stats}: $n=15$, $18$, $30$): with those
+sizes, $U=89$ gives $p\approx0.10$ (two-sided, normal approximation, no tie correction),
+not $0.18$, and $U=156$ gives $p\approx0.10$, not $0.03$. (ii)~Pure PySR is not one of the
+systems in the main paper's regenerated Core-15 five-system tables. (iii)~The Fisher and
+Friedman rows give no counts, degrees of freedom or data, so they cannot be checked at all.
+The only test in this document recomputed from source files is the Hybrid v50\_2 vs.\ Neural
+Network extrapolation test in Appendix~\ref{app:statistical_tests}.}
 \end{table}
 
 \paragraph{Power Analysis:}
 \begin{itemize}
-\item Extrapolation comparison: \textbf{[Correction, F-1: this line previously reported a post-hoc power figure using retracted five-system sample sizes and an unverified effect size. The real exp1\_five sample sizes are $n=11$ (Hybrid v50\_2) vs.\ $n=15$ (Neural Network) -- see Section~\ref{sec:five_systems} in the main paper and Appendix~\ref{app:statistical_tests} above -- and no post-hoc power figure for this comparison has been recomputed against verified data. Removed pending recomputation.]}
-\item Domain comparisons (n=3 per domain): Power = 0.65 for d > 0.8
-\item Method comparisons (n=15 per method): Power = 0.95 for d > 0.6
+\item Extrapolation comparison: \textbf{[Correction, F-1: this line previously reported a post-hoc power figure using retracted five-system sample sizes and an unverified effect size. The real exp1\_five sample sizes are those recomputed in Appendix~\ref{app:statistical_tests} (the earlier $n=11$ belonged to the superseded \texttt{data\_old} block) -- see Section~\ref{sec:five_systems} in the main paper and Appendix~\ref{app:statistical_tests} above -- and no post-hoc power figure for this comparison has been recomputed against verified data. Removed pending recomputation.]}
+\item Domain comparisons (n=3 per domain): Power = 0.65 for d > 0.8 \textbf{[Unverified: no calculation or source located.]}
+\item Method comparisons (n=15 per method): Power = 0.95 for d > 0.6 \textbf{[Unverified: no calculation or source located; ``n=15 per method'' also disagrees with the sample sizes $15$/$15$/$18$/$30$ in \Cref{tab:interpolation_stats}.]}
 \end{itemize}
 
 Recommendation: Future work should increase per-domain sample sizes to n $\geq$ 10 for robust inference on secondary effects.
@@ -2192,68 +2298,93 @@ Recommendation: Future work should increase per-domain sample sizes to n $\geq$ 
 \section{Noise Sensitivity Analysis}
 \label{app:noise_sensitivity}
 
-To assess correspondence with Condition 3 of the main paper's \emph{LLM Reproductive Behaviour} finding (noise tolerance threshold $\sigma \leq 0.1 \cdot \text{std}(y)$), we conducted systematic experiments varying noise levels.
+This section reports solve counts for the five noise levels present in the
+repository's noise-sweep result files. An earlier version of this section
+reported a seven-level, 75-trials-per-level PySR table
+($\sigma\in\{0.01,\dots,0.20\}$); its source was never located and it could not
+be regenerated, so it has been \textbf{withdrawn}. The levels $0.02$, $0.05$,
+$0.10$ and $0.20$ are not present in any available result file, so no claim
+about a sharp threshold at $\sigma=0.1\cdot\mathrm{std}(y)$ is made here.
 
-\subsection{Experimental Protocol}
+\subsection{Protocol}
 
-We tested 15 classical formulas (see the main paper's Five-System Comparison table) with noise levels:
-\[
-\sigma \in \{0.01, 0.03, 0.05, 0.08, 0.10, 0.15, 0.20\} \times \text{std}(y)
-\]
-
-For each noise level, we:
-\begin{enumerate}
-\item Generated $n = 100$ training points with additive Gaussian noise: $y_{\text{noisy}} = y_{\text{true}} + \mathcal{N}(0, \sigma^2)$
-\item Ran PySR with standard hyperparameters (Appendix~\ref{app:hyperparameters})
-\item Evaluated success as $R^2 \geq 0.99$ and correct functional form
-\item Repeated 5 times per configuration to account for evolutionary randomness
-\end{enumerate}
+Five noise-sweep shards cover $\sigma/\mathrm{std}(y)\in\{0,\,0.0005,\,0.001,\,0.005,\,0.01\}$,
+with 30 equations per level (150 records per system). A record counts as
+solved if $\Rsq\geq$ the \texttt{threshold\_used} recorded in its own file; the
+\texttt{success} flag is not used (M3 sets it to true whenever no exception is
+raised).
 
 \subsection{Results}
 
 \begin{table}[H]
 \centering
-\caption{Success Rate vs Noise Level}
+\caption{Solved counts per noise level ($\Rsq\geq$ the run's own recorded
+  threshold; $n=30$ per cell). Regenerated from the five noise-sweep shards
+  with \texttt{regenerate\_tables.py}. \textbf{Thresholds differ per run}
+  ($0.999999$, $0.95$, $0.95$, $0.995$, $0.99$ for $\sigma=0$, $0.0005$,
+  $0.001$, $0.005$, $0.01$), so counts are \emph{not} comparable across noise
+  levels, and the pooled column adds counts taken under different thresholds.}
 \label{tab:noise_sensitivity}
-\begin{tabular}{@{}ccc@{}}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l c c c c c r@{}}
 \toprule
-\textbf{Noise Level ($\sigma / \text{std}(y)$)} & \textbf{Success Rate} & \textbf{95\% CI} \\
+\textbf{Method} & \textbf{0} & \textbf{0.0005} & \textbf{0.001} & \textbf{0.005} & \textbf{0.01} & \textbf{Pooled}\\
 \midrule
-0.01 & 100\% (75/75) & [95.2\%, 100\%] \\
-0.03 & 97.3\% (73/75) & [90.7\%, 99.7\%] \\
-0.05 & 93.3\% (70/75) & [85.1\%, 97.8\%] \\
-0.08 & 78.7\% (59/75) & [67.7\%, 87.3\%] \\
-0.10 & 66.7\% (50/75) & [54.8\%, 77.1\%] \\
-0.15 & 45.3\% (34/75) & [33.8\%, 57.3\%] \\
-0.20 & 24.0\% (18/75) & [14.9\%, 35.3\%] \\
+\EHD{} (M3)            & 23/30 & 30/30 & 30/30 & 30/30 & 30/30 & 143/150 (95.3\%)\\
+HybridDiscovery v50\_2 & 21/30 & 25/30 & 26/30 & 23/30 & 26/30 & 121/150 (80.7\%)\\
+\HSL{} (M4)            & 30/30 & 30/30 & 30/30 & 30/30 & 30/30 & 150/150 (100.0\%)\\
+ImprovedNN             &  0/30 & 29/30 & 29/30 & 27/30 & 29/30 & 114/150 (76.0\%)\\
+PureLLM                & 30/30 & 29/30 & 29/30 & 30/30 & 30/30 & 148/150 (98.7\%)\\
+SymbolicEngineWithLLM  & 28/30 & 30/30 & 30/30 & 29/30 & 29/30 & 146/150 (97.3\%)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Solved counts at a single fixed threshold, $\Rsq\geq0.99$, for every
+  run ($n=30$ per cell). Because the threshold is the same at all noise levels,
+  counts are comparable across levels and the pooled column is valid.
+  Regenerated with \texttt{regenerate\_tables\_v2.py --fixed-threshold 0.99}.}
+\label{tab:noise_sensitivity_fixed}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l c c c c c r@{}}
+\toprule
+\textbf{Method} & \textbf{0} & \textbf{0.0005} & \textbf{0.001} & \textbf{0.005} & \textbf{0.01} & \textbf{Pooled}\\
+\midrule
+\EHD{} (M3)            & 30/30 & 30/30 & 30/30 & 30/30 & 30/30 & 150/150 (100.0\%)\\
+HybridDiscovery v50\_2 & 30/30 & 24/30 & 26/30 & 24/30 & 26/30 & 130/150 (86.7\%)\\
+\HSL{} (M4)            & 30/30 & 30/30 & 30/30 & 30/30 & 30/30 & 150/150 (100.0\%)\\
+ImprovedNN             & 29/30 & 27/30 & 28/30 & 29/30 & 29/30 & 142/150 (94.7\%)\\
+PureLLM                & 30/30 & 29/30 & 29/30 & 30/30 & 30/30 & 148/150 (98.7\%)\\
+SymbolicEngineWithLLM  & 30/30 & 30/30 & 30/30 & 30/30 & 29/30 & 149/150 (99.3\%)\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Key Findings}
 
-\paragraph{Sharp Threshold at $\sigma = 0.1$:}
-Success rate drops from 93.3\% ($\sigma = 0.05$) to 45.3\% ($\sigma = 0.15$), consistent with the empirically derived threshold. Fisher's exact test shows a significant difference between $\sigma \leq 0.10$ and $\sigma > 0.10$ ($p < 0.001$).
+\paragraph{Ranking.} At the fixed $\Rsq\geq0.99$ threshold, M3 and M4 both solve
+150/150, ahead of SymbolicEngineWithLLM (149), PureLLM (148), ImprovedNN (142)
+and HybridDiscovery v50\_2 (130). M3's apparent shortfall in the per-run table
+(23/30 at $\sigma=0$) comes from the strict $0.999999$ threshold used for that
+run, not from a loss of accuracy. At that strict threshold M3 solves 23/30
+noiseless equations while M4 solves 30/30, so M4 is the only system that is exact
+under the strict criterion. At $0.99$ the two systems cannot be separated.
 
-\paragraph{Domain Variability:}
-Classical mechanics formulas (kinetic energy, potential energy) tolerate higher noise ($\sigma \leq 0.15$) while chemistry formulas (Arrhenius, rate law) fail above $\sigma = 0.08$. This suggests domain-specific complexity affects noise sensitivity.
+\paragraph{Threshold confound.} The per-run table mixes thresholds from $0.95$ to
+$0.999999$. For example ImprovedNN scores 0/30 at $\sigma=0$ under $0.999999$ but
+29/30 under $0.99$; the jump in the per-run table is the threshold, not the
+data. Cross-level comparisons should use the fixed-threshold table. The value
+$0.99$ is permissive, so it does not measure exact recovery.
 
-\paragraph{Failure Modes:}
-Above threshold, common failures include:
-\begin{itemize}
-\item Incorrect exponents (e.g., $v^{1.8}$ instead of $v^2$ for kinetic energy)
-\item Spurious additive constants to compensate for noise
-\item Overfitting with complex expressions ($R^2 > 0.99$ on training, poor extrapolation)
-\end{itemize}
-
-\subsection{Implications}
-
-Our main experiments use $\sigma = 0.05 \cdot \text{std}(y)$, safely below the threshold, ensuring 93.3\% baseline success rate from noise alone. Real-world applications should:
-\begin{enumerate}
-\item Estimate noise level from repeated measurements
-\item Apply denoising if $\sigma > 0.08 \cdot \text{std}(y)$
-\item Increase sample size by factor of $(\sigma / 0.05)^2$ to maintain success rate
-\end{enumerate}
+\paragraph{Scope.} Only $\sigma\leq0.01\cdot\mathrm{std}(y)$ is covered, and at
+$\Rsq\geq0.99$ essentially all systems saturate, so these data do not show where
+noise starts to hurt. No failure-mode, domain-variability, or noise-threshold claim is supported by
+these data, and the earlier Fisher exact test ($p<0.001$) and sample-size
+scaling recommendation were withdrawn together with the seven-level table.
 
 % ============================================================================
 % APPENDIX I: EXTENDED DISCUSSION

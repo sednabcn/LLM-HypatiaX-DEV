@@ -412,7 +412,9 @@ $R^2$, augmentation is skipped.
 
 \begin{table}[h]
 \centering
-\caption{Case-level outcomes resolved by Fix~5 and routing guard.}
+\caption{Case-level outcomes resolved by Fix~5 and routing guard.
+  \textbf{[Unverified, manually entered: no result or configuration file located
+  that reproduces these values; the ``after'' entries are approximate.]}}
 \label{tab:fix5_cases}
 \begin{tabular}{llrrl}
 \toprule
@@ -564,10 +566,11 @@ retained.
   \item \textbf{[Open, superseded.]} The $1.73\times$ speedup and related
     scalability/parallelisation figures in \S\,\ref{app:complexity}
     (\emph{Empirical Timing Breakdown} onward) do not reproduce against
-    the mechanically-regenerated 5-seed$\times$74-task$\times$2-split
-    runtime sweep (main paper \S\,10.5, ``Runtime Analysis''), which instead shows
-    the hybrid system $2.5$--$9.3\times$ \emph{slower} than the neural
-    baseline on every seed and split. See the superseded notice at the
+    the mechanically-regenerated runtime table built from the five 74-task seed
+    files in the repository (main paper, Section ``Runtime Analysis'', Table \texttt{tab:timing\_full}),
+    which instead shows the hybrid system $3.8$--$11.2\times$ \emph{slower} than
+    the neural baseline on every seed (the files do not record which split variant
+    produced them). See the superseded notice at the
     start of that subsection; do not cite its absolute timings or
     speedup figures.
 \end{enumerate}
@@ -578,7 +581,9 @@ retained.
 
 \begin{table}[h]
 \centering
-\caption{All changes applied across the two modified files.}
+\caption{All changes applied across the two modified files.
+  \textbf{[Descriptive inventory of code changes only; it contains no performance
+  figures or estimates.]}}
 \label{tab:changes}
 \begin{tabular}{llll}
 \toprule
@@ -680,36 +685,33 @@ available to ensure full reproducibility of our results.
 
 \subsection{Code Repository}
 
-\textbf{GitHub:} \url{https://github.com/sednabcn/LLM-HypatiaX-Papers}
+\textbf{GitHub (reproduction; all tests and benchmarks):}
+\url{https://github.com/sednabcn/LLM-HypatiaX-REPRO}
 
-\paragraph{Repository Structure:}
+\textbf{GitHub (post-processing and pre-submission):}
+\url{https://github.com/sednabcn/LLM-HypatiaX-DEV}
+
+\paragraph{Repository Structure (reproduction repository):}
 \begin{small}
 \begin{verbatim}
-LLM-HypatiaX-Papers/
-+-- papers/
-|   +-- 2025-JMLR/
-|       +-- hypatiax/
-|           +-- core/
-|           |   +-- base_pure_llm/     # Pure LLM baseline
-|           |   +-- generation/        # Hybrid systems
-|           |   +-- training/          # Neural network baseline
-|           +-- data/results/          # Raw experimental data
-|           +-- experiments/
-|           |   +-- benchmarks/        # Feynman, noise-sweep runners
-|           |   +-- comparison/        # Comparative analysis
-|           |   +-- tests/             # DeFi extrapolation tests
-|           +-- protocols/             # Experimental protocols (v2)
-|           +-- tools/
-|               +-- symbolic/          # PySR / hybrid_system_v50_2
-|               +-- validation/        # Multi-layer validators
-|       +-- figures/                   # 13 reproducibility figures (PDF/PNG);
-|       |                               #   NOT the 5 figures embedded in the
-|       |                               #   compiled manuscript (disjoint sets)
-|       +-- paper/                     # LaTeX manuscript
-|       +-- reports/                   # Analysis reports
-|       +-- supplementaries/           # Supplementary materials S1-S8
+LLM-HypatiaX-REPRO/
++-- hypatiax/
+|   +-- analysis/              # Statistical analysis
+|   +-- core/
+|   |   +-- base_pure_llm/     # Pure LLM baseline
+|   |   +-- generation/        # Hybrid systems
+|   |   +-- training/          # Neural network baseline
+|   +-- data/results/          # Raw experimental data
+|   +-- experiments/
+|   |   +-- benchmarks/        # Feynman, noise-sweep, sample-complexity runners
+|   |   +-- tests/             # DeFi extrapolation tests
+|   +-- protocols/             # Experimental protocols
+|   +-- tools/
++-- .github/                   # CI workflows and analysis scripts
++-- config/repro.yaml
 +-- docs/
-+-- templates/
++-- AUDIT/
++-- run_all.sh
 +-- requirements.txt
 \end{verbatim}
 \end{small}
@@ -719,9 +721,9 @@ LLM-HypatiaX-Papers/
 \paragraph{Quick Start (all v2-corrected commands):}
 \begin{small}
 \begin{verbatim}
-git clone https://github.com/sednabcn/LLM-HypatiaX-Papers
-cd LLM-HypatiaX-Papers/papers/2025-JMLR
-pip install -r ../../requirements.txt
+git clone https://github.com/sednabcn/LLM-HypatiaX-REPRO
+cd LLM-HypatiaX-REPRO
+pip install -r requirements.txt
 source activate_hypatiax.sh
 
 # Core 15 benchmark (§6.4)
@@ -754,6 +756,19 @@ python hypatiax/analysis/statistical_analysis_full.py --v2
 python supplementaries/generate_figures/generate_figures.py --v2
 \end{verbatim}
 \end{small}
+
+\textbf{[Unverified: as of 2026-10-02 the following paths in the commands above
+were not found in \texttt{LLM-HypatiaX-REPRO} or \texttt{LLM-HypatiaX-DEV}:
+\texttt{hypatiax/experiments/comparison/ultimate\_comparative\_suite\_complete\_.py},
+\texttt{hypatiax/experiments/benchmarks/run\_protocol\_benchmark\_core.py},
+\texttt{hypatiax/analysis/statistical\_analysis\_full.py}, and
+\texttt{supplementaries/generate\_figures/generate\_figures.py}. The
+\texttt{--v2} flags were not checked. Present in the reproduction repository:
+\texttt{hypatiax/experiments/tests/test\_enhanced\_defi\_extrapolation.py},
+\texttt{hypatiax/experiments/benchmarks/run\_noise\_sweep\_benchmark.py},
+\texttt{hypatiax/experiments/benchmarks/run\_sample\_complexity\_benchmark.py},
+\texttt{hypatiax/analysis/statistical\_analysis.py}, and \texttt{run\_all.sh}.
+These commands must be replaced with the actual entry points before submission.]}
 
 \subsection{Hardware and Software}
 
@@ -896,7 +911,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 \subsection{Contact}
 
 \begin{itemize}
-\item \textbf{GitHub Issues:} \url{https://github.com/sednabcn/LLM-HypatiaX-Papers/issues}
+\item \textbf{GitHub Issues:} \url{https://github.com/sednabcn/LLM-HypatiaX-REPRO/issues}
 \item \textbf{Email:} \texttt{ruperto.bonet@modelphysmat.com}
 \item \textbf{Response time:} Within 2 weeks
 \item \textbf{Documentation:} \path{docs/QUICK_START_GUIDE.md}
@@ -931,29 +946,24 @@ Total per candidate: $\mathcal{O}(k + m)$. With $n$ candidates: $\mathcal{O}(n(k
 \paragraph{Comparison with Neural Networks:}
 \begin{itemize}
 \item \textbf{Neural Network Training}: $\mathcal{O}(e \cdot b \cdot (d \cdot h + h^2))$ where $e$ = epochs, $b$ = batch size, $d$ = input dimension, $h$ = hidden units
-\item \textbf{Typical values}: $e=200$, $b=160$, $d=3$, $h=64$ $\Rightarrow$ $\mathcal{O}(2 \times 10^6)$ operations
+\item \textbf{Typical values}: $e=200$, $b=160$, $d=3$, $h=64$ $\Rightarrow$ $\mathcal{O}(1.4 \times 10^8)$ operations
 \item \textbf{HypatiaX}: $n=1000$, $m=160$, $k=50$ $\Rightarrow$ $\mathcal{O}(2 \times 10^5)$ operations per iteration
 \end{itemize}
 
-Despite comparable per-iteration complexity, symbolic methods require more iterations (500 vs 200) for convergence, explaining the 27$\times$ runtime difference.
-
-\subsection{Empirical Timing Breakdown}
+\subsection{Empirical Timing Breakdown (Superseded, Unverified)}
 
 \textbf{[Superseded --- do not cite this subsection's absolute timings or
 speedup figures without independent reproduction.]} The profiling below
 predates the mechanical, script-driven regeneration of the runtime table
-directly from raw per-task result files across the complete
-5-seed$\times$74-task$\times$2-split sweep (main paper
-\S\,10.5, ``Runtime Analysis'', Table~5). That regeneration
+directly from the five 74-task per-seed result files in the repository
+(main paper, Section ``Runtime Analysis'', Table \texttt{tab:timing\_full}). That regeneration
 shows the opposite pattern from what follows: the hybrid system is
-$2.5$--$9.3\times$ \emph{slower} than the neural baseline on every seed
-and every split, never faster. In particular, the $1.73\times$ speedup
-and the $1.7$\,s neural-network timing quoted below do not reproduce;
-raw per-task neural-network times in the current benchmark cluster around
-$0.34$--$0.42$\,s, roughly $4\times$ smaller than the $1.7$\,s figure
-below, and the discrepancy is large enough to suggest this profiling
-reflects a different, earlier run configuration rather than a computation
-error. The scalability table (\S\,\ref{tab:scalability}, $5.1$--$5.8\times$)
+$3.8$--$11.2\times$ \emph{slower} than the neural baseline on every seed,
+never faster. In particular, the $1.73\times$ speedup
+and the $1.7$\,s neural-network timing formerly quoted below do not reproduce;
+mean per-task neural-network times in those files are $0.18$--$0.36$\,s per seed,
+roughly $5$--$9\times$ smaller than the $1.7$\,s figure,
+which has been replaced below by the measured per-task time. The source of the $1.7$\,s figure is not identified. The scalability table (\S\,\ref{tab:scalability}; its speedup column has been removed)
 and the parallelisation projections that follow are built on the same
 unreproduced baseline and should be read with the same caution. Retained
 here for historical/methodological interest only.
@@ -962,7 +972,13 @@ Profiling HypatiaX on representative test cases:
 
 \begin{table}[H]
 \centering
-\caption{Computational Cost Breakdown (average per test)}
+\caption{Computational Cost Breakdown (average per test).
+  \textbf{[Superseded, unverified: the Pure Symbolic and LLM-Guided Hybrid blocks
+  were not regenerated from result files. The Neural Network block previously showed a
+  1.7\,s total with a stage split (data preparation, training, validation) that has no
+  source and contradicts the result files; it is replaced by the per-task time from the
+  five 74-task per-seed files (main paper, \texttt{tab:timing\_full}) and the stage split
+  is removed.]}}
 \label{tab:timing_breakdown}
 \begin{tabular}{@{}lcc@{}}
 \toprule
@@ -971,9 +987,9 @@ Profiling HypatiaX on representative test cases:
 \multicolumn{3}{c}{\textit{Pure Symbolic (PySR)}} \\
 \midrule
 Population initialization & 5.2 & 1.3\% \\
-Evolutionary search & 365.8 & 93.9\% \\
+Evolutionary search & 365.8 & 93.8\% \\
 Symbolic simplification & 12.3 & 3.2\% \\
-Validation framework & 6.7 & 1.6\% \\
+Validation framework & 6.7 & 1.7\% \\
 \midrule
 \textbf{Total} & \textbf{390.0} & \textbf{100\%} \\
 \midrule
@@ -987,47 +1003,48 @@ Final validation & 4.0 & 5.7\% \\
 \midrule
 \textbf{Total} & \textbf{70.0} & \textbf{100\%} \\
 \midrule
-\multicolumn{3}{c}{\textit{Neural Network}} \\
+\multicolumn{3}{c}{\textit{Neural Network (measured per-task time)}} \\
 \midrule
-Data preparation & 0.3 & 17.6\% \\
-Training (200 epochs) & 1.2 & 70.6\% \\
-Validation & 0.2 & 11.8\% \\
-\midrule
-\textbf{Total} & \textbf{1.7} & \textbf{100\%} \\
+Mean per task, pooled over 370 task runs & 0.27 & --- \\
+Range of per-seed means (five seeds) & 0.18--0.36 & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \paragraph{Key Findings:}
 \begin{itemize}
-\item Evolutionary search dominates (93.9\%) in pure symbolic mode
-\item LLM-guided mode routes 68 of 74 cases (92\,\%) directly to the LLM formula, bypassing full PySR search; median speedup on those cases is $1.73\times$ over the neural baseline \citep{kambhampati2024llms}
-\item Validation overhead is negligible (1.6-5.7\%)
-\item Neural networks are 27$\times$ faster on this timing benchmark. \textbf{[Correction, F-1: an extrapolation-error figure previously cited here could not be reproduced from any data source currently available for this paper and has been removed; see the main paper's regenerated Five-System Comparison tables (Section~5, ``Five-System Comparative Analysis'') for the current, verified extrapolation-error figures instead.]}
+\item Evolutionary search dominates (93.8\%) in pure symbolic mode
+\item LLM-guided mode routes 68 of 74 cases (92\,\%) directly to the LLM formula, bypassing full PySR search (68 of 74 is confirmed for the seed-42 file; $68$--$69$ in each of the five seed files). \textbf{[Withdrawn: a $1.73\times$ median speedup over the neural baseline on those cases, previously stated here, does not reproduce; see the main paper, Section ``Runtime Analysis''.]}
+\item Validation overhead is negligible (1.7-5.7\%)
+\item \textbf{[Correction, F-1: an extrapolation-error figure previously cited here could not be reproduced from any data source currently available for this paper and has been removed; see the main paper's regenerated Five-System Comparison tables (Section~5, ``Five-System Comparative Analysis'') for the current, verified extrapolation-error figures instead.]}
 \end{itemize}
 
-\subsection{Scalability Analysis}
+\subsection{Scalability Analysis (Superseded, Unverified)}
 
 Testing scalability with varying dataset sizes:
 
 \begin{table}[H]
 \centering
-\caption{Scalability with Dataset Size}
+\caption{Scalability with Dataset Size.
+  \textbf{[Superseded, unverified: no scalability result file was found in
+  \texttt{hypatiax/data/results}, so these times are historical and not reproduced.
+  The Speedup column, which printed $5.1$--$5.8\times$ and relied on the unreproduced
+  neural-network baseline, has been removed.]}}
 \label{tab:scalability}
-\begin{tabular}{@{}cccc@{}}
+\begin{tabular}{@{}ccc@{}}
 \toprule
-\textbf{Data Points} & \textbf{Pure PySR (s)} & \textbf{LLM-Hybrid (s)} & \textbf{Speedup} \\
+\textbf{Data Points} & \textbf{Pure PySR (s)} & \textbf{LLM-Hybrid (s)} \\
 \midrule
-100 & 245 & 48 & 5.1$\times$ \\
-500 & 390 & 70 & 5.6$\times$ \\
-1000 & 521 & 95 & 5.5$\times$ \\
-5000 & 1245 & 215 & 5.8$\times$ \\
-10000 & 2340 & 410 & 5.7$\times$ \\
+100 & 245 & 48 \\
+500 & 390 & 70 \\
+1000 & 521 & 95 \\
+5000 & 1245 & 215 \\
+10000 & 2340 & 410 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{Observation:} Speedup remains relatively constant (5.1--5.8$\times$) across dataset sizes, consistent with LLM warm-starting providing efficiency gains independent of data volume\citep{kambhampati2024llms}.
+\paragraph{Observation:} The earlier scalability speedup claim is unverified and is omitted pending reproduction.
 
 \subsection{Computational Cost vs Accuracy Tradeoff}
 
@@ -1148,7 +1165,8 @@ Beyond data availability, specialized domains require distinct reasoning pattern
 
 \begin{table}[H]
 \centering
-\caption{Conceptual Requirements Comparison}
+\caption{Conceptual Requirements Comparison.
+  \textbf{[Qualitative author assessment; not derived from measured data.]}}
 \label{tab:conceptual_complexity}
 \begin{tabular}{@{}lcc@{}}
 \toprule
@@ -1267,7 +1285,7 @@ This distinction matters for science. Discovery requires:
 \item Reliable predictions for decision-making (drug dosing, climate policy)
 \end{enumerate}
 
-LLM-only approaches showed inconsistency on all three for specialized domains on the evaluated benchmark. Hybrid architectures combining LLM interfaces with symbolic engines addressed all three, at the cost of approximately 27$\times$ longer runtime---an acceptable tradeoff when correctness matters.
+LLM-only approaches showed inconsistency on all three for specialized domains on the evaluated benchmark. Hybrid architectures combining LLM interfaces with symbolic engines addressed all three, at the cost of substantially longer runtime (the measured ratio is reported in the main paper's Runtime Analysis)---an acceptable tradeoff when correctness matters.
 
 As we integrate AI more deeply into scientific workflows, maintaining this distinction between approximation and discovery will be increasingly important. A productive direction is the orchestration of complementary capabilities: LLMs for communication and initialisation, symbolic methods for structured mathematical search, and human experts for interpretation and validation.
 

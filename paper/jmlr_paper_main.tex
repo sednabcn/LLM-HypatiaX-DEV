@@ -130,10 +130,10 @@ against the raw per-task result files and are not repeated in this
 version: a ``73\,\% runtime reduction'' ($3.7\times$ speedup) and a
 subsequently reported $1.73\times$/$1.64\times$ speedup, both for
 HypatiaX over the neural-network baseline. The verified result is the
-opposite: across the complete 5-seed$\times$74-task sweep (both benchmark
-variants, $740$ tasks audited), the hybrid system is
-\emph{slower} than the pure neural-network baseline on every seed and
-every split, by a factor of $4.1\times$ to $7.7\times$ on mean time,
+opposite: across the five 74-task seed files held in the repository ($370$ task
+runs audited), the hybrid system is
+\emph{slower} than the pure neural-network baseline on every seed,
+by a factor of $3.8\times$ to $11.2\times$ on mean time,
 whether measured over all tasks or over LLM-routed tasks only
 (Table~\ref{tab:timing_full}, \S\ref{sec:timing}).
 
@@ -203,8 +203,7 @@ using training-data diagnostics alone.  The key insight is that the two paradigm
 failure modes are complementary: routing between them eliminates catastrophic
 failures while preserving the accuracy ceiling of the stronger component.
 
-On a benchmark of 74 DeFi mathematical tasks under an aggressive
-40\,\%/60\,\% PCA-directed extrapolation split, a standalone neural MLP achieves
+On a benchmark of 74 DeFi mathematical tasks under a 40\,\%/60\,\% extrapolation split (the released result files do not record whether the single-axis or PCA-directed variant was used), a standalone neural MLP achieves
 median test $\Rsq = -0.69$, and a pure LLM baseline suffers 5 catastrophic
 failures ($\Rsq < -10$) while achieving only 59.5\,\% near-perfect recovery.
 Neither paradigm alone is sufficient.
@@ -259,26 +258,26 @@ Table~\ref{tab:nguyen12} and \S\ref{sec:nguyen12}. Earlier figures
 (8/12~P, 7/12~H, 4/12, and a Neural MLP baseline that was never run) remain
 withdrawn.
 A previously reported $1.73\times$ median speedup of HypatiaX over
-neural-network inference on LLM-routed cases (68 of 74, PCA-directed
-split --- no seed was disclosed for the original claim; three of the
-five PCA-directed seeds independently verify at exactly 68/74, see
+neural-network inference on LLM-routed cases (68 of 74, split not recorded
+--- no seed was disclosed for the original claim; two of the
+five seed files in the repository route exactly 68/74, see
 Table~\ref{tab:timing_full}) does
-\textbf{not} reproduce: independently-verified regeneration of the
-runtime table directly from the raw per-task result files, across the
-complete, verified 5-seed$\times$74-task sweep, shows the hybrid system
-is $4.1$--$7.7\times$ \emph{slower} than the neural baseline on every
-seed and every split, never faster (see \S\ref{sec:timing}).
-On 30 Feynman equations spanning mechanics to quantum physics, HypatiaX
-achieves 12/30 near-perfect recovery under a random 80/20 split and 13/30
-under a PCA-directed 40\,\%/60\,\% split\footnote{Both figures use a single,
-strict $\Rsq \geq 0.999999$ threshold, applied identically to both splits;
-near-misses ($\Rsq \in [0.999, 0.999999)$) are disclosed separately in
-\S\ref{sec:feynman30} and never counted toward these figures. See the
-threshold policy statement in \S\ref{sec:feynman30} for the single
-convention used throughout this paper.}, versus 0/30 for the neural baseline
-under both protocols (see Section~\ref{sec:feynman30}), establishing that reliability gains extend beyond the DeFi domain.
+\textbf{not} reproduce: regeneration of the runtime table directly from
+the raw per-task result files, across the five 74-task seed files in the
+repository, shows the hybrid system
+is $3.8$--$11.2\times$ \emph{slower} than the neural baseline on every
+seed, never faster (see \S\ref{sec:timing}).
+On a custom 30-equation benchmark spanning mechanics to quantum physics (not a subset of the AI Feynman suite), HypatiaX
+passes 21/30 under a random 80/20 split and 13/30 on the held-out 60\,\% of a
+PCA-directed 40\,\%/60\,\% split\footnote{Strict $\Rsq \geq 0.999999$ threshold. The random-split
+figure uses the method-reported $\Rsq$; the PCA figure uses the far-region $\Rsq$ recomputed on
+the held-out 60\,\%, the extrapolation measure; see \S\ref{sec:feynman30}.}, versus 0/30 for the neural
+baseline on the random split. A pure-LLM baseline passes 29/30 on the random split, so this suite
+shows an advantage over the neural baseline but not over the pure LLM; held-out PCA scores are
+not available for the pure-LLM and hybrid-core methods because of an evaluator defect
+(Section~\ref{sec:feynman30}).
 Taken together, it is the individual extrapolation-rescue cases documented
-above (Arrhenius, Portfolio Variance) and the Feynman-suite comparison
+above (Arrhenius, Portfolio Variance) and the 30-equation benchmark comparison
 against the neural baseline --- not an aggregate near-perfect-rate or
 catastrophic-failure-avoidance gain on the DeFi benchmark --- that
 constitute this paper's empirically supported evidence for
@@ -374,7 +373,7 @@ success reporting is corrected: catastrophic failures are masked rather than
 eliminated, and the corrected near-perfect rate ties, rather than beats, the
 pure-LLM baseline (\S\ref{sec:hybrid-attribution-bug}). The paper's supported
 evidence for the routing approach instead comes from individual
-extrapolation-rescue cases and the Feynman-30 comparison
+extrapolation-rescue cases and the Protocol-30 comparison
 (\S\ref{sec:results}, \S\ref{sec:discussion}), not from an aggregate gain on
 this benchmark.
 
@@ -385,7 +384,7 @@ This paper makes the following contributions:
 
 \begin{enumerate}[leftmargin=2em,label=(\roman*)]
   \item \textbf{HypatiaX benchmark}: a corpus of 74 closed-form DeFi tasks
-    with an aggressive PCA-directed extrapolation split (40\,\%/60\,\%), together
+    with a 40\,\%/60\,\% extrapolation split (the released result files do not record whether the single-axis or PCA-directed variant was used), together
     with a unified evaluation pipeline (HypatiaX v3.0) that corrects four
     systematic biases in prior versions (data leakage, split misconfiguration,
     formula evaluation inconsistency, and weak trust gating).
@@ -399,21 +398,21 @@ This paper makes the following contributions:
     and \S\ref{sec:hybrid-attribution-bug})
 
   \item \textbf{Runtime reproducibility audit}: a mechanical, script-driven,
-    independently re-verified regeneration of the wall-clock timing table
+    script-driven regeneration of the wall-clock timing table
     directly from raw per-task result files (Table~\ref{tab:timing_full},
     Section~\ref{sec:timing}) that supersedes three earlier, unsupported
     runtime claims --- a previously circulated 73\,\% reduction claim, a
     subsequent $1.73\times$/$1.64\times$ speedup claim, and a still later
     $2.5$--$9.3\times$-slower claim that itself did not reproduce from its
-    own cited source. Across the complete, verified $5$-seed$\times$74-task
-    sweep ($740$ tasks audited across both benchmark variants), the hybrid
-    system is found to be $4.1$--$7.7\times$ \emph{slower} than the neural
-    baseline on every seed and every split, never faster, in either the
+    own cited source. Across the five 74-task seed files held in the
+    repository ($370$ task runs audited), the hybrid
+    system is found to be $3.8$--$11.2\times$ \emph{slower} than the neural
+    baseline on every seed, never faster, in either the
     ``all tasks'' or ``LLM-routed-only'' framing. Restricting to only the
     tasks the hybrid system's own \texttt{decision} field routed to the LLM,
-    every one of the ten seed/split rows in Table~\ref{tab:timing_llm_routed_full}
-    is still slower than the neural baseline, ranging from $4.07\times$ to
-    $5.76\times$ on mean time (pooled: $4.72\times$ v3c, $4.1$--$4.55\times$ PCA)
+    every one of the five seed rows in Table~\ref{tab:timing_llm_routed_full}
+    is still slower than the neural baseline, ranging from $3.84\times$ to
+    $9.39\times$ on mean time (pooled: $6.18\times$)
     --- the LLM-routed-only framing shows the same pattern, not a different one.
 
   \item \textbf{Difficulty-stratified analysis}: a breakdown of performance across
@@ -558,7 +557,7 @@ LLM guidance succeeds when: (1) the equation is well-represented in web text; (2
 \subsection{Extrapolation Testing}\label{subsec:extrapolation-testing}
 \label{sec:llm_extrap}
 
-Even when the LLM achieves near-perfect interpolation ($\Rsq \approx 1$), extrapolation performance is unreliable. Across 40 tests, 6 equations suffered catastrophic extrapolation failure ($\Rsq < -10$). This motivates the hybrid architecture: the LLM provides structural guidance while symbolic regression corrects parametric errors and the neural network provides a stable fallback.
+Even when the LLM achieves near-perfect interpolation ($\Rsq \approx 1$), extrapolation performance is unreliable. The earlier 40-test claim could not be verified from the released artifacts and is omitted. This motivates the hybrid architecture: the LLM provides structural guidance while symbolic regression corrects parametric errors and the neural network provides a stable fallback.
 
 % =============================================================================
 % === SECTION: Theoretical Framework (from jmlr_paper_final.tex §4) ===
@@ -799,11 +798,11 @@ extrapolation occurs along the dominant direction of variation in
 multivariate settings, reflecting the most challenging direction of
 distributional shift.
 
-Both variants' underlying runs are real and are reported side by side
-throughout this paper (e.g.\ Tables~\ref{tab:timing_full} and
-\ref{tab:timing_llm_routed_full}, labelled \texttt{v3c} and \texttt{PCA}
-respectively); PCA-directed supersedes v3c as the primary protocol for the
-DeFi and Feynman benchmarks; the Nguyen-12 benchmark
+Both variants are described here because the DeFi and Protocol-30 results are
+reported under them; the repository's multi-seed DeFi timing files
+(Tables~\ref{tab:timing_full} and \ref{tab:timing_llm_routed_full}) do not
+record which variant produced them (\S\ref{sec:timing}). PCA-directed supersedes v3c as the primary protocol for the
+DeFi and Protocol-30 benchmarks; the Nguyen-12 benchmark
 (\S\ref{subsec:nguyen12-benchmark-standard-sr-suite}) uses per-equation
 axis-aligned ranges rather than PCA-directed ordering (see the protocol
 note in that subsection), so this supersession does not apply there.
@@ -1117,8 +1116,8 @@ $\Rsq$ values depending on the evaluation backend.
 
 Stage~1--2: data ingestion and preprocessing.
 Stage~3 (optional): LLM proposes candidate expressions; on the v3.0 DeFi
-benchmark under the PCA-directed split, 68--69 of 74 tasks are routed to
-this path (54--55 of 74 under the v3c split; see
+benchmark, 68--69 of 74 tasks are routed to this path in each of the five
+seed files held in the repository (see
 Table~\ref{tab:timing_full}, \S\ref{sec:timing}). A previously reported
 $1.73\times$ median speedup over the neural baseline on these cases does
 not reproduce from the raw result files; the mechanically regenerated
@@ -1397,8 +1396,11 @@ the corresponding Mann-Whitney test and effect-size calculation.
 \centering
 \caption{Five-System Comparison: Extrapolation Error vs.\ Interpolation $R^2$
   (exp1\_five, Core-15; canonical result files in \texttt{hypatiax/data}, regenerated 2026-09-29).
-  $n$ is the number of equations entering the row's extrapolation-error mean and
-  median; Std and the 95\% CI are those of the extrapolation-error column itself
+  Extrapolation error is $100\cdot\mathrm{extrap\_rmse\_far}/\mathrm{train\_rmse}$ per
+  equation. The median uses every equation with a finite value; $n$, the mean, the Std and
+  the 95\% CI use only values at or below the upper Tukey fence $Q_3+1.5\,\mathrm{IQR}$, so
+  $n$ can be smaller than the number of equations (Hybrid v50\_2 keeps 10 of 12, Neural
+  Network 12 of 15). Std and the 95\% CI are those of that same clipped subset
   ($\mathrm{mean} \pm t_{0.975,\,n-1} \cdot \mathrm{std}/\sqrt{n}$), left
   blank where $n<3$ (Pure LLM, $n=2$, has no usable interval). The distribution is extremely heavy-tailed, so the
   normal-theory intervals are wide and extend below zero; they show that the means
@@ -1700,10 +1702,9 @@ is stable across two hardware runs (Run~B: $U=101.5$, $p=0.6833$).
 Domain-selective improvement is observed in Physics and DeFi Risk;
 \textsc{PySR}-only is superior in Chemistry and DeFi AMM.
 These null results on the Core-15 subset are expected given the full-benchmark
-picture: significant gains emerge in the Feynman success-subset
-(Mann-Whitney $U=81$, $p=0.00020$) and are concentrated on the hard transcendental
-and DeFi instability cases discussed in Sections~\ref{sec:instability_results}
-and~\ref{sec:feynman30}.
+picture: the Protocol-30 comparison (Section~\ref{sec:feynman30}) is reported as pass counts
+rather than as a significance test, and its hard transcendental and DeFi
+instability cases are discussed in Section~\ref{sec:instability_results}.
 
 \subsection{Performance by Difficulty Level}\label{subsec:performance-by-difficulty-level}
 \label{sec:difficulty}
@@ -1944,121 +1945,119 @@ row per method (Pure LLM / Neural MLP / HypatiaX), with a
 \textbf{$1.73\times$ speedup on LLM-routed cases} and a
 \textbf{$1.64\times$ median speedup overall}. Those numbers could not be
 reproduced from the raw per-task result files supplied alongside this
-benchmark. A subsequent audit draft worked from an incomplete data pool
-and reported the seeds other than 42 as truncated to 5 tasks each; that
-data-completeness concern was retracted, correctly -- all ten raw result
-files do contain the full 74 tasks each, correctly seed-labeled, with no
-cross-contamination. \textbf{However, the table published alongside that
-retraction was itself wrong}: it reported three PCA-directed seeds (123,
-777, 2024) as routing zero tasks to the LLM and Pure LLM timings
-collapsing to 0.17--0.24\,s, a pattern indistinguishable from the
-truncated-file defect that had just been ruled out. Independently
-re-running \texttt{generate\_table1.py} on all ten verified raw result
-files (five seeds $\times$ two benchmark variants, $42, 99, 123, 777,
-2024$, all 74 tasks each, $740$ tasks audited) shows every PCA seed
-routes 68--69 of 74 tasks to the LLM, with Pure LLM timings of
-8.3--9.8\,s -- consistent with seed 42 and with every v3c seed, and
-nothing like the previously published collapsed rows. Table~\ref{tab:timing_full}
-below is that independently-verified regeneration, broken down by
-individual seed and by split, plus the pooled 5-seed / 370-task total for
-each split. It \textbf{replaces} the originally reported single-row
-table, the six-reconstruction interim table from an earlier audit, and
-the previously published (and itself incorrect) multi-seed table.
+benchmark. Table~\ref{tab:timing_full} below is a mechanical regeneration
+by \texttt{scripts/generate\_tables.py} from the five 74-task per-seed result
+files held in the repository (seeds $42, 99, 123, 777, 2024$; $370$ task runs
+in total), broken down by individual seed plus a pooled 5-seed / 370-task
+total. It \textbf{replaces} the originally reported single-row table, the
+six-reconstruction interim table from an earlier audit, and the previously
+published multi-seed tables.
+
+\textbf{Scope of this table.} Earlier versions of this table labelled the
+non-PCA rows \texttt{v3c} and also reported a PCA-directed split. The \texttt{v3c}
+label cannot be supported (nothing in the files names the variant), so those rows are
+labelled \texttt{v3} here. PCA rows were withdrawn from an intermediate revision
+because the only PCA seed files then located (\texttt{15\_pca/}) held $5$
+portfolio-task records per seed ($25$ in total), not a 74-task sweep. They are restored here
+from five 74-task PCA seed files (\texttt{defi\_pca/} and \texttt{defi\_pca/multi-seeds/};
+seeds 42, 99, 123, 777, 2024; $74$ records each), regenerated by
+\texttt{scripts/generate\_tables.py}. These files are identified as PCA-directed by their
+filenames and by the script that writes them, not by a field inside the records. The five
+files in Table~\ref{tab:timing_full} carry no field naming their split or
+variant; they are labelled \texttt{v3} here only because of their filenames.
+Their routing (68--69 of 74 tasks per seed) differs from the 54--55 of 74
+previously reported for the \texttt{v3c} rows, so those earlier rows are not
+reproduced by these files and should not be cited.
 
 \begin{table}[htbp]
 \centering
 \small
 \caption{Wall-clock time per task (seconds), mean / median, regenerated
-directly from the complete raw per-task result files by
-\texttt{generate\_table1.py} with no manual number editing, and
-independently re-verified against the raw files themselves (see
-\S\ref{sec:timing_data_defect}). Rows are grouped by split (v3c =
-aggressive 40/60; PCA = PCA-directed 40/60), with one row per seed
-followed by the pooled 5-seed / 370-task total for that split (shaded).
-``Speedup'' compares the neural MLP arm to the hybrid arm; every row
-shows the hybrid system slower, never faster. This table replaces the
-originally reported single-row table ($1.73\times$/$1.64\times$ speedup,
-opposite direction, unreproduced), the interim six-reconstruction table
-from an earlier audit draft, and a previously published multi-seed table
-that itself did not reproduce from these same raw files (three
-PCA-directed seeds had been reported with near-zero LLM-routing that the
-raw files do not show).}
+directly from the five 74-task per-seed v3 result files and the five 74-task
+per-seed PCA result files in the repository by \texttt{scripts/generate\_tables.py},
+with no manual number editing. Each row is one seed; each shaded row pools all $370$
+task runs of its block (first block \texttt{v3}, second block \texttt{PCA}).
+``LLM-routed'' counts tasks whose hybrid \texttt{decision} field is
+\texttt{llm}; one further task per seed has decision \texttt{nn\_fallback} and
+is not counted. ``Speedup'' compares the neural MLP arm to the hybrid arm;
+every row shows the hybrid system slower, never faster. Seed~42's file was last modified
+on 2026-09-27 and those of seeds 99, 123, 777 and 2024 on 2026-09-29. This table
+replaces the originally reported single-row table
+($1.73\times$/$1.64\times$ speedup, opposite direction, unreproduced), the
+interim six-reconstruction table, and previously published multi-seed tables
+that did not reproduce from the repository's files.}
 \label{tab:timing_full}
 \begin{tabular}{lrrrrrl}
 \toprule
 Run & $n$ & Pure LLM (s) & Neural MLP (s) & Hybrid, all (s) & LLM-routed & Speedup, all (mean) \\
     &     & mean/median  & mean/median    & mean/median      & count      &  \\
 \midrule
-v3c seed42  & 74 & 9.69 / 8.85 & 0.33 / 0.33 & 1.99 / 1.52 & 55/74 & 5.99$\times$ slower \\
-v3c seed99  & 74 & 9.40 / 8.74 & 0.36 / 0.36 & 2.17 / 1.57 & 54/74 & 6.08$\times$ slower \\
-v3c seed123 & 74 & 9.46 / 8.42 & 0.36 / 0.36 & 1.93 / 1.46 & 55/74 & 5.38$\times$ slower \\
-v3c seed777 & 74 & 9.68 / 8.92 & 0.25 / 0.25 & 1.94 / 1.48 & 54/74 & 7.72$\times$ slower \\
-v3c seed2024 & 74 & 9.43 / 8.69 & 0.25 / 0.25 & 1.92 / 1.45 & 55/74 & 7.70$\times$ slower \\
+v3 seed42 & 74 & 8.63 / 7.58 & 0.36 / 0.35 & 1.70 / 1.32 & 68/74 & 4.77$\times$ slower \\
+v3 seed99 & 74 & 11.63 / 10.48 & 0.31 / 0.35 & 2.18 / 1.38 & 69/74 & 6.98$\times$ slower \\
+v3 seed123 & 74 & 11.20 / 10.22 & 0.21 / 0.24 & 2.14 / 1.36 & 68/74 & 10.03$\times$ slower \\
+v3 seed777 & 74 & 12.00 / 10.50 & 0.18 / 0.20 & 2.05 / 1.38 & 69/74 & 11.23$\times$ slower \\
+v3 seed2024 & 74 & 11.26 / 10.15 & 0.31 / 0.35 & 2.03 / 1.37 & 69/74 & 6.57$\times$ slower \\
 \rowcolor{black!8}
-\textbf{v3c ALL SEEDS (pooled)} & \textbf{370} & \textbf{9.53 / 8.75} & \textbf{0.31 / 0.33} & \textbf{1.99 / 1.49} & \textbf{273/370} & \textbf{6.43$\times$ slower} \\
-PCA seed42  & 74 & 9.85 / 8.95 & 0.33 / 0.33 & 1.63 / 1.34 & 68/74 & 4.87$\times$ slower \\
-PCA seed99  & 74 & 9.53 / 8.77 & 0.33 / 0.33 & 1.67 / 1.37 & 69/74 & 5.02$\times$ slower \\
-PCA seed123 & 74 & 9.81 / 8.87 & 0.33 / 0.33 & 1.76 / 1.36 & 69/74 & 5.27$\times$ slower \\
-PCA seed777 & 74 & 9.44 / 8.77 & 0.33 / 0.33 & 1.72 / 1.38 & 68/74 & 5.18$\times$ slower \\
-PCA seed2024 & 74 & 9.25 / 8.34 & 0.34 / 0.33 & 1.62 / 1.35 & 68/74 & 4.82$\times$ slower \\
+\textbf{v3 ALL SEEDS (pooled)} & \textbf{370} & \textbf{10.94 / 9.62} & \textbf{0.27 / 0.35} & \textbf{2.02 / 1.37} & \textbf{343/370} & \textbf{7.35$\times$ slower} \\
+PCA seed42 & 74 & 10.59 / 9.24 & 0.24 / 0.28 & 1.39 / 1.03 & 68/74 & 5.67$\times$ slower \\
+PCA seed99 & 74 & 10.98 / 9.51 & 0.21 / 0.24 & 1.33 / 1.14 & 68/74 & 6.22$\times$ slower \\
+PCA seed123 & 74 & 10.86 / 9.49 & 0.28 / 0.32 & 1.27 / 1.07 & 69/74 & 4.53$\times$ slower \\
+PCA seed777 & 74 & 11.11 / 9.79 & 0.21 / 0.24 & 1.46 / 1.12 & 68/74 & 6.85$\times$ slower \\
+PCA seed2024 & 74 & 10.51 / 9.26 & 0.31 / 0.35 & 1.39 / 1.08 & 68/74 & 4.51$\times$ slower \\
 \rowcolor{black!8}
-\textbf{PCA ALL SEEDS (pooled)} & \textbf{370} & \textbf{9.58 / 8.81} & \textbf{0.33 / 0.33} & \textbf{1.68 / 1.36} & \textbf{342/370} & \textbf{5.03$\times$ slower} \\
+\textbf{PCA ALL SEEDS (pooled)} & \textbf{370} & \textbf{10.81 / 9.46} & \textbf{0.25 / 0.27} & \textbf{1.37 / 1.09} & \textbf{341/370} & \textbf{5.43$\times$ slower} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-No timeouts were flagged on any arm, in any seed, in either split
-(\texttt{timed\_out} is \texttt{false} throughout all $740$ audited
-tasks), so the discrepancy between these regenerated figures and the
-previously reported tables is not an artifact of excluded failed runs,
-nor of pooling a partial data set.
-
-\paragraph{Data-completeness verification (defect retracted).}
+\paragraph{Data provenance and completeness.}
 \label{sec:timing_data_defect}
 An earlier audit draft reported that every seed-suffixed result file for
-seeds other than 42, for both benchmark variants, contained only 5 of the
-74 tasks. That finding does not hold against the files currently
-available: each of the ten raw result files (v3c seeds 42/99/123/777/2024
-and PCA seeds 42/99/123/777/2024) was independently re-checked outside
-\texttt{generate\_table1.py} -- confirming all 74 tasks per file, every
-record's internal \texttt{seed} field matching its filename, no
-cross-file overlap, and Pure LLM per-task timings in a consistent
-4--29\,second range on every file, with no sign of truncation or
-corruption. The complete $5\times74$ sweep genuinely exists for both
-benchmark variants. What was not true, until this pass, is that
-Table~\ref{tab:timing_full} actually reflected that verified data: a
-previously published version of this table still showed the collapsed,
-truncation-like pattern (near-zero LLM-routing and near-zero Pure LLM
-times on three PCA seeds) despite the underlying files being fine. That
-version is superseded by the table above, which was checked seed-by-seed
-against the raw files as part of this correction.
+seeds other than 42 contained only 5 of the 74 tasks. For the files in
+Table~\ref{tab:timing_full} that is not the case: each of the five holds
+74 tasks, and every record's internal \texttt{seed} field matches its filename. No timeout is flagged on the
+Neural MLP arm in any file (the only arm that records a \texttt{timed\_out} field), and Pure LLM per-task
+times lie between $4.7$ and $29.0$\,s across the five files, with no sign of truncation. The 5-record seed files that
+do exist in \texttt{15/} and \texttt{15\_pca/} are not used here; those in
+\texttt{15\_pca/} are recorded as a portfolio-task subset. The five 74-task files were not
+produced in one batch: seed~42 sits in \texttt{noiseless/defi/} and the other
+four in \texttt{noiseless/defi/multi-seeds/}, and the seed-42 Pure LLM records
+carry an additional \texttt{executed} field that the seed-99 and seed-123 records lack
+(seeds 777 and 2024 were not compared), which suggests the
+pooled row combines two versions of the benchmark script. The seed-42 timings are in
+line with the other seeds (hybrid mean $1.70$\,s against $2.03$--$2.18$\,s),
+but the pooled row should not be read as a single homogeneous run.
 
 \paragraph{Interpretation.}
-Every seed, in both splits, agrees on direction: the hybrid system is
-slower than the pure neural baseline, by $4.1\times$ to $7.7\times$ on
-mean time (across both the ``all tasks'' and ``LLM-routed-only''
-framings, Table~\ref{tab:timing_llm_routed_full} below). The absolute
-Neural MLP timings previously reported (3.0\,s mean / 2.7\,s median) do
-not match any raw result file audited, which instead show NN times of
-0.25--0.36\,s per task, roughly an order of magnitude faster; this is
-consistent with the previously reported figures having come from a
-heavier, superseded NN implementation rather than the training code
-currently shipped with the benchmark. No defect was found in the current
-NN training code itself that would explain that residual gap.
+Every seed agrees on direction: the hybrid system is
+slower than the pure neural baseline, by $3.8\times$ to $11.2\times$ on
+mean time (across both the ``all tasks'' framing, $4.77\times$--$11.23\times$,
+and the ``LLM-routed-only'' framing, $3.84\times$--$9.39\times$,
+Table~\ref{tab:timing_llm_routed_full} below); pooled, the slowdown is
+$7.35\times$ over all tasks and $6.18\times$ over LLM-routed tasks. The seed-to-seed spread is driven
+largely by the Neural MLP time, which ranges from $0.18$ to $0.36$\,s per task
+across seeds. The absolute Neural MLP timings previously reported
+(3.0\,s mean / 2.7\,s median) do not match any raw result file audited;
+the source of the earlier figures is not identified.
 
-Unlike a previous draft's by-seed reading, there is no seed on either
-split that routes zero tasks to the LLM: every PCA seed routes 68--69 of
-74 tasks, essentially identical to every v3c seed's 54--55 of 74. The
-two splits' pooled slowdowns are correspondingly close ($5.03\times$ mean
-for PCA vs.\ $6.43\times$ for v3c) rather than showing the sharp
-divide implied by the earlier, incorrect table.
+No seed routes zero tasks to the LLM: every seed routes 68--69 of 74 tasks.
+The five PCA rows show the same direction: the hybrid system is slower than the neural
+baseline on every PCA seed, by $4.51\times$--$6.85\times$ on mean time over all tasks
+($5.43\times$ pooled; $4.49\times$ pooled over LLM-routed tasks), and routes 68--69 of 74
+tasks per seed (341/370 pooled, against 343/370 for the v3 files). The hybrid arm's mean
+per-task time is lower on every PCA seed than on the same-numbered v3 seed ($1.27$--$1.46$\,s
+against $1.70$--$2.18$\,s; $1.37$\,s against $2.02$\,s pooled), while the Neural MLP and
+Pure LLM means are close across the two sets ($0.25$ against $0.27$\,s and $10.81$ against
+$10.94$\,s pooled). This is a descriptive comparison of two sets of five runs with no
+significance test, and the runs were not produced in one batch, so it does not establish
+that the split variant causes the difference.
 
 \begin{table}[htbp]
 \centering
 \small
 \caption{As Table~\ref{tab:timing_full}, restricted to tasks where the
-hybrid system's own \texttt{decision} field routed to the LLM rather than
-the NN --- the framing used for the previously reported $1.73\times$
+hybrid system's own \texttt{decision} field was \texttt{llm}, rather than
+the NN or \texttt{nn\_fallback} --- the framing used for the previously reported $1.73\times$
 claim. No row supports that claim; the LLM-routed subset is slower than
 the neural baseline in every case.}
 \label{tab:timing_llm_routed_full}
@@ -2066,20 +2065,20 @@ the neural baseline in every case.}
 \toprule
 Run ($n$ LLM-routed / total) & Neural MLP (s) & Hybrid, LLM-routed (s) & Speedup (mean / median) \\
 \midrule
-v3c seed42 (55/74)  & 0.33 / 0.33 & 1.49 / 1.43 & 4.51$\times$ / 4.32$\times$ slower \\
-v3c seed99 (54/74)  & 0.36 / 0.36 & 1.48 / 1.40 & 4.14$\times$ / 3.94$\times$ slower \\
-v3c seed123 (55/74) & 0.36 / 0.36 & 1.46 / 1.35 & 4.07$\times$ / 3.77$\times$ slower \\
-v3c seed777 (54/74) & 0.25 / 0.25 & 1.45 / 1.35 & 5.76$\times$ / 5.39$\times$ slower \\
-v3c seed2024 (55/74) & 0.25 / 0.25 & 1.42 / 1.36 & 5.70$\times$ / 5.46$\times$ slower \\
+v3 seed42 (68/74) & 0.36 / 0.35 & 1.37 / 1.30 & 3.84$\times$ / 3.67$\times$ slower \\
+v3 seed99 (69/74) & 0.31 / 0.35 & 1.80 / 1.38 & 5.77$\times$ / 3.89$\times$ slower \\
+v3 seed123 (68/74) & 0.21 / 0.24 & 1.78 / 1.34 & 8.34$\times$ / 5.58$\times$ slower \\
+v3 seed777 (69/74) & 0.18 / 0.20 & 1.72 / 1.37 & 9.39$\times$ / 6.76$\times$ slower \\
+v3 seed2024 (69/74) & 0.31 / 0.35 & 1.82 / 1.35 & 5.89$\times$ / 3.86$\times$ slower \\
 \rowcolor{black!8}
-\textbf{v3c ALL SEEDS (273/370)} & \textbf{0.31 / 0.33} & \textbf{1.46 / 1.37} & \textbf{4.72$\times$ / 4.13$\times$ slower} \\
-PCA seed42 (68/74) & 0.33 / 0.33 & 1.40 / 1.31 & 4.18$\times$ / 3.92$\times$ slower \\
-PCA seed99 (69/74) & 0.33 / 0.33 & 1.51 / 1.36 & 4.55$\times$ / 4.11$\times$ slower \\
-PCA seed123 (69/74) & 0.33 / 0.33 & 1.51 / 1.34 & 4.54$\times$ / 4.04$\times$ slower \\
-PCA seed777 (68/74) & 0.33 / 0.33 & 1.44 / 1.35 & 4.33$\times$ / 4.07$\times$ slower \\
-PCA seed2024 (68/74) & 0.34 / 0.33 & 1.38 / 1.34 & 4.13$\times$ / 4.01$\times$ slower \\
+\textbf{v3 ALL SEEDS (343/370)} & \textbf{0.27 / 0.35} & \textbf{1.70 / 1.34} & \textbf{6.18$\times$ / 3.86$\times$ slower} \\
+PCA seed42 (68/74) & 0.24 / 0.28 & 1.11 / 1.02 & 4.53$\times$ / 3.68$\times$ slower \\
+PCA seed99 (68/74) & 0.21 / 0.24 & 1.18 / 1.12 & 5.52$\times$ / 4.64$\times$ slower \\
+PCA seed123 (69/74) & 0.28 / 0.32 & 1.09 / 1.05 & 3.91$\times$ / 3.31$\times$ slower \\
+PCA seed777 (68/74) & 0.21 / 0.24 & 1.14 / 1.11 & 5.34$\times$ / 4.60$\times$ slower \\
+PCA seed2024 (68/74) & 0.31 / 0.35 & 1.14 / 1.05 & 3.70$\times$ / 3.00$\times$ slower \\
 \rowcolor{black!8}
-\textbf{PCA ALL SEEDS (342/370)} & \textbf{0.33 / 0.33} & \textbf{1.45 / 1.34} & \textbf{4.35$\times$ / 4.03$\times$ slower} \\
+\textbf{PCA ALL SEEDS (341/370)} & \textbf{0.25 / 0.27} & \textbf{1.13 / 1.08} & \textbf{4.49$\times$ / 4.00$\times$ slower} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2093,31 +2092,27 @@ $1.73\times$ speedup on LLM-routed cases and a $1.64\times$ median speedup
 overall; a still later draft reported the hybrid system as $2.5\times$ to
 $9.3\times$ slower, including three PCA seeds with zero LLM-routed tasks.
 \textbf{None of these three claims is supported by the raw benchmark
-data.} The independently-verified regeneration in Table~\ref{tab:timing_full}
-shows the hybrid system is $3.8\times$ to $7.7\times$ \emph{slower} than
-the pure neural baseline on every seed and every split, never faster,
+data.} The regeneration in Table~\ref{tab:timing_full}
+shows the hybrid system is $3.7\times$ to $11.2\times$ \emph{slower} than
+the pure neural baseline on every seed, never faster,
 whether measured by mean or median, and whether restricted to LLM-routed
-cases or not.
+cases or not (the lowest value, $3.67\times$, is the seed-42 LLM-routed median).
 
 The correct claim for this paper is therefore: \textbf{the hybrid system
-is slower than the pure neural baseline, by $4.1\times$ to $7.7\times$
-depending on seed, split, and framing, across the complete
-$5$-seed$\times$74-task sweep for both the v3c and PCA-directed
-variants.} This is not a provisional figure pending a re-run: the sweep
-is complete, every seed agrees on direction, and the per-seed figures
-have been independently re-derived from the raw files as part of this
-correction rather than taken on trust from a prior table.
+is slower than the pure neural baseline, by $3.8\times$ to $11.2\times$ on mean
+time depending on seed and framing, across the five 74-task seed files
+held in the repository.} The direction is the same in every seed and every
+framing; the magnitude varies by about a factor of three between seeds, and
+the files do not identify which split variant produced them.
 
 \paragraph{Interpretation for deployment.}
 The practical implication is the reverse of what was previously claimed:
 routing to the LLM does not reduce wall-clock cost relative to the neural
-baseline, on any seed, in either split. The two routers show similar
-overall overhead once measured correctly (PCA $5.03\times$ vs.\ v3c
-$6.43\times$ mean slowdown, pooled), rather than the sharp PCA-vs-v3c
-divide an earlier, incorrect table implied. Any deployment decision that
-assumed a $1.73\times$ runtime advantage for LLM-routed cases, or a
-sharply cheaper PCA-directed path, should be revisited against the
-figures in Table~\ref{tab:timing_full}.
+baseline, on any seed. Any deployment decision that
+assumed a $1.73\times$ runtime advantage for LLM-routed cases should be
+revisited against the figures in Table~\ref{tab:timing_full}. Whether the
+PCA-directed router differs in overhead from the single-axis router cannot be
+answered from the available data.
 
 
 \subsection{Portfolio Variance: Seed-Sweep Robustness Analysis}\label{subsec:portfolio-variance-seedsweep-robustness-}
@@ -2132,7 +2127,12 @@ $\{42, 99, 123, 777, 2024\}$.
 \centering
 \caption{Portfolio Variance seed-sweep results.
   \textbf{H recovers?}: exact closed-form formula recovered.
-  \textbf{H wins?}: HypatiaX far-$\Rsq$ strictly greater than PySR-only.}
+  \textbf{H wins?}: HypatiaX far-$\Rsq$ strictly greater than PySR-only.
+  \textbf{[Unverified: the five seed result files for this task are not at the
+  location the table generator reads, so these figures were not regenerated or
+  compared against source data (see the Post-Submission Report). Only the
+  internal arithmetic (means, win count) was checked. Do not treat as
+  reproduced.]}}
 \label{tab:portfolio_seed_sweep}
 \small
 \begin{tabular}{lccccl}
@@ -2261,513 +2261,211 @@ cells.
 }
 \end{table*}
 
-\subsection{Feynman Extrapolation Benchmark ($n=30$)}\label{subsec:feynman-extrapolation-benchmark-n30}
+\subsection{Protocol-30 Extrapolation Benchmark ($n=30$)}\label{subsec:feynman-extrapolation-benchmark-n30}
 \label{sec:feynman30}
 
 To assess generalisation beyond DeFi, we evaluate \textsc{HypatiaX}
-(\texttt{HybridDiscoverySystem\_v50\_2}) on 30 Feynman equations spanning
-mechanics, thermodynamics, optics, electromagnetism, electrostatics,
-magnetism, quantum mechanics, biology, chemistry, electrochemistry, and
-probability.
+(\texttt{HybridDiscoverySystem\_v50\_2}) and five other methods on a custom set of 30 closed-form
+equations (``Protocol-30'') spanning mechanics, thermodynamics, optics, electromagnetism,
+electrostatics, magnetism, quantum mechanics, biology, chemistry,
+electrochemistry, and probability. The set is not a subset of the AI Feynman
+benchmark (several of its domains lie outside that benchmark's scope); earlier drafts labelled it ``Feynman-30''. All figures in this subsection come from
+the 2026-08-12 noiseless runs (\texttt{run\_protocol\_benchmark\_core.py}
+v2.2) and replace every earlier pass count for this suite in this paper; the
+earlier 9/30, 12/30 and 13/30 figures are withdrawn and are not used anywhere.
 
-\textbf{Split-protocol disclosure (FIX-C3).}\quad
-Prior runs of the Feynman benchmark used a random 80/20 train/test split
-(\texttt{sklearn.model\_selection.train\_test\_split}, \texttt{test\_size=0.2}),
-whereas the DeFi benchmark uses a PCA-directed 40\,\%/60\,\% aggressive
-extrapolation split throughout (Section~\ref{sec:split}).
-The previously reported primary result (9/30 successes, Kaggle 4-vCPU run,
-attributed to \texttt{fixc3\_baseline.json}) does not reproduce and is
-withdrawn: that file contains no computed values
-($\mathtt{n\_pass}{=}0$, $\mathtt{n\_total}{=}0$, $\mathtt{solve\_rate}{=}\mathtt{null}$)
-and is an unmodified setup-script template stub, found byte-identical across
-more than a dozen unrelated experiment directories rather than a value
-computed for this experiment.
+\paragraph{Threshold policy.} Every pass/fail figure in this subsection uses
+one criterion, $\Rsq \geq 0.999999$ on the method-reported $\Rsq$ (\texttt{r2} field) or, where stated, the
+held-out far-region $\Rsq$ (\texttt{extrap\_r2\_far}).
+Results with $\Rsq \in [0.999, 0.999999)$ are counted as near-misses, never as
+passes.
 
-\textbf{Run provenance.}\quad
-At least four distinct PCA-split run dates exist in this project's history;
-Table~\ref{tab:provenance} discloses all four so that a reader encountering
-any of the other three elsewhere cannot mistake them for the figures reported
-in this section. Only the \textbf{July~22 / July~23, 2026} run pair is
-canonical for Section~\ref{sec:feynman30}: July~22 is the random 80/20 split
-source and July~23 is the PCA-directed 40/60 split source.
+\paragraph{Split protocols.} The random protocol is a random 80/20
+train/test split. In the PCA protocol, the benchmark runner applies
+\texttt{pca\_directed\_split} (test fraction 0.6, seed 42) once in its outer loop:
+every method receives only the 40\,\% training portion, and the 60\,\% held-out portion is used
+only to score formulas afterwards (\texttt{extrap\_r2\_far}). The \texttt{r2} field in the PCA result file
+is the score each method reports on the data it was given and is therefore not a held-out score; it is
+shown for comparison, and the held-out score is \texttt{extrap\_r2\_far}.
 
 \begin{table}[h]
 \centering
-\caption{Every PCA-split run date identified in this project's history, and
-  its status with respect to Section~\ref{sec:feynman30}. Only the
-  July~22/23 pair is the source of the figures reported below.}
-\label{tab:provenance}
+\caption{Equations passing $\Rsq \geq 0.999999$, out of 30. Random split and PCA ``reported'' use the
+  method-reported $\Rsq$; PCA ``held-out'' uses the far-region $\Rsq$ on the 60\,\% held-out portion.
+  Sources: \texttt{benchmark\_results.json} and \texttt{benchmark\_results\_pca\_4060.json}, 2026-08-12.}
+\label{tab:feynman30-methods}
 \small
-\begin{tabular}{lp{9.3cm}}
+\begin{tabular}{lccc}
 \toprule
-Run date & Status \\
+Method & Random 80/20 & PCA reported & PCA held-out \\
 \midrule
-June~4, 2026 & \textbf{Discarded, pre-fix.} \texttt{HybridDiscoverySystem}
-scores 0/30, with all 30 equations flagged as environment/import failures
---- the method did not execute at all. Not used in this section. \\
-June~29, 2026 & \textbf{Not located.} Named elsewhere as a canonical batch
-but not recovered from any file set examined; its absence does not affect
-the figures below, which are independently sourced from July~22/23. \\
-June~30, 2026 & \textbf{Unverified, not used.} Source of a pooled
-$n_{\text{pass}}{=}142$, $n_{\text{total}}{=}180$ figure that is, by its own
-metadata, paired with the already-withdrawn ``9/30'' claim above and shares
-that claim's known failure mode (arithmetic pooling of one run's records as
-if two). Treated as unconfirmed pending a direct recount; not used in this
-section. \\
-\textbf{July~22 / July~23, 2026} & \textbf{Canonical.} Source of every
-figure reported in this section. \\
+PureLLM Baseline & 29/30$^\ast$ & 29/30$^\ast$ & n/a$^\dagger$ \\
+ImprovedNN & 0/30 & 3/30 & n/a$^\ddagger$ \\
+EnhancedHybridSystemDeFi & 23/30 & 23/30 & n/a$^\dagger$ \\
+HybridSystemLLMNN all-domains & 30/30 & 30/30 & n/a$^\ddagger$ \\
+SymbolicEngineWithLLM$^\parallel$ & 27/30 & 23/30 & 17/30 \\
+\textbf{HybridDiscoverySystem v50\_2 (\textsc{HypatiaX})} & \textbf{21/30} & \textbf{18/30} & \textbf{13/30}$^\S$ \\
 \bottomrule
 \end{tabular}
+
+{\footnotesize $^\dagger$ Their formulas are Python \texttt{def} functions; the runner's evaluator
+mis-evaluates these (returns $e^{x}$ for one-variable formulas and fails for multi-variable ones), so the
+stored far-region values are invalid and are not used. $^\ddagger$ These methods return no formula string, so the held-out score cannot be recomputed.
+$^\S$ 2 of 30 equations (Photon energy, Bose--Einstein) have no valid far-region score and count as not passed.
+$^\ast$ 11 of the 30 PureLLM rows bypass the language model (hardcoded or least-squares-fitted formulas, see below); on the 19 \emph{live} rows, where the model was called, PureLLM passes 18/19 on both splits.
+$^\parallel$ The counts in this table are recomputed from the per-equation rows of Tables~\ref{tab:randomsplit} and~\ref{tab:pcasplit}. The noiseless table of Supplementary~B reads from a different result file (\texttt{protocol\_core\_noiseless\_20260812\_170344.json}) and shows 28/30 for SymbolicEngineWithLLM and 30/30 for PureLLM. For EnhancedHybridSystemDeFi, HybridSystemLLMNN and HybridDiscoverySystem the mean $\Rsq$ in the two sources agrees to six decimals; for SymbolicEngineWithLLM (0.999868 here, 0.999711 there) and ImprovedNN (0.999323 and 0.999222) it does not. The two files differ in exactly two pass/fail outcomes: PureLLM's Curie's law row returned no formula here ($\Rsq=0$) and passes there, and SymbolicEngineWithLLM's Arrhenius row is $0.999921$ here and $0.9999999987$ there (threshold $0.999999$; its search is not deterministic). Mean $\Rsq$ for PureLLM here includes the Curie zero. The choice of primary file is open, and neither figure supersedes the other.}
 \end{table}
 
-\paragraph{Threshold policy (stated once, applied everywhere).} Every
-headline pass/fail figure in this paper --- abstract, main text, tables,
-and conclusion alike --- uses one criterion: $\Rsq \geq 0.999999$
-(``strict''), applied identically to both the random-split and PCA-split
-runs. A result with $\Rsq \in [0.999, 0.999999)$ is disclosed separately
-as a \emph{near-miss} and is never counted toward a headline pass figure
-anywhere in this paper. Where a near-miss-inclusive (``loose'') tally is
-reported below for transparency, it is always labeled explicitly by split
-and convention (e.g.\ ``random-split, loose: 13/30'') and is never written
-as a bare, unqualified fraction --- because, as it happens, the number 13
-recurs in this section with three unrelated meanings (PCA-split strict
-passes, random-split loose-convention passes, and random-split's genuine-fail
-count) that must not be conflated. Any bare ``12/30'' or ``13/30'' elsewhere
-in this paper refers to the strict headline figures defined here: random-split
-strict $=12/30$, PCA-split strict $=13/30$.
+\textsc{HypatiaX} passes 21/30 (70.0\,\%) under the random split. On the PCA split its method-reported
+count is 18/30, but only 13/30 equations (43.3\,\%) pass on the held-out 60\,\%: four equations that pass in
+the reported column fail on the held-out data (Lorentz force, Coulomb force (1D), Newton's gravitational force and
+Rabi frequency), and 2 equations have no valid held-out score. SymbolicEngineWithLLM reaches 17/30 held-out. The
+held-out count is the extrapolation result; the reported count is closer to an in-sample fit. The neural baseline
+passes 0/30 on the random split and 3/30 by the PCA reported score. Per-equation values are in
+Tables~\ref{tab:randomsplit} and~\ref{tab:pcasplit}; the PCA table shows the reported column only.
 
-Recomputed directly from raw per-test JSON records for the canonical
-July~22/23 pair (not from a pre-merged summary file), and gated behind a
-self-verification step --- exact reproduction of every already-scored
-equation from the regenerated data, before any corrected null score is
-trusted --- \textsc{HypatiaX} achieves \textbf{12/30 (40.0\,\%)} successes
-($\Rsq \geq 0.999999$) under the random 80/20 split (run dated 2026-07-22),
-verified via a 14/14 exact match on already-scored equations before
-rescoring the originally-null ones (Table~\ref{tab:randomsplit}). This
-breaks down as 10 equations passing in the original run, 2 further
-equations recovered after patching evaluator defects, 1 near-miss (Planck
-blackbody, $\Rsq = 0.999994$, short by $6\times10^{-6}$), 13 genuine
-finite/catastrophic extrapolation failures (a separate count from either
-headline pass figure --- see the policy note above), and 4 equations left
-\textbf{unmeasured} by an architecturally distinct, evaluator-unfixable defect
-(Section~\ref{sec:feynman30-defects}, item~4); these 4 are not counted among
-the 13 genuine failures above and must not be read as failures.
+\textbf{The PureLLM baseline is partly hardcoded.} In the baseline's source
+(\texttt{baseline\_pure\_llm\_defi\_discovery.py}) a bypass returns a stored formula without calling the LLM
+for 11 of the 30 equations: eight use the exact ground-truth form taken from the benchmark protocol
+(Gaussian, Planck, Bose--Einstein, Nernst, Clausius--Mossotti, Lorentz force, Fourier's law, Zeeman energy), and three
+(Michaelis--Menten, logistic growth, allometric scaling) use a fixed functional form with parameters fitted to the
+test data by least squares. A twelfth branch (Arrhenius) did not fire in any run. On the random split these 11 rows
+are flagged \texttt{is\_hardcoded} in the per-domain run files and take 0.5--1.6\,ms each. The PCA-split file carries
+no flag; the same 11 equations are identified there by the same timing signature (0.5--1.4\,ms). We call the other
+19 rows \emph{live}: the language model was actually called for them. PureLLM passes 29/30 over all rows, 11/11 of the
+bypassed rows and 18/19 of the live rows, on both splits. Excluding the bypassed equations changes the per-equation
+comparison with the other methods (strict pass/fail, wins/losses of PureLLM over all rows $\rightarrow$ live rows only):
+against \textsc{HypatiaX}, 9/1 $\rightarrow$ 6/1 on the random split and 12/1 $\rightarrow$ 7/1 on the PCA split (the removed
+wins are Nernst, Gaussian and Bose--Einstein on the random split, plus Planck and Fourier on the PCA split); against
+EnhancedHybridSystemDeFi, 7/1 $\rightarrow$ 2/1 on both splits, since five of its seven losses are on bypassed equations;
+against SymbolicEngineWithLLM, 3/1 $\rightarrow$ 2/1 (random) and 7/1 $\rightarrow$ 3/1 (PCA). The live figure is not an
+unbiased estimate of unaided-LLM performance: according to comments in the baseline source, the bypass branches were
+added for equations on which the model had repeatedly failed, so excluding them favours PureLLM. Counting every bypassed
+equation as a failure would give 18/30, so the unaided pass count lies between 18/30 and 29/30; we have not rerun the
+baseline with the bypass disabled. The 29/30 figure should therefore not be read as the performance of an unaided LLM.
 
-Under the PCA-directed split (run dated 2026-07-23), \textsc{HypatiaX}
-achieves \textbf{13/30 (43.3\,\%)}, verified via a 13/13 exact match on
-already-scored equations before rescoring the 17 originally-null ones
-(Table~\ref{tab:pcasplit}). This supersedes an 18/30 figure carried in
-every prior draft without having been checked against any evaluator
-defect. The corrected breakdown is 10 equations already passing plus 3
-recovered from the null set (allometric scaling law, Snell's law, ideal
-gas law), 2 near-misses (Henderson--Hasselbalch, $\Rsq = 0.9998196$; Nernst
-equation, $\Rsq = 0.9999372$), 15 genuine finite/catastrophic failures, and
-0 unresolved cases --- the placeholder-token defect that blocks 4
-random-split equations was checked directly against every PCA-split
-formula string and confirmed absent. The previously reported 142/180
-figure is likewise withdrawn: it is the exact arithmetic doubling of a
-single 90-record run, produced by pooling two same-shaped flat export
-files that describe one underlying run, not two distinct 90-instance
-pools.
+\textbf{The hybrid methods inherit the bypass.} Both LLM-based hybrids obtain their formulas by calling the
+PureLLM baseline's generator (\texttt{EnhancedHybridSystemDeFi.generate\_llm\_formula} in
+\texttt{hybrid\_system\_nn\_defi\_domain.py}; the corresponding method of the all-domains hybrid in
+\texttt{hybrid\_system\_llm\_nn\_all\_domains.py}), which applies the hardcoded bypass before any language-model request.
+In the random-split run (\texttt{benchmark\_results.json}) the formula returned by
+EnhancedHybridSystemDeFi is character-for-character identical to PureLLM's on all 11 bypassed equations, and on only 3 of the
+19 live equations (reduced mass, Stefan--Boltzmann, ideal gas law); the noiseless run
+(\texttt{protocol\_core\_noiseless\_20260812\_170344.json}) gives the same 11 of 11 and 2 of 19 (reduced mass differs there).
+This does not mean its pass count reflects those formulas alone: its final $\Rsq$ also depends on its
+neural-network and ensemble decision logic, and in the random-split run it passes 6 of the 11 bypassed equations and 17 of the 19 live
+equations at $\Rsq \geq 0.999999$, against 11/11 and 18/19 for PureLLM (19/19 in the noiseless run, where it also passes 6/11 and 17/19).
+We did not run this comparison on the PCA-split file. The all-domains hybrid records no formula string, so
+whether the bypass fired for it cannot be checked from the stored output; we have not rerun either hybrid with the bypass disabled.
 
-We do not assert a difficulty ranking between the two protocols. The
-corrected PCA-split rate (43.3\,\%) exceeds the corrected random-split rate
-(40.0\,\%), the opposite of what a ``PCA extrapolation is strictly harder''
-narrative would predict. Both figures use the strict $\Rsq \geq 0.999999$
-threshold defined in the policy note above and report near-misses
-separately; under the near-miss-inclusive convention instead, the
-random-split loose tally is $12+1=13/30$ (43.3\,\%) and the PCA-split loose
-tally is $13+2=15/30$ (50.0\,\%) --- neither of which should be confused
-with the PCA-split \emph{strict} figure of $13/30$ stated above, despite
-sharing the same numerator by coincidence. The 4 random-split equations
-affected by the placeholder-token defect (Section~\ref{sec:feynman30-defects},
-item~4) have no valid $\Rsq$ and are reported as \textbf{unmeasured}, not as
-failures. The underlying defect is confirmed architecturally unfixable by
-evaluator patching, so unlike the earlier withdrawn figures this is not
-treated as a pending correction; the unmeasured status is disclosed as a
-permanent limitation of this run, not deferred or silently dropped from the
-per-equation table. Table~\ref{tab:feynman30-legacy} is \emph{not} a per-equation
-breakdown of the 12/30 or 13/30 headline figures above. It reports a
-different, withdrawn 9/30 run (a distinct equation set, hardware
-configuration, and scoring pass) and is retained only as a historical
-record of that earlier, superseded run.
+\textbf{These results do not show a gain over the pure-LLM baseline.}
+PureLLM passes 29/30 by the method-reported $\Rsq$ under both splits (18/19 on live rows), more than \textsc{HypatiaX},
+but a held-out PCA score for PureLLM cannot be computed from the stored output (footnote $\dagger$ of
+Table~\ref{tab:feynman30-methods}), so the pure-LLM comparison is only available on the random split
+and on the PCA reported score. The all-domains LLM+NN hybrid's 30/30 is a routing outcome, not independent
+evidence: every one of its 30 equations was routed to the LLM, 20 of them through an explicit
+\texttt{force\_llm} guard and 10 by the natural decision rule, and it records no formula string, so its
+result cannot be audited. These are mostly textbook formulas, so a high pass rate for methods that can recall the
+closed form is expected. What this suite supports is that the symbolic and hybrid methods clearly outperform
+the neural baseline; it does not support a claim that they outperform the pure LLM. Pairwise Wilcoxon signed-rank tests on the noiseless
+$\Rsq$ are given in the benchmark supplement (\S~``Wilcoxon Significance Tests''); comparisons involving PureLLM include
+the 11 bypassed equations, the effective sample size is below 30 for pairs with zero differences, and invalid $\Rsq$ values
+are treated as 0, so these tests should not be used to rank PureLLM against the other methods.
 
-\begin{longtable}{p{2.3cm}p{6.3cm}p{1.4cm}p{2.5cm}}
-\caption{Random 80/20 split, run dated 2026-07-22, all 30 equations, after
-  patching evaluator defects and gating on a 14/14 exact-reproduction
-  self-check. \textbf{Bold}: pass ($\Rsq \geq 0.999999$).}
+\textbf{Extrapolation limits.} Even for the two methods with valid held-out scores, only 17/30 and 13/30
+equations reach $\Rsq_{\text{far}} \geq 0.999999$, and several equations that look perfect in the reported
+column have strongly negative held-out $\Rsq$ (for example Rabi frequency).
+
+{\scriptsize\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{p{1.9cm}p{4.3cm}cccccc}
+\caption{Random 80/20 split, run dated 2026-08-12, all 30 equations $\times$ six methods (method-reported $\Rsq$, \texttt{benchmark\_results.json}). \textbf{Bold}: pass ($\Rsq \geq 0.999999$). PL = PureLLM Baseline, NN = ImprovedNN, EH = EnhancedHybridSystemDeFi, LN = HybridSystemLLMNN all-domains, SE = SymbolicEngineWithLLM, HD = HybridDiscoverySystem v50\_2 (\textsc{HypatiaX}). The PureLLM entry for Curie's law is a recorded evaluation failure (no valid formula), shown as $0.000000$.}
 \label{tab:randomsplit}\\
 \toprule
-Domain & Equation & $\Rsq$ & Status \\
+Domain & Equation & PL & NN & EH & LN & SE & HD \\
 \midrule
 \endfirsthead
 \toprule
-Domain & Equation & $\Rsq$ & Status \\
+Domain & Equation & PL & NN & EH & LN & SE & HD \\
 \midrule
 \endhead
-Biology & Allometric scaling law & \textbf{1.0000} & pass \\
-Biology & Logistic growth rate & \textbf{1.0000} & pass \\
-Biology & Michaelis--Menten enzyme kinetics & \textbf{1.0000} & pass \\
-Chemistry & Arrhenius rate constant & $-2.368$ & fail (finite) \\
-Chemistry & Henderson--Hasselbalch buffer pH & \textbf{1.0000} & pass \\
-Electrochemistry & Nernst equation & --- & unmeasured$^\dagger$ \\
-Electromagnetism & Clausius--Mossotti dielectric field & \textbf{1.0000} & pass \\
-Electromagnetism & Dielectric polarisation & $-2.2\times10^{45}$ & catastrophic \\
-Electromagnetism & Energy in a capacitor & $-1.240$ & fail (finite) \\
-Electromagnetism & Lorentz force & $-\infty$ & catastrophic \\
-Electromagnetism & Ohm's law & \textbf{1.0000} & pass \\
-Electrostatics & Coulomb force, 1D simplified & $-0.066$ & fail (finite) \\
-Electrostatics & Coulomb's law & $-0.253$ & fail (finite) \\
-Magnetism & Curie's law & --- & unmeasured$^\dagger$ \\
-Mechanics & Kinetic energy (classical) & $-1.590$ & fail (finite) \\
-Mechanics & Newton's gravitational force & 0.6634 & fail (finite) \\
-Mechanics & Reduced mass, two-body system & \textbf{1.0000} & pass \\
-Mechanics & Total mechanical energy & \textbf{0.9999998} & pass (recovered) \\
-Optics & Double-slit interference intensity & \textbf{1.0000} & pass \\
-Optics & Snell's law & \textbf{1.0000} & pass (recovered) \\
-Probability & Gaussian probability density & 0.1340 & fail (finite) \\
-Quantum & Bose--Einstein occupation number & --- & unmeasured$^\dagger$ \\
-Quantum & Fermi--Dirac occupation number & $-\infty$ & catastrophic \\
-Quantum & Photon energy & $-\infty$ & catastrophic \\
-Quantum & Rabi frequency & $-3.058$ & fail (finite) \\
-Quantum & Zeeman energy & \textbf{1.0000} & pass \\
-Thermodynamics & Fourier's law of heat conduction & $-0.2803$ & fail (finite) \\
-Thermodynamics & Ideal gas law & \textbf{1.0000} & pass \\
-Thermodynamics & Planck blackbody spectral radiance & 0.999994 & near-miss \\
-Thermodynamics & Stefan--Boltzmann law & --- & unmeasured$^\dagger$ \\
-\midrule
-\multicolumn{4}{l}{Pass: 12/30 (40.0\%). Near-miss: 1/30. Genuine fail: 13/30. Unmeasured: 4/30.} \\
+Biology & Michaelis--Menten kinetics & \textbf{1.000000} & 0.999997 & 0.999988 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Biology & Logistic growth rate & \textbf{1.000000} & 0.999859 & 0.999997 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Biology & Allometric scaling law & \textbf{1.000000} & 0.999995 & 0.999993 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Chemistry & Arrhenius rate constant & \textbf{1.000000} & 0.999930 & 0.999994 & \textbf{1.000000} & 0.999921 & 0.999594 \\
+Chemistry & Henderson--Hasselbalch buffer pH & \textbf{1.000000} & 0.999985 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electrochem. & Nernst equation & \textbf{1.000000} & 0.999979 & \textbf{1.000000} & \textbf{1.000000} & 0.997725 & 0.999205 \\
+Electromagn. & Clausius--Mossotti & \textbf{1.000000} & 0.999973 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electromagn. & Dielectric polarisation & \textbf{1.000000} & 0.999242 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.995528 \\
+Electromagn. & Lorentz force & \textbf{1.000000} & 0.999975 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electromagn. & Ohm's law & \textbf{1.000000} & 0.999587 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electromagn. & Energy in a capacitor & \textbf{1.000000} & 0.999806 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.999964 \\
+Electrostat. & Coulomb force (1D, simplified) & \textbf{1.000000} & 0.996355 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electrostat. & Coulomb's law & \textbf{1.000000} & 0.999939 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.996597 \\
+Magnetism & Curie's law & 0.000000 & 0.999953 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Mechanics & Newton's gravitational force & \textbf{1.000000} & 0.993960 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Mechanics & Kinetic energy & \textbf{1.000000} & 0.999855 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.999878 \\
+Mechanics & Reduced mass & \textbf{1.000000} & 0.999995 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Mechanics & Total mechanical energy & \textbf{1.000000} & 0.999937 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Optics & Snell's law & \textbf{1.000000} & 0.999987 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Optics & Double-slit interference intensity & \textbf{1.000000} & 0.999902 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Probability & Gaussian probability density & \textbf{1.000000} & 0.999770 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.999765 \\
+Quantum & Photon energy & \textbf{1.000000} & 0.999998 & 0.999990 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Quantum & Zeeman energy & \textbf{1.000000} & 0.999910 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Quantum & Bose--Einstein occupation number & \textbf{1.000000} & 0.999960 & 0.999979 & \textbf{1.000000} & \textbf{1.000000} & 0.994634 \\
+Quantum & Fermi--Dirac occupation number & \textbf{1.000000} & 0.998318 & \textbf{1.000000} & \textbf{1.000000} & 0.998390 & 0.999037 \\
+Quantum & Rabi frequency & \textbf{1.000000} & 0.999946 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Thermodyn. & Planck blackbody radiance & \textbf{1.000000} & 0.999932 & 0.999996 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Thermodyn. & Fourier's law & \textbf{1.000000} & 0.993764 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Thermodyn. & Stefan--Boltzmann law & \textbf{1.000000} & 0.999975 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Thermodyn. & Ideal gas law & \textbf{1.000000} & 0.999911 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
 \bottomrule
-\end{longtable}
+\end{longtable}}
 
-{\small $^\dagger$ Placeholder-token defect (Section~\ref{sec:feynman30-defects}, item~4):
-stored formula references a variable name that was never a real input, so no
-$\Rsq$ could be computed. Reported as \textbf{unmeasured}, not as a failure:
-this status must not be read as, or aggregated with, ``fail''.\par}
 
-\begin{longtable}{p{4.8cm}p{1.6cm}p{2.9cm}}
-\caption{PCA-directed 40/60 split, run dated 2026-07-23. The 17 rows below
-  were originally null and are individually re-derived here, gated on a
-  13/13 exact-reproduction self-check against the 13 already-scored
-  equations. The remaining 13 already-scored equations (10 pass, 3 fail per
-  the aggregate self-verification count) are not itemised here: their
-  individual $\Rsq$ values were not captured at per-equation granularity
-  during this rescoring run and are not reconstructed by inference.}
+{\scriptsize\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{p{1.9cm}p{4.3cm}cccccc}
+\caption{PCA-directed 40/60 split, run dated 2026-08-12, all 30 equations $\times$ six methods (method-reported $\Rsq$, \texttt{benchmark\_results\_pca\_4060.json}). \textbf{Bold}: pass ($\Rsq \geq 0.999999$). Column abbreviations as in Table~\ref{tab:randomsplit}. The PureLLM entry for the capacitor-energy equation is a recorded evaluation failure, shown as $0.000000$.}
 \label{tab:pcasplit}\\
 \toprule
-Equation & $\Rsq$ & Status \\
+Domain & Equation & PL & NN & EH & LN & SE & HD \\
 \midrule
 \endfirsthead
 \toprule
-Equation & $\Rsq$ & Status \\
+Domain & Equation & PL & NN & EH & LN & SE & HD \\
 \midrule
 \endhead
-Allometric scaling law & \textbf{0.9999995} & pass (recovered) \\
-Arrhenius rate constant & $-0.363$ & fail (finite) \\
-Henderson--Hasselbalch buffer pH & 0.9998196 & near-miss \\
-Nernst equation & 0.9999372 & near-miss \\
-Dielectric polarisation & $-1.068$ & fail (finite) \\
-Lorentz force & $-1.030$ & fail (finite) \\
-Coulomb force, 1D simplified & $-0.863$ & fail (finite) \\
-Coulomb's law & $-0.460$ & fail (finite) \\
-Snell's law & \textbf{1.0000} & pass (recovered) \\
-Gaussian probability density & $-1.192$ & fail (finite) \\
-Photon energy & $-13.592$ & catastrophic \\
-Bose--Einstein occupation number & $-1.051$ & fail (finite) \\
-Rabi frequency & $-13.117$ & catastrophic \\
-Planck blackbody spectral radiance & $-27.832$ & catastrophic \\
-Fourier's law of heat conduction & $-0.084$ & fail (finite) \\
-Stefan--Boltzmann law & $-0.889$ & fail (finite) \\
-Ideal gas law & \textbf{0.9999999933} & pass (recovered) \\
-\midrule
-\multicolumn{3}{l}{Of these 17: 3 pass, 2 near-miss, 12 genuine fail.} \\
+Biology & Michaelis--Menten kinetics & \textbf{1.000000} & 0.993994 & 0.999997 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Biology & Logistic growth rate & \textbf{1.000000} & 0.994709 & 0.999998 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Biology & Allometric scaling law & \textbf{1.000000} & 0.936331 & 0.999998 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Chemistry & Arrhenius rate constant & \textbf{1.000000} & -0.044405 & 0.999996 & \textbf{1.000000} & 0.994936 & 0.997920 \\
+Chemistry & Henderson--Hasselbalch buffer pH & \textbf{1.000000} & 0.972446 & \textbf{1.000000} & \textbf{1.000000} & 0.999283 & 0.999951 \\
+Electrochem. & Nernst equation & \textbf{1.000000} & 0.990615 & \textbf{1.000000} & \textbf{1.000000} & 0.998771 & 0.999983 \\
+Electromagn. & Clausius--Mossotti & \textbf{1.000000} & 0.909288 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electromagn. & Dielectric polarisation & \textbf{1.000000} & 0.710588 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.995048 \\
+Electromagn. & Lorentz force & \textbf{1.000000} & 0.800979 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electromagn. & Ohm's law & \textbf{1.000000} & 0.960263 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electromagn. & Energy in a capacitor & 0.000000 & 0.855165 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electrostat. & Coulomb force (1D, simplified) & \textbf{1.000000} & 0.999966 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Electrostat. & Coulomb's law & \textbf{1.000000} & 0.999862 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.999615 \\
+Magnetism & Curie's law & \textbf{1.000000} & 0.998748 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Mechanics & Newton's gravitational force & \textbf{1.000000} & 0.999990 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Mechanics & Kinetic energy & \textbf{1.000000} & 0.112559 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.995804 \\
+Mechanics & Reduced mass & \textbf{1.000000} & 0.925415 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Mechanics & Total mechanical energy & \textbf{1.000000} & 0.939856 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Optics & Snell's law & \textbf{1.000000} & 0.902944 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Optics & Double-slit interference intensity & \textbf{1.000000} & 0.733607 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Probability & Gaussian probability density & \textbf{1.000000} & 0.489964 & \textbf{1.000000} & \textbf{1.000000} & 0.997249 & 0.997945 \\
+Quantum & Photon energy & \textbf{1.000000} & \textbf{1.000000} & 0.999991 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Quantum & Zeeman energy & \textbf{1.000000} & 0.786961 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Quantum & Bose--Einstein occupation number & \textbf{1.000000} & 0.999995 & 0.999890 & \textbf{1.000000} & \textbf{1.000000} & 0.998929 \\
+Quantum & Fermi--Dirac occupation number & \textbf{1.000000} & 0.927491 & \textbf{1.000000} & \textbf{1.000000} & 0.511948 & 0.647311 \\
+Quantum & Rabi frequency & \textbf{1.000000} & 0.945751 & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
+Thermodyn. & Planck blackbody radiance & \textbf{1.000000} & -0.104423 & 0.999997 & \textbf{1.000000} & 0.999946 & 0.999969 \\
+Thermodyn. & Fourier's law & \textbf{1.000000} & 0.835533 & \textbf{1.000000} & \textbf{1.000000} & 0.999853 & 0.948649 \\
+Thermodyn. & Stefan--Boltzmann law & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & 0.999804 \\
+Thermodyn. & Ideal gas law & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
 \bottomrule
-\end{longtable}
-
-\subsubsection*{Confirmed evaluator defects}\label{sec:feynman30-defects}
-
-\begin{enumerate}
-\item \texttt{\textasciicircum} parsed as bitwise XOR, not exponentiation.
-  Fixed by rewriting to \texttt{**} before evaluation. Random split only.
-\item Unstripped bracketed annotation breaks the parser. Fixed by stripping
-  a leading \texttt{[\ldots]} segment before evaluation. Random split only.
-\item Missing \texttt{safe\_asin}/\texttt{safe\_acos}. Fixed by injecting
-  clipped-inverse-trig definitions into the evaluator namespace. Both
-  splits.
-\item \textbf{Placeholder-token variable names (e.g.\ \texttt{x0},
-  \texttt{x1}) baked into stored formulas.} Architecturally distinct from
-  items 1--3 and 5: no evaluator patch can recover a reference to a
-  variable that was never real, so this is not something a code fix can
-  close. Affects 4 random-split equations (Nernst,
-  Curie's law, Bose--Einstein, Stefan--Boltzmann); confirmed absent from
-  all 30 PCA-split formula strings by direct pattern search. Root cause (an
-  upstream formula-serialisation step) is not yet located and is disclosed
-  as an open, unresolved limitation rather than a pending fix. These 4
-  equations are reported throughout as \textbf{unmeasured} (no valid
-  $\Rsq$ was or could be computed) and are excluded from both the pass and
-  fail counts; they must not be silently dropped from the per-equation
-  table nor read as failures.
-\item Missing \texttt{asin\_of\_sin}. Six of the seventeen PCA-split null
-  equations failed uniformly with an undefined-name error; confirmed as
-  $\texttt{asin\_of\_sin}(x)=\arcsin(\mathrm{clip}(\sin(x),-1,1))$ and
-  patched into the evaluator namespace.
-\item \texttt{asin\_of\_sin}/\texttt{safe\_asin}/\texttt{acos\_of\_cos}/
-  \texttt{safe\_acos} aliased to domain-unsafe bare
-  \texttt{arcsin}/\texttt{arccos} by the discovery-time expression
-  normaliser in \texttt{hybrid\_system\_v50\_2.py}, silently discarding the
-  clip/compose semantics these names exist to provide. Distinct from item
-  5: this affects PySR's \emph{internal} RMSE/$\Rsq$ computation during
-  formula discovery and candidate selection, not final scoring against the
-  production evaluator. Fixed by leaving these names unaliased for
-  \texttt{sympy.lambdify} and instead supplying clip/compose-correct
-  implementations via its \texttt{modules} argument.
-\end{enumerate}
-
-\textbf{Remaining limitations.} One item above is not fully closed: the
-placeholder-token root cause (item~4) has not been located, so the 4
-affected random-split equations remain permanently unevaluatable. This
-does not require a code fix by any deadline --- it is disclosed as a
-permanent limitation, not a pending correction --- but the paper must
-consistently report these 4 as \textbf{unmeasured} throughout (as done in
-Table~\ref{tab:randomsplit} and the surrounding prose above), rather than
-omitting them or letting their status be read as ``fail''. Item~5
-(\texttt{asin\_of\_sin}) required a correction to how it
-was originally reported, and item~6 (discovery-time normalisation) is a
-newly-disclosed related defect; both are addressed below.
-
-We obtained and directly inspected the actual production evaluator source
-(\texttt{run\_comparative\_suite\_benchmark\_v2.py} and
-\texttt{run\_comparative\_suite\_benchmark\_pca.py}, the scripts that
-construct the \texttt{safe\_globals} execution namespace and call
-\texttt{eval()}/\texttt{exec()} on stored formula strings for scoring ---
-as distinct from \texttt{hybrid\_system\_v50\_2.py} and
-\texttt{symbolic\_engine.py}, which reference
-\texttt{safe\_asin}/\texttt{asin\_of\_sin} only on the PySR
-\emph{discovery}/search side, not the scoring side). \textbf{Confirmed:}
-all three \texttt{safe\_globals} constructions in
-\texttt{run\_comparative\_suite\_benchmark\_v2.py} omitted
-\texttt{safe\_asin}, \texttt{safe\_acos}, and \texttt{asin\_of\_sin}
-entirely, defining only a bare, clipped \texttt{arcsin}/\texttt{arccos}.
-Since PySR can be configured (via \texttt{--use-transcendental-compositions})
-to discover formulas that call these exact names --- the script's own CLI
-help text states this is ``required to recover equations like Snell's law
-at $\Rsq>0.9999$'' --- any such formula raises \texttt{NameError} during
-scoring, caught by a broad \texttt{except Exception: pass}, and the
-function returns \texttt{None}: a silently null, not a silently wrong,
-extrapolation score. This is consistent with, and is the most likely root
-cause of, exactly the pattern already observed: \textbf{Snell's law itself
-was one of the equations originally null before this paper's rescoring
-pass} (Table~\ref{tab:pcasplit}).
-
-\textbf{Correction to a previously-reported fix.} An earlier pass of this
-diagnostic claimed the above had been ``fixed by adding \texttt{safe\_asin},
-\texttt{safe\_acos}, \texttt{asin\_of\_sin}, \texttt{acos\_of\_cos}, and
-\texttt{atan\_of\_tan} to all five \texttt{safe\_globals} constructions in
-both production scripts.'' On direct line-by-line inspection this claim
-was false as stated: of the three \texttt{safe\_globals} constructions in
-\texttt{run\_comparative\_suite\_benchmark\_v2.py}, only one (a module-level
-helper used solely by \texttt{compute\_extrap\_r2\_far} for far-region
-extrapolation re-scoring) had actually received any patch, and even that
-one was incomplete, missing \texttt{acos\_of\_cos} and
-\texttt{atan\_of\_tan}. The two \texttt{safe\_globals} constructions that
-govern \emph{primary in-range} scoring ---
-\texttt{BaseMethod.\_runner\_eval\_formula} (used by the Hybrid,
-\texttt{SymbolicEngineMethod}, and \texttt{HybridSystemV50\_2Method}
-scoring paths) and \texttt{PureLLMBaselineMethod.\_runner\_eval\_formula}
-(the pure-LLM baseline's main scoring path) --- were entirely unpatched, so
-the original defect remained live in the paths that actually produce
-headline $\Rsq$ figures. This has now been corrected: all three
-\texttt{safe\_globals} constructions in
-\texttt{run\_comparative\_suite\_benchmark\_v2.py} carry all five names
-(\texttt{safe\_asin}, \texttt{safe\_acos}, \texttt{asin\_of\_sin},
-\texttt{acos\_of\_cos}, \texttt{atan\_of\_tan}), verified by direct
-execution against synthetic calls that previously raised \texttt{NameError}
-and now return the correct clipped-composition value. A related,
-previously-undisclosed instance of the same defect was also found and
-fixed in \texttt{symbolic\_engine.py}'s internal
-\texttt{\_predict\_from\_equation} evaluation namespace, which is missing
-despite this engine injecting these exact operator names into PySR's
-search space --- meaning discovered candidates using them could not even
-be scored internally during search, prior to this fix.
-
-\textbf{A second, distinct defect (item~6)} was found in
-\texttt{hybrid\_system\_v50\_2.py}: its discovery-time expression
-normaliser aliased \texttt{asin\_of\_sin}/\texttt{safe\_asin} to bare
-\texttt{arcsin} and \texttt{acos\_of\_cos}/\texttt{safe\_acos} to bare
-\texttt{arccos} via literal text substitution before
-\texttt{sympy.lambdify}, discarding the clip/compose semantics these names
-exist to provide. Concretely, $\texttt{asin\_of\_sin}(x)$ --- designed to
-handle $x$ outside $[-1,1]$ by composing through $\sin(\cdot)$ first ---
-was silently replaced with plain $\arcsin(x)$, reproducing exactly the
-domain failure it was designed to avoid and yielding \texttt{NaN} for
-out-of-domain inputs. This is architecturally distinct from item~5: it
-affects PySR's \emph{internal} RMSE/$\Rsq$ computation used for candidate
-fitness and selection \emph{during} formula discovery, not the final
-scoring reported in this paper's tables. It has been fixed by leaving
-these names unaliased through normalisation and instead supplying
-clip/compose-correct implementations to \texttt{sympy.lambdify} via its
-\texttt{modules} argument, verified to return finite values (rather than
-\texttt{NaN}) for out-of-domain test inputs where the unfixed alias-based
-path did not.
-
-\textbf{What remains unverified.} This corrected pass directly inspected
-\texttt{run\_comparative\_suite\_benchmark\_v2.py},
-\texttt{run\_comparative\_suite\_benchmark\_pca.py},
-\texttt{symbolic\_engine.py}, and \texttt{hybrid\_system\_v50\_2.py}.
-\texttt{run\_comparative\_suite\_benchmark\_pca.py} was found to already
-carry all five names (\texttt{safe\_asin}, \texttt{safe\_acos},
-\texttt{asin\_of\_sin}, \texttt{acos\_of\_cos}, \texttt{atan\_of\_tan}) in
-all three of its \texttt{safe\_globals} constructions, with correct
-clipped/composed semantics; this was confirmed not merely by reading the
-source but by extracting each \texttt{safe\_globals} dictionary literal
-and executing it directly against out-of-domain test inputs (e.g.\
-$\texttt{asin\_of\_sin}(10.0)$), all of which returned finite,
-correctly-clipped values rather than raising or returning \texttt{NaN}.
-Given that the equivalent claim for
-\texttt{run\_comparative\_suite\_benchmark\_v2.py} was demonstrably false
-on first inspection, this PCA-split result should not be read as a
-foregone conclusion re-confirmed by analogy --- it was checked
-independently and holds up. Item~5 and item~6 are therefore now closed for
-all four files inspected. Separately, none of the fixes described above
-have yet been exercised against a full production rerun of either
-benchmark script, and the item~6 fix means any past discovery run that
-used these five operator names may have selected or reported formulas
-based on an internal fitness score computed against the wrong
-(bare-\texttt{arcsin}) function --- a possible influence on which formulas
-were surfaced at all, not only how they were subsequently scored. Until a
-full rerun is obtained, all of the above should be treated as
-applied-in-code and verified-in-isolation only, on the same footing as
-other applied-but-not-yet-reconfirmed-in-production fixes elsewhere in
-this paper. None of this changes the 12/30 or 13/30 figures reported
-above, which are already gated on exact reproduction of every
-previously-scored equation and already used a manually-patched evaluator
-copy with the item~5 fix in place; but a full production rerun could
-reveal additional previously-null equations (beyond Snell's law) now
-scoring successfully, in either split, which this diagnostic pass ---
-confined to the already-identified null set --- would not have surfaced.
-
-\textbf{Historical note: the withdrawn 9/30 run.}\quad
-Table~\ref{tab:feynman30-legacy} reports the earlier, withdrawn Kaggle
-4-vCPU run on its own (different) equation set, together with that run's
-own Mann-Whitney statistics and hardware-sensitivity comparison; it is
-retained only as a historical record and is not the source of, or a
-per-equation breakdown for, the 12/30 or 13/30 figures above.
-
-\begin{table}[h]
-\centering
-\caption{\textbf{[WITHDRAWN RUN --- NOT THE SOURCE OF THE PAPER'S HEADLINE FIGURES]}
-  Feynman extrapolation benchmark, Kaggle 4-vCPU multiprocessing run,
-  9/30 solve rate, withdrawn (\S\ref{sec:feynman30}).
-  \textbf{Bold}: extrap $\Rsq > 0.99$; \emph{italic}: $\Rsq < 0$.
-  This table uses a different equation ordering and hardware configuration
-  than the corrected runs and is retained only as a historical record. The
-  paper's reported results are \textbf{12/30 (40.0\,\%)} successes under the
-  random 80/20 split (2026-07-22) and \textbf{13/30 (43.3\,\%)} under the
-  PCA-directed 40\,\%/60\,\% split (2026-07-23); no per-equation table for
-  either of those two runs currently exists. Do not cite the 9/30 total
-  below, or any row in this table, as support for the 12/30 or 13/30 figures.}
-\label{tab:feynman30-legacy}
-\small\setlength{\tabcolsep}{4.5pt}
-\renewcommand{\arraystretch}{1.08}
-\begin{tabular}{llccc}
-\toprule
-\textbf{Equation} & \textbf{Domain} &
-\textbf{Hyp Train $\Rsq$} & \textbf{Hyp Extrap $\Rsq$} & \textbf{NN Extrap $\Rsq$} \\
-\midrule
-Gaussian                  & Mechanics      & 0.926 & $-10.36$           & $-24.20$ \\
-Coulomb Force             & Mechanics      & 0.869 & $-7.43$            & $\ll{-}100$ \\
-Relativistic momentum     & Mechanics      & 0.997 & $-0.25$            & $-4.76$ \\
-Doppler shift             & Mechanics      & 0.997 & 0.688              & $-0.26$ \\
-Harmonic oscillator       & Mechanics      & 0.997 & \textbf{1.000}     & $-2.04$ \\
-Electric potential energy & Thermodynamics & 0.997 & \textbf{0.998}     & 0.962 \\
-Energy of photon          & Thermodynamics & $-2.71$ & $\ll{-}100$      & 0.677 \\
-Magnetization             & Thermodynamics & 0.924 & $-0.47$            & $-1.07$ \\
-Relativistic Doppler      & Optics         & 0.998 & \textbf{0.994}     & 0.987 \\
-Heat conduction           & Optics         & 0.923 & 0.136              & $\ll{-}100$ \\
-Snell's law               & Optics         & 0.993 & $-0.31$            & $-0.13$ \\
-Polarization              & Electromagnetism & 0.982 & 0.941            & 0.923 \\
-Torque                    & Electromagnetism & 0.998 & \textbf{1.000}   & $-2.01$ \\
-Interference intensity    & Electromagnetism & 0.985 & \textbf{1.000}   & $-6.07$ \\
-Polarizability            & Electromagnetism & $-0.95$ & $-11.75$       & 0.931 \\
-Planck radiation          & Electromagnetism & $-0.86$ & $-5.90$        & $-1.39$ \\
-Photon energy             & Quantum        & $-2.61$ & $\ll{-}100$      & 0.906 \\
-Magnetic moment           & Quantum        & $-0.76$ & $-9.59$          & $-2.56$ \\
-Bose-Einstein             & Quantum        & 0.997 & \textbf{0.997}     & 0.778 \\
-Gravity potential         & Gravitation    & 0.978 & $-2.38$            & $\ll{-}100$ \\
-Orbital period            & Gravitation    & 0.998 & \textbf{1.000}     & 0.862 \\
-Dielectric constant       & Fluid          & 0.579 & 0.000              & 0.000 \\
-Diffraction               & Fluid          & 0.995 & \textbf{0.997}     & 0.825 \\
-Wave superposition        & Waves          & 0.692 & $-1.14$            & $\ll{-}100$ \\
-de Broglie wavelength     & Waves          & $-0.11$ & $-9.46$          & $\ll{-}100$ \\
-Time dilation             & Relativity     & 0.997 & 0.639              & $-1.78$ \\
-Lorentz factor            & Relativity     & 0.997 & 0.711              & $-0.54$ \\
-Coulomb potential         & Atomic         & 0.063 & $\ll{-}100$        & $-4.66$ \\
-Diffusion coefficient     & Atomic         & $-0.56$ & $\ll{-}100$      & 0.034 \\
-Larmor frequency          & Nuclear        & 0.998 & \textbf{1.000}     & $-1.40$ \\
-\midrule\midrule
-\textbf{Successes ($\Rsq>0.99$), this run (withdrawn, \S\ref{sec:feynman30})} & & & \textbf{9/30 (30.0\%)} & 0/30 (0.0\%) \\
-\textbf{Median extrap $\Rsq$}    & & & $-0.123$               & $-1.225$ \\
-MW all $n=30$       & \multicolumn{4}{l}{$U=534.5$, $p=0.107$ — not significant (expected)} \\
-\textbf{MW successes $n=9$} & \multicolumn{4}{l}{$U=81$, $p=\mathbf{0.00020}$ — strongly significant} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\emph{The remainder of this note describes the withdrawn 9/30 run only and
-is not a description of the canonical 12/30 (2026-07-22) or 13/30
-(2026-07-23) results above.} The full-benchmark Mann-Whitney test
-($U=534.5$, $p=0.107$) on that withdrawn run is not significant, as
-expected: 21 failures introduce high variance that masks the signal.
-Among the 9 success-equations of that run where \textsc{HypatiaX} achieved
-$\Rsq > 0.99$, the conditional Mann-Whitney test ($U=81$, $p=0.00020$) was
-strongly significant. Five of those 9 successes corresponded to exact
-symbolic recovery ($\Rsq = 1.000$). These statistics have not been
-recomputed against the canonical July~22/23 runs.
-
-\textbf{Hardware sensitivity (withdrawn run).}  Across that same withdrawn
-benchmark, three independent hardware configurations yielded 14, 8, and 9
-successes (Celeron multi-threaded, Colab T4 serial, Kaggle 4-vCPU
-multiprocessing respectively), a variation attributed to non-determinism in
-the PySR evolutionary search under different parallelism regimes. All three
-counts belong to the withdrawn run and have not been recomputed under the
-corrected protocol; the $p=0.00020$ and $p=0.00043$ Mann-Whitney results
-quoted for the Kaggle and Colab configurations likewise describe only that
-withdrawn run.
-
-\textbf{Hardware sensitivity (current pipeline, CI-verified).} The ad hoc
-local Celeron/Colab/Kaggle comparison above has been superseded by a
-GitHub Actions CI pipeline (repository \texttt{sednabcn/LLM-HypatiaX-REPRO}),
-which runs the canonical benchmark on a single, standard
-\texttt{ubuntu-24.04} GitHub-hosted runner with \texttt{PySR\_SEED=42} fixed
-throughout, i.e.\ one deterministic machine rather than three divergent
-ones. This removes hardware sensitivity as a source of variation \emph{in
-principle}. On direct inspection of the CI logs: the \texttt{exp2\_feynman}
-discovery job (run~30258093290, commit \texttt{d5adf4e}, 2026-07-27)
-completed cleanly, and the subsequent \texttt{exp2\_feynman\_extrap} scoring
-job (run~30329546386, commit \texttt{c694d5f}, 2026-07-28) shows
-\emph{partial, inconsistent} recovery on exactly the equations items~5--6
-concern: Snell's law and the Nernst equation return a valid (non-null)
-extrapolation $\Rsq$ for 2 of 6 methods (\texttt{SymbolicEngineWithLLM},
-\texttt{HybridDiscoverySystem v50\_2}) but remain \texttt{null} for the
-other 4 (\texttt{PureLLM Baseline}, \texttt{ImprovedNN},
-\texttt{EnhancedHybridSystemDeFi}, \texttt{HybridSystemLLMNN}), while the
-placeholder-token-affected Bose--Einstein and Stefan--Boltzmann equations
-remain \texttt{null} across all methods, consistent with item~4 being
-architecturally unfixable. \textbf{This job scores the six-method
-cross-comparison reported in the supplementary benchmark report, a
-different metric from the per-equation strict-threshold headline defined
-above; the partial nulls above describe that six-method comparison and do
-not bear on the 12/30 or 13/30 figures.} \textbf{Item~9 is therefore closed
-with respect to its original scope} --- the stale local hardware-variance
-numbers are no longer the operative reproducibility story, and are
-superseded by a citable, deterministic, single-runner CI pipeline. The
-12/30 and 13/30 headline figures are confirmed independently of this
-six-method job, by the canonical July~22/23 run pair described above
-(Tables~\ref{tab:randomsplit}--\ref{tab:pcasplit}), each gated on its own
-exact-reproduction self-check (14/14 and 13/13 respectively, against every
-previously-scored equation) before any corrected null score was trusted.
-That confirmation is already complete; it does not depend on, and is not
-undermined by, the six-method job's partial nulls above.
+\end{longtable}}
 
 % ── RF-04: Nguyen-12 Benchmark ───────────────────────────────────────────────
 \subsection{Nguyen-12 Benchmark (Standard SR Suite)}\label{subsec:nguyen12-benchmark-standard-sr-suite}
@@ -2780,7 +2478,7 @@ an aggressive extrapolation protocol with a 40\,\%/60\,\% train/test split.
 \textbf{[Protocol note: the Nguyen-12 pipeline uses per-equation axis-aligned
 variable ranges (fixed \texttt{train\_ranges}/\texttt{extrap\_ranges} in
 \texttt{experiment\_protocol\_nguyen12.py}) rather than the PCA-directed
-ordering used for the DeFi and Feynman benchmarks.  The earlier claim that
+ordering used for the DeFi and Protocol-30 benchmarks.  The earlier claim that
 this benchmark uses ``the same PCA-directed protocol'' is not supported by
 the executed code and has been corrected here.]}
 Compare against the neural MLP baseline. \textbf{[Correction (item N-3):
@@ -2792,7 +2490,7 @@ contain results only for \texttt{hypatiax} and \texttt{pysr} --- no third
 system. The per-equation $N$ values and the ``MW $P{>}N$'' significance
 test previously printed here had no supporting source file and have been
 removed rather than retained as unverified. The neural-baseline comparison
-for this paper's other benchmarks (DeFi, Feynman-30) is unaffected --
+for this paper's other benchmarks (DeFi, Protocol-30) is unaffected --
 those use a real, separately-verified NN baseline
 (\texttt{ImprovedNN (core)}); only the Nguyen-12-specific column is
 withdrawn.]}
@@ -3094,7 +2792,7 @@ advantage of the hybrid system over its own LLM component. The paper's
 supported evidence for reliability under distribution shift instead comes
 from the individual extrapolation-rescue cases (Arrhenius, Portfolio
 Variance, \S\ref{sec:arrhenius_failure} and \S\ref{sec:portfolio_seed_sweep})
-and from the Feynman-30 comparison against the neural baseline
+and from the Protocol-30 comparison against the neural baseline
 (\S\ref{sec:feynman30}), not from an aggregate near-perfect-rate or
 catastrophic-failure-avoidance gain on this benchmark.
 
@@ -3185,7 +2883,7 @@ verified multi-run data.
 \subsection{Design Principles for Analytical Discovery}\label{subsec:design-principles-for-analytical-discove}
 \label{sec:disc_principles}
 
-Based on our findings across 74 DeFi tasks and 30 Feynman equations, we propose five design principles for hybrid symbolic--neural discovery systems:
+Based on our findings across 74 DeFi tasks and 30 Protocol-30 equations, we propose five design principles for hybrid symbolic--neural discovery systems:
 
 \begin{enumerate}
   \item \textbf{Cascade validation rather than single-criterion acceptance.} Our five-stage routing cascade detected failures missed by any individual gate. Dimensional consistency, domain constraints, numerical stability, OOD probing, and trust scoring each catch distinct failure modes.
@@ -3198,7 +2896,7 @@ Based on our findings across 74 DeFi tasks and 30 Feynman equations, we propose 
 \subsection{Comparison with Related Work}\label{subsec:comparison-with-related-work}
 \label{sec:disc_related}
 
-HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020ai} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Physics-informed neural networks~\citep{raissi2019physics,karniadakis2021physics} offer an alternative by embedding physical constraints directly into the network architecture; our approach differs by targeting financial and biochemical domains where such constraints are unavailable, and by recovering interpretable closed-form expressions rather than learned surrogates. DSR~\citep{petersen2021deep,landajuela2022unified} uses reinforcement learning and risk-seeking policy gradients to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX achieves 12/30 successes (40.0\%) under a random 80/20 extrapolation protocol and 13/30 (43.3\%) under our aggressive PCA-directed extrapolation protocol (both at the single strict $\Rsq \geq 0.999999$ threshold defined in \S\ref{sec:feynman30}), comparable to AI Feynman 2.0 under similar conditions. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
+HypatiaX builds on three lines of prior work. AI Feynman~\citep{udrescu2020ai} uses neural networks to identify symmetries and simplifications before symbolic regression, achieving strong performance on physics equations. Physics-informed neural networks~\citep{raissi2019physics,karniadakis2021physics} offer an alternative by embedding physical constraints directly into the network architecture; our approach differs by targeting financial and biochemical domains where such constraints are unavailable, and by recovering interpretable closed-form expressions rather than learned surrogates. DSR~\citep{petersen2021deep,landajuela2022unified} uses reinforcement learning and risk-seeking policy gradients to guide symbolic search; our LLM warm-start provides a complementary initialisation strategy with lower computational cost. MCTS-based SR methods~\citep{sun2022symbolic} explore expression trees more systematically than evolutionary search; HypatiaX's five-stage routing provides a practical approximation with lower overhead. On the Feynman benchmark, HypatiaX passes 21/30 equations (70.0\%) under a random 80/20 split and 13/30 (43.3\%) on the held-out 60\% of a PCA-directed 40/60 split (strict $\Rsq \geq 0.999999$, \S\ref{sec:feynman30}), versus 0/30 for the neural baseline on the random split. A pure-LLM baseline passes 29/30 on the random split, and held-out PCA scores are unavailable for the pure-LLM and hybrid-core methods because of an evaluator defect (\S\ref{sec:feynman30}); these figures are not directly comparable to published AI Feynman results, which use a different protocol. The DeFi benchmark is, to our knowledge, the first symbolic regression evaluation on post-2020 financial mathematics.
 
 \subsection{Ethical Considerations}\label{subsec:ethical-considerations}
 \label{sec:disc_ethics}
@@ -3237,8 +2935,7 @@ in new domains.
 \label{sec:conclusion}
 
 We have presented HypatiaX, a hybrid symbolic--neural framework for extrapolation
-in DeFi mathematical discovery.  On a benchmark of 74 DeFi tasks with an aggressive
-PCA-directed extrapolation split, HypatiaX achieves:
+in DeFi mathematical discovery.  On a benchmark of 74 DeFi tasks with a 40\,\%/60\,\% extrapolation split (the released result files do not record whether the single-axis or PCA-directed variant was used), HypatiaX achieves:
 
 \begin{itemize}
   \item A \textbf{90.5\,\%} raw near-perfect success rate ($\Rsq > 0.99$), up from
@@ -3262,11 +2959,11 @@ PCA-directed extrapolation split, HypatiaX achieves:
     fault unrelated to model performance (\S\ref{sec:hybrid-attribution-bug}).
   \item \textbf{No runtime speedup.} A previously reported $1.73\times$ speedup
     over the neural baseline on LLM-routed cases ($n=68$) does not reproduce
-    from the raw per-task result files. Independently-verified regeneration
-    of the timing table against the complete, verified 5-seed$\times$74-task
-    sweep (Table~\ref{tab:timing_full}, \S\ref{sec:timing}) shows the hybrid
-    system is $4.1$--$7.7\times$ \emph{slower} than the neural baseline on
-    every seed and every split, never faster.
+    from the raw per-task result files. Regeneration
+    of the timing table against the five 74-task seed files in the
+    repository (Table~\ref{tab:timing_full}, \S\ref{sec:timing}) shows the hybrid
+    system is $3.8$--$11.2\times$ \emph{slower} than the neural baseline on
+    every seed, never faster.
 \end{itemize}
 
 On this DeFi benchmark, once decision-attribution and runtime artifacts are
@@ -3274,21 +2971,19 @@ removed, hybrid symbolic--neural routing does not demonstrate an aggregate
 accuracy, reliability, or speed advantage over its own LLM component. The
 paper's supported evidence for reliability under distribution shift instead
 comes from individual extrapolation-rescue cases (Arrhenius, Portfolio
-Variance) and the Feynman-30 comparison against the neural baseline, not
+Variance) and the Protocol-30 comparison against the neural baseline, not
 from an aggregate gain on the DeFi benchmark.
 
 Future work should explore: extending the benchmark to broader scientific domains;
 developing lighter fallback architectures to reduce mean wall-clock time and
-close the fixed hybrid-wrapper overhead identified in
-\S\ref{sec:timing} (present even on zero-LLM-routed seeds);
+reduce the hybrid-wrapper overhead identified in
+\S\ref{sec:timing};
 integrating iterative LLM self-correction as an intermediate routing option between
 pure symbolic and neural fallback; and systematic evaluation across multiple LLM
-families. On the runtime question specifically, the 5-seed$\times$74-task
-sweep (all five seeds, all 74 tasks each, for both the v3c and
-PCA-directed splits) is now complete and verified
-(\S\ref{sec:timing_data_defect}); the open question is no longer data
-completeness but \emph{why} the hybrid wrapper adds overhead even when it
-routes no tasks to the LLM.
+families. On the runtime question specifically, the five 74-task seed files in
+the repository are complete (\S\ref{sec:timing_data_defect}); the open
+questions are \emph{why} the hybrid wrapper adds overhead, and how the
+PCA-directed split compares, for which no 74-task run is available.
 
 % =============================================================================
 \section*{Reproducibility Statement}
@@ -3308,39 +3003,11 @@ The pipeline includes explicit corrections for data leakage, split misconfigurat
 formula evaluation inconsistency, and trust-gating threshold, as described in
 Section~\ref{sec:corrections}.
 
-\textbf{Hardware sensitivity (Feynman benchmark, withdrawn run).}  The Feynman $n=30$ experiment was
-run on three hardware configurations: Celeron multi-threaded (14/30 successes),
-Colab T4 GPU serial (8/30), and Kaggle 4-vCPU multiprocessing (9/30, primary).
-The variation arises from non-determinism in PySR's evolutionary search under
-different parallelism regimes. \textbf{Author note:} all three figures belong
-to the withdrawn random-split run discussed in \S\ref{sec:feynman30}
-(superseded by 12/30) and have not been recomputed under the corrected
-protocol; do not cite this paragraph's numbers without doing so first.
-Reported statistics use the Kaggle run.
-Independent replication of the $p=0.00020$ Mann-Whitney result is expected to hold
-under any configuration that allows multi-process PySR execution.
-
-\textbf{Superseded by CI (2026-07-27/28).} The three-machine comparison above
-is no longer the operative reproducibility story: the benchmark now runs on a
-single deterministic GitHub Actions runner (\texttt{ubuntu-24.04},
-\texttt{PySR\_SEED=42}) in \texttt{sednabcn/LLM-HypatiaX-REPRO}
-(\texttt{exp2\_feynman}: run~30258093290, commit~\texttt{d5adf4e};
-\texttt{exp2\_feynman\_extrap}: run~30329546386, commit~\texttt{c694d5f}).
-This CI pair scores the six-method cross-comparison reported in the
-supplementary benchmark report --- a different metric from the paper's
-12/30 and 13/30 headline figures, which are per-equation results at the
-strict $\Rsq \geq 0.999999$ threshold (\S\ref{sec:feynman30}). The
-\texttt{extrap} job's own output shows \texttt{null} extrapolation $\Rsq$
-for most of the six methods on the item~4--6 equations, which is disclosed
-as a limitation of that six-method comparison specifically, not of the
-headline figures. The 12/30 and 13/30 figures are independently confirmed
-by the canonical July~22/23 run pair (Tables~\ref{tab:randomsplit}--\ref{tab:pcasplit}),
-each recomputed directly from raw per-test JSON records and gated on its
-own exact-reproduction self-check (14/14 for the random-split run, 13/13
-for the PCA-split run) against every previously-scored equation before any
-corrected null score was trusted. That confirmation is complete; readers
-should cite 12/30 and 13/30 from those tables, and should not treat the
-six-method CI job's partial nulls as bearing on them.
+\textbf{Reproducibility (Protocol-30 benchmark).} The Protocol-30 $n=30$ results in
+\S\ref{sec:feynman30} come from the 2026-08-12 noiseless runs, with the raw
+per-test result files and the per-method summaries kept in the repository.
+The earlier three-machine comparison (Celeron, Colab T4, Kaggle 4-vCPU) belonged
+to a withdrawn run and is no longer reported.
 
 % =============================================================================
 %% ── Bibliography ─────────────────────────────────────────────────────────────
@@ -3499,9 +3166,8 @@ removed here to avoid two copies of the timing analysis drifting out of
 sync; the authoritative, complete table is
 Table~\ref{tab:timing_full} in \S\ref{sec:timing} (main text), together
 with the LLM-routed-only view in Table~\ref{tab:timing_llm_routed_full}.
-Both are the direct, unmodified output of \texttt{generate\_table1.py}
-run against the complete pool --- all five seeds, all 74 tasks each, for
-both benchmark variants (v3c and PCA-directed) --- with no hand-editing
+Both are the direct, unmodified output of \texttt{scripts/generate\_tables.py}
+run against the five 74-task seed files in the repository, with no hand-editing
 of any number.
 
 Two prior claims are superseded by that analysis: a ``73\,\% runtime
@@ -3515,17 +3181,16 @@ re-verification against the raw v3.0 result data.
 
 An interim draft of this appendix additionally reported that seeds
 99/123/777/2024 each contained only a 5-task truncated subset of the full
-74-task suite, for both benchmark variants, and treated pooled multi-seed
-statistics as provisional pending a re-run on that basis. \textbf{That
-report does not hold against the currently available raw files.} Each of
-the ten seed-suffixed result files was independently re-checked --- task
-count, and the internal \texttt{seed} field on every record against its
-source filename --- and all ten contain the full 74 tasks with no
-cross-file contamination (\S\ref{sec:timing_data_defect}). The pooled
-5-seed / 370-task rows in Table~\ref{tab:timing_full} are accordingly
-representative rather than provisional, and no further re-run is required
-to support the direction of the runtime claim (hybrid slower than NN,
-every seed, both splits).
+74-task suite, and treated pooled multi-seed statistics as provisional.
+\textbf{That report does not hold for the 74-task files used here}: all five
+contain the full 74 tasks (\S\ref{sec:timing_data_defect}). Earlier versions
+of this appendix also described ten files, five for a PCA-directed split;
+that is withdrawn, since the only PCA-directed seed files in the repository
+hold 5 portfolio-task records each. The pooled 5-seed / 370-task row in
+Table~\ref{tab:timing_full} is representative of those five files, with the
+provenance caveats given in \S\ref{sec:timing_data_defect}, and the
+direction of the runtime claim (hybrid slower than NN, every seed) does not
+depend on the pooling.
 
 \section{Outstanding Process/Credibility Items (Do Not Cite Until Resolved)}\label{sec:process_items}
 
