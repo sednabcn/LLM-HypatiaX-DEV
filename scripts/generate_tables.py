@@ -167,6 +167,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--inspect-core", action="store_true", dest="inspect_core",
                    help="Print the layout of the protocol_core files (protocol block, methods, "
                         "record keys) and exit.")
+    p.add_argument("--ablation-aggregates", action="store_true", dest="ablation_aggregates",
+                   help="Add a Mean row and the Mann-Whitney note to ablation.tex "
+                        "(tab:llm_ablation). Off by default: the paper's table reports no "
+                        "aggregate, because nan / -inf cells have no agreed treatment, and "
+                        "the Mean row silently dropped them.")
     p.add_argument("--allow-fallback", action="store_true", dest="allow_fallback",
                    help=argparse.SUPPRESS)  # deprecated no-op, kept only so old
                                              # CI invocations passing this flag
@@ -1476,24 +1481,33 @@ def gen_ablation() -> None:
             f" & {_t(ptime)} & {_t(htime)} \\\\\n"
         )
 
-    tex += r"""\midrule
+    _aggr = bool(getattr(_ARGS, "ablation_aggregates", False))
+    if _aggr:
+        tex += r"""\midrule
 \multicolumn{2}{l}{\textit{Mean}} """
-    # Compute means over the 15 equations
-    import statistics as _st
-    def _mean_r2(col):
-        vals = [r for r in col if isinstance(r, float) and r == r and r >= -1e5]
-        return f"{_st.mean(vals):.4f}" if vals else "---"
+        # Compute means over the 15 equations
+        import statistics as _st
+        def _mean_r2(col):
+            vals = [r for r in col if isinstance(r, float) and r == r and r >= -1e5]
+            return f"{_st.mean(vals):.4f}" if vals else "---"
 
-    cols = list(zip(*equations))
-    tex += (
-        f"& {_mean_r2(cols[2])} & {_mean_r2(cols[3])}"
-        f" & {_mean_r2(cols[4])} & {_mean_r2(cols[5])}"
-        f" & {_mean_r2(cols[6])} & {_mean_r2(cols[7])}"
-        f" & {_mean_r2(cols[8])} & {_mean_r2(cols[9])}"
-        f" & {_mean_r2(cols[10])} & {_mean_r2(cols[11])} \\\\\n"
-    )
+        cols = list(zip(*equations))
+        tex += (
+            f"& {_mean_r2(cols[2])} & {_mean_r2(cols[3])}"
+            f" & {_mean_r2(cols[4])} & {_mean_r2(cols[5])}"
+            f" & {_mean_r2(cols[6])} & {_mean_r2(cols[7])}"
+            f" & {_mean_r2(cols[8])} & {_mean_r2(cols[9])}"
+            f" & {_mean_r2(cols[10])} & {_mean_r2(cols[11])} \\\\\n"
+        )
 
-    if mw_u is not None and mw_p is not None:
+    if not _aggr:
+        _mw_note = (
+            "  Aggregate statistics (mean, Mann--Whitney) are intentionally not computed: "
+            "cells that are \\textit{nan} or $-\\infty$ (not evaluated, or crashed) have no "
+            "agreed treatment in a summary statistic. Re-run with "
+            "\\texttt{--ablation-aggregates} to add them.\n"
+        )
+    elif mw_u is not None and mw_p is not None:
         _n_str = str(mw_n) if mw_n is not None else "?"
         _mw_note = (
             f"  Mann--Whitney (far-$R^2$): $U={mw_u:.1f}$, $p={mw_p:.4f}$ "
@@ -3580,6 +3594,83 @@ def gen_runtime() -> None:
     write_table("runtime.tex", tex)
 
 
+def _load_portfolio_sweep_shards():
+    """Merge the per-seed CI shard files into the layout gen_portfolio_seed_sweep() reads.
+
+    The CI experiment ``portfolio`` runs one seed per shard; each shard writes
+    portfolio_variance_defi_seed_sweep_seed<N>.json ({"seeds_run": [N], "results":
+    [{"seed", "far_r2", "decision", ...}]}) via portfolio_variance_v3c2.py (PV_SWEEP_ONLY=1).
+    Those files hold HypatiaX results only. The PySR-only column and the formula text come from
+    the ablation-format portfolio_variance_seed_sweep.json ({"pysr_only": [...], "hypatia": [...]})
+    when it exists; otherwise they stay NaN / "---" (never guessed).
+
+    Returns (merged_dict_or_None, [shard files used], [problems]).
+    """
+    files = {}
+    for base in (PATCHED, RESULTS, RESULTS / "portfolio_variance_audit"):
+        if base.exists():
+            for f in base.glob("portfolio_variance_defi_seed_sweep_seed*.json"):
+                if not any(x in f.name for x in _EXCLUDE_SUBSTRINGS):
+                    files[f.resolve()] = f
+    shard_files = sorted(files.values(), key=_det_key)
+    by_seed, used, problems = {}, [], []
+    for f in shard_files:
+        try:
+            j = json.loads(f.read_text())
+        except Exception as exc:
+            problems.append(f"{f.name}: unreadable ({exc})")
+            continue
+        rows = j.get("results") if isinstance(j, dict) else None
+        if not isinstance(rows, list):
+            problems.append(f"{f.name}: no 'results' list")
+            continue
+        got = False
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                sd = int(r.get("seed"))
+            except (TypeError, ValueError):
+                continue
+            if sd in by_seed:
+                problems.append(f"seed {sd} appears in more than one shard file; using {f.name}")
+            by_seed[sd] = r
+            got = True
+        if got:
+            used.append(f)
+    if not by_seed:
+        return None, used, problems
+
+    pysr, hyp_expr = {}, {}
+    for base in (PATCHED, RESULTS, RESULTS / "portfolio_variance_audit"):
+        cand = base / "portfolio_variance_seed_sweep.json"
+        if not cand.exists():
+            continue
+        try:
+            d = json.loads(cand.read_text())
+        except Exception:
+            continue
+        if isinstance(d, dict) and isinstance(d.get("pysr_only"), list):
+            for r in d["pysr_only"]:
+                if isinstance(r, dict) and isinstance(r.get("seed"), int):
+                    pysr[r["seed"]] = r
+            for h in d.get("hypatia", []) if isinstance(d.get("hypatia"), list) else []:
+                if isinstance(h, dict) and isinstance(h.get("seed"), int):
+                    hyp_expr[h["seed"]] = h.get("expr")
+            break
+
+    def _f(v):
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else float("nan")
+
+    seeds = sorted(by_seed)
+    merged = {
+        "pysr_only": [{"seed": sd, "far_r2": _f(pysr.get(sd, {}).get("far_r2"))} for sd in seeds],
+        "hypatia": [{"seed": sd, "far_r2": _f(by_seed[sd].get("far_r2")),
+                     "expr": hyp_expr.get(sd) or "---"} for sd in seeds],
+    }
+    return merged, used, problems
+
+
 def gen_portfolio_seed_sweep() -> None:
     """
     Tab 5 — Portfolio Variance seed-sweep results.
@@ -3594,24 +3685,36 @@ def gen_portfolio_seed_sweep() -> None:
     so a future \\input{tables/portfolio_sweep.tex} resolves \\ref calls instead
     of rendering "??".
     """
-    # Try to find portfolio_variance_seed_sweep.json
+    # 1) CI per-seed shard files (experiment=portfolio): merge them.
+    data, _shard_files, _shard_problems = _load_portfolio_sweep_shards()
     src_path = None
-    for base in [PATCHED, RESULTS, RESULTS / "portfolio_variance_audit"]:
-        for cand in [base / "portfolio_variance_seed_sweep.json",
-                     *sorted(base.glob("portfolio_variance*.json"),
-                             key=_det_key, reverse=True)]:
-            if cand.exists():
-                src_path = cand
+    for _pr in _shard_problems:
+        print(f"  WARN portfolio_sweep: {_pr}")
+    if data is not None and len(data["hypatia"]) >= 5:
+        src_path = f"{len(_shard_files)} shard files: " + ", ".join(f.name for f in _shard_files)
+        if any(r["far_r2"] != r["far_r2"] for r in data["pysr_only"]):
+            print("  note portfolio_sweep: no PySR-only value for some seeds "
+                  "(portfolio_variance_seed_sweep.json); P column and 'H wins?' shown as ---")
+    else:
+        if data is not None:
+            print(f"  note portfolio_sweep: only {len(data['hypatia'])} seed(s) in shard files "
+                  "(<5); falling back to a single combined JSON")
+        data = None
+        # 2) single combined JSON (legacy / ablation layout)
+        for base in [PATCHED, RESULTS, RESULTS / "portfolio_variance_audit"]:
+            for cand in [base / "portfolio_variance_seed_sweep.json",
+                         *sorted(base.glob("portfolio_variance*.json"),
+                                 key=_det_key, reverse=True)]:
+                if cand.exists():
+                    src_path = cand
+                    break
+            if src_path:
                 break
         if src_path:
-            break
-
-    data = None
-    if src_path:
-        try:
-            data = json.loads(src_path.read_text())
-        except Exception:
-            pass
+            try:
+                data = json.loads(src_path.read_text())
+            except Exception:
+                pass
 
     def _extract(d):
         if not isinstance(d, dict):
@@ -3670,7 +3773,9 @@ def gen_portfolio_seed_sweep() -> None:
 """
     p_means, h_means = [], []
     for (seed, pfar, hfar, hform, hrec, hwins) in rows:
-        tex += f"{seed} & {_r(pfar)} & {_r(hfar)} & {hform} & {_yn(hrec)} & {_yn(hwins)} \\\\\n"
+        _p_known = isinstance(pfar, float) and pfar == pfar
+        _wins_cell = _yn(hwins) if _p_known else "---"
+        tex += f"{seed} & {_r(pfar)} & {_r(hfar)} & {hform} & {_yn(hrec)} & {_wins_cell} \\\\\n"
         if isinstance(pfar, float) and pfar == pfar: p_means.append(pfar)
         if isinstance(hfar, float) and hfar == hfar: h_means.append(hfar)
 
@@ -3680,7 +3785,8 @@ def gen_portfolio_seed_sweep() -> None:
     n_wins  = sum(1 for r in rows if r[5])
     n_exact = sum(1 for r in rows if r[4])
     tex += r"\midrule" + "\n"
-    tex += f"Mean & {pm} & {hm} & & \\multicolumn{{2}}{{r}}{{H: {n_wins}/5 wins, {n_exact}/5 exact}} \\\\\n"
+    _wins_txt = f"{n_wins}/5" if p_means else "---"
+    tex += f"Mean & {pm} & {hm} & & \\multicolumn{{2}}{{r}}{{H: {_wins_txt} wins, {n_exact}/5 exact}} \\\\\n"
 
     tex += r"""\bottomrule
 \end{tabular}
@@ -7397,8 +7503,8 @@ def main() -> None:
          "__FIVE_SYSTEM__", "", "",
          ("exp1_five", "exp2_five", "exp2")),
         ("portfolio_variance seed-sweep (Tab 5 + Fig G)",
-         "", "portfolio_variance*.json", "",
-         ("exp1b", "exp1b_pca")),
+         "", "**/portfolio_variance*.json", "",
+         ("exp1b", "exp1b_pca", "portfolio")),
         ("exp2_feynman results (Tab 7)",
          "comparison_results/feynman-tests/exp2", "*.json", "feynman",
          ("exp2_feynman", "exp2_feynman_extrap", "exp2_feynman_pca")),
@@ -7713,6 +7819,11 @@ def main() -> None:
         # matches exp1b's real, current source data.
         "exp1b": [("── exp1b: noise-robust DeFi benchmark (multi-seed) ─────────", [
             lambda: gen_exp1b_noise_robust_defi(),
+            lambda: gen_portfolio_seed_sweep(),
+        ])],
+        # portfolio → portfolio_variance_defi_seed_sweep_seed<N>.json (one file per CI shard,
+        # merged by _load_portfolio_sweep_shards()) → portfolio_sweep (Tab 5)
+        "portfolio": [("── portfolio: Portfolio Variance seed sweep (Tab 5) ─────────", [
             lambda: gen_portfolio_seed_sweep(),
         ])],
         # exp1_ablation → exp1_ablation/*.json → ablation (Tab 6 + Fig F)
