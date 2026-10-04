@@ -15,7 +15,7 @@
 \title{HypatiaX: Post-Submission Report\\
 \large Open items deferred from the JMLR submission}
 \author{}
-\date{2026-09-27 (living document; last updated 2026-10-01)}
+\date{2026-09-27 (living document; last updated 2026-10-03)}
 
 \begin{document}
 \maketitle
@@ -885,6 +885,52 @@ incomplete sweep sources (time\_noise, winrate); noise\_sensitivity (source unid
 or remove the table or its numbers from the paper (policy in the preamble).
 (4) Record the CI result of the file-selection fix (Finding~B).
 
+\subsection*{Item 12: Minor issues from the manuscript audit (2026-10-03)}
+\textbf{Status:} Open, all minor. \textbf{Risk:} Low. Source: \texttt{manuscript\_audit\_2026-10-03.pdf}, which checked
+\texttt{paper\_audit.pdf} and the cleanup review against the three \texttt{\_cleaned.tex} files and the raw result files.
+Item~2's description of remaining \texttt{[VALUE REDACTED]} placeholders is out of date: the cleaned sources contain none (they
+appear as \texttt{[Removed]} or \texttt{[Unverified]} notes), so Item~2's open points now concern data, not placeholders.
+\begin{enumerate}
+  \item \textbf{\texttt{tab:arch} caption names the wrong source.} It says ``regenerated from the five noise-sweep shards''.
+    The noise-sweep shards carry no \texttt{metadata.decision}. The counts (M3: 140 ensemble / 10 NN; M4: 123 LLM / 27
+    ensemble; 150 records each) reproduce exactly from \texttt{protocol\_core\_noiseless\_20260812\_170344.json} plus the four
+    \texttt{protocol\_core\_noisy\_*} files ($\sigma=0.0005, 0.001, 0.005, 0.01$). Correct the caption. Those files
+    used thresholds $0.95$ ($\sigma=0.0005, 0.001$), $0.995$ and $0.99$, which the caption's ``pool mixes one noiseless run with
+    four noisy runs'' should state. This also lets the UNVERIFIED \texttt{arch} entry in Item~11 be closed once the files
+    are in the CI result path.
+  \item \textbf{Item~11 tables with a source now identified.} \texttt{tab:time\_noise} (M3 7.0--7.8\,s, M4 6.3--6.9\,s per
+    equation, M4 $1.1$--$1.2\times$ faster) and the \texttt{tab:winrate} noise column ($0/150$, $28/150$, $122/150$) reproduce
+    from the five noise-sweep shards; the \texttt{winrate} sample-complexity column ($0/180$, $8/180$, $172/180$) and
+    \texttt{tab:sc\_metrics} reproduce from the six sample-complexity shards. They can leave the incomplete-sweep list in
+    Item~11 item~(3) once the shards are committed.
+  \item \textbf{Two live \texttt{\textbackslash input} commands in Supplement~B.} \texttt{tables/llm\_detailed.tex} and
+    \texttt{tables/defi\_detailed.tex} are read at build time. Item~3 says no \texttt{\textbackslash input} exists, and the
+    audit's ``0 of 56 wired'' is also wrong. The build fails unless both files exist next to the source; regenerate them
+    (\texttt{gen\_suppb\_llm\_detailed}) before compiling.
+  \item \textbf{Four unresolved cross-document references in Supplement~B} will print \texttt{??}: \texttt{sec:nguyen12} and
+    \texttt{tab:nguyen12} (both defined only in the main paper), \texttt{sec:findings:item10b} (defined nowhere; it is
+    quoted inside a note that says so), and \texttt{sec:five\_systems} (main paper only). The file loads no \texttt{xr}.
+    Replace each with plain text, or load \texttt{xr-hyper} for the main paper.
+  \item \textbf{Two PCA-directed assertions conflict with the record-gap wording.} The abstract, introduction, conclusion and
+    the Runtime Analysis section state that the released DeFi result files do not record whether the single-axis or PCA-directed variant
+    was used. Two other passages assert PCA ordering for the DeFi benchmark: the Pipeline Corrections item
+    ``v3.0 uses the PCA-directed ordering described above'' and the out-of-distribution metric section (``a held-out test split
+    constructed by PCA-directed ordering''). Reword both to say ``the protocol specifies PCA-directed ordering''. The
+    Protocol-30 PCA mentions (\texttt{benchmark\_results\_pca\_4060.json}) are separately sourced and need no change.
+  \item \textbf{Timing headline scope.} The ``$3.8$--$11.2\times$ slower'' figure covers the five \texttt{v3} files under both
+    framings (all tasks $4.77$--$11.23\times$; LLM-routed only $3.84$--$9.39\times$), and ``$370$ task runs'' counts only
+    those. The five PCA rows ($4.51$--$6.85\times$, another $370$ runs) lie inside the range but are not named in the
+    headline sentence. Add ``and the five PCA files'' or state that the range is for the \texttt{v3} files.
+    \texttt{paper\_audit.pdf}'s ``$2.5$--$9.3\times$'' is the withdrawn claim, not a second result.
+  \item \textbf{Sample size of the noise sweep.} The \texttt{protocol\_core} noisy files record ``200-sample run'', which
+    supports the $n=200$ in the noise-table captions. The noise-sweep shards themselves do not store $n$. The runner patch that
+    records \texttt{n\_samples} is not yet committed; until it is, say in the caption that $n=200$ comes from the protocol files.
+  \item \textbf{\texttt{gen\_ablation()} still always writes a Mean row.} Confirmed in \texttt{generate\_tables.py}; the paper's
+    \texttt{tab:llm\_ablation} has no aggregate row. Do not wire this generator until it matches (as in the audit's open item).
+\end{enumerate}
+\textbf{Not an issue (checked):} the word ``aggressive'' (describes the single-axis v3c split, not PCA); the Protocol-30 PCA
+passages; the arithmetic and orphaned-text problems from the cleanup review (fixed in the sources).
+
 \section{Closed Items (Confirmed, No Manuscript Change)}
 
 \subsection*{Item C1: Hybrid decision-attribution bug fabricated-count (23)}
@@ -959,5 +1005,28 @@ addresses. \textbf{No further code change needed.} All three manuscript
 documents updated (2026-09-27) to mark this item Resolved rather than
 Open; the July~9 dashboard itself remains uncitable as a specific
 artifact, but the underlying defect cannot recur silently.
+
+\subsection*{Item C6: \texttt{paper\_audit.pdf} counts and cleanup-review problems 2--5 (2026-10-03)}
+Evaluated against the current sources, with no manuscript change needed. Confirmed correct in the manuscript: $74/90$
+(not $81/90$); the CI figures $[1087,1456]\%$, $1231\%$ and $n=14/13$ appear nowhere; the July~9 dashboard is flagged in all
+three files; the $23$-case hybrid-bug count. Wrong or stale in \texttt{paper\_audit.pdf} (see Item~3 and Item~12): $34$
+redactions ($0$ now), blank \texttt{main\_results} row (populated), $8$ fabricated cases ($23$), $2.5$--$9.3\times$ runtime range
+(withdrawn), $0$ wired tables ($2$ \texttt{\textbackslash input}). Cleanup-review problems 2 (scalability speedups removed),
+3 (NN time now $0.27$\,s pooled, $0.18$--$0.36$\,s per seed), 4 (complexity $1.4\times10^{8}$; $1.7\%$; $93.8\%$; both timing
+blocks sum to $100\%$) and 5 (orphaned sentences) are fixed in the sources.
+
+\subsection*{Item C7: Portfolio Variance seed-sweep data located and checked (2026-10-04)}
+\texttt{portfolio\_variance\_seed\_sweep.json} (Exp-1 ablation layout) and five
+\texttt{portfolio\_variance\_defi\_seed\_sweep\_seed<N>.json} shard files (v3c3, DeFi protocol) are now available.
+\emph{Checked:} every far-$R^2$ in \texttt{tab:portfolio\_seed\_sweep} (both columns), both means ($-31.953$, $-6.261$), the
+4/5 win count and the 2/5 exact-recovery count match the ablation file; the \texttt{[Unverified]} note in the caption was
+replaced by a verification note. \emph{Not checked:} the Bayesian figure $P\approx0.76$ in the same section has no source in
+either file. \emph{New finding:} the shard files report far-$R^2=1.000$ on 5/5 seeds, all with routing decision
+\texttt{llm}; this is a different experiment from the table and was added to the manuscript as a separate paragraph, not
+merged. \emph{Generator caveat:} \texttt{generate\_tables.py} merges the shard files with PySR-only values from the ablation
+file, so a regenerated \texttt{portfolio\_sweep.tex} (5/5 exact) will not match the manuscript table (2/5 exact) and
+would be reported DIFF by the table audit. Decide which source defines Table~5 before wiring it with
+\texttt{\textbackslash input}. \texttt{generate\_figures.py} now reads the sweep JSON for the three portfolio figures; the
+previously embedded values had PySR seed~2024 at far-$R^2=-12.11$ instead of $-118.448$.
 
 \end{document}

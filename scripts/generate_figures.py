@@ -638,6 +638,184 @@ print(f"LLM:     mean_stab={np.nanmean(llm_stab):.4f}")
 # P0 / RF02 / RF09 FIGURES  — require exp1_ablation_results.json (RAW)
 # Skipped entirely when RAW is None (e.g. for instability, exp2_feynman_extrap).
 # ══════════════════════════════════════════════════════════════════════════════
+# ── Portfolio-variance figures (fig21, fig_seed_sweep_comparison, fig1_seed_sweep) ──
+# FIX PV-FIG-DATA: read portfolio_variance_seed_sweep.json instead of an embedded dict and
+# generate independently of exp1_ablation_results.json (they only need the sweep file).
+_PV_FIGS_WANTED = (_EXPERIMENT is None or _EXPERIMENT in _EXP1_ABLATION_GROUP or _EXPERIMENT == "portfolio")
+if _PV_FIGS_WANTED and (os.path.isfile(DATA_PORTFOLIO_SW) or RAW is not None):
+    # ── fig21: portfolio variance seed sweep ──────────────────────────────────────
+    # Use the DATA from generate_plots.py (already in scope via the existing script content)
+    _pv_json = _load_json(DATA_PORTFOLIO_SW, "portfolio_variance_seed_sweep.json")
+    if _pv_json and isinstance(_pv_json.get("pysr_only"), list) and isinstance(_pv_json.get("hypatia"), list):
+        SEED_DATA = _pv_json
+        print(f"  [INFO] portfolio figures read from {DATA_PORTFOLIO_SW}")
+    else:
+        print("  [WARN] portfolio_variance_seed_sweep.json missing/unusable — using embedded legacy SEED_DATA")
+        SEED_DATA = {
+          "pysr_only": [
+            {"seed":42,   "train_r2":0.9095, "near_r2":-0.7811, "medium_r2":0.9268, "far_r2":-21.0040},
+            {"seed":123,  "train_r2":0.9044, "near_r2": 0.2342, "medium_r2":0.9472, "far_r2":-18.6505},
+            {"seed":777,  "train_r2":0.9564, "near_r2": 0.9999, "medium_r2":0.8005, "far_r2": -0.4378},
+            {"seed":2024, "train_r2":0.9742, "near_r2": 0.5868, "medium_r2":0.9699, "far_r2":-12.1092},
+            {"seed":99,   "train_r2":0.9668, "near_r2": 0.0715, "medium_r2":0.8659, "far_r2": -1.2264},
+          ],
+          "hypatia": [
+            {"seed":42,   "train_r2":0.9134, "near_r2": 0.9478, "medium_r2":0.8552, "far_r2": -0.0232},
+            {"seed":123,  "train_r2":0.9383, "near_r2": 0.7276, "medium_r2":0.6530, "far_r2":-18.0895},
+            {"seed":777,  "train_r2":0.9978, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
+            {"seed":2024, "train_r2":0.9977, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
+            {"seed":99,   "train_r2":0.8958, "near_r2": 0.1572, "medium_r2":0.9228, "far_r2":-15.1913},
+          ],
+        }
+    SEEDS = [r["seed"] for r in SEED_DATA["pysr_only"]]
+    PYSR  = {r["seed"]: r for r in SEED_DATA["pysr_only"]}
+    HYP   = {r["seed"]: r for r in SEED_DATA["hypatia"]}
+
+    fig = plt.figure(figsize=(14, 5))
+    gs  = GridSpec(1, 4, figure=fig, wspace=0.35)
+    metrics = [("near_r2","Near"), ("medium_r2","Medium"), ("far_r2","Far")]
+
+    for col_idx, (field, regime) in enumerate(metrics):
+        ax = fig.add_subplot(gs[0, col_idx])
+        x  = np.arange(len(SEEDS))
+        w  = 0.36
+        pv = [PYSR[s][field] for s in SEEDS]
+        hv = [HYP[s][field]  for s in SEEDS]
+        lo = -25 if field == "far_r2" else -15
+        pc = [max(lo, min(1.05, v)) for v in pv]
+        hc = [max(lo, min(1.05, v)) for v in hv]
+        ax.bar(x-w/2, pc, w, color=C_NN,  alpha=0.85, label="PySR-only",  edgecolor="white")
+        ax.bar(x+w/2, hc, w, color=C_HYB, alpha=0.85, label="HypatiaX",  edgecolor="white")
+        for i,(pval,hval,pclip,hclip) in enumerate(zip(pv,hv,pc,hc)):
+            ax.text(x[i]-w/2, pclip+0.2, f"{pval:.1f}", ha="center", va="bottom", fontsize=6, color=C_NN)
+            ax.text(x[i]+w/2, hclip+0.2, f"{hval:.2f}", ha="center", va="bottom", fontsize=6, color=C_HYB)
+        ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8)
+        ax.axhline(0,    color="black", lw=0.6, ls="--", alpha=0.4)
+        ax.set_xticks(x); ax.set_xticklabels([str(s) for s in SEEDS], fontsize=8)
+        ax.set_xlabel("Seed"); ax.set_ylabel(f"{regime} $R^2$")
+        ax.set_title(f"{regime} Extrapolation", fontsize=10, fontweight="bold")
+        ax.grid(axis="y", alpha=0.3)
+        if col_idx == 0: ax.legend(fontsize=7)
+
+    # 4th panel: summary table
+    ax4 = fig.add_subplot(gs[0, 3])
+    ax4.axis("off")
+    cell_data = []
+    for s in SEEDS:
+        cell_data.append([
+            str(s),
+            f"{PYSR[s]['far_r2']:.2f}",
+            f"{HYP[s]['far_r2']:.2f}",
+            "✓" if HYP[s]["far_r2"] > 0.99 else "✗",
+        ])
+    tbl = ax4.table(
+        cellText=cell_data,
+        colLabels=["Seed","PySR far","Hyp far","Hyp✓"],
+        cellLoc="center", loc="center",
+        bbox=[0, 0, 1, 1],
+    )
+    tbl.auto_set_font_size(False); tbl.set_fontsize(9)
+    ax4.set_title("Far-$R^2$ Summary", fontsize=10, fontweight="bold")
+
+    fig.suptitle("Portfolio Variance Seed Sweep: PySR-only vs HypatiaX", fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    _savefig(fig, "fig21_portfolio_variance_sweep")
+    plt.close(fig)
+    print("✓ fig21_portfolio_variance_sweep.png/.pdf")
+
+
+
+    # ── fig_seed_sweep_comparison ─────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    # Left: far_r2 per seed (bar)
+    ax = axes[0]
+    x = np.arange(len(SEEDS)); w = 0.36
+    pv = [PYSR[s]["far_r2"] for s in SEEDS]
+    hv = [HYP[s]["far_r2"]  for s in SEEDS]
+    pc = [max(-25, min(1.05, v)) for v in pv]
+    hc = [max(-25, min(1.05, v)) for v in hv]
+    ax.bar(x-w/2, pc, w, color=C_NN,  alpha=0.85, label="PySR-only", edgecolor="white")
+    ax.bar(x+w/2, hc, w, color=C_HYB, alpha=0.85, label="HypatiaX",  edgecolor="white")
+    ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+    ax.axhline(0,    color="black", lw=0.6, ls="--", alpha=0.4)
+    ax.set_xticks(x); ax.set_xticklabels([str(s) for s in SEEDS])
+    ax.set_xlabel("Seed"); ax.set_ylabel("Far $R^2$ (clipped $-25$)")
+    ax.set_title("Far-$R^2$ per Seed", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
+    # Right: scatter near vs far
+    ax = axes[1]
+    ax.scatter([PYSR[s]["near_r2"] for s in SEEDS], [PYSR[s]["far_r2"] for s in SEEDS],
+               s=80, color=C_NN,  alpha=0.8, label="PySR-only", edgecolors="white", lw=0.5)
+    ax.scatter([HYP[s]["near_r2"] for s in SEEDS], [HYP[s]["far_r2"] for s in SEEDS],
+               s=80, color=C_HYB, alpha=0.8, label="HypatiaX",  edgecolors="white", lw=0.5,
+               marker="D")
+    for s in SEEDS:
+        ax.annotate(str(s), (HYP[s]["near_r2"], HYP[s]["far_r2"]),
+                    textcoords="offset points", xytext=(4,4), fontsize=7, color=C_HYB)
+    ax.axhline(0.99, color=C_OK, lw=1, ls=":", alpha=0.7)
+    ax.axvline(0.99, color=C_OK, lw=1, ls=":", alpha=0.7)
+    ax.set_xlabel("Near $R^2$"); ax.set_ylabel("Far $R^2$")
+    ax.set_title("Near vs Far Extrapolation", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8); ax.grid(alpha=0.25)
+    fig.suptitle("Portfolio Variance Seed Sweep Comparison", fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    _savefig(fig, "fig_seed_sweep_comparison")
+    plt.close(fig)
+    print("✓ fig_seed_sweep_comparison.png/.pdf")
+
+
+    # ── fig1_seed_sweep — richer per-seed line chart (P0 paper figure) ────────────
+    # Each line traces one method across seeds; panels show near / medium / far.
+    _REGIMES_SW = [
+        ("near_r2",   "Near extrapolation $R^2$"),
+        ("medium_r2", "Medium extrapolation $R^2$"),
+        ("far_r2",    "Far extrapolation $R^2$"),
+    ]
+    _SW_CLIP = {"near_r2": (-5, 1.05), "medium_r2": (-5, 1.05), "far_r2": (-25, 1.05)}
+
+    fig_sw, axes_sw = plt.subplots(1, 3, figsize=(15, 4.5), sharey=False)
+    _seed_x = np.arange(len(SEEDS))
+
+    for ax, (field, ylabel) in zip(axes_sw, _REGIMES_SW):
+        lo, hi = _SW_CLIP[field]
+        pv = np.array([max(lo, min(hi, PYSR[s][field])) for s in SEEDS])
+        hv = np.array([max(lo, min(hi, HYP[s][field]))  for s in SEEDS])
+
+        ax.plot(_seed_x, pv, color=C_NN,  lw=2, marker="o", ms=6, label="PySR-only")
+        ax.plot(_seed_x, hv, color=C_HYB, lw=2, marker="D", ms=6, label="HypatiaX")
+
+        # Annotate each point with the raw (unclipped) value when it was clipped.
+        for i, s in enumerate(SEEDS):
+            raw_p = PYSR[s][field]; raw_h = HYP[s][field]
+            if raw_p < lo or raw_p > hi:
+                ax.annotate(f"{raw_p:.1f}", (i, pv[i]), textcoords="offset points",
+                            xytext=(0, -14), ha="center", fontsize=6.5, color=C_NN)
+            if raw_h < lo or raw_h > hi:
+                ax.annotate(f"{raw_h:.2f}", (i, hv[i]), textcoords="offset points",
+                            xytext=(0, 8), ha="center", fontsize=6.5, color=C_HYB)
+
+        ax.axhline(0.99, color=C_OK,   lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
+        ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
+        ax.fill_between(_seed_x, pv, hv, alpha=0.08, color=C_HYB)
+        ax.set_xticks(_seed_x)
+        ax.set_xticklabels([str(s) for s in SEEDS], fontsize=9)
+        ax.set_xlabel("Seed", fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(ylabel.split(" ")[0] + " Extrapolation", fontsize=11, fontweight="bold")
+        ax.grid(alpha=0.3)
+        if ax is axes_sw[0]:
+            ax.legend(fontsize=8)
+
+    fig_sw.suptitle("Portfolio Variance Seed Sweep — Per-Seed Line Chart\n"
+                    "(PySR-only vs HypatiaX across all extrapolation regimes)",
+                    fontsize=12, fontweight="bold")
+    fig_sw.tight_layout()
+    _savefig(fig_sw, "fig1_seed_sweep")
+    plt.close(fig_sw)
+    print("✓ fig1_seed_sweep.png/.pdf")
+
+
+
 if RAW is not None:
     # ── hypatiax_three_systems — architecture diagram rendered from code ──────────
     _sys_fig, _sys_ax = plt.subplots(figsize=(14, 6))
@@ -1128,81 +1306,6 @@ if RAW is not None:
     print("✓ fig20_wall_clock_speedup.png/.pdf")
 
 
-    # ── fig21: portfolio variance seed sweep ──────────────────────────────────────
-    # Use the DATA from generate_plots.py (already in scope via the existing script content)
-    SEED_DATA = {
-      "pysr_only": [
-        {"seed":42,   "train_r2":0.9095, "near_r2":-0.7811, "medium_r2":0.9268, "far_r2":-21.0040},
-        {"seed":123,  "train_r2":0.9044, "near_r2": 0.2342, "medium_r2":0.9472, "far_r2":-18.6505},
-        {"seed":777,  "train_r2":0.9564, "near_r2": 0.9999, "medium_r2":0.8005, "far_r2": -0.4378},
-        {"seed":2024, "train_r2":0.9742, "near_r2": 0.5868, "medium_r2":0.9699, "far_r2":-12.1092},
-        {"seed":99,   "train_r2":0.9668, "near_r2": 0.0715, "medium_r2":0.8659, "far_r2": -1.2264},
-      ],
-      "hypatia": [
-        {"seed":42,   "train_r2":0.9134, "near_r2": 0.9478, "medium_r2":0.8552, "far_r2": -0.0232},
-        {"seed":123,  "train_r2":0.9383, "near_r2": 0.7276, "medium_r2":0.6530, "far_r2":-18.0895},
-        {"seed":777,  "train_r2":0.9978, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
-        {"seed":2024, "train_r2":0.9977, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
-        {"seed":99,   "train_r2":0.8958, "near_r2": 0.1572, "medium_r2":0.9228, "far_r2":-15.1913},
-      ],
-    }
-    SEEDS = [r["seed"] for r in SEED_DATA["pysr_only"]]
-    PYSR  = {r["seed"]: r for r in SEED_DATA["pysr_only"]}
-    HYP   = {r["seed"]: r for r in SEED_DATA["hypatia"]}
-
-    fig = plt.figure(figsize=(14, 5))
-    gs  = GridSpec(1, 4, figure=fig, wspace=0.35)
-    metrics = [("near_r2","Near"), ("medium_r2","Medium"), ("far_r2","Far")]
-
-    for col_idx, (field, regime) in enumerate(metrics):
-        ax = fig.add_subplot(gs[0, col_idx])
-        x  = np.arange(len(SEEDS))
-        w  = 0.36
-        pv = [PYSR[s][field] for s in SEEDS]
-        hv = [HYP[s][field]  for s in SEEDS]
-        lo = -25 if field == "far_r2" else -15
-        pc = [max(lo, min(1.05, v)) for v in pv]
-        hc = [max(lo, min(1.05, v)) for v in hv]
-        ax.bar(x-w/2, pc, w, color=C_NN,  alpha=0.85, label="PySR-only",  edgecolor="white")
-        ax.bar(x+w/2, hc, w, color=C_HYB, alpha=0.85, label="HypatiaX",  edgecolor="white")
-        for i,(pval,hval,pclip,hclip) in enumerate(zip(pv,hv,pc,hc)):
-            ax.text(x[i]-w/2, pclip+0.2, f"{pval:.1f}", ha="center", va="bottom", fontsize=6, color=C_NN)
-            ax.text(x[i]+w/2, hclip+0.2, f"{hval:.2f}", ha="center", va="bottom", fontsize=6, color=C_HYB)
-        ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8)
-        ax.axhline(0,    color="black", lw=0.6, ls="--", alpha=0.4)
-        ax.set_xticks(x); ax.set_xticklabels([str(s) for s in SEEDS], fontsize=8)
-        ax.set_xlabel("Seed"); ax.set_ylabel(f"{regime} $R^2$")
-        ax.set_title(f"{regime} Extrapolation", fontsize=10, fontweight="bold")
-        ax.grid(axis="y", alpha=0.3)
-        if col_idx == 0: ax.legend(fontsize=7)
-
-    # 4th panel: summary table
-    ax4 = fig.add_subplot(gs[0, 3])
-    ax4.axis("off")
-    cell_data = []
-    for s in SEEDS:
-        cell_data.append([
-            str(s),
-            f"{PYSR[s]['far_r2']:.2f}",
-            f"{HYP[s]['far_r2']:.2f}",
-            "✓" if HYP[s]["far_r2"] > 0.99 else "✗",
-        ])
-    tbl = ax4.table(
-        cellText=cell_data,
-        colLabels=["Seed","PySR far","Hyp far","Hyp✓"],
-        cellLoc="center", loc="center",
-        bbox=[0, 0, 1, 1],
-    )
-    tbl.auto_set_font_size(False); tbl.set_fontsize(9)
-    ax4.set_title("Far-$R^2$ Summary", fontsize=10, fontweight="bold")
-
-    fig.suptitle("Portfolio Variance Seed Sweep: PySR-only vs HypatiaX", fontsize=12, fontweight="bold")
-    fig.tight_layout()
-    _savefig(fig, "fig21_portfolio_variance_sweep")
-    plt.close(fig)
-    print("✓ fig21_portfolio_variance_sweep.png/.pdf")
-
-
     # ── fig22: bubble train vs far ────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     for ax, method, label, color in [
@@ -1234,96 +1337,6 @@ if RAW is not None:
     _savefig(fig, "fig22_bubble_train_vs_far")
     plt.close(fig)
     print("✓ fig22_bubble_train_vs_far.png/.pdf")
-
-
-    # ── fig_seed_sweep_comparison ─────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-    # Left: far_r2 per seed (bar)
-    ax = axes[0]
-    x = np.arange(len(SEEDS)); w = 0.36
-    pv = [PYSR[s]["far_r2"] for s in SEEDS]
-    hv = [HYP[s]["far_r2"]  for s in SEEDS]
-    pc = [max(-25, min(1.05, v)) for v in pv]
-    hc = [max(-25, min(1.05, v)) for v in hv]
-    ax.bar(x-w/2, pc, w, color=C_NN,  alpha=0.85, label="PySR-only", edgecolor="white")
-    ax.bar(x+w/2, hc, w, color=C_HYB, alpha=0.85, label="HypatiaX",  edgecolor="white")
-    ax.axhline(0.99, color=C_OK, lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
-    ax.axhline(0,    color="black", lw=0.6, ls="--", alpha=0.4)
-    ax.set_xticks(x); ax.set_xticklabels([str(s) for s in SEEDS])
-    ax.set_xlabel("Seed"); ax.set_ylabel("Far $R^2$ (clipped $-25$)")
-    ax.set_title("Far-$R^2$ per Seed", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
-    # Right: scatter near vs far
-    ax = axes[1]
-    ax.scatter([PYSR[s]["near_r2"] for s in SEEDS], [PYSR[s]["far_r2"] for s in SEEDS],
-               s=80, color=C_NN,  alpha=0.8, label="PySR-only", edgecolors="white", lw=0.5)
-    ax.scatter([HYP[s]["near_r2"] for s in SEEDS], [HYP[s]["far_r2"] for s in SEEDS],
-               s=80, color=C_HYB, alpha=0.8, label="HypatiaX",  edgecolors="white", lw=0.5,
-               marker="D")
-    for s in SEEDS:
-        ax.annotate(str(s), (HYP[s]["near_r2"], HYP[s]["far_r2"]),
-                    textcoords="offset points", xytext=(4,4), fontsize=7, color=C_HYB)
-    ax.axhline(0.99, color=C_OK, lw=1, ls=":", alpha=0.7)
-    ax.axvline(0.99, color=C_OK, lw=1, ls=":", alpha=0.7)
-    ax.set_xlabel("Near $R^2$"); ax.set_ylabel("Far $R^2$")
-    ax.set_title("Near vs Far Extrapolation", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=8); ax.grid(alpha=0.25)
-    fig.suptitle("Portfolio Variance Seed Sweep Comparison", fontsize=12, fontweight="bold")
-    fig.tight_layout()
-    _savefig(fig, "fig_seed_sweep_comparison")
-    plt.close(fig)
-    print("✓ fig_seed_sweep_comparison.png/.pdf")
-
-
-    # ── fig1_seed_sweep — richer per-seed line chart (P0 paper figure) ────────────
-    # Each line traces one method across seeds; panels show near / medium / far.
-    _REGIMES_SW = [
-        ("near_r2",   "Near extrapolation $R^2$"),
-        ("medium_r2", "Medium extrapolation $R^2$"),
-        ("far_r2",    "Far extrapolation $R^2$"),
-    ]
-    _SW_CLIP = {"near_r2": (-5, 1.05), "medium_r2": (-5, 1.05), "far_r2": (-25, 1.05)}
-
-    fig_sw, axes_sw = plt.subplots(1, 3, figsize=(15, 4.5), sharey=False)
-    _seed_x = np.arange(len(SEEDS))
-
-    for ax, (field, ylabel) in zip(axes_sw, _REGIMES_SW):
-        lo, hi = _SW_CLIP[field]
-        pv = np.array([max(lo, min(hi, PYSR[s][field])) for s in SEEDS])
-        hv = np.array([max(lo, min(hi, HYP[s][field]))  for s in SEEDS])
-
-        ax.plot(_seed_x, pv, color=C_NN,  lw=2, marker="o", ms=6, label="PySR-only")
-        ax.plot(_seed_x, hv, color=C_HYB, lw=2, marker="D", ms=6, label="HypatiaX")
-
-        # Annotate each point with the raw (unclipped) value when it was clipped.
-        for i, s in enumerate(SEEDS):
-            raw_p = PYSR[s][field]; raw_h = HYP[s][field]
-            if raw_p < lo or raw_p > hi:
-                ax.annotate(f"{raw_p:.1f}", (i, pv[i]), textcoords="offset points",
-                            xytext=(0, -14), ha="center", fontsize=6.5, color=C_NN)
-            if raw_h < lo or raw_h > hi:
-                ax.annotate(f"{raw_h:.2f}", (i, hv[i]), textcoords="offset points",
-                            xytext=(0, 8), ha="center", fontsize=6.5, color=C_HYB)
-
-        ax.axhline(0.99, color=C_OK,   lw=1.2, ls=":", alpha=0.8, label="Success (0.99)")
-        ax.axhline(0.0,  color="black", lw=0.7, ls="--", alpha=0.4)
-        ax.fill_between(_seed_x, pv, hv, alpha=0.08, color=C_HYB)
-        ax.set_xticks(_seed_x)
-        ax.set_xticklabels([str(s) for s in SEEDS], fontsize=9)
-        ax.set_xlabel("Seed", fontsize=10)
-        ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_title(ylabel.split(" ")[0] + " Extrapolation", fontsize=11, fontweight="bold")
-        ax.grid(alpha=0.3)
-        if ax is axes_sw[0]:
-            ax.legend(fontsize=8)
-
-    fig_sw.suptitle("Portfolio Variance Seed Sweep — Per-Seed Line Chart\n"
-                    "(PySR-only vs HypatiaX across all extrapolation regimes)",
-                    fontsize=12, fontweight="bold")
-    fig_sw.tight_layout()
-    _savefig(fig_sw, "fig1_seed_sweep")
-    plt.close(fig_sw)
-    print("✓ fig1_seed_sweep.png/.pdf")
 
 
     # ══════════════════════════════════════════════════════════════════════════════

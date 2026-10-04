@@ -130,8 +130,9 @@ against the raw per-task result files and are not repeated in this
 version: a ``73\,\% runtime reduction'' ($3.7\times$ speedup) and a
 subsequently reported $1.73\times$/$1.64\times$ speedup, both for
 HypatiaX over the neural-network baseline. The verified result is the
-opposite: across the five 74-task seed files held in the repository ($370$ task
-runs audited), the hybrid system is
+opposite: across the five 74-task v3 seed files held in the repository ($370$ task
+runs audited; a separate PCA block of the same table, also $370$ runs, shows the
+same direction), the hybrid system is
 \emph{slower} than the pure neural-network baseline on every seed,
 by a factor of $3.8\times$ to $11.2\times$ on mean time,
 whether measured over all tasks or over LLM-routed tasks only
@@ -263,7 +264,7 @@ neural-network inference on LLM-routed cases (68 of 74, split not recorded
 five seed files in the repository route exactly 68/74, see
 Table~\ref{tab:timing_full}) does
 \textbf{not} reproduce: regeneration of the runtime table directly from
-the raw per-task result files, across the five 74-task seed files in the
+the raw per-task result files, across the five 74-task v3 seed files in the
 repository, shows the hybrid system
 is $3.8$--$11.2\times$ \emph{slower} than the neural baseline on every
 seed, never faster (see \S\ref{sec:timing}).
@@ -404,8 +405,9 @@ This paper makes the following contributions:
     runtime claims --- a previously circulated 73\,\% reduction claim, a
     subsequent $1.73\times$/$1.64\times$ speedup claim, and a still later
     $2.5$--$9.3\times$-slower claim that itself did not reproduce from its
-    own cited source. Across the five 74-task seed files held in the
-    repository ($370$ task runs audited), the hybrid
+    own cited source. Across the five 74-task v3 seed files held in the
+    repository ($370$ task runs audited; the separate PCA block shows the same
+    direction), the hybrid
     system is found to be $3.8$--$11.2\times$ \emph{slower} than the neural
     baseline on every seed, never faster, in either the
     ``all tasks'' or ``LLM-routed-only'' framing. Restricting to only the
@@ -831,8 +833,10 @@ biased reported results:
 
   \item \textbf{Incorrect extrapolation splitting}: Prior versions used axis-aligned
     min/max splits, which can inadvertently include extrapolation samples in the
-    training set for multivariate tasks.  v3.0 uses the PCA-directed ordering
-    described above.
+    training set for multivariate tasks.  v3.0 adds the PCA-directed ordering
+    described above. Which variant produced a given released result file is
+    stated only where the file records it; the multi-seed DeFi timing files do
+    not (\S\ref{sec:timing}).
 
   \item \textbf{Inconsistent formula evaluation}: Earlier
     versions used multiple evaluation backends (SymPy, eval, NumExpr) without a
@@ -1321,10 +1325,11 @@ the reported time \emph{fully accounts} for all LLM inference time plus any
 neural network retraining that occurs during fallback.  We do not separate
 LLM and NN costs in the aggregate reported time; they are summed.
 
-We separately report the speedup for the LLM-routed subset (cases where the
-hybrid routes to pure LLM or ensemble, without triggering full NN retraining).
-This subset comprises $n=68$ of 74 tasks and represents the cleanest comparison
-for assessing the efficiency of symbolic routing.
+We separately report the runtime ratio relative to the neural baseline for the
+LLM-routed subset (cases where the hybrid routes to pure LLM or ensemble,
+without triggering full NN retraining). This subset comprises $n=68$ of 74 tasks
+and represents the cleanest comparison for assessing the cost of symbolic
+routing; the measured ratio is a slowdown, not a speedup (Table~\ref{tab:timing_full}).
 
 \subsection{Implementation Details}\label{subsec:implementation-details}
 \label{sec:setup_impl}
@@ -1564,7 +1569,7 @@ the lower median and mean, though the mean CIs overlap). Under exp2\_five, neith
 Network has any successful, finite extrapolation-error measurement at
 all, so no comparison is possible on that suite (the benchmark
 supplement's \S~``Statistical Test Details''
-reports no test for exp2\_five for this reason). Row sample sizes in \Cref{tab:five_systems_full} are the numbers of equations
+reports no test for exp2\_five for this reason). Row sample sizes in Table~\ref{tab:five_systems_full} are the numbers of equations
 with a finite extrapolation-error measurement (Hybrid 10, NN 12); the
 medium-regime Mann--Whitney test in the benchmark supplement uses $n=12$ (Hybrid) /
 $n=15$ (NN). Both five-system tables (exp1\_five and exp2\_five) are regenerated
@@ -1604,7 +1609,7 @@ None of these reproduce from the canonical file, which gives the values
 shown; the earlier Pure~LLM/Neural~MLP figures are withdrawn, not corrected.
 The near-perfect rate for Pure~LLM ($59.5\,\%$) now agrees with
 Table~\ref{tab:difficulty}. This table
-covers the DeFi benchmark; it is a \emph{different benchmark} from the $30/30$ Pure~LLM
+covers the DeFi benchmark; it is a \emph{different benchmark} from the $29/30$ Pure~LLM
 figure in the benchmark supplement's six-method noiseless comparison
 (30-equation custom set), and the two should not be read as conflicting.}
 \label{tab:main_results}
@@ -2100,8 +2105,9 @@ cases or not (the lowest value, $3.67\times$, is the seed-42 LLM-routed median).
 
 The correct claim for this paper is therefore: \textbf{the hybrid system
 is slower than the pure neural baseline, by $3.8\times$ to $11.2\times$ on mean
-time depending on seed and framing, across the five 74-task seed files
-held in the repository.} The direction is the same in every seed and every
+time depending on seed and framing, across the five 74-task v3 seed files
+held in the repository} (the PCA block of Table~\ref{tab:timing_full} shows the
+same direction). The direction is the same in every seed and every
 framing; the magnitude varies by about a factor of three between seeds, and
 the files do not identify which split variant produced them.
 
@@ -2128,11 +2134,11 @@ $\{42, 99, 123, 777, 2024\}$.
 \caption{Portfolio Variance seed-sweep results.
   \textbf{H recovers?}: exact closed-form formula recovered.
   \textbf{H wins?}: HypatiaX far-$\Rsq$ strictly greater than PySR-only.
-  \textbf{[Unverified: the five seed result files for this task are not at the
-  location the table generator reads, so these figures were not regenerated or
-  compared against source data (see the Post-Submission Report). Only the
-  internal arithmetic (means, win count) was checked. Do not treat as
-  reproduced.]}}
+  \textbf{[Verified 2026-10-04 against \texttt{portfolio\_variance\_seed\_sweep.json}
+  (Exp-1 ablation run, PySR-only and HypatiaX\,=\,PySR with LLM warm start): all ten far-$\Rsq$ values,
+  both means, the 4/5 win count and the 2/5 exact-recovery count match the file; the
+  formula labels follow the recorded expressions. The separate DeFi-protocol
+  shard run is reported below and is not part of this table.]}}
 \label{tab:portfolio_seed_sweep}
 \small
 \begin{tabular}{lccccl}
@@ -2173,6 +2179,21 @@ in $40\%$ of runs ($2/5$, seeds 777 and 2024) and achieves strictly higher far-$
 in 4 of 5 seeds.  A Bayesian superiority analysis yields
 $P(\text{HypatiaX} > \text{PySR}) \approx 0.76$, indicating that \textsc{HypatiaX}
 occupies a fundamentally different regime of symbolic discovery.
+
+\textbf{Separate DeFi-protocol sweep (v3c3, five per-seed shard files).}
+A second sweep of the same case (``Portfolio VaR for two correlated assets'')
+under the DeFi protocol, one shard per seed in $\{42, 99, 123, 777, 2024\}$,
+reports far-$\Rsq = 1.000$ and train $\Rsq = 1.000$ on all five seeds (5/5 above
+the $0.99$ success threshold). In every shard the recorded routing decision is
+\texttt{llm}, and the recorded formula is the same closed form,
+$\sqrt{v_1^2 + v_2^2 + 2\rho v_1 v_2}$, at about $1.2$--$1.3$\,s per seed. This is therefore
+a result for the LLM-routed path and says nothing about the PySR search used in
+the table above; the two sweeps are different experiments with different
+outcomes (2/5 versus 5/5 exact recovery) and must not be pooled or compared
+as one method on one setup. Consistent with the benchmark-level finding that we
+do not find a corrected advantage of the hybrid system over its own LLM
+component, this sweep does not by itself support a PySR-warm-start effect on
+Portfolio Variance.
 
 \textbf{Corrected attribution.}\footnote{An earlier draft erroneously attributed
 far-$\Rsq=-18.1$ to the default seed~(42).  The verified figure is: H seed=42
@@ -2292,7 +2313,7 @@ shown for comparison, and the held-out score is \texttt{extrap\_r2\_far}.
 \centering
 \caption{Equations passing $\Rsq \geq 0.999999$, out of 30. Random split and PCA ``reported'' use the
   method-reported $\Rsq$; PCA ``held-out'' uses the far-region $\Rsq$ on the 60\,\% held-out portion.
-  Sources: \texttt{benchmark\_results.json} and \texttt{benchmark\_results\_pca\_4060.json}, 2026-08-12.}
+  Sources: the 2026-08-12 run files and \texttt{benchmark\_results\_pca\_4060.json}. SymbolicEngineWithLLM is omitted: its earlier counts came from a six-method file that is not among the supplied artefacts.}
 \label{tab:feynman30-methods}
 \small
 \begin{tabular}{lccc}
@@ -2303,7 +2324,6 @@ PureLLM Baseline & 29/30$^\ast$ & 29/30$^\ast$ & n/a$^\dagger$ \\
 ImprovedNN & 0/30 & 3/30 & n/a$^\ddagger$ \\
 EnhancedHybridSystemDeFi & 23/30 & 23/30 & n/a$^\dagger$ \\
 HybridSystemLLMNN all-domains & 30/30 & 30/30 & n/a$^\ddagger$ \\
-SymbolicEngineWithLLM$^\parallel$ & 27/30 & 23/30 & 17/30 \\
 \textbf{HybridDiscoverySystem v50\_2 (\textsc{HypatiaX})} & \textbf{21/30} & \textbf{18/30} & \textbf{13/30}$^\S$ \\
 \bottomrule
 \end{tabular}
@@ -2312,14 +2332,13 @@ SymbolicEngineWithLLM$^\parallel$ & 27/30 & 23/30 & 17/30 \\
 mis-evaluates these (returns $e^{x}$ for one-variable formulas and fails for multi-variable ones), so the
 stored far-region values are invalid and are not used. $^\ddagger$ These methods return no formula string, so the held-out score cannot be recomputed.
 $^\S$ 2 of 30 equations (Photon energy, Bose--Einstein) have no valid far-region score and count as not passed.
-$^\ast$ 11 of the 30 PureLLM rows bypass the language model (hardcoded or least-squares-fitted formulas, see below); on the 19 \emph{live} rows, where the model was called, PureLLM passes 18/19 on both splits.
-$^\parallel$ The counts in this table are recomputed from the per-equation rows of Tables~\ref{tab:randomsplit} and~\ref{tab:pcasplit}. The noiseless table of Supplementary~B reads from a different result file (\texttt{protocol\_core\_noiseless\_20260812\_170344.json}) and shows 28/30 for SymbolicEngineWithLLM and 30/30 for PureLLM. For EnhancedHybridSystemDeFi, HybridSystemLLMNN and HybridDiscoverySystem the mean $\Rsq$ in the two sources agrees to six decimals; for SymbolicEngineWithLLM (0.999868 here, 0.999711 there) and ImprovedNN (0.999323 and 0.999222) it does not. The two files differ in exactly two pass/fail outcomes: PureLLM's Curie's law row returned no formula here ($\Rsq=0$) and passes there, and SymbolicEngineWithLLM's Arrhenius row is $0.999921$ here and $0.9999999987$ there (threshold $0.999999$; its search is not deterministic). Mean $\Rsq$ for PureLLM here includes the Curie zero. The choice of primary file is open, and neither figure supersedes the other.}
+$^\ast$ 11 of the 30 PureLLM rows bypass the language model (hardcoded or least-squares-fitted formulas, see below); on the 19 \emph{live} rows, where the model was called, PureLLM passes 18/19 on both splits.}
 \end{table}
 
 \textsc{HypatiaX} passes 21/30 (70.0\,\%) under the random split. On the PCA split its method-reported
 count is 18/30, but only 13/30 equations (43.3\,\%) pass on the held-out 60\,\%: four equations that pass in
 the reported column fail on the held-out data (Lorentz force, Coulomb force (1D), Newton's gravitational force and
-Rabi frequency), and 2 equations have no valid held-out score. SymbolicEngineWithLLM reaches 17/30 held-out. The
+Rabi frequency), and 2 equations have no valid held-out score. The
 held-out count is the extrapolation result; the reported count is closer to an in-sample fit. The neural baseline
 passes 0/30 on the random split and 3/30 by the PCA reported score. Per-equation values are in
 Tables~\ref{tab:randomsplit} and~\ref{tab:pcasplit}; the PCA table shows the reported column only.
@@ -2338,7 +2357,7 @@ comparison with the other methods (strict pass/fail, wins/losses of PureLLM over
 against \textsc{HypatiaX}, 9/1 $\rightarrow$ 6/1 on the random split and 12/1 $\rightarrow$ 7/1 on the PCA split (the removed
 wins are Nernst, Gaussian and Bose--Einstein on the random split, plus Planck and Fourier on the PCA split); against
 EnhancedHybridSystemDeFi, 7/1 $\rightarrow$ 2/1 on both splits, since five of its seven losses are on bypassed equations;
-against SymbolicEngineWithLLM, 3/1 $\rightarrow$ 2/1 (random) and 7/1 $\rightarrow$ 3/1 (PCA). The live figure is not an
+The live figure is not an
 unbiased estimate of unaided-LLM performance: according to comments in the baseline source, the bypass branches were
 added for equations on which the model had repeatedly failed, so excluding them favours PureLLM. Counting every bypassed
 equation as a failure would give 18/30, so the unaided pass count lies between 18/30 and 29/30; we have not rerun the
@@ -2466,6 +2485,8 @@ Thermodyn. & Stefan--Boltzmann law & \textbf{1.000000} & \textbf{1.000000} & \te
 Thermodyn. & Ideal gas law & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} & \textbf{1.000000} \\
 \bottomrule
 \end{longtable}}
+
+Noise robustness ($\sigma \in \{0,\,0.05,\,0.1,\,0.5,\,1\}\%$) and sample complexity ($n=50$ to $1000$, noiseless only) on the same 30 equations are reported in Supplementary~B; recovery thresholds differ between those sweeps and are stated in its table captions.
 
 % ── RF-04: Nguyen-12 Benchmark ───────────────────────────────────────────────
 \subsection{Nguyen-12 Benchmark (Standard SR Suite)}\label{subsec:nguyen12-benchmark-standard-sr-suite}
@@ -2859,7 +2880,9 @@ to generate one.  We leave this prompt-engineering intervention for future work.
 \label{sec:ood_proxy}
 
 Throughout this paper, ``out-of-distribution $\Rsq$'' refers to performance on a
-held-out \emph{test split} constructed by PCA-directed ordering, not to a
+held-out \emph{test split} constructed by the 40\,\%/60\,\% protocol of
+\S\ref{sec:split} (single-axis v3c or PCA-directed, depending on the result
+file; some released files do not record which), not to a
 symbolically verified out-of-distribution regime.  This distinction matters: a
 formula that achieves far-$\Rsq \approx 0$ on the test split may still be
 structurally wrong.  The clearest illustration is \textsc{HypatiaX} seed=42 on
@@ -2960,7 +2983,7 @@ in DeFi mathematical discovery.  On a benchmark of 74 DeFi tasks with a 40\,\%/6
   \item \textbf{No runtime speedup.} A previously reported $1.73\times$ speedup
     over the neural baseline on LLM-routed cases ($n=68$) does not reproduce
     from the raw per-task result files. Regeneration
-    of the timing table against the five 74-task seed files in the
+    of the timing table against the five 74-task v3 seed files in the
     repository (Table~\ref{tab:timing_full}, \S\ref{sec:timing}) shows the hybrid
     system is $3.8$--$11.2\times$ \emph{slower} than the neural baseline on
     every seed, never faster.
@@ -2980,10 +3003,11 @@ reduce the hybrid-wrapper overhead identified in
 \S\ref{sec:timing};
 integrating iterative LLM self-correction as an intermediate routing option between
 pure symbolic and neural fallback; and systematic evaluation across multiple LLM
-families. On the runtime question specifically, the five 74-task seed files in
+families. On the runtime question specifically, the five 74-task v3 files and the five 74-task PCA files in
 the repository are complete (\S\ref{sec:timing_data_defect}); the open
-questions are \emph{why} the hybrid wrapper adds overhead, and how the
-PCA-directed split compares, for which no 74-task run is available.
+questions are \emph{why} the hybrid wrapper adds overhead, and whether the
+PCA-directed router differs in overhead from the single-axis router, which
+the files cannot answer because the v3 files record no split variant.
 
 % =============================================================================
 \section*{Reproducibility Statement}
@@ -2994,6 +3018,8 @@ All results are generated using HypatiaX v3.0 with the following artefacts:
     results including $\Rsq$, timing, and routing decisions.
   \item \texttt{portfolio\_variance\_seed\_sweep.json}: raw per-seed results for
     the 5-seed Portfolio Variance robustness study (Section~\ref{sec:portfolio_seed_sweep}).
+  \item \texttt{portfolio\_variance\_defi\_seed\_sweep\_seed<N>.json} ($N\in\{42,99,123,777,2024\}$):
+    per-seed shard files of the separate DeFi-protocol (v3c3) Portfolio Variance sweep.
   \item Fixed random seed 42 for all neural network training.
   \item Deterministic prompting framework for LLM formula generation.
   \item Unified formula executor (single code path for all methods).
@@ -3167,7 +3193,7 @@ sync; the authoritative, complete table is
 Table~\ref{tab:timing_full} in \S\ref{sec:timing} (main text), together
 with the LLM-routed-only view in Table~\ref{tab:timing_llm_routed_full}.
 Both are the direct, unmodified output of \texttt{scripts/generate\_tables.py}
-run against the five 74-task seed files in the repository, with no hand-editing
+run against the five 74-task v3 seed files and the five 74-task PCA seed files in the repository, with no hand-editing
 of any number.
 
 Two prior claims are superseded by that analysis: a ``73\,\% runtime

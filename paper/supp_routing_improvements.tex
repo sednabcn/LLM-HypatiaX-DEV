@@ -370,8 +370,7 @@ diverged silently.
 def _eval_formula_r2(llm_code, X, y_true, var_names):
     try:
         from hypatiax.experiments.tests.hybrid_ensemble_system_defi_domain import (
-            execute_python_code_get_predictions,
-        )
+            execute_python_code_get_predictions)
         y_pred = execute_python_code_get_predictions(llm_code, X)
         if y_pred is None or np.any(np.isnan(y_pred)) or np.any(np.isinf(y_pred)):
             return float("nan"), False
@@ -566,7 +565,7 @@ retained.
   \item \textbf{[Open, superseded.]} The $1.73\times$ speedup and related
     scalability/parallelisation figures in \S\,\ref{app:complexity}
     (\emph{Empirical Timing Breakdown} onward) do not reproduce against
-    the mechanically-regenerated runtime table built from the five 74-task seed
+    the mechanically-regenerated runtime table built from the five 74-task v3 seed
     files in the repository (main paper, Section ``Runtime Analysis'', Table \texttt{tab:timing\_full}),
     which instead shows the hybrid system $3.8$--$11.2\times$ \emph{slower} than
     the neural baseline on every seed (the files do not record which split variant
@@ -737,11 +736,6 @@ test_enhanced_defi_extrapolation.py \
     --fixed-denominator 66 --nan-penalty --v2
 
 # Feynman SR — Phase 3 (§5.8, ~1h 13min on reference hardware)
-# [Corrected: previously cited run_comparative_suite_benchmark_v2.py with
-# --threshold 0.9999 and --pysr-timeout 900. That command/threshold does
-# not match the verified released source file for this run; see the
-# supplementary benchmark report's Phase-3 reproduction-command
-# correction. Regenerated to match the verified command below.]
 python hypatiax/experiments/benchmarks/\
 run_protocol_benchmark_core.py \
     --noiseless --threshold 0.999999 \
@@ -797,12 +791,7 @@ Pandas       & 2.3.3   & \\
 Matplotlib   & 3.10.7  & \\
 Seaborn      & 0.13.2  & \\
 scikit-learn & 1.7.2   & \\
-Anthropic SDK & 0.73.0 & \texttt{claude-sonnet-5}, temp~0.25 \textbf{[Corrected:
-  previously listed as \texttt{claude-sonnet-4-20250514}, temp~0.0 --
-  stale copy; \texttt{hypatia.py} hardcodes \texttt{claude-sonnet-5}/temp~0.25,
-  confirmed the value actually used, since \texttt{LLM\_MODEL} and
-  \texttt{repro.yaml}'s \texttt{llm\_model} field are dead code that
-  nothing reads. See Issue 11.]} \\
+Anthropic SDK & 0.73.0 & \texttt{claude-sonnet-5}, temp~0.25 \\
 \midrule
 PySR populations & 2 & hardware limit (2-core CPU) \\
 \bottomrule
@@ -834,9 +823,7 @@ Figure Generation (13)     & --- & 10 min \\
 \begin{itemize}
 \item All campaigns: base seed \texttt{42} (\texttt{BenchmarkProtocol.seed = 42})
 \item Per-equation offset: \texttt{seed + index $\times$ 7}
-\item LLM calls: temperature \texttt{0.25} \textbf{[Corrected: previously
-  listed as \texttt{0.0} (deterministic) for all methods -- stale copy;
-  see Issue 11]} for all methods
+\item LLM calls: temperature \texttt{0.25} for all methods
 \item Neural network (Phase~3): 3 independent seeds per equation; median $R^2$ reported
 \end{itemize}
 
@@ -955,7 +942,7 @@ Total per candidate: $\mathcal{O}(k + m)$. With $n$ candidates: $\mathcal{O}(n(k
 \textbf{[Superseded --- do not cite this subsection's absolute timings or
 speedup figures without independent reproduction.]} The profiling below
 predates the mechanical, script-driven regeneration of the runtime table
-directly from the five 74-task per-seed result files in the repository
+directly from the five 74-task per-seed v3 result files in the repository
 (main paper, Section ``Runtime Analysis'', Table \texttt{tab:timing\_full}). That regeneration
 shows the opposite pattern from what follows: the hybrid system is
 $3.8$--$11.2\times$ \emph{slower} than the neural baseline on every seed,
@@ -1016,7 +1003,6 @@ Range of per-seed means (five seeds) & 0.18--0.36 & --- \\
 \item Evolutionary search dominates (93.8\%) in pure symbolic mode
 \item LLM-guided mode routes 68 of 74 cases (92\,\%) directly to the LLM formula, bypassing full PySR search (68 of 74 is confirmed for the seed-42 file; $68$--$69$ in each of the five seed files). \textbf{[Withdrawn: a $1.73\times$ median speedup over the neural baseline on those cases, previously stated here, does not reproduce; see the main paper, Section ``Runtime Analysis''.]}
 \item Validation overhead is negligible (1.7-5.7\%)
-\item \textbf{[Correction, F-1: an extrapolation-error figure previously cited here could not be reproduced from any data source currently available for this paper and has been removed; see the main paper's regenerated Five-System Comparison tables (Section~5, ``Five-System Comparative Analysis'') for the current, verified extrapolation-error figures instead.]}
 \end{itemize}
 
 \subsection{Scalability Analysis (Superseded, Unverified)}
@@ -1050,14 +1036,7 @@ Testing scalability with varying dataset sizes:
 
 \begin{table}[H]
 \centering
-\caption{Runtime vs.\ Interpolation Performance Tradeoff. \textbf{[Correction,
-  F-1: this table previously included an ``Extrapolation Error'' column
-  whose figures could not be reproduced from any data source currently
-  available for this paper. Those figures have been removed, along with the
-  cost-per-point-reduced and $\infty$ rows that were derived from them. See
-  the main paper's regenerated Five-System Comparison tables (Section~5)
-  for the current, verified extrapolation-error figures, which do not
-  support a near-zero characterisation for the hybrid system.]}}
+\caption{Runtime vs.\ Interpolation Performance Tradeoff. }
 \label{tab:cost_accuracy_tradeoff}
 \begin{tabular}{lcc}
 \toprule
@@ -1070,28 +1049,14 @@ Pure PySR & 390.0 & 0.982 \\
 \end{tabular}
 \end{table}
 
-\paragraph{Interpretation:} \textbf{[Correction, F-1: this paragraph
-previously claimed the $41\times$ runtime increase (1.7s $\to$ 70s) sharply
-reduced mean extrapolation error, and that Pure PySR gave no additional
-benefit over Hybrid on extrapolation. Those extrapolation-error figures do
-not reproduce from any available data source and have been removed; see
-the main paper's regenerated Five-System Comparison tables (Section~5) for
-the current figures. What remains supported by this
-table is the runtime/interpolation tradeoff itself: Hybrid trades a
-$41\times$ runtime increase over the neural baseline for a modest
-interpolation $R^2$ gain (0.940 $\to$ 0.931 is actually a slight decrease
-on this particular sweep), and Pure PySR's further $5.6\times$ runtime
-increase over Hybrid yields a small interpolation $R^2$ gain (0.931 $\to$
-0.982). No extrapolation claim is made here pending resolution of the
-figures above.]}
+\paragraph{Interpretation:} This table supports only the runtime/interpolation tradeoff itself. Hybrid trades a $41\times$ runtime increase over the neural baseline for no interpolation gain ($0.940 \to 0.931$, a slight decrease on this sweep), and Pure PySR's further $5.6\times$ runtime increase over Hybrid yields a small interpolation $R^2$ gain ($0.931 \to 0.982$). No extrapolation claim is made here.
 
 \subsection{Parallelisation and Future Speedup}
 
-PySR was configured with 2 parallel populations on the experimental hardware (Intel Celeron T3100, 2-core CPU). On modern multi-core hardware (e.g.\ 16+ cores), PySR can exploit 12 or more parallel populations, yielding an estimated ${\sim}8\times$ wall-clock speedup relative to our reported runtimes. GPU parallelisation of fitness evaluation (75\% of runtime) could further reduce total runtime to ${\sim}1$--$2$ seconds per test, making the hybrid approach competitive with neural networks on speed. \textbf{[Correction, F-1: the original clause here (``while retaining near-zero extrapolation error'') has been removed; see the main paper's regenerated Five-System Comparison tables (Section~5) for the current extrapolation-error figures, which are not near-zero for the hybrid system.]}
+PySR was configured with 2 parallel populations on the experimental hardware (Intel Celeron T3100, 2-core CPU). On modern multi-core hardware (e.g.\ 16+ cores), PySR can exploit 12 or more parallel populations, yielding an estimated ${\sim}8\times$ wall-clock speedup relative to our reported runtimes. GPU parallelisation of fitness evaluation (75\% of runtime) could further reduce total runtime to ${\sim}1$--$2$ seconds per test, making the hybrid approach competitive with neural networks on speed.
 
 % ============================================================================
 % APPENDICES H & I: SUPPLEMENTARY MATERIALS AND EXTENDED DISCUSSION
-% Corrected values integrated
 % Updated: 2026-01-27
 % ============================================================================
 
@@ -1156,8 +1121,6 @@ VaR = P$\sigma$z & Finance (general) & $\sim 1 \times 10^4$ \\
 \end{tabular}
 \end{table}
 
-% [Correction: the Spearman rho = 0.89, p < 0.001 stated here is withdrawn. The occurrence figures above are estimates, the table has no per-equation
-% success column, and the claim is not reproducible from it (rho = 0.59-0.63; with n = 8, p < 0.001 would need rho >= 0.976).]
 
 \paragraph{Conceptual Complexity Comparison:}
 
