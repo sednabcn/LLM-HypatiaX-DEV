@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Regenerate exp1 ablation artifacts from the raw shards.
+
+Writes: _merged.json (15 real equations only), exp1_rf01_mannwhitney.json
+(paired far-R2 test, n=10), ablation.tex.
+Usage: python generate_ablation_table.py <shard_dir> <out_dir>
+"""
+import glob, json, math, os, sys, datetime
+import numpy as np
+from scipy import stats
+
+shard_dir, out_dir = sys.argv[1], sys.argv[2]
+os.makedirs(out_dir, exist_ok=True)
+
+# ---- load shards (raw record) -------------------------------------------
+res = {}
+for f in sorted(glob.glob(os.path.join(shard_dir, "exp1_ablation_results_shard*.json"))):
+    for k, v in json.load(open(f)).items():
+        assert v["name"] not in res, f"duplicate {v['name']}"
+        res[v["name"]] = v
+assert len(res) == 15, len(res)
+names = sorted(res)
+
+json.dump({n: res[n] for n in names},
+          open(os.path.join(out_dir, "_merged.json"), "w"), indent=2, sort_keys=True)
+
+# ---- paired far-R2 test ---------------------------------------------------
+fin = lambda x: x is not None and math.isfinite(x)
+inc, skipped = [], {}
+for n in names:
+    p = res[n]["pysr_only"]["extrap_r2_far"]; h = res[n]["hypatia"]["extrap_r2_far"]
+    if h is None:
+        skipped[n] = "Hypatia extrapolation not evaluated (null)"
+    elif not fin(h) or not fin(p):
+        skipped[n] = "non-finite far R2 (-inf)"
+    else:
+        inc.append(n)
+P = np.array([res[n]["pysr_only"]["extrap_r2_far"] for n in inc])
+H = np.array([res[n]["hypatia"]["extrap_r2_far"] for n in inc])
+d = H - P
+wil2 = stats.wilcoxon(H, P, alternative="two-sided")
+wilg = stats.wilcoxon(H, P, alternative="greater")
+Wp = float(wilg.statistic); nz = int((d != 0).sum()); Wm = nz * (nz + 1) / 2 - Wp
+r_w = (Wp - Wm) / (Wp + Wm)
+mw2 = stats.mannwhitneyu(H, P, alternative="two-sided")
+mwg = stats.mannwhitneyu(H, P, alternative="greater")
+r_mw = 2 * float(mw2.statistic) / (len(H) * len(P)) - 1
+tol = 1e-9
+hw, pw, ties = int((d > tol).sum()), int((d < -tol).sum()), int((abs(d) <= tol).sum())
+sentence = (
+    f"Across the {len(inc)} Core-15 equations with finite far-extrapolation $R^2$ for both "
+    f"conditions, HypatiaX does not differ significantly from PySR-only "
+    f"(Wilcoxon signed-rank, two-sided $p={wil2.pvalue:.2f}$, $n={len(inc)}$; "
+    f"HypatiaX better on {hw}, PySR on {pw}, {ties} ties).")
+out = {"rf01_far_r2_test": {
+    "primary_test": "wilcoxon_signed_rank_paired_two_sided",
+    "n_pairs": len(inc), "n_skipped": len(skipped),
+    "skipped_equations": skipped, "equations_included": inc,
+    "H_far_r2_vector": H.tolist(), "P_far_r2_vector": P.tolist(),
+    "wilcoxon_W": float(wil2.statistic), "wilcoxon_W_plus": Wp, "wilcoxon_W_minus": Wm,
+    "wilcoxon_n_nonzero": nz,
+    "wilcoxon_p_two_sided": float(wil2.pvalue), "wilcoxon_p_greater": float(wilg.pvalue),
+    "rank_biserial_wilcoxon": r_w,
+    "secondary_mann_whitney": {"U": float(mw2.statistic),
+        "p_two_sided": float(mw2.pvalue), "p_greater": float(mwg.pvalue),
+        "rank_biserial": r_mw},
+    "sign_convention": "H relative to P; positive = HypatiaX higher far R2",
+    "H_median_far_r2": float(np.median(H)), "P_median_far_r2": float(np.median(P)),
+    "h_wins": hw, "p_wins": pw, "ties": ties,
+    "significant_p05": bool(wil2.pvalue < 0.05),
+    "paper_sentence": sentence}}
+json.dump(out, open(os.path.join(out_dir, "exp1_rf01_mannwhitney.json"), "w"), indent=2)
+
+# ---- table ----------------------------------------------------------------
+def r2(x):
+    if x is None: return "---"
+    if x == float("-inf"): return r"$-\infty$"
+    if x < -100: return r"$\ll{-100}$"
+    return f"{x:.4f}"
+def tm(x): return f"{round(x):d}"
+keys = ["train_r2", "extrap_r2_near", "extrap_r2_medium", "extrap_r2_far"]
+rows = []
+for n in names:
+    c = [n, res[n]["pysr_only"] and ""]  # placeholder replaced below
+    cells = [n, res[n]["domain"]]
+    for k in keys:
+        cells += [r2(res[n]["pysr_only"][k]), r2(res[n]["hypatia"][k])]
+    cells += [tm(res[n]["pysr_only"]["total_time_s"]), tm(res[n]["hypatia"]["total_time_s"])]
+    mark = "" if n in inc else r"$^\dagger$"
+    cells[0] = n + mark
+    rows.append(" & ".join(cells) + r" \\")
+def mean(cond, k): return np.mean([res[n][cond][k] for n in names])
+def med(cond, k): return float(np.median([res[n][cond][k] for n in inc]))
+mean_row = (r"\multicolumn{2}{l}{\textit{Mean, all 15}} & "
+    f"{mean('pysr_only','train_r2'):.4f} & {mean('hypatia','train_r2'):.4f} & "
+    "--- & --- & --- & --- & --- & --- & "
+    f"{mean('pysr_only','total_time_s'):.0f} & {mean('hypatia','total_time_s'):.0f} \\\\")
+med_row = (rf"\multicolumn{{2}}{{l}}{{\textit{{Median, {len(inc)} paired}}}} & --- & --- & " +
+    " & ".join(f"{med(c,k):.4f}" for k in keys[1:] for c in ("pysr_only", "hypatia")) +
+    " & --- & --- \\\\")
+dag = ", ".join(f"{n} ({'Hypatia not evaluated' if 'null' in why else 'Hypatia far $R^2=-\\infty$'})"
+                for n, why in skipped.items())
+tex = rf"""% Generated by generate_ablation_table.py (from raw shards)
+% Date:   {datetime.date.today()}
+
+
+\begin{{table*}}[t]
+\centering
+\caption{{LLM Ablation: PySR Alone vs.\ HypatiaX (PySR + LLM Warm-Start) on Core~15.
+  Extrap columns show $R^2$ at near ($1.2\times$), medium (canonical),
+  and far ($5\times$) out-of-distribution ranges.}}
+\label{{tab:llm_ablation}}
+\small
+\begin{{tabular}}{{llrrrrrrrrrr}}
+\toprule
+ & & \multicolumn{{2}}{{c}}{{\textbf{{Train $R^2$}}}}
+   & \multicolumn{{2}}{{c}}{{\textbf{{Near $R^2$}}}}
+   & \multicolumn{{2}}{{c}}{{\textbf{{Med $R^2$}}}}
+   & \multicolumn{{2}}{{c}}{{\textbf{{Far $R^2$}}}}
+   & \multicolumn{{2}}{{c}}{{\textbf{{Time (s)}}}} \\
+\cmidrule(lr){{3-4}}\cmidrule(lr){{5-6}}\cmidrule(lr){{7-8}}
+\cmidrule(lr){{9-10}}\cmidrule(lr){{11-12}}
+\textbf{{Equation}} & \textbf{{Domain}}
+  & P & H & P & H & P & H & P & H & P & H \\
+\midrule
+{chr(10).join(rows)}
+\midrule
+{mean_row}
+{med_row}
+\bottomrule
+\end{{tabular}}
+\begin{{tablenotes}}
+\small
+\item P = PySR-only; H = HypatiaX (PySR + LLM warm-start).
+  Near/Med/Far $R^2$ at $1.2\times$, canonical, and $5\times$ training range.
+  Values below $-100$ are shown as $\ll{{-100}}$; --- = not evaluated.
+  Times are rounded to the nearest second.
+  Medians are over the {len(inc)} equations with finite far $R^2$ in both conditions.
+  $^\dagger$Excluded from the paired test: {dag}.
+  Wilcoxon signed-rank on far $R^2$ ({len(inc)} pairs, two-sided): $W={wil2.statistic:.0f}$,
+  $p={wil2.pvalue:.2f}$; H better on {hw}, P on {pw}, {ties} ties
+  (see \texttt{{exp1\_rf01\_mannwhitney.json}}).
+\end{{tablenotes}}
+\end{{table*}}
+"""
+open(os.path.join(out_dir, "ablation.tex"), "w").write(tex)
+print(sentence); print(json.dumps(out["rf01_far_r2_test"]["secondary_mann_whitney"]))
+print("W+",Wp,"W-",Wm,"r",r_w)
