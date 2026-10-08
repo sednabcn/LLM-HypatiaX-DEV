@@ -50,16 +50,18 @@ P0                  hypatiax_three_systems                     (no data file —
 P0                  hypatiax_algorithm1_routing_cascade_v2     (no data file — rendered from code)
 cosmetic            fig07_scatter_train_vs_extrap              exp1_ablation_results.json
 cosmetic            fig08_train_r2_bar                         exp1_ablation_results.json
-cosmetic [P0]       fig09_r2_heatmap_regimes                   tab:llm_ablation in jmlr_paper_main.tex
-                                                               (fallback: exp1_ablation_results.json)
+cosmetic [P0]       fig09_r2_heatmap_regimes                   exp1_ablation_results_shard*.json
+                                                               (fallback: tab:llm_ablation in the .tex,
+                                                                then exp1_ablation_results.json)
 cosmetic            fig10_far_extrap_head2head                 exp1_ablation_results.json
 cosmetic            fig11_speedup_bar                          exp1_ablation_results.json
 cosmetic            fig12_ridge_vs_train_r2                    exp1_ablation_results.json
 cosmetic            fig14_per_equation_r2_profile              exp1_ablation_results.json
 cosmetic            fig16_instability_vs_extrapolation         instability_extrapolation_v2.csv
 cosmetic            fig17_3d_surface_instability_complexity    instability_extrapolation_v2.csv
-cosmetic [P0]       fig18_r2_heatmap_improved                  tab:llm_ablation in jmlr_paper_main.tex
-                                                               (fallback: exp1_ablation_results.json)
+cosmetic [P0]       fig18_r2_heatmap_improved                  exp1_ablation_results_shard*.json
+                                                               (fallback: tab:llm_ablation in the .tex,
+                                                                then exp1_ablation_results.json)
 cosmetic            fig19_far_extrap_improved                  exp1_ablation_results.json
 cosmetic            fig20_wall_clock_speedup                   wall_clock_flags.json
 cosmetic            fig21_portfolio_variance_sweep             portfolio_variance_seed_sweep.json
@@ -127,12 +129,22 @@ _parser.add_argument(
 )
 _parser.add_argument(
     "--tex", default=None,
-    help="Path to jmlr_paper_main.tex. fig09_r2_heatmap_regimes and "
-         "fig18_r2_heatmap_improved are generated directly from the values printed in "
-         "tab:llm_ablation so figure and table cannot drift apart. If omitted, "
-         "jmlr_paper_main.tex is looked for in --results-dir, the CWD, this script's "
-         "directory, the repo root and cwd (also under paper/ and docs/). If it is not found "
-         "or cannot be parsed, those two figures fall back to exp1_ablation_results.json.",
+    help="Path to jmlr_paper_main.tex. Used as the fig09/fig18 data source when no raw "
+         "shards are found (see --shards-dir), and otherwise to cross-check the shards "
+         "against the values printed in tab:llm_ablation so figure and table cannot drift "
+         "apart. If omitted, jmlr_paper_main.tex is looked for in --results-dir, the CWD, "
+         "this script's directory, the repo root and cwd (also under paper/ and docs/). If "
+         "neither shards nor a parsable table are found, those two figures fall back to "
+         "exp1_ablation_results.json.",
+)
+_parser.add_argument(
+    "--shards-dir", default=None, dest="shards_dir",
+    help="Directory holding the raw exp1 ablation shards "
+         "(exp1_ablation_results_shard*.json). When shards are found, fig09_r2_heatmap_regimes "
+         "and fig18_r2_heatmap_improved are drawn from them (the same source as "
+         "tab:llm_ablation), and the values are cross-checked against the table printed in "
+         "--tex. If omitted, --results-dir, <results-dir>/ablation/exp1_ablation, the patched "
+         "dir and the CWD are searched.",
 )
 _parser.add_argument(
     "--source", default="auto",
@@ -654,19 +666,22 @@ print(f"LLM:     mean_stab={np.nanmean(llm_stab):.4f}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Table-/JSON-driven and code-drawn paper figures
-# (merged in from make_architecture_figures.py, make_heatmaps_from_table.py and
-#  make_seed_sweep_figure.py — those standalone scripts are now redundant)
+# (merged in from make_architecture_figures.py, make_heatmaps_from_table.py,
+#  generate_ablation_heatmaps.py and make_seed_sweep_figure.py — those standalone
+#  scripts are now redundant)
 #
 #   hypatiax_three_systems                     — architecture diagram (no data file)
 #   hypatiax_algorithm1_routing_cascade_v2     — Algorithm-1 routing cascade (no data file)
-#   fig09_r2_heatmap_regimes                   — parsed from tab:llm_ablation in the .tex
-#   fig18_r2_heatmap_improved                  — parsed from tab:llm_ablation in the .tex
+#   fig09_r2_heatmap_regimes                   — raw exp1 shards (cross-checked vs the .tex table)
+#   fig18_r2_heatmap_improved                  — raw exp1 shards (cross-checked vs the .tex table)
 #   fig1_seed_sweep                            — portfolio_variance_seed_sweep.json only
 #
-# The heatmaps are read straight from the values printed in the paper's table so
-# that figure and table cannot drift apart. If the .tex cannot be found/parsed,
-# the older exp1_ablation_results.json-based fig09/fig18 code further below is
-# used as a fallback.
+# Heatmap data source, in order of preference:
+#   1. the raw exp1 shards (exp1_ablation_results_shard*.json) — the same files the
+#      table in the paper is generated from; if the .tex is also available, every cell is
+#      cross-checked against tab:llm_ablation and any mismatch is reported;
+#   2. the values printed in tab:llm_ablation of the .tex;
+#   3. the older exp1_ablation_results.json-based fig09/fig18 code further below.
 #
 # All of these set their fonts through rc_context, so nothing here changes the
 # global matplotlib state seen by the other figure groups in this script.
@@ -922,6 +937,7 @@ _HM_TIER = {
     "Logistic Growth": "Med", "Michaelis-Menten": "Med", "Portfolio Std Dev": "Easy",
     "Price Impact": "Easy", "Rate Law": "Med", "Value at Risk": "Easy"}
 _HM_TCOL = {"Easy": "#1b9e5a", "Med": "#e08a00", "Hard": "#d62728"}
+_HM_SOURCE = "tab:llm_ablation"   # overwritten with the actual source before drawing
 _HM_VMIN, _HM_VMAX = -1.5, 1.0
 _HM_CMAP = plt.get_cmap("RdYlGn")
 _HM_NORM = mcolors.Normalize(_HM_VMIN, _HM_VMAX)
@@ -960,6 +976,76 @@ def _hm_load(tex):
     if unknown:
         raise ValueError(f"no difficulty tier defined for equation(s): {unknown}")
     return data
+
+
+
+_HM_KEYS = ("train_r2", "extrap_r2_near", "extrap_r2_medium", "extrap_r2_far")
+
+
+def _find_shard_files():
+    """Locate exp1_ablation_results_shard*.json (--shards-dir first, then the usual places)."""
+    dirs = []
+    if _ARGS.shards_dir:
+        dirs.append(os.path.abspath(_ARGS.shards_dir))
+    dirs += [_RESULTS_DIR,
+             os.path.join(_RESULTS_DIR, "ablation", "exp1_ablation"),
+             os.path.join(_PATCHED_DIR, "ablation", "exp1_ablation"),
+             os.getcwd()]
+    seen = set()
+    for d in dirs:
+        if d in seen:
+            continue
+        seen.add(d)
+        files = sorted(glob.glob(os.path.join(d, "exp1_ablation_results_shard*.json")))
+        if files:
+            return files
+    return []
+
+
+def _hm_load_shards(files):
+    """Merge the raw exp1 shards into the same {name: {domain, P, H}} structure that
+    _hm_load() builds from the table. None (never completed) becomes nan; +-inf is kept."""
+    def val(v):
+        return float("nan") if v is None else float(v)
+    data = {}
+    for fp in files:
+        with open(fp, encoding="utf-8") as f:
+            for rec in json.load(f).values():
+                name = rec["name"]
+                if name in data:
+                    raise ValueError(f"equation '{name}' appears in more than one shard ({fp})")
+                data[name] = dict(domain=rec["domain"],
+                                  P=[val(rec["pysr_only"][k]) for k in _HM_KEYS],
+                                  H=[val(rec["hypatia"][k]) for k in _HM_KEYS])
+    if len(data) != 15:
+        raise ValueError(f"expected 15 equations in the exp1 shards, found {len(data)}")
+    unknown = sorted(set(data) - set(_HM_TIER))
+    if unknown:
+        raise ValueError(f"no difficulty tier defined for equation(s): {unknown}")
+    return data
+
+
+def _hm_crosscheck(shard_data, table_data):
+    """Compare every shard value with the value printed in tab:llm_ablation. The table prints
+    4 decimals (1 decimal from |x|>=1000, 3-digit mantissa from |x|>=1e5), so finite values
+    must agree to max(6e-5, 1e-3 * |x|); nan and +-inf must match exactly."""
+    problems = []
+    for name in sorted(set(shard_data) | set(table_data)):
+        if name not in shard_data or name not in table_data:
+            problems.append(f"{name}: present in only one of shards/table")
+            continue
+        for key in ("P", "H"):
+            for reg, a, b in zip(("Train", "Near", "Medium", "Far"),
+                                 shard_data[name][key], table_data[name][key]):
+                if math.isnan(a) or math.isnan(b):
+                    ok = math.isnan(a) and math.isnan(b)
+                elif math.isinf(a) or math.isinf(b):
+                    ok = a == b
+                else:
+                    ok = abs(a - b) <= max(6e-5, 1e-3 * abs(b))
+                if not ok:
+                    problems.append(f"{name} [{key}, {reg}]: shards={a!r} table={b!r}")
+    return problems
 
 
 def _hm_fmt(x):
@@ -1032,7 +1118,7 @@ def _hm_fig09(data):
     fig.subplots_adjust(top=0.92, bottom=0.08, left=0.17, right=0.925, wspace=0.05)
     _savefig(fig, "fig09_r2_heatmap_regimes")
     plt.close(fig)
-    print("✓ fig09_r2_heatmap_regimes.png/.pdf  (from tab:llm_ablation)")
+    print(f"✓ fig09_r2_heatmap_regimes.png/.pdf  (from {_HM_SOURCE})")
 
 
 def _hm_group_mean(vals):
@@ -1047,7 +1133,7 @@ def _hm_fig18(data):
     doms = ["Biology", "Chemistry", "DeFi AMM", "DeFi Risk", "Physics"]; tiers = ["Easy", "Med", "Hard"]
     unexpected = sorted({d["domain"] for d in data.values()} - set(doms))
     if unexpected:
-        print(f"  [WARN] fig18: domain(s) {unexpected} in tab:llm_ablation are not in the "
+        print(f"  [WARN] fig18: domain(s) {unexpected} in the Core-15 data are not in the "
               f"fixed row list and will be omitted from the heatmap.")
     fig, axes = plt.subplots(1, 2, figsize=(12, 5.6))
     summary = {}
@@ -1070,7 +1156,7 @@ def _hm_fig18(data):
     fig.subplots_adjust(top=0.88, bottom=0.14, left=0.10, right=0.925, wspace=0.05)
     _savefig(fig, "fig18_r2_heatmap_improved")
     plt.close(fig)
-    print("✓ fig18_r2_heatmap_improved.png/.pdf  (from tab:llm_ablation)")
+    print(f"✓ fig18_r2_heatmap_improved.png/.pdf  (from {_HM_SOURCE})")
     return summary
 
 
@@ -1129,33 +1215,19 @@ def _make_fig1_seed_sweep(PYSR, HYP, SEEDS):
 # FIX PV-FIG-DATA: read portfolio_variance_seed_sweep.json instead of an embedded dict and
 # generate independently of exp1_ablation_results.json (they only need the sweep file).
 _PV_FIGS_WANTED = (_EXPERIMENT is None or _EXPERIMENT in _EXP1_ABLATION_GROUP or _EXPERIMENT == "portfolio")
-if _PV_FIGS_WANTED and (os.path.isfile(DATA_PORTFOLIO_SW) or RAW is not None):
+# The sweep JSON is the only source for these figures. There is deliberately no embedded
+# fallback copy of the numbers: the old embedded SEED_DATA was stale (PySR-only seed-2024
+# far R^2 = -12.1, against -118.448 in the JSON) and drew wrong values into paper figures.
+_pv_json = _load_json(DATA_PORTFOLIO_SW, "portfolio_variance_seed_sweep.json") if _PV_FIGS_WANTED else None
+_PV_OK = bool(_pv_json) and isinstance(_pv_json.get("pysr_only"), list) \
+         and isinstance(_pv_json.get("hypatia"), list)
+if _PV_FIGS_WANTED and not _PV_OK:
+    print(f"  [SKIP] fig21_portfolio_variance_sweep, fig_seed_sweep_comparison, fig1_seed_sweep — "
+          f"{DATA_PORTFOLIO_SW} missing or unusable (no embedded fallback data is used).")
+if _PV_FIGS_WANTED and _PV_OK:
     # ── fig21: portfolio variance seed sweep ──────────────────────────────────────
-    # Use the DATA from generate_plots.py (already in scope via the existing script content)
-    _pv_json = _load_json(DATA_PORTFOLIO_SW, "portfolio_variance_seed_sweep.json")
-    if _pv_json and isinstance(_pv_json.get("pysr_only"), list) and isinstance(_pv_json.get("hypatia"), list):
-        SEED_DATA = _pv_json
-        _PV_FROM_JSON = True
-        print(f"  [INFO] portfolio figures read from {DATA_PORTFOLIO_SW}")
-    else:
-        _PV_FROM_JSON = False
-        print("  [WARN] portfolio_variance_seed_sweep.json missing/unusable — using embedded legacy SEED_DATA")
-        SEED_DATA = {
-          "pysr_only": [
-            {"seed":42,   "train_r2":0.9095, "near_r2":-0.7811, "medium_r2":0.9268, "far_r2":-21.0040},
-            {"seed":123,  "train_r2":0.9044, "near_r2": 0.2342, "medium_r2":0.9472, "far_r2":-18.6505},
-            {"seed":777,  "train_r2":0.9564, "near_r2": 0.9999, "medium_r2":0.8005, "far_r2": -0.4378},
-            {"seed":2024, "train_r2":0.9742, "near_r2": 0.5868, "medium_r2":0.9699, "far_r2":-12.1092},
-            {"seed":99,   "train_r2":0.9668, "near_r2": 0.0715, "medium_r2":0.8659, "far_r2": -1.2264},
-          ],
-          "hypatia": [
-            {"seed":42,   "train_r2":0.9134, "near_r2": 0.9478, "medium_r2":0.8552, "far_r2": -0.0232},
-            {"seed":123,  "train_r2":0.9383, "near_r2": 0.7276, "medium_r2":0.6530, "far_r2":-18.0895},
-            {"seed":777,  "train_r2":0.9978, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
-            {"seed":2024, "train_r2":0.9977, "near_r2": 1.0000, "medium_r2":1.0000, "far_r2":  1.0000},
-            {"seed":99,   "train_r2":0.8958, "near_r2": 0.1572, "medium_r2":0.9228, "far_r2":-15.1913},
-          ],
-        }
+    SEED_DATA = _pv_json
+    print(f"  [INFO] portfolio figures read from {DATA_PORTFOLIO_SW}")
     SEEDS = [r["seed"] for r in SEED_DATA["pysr_only"]]
     PYSR  = {r["seed"]: r for r in SEED_DATA["pysr_only"]}
     HYP   = {r["seed"]: r for r in SEED_DATA["hypatia"]}
@@ -1254,22 +1326,17 @@ if _PV_FIGS_WANTED and (os.path.isfile(DATA_PORTFOLIO_SW) or RAW is not None):
 
 
     # ── fig1_seed_sweep — per-seed line chart (P0 paper figure) ───────────────────
-    # Drawn ONLY from portfolio_variance_seed_sweep.json. The embedded legacy
-    # SEED_DATA above is stale (e.g. it has PySR-only seed-2024 far R^2 = -12.1, the
-    # JSON has -118.448), so it is deliberately not used for a paper figure.
+    # Drawn only from portfolio_variance_seed_sweep.json; seeds are plotted in the row
+    # order of tab:portfolio_seed_sweep (42, 99, 123, 777, 2024).
     # See _make_fig1_seed_sweep() for how off-scale values are shown.
-    if _PV_FROM_JSON:
-        _make_fig1_seed_sweep(PYSR, HYP, SEEDS)
-    else:
-        print("  [SKIP] fig1_seed_sweep — portfolio_variance_seed_sweep.json missing/unusable; "
-              "not drawing it from the embedded legacy SEED_DATA.")
+    _make_fig1_seed_sweep(PYSR, HYP, SEEDS)
 
 
 
 
-# ── Run the code-drawn / table-driven P0 figures ──────────────────────────────
+# ── Run the code-drawn / shard-driven P0 figures ──────────────────────────────
 # Independent of exp1_ablation_results.json (RAW): the diagrams need no data and
-# the heatmaps read tab:llm_ablation from the .tex (the Core-15 ablation table).
+# the heatmaps read the raw exp1 shards (or, failing that, tab:llm_ablation from the .tex).
 # Restricted to exp1_ablation (or a legacy run with no --experiment) so that exp1 /
 # exp1b -- which also belong to _EXP1_ABLATION_GROUP -- do not each re-emit the same
 # stems into their own figures/ dirs; figures_deploy would then see 3 producers of
@@ -1281,31 +1348,58 @@ if _P0_OWNER_RUN:
     _make_architecture_figure()
     _make_cascade_figure()
 
+    _hm_data, _hm_table, _hm_shards = None, None, None
     _tex_path = _find_tex()
-    if _tex_path is None:
-        print("  [INFO] jmlr_paper_main.tex not found (use --tex) — fig09/fig18 will fall "
-              "back to exp1_ablation_results.json if it is available.")
-    else:
+    if _tex_path is not None:
         try:
-            _hm_data = _hm_load(_tex_path)
+            _hm_table = _hm_load(_tex_path)
         except Exception as _e:
-            _hm_data = None
-            print(f"  [WARN] could not parse tab:llm_ablation from {_tex_path}: {_e} — "
-                  f"fig09/fig18 fall back to exp1_ablation_results.json.")
-        if _hm_data is not None:
-            print(f"  [INFO] fig09/fig18 read from tab:llm_ablation in {_tex_path}")
-            try:
-                _hm_fig09(_hm_data); _FIG09_DONE = True
-            except Exception as _e:
-                print(f"  [WARN] fig09 from table failed ({_e}) — falling back.")
-            try:
-                _hm_summary = _hm_fig18(_hm_data); _FIG18_DONE = True
-                for _k, _lab in (("P", "PySR-only"), ("H", "HypatiaX")):
-                    print(f"  fig18 cell values ({_lab}, rows Biology..Physics; cols Easy/Med/Hard):")
-                    for _row in _hm_summary[_k]:
-                        print("    " + "  ".join("  --" if _v is None else f"{_hm_fmt(_v):>8}" for _v in _row))
-            except Exception as _e:
-                print(f"  [WARN] fig18 from table failed ({_e}) — falling back.")
+            print(f"  [WARN] could not parse tab:llm_ablation from {_tex_path}: {_e}")
+    _shard_files = _find_shard_files()
+    if _shard_files:
+        try:
+            _hm_shards = _hm_load_shards(_shard_files)
+        except Exception as _e:
+            print(f"  [WARN] could not load the exp1 shards ({len(_shard_files)} file(s) in "
+                  f"{os.path.dirname(_shard_files[0])}): {_e}")
+    if _hm_shards is not None:
+        _hm_data = _hm_shards
+        _HM_SOURCE = f"{len(_shard_files)} raw exp1 shard(s) in {os.path.dirname(_shard_files[0])}"
+        print(f"  [INFO] fig09/fig18 read from {_HM_SOURCE}")
+        if _hm_table is not None:
+            _bad = _hm_crosscheck(_hm_shards, _hm_table)
+            if _bad:
+                print(f"  [WARN] {len(_bad)} value(s) in tab:llm_ablation ({_tex_path}) differ "
+                      f"from the shards — the table is NOT generated from these files. "
+                      f"Figures follow the shards; regenerate the table. First mismatches:")
+                for _m in _bad[:15]:
+                    print("    " + _m)
+            else:
+                print(f"  [INFO] fig09/fig18 data agree with tab:llm_ablation in {_tex_path} "
+                      f"(all 120 cells).")
+        else:
+            print("  [INFO] jmlr_paper_main.tex not found/parsable — shards not cross-checked "
+                  "against the printed table.")
+    elif _hm_table is not None:
+        _hm_data = _hm_table
+        _HM_SOURCE = f"tab:llm_ablation in {_tex_path}"
+        print(f"  [INFO] no exp1 shards found — fig09/fig18 read from {_HM_SOURCE}")
+    else:
+        print("  [INFO] neither exp1 shards nor jmlr_paper_main.tex (use --shards-dir / --tex) "
+              "available — fig09/fig18 fall back to exp1_ablation_results.json if present.")
+    if _hm_data is not None:
+        try:
+            _hm_fig09(_hm_data); _FIG09_DONE = True
+        except Exception as _e:
+            print(f"  [WARN] fig09 failed ({_e}) — falling back.")
+        try:
+            _hm_summary = _hm_fig18(_hm_data); _FIG18_DONE = True
+            for _k, _lab in (("P", "PySR-only"), ("H", "HypatiaX")):
+                print(f"  fig18 cell values ({_lab}, rows Biology..Physics; cols Easy/Med/Hard):")
+                for _row in _hm_summary[_k]:
+                    print("    " + "  ".join("  --" if _v is None else f"{_hm_fmt(_v):>8}" for _v in _row))
+        except Exception as _e:
+            print(f"  [WARN] fig18 failed ({_e}) — falling back.")
 
 if RAW is not None:
     # ══════════════════════════════════════════════════════════════════════════════
@@ -1368,7 +1462,7 @@ if RAW is not None:
     print("✓ fig08_train_r2_bar.png/.pdf")
 
 
-    # Fallback only: used when the table-driven version (see _hm_fig09 above)
+    # Fallback only: used when the shard/table-driven version (see _hm_fig09 above)
     # could not be produced because jmlr_paper_main.tex was not found/parsed.
     if not _FIG09_DONE:
         # ── fig09: r2 heatmap across regimes ─────────────────────────────────────────
@@ -1591,7 +1685,7 @@ if RAW is not None:
     print("✓ fig17_3d_surface_instability_complexity.png/.pdf")
 
 
-    # Fallback only: used when the table-driven version (see _hm_fig18 above)
+    # Fallback only: used when the shard/table-driven version (see _hm_fig18 above)
     # could not be produced because jmlr_paper_main.tex was not found/parsed.
     if not _FIG18_DONE:
         # ── fig18: r2 heatmap improved (formula_type × difficulty) ───────────────────
