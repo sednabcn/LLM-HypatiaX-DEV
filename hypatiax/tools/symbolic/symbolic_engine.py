@@ -868,6 +868,23 @@ class SymbolicEngine:
             random_state: Random seed for reproducibility
             auto_sanitize: Automatically fix variable name conflicts
 
+        Keyword Args:
+            extra_unary_operators / extra_binary_operators: Optional lists of
+                operator names to union into the search's operator set on top
+                of everything else this method already injects (domain/data
+                heuristics, transcendental compositions, etc.). Consumed here
+                and never forwarded to PySRRegressor itself. Used by
+                SymbolicEngineWithLLM's "seed"/"hybrid" modes to let an LLM
+                candidate's operators bias the search.
+            seed_expressions: Optional list of candidate expression string(s)
+                (in terms of the sanitized variable names) to attempt a true
+                PySR warm-start with, via `guesses=`. Only takes effect if the
+                installed PySRRegressor actually exposes a `guesses` param —
+                probed at runtime, not assumed. If it's absent, or present but
+                rejects the value at construction time, this silently falls
+                back to the extra_unary/extra_binary_operators biasing above
+                instead of crashing the run.
+
         Returns:
             Dictionary with discovery results
         """
@@ -1131,6 +1148,57 @@ class SymbolicEngine:
             else:
                 _trace.append("explog=skipped")
 
+            # ── LLM-suggested operator injection ──────────────────────────────
+            # SymbolicEngineWithLLM's "seed"/"hybrid" modes pass these two
+            # kwargs to bias the search toward operators consistent with the
+            # LLM's candidate equation. They are popped out of `kwargs` here
+            # (never forwarded to PySRRegressor itself) and unioned into the
+            # operator lists already assembled above.
+            #
+            # NOTE: this is deliberately NOT an attempt to "warm start" PySR
+            # with the LLM's literal expression. No such kwarg exists —
+            # PySRRegressor.__init__ has no guesses=/initial_expressions=
+            # parameter in the installed pysr version, and unlike a plain
+            # **kwargs sink it does NOT silently ignore unknown keywords: it
+            # raises TypeError for anything not in its signature or its small
+            # deprecated-alias list (verified against the installed package).
+            # unary_operators/binary_operators, by contrast, are real
+            # PySRRegressor.__init__ parameters, so unioning into them is a
+            # genuine (if weaker) way for the LLM's guess to influence the
+            # search rather than being computed and thrown away.
+            _extra_unary = kwargs.pop("extra_unary_operators", None) or []
+            _extra_binary = kwargs.pop("extra_binary_operators", None) or []
+            # ── Optional true warm-start: seed_expressions ─────────────────────
+            # As of the installed pysr version, PySRRegressor.__init__ has NO
+            # working guesses=/initial_expressions= parameter — it's referenced
+            # in some PySR docs/branches but raises TypeError in the pip release
+            # actually installed here (confirmed: MilesCranmer/PySR issue #1057,
+            # "guesses parameter missing in PySRRegressor", still open as of
+            # 1.5.9/1.5.10). So this is NOT assumed to work — it's probed for
+            # at runtime (same pattern as the temp_equation_file/equation_file
+            # and define_operators probes elsewhere in this method) a few lines
+            # below, right before PySRRegressor is constructed, and used only if
+            # actually present in the installed signature. If it's absent (as
+            # today) or the probe is wrong and construction still fails, this
+            # falls back to the extra_unary/extra_binary_operators biasing below
+            # rather than crashing the run — see the try/except around
+            # PySRRegressor(**pysr_kwargs).
+            _seed_expressions = kwargs.pop("seed_expressions", None) or []
+            merged_binary_operators = list(self.config.binary_operators)
+            if _extra_unary or _extra_binary:
+                _added_unary = [op for op in _extra_unary if op not in active_unary]
+                active_unary.extend(_added_unary)
+                _added_binary = [op for op in _extra_binary if op not in merged_binary_operators]
+                merged_binary_operators.extend(_added_binary)
+                if _added_unary or _added_binary:
+                    print(
+                        f"   [LLM-OPS] injected unary={_added_unary} "
+                        f"binary={_added_binary}",
+                        flush=True,
+                    )
+                _trace.append(f"llm_extra_unary={_added_unary}")
+                _trace.append(f"llm_extra_binary={_added_binary}")
+
             # ── Unique per-run equation file ─────────────────────────────────
             # PySR persists its Pareto front to a CSV file (hall_of_fame_*.csv)
             # and reloads it on the next run if the file is still present.
@@ -1168,7 +1236,7 @@ class SymbolicEngine:
                 niterations=int(os.environ.get("N_ITERATIONS", self.config.niterations)),
                 populations=int(os.environ.get("POPULATIONS", self.config.populations)),
                 population_size=self.config.population_size,
-                binary_operators=self.config.binary_operators,
+                binary_operators=merged_binary_operators,
                 unary_operators=active_unary,
                 constraints=self.config.constraints,
                 parsimony=self.config.parsimony,
@@ -1300,6 +1368,38 @@ class SymbolicEngine:
                         _new_unary.append(_body_map.get(_op, _op))
                     pysr_kwargs["unary_operators"] = _new_unary
 
+            # ── seed_expressions → guesses (probed, best-effort) ───────────────
+            # If the caller (SymbolicEngineWithLLM's seed/hybrid modes) supplied
+            # candidate expression(s) and the installed PySRRegressor actually
+            # exposes a `guesses` parameter, wire it through for a real
+            # population warm-start instead of only operator-biasing. This is
+            # opportunistic: the exact accepted format for `guesses` isn't
+            # documented for a working release at the time this was written
+            # (see note above — issue #1057), so failure to construct with it
+            # is handled below by retrying once without it, rather than
+            # aborting the whole discover() call.
+            _guesses_requested = False
+            if _seed_expressions:
+                import inspect as _inspect_guess
+                _pysr_guess_params = set(
+                    _inspect_guess.signature(PySRRegressor.__init__).parameters
+                )
+                if "guesses" in _pysr_guess_params:
+                    pysr_kwargs["guesses"] = list(_seed_expressions)
+                    _guesses_requested = True
+                    print(
+                        f"   [PySR] guesses param available — seeding with "
+                        f"{_seed_expressions!r}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "   [PySR] guesses param not available in this pysr "
+                        "version — falling back to operator biasing only",
+                        flush=True,
+                    )
+                    _trace.append("guesses=unavailable")
+
             pysr_kwargs.update(kwargs)
 
             # Diagnostic: log the final PySR kwargs so misconfigurations are
@@ -1327,7 +1427,24 @@ class SymbolicEngine:
                 print(_init_tb, flush=True)
                 print(f"   [PySR] PySRRegressor.__init__ FAILED: {_init_exc}", file=_sys2.stderr, flush=True)
                 print(_init_tb, file=_sys2.stderr, flush=True)
-                raise
+                # `guesses` was opportunistic (see probe above) — if it's what
+                # broke construction (wrong format, wrong version, etc.), drop
+                # it and retry once rather than losing the whole PySR run over
+                # a best-effort warm-start attempt. Any other failure re-raises
+                # as before.
+                if _guesses_requested and "guesses" in pysr_kwargs:
+                    print(
+                        "   [PySR] retrying construction without `guesses` "
+                        "(operator-biasing from extra_unary/binary_operators "
+                        "is still in effect)",
+                        flush=True,
+                    )
+                    _trace.append("guesses=construction_failed_retrying_without")
+                    pysr_kwargs.pop("guesses", None)
+                    self.model = PySRRegressor(**pysr_kwargs)
+                    print("   [PySR] PySRRegressor constructed OK (without guesses)", flush=True)
+                else:
+                    raise
 
             # ── y-scale normalization ──────────────────────────────────────────
             # PySR's internal constant optimizer (BFGS in Julia) initializes
@@ -1911,7 +2028,16 @@ class SymbolicEngineWithLLM(SymbolicEngine):
     def _discover_with_llm_seed(
         self, X, y, variable_names, equation_name, random_state, auto_sanitize, **kwargs
     ) -> dict:
-        """Use LLM to configure PySR operators."""
+        """Use LLM to configure PySR operators.
+
+        The LLM's top hypothesis is parsed for the operators it uses (e.g.
+        exp, sin, /) via _extract_operators_from_equation(), and those are
+        threaded into super().discover() via the extra_unary_operators/
+        extra_binary_operators hook, which unions them into PySR's operator
+        set for the run. Previously llm_config was computed and printed but
+        never passed anywhere, so this mode had zero effect on PySR beyond
+        what pure PySR would have done on its own.
+        """
         print("\n[LLM SEED MODE] Using LLM to configure PySR...")
 
         # Validate variable names first
@@ -1931,6 +2057,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             caller_id=f"{self.__class__.__name__}:seed",
         )
 
+        llm_config = None
         if hypotheses:
             print(f"   ✓ LLM generated {len(hypotheses)} hypotheses")
 
@@ -1939,6 +2066,15 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             llm_config = self._extract_operators_from_equation(best_hyp.equation)
 
             print(f"   → LLM suggests operators: {llm_config}")
+
+            # Actually wire these into PySR (previously computed and dropped).
+            kwargs.setdefault("extra_unary_operators", llm_config["unary_operators"])
+            kwargs.setdefault("extra_binary_operators", llm_config["binary_operators"])
+            # Also attempt a true warm-start with the LLM's own expression —
+            # only takes effect if the installed pysr exposes `guesses` (see
+            # base discover()'s probe); otherwise the operator-biasing above
+            # is what actually does the work.
+            kwargs.setdefault("seed_expressions", [best_hyp.equation])
 
         # Run PySR with LLM-informed config
         result = super().discover(
@@ -1951,7 +2087,8 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             **kwargs,
         )
         result["llm_mode"] = "seed"
-        result["llm_hypotheses"] = [h.equation for h in hypotheses]
+        result["llm_hypotheses"] = [h.equation for h in hypotheses] if hypotheses else []
+        result["llm_suggested_operators"] = llm_config
 
         return result
 
@@ -2022,6 +2159,7 @@ class SymbolicEngineWithLLM(SymbolicEngine):
 
         # Discard LLM prior if it is too weak to be a useful seed for PySR
         _use_llm_seed = True
+        _llm_extra_ops = None
         if best_hyp.r2_score is None or best_hyp.r2_score < 0.5:
             print(
                 f"   ⚠ LLM R²={best_hyp.r2_score:.3f} < 0.5 — discarding LLM prior, "
@@ -2029,6 +2167,27 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 flush=True,
             )
             _use_llm_seed = False
+        else:
+            # Actually use the prior: bias PySR's operator set toward the
+            # LLM candidate's operators (see base discover()'s
+            # extra_unary_operators/extra_binary_operators hook), so Phase 2
+            # is a real refinement instead of an independent cold PySR run
+            # that happens to get compared against the LLM's answer at the
+            # end. Previously _use_llm_seed was computed and never read
+            # again — this branch is the actual fix.
+            _llm_extra_ops = self._extract_operators_from_equation(best_hyp.equation)
+            kwargs.setdefault("extra_unary_operators", _llm_extra_ops["unary_operators"])
+            kwargs.setdefault("extra_binary_operators", _llm_extra_ops["binary_operators"])
+            # True warm-start attempt (only takes effect if the installed
+            # pysr exposes `guesses` — see base discover()'s probe). This is
+            # exactly the case _use_llm_seed=True exists to gate: a weak LLM
+            # guess (R²<0.5) never reaches here, so a bad expression can't be
+            # planted into PySR's initial population.
+            kwargs.setdefault("seed_expressions", [best_hyp.equation])
+            print(
+                f"   → Seeding PySR operator set from LLM candidate: {_llm_extra_ops}",
+                flush=True,
+            )
 
         # Phase 2: PySR Refinement
         print("   → Refining with PySR...")
@@ -2056,6 +2215,8 @@ class SymbolicEngineWithLLM(SymbolicEngine):
             result["llm_hypotheses"] = [h.equation for h in hypotheses]
             result["llm_time"] = llm_time
             result["pysr_time"] = pysr_time
+            result["llm_seed_used"] = _use_llm_seed
+            result["llm_suggested_operators"] = _llm_extra_ops
         else:
             print("   ✅ LLM solution was better")
             result = {
@@ -2073,6 +2234,8 @@ class SymbolicEngineWithLLM(SymbolicEngine):
                 "pysr_time": pysr_time,
                 "validation": {"valid": True, "errors": [], "warnings": []},
                 "llm_hypotheses": [h.equation for h in hypotheses],
+                "llm_seed_used": _use_llm_seed,
+                "llm_suggested_operators": _llm_extra_ops,
             }
 
         return result

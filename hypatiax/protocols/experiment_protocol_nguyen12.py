@@ -15,8 +15,8 @@ The Nguyen-12 suite consists of 12 equations spanning:
   * Bivariate expressions    (N9–N12)
 
 Experiment 3 results (exp3_nguyen12_hybrid50v.json):
-  * HypatiaX strict recovery : 11/12 (91.7%)
-  * PySR-only strict recovery : 10/12 (83.3%)
+  * HypatiaX recovery (4-decimal convention, tab:nguyen12) : 7/12 (58.3%)
+  * PySR-only recovery (4-decimal convention, tab:nguyen12) : 8/12 (66.7%)
   * MW H > P  : U=51.0, p=0.893 (n.s.)
   * MW P > NN : U=113.0, p=0.0097 (significant)
 
@@ -780,8 +780,8 @@ class NguYenProtocol:
                 f"{row['P_train']:>9.7f} {row['P_extrap']:>12.4g} {row['NN_extrap']:>12.4g}"
             )
         print()
-        print("  H strict recovery  : 11/12 (91.7%)")
-        print("  P strict recovery  : 10/12 (83.3%)")
+        print("  H recovery (4-decimal, tab:nguyen12) : 7/12 (58.3%)")
+        print("  P recovery (4-decimal, tab:nguyen12) : 8/12 (66.7%)")
         print("  MW H > P  : U=51.0, p=0.893 (n.s.)")
         print("  MW P > NN : U=113.0, p=0.0097 (sig.)")
         print()
@@ -918,9 +918,9 @@ if __name__ == "__main__":
     print(f"\n  Total equations : {total_cases}")
     print(f"  ⭐ = extrapolation test,  [+] = positive domain only")
     print()
-    print("  Published recovery (strict R²≥0.9999, hybrid50v run):")
-    print("    HypatiaX  : 11/12  (91.7%)")
-    print("    PySR-only : 10/12  (83.3%)")
+    print("  Published recovery (4-decimal convention, tab:nguyen12, hybrid50v run):")
+    print("    HypatiaX  : 7/12  (58.3%)")
+    print("    PySR-only : 8/12  (66.7%)")
     print("    MW H>P    : U=51.0, p=0.893  (n.s.)")
     print("    MW P>NN   : U=113.0, p=0.0097  (sig.)")
     print()

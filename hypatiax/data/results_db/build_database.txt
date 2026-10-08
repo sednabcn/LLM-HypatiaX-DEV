@@ -1,0 +1,66 @@
+﻿Build a RELATIONAL DATABASE with the experiments ID/results/ relevant items of each  json
+
+
+I built the SQLite database, but it holds no actual results or JSON contents yet. What you uploaded were two directory listings (tree_results.txt, tree_repro.txt) and run_all.sh, so I had only file names and the pipeline script. The tables for the JSON contents are built and empty until you run the loader on the real files.
+What is filled in:
+    • Experiments: all 37 steps of run_all.sh, with step order, paper references (Tab/Fig/§), the scripts each step calls, and the flags and environment values it sets. Twenty of them write results. fixn3_item_ii and issue2b_experiment exist in the results tree but have no step in run_all.sh, so I added them with a note.
+    • File inventory: all 432 result files (410 JSON), each tied to an experiment. The metadata is read from the path and file name: kind (checkpoint, protocol run, rescued shard and so on), seed, shard, temperature, run number, timestamp, Feynman domain, split protocol, and whether it is rescued, partial or a saved copy.
+    • Views: a per-experiment summary, seed coverage, and each rescued shard matched to its original (all 60 matched).
+What is empty:
+    • JSON contents: the tables for per-record metrics (R², RMSE, success, time) and for every raw JSON value.
+    • To fill them: run python3 ingest_json.py hypatiax_experiments.db <path to hypatiax/data/results> on your machine. I tested it only on one made-up JSON file, not your real ones. Which fields count as a metric is guessed from field names like r2, rmse and success, so check that against your real files.
+    • Your call: if you upload the JSONs, or a few representative ones, I can load them and give you proper typed tables.
+Things to check in the data:
+    • Two experiment mappings are guesses, marked in a mapping_basis column: extrapolation_sparse_seed_off and extrapolation-sparse_seeds_fallback are treated as variants of exp3, and comparison_results/benchmark_results.json is assigned to exp2_feynman_extrap.
+    • Seed 77 and 777 both appear in defi_pca. The multi-seeds folder has files for both. Only 777 fits the other experiments, so 77 may be a typo or a stray file.
+    • Seeds are uneven across the DeFi runs. The noiseless/defi run has only seed 42, and the PCA variants cover different seed sets from the non-PCA ones.
+Files are in /mnt/user-data/outputs/:
+    • hypatiax_experiments.db
+    • schema.sql
+    • build_db.py
+    • ingest_json.py
+    • README.md
+
+
+
+Status: the database is loaded and the duplicate analysis is done. Next I'm spot-checking the typed tables against the raw JSON and pulling out the inconsistencies.
+
+The database is built and loaded with the real JSON contents; it's the .db file in the cards, with the scripts that rebuild it.
+Your zip matched checksums.txt byte for byte (0 mismatches). It holds 385 of the 410 JSONs, and I parsed 258 unique files. Spot checks of row counts against the raw JSON passed in all 18 cases I tried, and one DeFi test R² matched exactly.
+What's in it
+    • Pipeline and inventory: 40 experiments from run_all.sh, plus all 432 files with their checksums, duplicate links and parsed seed, shard, temperature and timestamp.
+    • DeFi benchmark: 5,829 rows of case, system (pure LLM, neural net, hybrid) and R², success and time.
+    • Feynman runs: 3,810 rows of test, method and R², RMSE, time and formula.
+    • Nguyen-12: 960 per-equation results, run configs and summaries, and 64,616 PySR search-trajectory steps.
+    • Other result tables:
+        ◦ Ablation: 105 rows, plus wall-clock flags and instability indices.
+        ◦ Sweeps: noise sweep and sample complexity.
+        ◦ Portfolio variance: seed results.
+        ◦ Audit: the contradiction-audit findings.
+    • Everything else: every raw value of every parsed JSON (about 204,000), for formats without a typed table.
+    • Views and examples: summary views, and queries.sql with example queries (all of them run).
+What I found while loading
+    • Duplicates: 152 of the 410 JSONs are byte-identical copies. All 25 files in extrapolation_sparse_seed_off are copies of extrapolation/. 41 of the fixc3_baseline* files and 33 of the checkpoint stubs are one identical file each.
+    • The fallback folder differs: extrapolation-sparse_seeds_fallback is not a copy. Its seed-42 run recovers 12/12 equations for HypatiaX, against 10/12 in extrapolation.
+    • Temperature runs: the fixn3 temp 0 and temp 0.25 runs are not identical, even though their sizes are almost equal. Every one of the ten runs recovers 12/12.
+    • Partial files: none of the 25 _partial files is identical to its final file.
+    • Duplicate case names: the DeFi cases include Collateral Ratio and Collateral ratio, and Reserve Ratio and Reserve ratio, as separate entries.
+    • v3c2 header: hypatiax_defi_benchmark_v3c2_results.json says "Benchmark v4.0" inside, not v3c2.
+    • v3c3 files: they hold 84 cases, not 74, under a single pure_llm key that also carries decision fields.
+    • fixc3 baseline: its single parsed record says 74/90 passing (82%), next to a paper_claim of "9/30 = 0.300". I don't know whether those are meant to be the same quantity.
+    • Seeds 77 and 777: both exist in the PCA DeFi runs and have different contents. So seed77 is a real separate run, not a renamed copy. Your run_all.sh has no 77, so I can't tell where it came from.
+Limits
+    • Six files in exp1_ablation are .json files that actually contain logs or CSV text. I flagged them but didn't parse them.
+    • About 20 other JSONs (provenance maps, hybrid outputs, paper numbers and similar) have no typed table. Their values are in the raw-values table only.
+    • CSV files are listed in the inventory but not loaded.
+    • Where a file's experiment was a guess from its name (the two sparse-seed folders and benchmark_results.json), the mapping_basis column says so.
+Files are in /mnt/user-data/outputs/:
+    • hypatiax_experiments.db
+    • README.md
+    • queries.sql
+    • schema.sql
+    • ingest_json.py
+    • build_db.py
+
+
+

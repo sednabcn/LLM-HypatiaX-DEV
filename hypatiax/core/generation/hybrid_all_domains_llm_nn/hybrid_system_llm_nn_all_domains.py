@@ -12,6 +12,7 @@ CI integration fix (instability experiment):
     actually take effect; previously the env vars were set but silently ignored.
 """
 
+import hashlib
 import inspect
 import json
 import os
@@ -87,6 +88,31 @@ def _resolve_domains_from_env() -> list[str] | None:
                 print(f"ℹ️  Domain list sourced from env var {var}: {domains}")
                 return domains
     return None
+
+
+def _create_message_deterministic(client, **kwargs):
+    """Call client.messages.create(), preferring temperature=0.0 for
+    reproducibility (see FIX-ISSUE2B-LLM-TEMPERATURE below), but tolerate
+    newer models that no longer accept the parameter at all.
+
+    FIX-TEMPERATURE-DEPRECATED: mirrors the identical helper in
+    baseline_pure_llm_defi_discovery.py. Anthropic deprecated the
+    temperature/top_p/top_k sampling parameters for models released after
+    Claude Opus 4.6 (Sonnet 4.6+, Opus 4.7+ — exactly this codebase's
+    default model), and these newer models reject the request outright
+    with a 400 "`temperature` is deprecated for this model." error rather
+    than ignoring the field, as observed failing the CI benchmark run.
+    Tries temperature=0.0 first and retries once without it only on that
+    specific deprecation error, so determinism is preserved wherever the
+    model still supports it.
+    """
+    try:
+        return client.messages.create(temperature=0.0, **kwargs)
+    except Exception as e:
+        msg = str(e)
+        if "temperature" in msg.lower() and "deprecated" in msg.lower():
+            return client.messages.create(**kwargs)
+        raise
 
 
 class HybridSystemAllDomains:
@@ -172,7 +198,16 @@ class HybridSystemAllDomains:
         prompt = self._generate_prompt(description, domain, variable_names, metadata)
 
         try:
-            response = self.client.messages.create(
+            # FIX-ISSUE2B-LLM-TEMPERATURE: same fix as PureLLMBaseline's
+            # call site (baseline_pure_llm_defi_discovery.py) -- this local
+            # fallback previously had no temperature argument, defaulting to
+            # the API's non-zero default. Currently dormant in the Item 2b
+            # test set (the PureLLMBaseline delegate above succeeds for all
+            # 30 equations), but would silently reintroduce run-to-run
+            # sampling variance the moment that delegate fails for any
+            # equation and control falls through to here.
+            response = _create_message_deterministic(
+                self.client,
                 model=self.model,
                 max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
@@ -215,9 +250,15 @@ class HybridSystemAllDomains:
             for k, v in metadata["constants"].items():
                 constants_info += f"\n  • {k} = {v}"
 
+        # FIX GT-LEAK (2026-08-10): removed "Expected form: {ground_truth}"
+        # hint. This handed the fallback path's LLM call the answer before
+        # asking it to derive the formula — same bug class as the leak fixed
+        # in hypatiax_defi_benchmark_v3c.py's _generate_llm_formula (Fix 14).
+        # This path only fires when the PureLLMBaseline delegate above fails
+        # or returns empty/N/A (see generate_llm_formula docstring), so the
+        # leak activated disproportionately on the HARDEST cases — exactly
+        # where a ground-truth hint would inflate scores the most.
         hint_info = ""
-        if metadata and "ground_truth" in metadata:
-            hint_info = f"\nExpected form: {metadata['ground_truth']}"
 
         return f"""[HYBRID-SYSTEM: LLM+NN symbolic discovery — independent from pure-LLM baseline]
 You are a mathematical formula expert specialising in {domain}.
@@ -279,7 +320,7 @@ NO markdown code blocks, individual parameters NOT dict."""
         return parsed
 
     def train_nn(
-        self, X: np.ndarray, y: np.ndarray, epochs: int = 1000
+        self, X: np.ndarray, y: np.ndarray, epochs: int = 1000, seed: int | None = None
     ) -> tuple[nn.Module, dict]:
         """Train neural network with improved architecture.
 
@@ -294,8 +335,20 @@ NO markdown code blocks, individual parameters NOT dict."""
         - Zero dropout — 160 training samples cannot afford activation dropout.
         - Log-transform of y for wide-range positive targets.
         - Save scalers as instance attrs so _get_nn_predictions can reuse them.
+
+        FIX-ISSUE2B-UNSEEDED-NN: `seed`, when given, seeds torch's global RNG
+        right before _make_model() so weight init is reproducible across
+        separate process invocations of the same equation (previously
+        unseeded, unlike this file's other NN-touching code paths). Not
+        currently exposed by the Item 2b test set -- for these equations
+        decision="llm" wins and this NN's output never reaches the final
+        r2 -- but a latent gap for any equation where the NN path is
+        chosen instead.
         """
         from sklearn.preprocessing import StandardScaler
+
+        if seed is not None:
+            torch.manual_seed(seed)
 
         if len(X) < 10:
             return None, {
@@ -305,6 +358,29 @@ NO markdown code blocks, individual parameters NOT dict."""
                 "error": "Insufficient data",
             }
 
+        # FIX (crash-to-failure-dict): the rest of the method is wrapped in
+        # try/except so a training blow-up (NaN from log-transform on a
+        # non-positive value, a singular matrix in StandardScaler, a bad
+        # architecture choice, non-finite predictions, etc.) degrades to a
+        # failure metrics dict in the same shape as the insufficient-data
+        # early-return above, instead of an uncaught crash taking down the
+        # whole hybrid run — matching evaluate_llm_formula()'s existing
+        # graceful-failure contract in this same class.
+        try:
+            return self._train_nn_inner(X, y, epochs, seed)
+        except Exception as e:
+            return None, {
+                "r2": 0.0,
+                "rmse": float("inf"),
+                "mae": float("inf"),
+                "error": f"{type(e).__name__}: {e}",
+            }
+
+    def _train_nn_inner(
+        self, X: np.ndarray, y: np.ndarray, epochs: int, seed: int | None
+    ) -> tuple[nn.Module, dict]:
+        """Actual training body of train_nn(), split out so train_nn() can
+        wrap it in a single try/except (see FIX comment above)."""
         # 80/20 split for early stopping only; final metrics on full dataset
         from sklearn.model_selection import train_test_split as _tts
         X_train, X_val, y_train, y_val = _tts(X, y, test_size=0.2, random_state=42)
@@ -412,6 +488,9 @@ NO markdown code blocks, individual parameters NOT dict."""
 
         y_pred_w = scaler_y.inverse_transform(y_pred_s.reshape(-1, 1)).flatten()
         y_pred   = np.exp(y_pred_w) if use_logy else y_pred_w
+
+        if not np.all(np.isfinite(y_pred)):
+            raise ValueError("Non-finite predictions after inverse-transform")
 
         ss_res = np.sum((y - y_pred) ** 2)
         ss_tot = np.sum((y - np.mean(y)) ** 2)
@@ -532,6 +611,7 @@ NO markdown code blocks, individual parameters NOT dict."""
         if n_params != n_features and var_names:
             try:
                 col_map = {}
+                unmatched = set()
                 for p in param_names:
                     # Exact match first, then case-insensitive substring match
                     matched = None
@@ -545,14 +625,33 @@ NO markdown code blocks, individual parameters NOT dict."""
                                 matched = j
                                 break
                     if matched is None:
-                        # Fall back to positional for unmatched params
-                        pidx = param_names.index(p)
-                        matched = pidx if pidx < n_features else 0
+                        # FIX-SIGNATURE-MATCHING: previously fell back to
+                        # `pidx if pidx < n_features else 0`, which for a
+                        # genuinely unmatched extra param (e.g. an implicit
+                        # "t" in def formula(N, t) when var_names=["N"])
+                        # silently reused *column 0's real data* — feeding
+                        # N's values into the t slot. If the formula
+                        # actually uses that extra param, this produces a
+                        # wrong-but-plausible-looking prediction rather than
+                        # an error. A neutral 0.0 placeholder is used
+                        # instead (see `unmatched`, applied below), so an
+                        # unmatched param either has no effect (safe) or
+                        # produces an obviously-off prediction rather than
+                        # a value quietly corrupted by an unrelated
+                        # variable's data.
+                        unmatched.add(p)
+                        continue
                     col_map[p] = matched
 
-                kwargs = {p: X[:, col_map[p]] for p in param_names}
-                y = func(**kwargs)
-                return np.asarray(y).flatten()
+                # Require every real variable to be matched to some param —
+                # only the *extra* (unmatched) params get the placeholder.
+                if len(set(col_map.values())) == n_features:
+                    kwargs = {
+                        p: (X[:, col_map[p]] if p in col_map else np.zeros(X.shape[0]))
+                        for p in param_names
+                    }
+                    y = func(**kwargs)
+                    return np.asarray(y).flatten()
             except Exception:
                 pass
 
@@ -703,7 +802,13 @@ NO markdown code blocks, individual parameters NOT dict."""
         if verbose:
             print("  [HYBRID] Training NN...")
 
-        nn_model, nn_metrics = self.train_nn(X, y_true, epochs=1000)
+        # FIX-ISSUE2B-UNSEEDED-NN: same sha256(description)-derived-seed
+        # pattern used elsewhere in this pipeline (PureLLMBaseline's
+        # EnhancedHybridSystemDeFi counterpart, the harness's own
+        # _nn_residual_fit) so this NN's weight init is reproducible
+        # across separate process runs of the same equation.
+        _nn_seed = int(hashlib.sha256(description.encode()).hexdigest(), 16) % (2**31)
+        nn_model, nn_metrics = self.train_nn(X, y_true, epochs=1000, seed=_nn_seed)
 
         if verbose:
             print(f"  [HYBRID] NN R²: {nn_metrics['r2']:.4f}")

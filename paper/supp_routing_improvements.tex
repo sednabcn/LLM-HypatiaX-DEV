@@ -72,10 +72,9 @@
 \maketitle
 
 \begin{quote}\small
-\textbf{Note.} A consolidated list of every unconfirmed, withdrawn, or
-stale claim identified across this file and its companion documents is
-maintained separately in \texttt{unconfirmed\_paper\_claims.tex}. Consult
-it before citing any figure flagged in this document.
+\textbf{Note.} Figures in this document that could not be reproduced from released
+result files have been removed. The removed material and its provenance
+are recorded in the Post-Submission Report.
 \end{quote}
 
 \tableofcontents
@@ -112,16 +111,11 @@ Prior to the improvements described here, the aggregate picture was:
 \begin{table}[h]
 \centering
 \caption{Baseline performance before routing improvements (standard cases,
-         intractable cases excluded). \textbf{[Removed, 2026-09-27]:} this
-         table's denominator ($n{=}66$, ``pre-v3.0 historical'') and its
-         Hybrid $R^2>0.99$ figure could not be traced to any source file
-         after an exhaustive repository search (git history included --- see
-         Post-Submission Report, \S~``Item 2,'' placeholder P1); the figure
-         has been removed rather than left unverifiable. The v3.0 benchmark
-         uses $n=74$; its own $R^2>0.99$ figure is \textbf{59.5\,\%} (44/74,
-         decision-attribution-bug-corrected --- see main paper,
-         \S~``The Hybrid Decision-Attribution Bug''), not the raw
-         \textbf{90.5\,\%} (67/74) this table previously cross-referenced.}
+         intractable cases excluded; denominator $n{=}66$, pre-v3.0 historical). The Hybrid
+         $R^2>0.99$ figure is not reported: it could not be traced to a source file. The v3.0
+         benchmark uses $n=74$; its own $R^2>0.99$ figure is \textbf{59.5\,\%} (44/74,
+         decision-attribution-bug-corrected --- see main paper, \S~``The Hybrid
+         Decision-Attribution Bug'').}
 \label{tab:baseline}
 \begin{tabular}{lcccc}
 \toprule
@@ -134,13 +128,7 @@ Hybrid      & 1.000 & --- & \emph{removed} & 1 \\
 \end{tabular}
 \end{table}
 
-\textbf{[Removed, 2026-09-27]:} the interpretive paragraph that followed
-this table (comparing the Hybrid's near-perfect tail rate against Pure
-LLM's 83.9\,\%) depended entirely on the removed figure above and has been
-removed with it.
-
-Post-mortem analysis nonetheless identified a real root cause, independent
-of the removed figure: \textbf{routing confidence}. The hybrid's decision
+Post-mortem analysis identified a root cause: \textbf{routing confidence}. The hybrid's decision
 to assign a case to the NN or blended ensemble relied on in-distribution
 training $R^2$ as the sole criterion, which is a poor proxy for
 extrapolation quality.
@@ -407,62 +395,20 @@ if _llm_formula_trustworthy and decision in ("nn", "ensemble"):
 The same guard applies to Fix~3: if the LLM formula has negative training
 $R^2$, augmentation is skipped.
 
-\subsection{Case-Level Impact of Fix~5}
-
-\begin{table}[h]
-\centering
-\caption{Case-level outcomes resolved by Fix~5 and routing guard.
-  \textbf{[Unverified, manually entered: no result or configuration file located
-  that reproduces these values; the ``after'' entries are approximate.]}}
-\label{tab:fix5_cases}
-\begin{tabular}{llrrl}
-\toprule
-\textbf{Case} & \textbf{Type} & \textbf{LLM} & \textbf{Hybrid (before)} & \textbf{Hybrid (after)} \\
-\midrule
-Correlated Portfolio VaR & quadratic     & $+1.000$ & $-12.121$ & $\approx+1.000$ \\
-IL in constant product   & alg.\ + sqrt  & $+1.000$ & NaN       & $\approx+1.000$ \\
-Capital efficiency       & rational      & NaN      & $-3274$   & $\approx+0.827$ \\
-Concentrated liquidity   & alg.\ + sqrt  & $-20.8$  & $-1606$   & $\approx+0.963$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Net effect: catastrophic count $3 \to 1$ (only \emph{Component ES} remains,
-where all three methods fail equally).
 
 %% ============================================================
-\section{Projected Impact on the Leaderboard}
+\section{Impact on the Leaderboard}
 \label{sec:leaderboard}
 
 \begin{table}[h]
 \centering
-\caption{Measured and projected $R^2 > 0.99$ (\%) by fix.
-         Denominator $= 66$ standard cases (pre-v3.0 historical). The
-         v3.0 benchmark's uncorrected figure is \textbf{90.5\,\%} (67/74, raw
-         $R^2>0.99$ rate --- resolved by cross-reference; see editorial
-         note below); the
-         main paper's decision-attribution-bug correction
-         (its primary results table, in \texttt{jmlr\_paper\_main.tex})
-         gives \textbf{59.5\,\%} (44/74) as the current, verified figure ---
-         confirmed (2026-09-27) by mechanically re-running the correction
-         rule directly against the canonical seed-42 file (md5
-         \texttt{cbf503d0b3985b4c1bccf7ed18e0316b}, \texttt{hypatiax/data}), which reproduces
-         44/74 = 59.5\,\% and the exact 23-case fabricated breakdown
-         field-for-field. \textbf{[Removed, 2026-09-27]:} the fix-by-fix
-         cumulative percentages previously shown below (baseline 66.2\,\%
-         through Fix~4's 82.2\,\%, the ``honest $n{=}66$'' rows, and the
-         projected Fix~5 figure) have been removed. An exhaustive search of
-         the source repository, including full git history, found no
-         committed file for the $n{=}66$ denominator, and the one file that
-         did match the Fix~4 figure exactly (\texttt{hybrid\_pysr/defi/}
-         \texttt{\_report.md}, experiment \texttt{suppA}, $N=73$) uses a
-         different threshold ($R^2\geq0.80$) than this table claimed
-         ($R^2>0.99$) --- see Post-Submission Report, \S~``Item 2,''
-         placeholders P1 and P4, for the full search trail. Only the
-         qualitative fix descriptions below are retained, since each
-         corresponds to a real, verified code change (see
-         \S~\ref{sec:changes}); their individual and cumulative
-         percentage impact is not currently supported by any located data.}
+\caption{Routing fixes in order of application. No per-fix percentage impact is reported:
+         the figures previously shown here could not be traced to a source file. The
+         decision-attribution-bug-corrected near-perfect rate on the DeFi benchmark is
+         \textbf{59.5\,\%} (44/74), reproduced by re-running the correction rule against the canonical
+         seed-42 file (md5 \texttt{cbf503d0b3985b4c1bccf7ed18e0316b}); the uncorrected rate is
+         \textbf{90.5\,\%} (67/74). See the main paper (\texttt{jmlr\_paper\_main.tex}).
+         Each fix below is a verified code change (\S~\ref{sec:changes}).}
 \label{tab:projected}
 \begin{tabular}{ll}
 \toprule
@@ -480,26 +426,11 @@ Fix~5 (proj.) & Unified evaluator + routing guard \\
 \end{tabular}
 \end{table}
 
-\textbf{[Removed, 2026-09-27]:} the observation and remark that followed
-this table (comparing $72.7\%$ vs.\ $69.7\%$ on an ``honest $n{=}66$''
-denominator, and the ``fixed denominator of 66'' framing) depended entirely
-on the removed figures above and has been removed with them. Each fix
-listed above corresponds to a real, verified code change documented in
-\S~\ref{sec:changes}; what is not currently supported by any located data
-is their individual or cumulative percentage impact.
-This does not invalidate Fixes~0--5 individually (each addresses a
-distinct, verified routing or data-generation defect, documented in
-\S~\ref{sec:changes}); what is no longer supported is any specific
-percentage comparison built on the removed figures above. See the main
-paper for the current, corrected comparison (59.5\,\%, decision-attribution
-corrected) and its own caveats.
+Each fix above addresses a distinct, verified routing or data-generation defect
+(\S~\ref{sec:changes}); their individual and cumulative effect on the near-perfect rate
+is not reported. See the main paper for the current, corrected comparison (59.5\,\%) and
+its caveats.
 
-\begin{remark}
-\textbf{[Removed, 2026-09-27]:} this remark previously asserted a
-``fixed denominator of 66'' for all comparisons in this document. That
-denominator could not be traced to a source file (see above) and the
-claim has been removed with it.
-\end{remark}
 
 %% ============================================================
 \section{Interaction Between Fixes}
@@ -517,63 +448,6 @@ claim has been removed with it.
     is purely additive.
 \end{itemize}
 
-\textbf{[Removed, 2026-09-27]:} a paragraph previously stood here explaining
-the gap between a per-fix cumulative sum and a ``first-complete-run''
-result, both of which are among the figures removed above. The qualitative
-interactions listed do not depend on either removed figure and are
-retained.
-
-%% ============================================================
-\section{Remaining Open Issues}
-\label{sec:open_issues}
-
-\begin{enumerate}[leftmargin=*]
-  \item \textbf{Formula evaluator divergence.}  Closed by Fix~5 — all formula
-    evaluation now routes through a single code path.
-  \item \textbf{Stochastic NN initialisation.}  Cases routed to \texttt{"nn"}
-    use a freshly trained MLP, introducing variance.  A deterministic seed or
-    model caching would eliminate this.
-  \item \textbf{Probe threshold sensitivity.}  The $\Delta R^2 \geq 0.15$
-    threshold was chosen heuristically.  A systematic sweep over
-    $\{0.05, 0.10, 0.15, 0.20, 0.25\}$ on a held-out validation set would
-    yield a more principled value.
-  \item \textbf{Multi-feature probe.}  The probe currently sorts by the
-    primary feature only.  For cases with multiple features of similar
-    importance, a Mahalanobis-distance-based probe would be more robust.
-  \item \textbf{LLM API timeouts.}  Two scores on cases~6--7 remain NaN
-    due to connection errors.  These should be retried with exponential
-    backoff ($\leq 3$ attempts, delays 5/15/45\,s).
-  \item \textbf{[Resolved, confirmed 2026-09-27.]} The July~9 CI dashboard
-    should not be cited: its own notebooks (NB-01--NB-06) reported ``not
-    found'' for that run, while its summary asserted ``0 open issues''
-    and specific claims resolved. \texttt{build\_report.py}'s
-    \texttt{notebook\_execution\_status()} (commit \texttt{9d7a833f},
-    2026-07-29, tagged \texttt{FIX-DASHBOARD-STALE-GREEN} in its own source)
-    now checks every code cell's \texttt{execution\_count} rather than mere
-    file existence, and hard-fails the build (\texttt{sys.exit(1)}) if any
-    notebook did not run to completion, rather than silently publishing a
-    stale-but-green summary. Confirmed present and wired to a hard exit in
-    the live repository as of this date; the July~9 dashboard itself
-    should still not be cited, but the pipeline defect that produced it
-    is fixed.
-  \item \textbf{[Resolved.]} The legacy exp2 baseline-lock
-    threshold fix ($R^2 \geq 0.999999$ replacing $R^2 \geq 0.9999$, which
-    had inflated the legacy baseline from 74/90 to 81/90) is now
-    live-confirmed at 74/90 against a fresh CI run of the patched script,
-    and reproduced independently a second time via a patched Gate~C
-    schema check. Cite 74/90; do not cite 81/90.
-  \item \textbf{[Open, superseded.]} The $1.73\times$ speedup and related
-    scalability/parallelisation figures in \S\,\ref{app:complexity}
-    (\emph{Empirical Timing Breakdown} onward) do not reproduce against
-    the mechanically-regenerated runtime table built from the five 74-task v3 seed
-    files in the repository (main paper, Section ``Runtime Analysis'', Table \texttt{tab:timing\_full}),
-    which instead shows the hybrid system $3.8$--$11.2\times$ \emph{slower} than
-    the neural baseline on every seed (the files do not record which split variant
-    produced them). See the superseded notice at the
-    start of that subsection; do not cite its absolute timings or
-    speedup figures.
-\end{enumerate}
-
 %% ============================================================
 \section{Summary of Changes}
 \label{sec:changes}
@@ -581,8 +455,8 @@ retained.
 \begin{table}[h]
 \centering
 \caption{All changes applied across the two modified files.
-  \textbf{[Descriptive inventory of code changes only; it contains no performance
-  figures or estimates.]}}
+  Descriptive inventory of code changes only; it contains no performance
+  figures or estimates.}
 \label{tab:changes}
 \begin{tabular}{llll}
 \toprule
@@ -606,19 +480,11 @@ retained.
 \end{table}
 
 \bigskip
-\noindent \textbf{[Removed, 2026-09-27]:} this closing paragraph previously
-projected that the Hybrid closes or exceeds Pure LLM's $83.9\%$ rate, and
-separately claimed HypatiaX leads $74.6\%$ vs.\ $60.5\%$. Both figures
-depended on the same removed data (the Fix~0--4 cumulative table and the
-``honest $n{=}66$'' run) and have been removed with it; an exhaustive
-repository search, including full git history, did not locate a source
-for either. What remains verified: the main paper's decision-attribution-
-corrected rate is $59.5\%$ (44/74), tied with Pure LLM's own corrected
-rate on the same benchmark (see main paper, \S~``The Hybrid
-Decision-Attribution Bug''). The routing fixes documented in this
-supplement (\S~\ref{sec:changes}) are each independently verified code
-changes; what is not currently supported by any located data is their
-individual or cumulative effect on the near-perfect success rate.
+\noindent The main paper's decision-attribution-corrected near-perfect rate is
+$59.5\%$ (44/74), tied with Pure LLM's own corrected rate on the same benchmark (see main
+paper, \S~``The Hybrid Decision-Attribution Bug''). The routing fixes documented in this
+supplement (\S~\ref{sec:changes}) are each independently verified code changes; their
+individual or cumulative effect on the near-perfect success rate is not reported.
 
 % ====================================================================
 % NEW APPENDICES (extracted from jmlr_paper_main.tex)
@@ -725,44 +591,20 @@ cd LLM-HypatiaX-REPRO
 pip install -r requirements.txt
 source activate_hypatiax.sh
 
-# Core 15 benchmark (§6.4)
-python hypatiax/experiments/comparison/\
-ultimate_comparative_suite_complete_.py \
-    --seed 42 --symbolic-timeout 1800 --v2
-
-# DeFi 74-case benchmark v3.0 (§6.5)
-python hypatiax/experiments/tests/\
-test_enhanced_defi_extrapolation.py \
-    --fixed-denominator 66 --nan-penalty --v2
-
-# Feynman SR — Phase 3 (§5.8, ~1h 13min on reference hardware)
+# Feynman SR --- Phase 3 (§5.8, ~1h 13min on reference hardware)
 python hypatiax/experiments/benchmarks/\
-run_protocol_benchmark_core.py \
+run_comparative_suite_benchmark_v2.py \
     --noiseless --threshold 0.999999 \
     --nn-seeds 3 --samples 200 \
     --method-timeout 900 --pysr-timeout 1100
-
-# Statistical analysis
-python hypatiax/analysis/statistical_analysis_full.py --v2
-
-# All 13 reproducibility figures (separate from the 5 figures
-# embedded directly in the compiled manuscript)
-python supplementaries/generate_figures/generate_figures.py --v2
 \end{verbatim}
 \end{small}
 
-\textbf{[Unverified: as of 2026-10-02 the following paths in the commands above
-were not found in \texttt{LLM-HypatiaX-REPRO} or \texttt{LLM-HypatiaX-DEV}:
-\texttt{hypatiax/experiments/comparison/ultimate\_comparative\_suite\_complete\_.py},
-\texttt{hypatiax/experiments/benchmarks/run\_protocol\_benchmark\_core.py},
-\texttt{hypatiax/analysis/statistical\_analysis\_full.py}, and
-\texttt{supplementaries/generate\_figures/generate\_figures.py}. The
-\texttt{--v2} flags were not checked. Present in the reproduction repository:
-\texttt{hypatiax/experiments/tests/test\_enhanced\_defi\_extrapolation.py},
-\texttt{hypatiax/experiments/benchmarks/run\_noise\_sweep\_benchmark.py},
-\texttt{hypatiax/experiments/benchmarks/run\_sample\_complexity\_benchmark.py},
-\texttt{hypatiax/analysis/statistical\_analysis.py}, and \texttt{run\_all.sh}.
-These commands must be replaced with the actual entry points before submission.]}
+\noindent Other runners in the repository: \texttt{hypatiax/experiments/benchmarks/run\_noise\_sweep\_benchmark.py},
+\texttt{run\_sample\_complexity\_benchmark.py}, \texttt{hypatiax/experiments/tests/test\_enhanced\_defi\_extrapolation.py}
+(DeFi extrapolation), and \texttt{run\_all.sh} at the repository root. The Phase~3 script identifies itself as
+\texttt{run\_protocol\_benchmark\_core.py} in its docstring; its output files are named \texttt{protocol\_core\_*}.
+
 
 \subsection{Hardware and Software}
 
@@ -881,14 +723,11 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 \begin{enumerate}
 \item Clone repository and install dependencies (including Julia 1.12.2)
 \item Set \texttt{ANTHROPIC\_API\_KEY} for LLM-dependent runners
-\item Run Core~15 benchmark — confirm Mann-Whitney U=0, p$<10^{-6}$
+\item Run Core~15 benchmark — confirm the Core~15 far-$R^2$ Mann-Whitney values in the main paper ($U_H=72$, $p=0.095$ with failed cells ranked worst; $p=0.60$ and $0.43$ under the two exclusion conventions; recomputed from the raw ablation shards \texttt{exp1\_ablation\_results\_shard0--3.json}, paired Wilcoxon signed-rank on the 10 equations with finite far-$R^2$ in both arms: $W=9$, $p=0.25$; none significant at the $5\,\%$ level)
 \item Run DeFi benchmark --- confirm HypatiaX's decision-attribution-bug-corrected
-  near-perfect rate of \textbf{59.5\,\%} (44/74; independently re-verified
-  2026-09-27 against the canonical seed-42 file). The per-fix cumulative
-  and ``honest $n{=}66$'' figures previously claimed in
-  Section~\ref{sec:leaderboard} above could not be verified and were
-  removed; see main paper's Hybrid Decision-Attribution Bug section for
-  the current, verified figure
+  near-perfect rate of \textbf{59.5\,\%} (44/74, re-verified
+  2026-09-27 against the canonical seed-42 file); see the main paper's Hybrid
+  Decision-Attribution Bug section
 \item Run Feynman Phase~3 — confirm Hybrid DeFi 96.7\% ($R^2>0.9999$)
 \item Run statistical analysis — confirm Cohen's d = 0.95 (pooled)
 \item Regenerate 13 figures — confirm visual match with paper
@@ -937,123 +776,20 @@ Total per candidate: $\mathcal{O}(k + m)$. With $n$ candidates: $\mathcal{O}(n(k
 \item \textbf{HypatiaX}: $n=1000$, $m=160$, $k=50$ $\Rightarrow$ $\mathcal{O}(2 \times 10^5)$ operations per iteration
 \end{itemize}
 
-\subsection{Empirical Timing Breakdown (Superseded, Unverified)}
+\subsection{Measured Runtime}
 
-\textbf{[Superseded --- do not cite this subsection's absolute timings or
-speedup figures without independent reproduction.]} The profiling below
-predates the mechanical, script-driven regeneration of the runtime table
-directly from the five 74-task per-seed v3 result files in the repository
-(main paper, Section ``Runtime Analysis'', Table \texttt{tab:timing\_full}). That regeneration
-shows the opposite pattern from what follows: the hybrid system is
-$3.8$--$11.2\times$ \emph{slower} than the neural baseline on every seed,
-never faster. In particular, the $1.73\times$ speedup
-and the $1.7$\,s neural-network timing formerly quoted below do not reproduce;
-mean per-task neural-network times in those files are $0.18$--$0.36$\,s per seed,
-roughly $5$--$9\times$ smaller than the $1.7$\,s figure,
-which has been replaced below by the measured per-task time. The source of the $1.7$\,s figure is not identified. The scalability table (\S\,\ref{tab:scalability}; its speedup column has been removed)
-and the parallelisation projections that follow are built on the same
-unreproduced baseline and should be read with the same caution. Retained
-here for historical/methodological interest only.
+Runtimes are reported only from the mechanical regeneration of the runtime table from the
+five 74-task per-seed v3 result files in the repository (main paper, Section ``Runtime
+Analysis'', Table \texttt{tab:timing\_full}). The hybrid system is $3.8$--$11.2\times$
+\emph{slower} than the neural baseline on every seed, never faster; mean per-task
+neural-network time is $0.27$\,s pooled over 370 task runs (per-seed means
+$0.18$--$0.36$\,s). LLM-guided mode routes 68 of 74 cases (92\,\%) directly to the LLM
+formula, bypassing full PySR search (68 of 74 for the seed-42 file; $68$--$69$ in each of the
+five seed files). No stage-level timing breakdown, dataset-size scalability sweep or
+runtime-versus-accuracy table is reported here, because none could be regenerated from a
+result file; see the Post-Submission Report.
 
-Profiling HypatiaX on representative test cases:
 
-\begin{table}[H]
-\centering
-\caption{Computational Cost Breakdown (average per test).
-  \textbf{[Superseded, unverified: the Pure Symbolic and LLM-Guided Hybrid blocks
-  were not regenerated from result files. The Neural Network block previously showed a
-  1.7\,s total with a stage split (data preparation, training, validation) that has no
-  source and contradicts the result files; it is replaced by the per-task time from the
-  five 74-task per-seed files (main paper, \texttt{tab:timing\_full}) and the stage split
-  is removed.]}}
-\label{tab:timing_breakdown}
-\begin{tabular}{@{}lcc@{}}
-\toprule
-\textbf{Component} & \textbf{Time (s)} & \textbf{Percentage} \\
-\midrule
-\multicolumn{3}{c}{\textit{Pure Symbolic (PySR)}} \\
-\midrule
-Population initialization & 5.2 & 1.3\% \\
-Evolutionary search & 365.8 & 93.8\% \\
-Symbolic simplification & 12.3 & 3.2\% \\
-Validation framework & 6.7 & 1.7\% \\
-\midrule
-\textbf{Total} & \textbf{390.0} & \textbf{100\%} \\
-\midrule
-\multicolumn{3}{c}{\textit{LLM-Guided Hybrid}} \\
-\midrule
-LLM API call & 8.5 & 12.1\% \\
-Expression parsing & 2.0 & 2.9\% \\
-Initial validation & 3.0 & 4.3\% \\
-PySR refinement (when needed) & 52.5 & 75.0\% \\
-Final validation & 4.0 & 5.7\% \\
-\midrule
-\textbf{Total} & \textbf{70.0} & \textbf{100\%} \\
-\midrule
-\multicolumn{3}{c}{\textit{Neural Network (measured per-task time)}} \\
-\midrule
-Mean per task, pooled over 370 task runs & 0.27 & --- \\
-Range of per-seed means (five seeds) & 0.18--0.36 & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Key Findings:}
-\begin{itemize}
-\item Evolutionary search dominates (93.8\%) in pure symbolic mode
-\item LLM-guided mode routes 68 of 74 cases (92\,\%) directly to the LLM formula, bypassing full PySR search (68 of 74 is confirmed for the seed-42 file; $68$--$69$ in each of the five seed files). \textbf{[Withdrawn: a $1.73\times$ median speedup over the neural baseline on those cases, previously stated here, does not reproduce; see the main paper, Section ``Runtime Analysis''.]}
-\item Validation overhead is negligible (1.7-5.7\%)
-\end{itemize}
-
-\subsection{Scalability Analysis (Superseded, Unverified)}
-
-Testing scalability with varying dataset sizes:
-
-\begin{table}[H]
-\centering
-\caption{Scalability with Dataset Size.
-  \textbf{[Superseded, unverified: no scalability result file was found in
-  \texttt{hypatiax/data/results}, so these times are historical and not reproduced.
-  The Speedup column, which printed $5.1$--$5.8\times$ and relied on the unreproduced
-  neural-network baseline, has been removed.]}}
-\label{tab:scalability}
-\begin{tabular}{@{}ccc@{}}
-\toprule
-\textbf{Data Points} & \textbf{Pure PySR (s)} & \textbf{LLM-Hybrid (s)} \\
-\midrule
-100 & 245 & 48 \\
-500 & 390 & 70 \\
-1000 & 521 & 95 \\
-5000 & 1245 & 215 \\
-10000 & 2340 & 410 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Observation:} The earlier scalability speedup claim is unverified and is omitted pending reproduction.
-
-\subsection{Computational Cost vs Accuracy Tradeoff}
-
-\begin{table}[H]
-\centering
-\caption{Runtime vs.\ Interpolation Performance Tradeoff. }
-\label{tab:cost_accuracy_tradeoff}
-\begin{tabular}{lcc}
-\toprule
-\textbf{Method} & \textbf{Runtime (s)} & \textbf{Interpolation $R^2$} \\
-\midrule
-Neural Network & 1.7 & 0.940 \\
-LLM-Guided Hybrid & 70.0 & 0.931 \\
-Pure PySR & 390.0 & 0.982 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Interpretation:} This table supports only the runtime/interpolation tradeoff itself. Hybrid trades a $41\times$ runtime increase over the neural baseline for no interpolation gain ($0.940 \to 0.931$, a slight decrease on this sweep), and Pure PySR's further $5.6\times$ runtime increase over Hybrid yields a small interpolation $R^2$ gain ($0.931 \to 0.982$). No extrapolation claim is made here.
-
-\subsection{Parallelisation and Future Speedup}
-
-PySR was configured with 2 parallel populations on the experimental hardware (Intel Celeron T3100, 2-core CPU). On modern multi-core hardware (e.g.\ 16+ cores), PySR can exploit 12 or more parallel populations, yielding an estimated ${\sim}8\times$ wall-clock speedup relative to our reported runtimes. GPU parallelisation of fitness evaluation (75\% of runtime) could further reduce total runtime to ${\sim}1$--$2$ seconds per test, making the hybrid approach competitive with neural networks on speed.
 
 % ============================================================================
 % APPENDICES H & I: SUPPLEMENTARY MATERIALS AND EXTENDED DISCUSSION

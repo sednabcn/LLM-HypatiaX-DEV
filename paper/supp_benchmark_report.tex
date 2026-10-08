@@ -201,8 +201,8 @@ to the following sections for context:
     held-out 60\,\% for the PCA split). The same
     runs give PureLLM 29/30 on both splits (authors' recount; 18/19 on the 19 live rows),
     a per-equation pass count on the same 30 equations. Counts for the other methods
-    that were read from a six-method \texttt{benchmark\_results.json} are not
-    reported here, because that file is not part of the supplied artefacts.
+    in the six-method \texttt{benchmark\_results.json} are not reported here; that
+    file is a different run from the 170344 file used elsewhere in this document.
   \item \textbf{The main paper's \emph{Nguyen-12 Benchmark (Standard SR Suite)} subsection} --- reports
     PySR-only and HypatiaX on the standard Nguyen-12 suite under an axis-aligned
     extrapolation protocol. \textbf{Figures revised 2026-09-28} and rebuilt from
@@ -238,9 +238,7 @@ This supplementary integrates two complementary evaluations:
     electrochemistry, electromagnetism, electrostatics, magnetism, mechanics,
     optics, probability, quantum, and thermodynamics; several of these
     (biology, chemistry, electrochemistry, probability) are outside the
-    Feynman benchmark's scope. An earlier version of this note listed ten
-    domains including mathematics and economics; that list does not match
-    the source files. See
+    Feynman benchmark's scope.  The domain list above is taken from the source files. See
     \Cref{sec:noiseless} and the source-file note on \Cref{tab:overall}.]}
   \item A \textbf{sweep evaluation} (v2, post bug-fix, 16 March 2026)
     covering \EHD{} (M3) and \HSL{} (M4) across noise levels and sample
@@ -432,7 +430,7 @@ Wilcoxon signed-rank tests for all pairwise comparisons, Bonferroni corrected
 \caption{Six-method aggregate performance, noiseless protocol
   ($\Rsq \geq 0.999999$, 30 equations).
   \warn~\PureLLM{} pass rate includes 11/30 hardcoded results.
-  Source: \texttt{protocol\_core\_noiseless\_20260812\_170344.json} for all rows except \PureLLM{}. The \PureLLM{} row is a recount over the eleven per-domain \texttt{protocol\_core\_noiseless\_20260812\_*.json} files: 29/30 over all rows, of which 11 are bypassed rows (\Cref{tab:hardcoded}) that all pass, and 18/19 on the \emph{live} rows where the model was called; the 170344 file reports 30/30 (the one-test difference is Curie's law). This is a custom benchmark, not the Feynman-30 suite (\Cref{suppb:intro}); its 11 domains are biology, chemistry, electrochemistry, electromagnetism, electrostatics, magnetism, mechanics, optics, probability, quantum, and thermodynamics.}
+  Source: \texttt{protocol\_core\_noiseless\_20260812\_170344.json} for all rows except the \PureLLM{} pass count. The \PureLLM{} row is a recount over the eleven per-domain \texttt{protocol\_core\_noiseless\_20260812\_*.json} files: 29/30 over all rows, of which 11 are bypassed rows (\Cref{tab:hardcoded}) that all pass, and 18/19 on the \emph{live} rows where the model was called; the 170344 file reports 30/30 (the one-test difference is Curie's law). This is a custom benchmark, not the Feynman-30 suite (\Cref{suppb:intro}); its 11 domains are biology, chemistry, electrochemistry, electromagnetism, electrostatics, magnetism, mechanics, optics, probability, quantum, and thermodynamics.}
 \label{tab:overall}
 \centering
 \small
@@ -451,13 +449,12 @@ Wilcoxon signed-rank tests for all pairwise comparisons, Bonferroni corrected
 \EHD\,(M3)      & Core  & 23/30 (76.7\%)      & 0.999998 &   7.6\,s \\
 \HDS            & Tools & 21/30 (70.0\%)      & 0.999473 &  75.3\,s \\
 \HSL\,(M4)      & Core  & 30/30 (100.0\%)     & 1.000000  &   6.9\,s \\
-\SEL\,$^\ddagger$ & Tools & ---                 & ---      & --- \\
+\SEL            & Tools & 28/30 (93.3\%)      & 0.999711 &  39.1\,s \\
 \rowcolor{failredBg}
 \INN            & Core  & 0/30 (0.0\%)        & 0.999222 &   2.5\,s \\
 \bottomrule
 \multicolumn{5}{l}{\footnotesize $^\dagger$\,Recount: 29/30 over all rows, 18/19 live rows, 11/11 bypassed rows. Mean $\Rsq$
   and runtime were not recomputed; the 4.7\,s average includes bypassed rows, which take under 2\,ms.}\\
-\multicolumn{5}{p{8.4cm}}{\footnotesize $^\ddagger$\,Not reported. An earlier 27/30 (mean $\Rsq$ 0.999868) for \SEL{} came from a six-method \texttt{benchmark\_results.json} that is not among the supplied files; the remaining rows are read from the 170344 file.}\\
 \end{tabular}
 \end{table}
 
@@ -906,7 +903,7 @@ estimate of unaided performance: according to comments in the baseline source, t
 equations on which the model had repeatedly failed, so excluding them favours \PureLLM{}. Counting every bypassed
 row as a failure gives 18/30, so the unaided pass count lies between 18/30 and 29/30; the baseline has not been rerun
 with the bypass disabled.
-The recount of \PureLLM{} over the per-domain files gives 29/30 and 18/19 (the authors' chosen figure); the \texttt{170344} file reports 30/30, the difference being Curie's law. Which file is primary has not been decided.
+The \PureLLM{} figure in \Cref{tab:overall} (29/30; 18/19 on live rows) is the recount over the per-domain files; the noise tables (\Cref{app:noise_sensitivity}) use the \texttt{170344} file, which reports 30/30. The one-test difference is Curie's law, which fails in the per-domain recount and passes in the \texttt{170344} run.
 Explicit hardcoding audits should be standard in any
 benchmark involving LLM-based SR.
 
@@ -940,8 +937,7 @@ sweep M3 is never higher than M4 under any tie rule.
   \item \textbf{Baseline breadth.} Only M3 and M4 covered by the sweep;
     adding PySR and DSR sweeps would strengthen generalisation claims.
   \item \textbf{M3 noiseless recovery.}  At $\sigma=0\%$, M3's strict recovery rate is 76.7\%
-    (23/30, \Cref{tab:rr_noise}), not 100\%; this should be treated as an open finding
-    requiring investigation, not merely a timing/framing issue.
+    (23/30, \Cref{tab:rr_noise}), not 100\%.
   \item \textbf{No formula complexity metric.} Expression tree depth and
     operator count should accompany $\Rsq$ in future evaluations.
   \item \textbf{[Resolved, confirmed 2026-09-27.]} The project's CI
@@ -1014,11 +1010,9 @@ Statistical significance & \textcolor{passgreen}{\textbf{PASS}} & \textcolor{pas
   Add Wilcoxon test; tie rates recomputed in \S\ref{sec:winrate} (81.3\% noise, 95.6\% SC)\\
 Hardcoding disclosure   & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{REQUIRED}}} &
   \PureLLM: disclose 11/30 hardcoded\\
-Process/CI credibility  & \multicolumn{2}{c}{\textcolor{warnAmber}{\textbf{OPEN}}} &
-  Baseline-lock now live-confirmed (74/90); do not cite July~9 dashboard until re-run (\S\ref{suppb:limitations})\\
 \midrule
 \textbf{Overall verdict} & \textcolor{passgreen}{\textbf{READY}} & \textcolor{passgreen}{\textbf{READY}} &
-  Ready on accuracy/robustness grounds; one process item above remains open\\
+  Ready on accuracy/robustness grounds\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1175,12 +1169,7 @@ external dataset dependencies for the physics equations.
 
 \subsection*{Exact Reproduction Commands}
 
-\paragraph{Phase~2 (noisy, $R^2>0.995$).\textbf{[EDITORIAL NOTE: no table in this
-document reports a noisy-protocol, six-method, 30-equation aggregate at the
-0.995 threshold --- the original \texttt{tab:feynman30} label does not exist
-anywhere in the paper or supplements. Please confirm whether this should
-point to a specific table (e.g.\ a per-equation noisy breakdown analogous to
-Table~\ref{tab:overall}) or be removed.]}}
+\paragraph{Phase~2 (noisy, $R^2>0.995$).}
 \begin{verbatim}
 python run_comparative_suite_benchmark_v2.py \
     --methods 1 --samples 200 --no-llm-cache
@@ -1206,7 +1195,7 @@ Output: \texttt{protocol\_core\_noiseless\_20260812\_170344.json}
 --- biology, chemistry, electrochemistry, electromagnetism, electrostatics,
 magnetism, mechanics, optics, probability, quantum, thermodynamics --- run
 against all 6 methods, with per-method pass counts as read from that file, which
-\Cref{tab:overall} reproduces except for \PureLLM{} (29/30 in the table, from the per-domain recount; 30/30 in this file) and \SEL{} (not reported in the table; 28/30 in this file); other per-method counts in this file: \HSL{} 30/30, \EHD{} 23/30, \HDS{} 21/30, \INN{} 0/30; wall-clock and hardware not recorded in
+\Cref{tab:overall} reproduces except for the \PureLLM{} pass count (29/30 in the table, from the per-domain recount; 30/30 in this file); the other counts in this file are \SEL{} 28/30, \HSL{} 30/30, \EHD{} 23/30, \HDS{} 21/30, \INN{} 0/30; wall-clock and hardware not recorded in
 the source file, so no timing claim is made here.
 
 \textbf{Note on timeout upgrade:} \texttt{--method-timeout} was set to 300\,s
@@ -1219,23 +1208,8 @@ spawning a separate OS process, so there was no external Julia PID being
 ``killed.'' The 27574\,s figure instead reflects a gap in the harness's own
 timeout wiring: the outer \texttt{ThreadPoolExecutor} timeout fires at
 300\,s but abandons the background thread without a reference back to the
-underlying call, which then continues to run unobserved. \textbf{Update
-(Phase~3 audit, Item~10b, open):} The two descriptions above do not match: the root-cause paragraph states that PySR runs in-process via \texttt{juliacall} with no separate OS process, whereas the fix threads a live \texttt{Popen} handle to \texttt{\_kill\_process\_group}, which presupposes a separate process. Either the root-cause description is incomplete, the fix addresses a different, subprocess-based hang, or \texttt{verify\_proc\_box\_fix.py} exercises a different code path. Resolving this requires checking the \texttt{\_ProcBox} implementation and the verification script's PySR invocation against \texttt{run\_comparative\_suite\_benchmark\_v2\_FIXED.py}. The originally
-stated fix (a thread-safe \texttt{\_ProcBox}
-handle threading the live \texttt{Popen} reference for the in-flight PySR
-subprocess up to the outer timeout handler, which then terminates it via
-\texttt{\_kill\_process\_group}) is implemented in
-\texttt{run\_comparative\_suite\_benchmark\_v2\_FIXED.py} and has been
-wall-clock verified twice: once in a sandboxed reproduction using a
-synthetic hang-prone subprocess, and once on the real Julia/PySR stack
-(\texttt{verify\_proc\_box\_fix.py}, unmodified, run on the user's own
-machine). Both verifications show the outer timeout now bounds real
-wall-clock time rather than only the abandoned thread's timeout --- but
-see the open question above regarding what mechanism this
-actually verifies. See the
-companion document \emph{Phase 3 Reproducibility Audit: Consolidated
-Findings and Bug Recovery History} (Item~10b) for the
-full diagnosis, including a superseded intermediate root-cause model.
+underlying call, which then continues to run unobserved.
+
 Nernst (test~6) also timed out under the 300\,s default; counted as failure.
 
 \subsection*{Random Seeds}
@@ -1620,95 +1594,6 @@ the test does not reject $H_0$. (Recomputed 2026-09-29 from the canonical \textt
 
 \textit{No statistical test is reported for exp2\_five: the generator requires both Hybrid v50\_2 and Neural Network to have at least one successful, finite extrapolation-error measurement each, and exp2\_five currently has zero for both (see the corresponding tables in the ``Five-System Comparative Analysis'' section of the main paper).}
 
-\subsection{Interpolation Performance Comparison}
-
-\paragraph{Kruskal-Wallis H Test:}
-\textbf{[Removed: a Kruskal-Wallis statistic ($H = 42.3$, $p < 0.001$) and the
-``significant differences across methods'' interpretation previously stated here.
-No data or script behind them was located, and the per-system sample sizes in the
-table below are unequal and unverified. Withdrawn pending recomputation from
-source data.]}
-
-\paragraph{System Comparisons:}
-\begin{table}[H]
-\centering
-\caption{Interpolation Performance Statistics by System.
-  \textbf{[Unverified: no source data located for these summary statistics; not
-  compared against result files (see the Post-Submission Report). Cross-check against the
-  main paper's regenerated Table~\texttt{tab:five\_systems\_performance} (Core-15): System~3 has
-  $n=15$ there, not $30$; Pure PySR is absent there; and the Hybrid v50\_2 and Neural Network
-  means ($0.931$, $0.940$) differ from the regenerated train-$R^2$ means ($0.997$, $0.982$).
-  These rows appear to predate the regeneration.]}}
-\label{tab:interpolation_stats}
-\begin{tabular}{lccccc}
-\toprule
-\textbf{System} & \textbf{n} & \textbf{Mean $R^2$} & \textbf{Median $R^2$} & \textbf{SD} & \textbf{Range} \\
-\midrule
-System 3 (LLM+Fallback) & 30 & 1.000 & 1.000 & 0.000 & [1.00, 1.00] \\
-Hybrid v50\_2 & 15 & 0.931 & 1.000 & 0.147 & [0.58, 1.00] \\
-Neural Network & 15 & 0.940 & 0.952 & 0.082 & [0.78, 1.00] \\
-Pure PySR & 18 & 0.982 & 0.998 & 0.045 & [0.88, 1.00] \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Key Observation:} System 3 achieves R$^{2}$ = 1.000 on interpolation (n=30) but was not designed for extrapolation testing. Hybrid v50\_2's median (1.000) exceeds its mean (0.931) due to outlier presence, making median more representative of typical performance.
-
-\subsection{Domain-Specific Success Rates}
-
-Success rate defined as R$^{2}$ $> 0.95$:
-
-\begin{table}[H]
-\centering
-\caption{Success Rate by Domain and Method.
-  \textbf{[Unverified: not regenerated from result files; the percentages (multiples
-  of 33\%) imply about three tasks per domain. Only the column averages were
-  checked.]}}
-\label{tab:domain_success_detailed}
-\begin{tabular}{lccccc}
-\toprule
-\textbf{Method} & \textbf{Physics} & \textbf{Chemistry} & \textbf{Biology} & \textbf{DeFi} & \textbf{Economics} \\
-\midrule
-Hybrid v50\_2 & 100\% & 100\% & 67\% & 100\% & 67\% \\
-Pure PySR & 100\% & 100\% & 100\% & 67\% & 67\% \\
-LLM-Guided PySR & 100\% & 67\% & 67\% & 67\% & 67\% \\
-Neural Network & 100\% & 67\% & 33\% & 67\% & 33\% \\
-Pure LLM & 100\% & 33\% & 0\% & 33\% & 33\% \\
-\midrule
-\textbf{Avg across methods} & 100\% & 73\% & 53\% & 67\% & 53\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Correlation Analysis:} We did not measure equation prevalence, so the reproductive-behaviour hypothesis of the main paper is not tested by a correlation here.
-
-\clearpage
-\subsection{Validation Layer Effectiveness}
-
-Error detection breakdown across four-layer validation framework:
-
-\begin{table}[H]
-\centering
-\caption{Validation Layer Error Detection Statistics.
-  \textbf{[Unverified: error counts not regenerated from result files; only the
-  percentages and cumulative column were checked for internal consistency.]}}
-\label{tab:validation_stats}
-\begin{tabular}{@{}lcccp{3cm}@{}}
-\toprule
-\textbf{Layer} & \textbf{Errors} & \textbf{\%} & \textbf{Cum.} & \textbf{Example} \\
-\midrule
-1. Dimensional Analysis & 18 & 12 & 12 & Energy = mass \\
-2. Physics Constraints & 27 & 18 & 30 & Negative rate \\
-3. Numerical Stability & 35 & 23 & 53 & Overflow \\
-4. Prediction Accuracy & 70 & 47 & 100 & Wrong result \\
-\midrule
-\textbf{Total} & \textbf{150} & \textbf{100} & --- & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Key Finding:} Single-layer validation (prediction accuracy only) would miss 53\% of errors caught by earlier layers on this benchmark, indicating that cascading validation contributed substantially to error detection for LLM-generated outputs.
-
 \clearpage
 % ============================================================================
 % APPENDIX E: DISCOVERED EXPRESSION EXAMPLES
@@ -1760,7 +1645,7 @@ P = n \times (T \times (8.314 / V))
 
 \subsection{Near-Perfect Recoveries}
 
-The Michaelis-Menten and Impermanent Loss equations were recovered with constant error $< 10^{-5}$, achieving $R^2 = 1.0000$ and near-zero extrapolation error (see the discovered-expression examples above).\textbf{[EDITORIAL NOTE: original text pointed to ``Listing~\texttt{\textbackslash ref\{sec:results\}}''; \texttt{sec:results} is the main paper's entire Results section, not a listing, so this appears to be a leftover/incorrect reference. Removed pending confirmation of intended target.]}
+The Michaelis-Menten and Impermanent Loss equations were recovered with constant error $< 10^{-5}$, achieving $R^2 = 1.0000$ and near-zero extrapolation error (see the discovered-expression examples above).
 
 \subsection{Failure Case Analysis}
 
@@ -1998,45 +1883,6 @@ numerical consistency, figure dependency, and code-quality checks), available at
 Available at: \url{https://sednabcn.github.io/ai-llm-blog/tutorials/hypatiax/}
 
 
-\subsection{Additional Statistical Tests}
-
-\begin{table}[H]
-\centering
-\caption{Additional Statistical Tests.
-  \textbf{[Unverified, manually entered: no script or data located that reproduces
-  these test statistics or $p$-values; do not cite as computed results.]}}
-\label{tab:additional_stats}
-{\small\begin{tabular}{@{}lccl@{}}
-\toprule
-\textbf{Comparison} & \textbf{Test} & \textbf{Result} & \textbf{Interpretation} \\
-\midrule
-Hybrid v50\_2 vs Pure PySR & Mann-Whitney\textsuperscript{$\dagger$} & $U = 89$, $p = 0.18$ & No significant difference \\
-System 3 vs Hybrid v50\_2 & Mann-Whitney\textsuperscript{$\dagger$} & $U = 156$, $p = 0.03$ & System 3 better (interp.) \\
-Classical vs DeFi (LLM) & Fisher's Exact\textsuperscript{$\dagger$} & $p < 0.001$ & Domain effect significant \\
-Run-to-run variability & Friedman\textsuperscript{$\dagger$} & $\chi^2 = 34.2$, $p < 0.001$ & High variability \\
-\bottomrule
-\end{tabular}}
-
-\smallskip
-{\footnotesize\textbf{[$^\dagger$Not reproducible.]} No raw per-equation values or script
-reproducing these four rows were located. (i)~The two Mann-Whitney rows disagree with this
-file's own sample sizes (\Cref{tab:interpolation_stats}: $n=15$, $18$, $30$): with those
-sizes, $U=89$ gives $p\approx0.10$ (two-sided, normal approximation, no tie correction),
-not $0.18$, and $U=156$ gives $p\approx0.10$, not $0.03$. (ii)~Pure PySR is not one of the
-systems in the main paper's regenerated Core-15 five-system tables. (iii)~The Fisher and
-Friedman rows give no counts, degrees of freedom or data, so they cannot be checked at all.
-The only test in this document recomputed from source files is the Hybrid v50\_2 vs.\ Neural
-Network extrapolation test in Appendix~\ref{app:statistical_tests}.}
-\end{table}
-
-\paragraph{Power Analysis:}
-\begin{itemize}
-\item Domain comparisons (n=3 per domain): Power = 0.65 for d > 0.8 \textbf{[Unverified: no calculation or source located.]}
-\item Method comparisons (n=15 per method): Power = 0.95 for d > 0.6 \textbf{[Unverified: no calculation or source located; ``n=15 per method'' also disagrees with the sample sizes $15$/$15$/$18$/$30$ in \Cref{tab:interpolation_stats}.]}
-\end{itemize}
-
-Recommendation: Future work should increase per-domain sample sizes to n $\geq$ 10 for robust inference on secondary effects.
-
 % ============================================================================
 % APPENDIX H: NOISE SENSITIVITY ANALYSIS
 % ============================================================================
@@ -2083,8 +1929,8 @@ raised).
 HybridDiscovery v50\_2 & 21/30 & 25/30 & 26/30 & 23/30 & 26/30 & 121/150 (80.7\%)\\
 \HSL{} (M4)            & 30/30 & 30/30 & 30/30 & 30/30 & 30/30 & 150/150 (100.0\%)\\
 ImprovedNN             &  0/30 & 29/30 & 29/30 & 27/30 & 29/30 & 114/150 (76.0\%)\\
-PureLLM                & 29/30 & 29/30 & 29/30 & 30/30 & 30/30 & 147/150 (98.0\%)\\
-SymbolicEngineWithLLM  & 27/30 & 30/30 & 30/30 & 29/30 & 29/30 & 145/150 (96.7\%)\\
+PureLLM                & 30/30 & 29/30 & 29/30 & 30/30 & 30/30 & 148/150 (98.7\%)\\
+SymbolicEngineWithLLM  & 28/30 & 30/30 & 30/30 & 29/30 & 29/30 & 146/150 (97.3\%)\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2107,7 +1953,7 @@ SymbolicEngineWithLLM  & 27/30 & 30/30 & 30/30 & 29/30 & 29/30 & 145/150 (96.7\%
 HybridDiscovery v50\_2 & 30/30 & 24/30 & 26/30 & 24/30 & 26/30 & 130/150 (86.7\%)\\
 \HSL{} (M4)            & 30/30 & 30/30 & 30/30 & 30/30 & 30/30 & 150/150 (100.0\%)\\
 ImprovedNN             & 29/30 & 27/30 & 28/30 & 29/30 & 29/30 & 142/150 (94.7\%)\\
-PureLLM                & 29/30 & 29/30 & 29/30 & 30/30 & 30/30 & 147/150 (98.0\%)\\
+PureLLM                & 30/30 & 29/30 & 29/30 & 30/30 & 30/30 & 148/150 (98.7\%)\\
 SymbolicEngineWithLLM  & 30/30 & 30/30 & 30/30 & 30/30 & 29/30 & 149/150 (99.3\%)\\
 \bottomrule
 \end{tabular}

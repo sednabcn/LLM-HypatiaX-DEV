@@ -269,7 +269,7 @@ def _single_train_run(X_train_t, y_train_t, X_val_t, y_val_t, cfg, seed):
     magic numbers live in this function.
     """
     torch.manual_seed(seed)
-    model     = ImprovedNN(cfg.input_dim, list(cfg.hidden_dims))
+    model     = ImprovedNN(cfg.input_dim, list(cfg.hidden_dims)).double()
     optimizer = cfg.make_optimizer(model)
     scheduler = cfg.make_scheduler(optimizer)
     criterion = nn.MSELoss()
@@ -337,137 +337,195 @@ def train_neural_network(
     """
 
     # =========================================================================
-    # STEP 1 — Resolve all hyper-parameters a priori from (X, y, metadata)
+    # Everything below is wrapped in try/except so that any failure — a NaN
+    # from np.log on a non-positive value under use_log_y, a singular matrix
+    # in StandardScaler, an exception inside adaptive_config's CaseProfile
+    # (confirmed to have no exception handling of its own: CaseProfile.from_data()
+    # / CaseSignals.from_data() do not catch anything), a training divergence,
+    # etc. — degrades to a success: False result instead of an uncaught crash
+    # that takes down the whole benchmark run. This matches the contract the
+    # Pure LLM baseline's generate_formula()/evaluate_function() already honor.
     # =========================================================================
-    if _ADAPTIVE_CONFIG_AVAILABLE:
-        cfg = _CaseProfile.from_data(X, y, metadata, budget_secs=budget_secs).to_config()
-    else:
-        cfg = _local_resolve(X, y, metadata or {}, budget_secs)
+    try:
+        # =====================================================================
+        # STEP 1 — Resolve all hyper-parameters a priori from (X, y, metadata)
+        # =====================================================================
+        if _ADAPTIVE_CONFIG_AVAILABLE:
+            cfg = _CaseProfile.from_data(X, y, metadata, budget_secs=budget_secs).to_config()
+        else:
+            cfg = _local_resolve(X, y, metadata or {}, budget_secs)
 
-    if verbose:
-        print(cfg.summary())
+        if verbose:
+            print(cfg.summary())
 
-    # =========================================================================
-    # STEP 2 — Preprocessing (driven entirely by cfg)
-    # =========================================================================
-    X_work = X.copy().astype(float)
-    for col in cfg.log_X_cols:
-        X_work[:, col] = np.log(X_work[:, col])
+        # =====================================================================
+        # STEP 2 — Preprocessing (driven entirely by cfg)
+        # =====================================================================
+        X_work = X.copy().astype(float)
+        for col in cfg.log_X_cols:
+            X_work[:, col] = np.log(X_work[:, col])
 
-    if cfg.use_log_y:
-        y_work = np.log(np.abs(y))
-    else:
-        y_work = y.copy()
+        if cfg.use_log_y:
+            y_work = np.log(np.abs(y))
+        else:
+            y_work = y.copy()
 
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_work, y_work, test_size=0.2, random_state=42
-    )
+        if not np.all(np.isfinite(X_work)) or not np.all(np.isfinite(y_work)):
+            raise ValueError(
+                "Non-finite values after log preprocessing "
+                "(likely log of a non-positive value in log_X_cols or use_log_y)"
+            )
 
-    scaler_X = StandardScaler()
-    X_train_s = scaler_X.fit_transform(X_train)
-    X_val_s   = scaler_X.transform(X_val)
-    X_all_s   = scaler_X.transform(X_work)
-
-    scaler_y  = StandardScaler()
-    y_train_s = scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
-    y_val_s   = scaler_y.transform(y_val.reshape(-1, 1)).flatten()
-
-    X_train_t = torch.FloatTensor(X_train_s)
-    y_train_t = torch.FloatTensor(y_train_s).reshape(-1, 1)
-    X_val_t   = torch.FloatTensor(X_val_s)
-    y_val_t   = torch.FloatTensor(y_val_s).reshape(-1, 1)
-    X_all_t   = torch.FloatTensor(X_all_s)
-
-    # =========================================================================
-    # STEP 3 — Multi-restart training  (cfg.n_seeds restarts → keep best)
-    # =========================================================================
-    best_model       = None
-    best_val_loss    = float("inf")
-    best_train_loss  = float("inf")
-
-    for seed in range(cfg.n_seeds):
-        model, val_loss, train_loss = _single_train_run(
-            X_train_t, y_train_t, X_val_t, y_val_t, cfg, seed
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_work, y_work, test_size=0.2, random_state=42
         )
-        if val_loss < best_val_loss:
-            best_val_loss   = val_loss
-            best_train_loss = train_loss
-            best_model      = model
 
-    # =========================================================================
-    # STEP 4 — Evaluate on full dataset (matches benchmark scoring convention)
-    # =========================================================================
-    best_model.eval()
-    with torch.no_grad():
-        y_pred_s = best_model(X_all_t).numpy().flatten()
+        scaler_X = StandardScaler()
+        X_train_s = scaler_X.fit_transform(X_train)
+        X_val_s   = scaler_X.transform(X_val)
+        X_all_s   = scaler_X.transform(X_work)
 
-    y_pred_w = scaler_y.inverse_transform(y_pred_s.reshape(-1, 1)).flatten()
-    if cfg.use_log_y:
-        y_pred = cfg.y_sign * np.exp(np.clip(y_pred_w, -500.0, 500.0))
-    else:
-        y_pred = y_pred_w
+        scaler_y  = StandardScaler()
+        y_train_s = scaler_y.fit_transform(y_train.reshape(-1, 1)).flatten()
+        y_val_s   = scaler_y.transform(y_val.reshape(-1, 1)).flatten()
 
-    rmse   = float(np.sqrt(np.mean((y - y_pred) ** 2)))
-    mae    = float(np.mean(np.abs(y - y_pred)))
-    mse    = float(np.mean((y - y_pred) ** 2))
-    ss_res = float(np.sum((y - y_pred) ** 2))
-    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-    r2     = float(1 - ss_res / ss_tot) if ss_tot > 1e-10 else (1.0 if ss_res < 1e-10 else 0.0)
+        X_train_t = torch.DoubleTensor(X_train_s)
+        y_train_t = torch.DoubleTensor(y_train_s).reshape(-1, 1)
+        X_val_t   = torch.DoubleTensor(X_val_s)
+        y_val_t   = torch.DoubleTensor(y_val_s).reshape(-1, 1)
+        X_all_t   = torch.DoubleTensor(X_all_s)
 
-    # =========================================================================
-    # STEP 5 — Extrapolation analysis (if applicable)
-    # =========================================================================
-    is_extrapolation = bool((metadata or {}).get("extrapolation_test", False))
-    extrapolation_stats = None
-    if is_extrapolation:
-        extrapolation_stats = {
-            "mean_prediction":       float(np.mean(y_pred)),
-            "std_prediction":        float(np.std(y_pred)),
-            "mean_error":            float(np.mean(y_pred - y)),
-            "extrapolation_quality": (
-                "poor" if abs(np.mean(y_pred - y)) > np.std(y) else "good"
-            ),
+        # =====================================================================
+        # STEP 3 — Multi-restart training  (cfg.n_seeds restarts → keep best)
+        # =====================================================================
+        best_model       = None
+        best_val_loss    = float("inf")
+        best_train_loss  = float("inf")
+
+        for seed in range(cfg.n_seeds):
+            model, val_loss, train_loss = _single_train_run(
+                X_train_t, y_train_t, X_val_t, y_val_t, cfg, seed
+            )
+            if val_loss < best_val_loss:
+                best_val_loss   = val_loss
+                best_train_loss = train_loss
+                best_model      = model
+
+        if best_model is None:
+            raise RuntimeError("No training run produced a usable model (all seeds failed)")
+
+        # =====================================================================
+        # STEP 4 — Evaluate on full dataset (matches benchmark scoring convention)
+        # =====================================================================
+        best_model.eval()
+        with torch.no_grad():
+            y_pred_s = best_model(X_all_t).numpy().flatten()
+
+        y_pred_w = scaler_y.inverse_transform(y_pred_s.reshape(-1, 1)).flatten()
+        if cfg.use_log_y:
+            y_pred = cfg.y_sign * np.exp(np.clip(y_pred_w, -500.0, 500.0))
+        else:
+            y_pred = y_pred_w
+
+        if not np.all(np.isfinite(y_pred)):
+            raise ValueError("Non-finite predictions after inverse-transform")
+
+        rmse   = float(np.sqrt(np.mean((y - y_pred) ** 2)))
+        mae    = float(np.mean(np.abs(y - y_pred)))
+        mse    = float(np.mean((y - y_pred) ** 2))
+        ss_res = float(np.sum((y - y_pred) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+
+        # Relative threshold — scales with the target's magnitude, mirroring
+        # the exact fix already applied on the Pure LLM baseline side, so tiny-y
+        # equations (Photon ~1e-19, Zeeman ~1e-23) aren't misclassified as
+        # constant targets by an absolute 1e-10 floor. This keeps the docstring's
+        # claim of "consistent evaluation metrics with Pure LLM baseline" true.
+        _scale = float(np.max(np.abs(y)) ** 2) * len(y)
+        _tol   = 1e-10 * _scale if _scale > 0 else 1e-30
+        if ss_tot > _tol:
+            r2 = float(1.0 - ss_res / ss_tot)
+        else:
+            r2 = 1.0 if ss_res < _tol else float("-inf")
+
+        # =====================================================================
+        # STEP 5 — Extrapolation analysis (if applicable)
+        # =====================================================================
+        is_extrapolation = bool((metadata or {}).get("extrapolation_test", False))
+        extrapolation_stats = None
+        if is_extrapolation:
+            extrapolation_stats = {
+                "mean_prediction":       float(np.mean(y_pred)),
+                "std_prediction":        float(np.std(y_pred)),
+                "mean_error":            float(np.mean(y_pred - y)),
+                "extrapolation_quality": (
+                    "poor" if abs(np.mean(y_pred - y)) > np.std(y) else "good"
+                ),
+            }
+
+        # =====================================================================
+        # STEP 6 — Pack and return results
+        # =====================================================================
+        arch_str = (
+            f"ResidualMLP {list(cfg.hidden_dims)} SiLU LayerNorm "
+            f"({'log-y' if cfg.use_log_y else 'lin-y'}, {cfg.n_seeds} seed(s))"
+        )
+        result = {
+            "method":       "neural_network",
+            "architecture": arch_str,
+            "description":  description,
+            "domain":       domain,
+            "evaluation": {
+                "r2":      r2,
+                "rmse":    rmse,
+                "mae":     mae,
+                "mse":     mse,
+                "success": True,
+            },
+            "training_info": {
+                "log_y":            cfg.use_log_y,
+                "log_X_cols":       list(cfg.log_X_cols),
+                "best_val_loss":    float(best_val_loss),
+                "final_train_loss": float(best_train_loss),
+                "n_seeds":          cfg.n_seeds,
+                "hidden_dims":      list(cfg.hidden_dims),
+                "lr":               cfg.lr,
+                "weight_decay":     cfg.weight_decay,
+                "scheduler":        cfg.scheduler_cls,
+                "config_rationale": list(cfg.rationale),
+            },
+            "metadata":  metadata,
+            "timestamp": datetime.now().isoformat(),
         }
 
-    # =========================================================================
-    # STEP 6 — Pack and return results
-    # =========================================================================
-    arch_str = (
-        f"ResidualMLP {list(cfg.hidden_dims)} SiLU LayerNorm "
-        f"({'log-y' if cfg.use_log_y else 'lin-y'}, {cfg.n_seeds} seed(s))"
-    )
-    result = {
-        "method":       "neural_network",
-        "architecture": arch_str,
-        "description":  description,
-        "domain":       domain,
-        "evaluation": {
-            "r2":      r2,
-            "rmse":    rmse,
-            "mae":     mae,
-            "mse":     mse,
-            "success": True,
-        },
-        "training_info": {
-            "log_y":            cfg.use_log_y,
-            "log_X_cols":       list(cfg.log_X_cols),
-            "best_val_loss":    float(best_val_loss),
-            "final_train_loss": float(best_train_loss),
-            "n_seeds":          cfg.n_seeds,
-            "hidden_dims":      list(cfg.hidden_dims),
-            "lr":               cfg.lr,
-            "weight_decay":     cfg.weight_decay,
-            "scheduler":        cfg.scheduler_cls,
-            "config_rationale": list(cfg.rationale),
-        },
-        "metadata":  metadata,
-        "timestamp": datetime.now().isoformat(),
-    }
+        if extrapolation_stats:
+            result["extrapolation_stats"] = extrapolation_stats
 
-    if extrapolation_stats:
-        result["extrapolation_stats"] = extrapolation_stats
+        return result
 
-    return result
+    except Exception as e:
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        return {
+            "method":       "neural_network",
+            "architecture": None,
+            "description":  description,
+            "domain":       domain,
+            "evaluation": {
+                "r2":      float("nan"),
+                "rmse":    float("nan"),
+                "mae":     float("nan"),
+                "mse":     float("nan"),
+                "success": False,
+                "error":   str(e),
+            },
+            "error_type":    type(e).__name__,
+            "error_repr":    repr(e),
+            "training_info": {},
+            "metadata":      metadata,
+            "timestamp":     datetime.now().isoformat(),
+        }
 
 
 def run_comprehensive_test(
@@ -532,9 +590,19 @@ def run_comprehensive_test(
                 verbose=verbose,
             )
 
-            # Print results
+            # Print results — check success first. A failed run (see the
+            # try/except in train_neural_network()) returns evaluation with
+            # success: False and an empty training_info, so r2/rmse/mae and
+            # the training_info keys below are not guaranteed to exist;
+            # touching them unconditionally would just turn a graceful
+            # failure back into a crash one line later.
             metrics  = result["evaluation"]
             training = result["training_info"]
+
+            if not metrics.get("success", False):
+                print(f"  ❌ TRAINING FAILED: {metrics.get('error', 'unknown error')}")
+                all_results.append(result)
+                continue
 
             print(f"  ✅ R² Score: {metrics['r2']:.6f}")
             print(f"  RMSE: {metrics['rmse']:.6f}")

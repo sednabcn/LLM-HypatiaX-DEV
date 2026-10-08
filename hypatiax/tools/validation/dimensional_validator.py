@@ -97,8 +97,13 @@ def safe_sympify(
             # parse correctly without NameError in the validator layers.
             "safe_asin":   sp.asin,
             "safe_acos":   sp.acos,
-            "asin_of_sin": sp.asin,
-            "acos_of_cos": sp.acos,
+            # FIX (asin_of_sin audit): was aliased to plain sp.asin, a different
+            # function restricted to [-1, 1]. asin_of_sin(x) = asin(sin(x)),
+            # composed and defined for all real x, matching the domain-safe
+            # numeric definition used at scoring time (symbolic_engine.py,
+            # hybrid_system_v50_2.py, run_comparative_suite_benchmark_v2/_pca.py).
+            "asin_of_sin": lambda x: sp.asin(sp.Max(-1, sp.Min(1, sp.sin(x)))),
+            "acos_of_cos": lambda x: sp.acos(sp.Max(-1, sp.Min(1, sp.cos(x)))),
             "atan_of_tan": sp.atan,
             # Standard inverse trig (sometimes used directly in expressions)
             "asin":  sp.asin,

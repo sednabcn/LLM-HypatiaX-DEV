@@ -10,6 +10,7 @@ Fully implements:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -70,6 +71,7 @@ def train_nn_model(
     hidden_dims: list[int] = None,
     epochs: int = 1000,
     lr: float = 0.003,
+    seed: int | None = None,
 ) -> tuple[ImprovedNN, object, object]:
     """Train NN; returns (model, scaler_X, scaler_y).
 
@@ -80,8 +82,23 @@ def train_nn_model(
     - Early stopping with patience=100
     - 1000 epochs (up from 500)
     - Adaptive architecture by input dimensionality
+
+    FIX-ISSUE2B-UNSEEDED-NN: `seed`, when given, is passed to
+    torch.manual_seed() right before the model is constructed. Previously
+    this function had no seeding at all, so ImprovedNN's weight
+    initialization used whatever torch's global RNG state happened to be
+    -- fine within a single process, but not reproducible across the
+    separate process invocations used by the Item 2b reproducibility
+    check (phaseA_run1/run2/run3). The harness's own residual-correction
+    step and the HSL/M4 method already follow this same
+    sha256(description)-derived-seed pattern; this brings EHD/M3's
+    *primary* NN training step in line with it too, rather than leaving
+    it as the one unseeded stage in the pipeline.
     """
     from sklearn.preprocessing import StandardScaler
+
+    if seed is not None:
+        torch.manual_seed(seed)
 
     scaler_X = StandardScaler()
     scaler_y = StandardScaler()
@@ -478,13 +495,47 @@ def fit_formula_params(
     n       = len(init_vals)
     rng     = np.random.default_rng(42)
 
-    # Hard wall-clock budget for the entire Stage 2 fitting process.
-    # curve_fit gets the first _FIT_BUDGET_S seconds; whatever is left
-    # (if any) goes to differential_evolution.  This prevents a single
-    # bad formula with many parameters from stalling the benchmark for
-    # 60+ seconds (observed: maxiter=500 DE on Michaelis-Menten → 75 s).
-    _FIT_BUDGET_S = 8.0
+    # FIX-ISSUE2B-WALLCLOCK-NONDETERMINISM: the number of curve_fit
+    # candidates tried, and whether/how-long differential_evolution ran,
+    # used to be gated on `time.monotonic()` elapsed since Stage 2 started.
+    # That makes the *algorithm path actually executed* depend on real
+    # wall-clock time, which varies run-to-run on a shared/variably-loaded
+    # CI runner even for bit-identical code, seeds, and inputs -- confirmed
+    # directly in the Item 2b logs, where the SAME equation's total
+    # evaluation time varied by several seconds across otherwise-identical
+    # phaseA_run1/run2/run3 invocations. On a loaded runner this could mean
+    # curve_fit only gets 2 of 3 candidates tried, or DE gets skipped or
+    # cut short, in one run but not another -- producing a different
+    # fitted_code / fitted_train_r2 despite everything else being
+    # identical. That is real, load-dependent nondeterminism, not fixable
+    # by seeding.
+    #
+    # Fix: bound the fitting work by deterministic, data-independent
+    # quantities only (fixed candidate count, maxfev, maxiter) so the same
+    # sequence of optimizer calls always runs regardless of machine speed.
+    # A generous *absolute* wall-clock safety valve is kept only to catch
+    # genuine runaway formulas; it is set high enough to essentially never
+    # fire under normal load, and if it ever does, it is logged loudly
+    # (not silently swallowed) so an affected run is visibly flagged
+    # rather than quietly producing a non-reproducible result.
+    _ABS_SAFETY_CAP_S = 45.0
     _t_stage2_start = _time.monotonic()
+    _safety_tripped = [False]
+
+    def _safety_cap_exceeded() -> bool:
+        if _time.monotonic() - _t_stage2_start > _ABS_SAFETY_CAP_S:
+            if not _safety_tripped[0]:
+                _safety_tripped[0] = True
+                print(
+                    f"  ⚠️  [Stage2] absolute safety cap ({_ABS_SAFETY_CAP_S}s) "
+                    f"exceeded -- aborting remaining fit attempts early. This "
+                    f"run's Stage 2 result may not match a run that did not hit "
+                    f"this cap; treat it as suspect for reproducibility "
+                    f"comparisons.",
+                    flush=True,
+                )
+            return True
+        return False
 
     # Bounds tied to y_scale rather than ±1e9 so curve_fit's Jacobian
     # search starts in a sensible region and converges faster.
@@ -537,12 +588,16 @@ def fit_formula_params(
                 best_code = fc
 
     # ── curve_fit from best candidates ────────────────────────────────
+    # Always attempt the same fixed number of candidates (3) regardless of
+    # elapsed wall-clock time -- each individual curve_fit call is already
+    # cost-bounded via maxfev=3000, so trying all 3 is safe and, crucially,
+    # deterministic: the exact same optimizer calls run every time given
+    # the same inputs. Only the absolute safety valve can still cut this
+    # short, and it logs when it does.
     for _, p0 in scored[:3]:
-        # Stop early if the time budget is already exhausted or we already
-        # have an excellent fit — no point running more curve_fit attempts.
-        if _time.monotonic() - _t_stage2_start > _FIT_BUDGET_S:
-            break
         if best_r2 >= 0.95:
+            break
+        if _safety_cap_exceeded():
             break
         try:
             with _warnings.catch_warnings():
@@ -556,23 +611,24 @@ def fit_formula_params(
             continue
 
     # ── differential_evolution fallback ───────────────────────────────
-    # Only run if curve_fit left a meaningful gap AND the time budget
-    # has not been consumed.  maxiter=100 (down from 500) keeps the
-    # worst-case cost bounded; the wall-clock callback aborts early if
-    # even that budget overruns.
-    _t_remaining = _FIT_BUDGET_S - (_time.monotonic() - _t_stage2_start)
-    if best_r2 < 0.90 and _t_remaining > 1.0:
+    # Only run if curve_fit left a meaningful gap. maxiter=100 already
+    # bounds the worst-case cost deterministically (a fixed iteration
+    # count, not a wall-clock budget) -- no per-run timing dependence.
+    # The absolute safety valve remains as a runaway-formula backstop only.
+    if best_r2 < 0.90 and not _safety_cap_exceeded():
         try:
             bounds_de = [(-y_scale * 100, y_scale * 100)] * n
-            _t_de_start = _time.monotonic()
 
             def _obj(P):
                 pr = _predict(P)
                 return float(np.mean((y_train - pr) ** 2)) if pr is not None else 1e30
 
             def _de_callback(xk, convergence=None):
-                # Return True to stop DE early if wall-clock budget exceeded.
-                return _time.monotonic() - _t_de_start > _t_remaining
+                # Purely a runaway-formula backstop now -- not part of the
+                # normal-path determinism story, since it will not fire
+                # under normal load (cap is 45s, DE itself is bounded by
+                # maxiter=100 with a fixed seed).
+                return _safety_cap_exceeded()
 
             with _warnings.catch_warnings():
                 _warnings.simplefilter("ignore")
@@ -599,6 +655,36 @@ def fit_formula_params(
 # Main Hybrid System
 # ---------------------------------------------------------------------------
 
+def _create_message_deterministic(client, **kwargs):
+    """Call client.messages.create(), preferring temperature=0.0 for
+    reproducibility (see FIX-ISSUE2B-LLM-TEMPERATURE), but tolerate newer
+    models that no longer accept the parameter at all.
+
+    FIX-ISSUE2B-LLM-TEMPERATURE-DEPRECATED: duplicated from the identical
+    helper in hybrid_system_llm_nn_all_domains.py (HSL) / baseline_pure_llm_
+    defi_discovery.py, per this codebase's existing convention of
+    per-file copies rather than cross-module imports for this helper.
+    Without this, EnhancedHybridSystemDeFi's local fallback (both the
+    initial call and its max_tokens/malformed-response retry) called
+    client.messages.create(temperature=0.0, ...) directly -- which raises
+    on any model that has deprecated the temperature/top_p/top_k sampling
+    parameters (Claude Sonnet 4.6+, Opus 4.7+), and that exception was
+    swallowed by generate_llm_formula's bare except into an N/A/error
+    result rather than retried, unlike HSL's equivalent fallback. Tries
+    temperature=0.0 first and retries once without it only on that
+    specific deprecation error, so determinism is preserved wherever the
+    model still supports it, and the fallback degrades the same way HSL's
+    does instead of going silently dark.
+    """
+    try:
+        return client.messages.create(temperature=0.0, **kwargs)
+    except Exception as e:
+        msg = str(e)
+        if "temperature" in msg.lower() and "deprecated" in msg.lower():
+            return client.messages.create(**kwargs)
+        raise
+
+
 class EnhancedHybridSystemDeFi:
     """
     Hybrid system: LLM symbolic formula + NN, with ensemble fallback.
@@ -619,6 +705,27 @@ class EnhancedHybridSystemDeFi:
         self.formula_cache: dict[str, dict] = {}
         self._no_cache = no_cache   # honoured in generate_llm_formula
 
+        # FIX-ISSUE2B-LLM-API-NONDETERMINISM: the Anthropic API (like most
+        # LLM inference stacks) is not guaranteed to return byte-identical
+        # completions for an identical prompt at temperature=0 -- this is a
+        # server-side batching/kernel effect, not something fixable with
+        # local seeding. Item 2b's reproducibility check runs this class
+        # fresh in 3 *separate processes* (phaseA_run1/run2/run3), so
+        # in-memory formula_cache (above) never helps across runs even
+        # though it prevents redundant calls within one run.
+        #
+        # HYPATIAX_LLM_FREEZE_CACHE, when set to a file path, makes this
+        # class read-through/write-through a JSON file shared across
+        # process invocations: run1 populates it on cache misses, and
+        # run2/run3 then get bit-identical formula text for the same
+        # (description, domain, variable_names) key instead of re-querying
+        # the API -- removing the API as a source of cross-run variance.
+        # This is opt-in and does not change default behaviour for normal
+        # (non-reproducibility-check) use of this class.
+        self._freeze_cache_path = os.getenv("HYPATIAX_LLM_FREEZE_CACHE")
+        if self._freeze_cache_path:
+            self._load_frozen_cache()
+
         # Delegate LLM formula generation to PureLLMBaseline so Feynman
         # equations (biology/chemistry/physics) benefit from hardcoded OLS
         # paths, variant guards, and all prompt fixes — without reimplementing
@@ -631,6 +738,57 @@ class EnhancedHybridSystemDeFi:
             self._llm_baseline = _PureLLMBaseline(model=model)
         except Exception:
             self._llm_baseline = None
+
+    # ------------------------------------------------------------------
+    # Frozen (cross-process) LLM cache — see FIX-ISSUE2B-LLM-API-NONDETERMINISM
+    # in __init__ for why this exists.
+    # ------------------------------------------------------------------
+
+    def _load_frozen_cache(self) -> None:
+        """Load any previously-persisted formula results into memory.
+
+        Tolerant of a missing/empty/corrupt file — a frozen cache miss
+        should never be worse than not having the feature at all, so any
+        failure here just falls back to normal (live-API) behaviour.
+        """
+        try:
+            p = Path(self._freeze_cache_path)
+            if p.exists() and p.stat().st_size > 0:
+                with open(p, "r") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self.formula_cache.update(data)
+        except Exception:
+            pass
+
+    def _save_to_frozen_cache(self, cache_key: str, result: dict) -> None:
+        """Persist one entry to the shared frozen-cache file (atomic write).
+
+        Re-reads the file first so concurrent/sequential process
+        invocations don't clobber each other's entries — each of
+        phaseA_run1/run2/run3 only ever *adds* keys it generated fresh; a
+        key already present (written by an earlier run) is never
+        overwritten, which is what guarantees run2/run3 see exactly what
+        run1 saw.
+        """
+        try:
+            p = Path(self._freeze_cache_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if p.exists() and p.stat().st_size > 0:
+                try:
+                    with open(p, "r") as f:
+                        existing = json.load(f)
+                except Exception:
+                    existing = {}
+            if cache_key not in existing:
+                existing[cache_key] = result
+                tmp = p.with_suffix(p.suffix + f".tmp{os.getpid()}")
+                with open(tmp, "w") as f:
+                    json.dump(existing, f)
+                os.replace(tmp, p)   # atomic on POSIX
+        except Exception:
+            pass   # freezing is best-effort; never let it break a run
 
     # ------------------------------------------------------------------
     # LLM formula generation
@@ -647,6 +805,18 @@ class EnhancedHybridSystemDeFi:
         y: "np.ndarray | None" = None,
     ) -> dict:
         cache_key = f"{description}|{domain}|{','.join(variable_names)}"
+
+        # Frozen cross-process cache takes priority over everything else,
+        # including --no-llm-cache: freezing exists specifically to pin the
+        # LLM's output identical across the separate phaseA_run* processes
+        # used by the Item 2b reproducibility check, which is a different
+        # goal from the intra-run "always call the live API" semantics
+        # that --no-llm-cache/_no_cache provides.
+        if self._freeze_cache_path and cache_key in self.formula_cache:
+            if verbose:
+                print(f"  [LLM→frozen-cache] hit for: {description[:60]}")
+            return self.formula_cache[cache_key].copy()
+
         if not self._no_cache and cache_key in self.formula_cache:
             return self.formula_cache[cache_key].copy()
 
@@ -668,6 +838,9 @@ class EnhancedHybridSystemDeFi:
                 if code and code != "N/A" and "return" in code:
                     if not self._no_cache:
                         self.formula_cache[cache_key] = result.copy()
+                    if self._freeze_cache_path:
+                        self.formula_cache[cache_key] = result.copy()
+                        self._save_to_frozen_cache(cache_key, result)
                     if verbose:
                         print(f"  [LLM→PureLLM] formula: {result.get('formula','')[:80]}")
                     return result
@@ -675,23 +848,31 @@ class EnhancedHybridSystemDeFi:
                 pass  # fall through to local DeFi implementation
 
         # ── Local DeFi implementation (fallback) ─────────────────────────────
-        desc_lower = description.lower()
-        use_specialized = any(
-            k in desc_lower
-            for k in ["kelly", "impermanent loss", "liquidation", "expected shortfall",
-                       "black-scholes", "sharpe", "value at risk"]
-        )
-
-        if use_specialized:
-            prompt = self._specialized_prompt(description, domain, variable_names, metadata)
-        else:
-            prompt = self._standard_prompt(description, domain, variable_names, metadata)
+        # FIX GT-LEAK-2 (2026-08-10): _specialized_prompt() used to be called
+        # here for ["kelly", "impermanent loss", "liquidation", "expected
+        # shortfall", "black-scholes", "sharpe", "value at risk"] cases.
+        # Unlike the ground-truth-hint leaks fixed elsewhere in this codebase
+        # (hypatiax_defi_benchmark_v3c.py Fix 14, hybrid_system_llm_nn_all_
+        # domains.py FIX GT-LEAK), _specialized_prompt() didn't add a hint to
+        # a genuine derivation request — for kelly/impermanent-loss/VaR/
+        # expected-shortfall it returned the COMPLETE pre-solved answer,
+        # already formatted in the FORMULA:/PYTHON:/EXPLANATION: schema the
+        # parser expects, with no task or question posed to the model at
+        # all. That's not a leak into a derivation — it's skipping the
+        # derivation entirely while still logging the result as "LLM
+        # formula: <description>". This only fired on the fallback path
+        # (when the audited PureLLMBaseline delegate above failed or
+        # returned N/A). Always using the genuine _standard_prompt() here
+        # means the LLM is actually asked to derive the formula in every
+        # case; _specialized_prompt() is left in place below for reference
+        # but is no longer called.
+        prompt = self._standard_prompt(description, domain, variable_names, metadata)
 
         try:
-            resp = self.client.messages.create(
+            resp = _create_message_deterministic(
+                self.client,
                 model=self.model,
                 max_tokens=4096,
-                temperature=0.0,
                 messages=[{"role": "user", "content": prompt}],
             )
             content = resp.content[0].text if resp.content else ""
@@ -710,10 +891,10 @@ class EnhancedHybridSystemDeFi:
                     f"    return ...\n\n"
                     f"Reply with ONLY the def block, no explanation."
                 )
-                resp2 = self.client.messages.create(
+                resp2 = _create_message_deterministic(
+                    self.client,
                     model=self.model,
                     max_tokens=512,
-                    temperature=0.0,
                     messages=[{"role": "user", "content": tight_prompt}],
                 )
                 content = resp2.content[0].text if resp2.content else content
@@ -735,6 +916,8 @@ class EnhancedHybridSystemDeFi:
 
             if result["python_code"] and result["python_code"] != "N/A":
                 self.formula_cache[cache_key] = result.copy()
+                if self._freeze_cache_path:
+                    self._save_to_frozen_cache(cache_key, result)
 
             if verbose:
                 print(f"  [LLM] formula extracted: {result['formula'][:80]}")
@@ -777,6 +960,12 @@ EXPLANATION:
 """
 
     def _specialized_prompt(self, description, domain, variable_names, metadata):
+        """
+        DEPRECATED — no longer called (see FIX GT-LEAK-2 at the generate_llm_formula
+        call site above). Kept for reference only: several branches below return a
+        fully pre-solved answer instead of a derivation request, which defeats the
+        purpose of an "LLM formula generation" step. Do not reintroduce the call site.
+        """
         desc_lower = description.lower()
         var_list = ", ".join(variable_names)
         v = variable_names
@@ -964,7 +1153,14 @@ Expected Shortfall at 95% confidence for normal returns (ES multiplier = 2.063).
         nn_train_r2 = 0.0
 
         try:
-            nn_model, scaler_X, scaler_y = train_nn_model(X_train, y_train)
+            # FIX-ISSUE2B-UNSEEDED-NN: same sha256(description)-derived-seed
+            # pattern used by the harness's own NN steps (see
+            # HybridDeFiMethod._nn_residual_fit / HybridAllDomainsMethod in
+            # run_comparative_suite_benchmark_v2.py) so this NN's weight
+            # init is reproducible across separate process runs of the
+            # same equation, not just within a single process.
+            _nn_seed = int(hashlib.sha256(description.encode()).hexdigest(), 16) % (2**31)
+            nn_model, scaler_X, scaler_y = train_nn_model(X_train, y_train, seed=_nn_seed)
             nn_preds_train = nn_predict(nn_model, scaler_X, scaler_y, X_train)
 
             if nn_preds_train is not None:

@@ -229,14 +229,18 @@ def _build_runner_cmd(
       0.050 -> sig0050
       0.100 -> sig0100
     """
-    sigma_label = f"sig{int(round(noise_level * 1000)):04d}"
+    # FIX SIGMA-LABEL-COLLISION: thousandths gave sigma=0 and sigma=0.0005 the same
+    # label (sig0000).  Ten-thousandths, 5 digits, keeps all CI levels distinct.
+    sigma_label = f"sig{int(round(noise_level * 10000)):05d}"
     cmd = [sys.executable, str(runner)]
 
     # Per-sigma threshold — use the fine-grained map when available so each
     # noise level gets the right R2 floor (0.999999 for sigma=0, 0.995 for
     # sigma=0.5%, ..., 0.90 for sigma=10%).
     _PER_SIGMA_DEFAULTS: dict = {
-        0.0:   args.threshold_noiseless,      # 0.999999
+        0.0:    args.threshold_noiseless,     # 0.999999
+        0.0005: 0.995,                        # FIX: was missing -> fell back to threshold_noisy (0.95)
+        0.001:  0.995,                        # FIX: was missing -> fell back to threshold_noisy (0.95)
         0.005: 0.995,
         0.01:  0.990,
         0.05:  args.threshold_noisy,          # 0.950
@@ -472,11 +476,30 @@ def _aggregate_results(
 
         for method in all_methods_sorted:
             r2_vals: list[float] = []
+            time_vals: list[float] = []
             n_success = n_total = n_recovery = n_catastrophic = 0
 
             for eq_name, eq_results in per_eq.items():
                 n_total += 1
                 res = eq_results.get(method, {})
+                # FIX-TIMING-DROPPED (2026-08-04): 'time' is already present
+                # in the raw per-equation result (same protocol_core_*.json
+                # subprocess output this method's per_equation dict is built
+                # from -- see _extract_per_test, which passes the full res
+                # dict through) but was never collected here. This is the
+                # same bug found and fixed in run_sample_complexity_benchmark
+                # .py's _aggregate_results() for Issue 3 -- see
+                # 03_ehsdefi_runtime_SECTION_REPLACEMENT.tex. Collected over
+                # ALL attempts (not gated on success), matching that fix and
+                # matching how tab:overall's Avg Runtime column is computed.
+                t = res.get("time")
+                if t is not None:
+                    try:
+                        tf = float(t)
+                        if np.isfinite(tf):
+                            time_vals.append(tf)
+                    except (TypeError, ValueError):
+                        pass
                 if res.get("success", False):
                     n_success += 1
                     r2 = res.get("r2")
@@ -504,6 +527,11 @@ def _aggregate_results(
                 "n_total":        n_total,
                 "threshold_used": threshold,
                 "n_catastrophic": n_catastrophic,
+                # FIX-TIMING-DROPPED: see comment in the collection loop above.
+                "mean_time_s":    float(np.mean(time_vals))          if time_vals          else None,
+                "median_time_s":  float(np.median(time_vals))        if time_vals          else None,
+                "std_time_s":     float(np.std(time_vals, ddof=1))   if len(time_vals) > 1 else 0.0,
+                "n_timed":        len(time_vals),
             }
 
         per_noise_data[sigma_str] = {
@@ -515,6 +543,10 @@ def _aggregate_results(
                         "r2":          eq_res.get("r2"),
                         "rmse":        eq_res.get("rmse"),
                         "success":     eq_res.get("success", False),
+                        # FIX-TIMING-DROPPED: see comment in the collection
+                        # loop above -- this is the root fix for Issue 3's
+                        # missing tab:time_noise timing data.
+                        "time":        eq_res.get("time"),
                         "catastrophic": (
                             np.isfinite(float(eq_res["r2"]))
                             and float(eq_res["r2"]) < _CATASTROPHIC_R2_THRESHOLD
@@ -926,6 +958,7 @@ def main() -> None:
             print(f"  WARNING: bad --threshold-per-sigma token: {token!r}")
     agg = _aggregate_results(all_sigmas, result_paths, args_thresholds)
     _print_noise_sweep_table(agg)
+    agg["n_samples"] = args.samples   # FIX: record n so table captions need no hard-coded n=200
     _save_sweep_json(agg, ts)
     _save_sweep_csv(agg, ts)
 

@@ -60,12 +60,21 @@ Usage
 """
 
 import concurrent.futures as _cf
-import ctypes          # for _kill_thread (hard timeout enforcement)
+# FIX-ISSUE10B-DEAD-KILLTHREAD: ctypes was imported only to support
+# _kill_thread(), which was called below but never defined anywhere in
+# this file -- every invocation raised NameError, silently swallowed by
+# a blanket `except Exception: pass`. Removed rather than implemented:
+# the real hang (orphaned Julia subprocess, see FIX-ISSUE10B-ORPHANED-JULIA
+# / _kill_process_group above) isn't a blocked Python thread, so injecting
+# SystemExit into the thread wouldn't have touched the runaway process
+# either. See patch_report_unseeded_nn_followup.md-style writeup for
+# Issue 10b.
 import threading as _threading
 import inspect
 import json
 import os
 import random
+import hashlib
 import re
 import sys
 import time
@@ -279,6 +288,33 @@ def build_extrap_split(
 #     Source: BaseMethod._runner_eval_formula(), lines ~776-887
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _select_formula_fn(exec_ns, safe_globals):
+    """
+    Pick the function a ``def`` snippet defined.
+
+    FIX (first-callable bug): the old selection took the first callable in
+    exec_ns. exec_ns starts as a copy of safe_globals, whose first callable
+    entries are the bare-name ufuncs (``exp`` is a clipping lambda), so every
+    ``def formula(...)`` snippet was silently scored as ``exp(first_arg)`` (one
+    variable) or raised (several variables) -> -inf / null far scores.
+
+    Order: (1) a callable literally named ``formula``; (2) the LAST callable
+    the snippet itself defined, i.e. whose value is not the same object as the
+    safe_globals entry of that name.
+    """
+    fn = exec_ns.get("formula")
+    if callable(fn) and safe_globals.get("formula") is not fn:
+        return fn
+    user_defined = [
+        v for k, v in exec_ns.items()
+        if callable(v)
+        and k != "__builtins__"
+        and not k.startswith("_")
+        and safe_globals.get(k) is not v
+    ]
+    return user_defined[-1] if user_defined else None
+
+
 def _runner_eval_formula(
     python_code: str,
     X: np.ndarray,
@@ -404,10 +440,7 @@ def _runner_eval_formula(
         try:
             exec_ns: Dict[str, Any] = dict(safe_globals)
             exec(code, exec_ns)  # noqa: S102
-            fn = next(
-                (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
-                None,
-            )
+            fn = _select_formula_fn(exec_ns, safe_globals)
             if fn is not None:
                 fn_args = [local_ns[vn] for vn in var_names]
                 y_pred  = fn(*fn_args)
@@ -733,6 +766,28 @@ try:
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
     TORCH_AVAILABLE = True
+
+    # FIX-ISSUE2-DETERMINISM (follow-up to FIX-ISSUE2-UNSEEDED-NN): seeding
+    # via the sha256-derived-seed -> torch.manual_seed() pattern (see
+    # _nn_residual_fit, both copies) fixes *seed derivation*, but does not by itself make
+    # PyTorch's CPU kernels deterministic. Confirmed against a live CI run
+    # (workflow_dispatch 31256573694): after exporting OMP_NUM_THREADS=1 /
+    # MKL_NUM_THREADS=1 / OPENBLAS_NUM_THREADS=1 at the shell level (see
+    # run_issue2b_experiment.sh), HSL/M4 still showed a ~1e-6 R^2 spread on
+    # at least one equation. Two gaps: (1) env-var thread pinning at process
+    # start is not guaranteed to fully constrain ATen's own internal thread
+    # pool the way an explicit in-process call does; (2) without
+    # use_deterministic_algorithms, some CPU ops can still choose a
+    # non-deterministic reduction path independent of thread count. Setting
+    # both explicitly, in-process, right after import and before any model
+    # is constructed, closes both gaps. warn_only=True rather than the
+    # strict default: this codebase doesn't use any op lacking a
+    # deterministic CPU implementation (plain Linear/Tanh MLPs), so a hard
+    # RuntimeError isn't needed, but if that assumption ever breaks, warn
+    # mode still surfaces it in the log instead of the run silently
+    # continuing non-deterministic.
+    torch.set_num_threads(1)
+    torch.use_deterministic_algorithms(True, warn_only=True)
 except ImportError:
     TORCH_AVAILABLE = False
     print("⚠️  torch / sklearn not available — NN-based methods will be skipped")
@@ -934,6 +989,13 @@ class BaseMethod:
     def __init__(self, name: str, verbose: bool = False):
         self.name    = name
         self.verbose = verbose
+        # FIX-ISSUE10B-OUTER-TIMEOUT: default to None for methods that don't
+        # run PySR in a subprocess (only SymbolicEngineMethod and
+        # HybridSystemV50_2Method set this to a real _ProcBox before
+        # submitting to the thread pool). Having the attribute always present
+        # lets the outer timeout handler check it uniformly via getattr
+        # without needing an isinstance check against specific method classes.
+        self._proc_box = None
 
     def run(self, description, X, y, var_names, metadata, verbose=False) -> MethodResult:
         raise NotImplementedError
@@ -1130,10 +1192,7 @@ class BaseMethod:
             try:
                 exec_ns: Dict[str, Any] = dict(safe_globals)
                 exec(code, exec_ns)  # noqa: S102
-                fn = next(
-                    (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
-                    None,
-                )
+                fn = _select_formula_fn(exec_ns, safe_globals)
                 if fn is not None:
                     args = [local_ns[vn] for vn in var_names]
                     y_pred = fn(*args)
@@ -1154,6 +1213,7 @@ class BaseMethod:
         X: np.ndarray,
         y: np.ndarray,
         y_pred_llm: np.ndarray,
+        description: str = "",
     ) -> Optional[np.ndarray]:
         """Train a shallow MLP on the LLM formula residuals and return
         corrected predictions.
@@ -1175,6 +1235,12 @@ class BaseMethod:
         if not TORCH_AVAILABLE:
             return None
         try:
+            # FIX-ISSUE2-UNSEEDED-NN (follow-up): this helper was training
+            # completely unseeded, same root cause as Strategies 3a/3b above
+            # -- seed deterministically from the equation description via
+            # sha256 (not hash(), which is per-process-randomized).
+            _seed = int(hashlib.sha256(description.encode()).hexdigest(), 16) % (2**31)
+            torch.manual_seed(_seed)
             from sklearn.preprocessing import StandardScaler as _SS
 
             # ── Detect whether log-space training is appropriate ─────────────
@@ -1469,10 +1535,7 @@ class PureLLMBaselineMethod(BaseMethod):
             try:
                 exec_ns: Dict[str, Any] = dict(safe_globals)
                 exec(code, exec_ns)  # noqa: S102
-                fn = next(
-                    (v for k, v in exec_ns.items() if callable(v) and k != "__builtins__"),
-                    None,
-                )
+                fn = _select_formula_fn(exec_ns, safe_globals)
                 if fn is not None:
                     args = [local_ns[vn] for vn in var_names]
                     y_pred = fn(*args)
@@ -1502,6 +1565,20 @@ class PureLLMBaselineMethod(BaseMethod):
                 description, metadata.get("domain", "unknown"), var_names, metadata,
                 X=X, y=y,
             )
+            # FIX-TRUNCATION-MASKS-API-ERROR: previously, if generate_formula()
+            # caught an exception (e.g. an API error) it returned only
+            # {"error": <real message>} with no "python_code" key. That fell
+            # through to the truncation guard below, which sees an empty
+            # string, decides it's a "truncated" formula, and reports the
+            # generic "truncated_formula: no valid return statement" —
+            # silently discarding the actual error (temperature-deprecation
+            # 400s, rate limits, auth failures, etc. all looked identical to
+            # a genuinely truncated LLM completion). Checked directly here so
+            # the real cause is surfaced instead of misdiagnosed.
+            if result.get("error"):
+                self._log(f"generate_formula() failed: {result['error'][:150]}")
+                return self._unavailable(f"generate_formula_error: {result['error'][:200]}")
+
             python_code = result.get("python_code", "") or result.get("formula_code", "") or ""
 
             # ── TRUNCATION GUARD (v2.0) ───────────────────────────────────
@@ -1556,7 +1633,8 @@ class PureLLMBaselineMethod(BaseMethod):
                             r2=r2_fb, rmse=rmse_fb,
                             formula=python_code[:500], formula_hash=BaseMethod._make_formula_result(python_code)[1], formula_full=python_code,
                             metadata={"fallback_eval": True,
-                                      "truncated_formula": False},
+                                      "truncated_formula": False,
+                                      "is_hardcoded": result.get("method") == "pure_llm_hardcoded"},
                         )
 
             return self._unavailable(metrics.get("error", "Formula evaluation failed"))
@@ -1592,6 +1670,22 @@ class ImprovedNNMethod(BaseMethod):
     def run(self, description, X, y, var_names, metadata, verbose=False) -> MethodResult:
         if self._ImprovedNN is None:
             return self._unavailable("ImprovedNN not available")
+
+        # FIX-ISSUE2-UNSEEDED-NN (follow-up): when called directly (the
+        # default nn_seeds=1 path -- see ProtocolBenchmarkSuite's dispatch,
+        # which only routes through run_multiseed()/_run_single_seed() when
+        # nn_seeds > 1), this method trained with no seed set at all. Guard
+        # on self._nn_seeds == 1 so we do NOT touch the RNG state when
+        # called via _run_single_seed (which already seeds per trial before
+        # calling this method) -- that seeding must stay independent per
+        # trial for run_multiseed()'s variance estimate to remain meaningful.
+        if self._nn_seeds == 1:
+            _seed = int(
+                hashlib.sha256(description.encode()).hexdigest(), 16
+            ) % (2**31)
+            if TORCH_AVAILABLE:
+                torch.manual_seed(_seed)
+            np.random.seed(_seed)
 
         try:
             X_train, X_test, y_train, y_test = train_test_split(
@@ -2176,14 +2270,21 @@ class HybridDeFiMethod(BaseMethod):
                     _yc = y - float(np.mean(y))
                     if float(np.sum(_yc**2)) > 0:
                         _y_pred_defi = float(np.mean(y)) + float(np.sqrt(max(r2_val, 0.0))) * _yc
-                        _rng = np.random.default_rng(seed=int(abs(hash(description)) % (2**31)))
+                        # FIX-ISSUE2-UNSEEDED-NN (follow-up): hash() is
+                        # per-process-randomized unless PYTHONHASHSEED is
+                        # pinned -- switched to sha256, same fix already
+                        # applied to Strategies 3a/3b in HybridAllDomainsMethod.
+                        _rng = np.random.default_rng(
+                            seed=int(
+                                hashlib.sha256(description.encode()).hexdigest(), 16
+                            ) % (2**31))
                         _y_pred_defi = _y_pred_defi + _rng.normal(0, rmse_val * 0.01, size=len(y))
                 except Exception:
                     _y_pred_defi = None
             if (TORCH_AVAILABLE and _y_pred_defi is not None
                     and np.all(np.isfinite(_y_pred_defi))
                     and np.isfinite(r2_val) and r2_val > -1.0):
-                _y_hybrid = self._nn_residual_fit(X, y, _y_pred_defi)
+                _y_hybrid = self._nn_residual_fit(X, y, _y_pred_defi, description)
                 if _y_hybrid is not None and np.all(np.isfinite(_y_hybrid)):
                     _r2h  = self._safe_r2(y, _y_hybrid)
                     _rmh  = self._safe_rmse(y, _y_hybrid)
@@ -2305,6 +2406,7 @@ class HybridAllDomainsMethod(BaseMethod):
         X: np.ndarray,
         y: np.ndarray,
         y_pred_llm: np.ndarray,
+        description: str = "",
     ) -> Optional[np.ndarray]:
         """Train a shallow MLP on the LLM formula's residuals and return
         corrected predictions: y_hybrid = y_pred_llm + NN(X).
@@ -2319,6 +2421,10 @@ class HybridAllDomainsMethod(BaseMethod):
         if not TORCH_AVAILABLE:
             return None
         try:
+            # FIX-ISSUE2-UNSEEDED-NN (follow-up): same fix as BaseMethod's
+            # copy of this helper -- was training fully unseeded.
+            _seed = int(hashlib.sha256(description.encode()).hexdigest(), 16) % (2**31)
+            torch.manual_seed(_seed)
             from sklearn.preprocessing import StandardScaler as _SS
 
             # Detect wide-range positive targets (power-law equations like Newton's
@@ -2518,6 +2624,39 @@ class HybridAllDomainsMethod(BaseMethod):
 
                 if _use_direct:
                     try:
+                        # FIX-ISSUE2-UNSEEDED-NN (2026-08-04): this path exists
+                        # specifically to fix "Newton's gravity"-style failures
+                        # (see comment above) -- i.e. it fires ONLY for wide-
+                        # dynamic-range, all-positive equations: Coulomb's law,
+                        # Newton's gravitation, the ideal gas law. It trains a
+                        # fresh net3/opt3 with NO explicit seed, so weight init
+                        # draws from the global unseeded torch RNG, whose state
+                        # depends on how many prior torch calls happened earlier
+                        # in *this* process -- different every run/shard.
+                        #
+                        # Confirmed as the root cause of Issue 2: HyperSymLoop's
+                        # noiseless pass rate varied 26-30/30 across 12 otherwise-
+                        # identical runs, with every single failure landing on
+                        # exactly these three equation types and none of the
+                        # other 27 -- consistent with genuine optimizer
+                        # non-determinism on this one code path, not a timeout
+                        # or system-load effect (failures scored 0.9996-0.9998,
+                        # not the 0.0/"timed_out" signature of the hard
+                        # per-method timeout above).
+                        #
+                        # Fix: seed deterministically from the equation
+                        # description, the same way Strategy 3b already seeds
+                        # its reconstruction noise below -- but via sha256
+                        # rather than Python's built-in hash(), since hash()
+                        # is randomized per-process unless PYTHONHASHSEED is
+                        # pinned, which would silently reintroduce the same
+                        # cross-run non-determinism this fix is meant to remove
+                        # (Strategy 3b's existing hash()-based seed likely has
+                        # the same latent issue and should be switched too).
+                        _seed3 = int(
+                            hashlib.sha256(description.encode()).hexdigest(), 16
+                        ) % (2**31)
+                        torch.manual_seed(_seed3)
                         from sklearn.preprocessing import StandardScaler as _SS3
                         # Log-transform strictly-positive, wide-range X columns
                         _lc3 = [c for c in range(X.shape[1])
@@ -2578,8 +2717,15 @@ class HybridAllDomainsMethod(BaseMethod):
                 # Strategy 3b — algebraic reconstruction fallback for normal-scale eqs
                 if y_pred_llm is None:
                     try:
+                        # FIX-ISSUE2-UNSEEDED-NN (2026-08-04): hash() on a str
+                        # is randomized per-process unless PYTHONHASHSEED is
+                        # pinned, so this "reproducible" seed wasn't actually
+                        # stable across separate runs -- switched to sha256 for
+                        # the same reason as Strategy 3a above.
                         rng = np.random.default_rng(
-                            seed=int(abs(hash(description)) % (2**31)))
+                            seed=int(
+                                hashlib.sha256(description.encode()).hexdigest(), 16
+                            ) % (2**31))
                         y_mean   = float(np.mean(y))
                         y_center = y - y_mean
                         ss_tot   = float(np.sum(y_center ** 2))
@@ -2629,7 +2775,7 @@ class HybridAllDomainsMethod(BaseMethod):
                 and np.isfinite(r2v)
                 and r2v > -1.0
             ):
-                y_hybrid = self._nn_residual_fit(X, y, y_pred_llm)
+                y_hybrid = self._nn_residual_fit(X, y, y_pred_llm, description)
                 if y_hybrid is not None and np.all(np.isfinite(y_hybrid)):
                     r2_hybrid   = self._safe_r2(y, y_hybrid)
                     rmse_hybrid = self._safe_rmse(y, y_hybrid)
@@ -2827,6 +2973,93 @@ print(json.dumps(_to_native(result) if result else {"success": False, "error": "
 """
 
 
+class _ProcBox:
+    """
+    FIX-ISSUE10B-OUTER-TIMEOUT: thread-safe handoff for the live PySR
+    subprocess handle.
+
+    Context: the outer per-method hard timeout (_METHOD_TIMEOUT_SECS, e.g.
+    300s for tests 1-18) wraps method.run(...) in a ThreadPoolExecutor and
+    waits via future.result(timeout=...). On expiry it used to try to
+    force-terminate the *background thread* via a ctypes trick
+    (_kill_thread) -- removed in FIX-ISSUE10B-DEAD-KILLTHREAD because that
+    function was never defined and the call always silently no-op'd via
+    `except Exception: pass`.
+
+    Even if it had worked, killing the thread would not have stopped
+    anything: the thread's real resource is a `subprocess.Popen` handle
+    three call-layers down inside _run_pysr_in_subprocess(), which the
+    outer scope has no reference to. So when the 300s outer timeout fired,
+    that subprocess (with its own separate, larger pysr_timeout of
+    900-1100s) kept running completely undetected, competing for CPU with
+    whatever test the harness moved on to next -- the actual mechanism
+    behind a 300s-limit test overrunning by orders of magnitude.
+
+    Fix: give the outer scope a way to reach the *actual* subprocess.
+    SymbolicEngineMethod/HybridSystemV50_2Method attach a fresh _ProcBox
+    to `self._proc_box` immediately before submitting to the thread pool;
+    _run_pysr_in_subprocess registers its Popen handle into that box the
+    moment it spawns, and clears it when the call returns (success,
+    failure, or its own inner timeout). If the *outer* timeout fires while
+    a proc is still registered, the handler calls _kill_process_group()
+    on it directly -- reaching the real resource instead of the thread
+    that happens to be blocked on it.
+    """
+
+    def __init__(self):
+        self._lock = _threading.Lock()
+        self._proc = None
+
+    def set(self, proc) -> None:
+        with self._lock:
+            self._proc = proc
+
+    def clear(self) -> None:
+        with self._lock:
+            self._proc = None
+
+    def get(self):
+        with self._lock:
+            return self._proc
+
+
+def _kill_process_group(proc: "subprocess.Popen") -> None:
+    """
+    Kill proc and every descendant it spawned (e.g. an orphaned Julia
+    process), not just the direct child. Companion fix to
+    FIX-ISSUE10B-ORPHANED-JULIA above.
+
+    Primary path: SIGKILL the whole process group (proc was started with
+    start_new_session=True, so its pgid == its pid).
+    Fallback path: if that's unavailable (platform without os.killpg, or
+    the group signal race-loses to a process that re-parented before the
+    signal landed), fall back to psutil to enumerate and kill descendants
+    individually. Best-effort throughout -- must never itself raise and
+    crash the suite.
+    """
+    import signal
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+        return
+    except (ProcessLookupError, PermissionError, AttributeError, OSError):
+        pass
+    try:
+        import psutil
+        parent = psutil.Process(proc.pid)
+        for child in parent.children(recursive=True):
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
 def _run_pysr_in_subprocess(
     method: str,
     X: "np.ndarray",
@@ -2836,6 +3069,7 @@ def _run_pysr_in_subprocess(
     metadata: Dict,
     extra_kwargs: Optional[Dict] = None,
     timeout: Optional[int] = None,
+    proc_box: Optional["_ProcBox"] = None,
 ) -> Dict:
     """
     Run a PySR-backed method in an isolated subprocess.
@@ -2845,6 +3079,17 @@ def _run_pysr_in_subprocess(
     method : "symbolic_engine" | "hybrid_v50_2"
     timeout : seconds before giving up (default 600; Julia startup alone can
               take 60-90 s, so 300 s left almost no time for actual search)
+    proc_box : FIX-ISSUE10B-OUTER-TIMEOUT. Optional handoff box (see _ProcBox
+              docstring above). When provided, the live Popen handle is
+              registered into it immediately after spawn and cleared in a
+              `finally` before this function returns by any path (normal
+              return, inner-timeout return, or exception). This lets the
+              *outer* per-method timeout handler (which has no direct
+              reference to `proc` — it is a local variable in this function,
+              three call-layers below the outer scope) reach in and kill the
+              real subprocess/process-group if the outer timeout fires while
+              this call is still in flight, instead of abandoning it to run
+              for its own separate (larger) inner `timeout`.
 
     Returns
     -------
@@ -2877,18 +3122,38 @@ def _run_pysr_in_subprocess(
 
     proc = None
     try:
+        # FIX-ISSUE10B-ORPHANED-JULIA: start the worker in its own process
+        # group (start_new_session=True == setsid). Previously proc.kill()
+        # on TimeoutExpired only signalled this one direct child; if the
+        # worker spawns Julia as its own OS subprocess (rather than loading
+        # libjulia in-process), killing the wrapper left Julia orphaned and
+        # still running with no timeout of its own -- root cause of the
+        # Arrhenius test hanging 27574s past its configured 300s limit
+        # before someone had to kill the Julia process by hand. Killing the
+        # whole process group on timeout reaches Julia too.
         proc = subprocess.Popen(
             [sys.executable, "-c", _SUBPROCESS_WORKER],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            start_new_session=True,
         )
+        # FIX-ISSUE10B-OUTER-TIMEOUT: publish the live handle immediately so
+        # the outer per-method timeout handler can reach it even if it fires
+        # while we're still blocked in communicate() below.
+        if proc_box is not None:
+            proc_box.set(proc)
         try:
             stdout_bytes, stderr_bytes = proc.communicate(input=encoded, timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            _, stderr_bytes = proc.communicate()
+            _kill_process_group(proc)
+            try:
+                _, stderr_bytes = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                # Group kill sent but pipe reader still wedged (rare) --
+                # don't let cleanup itself hang the harness.
+                stderr_bytes = b""
             stderr_tail = (
                 stderr_bytes.decode(errors="replace")[-300:] if stderr_bytes else ""
             )
@@ -2925,6 +3190,12 @@ def _run_pysr_in_subprocess(
         if proc is not None:
             proc.kill()
         return {"success": False, "error": f"subprocess launch failed: {exc}"}
+    finally:
+        # FIX-ISSUE10B-OUTER-TIMEOUT: unregister on every exit path (normal
+        # return, inner-timeout return, or exception) so the outer handler
+        # never acts on a stale/already-finished proc after this call returns.
+        if proc_box is not None:
+            proc_box.clear()
 
 
 # ============================================================================
@@ -3061,6 +3332,12 @@ class SymbolicEngineMethod(BaseMethod):
               f"  (spread={_spread:.1f}dec, vars={X.shape[1]}, score={_score:.2f})",
               flush=True)
 
+        # FIX-ISSUE10B-OUTER-TIMEOUT: attach a fresh proc box before entering
+        # the subprocess call so the outer per-method timeout handler (which
+        # wraps this whole .run() call in a ThreadPoolExecutor) has a way to
+        # reach the real Popen handle if it fires while we're still blocked
+        # here — see _ProcBox docstring above _run_pysr_in_subprocess.
+        self._proc_box = _ProcBox()
         result = _run_pysr_in_subprocess(
             method="symbolic_engine",
             X=X, y=y,
@@ -3069,6 +3346,7 @@ class SymbolicEngineMethod(BaseMethod):
             metadata=metadata,
             extra_kwargs=_se_kwargs,
             timeout=_subprocess_timeout,
+            proc_box=self._proc_box,
         )
 
         if result and result.get("success"):
@@ -3222,6 +3500,9 @@ class HybridSystemV50_2Method(BaseMethod):
         # Old value (_PYSR_TIMEOUT + 500 = 1100s) EXCEEDED the 900s method
         # budget, leaving orphaned subprocesses and guaranteeing a timeout.
         _subprocess_timeout = max(60, _METHOD_TIMEOUT_SECS - 100)
+        # FIX-ISSUE10B-OUTER-TIMEOUT: see matching comment in
+        # SymbolicEngineMethod.run — same handoff pattern.
+        self._proc_box = _ProcBox()
         result = _run_pysr_in_subprocess(
             method="hybrid_v50_2",
             X=X, y=y,
@@ -3230,6 +3511,7 @@ class HybridSystemV50_2Method(BaseMethod):
             metadata=_meta,
             extra_kwargs=_tc_kwargs,
             timeout=_subprocess_timeout,
+            proc_box=self._proc_box,
         )
 
         if result and result.get("success"):
@@ -3438,26 +3720,37 @@ class ProtocolBenchmarkSuite:
                 )
                 if verbose:
                     print(f"⏱ timeout ({_METHOD_TIMEOUT_SECS}s)", end="", flush=True)
-                # Inject SystemExit into the background thread so it stops
-                # consuming API quota.  _kill_thread returns False silently
-                # if the thread already exited (race condition is harmless).
-                for _t in _threading.enumerate():
-                    if _t.ident and not _t.daemon and _t is not _threading.main_thread():
-                        pass  # only kill daemon threads spawned by our pool
-                # ThreadPoolExecutor worker threads ARE daemon threads —
-                # find them by checking the running future's thread reference
-                # via the pool's internal _threads set.
-                try:
-                    for _worker_thread in list(_pool._threads):
-                        if _worker_thread.is_alive():
-                            _killed = _kill_thread(_worker_thread.ident)
-                            if verbose:
-                                print(
-                                    f" [thread {'killed' if _killed else 'already exited'}]",
-                                    end="", flush=True
-                                )
-                except Exception:
-                    pass  # ctypes injection is best-effort; never crash the suite
+                # FIX-ISSUE10B-DEAD-KILLTHREAD: this block previously called
+                # _kill_thread(_worker_thread.ident) to inject SystemExit into
+                # the background thread. _kill_thread was never defined
+                # anywhere in this file, so every timeout silently raised
+                # NameError here (caught by a blanket `except Exception: pass`)
+                # and no kill of any kind ever happened -- the "[thread
+                # killed]" verbose message was never reachable in practice.
+                # Removed rather than implemented: the background thread is
+                # merely blocked on the (already-fixed) PySR subprocess call;
+                # it is not itself the resource leak. The thread is a daemon
+                # thread (ThreadPoolExecutor default), so it will not block
+                # process exit even if it runs to completion.
+                #
+                # FIX-ISSUE10B-OUTER-TIMEOUT: the *actual* runaway resource is
+                # the real subprocess.Popen handle living three call-layers
+                # down inside _run_pysr_in_subprocess() -- this outer handler
+                # previously had no reference to it, so on a 300s outer
+                # timeout that subprocess (with its own separate, larger
+                # 900-1100s inner pysr_timeout) kept running completely
+                # undetected until ITS OWN inner timeout eventually fired.
+                # SymbolicEngineMethod/HybridSystemV50_2Method now attach a
+                # fresh _ProcBox to self._proc_box immediately before
+                # submitting to the pool; reach through it here and kill the
+                # real process group directly, closing that gap.
+                _proc_box = getattr(method, "_proc_box", None)
+                if _proc_box is not None:
+                    _live_proc = _proc_box.get()
+                    if _live_proc is not None:
+                        if verbose:
+                            print(" [killing orphaned subprocess]", end="", flush=True)
+                        _kill_process_group(_live_proc)
             finally:
                 # FIXED: drop cancel_futures=True — it caused blocking on Python < 3.12.
                 # wait=False alone is safe: the thread is a daemon and will not
@@ -4432,8 +4725,17 @@ Examples
             "PySR/Julia). Useful when Julia startup overhead dominates test time."
         ),
     )
+    # FIX-ISSUE10A-SENTINEL-DEFAULT: default=None (not the literal 1100/900)
+    # so downstream code can tell "user explicitly passed this flag" apart
+    # from "flag omitted, still at default." A value-equality check
+    # (`if args.pysr_timeout == 1100`) can't make that distinction -- an
+    # explicit `--pysr-timeout 1100` looks identical to no flag at all, so
+    # a stale/legacy env var override would silently clobber an explicit
+    # CLI choice whenever it happened to match the default. See
+    # _DEFAULT_PYSR_TIMEOUT / _DEFAULT_METHOD_TIMEOUT below for where the
+    # real default value now lives.
     parser.add_argument(
-        "--pysr-timeout", type=int, default=1100, dest="pysr_timeout",
+        "--pysr-timeout", type=int, default=None, dest="pysr_timeout",
         metavar="SECS",
         help=(
             "Seconds before a PySR subprocess is killed "
@@ -4443,7 +4745,7 @@ Examples
         ),
     )
     parser.add_argument(
-        "--method-timeout", type=int, default=900, dest="method_timeout",
+        "--method-timeout", type=int, default=None, dest="method_timeout",
         metavar="SECS",
         help=(
             "Hard timeout in seconds for each individual method call "
@@ -4600,24 +4902,78 @@ Examples
     args = parser.parse_args()
 
     # ── BUG 6 FIX: Read CI environment overrides before applying CLI args ──
-    # CI sets FEYNMAN_TIMEOUT and JOB_DEADLINE in the environment but the script
-    # previously never read them, silently using 90s method timeout and 600s PySR
-    # timeout instead of the paper-quality 1100s values.
-    # CLI args take precedence when they differ from their defaults.
-    _env_feynman_to = int(os.environ.get("FEYNMAN_TIMEOUT", "0")) or None
-    _env_job_dl     = int(os.environ.get("JOB_DEADLINE",    "0")) or None
+    # CI sets timeout overrides in the environment but the script previously
+    # never read them, silently using 90s method timeout and 600s PySR
+    # timeout instead of the paper-quality 900s/1100s values.
+    # An explicit CLI flag always wins over any environment variable.
+    #
+    # FIX-ISSUE10A-CONFIG-BLEED: this used to read a single FEYNMAN_TIMEOUT
+    # env var and apply that ONE value to BOTH args.method_timeout (900) and
+    # args.pysr_timeout (1100). Those two knobs are intentionally different
+    # (repro.yaml timeouts.method_seconds=900 vs .feynman_pysr_seconds=1100 —
+    # PySR needs extra budget on top of the method budget for Julia startup),
+    # so whichever single number CI happened to export for FEYNMAN_TIMEOUT
+    # silently collapsed both to the same value. Split into two independent
+    # env vars so each config can be overridden on its own; the old
+    # FEYNMAN_TIMEOUT name is kept as a legacy fallback that only fires when
+    # neither of the new, more specific vars is set.
+    #
+    # FIX-ISSUE10A-SENTINEL-DEFAULT (this pass): the precedence check used
+    # to be `if args.pysr_timeout == 1100:` -- true both when the flag was
+    # never passed AND when someone explicitly passed `--pysr-timeout 1100`.
+    # A CI job that (a) explicitly passes --method-timeout 900 on the
+    # command line *and* (b) still has the legacy FEYNMAN_TIMEOUT env var
+    # set in its environment (e.g. for a different, unrelated purpose, or
+    # left over from before this job was updated) would have that explicit
+    # 900 silently overwritten back to whatever FEYNMAN_TIMEOUT held --
+    # exactly reproducing the original bleed via a different path, and
+    # invisibly, since nothing about passing an explicit flag looked any
+    # different from omitting it. Now that argparse's default is None
+    # (see above), "was this flag passed" is a real distinction: an
+    # explicit CLI value is honoured unconditionally and no environment
+    # variable is even consulted for that flag.
+    _DEFAULT_PYSR_TIMEOUT   = 1100
+    _DEFAULT_METHOD_TIMEOUT = 900
 
-    # Apply env overrides only when the CLI arg is still at its default value
-    # (i.e. the user did not explicitly pass --method-timeout or --pysr-timeout).
-    # Defaults updated to paper quality: method_timeout=900, pysr_timeout=1100.
-    if _env_feynman_to and args.method_timeout == 900:
-        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_feynman_to}s applied to --method-timeout "
-              f"(CLI default was 900s)")
-        args.method_timeout = _env_feynman_to
-    if _env_feynman_to and args.pysr_timeout == 1100:
-        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_feynman_to}s applied to --pysr-timeout "
-              f"(CLI default was 1100s)")
-        args.pysr_timeout = _env_feynman_to
+    _env_method_to  = int(os.environ.get("FEYNMAN_METHOD_TIMEOUT", "0")) or None
+    _env_pysr_to    = int(os.environ.get("FEYNMAN_PYSR_TIMEOUT",   "0")) or None
+    _env_legacy_to  = int(os.environ.get("FEYNMAN_TIMEOUT",        "0")) or None
+    _env_job_dl     = int(os.environ.get("JOB_DEADLINE",           "0")) or None
+
+    if _env_legacy_to and (_env_method_to or _env_pysr_to):
+        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_legacy_to}s is set but ignored because "
+              f"FEYNMAN_METHOD_TIMEOUT/FEYNMAN_PYSR_TIMEOUT are also set — "
+              f"the specific vars win.")
+
+    if args.method_timeout is not None:
+        # Explicit CLI flag: honour it as-is, no env var can override it.
+        print(f"ℹ️  --method-timeout {args.method_timeout}s passed explicitly "
+              f"on the CLI — environment timeout variables ignored for this flag.")
+    elif _env_method_to:
+        print(f"ℹ️  FEYNMAN_METHOD_TIMEOUT={_env_method_to}s applied to "
+              f"--method-timeout (no CLI flag passed)")
+        args.method_timeout = _env_method_to
+    elif _env_legacy_to:
+        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_legacy_to}s (legacy) applied to "
+              f"--method-timeout (no CLI flag passed)")
+        args.method_timeout = _env_legacy_to
+    else:
+        args.method_timeout = _DEFAULT_METHOD_TIMEOUT
+
+    if args.pysr_timeout is not None:
+        print(f"ℹ️  --pysr-timeout {args.pysr_timeout}s passed explicitly "
+              f"on the CLI — environment timeout variables ignored for this flag.")
+    elif _env_pysr_to:
+        print(f"ℹ️  FEYNMAN_PYSR_TIMEOUT={_env_pysr_to}s applied to "
+              f"--pysr-timeout (no CLI flag passed)")
+        args.pysr_timeout = _env_pysr_to
+    elif _env_legacy_to:
+        print(f"ℹ️  FEYNMAN_TIMEOUT={_env_legacy_to}s (legacy) applied to "
+              f"--pysr-timeout (no CLI flag passed)")
+        args.pysr_timeout = _env_legacy_to
+    else:
+        args.pysr_timeout = _DEFAULT_PYSR_TIMEOUT
+
     if _env_job_dl:
         print(f"ℹ️  JOB_DEADLINE={_env_job_dl}s detected (informational — "
               f"not currently used as a hard cutoff)")
@@ -4848,7 +5204,14 @@ Examples
             _desc, _X, _y, _vnames, _meta, _dom = _tup
             _y_std = float(np.std(_y))
             if _y_std > 0.0:
-                _rng_seed = int(abs(hash(_desc)) % (2**31))
+                # FIX-ISSUE2-UNSEEDED-NN (follow-up): hash() is
+                # per-process-randomized unless PYTHONHASHSEED is pinned, so
+                # noise injection was not actually reproducible across runs
+                # with the same sigma despite the comment above claiming it
+                # was -- switched to sha256, same fix as elsewhere in this file.
+                _rng_seed = int(
+                    hashlib.sha256(_desc.encode()).hexdigest(), 16
+                ) % (2**31)
                 _rng = np.random.default_rng(seed=_rng_seed)
                 _noise = _rng.normal(0.0, _HYPATIAX_NOISE_LEVEL * _y_std, size=len(_y))
                 _y = _y + _noise

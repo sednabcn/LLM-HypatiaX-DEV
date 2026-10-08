@@ -18,6 +18,7 @@ BUG FIXES vs previous version:
 """
 
 import inspect
+import hashlib
 import json
 import os
 import random
@@ -40,17 +41,86 @@ env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 
+def _create_message_deterministic(client, **kwargs):
+    """Make one direct Anthropic API call.
+
+    Diagnostic/JMLR reproducibility mode: pass through whatever kwargs the
+    caller supplies (including ``temperature`` when the caller sets it —
+    see FIX-ISSUE2B-LLM-TEMPERATURE at the generate_formula() call site)
+    with no retry-on-error logic, so a failure can't be obscured by a
+    silent retry.
+
+    CORRECTED (previously claimed "Claude 4.6 models reject
+    `temperature`" and said this function deliberately omitted it — a
+    live smoke test against model="claude-sonnet-4-6" confirmed
+    `temperature=0.0` is accepted, so that claim was wrong and the
+    generate_formula() call site now sends it).
+
+    The function deliberately has no cache, memoization, retry, or fallback.
+    Every invocation reaches ``client.messages.create`` exactly once unless
+    the client raises before returning.
+    """
+    t0 = time.perf_counter()
+    print(
+        "API_ENTER "
+        f"model={kwargs.get('model')!r} "
+        f"max_tokens={kwargs.get('max_tokens')!r} "
+        f"messages={len(kwargs.get('messages', []))}"
+    )
+    try:
+        response = client.messages.create(**kwargs)
+    except Exception as e:
+        dt = time.perf_counter() - t0
+        print(
+            "API_ERROR "
+            f"dt={dt:.6f}s "
+            f"type={type(e).__name__} "
+            f"message={str(e)!r}"
+        )
+        raise
+    dt = time.perf_counter() - t0
+    block_types = [
+        getattr(b, "type", type(b).__name__)
+        for b in getattr(response, "content", [])
+    ]
+    print(
+        "API_EXIT "
+        f"dt={dt:.6f}s "
+        f"response_type={type(response).__name__} "
+        f"block_types={block_types!r}"
+    )
+    return response
+
+
 class PureLLMBaseline:
     """Fixed Pure LLM baseline with liquidation domain corrections."""
 
-    def __init__(self, model: str = "claude-sonnet-5"):
+    # FIX-ITEM1-MODEL-MISMATCH (consolidation report §4 item 1): this
+    # default was "claude-sonnet-5" — a different, unrelated model string
+    # from the one the hybrid arm's own inline LLM call uses
+    # (_HYBRID_LLM_MODEL_NAME / model="claude-sonnet-4-6" in both
+    # hypatiax_defi_benchmark_v4.py and hypatiax_defi_benchmark_v4_pca.py).
+    # When "claude-sonnet-4-5" -> "claude-sonnet-4-6" (Fix 13) was applied,
+    # it only touched the two benchmark scripts' inline hybrid call sites —
+    # this module's own default was never part of that change and drifted.
+    # An invalid/unavailable model string causes the API to reject the
+    # request immediately (no tokens generated), which _create_message_
+    # deterministic() re-raises and generate_formula()'s broad except
+    # catches, returning a dict with no "python_code" key at all. Downstream,
+    # that empty code is misclassified by _is_truncated_formula() as
+    # "truncated_formula: no valid return statement" even though nothing was
+    # generated or truncated. This is the confirmed root cause of the
+    # universal pure_llm near-instant failure (100% of non-PCA calls,
+    # 4/5 seeds of PCA calls). Aligning the default here with the model the
+    # working hybrid path actually uses closes the gap.
+    def __init__(self, model: str = "claude-sonnet-4-6"):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
         self.client = Anthropic(api_key=api_key)
         self.model = model
         self.results = []
-        self._cache: dict = {}  # added by apply_patches
+        # No per-instance cache: each benchmark case owns a fresh baseline.
 
     @staticmethod
     def evaluate_function(func, X, var_names=None):
@@ -160,6 +230,73 @@ class PureLLMBaseline:
                         return y.flatten()
             except Exception:
                 pass
+
+        # ============================================================
+        # STRATEGY 5: Match param names to var_names, allowing extra
+        # unmatched (placeholder) parameters
+        # ============================================================
+        # FIX-SIGNATURE-MATCHING: Strategy 4 requires *every* function
+        # parameter to be matched to a variable (len(param_to_idx) ==
+        # n_params). This fails whenever the LLM's generated signature
+        # includes an extra parameter that has no corresponding data
+        # column — most commonly an implicit "t" for time in an ODE rate
+        # law, e.g. def formula(N, t) when var_names=["N"] (see the
+        # documented logistic-growth workaround above, which currently
+        # sidesteps this by hardcoding the formula instead of fixing
+        # evaluation). That extra parameter isn't actually used to look up
+        # data we have, so instead of giving up, this strategy matches
+        # whatever parameters DO correspond to real variables (fuzzy match,
+        # same rule as Strategy 4) and supplies a 0.0 placeholder for any
+        # leftover parameters — succeeding as long as every real variable
+        # was matched to some parameter (len(set(param_to_idx.values())) ==
+        # n_features), even if the reverse isn't true.
+        if var_names is not None and param_names and len(var_names) == n_features:
+            param_to_idx = {}
+            for param_name in param_names:
+                for idx, var_name in enumerate(var_names):
+                    if (
+                        param_name.lower() in var_name.lower()
+                        or var_name.lower() in param_name.lower()
+                    ):
+                        param_to_idx[param_name] = idx
+                        break
+
+            if param_to_idx and len(set(param_to_idx.values())) == n_features:
+                try:
+                    # Vectorized: matched params get their data column,
+                    # any unmatched (extra) params get a 0.0 placeholder.
+                    kwargs = {
+                        param: (
+                            X[:, param_to_idx[param]]
+                            if param in param_to_idx
+                            else np.zeros(n_samples)
+                        )
+                        for param in param_names
+                    }
+                    y = func(**kwargs)
+                    y = np.asarray(y)
+                    if y.shape[0] == n_samples:
+                        return y.flatten()
+                except Exception:
+                    pass
+
+                try:
+                    # Row-by-row fallback with the same matching/placeholder
+                    # scheme.
+                    y = np.empty(n_samples, dtype=float)
+                    for i in range(n_samples):
+                        kwargs = {
+                            param: (
+                                float(X[i, param_to_idx[param]])
+                                if param in param_to_idx
+                                else 0.0
+                            )
+                            for param in param_names
+                        }
+                        y[i] = func(**kwargs)
+                    return y
+                except Exception:
+                    pass
 
         # ============================================================
         # All strategies failed
@@ -327,10 +464,62 @@ class PureLLMBaseline:
             )
 
         try:
-            response = self.client.messages.create(
+            # FIX-ISSUE2B-LLM-TEMPERATURE: this call previously had no
+            # `temperature` argument, so it silently used the Anthropic API
+            # default (non-zero). Callers of this class (e.g.
+            # EnhancedHybridSystemDeFi.generate_llm_formula, which delegates
+            # here as its *preferred* path) assumed temperature=0 behaviour
+            # -- see the comment at HybridDeFiMethod.run() in
+            # run_comparative_suite_benchmark_v2.py claiming "At
+            # temperature=0 this produces the same formula". That assumption
+            # was false for this call site, which is why a fresh live call
+            # per Phase-A run could return a structurally-equivalent but
+            # not-bit-identical formula, producing the ~1e-9 R² spread
+            # observed on Snell's Law in the Item 2b reproducibility check.
+            # temperature=0.0 narrows (does not fully guarantee, since
+            # provider-side serving batching can still vary) run-to-run
+            # sampling variance.
+            #
+            # FIX-ISSUE2B-LLM-TEMPERATURE (applied): the comment above
+            # described this mitigation but `temperature` was never
+            # actually passed to _create_message_deterministic() below,
+            # so the API default (non-zero) was silently used the whole
+            # time. Confirmed via a live smoke test that this model
+            # (self.model, default "claude-sonnet-4-6") accepts
+            # temperature=0.0 rather than rejecting it, so it's now
+            # passed through for real.
+            _gen_t0 = time.perf_counter()
+            print(
+                "GENERATE_ENTER "
+                f"model={self.model!r} "
+                f"domain={domain!r} "
+                f"description_hash={hashlib.sha256(description.encode()).hexdigest()[:12]} "
+                f"generate_formula_source={inspect.getsourcefile(self.generate_formula)!r} "
+                f"api_helper_source={inspect.getsourcefile(_create_message_deterministic)!r} "
+                f"client_type={type(self.client).__module__}.{type(self.client).__name__}"
+            )
+            # [FIX-SDK1.0-TEMPERATURE] Superseding FIX-ISSUE2B-LLM-TEMPERATURE
+            # above: that fix made this call start sending temperature=0.0
+            # right as anthropic SDK v1.0 (2026-08-20) removed temperature/
+            # top_p/top_k from Messages.create() outright -- it's a
+            # client-side TypeError now (no **kwargs passthrough), and
+            # current models also 400 on it server-side regardless of SDK
+            # version. So this goes back to not sending temperature, but
+            # for the opposite reason: it's no longer accepted at all, not
+            # "not yet wired up". The temperature=0 determinism control
+            # described in FIX-ISSUE2B-LLM-TEMPERATURE's comment above no
+            # longer exists as an option -- run-to-run sampling variance
+            # should be expected again.
+            response = _create_message_deterministic(
+                self.client,
                 model=self.model,
                 max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
+            )
+            print(
+                "GENERATE_API_RETURN "
+                f"dt={time.perf_counter() - _gen_t0:.6f}s "
+                f"description_hash={hashlib.sha256(description.encode()).hexdigest()[:12]}"
             )
             # FIX (ThinkingBlock crash): response.content[0] is not guaranteed to be
             # the text block. When the model returns extended-thinking output, the
@@ -364,13 +553,17 @@ class PureLLMBaseline:
                 "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
-            print(f"\n❌ ERROR: {str(e)}")
+            print(
+                f"\n❌ ERROR: {type(e).__name__}: {str(e)}"
+            )
             return {
                 "method": "pure_llm",
                 "model": self.model,
                 "description": description,
                 "domain": domain,
                 "error": str(e),
+                "error_type": type(e).__name__,
+                "error_repr": repr(e),
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -404,6 +597,11 @@ class PureLLMBaseline:
         Variable names and formula signs are taken DIRECTLY from
         experiment_protocol_benchmark.py — no heuristics, no guessing.
         """
+        # Clean-baseline switch: set HYPATIAX_DISABLE_HARDCODED=1 to bypass every
+        # hardcoded / OLS-fitted branch below so each equation goes to the LLM.
+        if os.environ.get("HYPATIAX_DISABLE_HARDCODED", "").strip().lower() in ("1", "true", "yes"):
+            return None
+
         vset = set(variable_names)
 
         # ── I.6.20 — Gaussian PDF ────────────────────────────────────────────
@@ -1275,39 +1473,62 @@ CRITICAL REQUIREMENTS:
 - Ensure operations work element-wise on numpy arrays
 - If the task involves a probability density or distribution, include the FULL normalization constant (e.g. 1/(sigma*sqrt(2*pi)) for Gaussian)"""
 
+    # Canonical section headers this parser understands, in the order the
+    # prompt asks the model to emit them. A single regex finds every header
+    # regardless of how much whitespace/blank-lines surround it, then each
+    # section's body is just "everything between this header and the next
+    # one" -- no reliance on the model emitting exactly one blank line
+    # before the next ALL-CAPS: header, which --no-llm-cache live sampling
+    # does not reliably produce (fixed 2026-08: previously used a
+    # `(?=\n\n[A-Z]+:|$)` lookahead per-section, which silently swallowed
+    # VARIABLES:/ASSUMPTIONS:/EXPLANATION: into python_code -- the only
+    # field test_formula_accuracy() actually executes -- whenever the model
+    # used a single newline instead of a blank line before the next
+    # header. That produced intermittent PureLLM eval failures that varied
+    # run-to-run with no code change, since nothing here is deterministic
+    # LLM output.)
+    _SECTION_HEADERS = ("FORMULA", "LATEX", "PYTHON", "VARIABLES", "ASSUMPTIONS", "EXPLANATION")
+
     def _parse_response(self, content: str) -> dict[str, str]:
-        """Parse LLM response."""
-        parsed = {}
+        """Parse LLM response by splitting on known section headers.
 
-        match = re.search(r"FORMULA:\s*\n([^\n]+)", content, re.IGNORECASE)
-        parsed["formula"] = match.group(1).strip() if match else "N/A"
-
-        match = re.search(
-            r"LATEX:\s*\n(.*?)(?=\n\n[A-Z]+:|$)", content, re.DOTALL | re.IGNORECASE
-        )
-        parsed["latex"] = match.group(1).strip() if match else "N/A"
-
-        match = re.search(
-            r"PYTHON:\s*\n(.*?)(?=\n\n[A-Z]+:|$)", content, re.DOTALL | re.IGNORECASE
-        )
-        parsed["python"] = (
-            self._clean_python_code(match.group(1).strip()) if match else "N/A"
+        Robust to whatever whitespace/blank-line pattern the model used
+        around each header -- does not require the next header to be
+        preceded by exactly one blank line.
+        """
+        header_pat = re.compile(
+            r"^\s*(" + "|".join(self._SECTION_HEADERS) + r")\s*:\s*$",
+            re.IGNORECASE | re.MULTILINE,
         )
 
-        for section in ["variables", "assumptions", "explanation"]:
-            match = re.search(
-                rf"{section.upper()}:\s*\n(.*?)(?=\n\n[A-Z]+:|$)",
-                content,
-                re.DOTALL | re.IGNORECASE,
-            )
-            parsed[section] = match.group(1).strip() if match else "N/A"
+        matches = list(header_pat.finditer(content))
+        parsed = {s.lower(): "N/A" for s in self._SECTION_HEADERS}
+
+        if not matches:
+            # Fall back to the original single-line FORMULA: <text> style,
+            # in case the model put content on the same line as the header
+            # instead of the line below it.
+            m = re.search(r"FORMULA:\s*(.+)", content, re.IGNORECASE)
+            if m:
+                parsed["formula"] = m.group(1).strip()
+            return parsed
+
+        for i, m in enumerate(matches):
+            name = m.group(1).lower()
+            start = m.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            body = content[start:end].strip()
+            if name == "python":
+                body = self._clean_python_code(body)
+            parsed[name] = body if body else "N/A"
 
         return parsed
 
     def _clean_python_code(self, code: str) -> str:
-        """Clean Python code."""
-        code = re.sub(r"^```python\s*\n", "", code, flags=re.MULTILINE)
-        code = re.sub(r"\n```\s*$", "", code, flags=re.MULTILINE)
+        """Clean Python code: strip optional ```python / ``` fences."""
+        code = code.strip()
+        code = re.sub(r"^```(?:python)?\s*\n?", "", code, flags=re.IGNORECASE)
+        code = re.sub(r"\n?```\s*$", "", code)
         return code.strip()
 
     def test_formula_accuracy(
@@ -1385,7 +1606,7 @@ CRITICAL REQUIREMENTS:
             exec(python_code, _exec_globals, local_vars)
 
             # Find the function
-            func = next(
+            func = local_vars.get("formula") if callable(local_vars.get("formula")) else next(
                 (
                     v
                     for v in local_vars.values()

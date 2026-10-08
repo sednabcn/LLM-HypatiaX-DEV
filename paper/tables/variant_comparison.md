@@ -19,10 +19,10 @@ Each panel is one benchmark on which the compared methods share the same equatio
 |---|---|---|---|---|---|---|---|
 | NN | Neural Network | 15/15 | 0.9976 | -0.1929 (14) | -0.4931 (14) | -14.7408 (12) | 0.5 |
 | LLM | Pure LLM | 15/15 | 0.9930 | -1.4868 (1) | --- (0) | --- (0) | 7.1 |
-| PySR-only [equation set differs] | exp1_ablation pysr_only (raw PySRRegressor) | 15/15 | 0.9975 | 1.0000 (15) | 1.0000 (14) | 1.0000 (15) | 1101 |
+| PySR-only | exp1_ablation pysr_only (raw PySRRegressor) | 15/15 | 0.9975 | 1.0000 (15) | 1.0000 (14) | 1.0000 (15) | 1101 |
 | V2 | System 3 LLM+Fallback | 15/15 | 1.0000 | --- (0) | --- (0) | --- (0) | 9.3 |
 | V4 (llm_mode=none, LLM off) | System 2 Symbolic | 15/15 | 0.9978 | 0.9987 (12) | 0.9969 (12) | 0.9461 (12) | 33.0 |
-| V4 (LLM hybrid mode, indirect via HybridDiscoverySystem) | exp1_ablation hypatia arm | 15/20 | 0.9977 | 0.9993 (10) | 0.9999 (10) | 0.9993 (10) | 357 |
+| V4 (LLM hybrid mode, indirect via HybridDiscoverySystem) | exp1_ablation hypatia arm | 15/15 | 0.9977 | 0.9993 (10) | 0.9999 (10) | 0.9993 (10) | 357 |
 | PySR engine (v50_2, no LLM) | Hybrid v50_2 | 15/15 | 0.9977 | 0.9788 (12) | 0.9923 (11) | 0.9707 (9) | 105 |
 
 ## C. DeFi-73, extrapolation test R² (n=73; pass = R²≥0.99)
@@ -42,12 +42,12 @@ Each panel is one benchmark on which the compared methods share the same equatio
 | Variant | Status | Evidence |
 |---|---|---|
 | V3 `ensemble_llm_nn()` | NO CONFIRMED RESULT SOURCE | the only result-writing caller (test_enhanced_defi_extrapolation.py) imports it from hypatiax.experiments.tests.hybrid_ensemble_system_defi_domain, which does not exist; a bare except then falls back to max(LLM, NN) on TEST R2; 41/45 'ensemble'-route rows equal max(LLM,NN) to 1e-6 (0 below it) |
-| V5 `PhysicsAwareRegressor` | NOT EXERCISED | PhysicsAwareRegressor is reachable only as the [FALLBACK] inside HybridDiscoverySystem, gated by enable_physics_fallback, whose default is False (PIN-4); explicit settings in experiments/: False; 0/600 recorded strategy tags are physics_aware (295 result files scanned); SmartStructureDetector is not imported by any other module |
+| V5 `PhysicsAwareRegressor` | NOT EXERCISED | PhysicsAwareRegressor is reachable only as the [FALLBACK] inside HybridDiscoverySystem, gated by enable_physics_fallback, whose default is False (PIN-4); explicit settings in experiments/: False; 0/600 recorded strategy tags are physics_aware (318 result files scanned); SmartStructureDetector is not imported by any other module |
 
 **Notes**
 
 1. V1 = EnhancedHybridSystemDeFi; V2 = HybridSystemAllDomains; V3 = ensemble_llm_nn(); V4 = SymbolicEngineWithLLM; V5 = PhysicsAwareRegressor / SmartStructureDetector. V2's identity is established by name-list elimination, not an explicit import (see evidence file).
-2. V4 in panels A/B is run with llm_mode="none" (the benchmark pins it), i.e. V4's PySR path only; its LLM modes are reached only indirectly, through HybridDiscoverySystem in the ablation's hypatia arm. That arm's llm_expression field is empty in 20/20 records, so the LLM's own contribution cannot be verified from the file.
+2. V4 in panels A/B is run with llm_mode="none" (the benchmark pins it), i.e. V4's PySR path only; its LLM modes are reached only indirectly, through HybridDiscoverySystem in the ablation's hypatia arm. That arm's llm_expression field is empty in 15/15 records, so the LLM's own contribution cannot be verified from the file.
 3. PySR engine (v50_2, no LLM) is HybridDiscoverySystem with use_llm off (a retry / adaptive-iteration wrapper around PySR), not a raw PySRRegressor; panel B's PySR-only row is the raw baseline.
 4. In panel A the V1 and V2 wrappers force the LLM path on Feynman domains (force_llm) and almost all methods saturate near R2 = 1; the panel shows what was run, not that the methods are equivalent.
 5. In panel B, NN / LLM / V2 have few or no finite extrapolation values because formula-based methods record none for those columns; compare (k) before reading a median.

@@ -1,0 +1,101 @@
+% figures_inventory.tex
+% Inventory of the figures actually embedded (via \includegraphics) in
+% jmlr_paper_main.tex -- this is the complete, exhaustive set of image
+% files required by the compiled manuscript.
+
+\begin{table}[H]
+\centering
+\caption{Figures embedded in the compiled manuscript, in order of
+  appearance. All 5 files are required in \texttt{submission/sources/figures/}.}
+\label{tab:figlist_complete}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{L{5.2cm} L{3.0cm} L{5.3cm}}
+\toprule
+\textbf{Filename} & \textbf{Location} & \textbf{Content}\\
+\midrule
+\texttt{hypatiax\_three\_systems} &
+  Methodology (Fig.~1) &
+  HypatiaX architecture: three internal modules (PySR symbolic
+  regression, LLM symbolic prior, hybrid fusion) and a separate
+  Router/Stability Check with four outcomes (accept PySR fit, fall back
+  on low confidence, accept LLM prior, hybrid path).\\
+\texttt{hypatiax\_algorithm1\_routing\_cascade\_v2} &
+  Methodology, Component~3 (Fig.~2) &
+  Algorithm~1 routing cascade: extrapolation detection, LLM query,
+  Pareto de-duplication, cold PySR, scale-compatibility check, warm
+  PySR, Instability Index, and the convergence lock.\\
+\texttt{fig18\_r2\_heatmap\_improved} &
+  Results, Core-15 benchmark (Fig.~3) &
+  Mean far-extrapolation $\Rsq$ by formula domain and difficulty tier,
+  PySR-only vs.\ HypatiaX. Shared colour scale saturating outside
+  $[-1.5,\,1.0]$; cell labels show the true values. Hatched cells:
+  \textit{nan} (never completed); dark red \textit{$-$INF}: crashed.\\
+\texttt{fig09\_r2\_heatmap\_regimes} &
+  Results, Core-15 benchmark (Fig.~4) &
+  Per-equation $\Rsq$ across Train, Near, Medium and Far regimes, on the
+  same colour scale; cell labels show the true (unclipped) values,
+  including the extreme failures.\\
+\texttt{fig1\_seed\_sweep} &
+  Results, Portfolio Variance (Fig.~5) &
+  Seed sweep: Near/Medium/Far $\Rsq$ for PySR-only vs.\ HypatiaX across
+  5 seeds. Far-panel values below the axis floor are drawn at the floor
+  with a marker and their true value printed (PySR-only, seed~2024:
+  $-118.4$).\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Scope:} this list is exhaustive for the compiled
+PDF --- every \verb|\includegraphics| call in
+\texttt{jmlr\_paper\_main.tex} is accounted for above, and neither
+supplementary document embeds any images. These 5 files are the only
+figures that belong in \texttt{submission/sources/figures/}.
+
+\begin{table}[H]
+\centering
+\caption{How each manuscript figure is regenerated with
+  \texttt{scripts/generate\_figures.py}.}
+\label{tab:figlist_generation}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{L{5.2cm} L{3.0cm} L{5.3cm}}
+\toprule
+\textbf{Filename} & \textbf{Run with} & \textbf{Source data}\\
+\midrule
+\texttt{hypatiax\_three\_systems} &
+  \texttt{--experiment exp1\_ablation} &
+  none (drawn from code)\\
+\texttt{hypatiax\_algorithm1\_routing\_cascade\_v2} &
+  \texttt{--experiment exp1\_ablation} &
+  none (drawn from code)\\
+\texttt{fig18\_r2\_heatmap\_improved} &
+  \texttt{--experiment exp1\_ablation} &
+  Table~\ref{tab:llm_ablation}, read from
+  \texttt{paper/jmlr\_paper\_main.tex} (\texttt{--tex})\\
+\texttt{fig09\_r2\_heatmap\_regimes} &
+  \texttt{--experiment exp1\_ablation} &
+  Table~\ref{tab:llm_ablation}, read from
+  \texttt{paper/jmlr\_paper\_main.tex} (\texttt{--tex})\\
+\texttt{fig1\_seed\_sweep} &
+  \texttt{--experiment exp1\_ablation} &
+  \texttt{portfolio\_variance\_seed\_sweep.json}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Generation source:} all 5 figures are produced by
+\texttt{scripts/generate\_figures.py}; the two heatmaps are parsed
+directly from the values printed in Table~\ref{tab:llm_ablation}, so
+figure and table cannot disagree, and the seed sweep is drawn only from
+\texttt{portfolio\_variance\_seed\_sweep.json} (no values are embedded in
+the script; if that file is missing the figure is skipped rather than
+drawn from stale data). If the \texttt{.tex} file cannot be found or
+parsed, the two heatmaps fall back to
+\texttt{exp1\_ablation\_results.json}. PDFs are written without a
+creation timestamp, so re-running the script on unchanged inputs
+reproduces them byte for byte. This is distinct from the benchmark
+supplement's reproducibility figure set (regenerated from the
+\texttt{noise\_sweep}/\texttt{sample\_complexity} v2 JSONs with
+\texttt{--experiment suppB} and \texttt{--experiment suppB\_sc}), none of
+which is embedded in the manuscript.

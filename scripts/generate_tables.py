@@ -1421,37 +1421,57 @@ def gen_ablation() -> None:
     # h_wins=0). Surfaced honestly here rather than silently relabelled as
     # n=15; do not paper over this by hand-editing n back to 15 upstream.
     def _load_mannwhitney() -> dict | None:
+        """Paired far-R^2 test result written by generate_ablation_table.py.
+
+        Current schema: top-level key "rf01_far_r2_test" (Wilcoxon signed-rank
+        primary, n = equations with finite far R^2 in BOTH conditions).
+        Legacy schema: "rf01_mann_whitney" (n=3, Chemistry-only skip list) --
+        still read so old result dirs do not break, but it is NOT the same test.
+        Returns a normalised dict or None.
+        """
         for base in (PATCHED, RESULTS):
             p = base / "ablation" / "exp1_ablation" / "exp1_rf01_mannwhitney.json"
-            if p.exists():
-                try:
-                    return json.loads(p.read_text()).get("rf01_mann_whitney")
-                except Exception:
-                    continue
+            if not p.exists():
+                continue
+            try:
+                j = json.loads(p.read_text())
+            except Exception:
+                continue
+            if isinstance(j.get("rf01_far_r2_test"), dict):
+                t = j["rf01_far_r2_test"]
+                return {"kind": "wilcoxon", "W": t.get("wilcoxon_W"),
+                        "p": t.get("wilcoxon_p_two_sided"), "n": t.get("n_pairs"),
+                        "h_wins": t.get("h_wins"), "p_wins": t.get("p_wins"),
+                        "ties": t.get("ties"),
+                        "included": list(t.get("equations_included") or []),
+                        "skipped": dict(t.get("skipped_equations") or {})}
+            if isinstance(j.get("rf01_mann_whitney"), dict):
+                t = j["rf01_mann_whitney"]
+                return {"kind": "mannwhitney", "W": t.get("U_two_sided"),
+                        "p": t.get("p_two_sided"), "n": t.get("n_pairs"),
+                        "skipped_n": t.get("n_skipped", 0),
+                        "included": list(t.get("equations_included") or []),
+                        "skipped": {}}
         return None
 
     _mw = _load_mannwhitney()
-    if _mw:
-        mw_u = _mw.get("U_two_sided")
-        mw_p = _mw.get("p_two_sided")
-        mw_n = _mw.get("n_pairs")
-        mw_skipped = _mw.get("n_skipped", 0)
-    else:
-        _d = data if isinstance(data, dict) else {}
-        mw_p = _d.get("mw_p", _d.get("mann_whitney_p"))
-        mw_u = _d.get("mw_u", _d.get("mann_whitney_u"))
-        mw_n = None
-        mw_skipped = 0
 
     def _r(v, clip=None):
+        # One rule for every R^2 column (the old code clipped only Far, at -1000,
+        # and printed a raw "-inf" elsewhere): -inf -> $-\infty$, below -100 ->
+        # $\ll{-100}$, nan/None -> --- (not evaluated).
         if not isinstance(v, (int, float)) or v != v:
             return "---"
-        if clip and v < clip:
+        if v == float("-inf"):
+            return r"$-\infty$"
+        if v == float("inf"):
+            return r"$+\infty$"
+        if v < -100:
             return r"$\ll{-100}$"
-        return f"{v:.4f}" if abs(v) < 1000 else f"{v:.1f}"
+        return f"{v:.4f}"
 
     def _t(v):
-        return str(int(v)) if isinstance(v, (int, float)) and v == v else "---"
+        return str(int(round(v))) if isinstance(v, (int, float)) and v == v else "---"
 
     tex = header_comment(src) + r"""
 \begin{table*}[t]
@@ -1474,53 +1494,72 @@ def gen_ablation() -> None:
   & P & H & P & H & P & H & P & H & P & H \\
 \midrule
 """
+    _aggr = bool(getattr(_ARGS, "ablation_aggregates", False))
+    _paired = set((_mw or {}).get("included") or []) if (_mw or {}).get("kind") == "wilcoxon" else set()
     for (eq, dom, pt, ht, pn, hn, pm, hm, pf, hf, ptime, htime) in equations:
+        _dag = r"$^\dagger$" if (_aggr and _paired and eq not in _paired) else ""
+        eq = f"{eq}{_dag}"
         tex += (
             f"{eq} & {dom} & {_r(pt)} & {_r(ht)} & {_r(pn)} & {_r(hn)}"
-            f" & {_r(pm)} & {_r(hm)} & {_r(pf,-1000)} & {_r(hf,-1000)}"
+            f" & {_r(pm)} & {_r(hm)} & {_r(pf)} & {_r(hf)}"
             f" & {_t(ptime)} & {_t(htime)} \\\\\n"
         )
 
-    _aggr = bool(getattr(_ARGS, "ablation_aggregates", False))
     if _aggr:
-        tex += r"""\midrule
-\multicolumn{2}{l}{\textit{Mean}} """
-        # Compute means over the 15 equations
+        # Mean over all 15 silently dropped -inf / huge cells, so it is replaced by
+        # (a) the mean of TRAIN R^2 and run time (always finite) and (b) the MEDIAN
+        # of the extrapolation columns over the equations in the paired test, i.e.
+        # those with finite far R^2 in BOTH conditions (list comes from the JSON).
         import statistics as _st
-        def _mean_r2(col):
-            vals = [r for r in col if isinstance(r, float) and r == r and r >= -1e5]
-            return f"{_st.mean(vals):.4f}" if vals else "---"
-
-        cols = list(zip(*equations))
+        _fin = lambda x: isinstance(x, (int, float)) and x == x
+        _idx = {n: i for i, n in enumerate(c[0].replace(r"$^\dagger$", "") for c in equations)}
+        _pair_rows = [e for e in equations if (not _paired) or e[0] in _paired]
+        def _mean_all(ci):
+            v = [e[ci] for e in equations if _fin(e[ci])]
+            return f"{_st.mean(v):.4f}" if v else "---"
+        def _mean_t(ci):
+            v = [e[ci] for e in equations if _fin(e[ci])]
+            return f"{_st.mean(v):.0f}" if v else "---"
+        def _med(ci):
+            v = [e[ci] for e in _pair_rows if _fin(e[ci]) and abs(e[ci]) != float("inf")]
+            return f"{_st.median(v):.4f}" if v else "---"
         tex += (
-            f"& {_mean_r2(cols[2])} & {_mean_r2(cols[3])}"
-            f" & {_mean_r2(cols[4])} & {_mean_r2(cols[5])}"
-            f" & {_mean_r2(cols[6])} & {_mean_r2(cols[7])}"
-            f" & {_mean_r2(cols[8])} & {_mean_r2(cols[9])}"
-            f" & {_mean_r2(cols[10])} & {_mean_r2(cols[11])} \\\\\n"
+            "\\midrule\n"
+            f"\\multicolumn{{2}}{{l}}{{\\textit{{Mean, all {len(equations)}}}}} & {_mean_all(2)} & {_mean_all(3)}"
+            f" & --- & --- & --- & --- & --- & --- & {_mean_t(10)} & {_mean_t(11)} \\\\\n"
+            f"\\multicolumn{{2}}{{l}}{{\\textit{{Median, {len(_pair_rows)} paired}}}} & --- & ---"
+            f" & {_med(4)} & {_med(5)} & {_med(6)} & {_med(7)} & {_med(8)} & {_med(9)} & --- & --- \\\\\n"
         )
 
     if not _aggr:
         _mw_note = (
-            "  Aggregate statistics (mean, Mann--Whitney) are intentionally not computed: "
+            "  Aggregate statistics (mean, paired test) are intentionally not computed: "
             "cells that are \\textit{nan} or $-\\infty$ (not evaluated, or crashed) have no "
             "agreed treatment in a summary statistic. Re-run with "
             "\\texttt{--ablation-aggregates} to add them.\n"
+            "  Values below $-100$ are shown as $\\ll{-100}$; --- = not evaluated.\n"
         )
-    elif mw_u is not None and mw_p is not None:
-        _n_str = str(mw_n) if mw_n is not None else "?"
+    elif _mw and _mw.get("kind") == "wilcoxon" and _mw.get("p") is not None:
+        _why = lambda r: ("Hypatia not evaluated" if "null" in str(r) else "Hypatia far $R^2=-\\infty$")
+        _dag_txt = ", ".join(f"{n} ({_why(r)})" for n, r in _mw["skipped"].items())
         _mw_note = (
-            f"  Mann--Whitney (far-$R^2$): $U={mw_u:.1f}$, $p={mw_p:.4f}$ "
-            f"(two-sided, $n={_n_str}$"
+            "  Values below $-100$ are shown as $\\ll{-100}$; --- = not evaluated. "
+            "Times are rounded to the nearest second.\n"
+            f"  Medians are over the {_mw['n']} equations with finite far $R^2$ in both conditions.\n"
+            + (f"  $^\\dagger$Excluded from the paired test: {_dag_txt}.\n" if _dag_txt else "")
+            + f"  Wilcoxon signed-rank on far $R^2$ ({_mw['n']} pairs, two-sided): "
+            f"$W={_mw['W']:.0f}$, $p={_mw['p']:.2f}$; H better on {_mw['h_wins']}, "
+            f"P on {_mw['p_wins']}, {_mw['ties']} ties "
+            "(see \\texttt{exp1\\_rf01\\_mannwhitney.json}).\n"
         )
-        if mw_skipped:
-            _mw_note += (
-                f"; {mw_skipped} of 15 equations excluded from this test -- "
-                r"see \texttt{exp1\_rf01\_mannwhitney.json} for which and why"
-            )
-        _mw_note += ").\n"
+    elif _mw and _mw.get("kind") == "mannwhitney":
+        _mw_note = (
+            f"  Legacy Mann--Whitney (far-$R^2$): $U={_mw['W']:.1f}$, $p={_mw['p']:.4f}$ "
+            f"(two-sided, $n={_mw['n']}$; {_mw.get('skipped_n', 0)} of 15 excluded). "
+            "Regenerate exp1\\_rf01\\_mannwhitney.json for the paired Wilcoxon test.\n"
+        )
     else:
-        _mw_note = "  Mann--Whitney statistic unavailable for this run.\n"
+        _mw_note = "  Paired-test statistic unavailable for this run.\n"
 
     tex += r"""\bottomrule
 \end{tabular}

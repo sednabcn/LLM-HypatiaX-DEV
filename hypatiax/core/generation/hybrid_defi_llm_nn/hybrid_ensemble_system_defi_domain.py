@@ -1,11 +1,11 @@
 """
-Example: how a hybrid system should call NeuralNetworkBaseline.train_get_model()
-and get_predictions(), combine them with an LLM-produced formula, and form an
-uncertainty-weighted ensemble.
+Example: how a hybrid system should call train_nn_model()/nn_predict() from
+hybrid_system_nn_defi_domain.py, combine the result with an LLM-produced
+formula, and form an uncertainty-weighted ensemble.
 
 This snippet assumes these modules are available in your PYTHONPATH:
-- baseline_pure_llm_defi.PureLLMBaseline (or another LLM wrapper)
-- baseline_neural_network_defi_improved.NeuralNetworkBaseline
+- baseline_pure_llm_defi_discovery.PureLLMBaseline (or another LLM wrapper)
+- hybrid_system_nn_defi_domain.{train_nn_model, nn_predict}
 
 It also works offline if ANTHROPIC_API_KEY is not set by using the canonical
 specialized formula for the test case.
@@ -18,23 +18,26 @@ Could help when both methods are valid but imperfect
 
 """
 
+import hashlib
+
 import numpy as np
 from sklearn.metrics import r2_score
 
 # Import your LLM baseline and NN baseline implementations
 from hypatiax.core.base_pure_llm.baseline_pure_llm_defi_discovery import PureLLMBaseline
 from hypatiax.protocols.experiment_protocol_defi import DeFiExperimentProtocol
-# NOTE: `NeuralNetworkBaseline` is only used inside main() below (the CLI demo
-# block) and is not defined anywhere in this codebase — baseline_neural_network_
-# defi_improved.py only exports ImprovedNN. Importing it at module scope broke
-# every other function in this file (including execute_python_code_get_predictions,
-# which has no dependency on it) for anyone who merely imports this module.
-# The import is deferred into main() below so it only fails if the CLI demo is
-# actually run. If you need main() to work, either implement NeuralNetworkBaseline
-# (docstring at top of file says it should wrap ImprovedNN with a
-# train_get_model()/get_predictions() API) or update main() to use ImprovedNN
-# directly, matching the pattern in _train_and_eval_nn() in
-# hypatiax/experiments/tests/test_enhanced_defi_extrapolation.py.
+# FIX: main() previously did a deferred `from hypatiax.core.training.
+# baseline_neural_network_defi_improved import NeuralNetworkBaseline` and
+# called nn.train_get_model()/nn.get_predictions(). That class does not
+# exist anywhere in this codebase -- baseline_neural_network_defi_improved.py
+# only exports ImprovedNN, and the trainable NN actually lives in
+# hybrid_system_nn_defi_domain.py as plain functions (train_nn_model,
+# nn_predict), not a class with that API. main() below now calls those
+# functions directly instead. The import is still deferred into main()
+# (rather than hoisted to module scope) purely to keep this module's other,
+# NN-independent functions (execute_python_code_get_predictions,
+# ensemble_llm_nn) importable even if the NN module or its torch dependency
+# is unavailable in a given environment.
 
 
 def execute_python_code_get_predictions(python_code: str, X: np.ndarray):
@@ -177,17 +180,21 @@ def main():
     print("Data shapes:", X.shape, y_true.shape)
 
     # 1) Generate/obtain LLM formula (if API key present). Otherwise, use canned formula
-    llm = PureLLMBaseline()
     try:
+        llm = PureLLMBaseline()
         llm_result = llm.generate_formula(
             description=desc,
             domain="liquidity",
             variable_names=var_names,
             metadata=meta,
-            verbose=False,
         )
     except Exception:
-        # No API key or call failed -> use canonical specialized code (Kelly)
+        # No API key, or the call/PureLLMBaseline() constructor failed
+        # (e.g. ANTHROPIC_API_KEY unset) -> use canonical specialized code
+        # (Kelly). PureLLMBaseline() itself is now inside the try/except
+        # too, since its __init__ raises ValueError when the API key is
+        # missing -- that used to happen before generate_formula() was
+        # even reached, so it wasn't actually covered by this except.
         llm_result = {"python_code": "N/A", "formula": "N/A"}
         print("LLM call failed or unavailable; will use canonical fallback.")
 
@@ -215,21 +222,20 @@ def formula(expected_fee_apy, il_risk):
         llm_pred = None
         llm_r2 = None
 
-    # 3) Train NN and obtain predictions (use train_get_model/get_predictions)
-    from hypatiax.core.training.baseline_neural_network_defi_improved import (
-        NeuralNetworkBaseline,
-    )  # see NOTE at top of file: this class is not currently implemented
-    nn = NeuralNetworkBaseline(hidden_dims=[128, 64, 32], epochs=200, batch_size=64)
-    model, nn_metrics, scaler_X, scaler_y = nn.train_get_model(
-        X,
-        y_true,
-        metadata=meta,
-        is_extrapolation=meta.get("extrapolation_test", False),
-        verbose=True,
+    # 3) Train NN and obtain predictions, using the real public API from
+    # hybrid_system_nn_defi_domain.py: train_nn_model() / nn_predict().
+    # Deterministic seed derived the same way the rest of that module's
+    # pipeline seeds its NN training step (FIX-ISSUE2B-UNSEEDED-NN), so
+    # this demo is reproducible across runs for the same test case.
+    from hybrid_system_nn_defi_domain import train_nn_model, nn_predict
+
+    seed = int(hashlib.sha256(desc.encode()).hexdigest(), 16) % (2**31)
+    model, scaler_X, scaler_y = train_nn_model(
+        X, y_true, hidden_dims=[128, 64, 32], epochs=200, seed=seed
     )
-    nn_pred = nn.get_predictions(model, scaler_X, scaler_y, X)
-    print("NN metrics:", nn_metrics)
-    nn_r2 = nn_metrics.get("r2", None)
+    nn_pred = nn_predict(model, scaler_X, scaler_y, X)
+    nn_r2 = r2_score(y_true, nn_pred)
+    print(f"NN R\u00b2 = {nn_r2:.6f}")
 
     # 4) Ensemble
     ensemble_pred, info = ensemble_llm_nn(

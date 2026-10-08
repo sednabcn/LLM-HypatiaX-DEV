@@ -3,7 +3,26 @@ hypatia.py — LLM warm-start prior for HypatiaX / exp3_nguyen12_hypatiax.py
 ===========================================================================
 Provides ``get_llm_prior(eq, X_train, y_train, ...)`` which queries Claude
 via the Anthropic API and returns a ranked list of candidate symbolic
-expressions in PySR-compatible Python syntax.
+expressions.
+
+[DOC-FIX] The expressions are returned in plain Python/numpy syntax
+(``**`` for power, ``np.sin`` / ``np.cos`` / ``np.log`` / ``np.exp`` /
+``np.sqrt`` / ``np.abs`` for functions) — see ``_build_prompt``'s "Rules for
+expr" section, which is what the LLM is actually instructed to emit. This is
+NOT necessarily the same operator syntax a given PySR configuration uses
+(e.g. PySR is commonly configured with ``^`` for power and bare unary
+names like ``sin``/``cos`` with no ``np.`` prefix, and callers may not
+configure an ``abs`` operator at all). Earlier revisions of this docstring
+called the output "PySR-compatible," which is what led a downstream caller
+to pass these strings directly into ``PySRRegressor(guesses=...)`` and get
+silently-broken warm-starts. Callers MUST convert to their own PySR
+operator config (translating ``**``→their power op, dropping/mapping
+``np.*`` calls to their configured unary op names, and dropping any
+candidate that uses a function their config doesn't support) before passing
+these expressions to PySR. This module intentionally does not perform that
+conversion itself, since the correct mapping depends on each caller's own
+``binary_operators`` / ``unary_operators`` config, which this module has no
+visibility into.
 
 The module is intentionally self-contained: no HypatiaX internal imports are
 required so that exp3 can drop this file next to the script and import it
@@ -14,7 +33,9 @@ Usage
     from hypatia import get_llm_prior
 
     exprs = get_llm_prior(eq_dict, X_train, y_train)
-    # exprs -> ["x**3 + x**2 + x", "x**3 + x**2", ...]
+    # exprs -> ["x**3 + x**2 + x", "x**3 + x**2", ...]  (plain Python/numpy
+    #           syntax — convert to your PySR operator config before using
+    #           as `guesses=`; see [DOC-FIX] note above)
 
 API key resolution order
 ------------------------
@@ -78,10 +99,10 @@ def get_llm_prior(
     *,
     api_key: str | None = None,
     n_candidates: int = 5,
-    temperature: float = 0.25,
     model: str = "claude-sonnet-5",
     max_tokens: int = 1024,
     timeout: float = 60.0,
+    temperature: float = 0.25,
     verbose: bool = True,
 ) -> list[str]:
     """Return a list of candidate expressions for ``eq`` ordered by LLM confidence.
@@ -99,22 +120,35 @@ def get_llm_prior(
         Anthropic API key.  Falls back to ``ANTHROPIC_API_KEY`` env var.
     n_candidates:
         How many candidate expressions to request from the LLM.
-    temperature:
-        Sampling temperature (lower = more deterministic).
     model:
         Anthropic model string.
     max_tokens:
         Max completion tokens.
     timeout:
         Seconds to wait for the API call before raising.
+    temperature:
+        Deprecated/no-op as of [FIX-SDK1.0-TEMPERATURE]. Anthropic SDK v1.0+
+        removed `temperature` from Messages.create() entirely, and current
+        models reject it server-side (400) regardless of SDK version. This
+        argument is accepted for backward-compatible call signatures but is
+        NOT sent to the API; the model's own default sampling always
+        applies. Kept so existing callers (e.g. exp3's --temperature flag)
+        don't need to change their call sites, but the FIX-N3-ii
+        determinism-via-temperature=0 control this used to provide no
+        longer exists — see caller-side notes if exact-reproducibility is
+        required.
     verbose:
         Print progress to stdout.
 
     Returns
     -------
     List[str]
-        Python expressions using the variable names in ``eq["vars"]``,
-        compatible with PySR's ``populations_init`` / expression seeding.
+        Python expressions using the variable names in ``eq["vars"]``, in
+        plain Python/numpy syntax (``**`` for power, ``np.sin`` etc. for
+        functions — NOT necessarily your PySR config's operator syntax; see
+        the [DOC-FIX] note in the module docstring). Convert to your own
+        PySR ``binary_operators`` / ``unary_operators`` config before
+        passing into ``guesses=`` or any other PySR seeding mechanism.
         Empty list on any error (caller falls back to cold PySR).
     """
     resolved_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
@@ -147,14 +181,45 @@ def get_llm_prior(
     try:
         anthropic = _get_anthropic()
         client = anthropic.Anthropic(api_key=resolved_key)
+        # [FIX-SDK1.0-TEMPERATURE] anthropic SDK v1.0 (2026-08-20) removed
+        # temperature/top_p/top_k from Messages.create() with no **kwargs
+        # passthrough (TypeError, not a network call), and current models
+        # reject the parameter server-side anyway (400: "temperature is
+        # deprecated for this model"). There is no version of the SDK that
+        # both installs cleanly today and accepts this argument, so it is
+        # no longer sent. This removes the temperature=0 determinism
+        # control the `temperature` parameter used to provide — see the
+        # docstring note below.
+        if temperature != 0.25 and verbose:
+            print(
+                f"  [LLM] note: temperature={temperature} was requested but "
+                "is no longer sent (unsupported by current models/SDK); "
+                "the model's own default sampling applies."
+            )
         message = client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
             timeout=timeout,
         )
-        raw = message.content[0].text
+        # [FIX-THINKING-BLOCK] message.content[0] is not reliably the text
+        # block — some models (or requests with extended thinking enabled)
+        # return a ThinkingBlock first, followed by the TextBlock with the
+        # actual completion. Grabbing content[0].text unconditionally raised
+        # "'ThinkingBlock' object has no attribute 'text'" and silently
+        # dropped the LLM warm-start for every equation. Find the first
+        # block that actually has a `.text` attribute instead of assuming
+        # position 0.
+        text_blocks = [
+            block for block in message.content
+            if getattr(block, "type", None) == "text"
+        ]
+        if not text_blocks:
+            raise ValueError(
+                f"No text block in API response (got block types: "
+                f"{[getattr(b, 'type', type(b).__name__) for b in message.content]})"
+            )
+        raw = text_blocks[0].text
     except Exception as exc:
         warnings.warn(
             f"  [LLM] API call failed for {eq['id']}: {exc}",

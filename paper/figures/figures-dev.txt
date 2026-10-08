@@ -1,0 +1,107 @@
+﻿1) check the figures fit with the body text  2)compile all
+
+
+I'm midway through your two tasks: the figure-versus-text check is done, and I'm now compiling all four documents with your real figures and bibliography.
+
+All four documents compile. The figures do not fully match the body text, and I haven't changed any files this turn.
+1. Figures against body text
+Seed-sweep figure (fig1_seed_sweep): one mismatch. Nine of ten far-R² points match the table and caption. The exception is PySR-only on seed 2024, which plots at about −12, while the table and caption say −118.448. The −118 value cannot fit on the figure's axis, which stops near −22.
+Heatmaps (fig18 and fig09): they come from a different data source than tab:llm_ablation. The caption of fig09 says it is the same corrected source and that the two agree, but they don't. For example:
+Cell (far R² unless noted)	Figure	tab:llm_ablation
+PySR, Impermanent Loss	−63	−157.08
+PySR, Michaelis–Menten	−808	0.6471
+PySR, Henderson–Hasselbalch (medium)	−INF	0.9850
+PySR, Arrhenius (near / medium)	−0.98 / −0.67	0.9779 / 0.4636
+HypatiaX, Allometric Scaling	−0.70	−0.0644
+HypatiaX, Constant Product	−173 / −246 / −INF	−1.8×10⁴ / −5.4×10³⁴ / −1.9×10⁴⁶
+Other problems that follow from this:
+    • fig09 has 20 rows, not 15: the five domain rows (Biology, Chemistry, DeFi AMM, DeFi Risk, Physics) are all NaN.
+    • The fig09 caption says PySR-only completes every cell, but the figure shows −INF for PySR on Henderson–Hasselbalch.
+    • The caption says Constant Product is −∞ beyond Train. The figure shows −∞ only at far. The table shows huge finite values, so the table's own footnote also lists Constant Product among the nan or −∞ cases wrongly.
+    • The fig18 caption says Chemistry "Hard: 0.90 vs −12.56". The figure shows Chemistry Easy, 0.90 vs −12.55.
+    • The fig18 caption's "−78.04" for PySR on DeFi AMM (Hard) is the table-derived value. The figure shows −30.96.
+Your table is the one you said was rebuilt from _merged.json, so the heatmaps are the likely stale ones.
+Architecture figure (hypatiax_three_systems): the caption and the figure's own labels disagree.
+    • Router outcomes: the caption lists four router outcomes. The figure draws three: "low confidence" to System 1, "hybrid path" to System 3, and an "LLM prior" label with no arrow. "fit" labels the input arrow from Training Data, not an outcome.
+    • Layout: the System 1 and 3 arrows end in empty space instead of at Output. The Training Data and Output boxes overlap.
+    • Text versus figure: the intro describes "an LLM symbolic generator, a residual MLP, and a routing/ensembling layer" and a fallback to the neural network, but the figure shows PySR, an LLM prior and a hybrid fusion, with no neural network.
+I couldn't check hypatiax_algorithm1_routing_cascade_v2, because it wasn't uploaded.
+2. Compile
+    • post_submission_report and supp_routing_improvements compile as they are.
+    • jmlr_paper_main (59 pages) and supp_benchmark_report (35 pages) compile with font expansion switched off. In this sandbox, expansion fails with a pdfTeX "scalable fonts" error. That also happened on the files before my cleanup, so it's the environment. On a normal TeX install the files as delivered should build, but I couldn't confirm that here.
+    • With your bibliography and figures, the main paper has no undefined references or citations and no BibTeX warnings.
+    • Not real in my build:
+        ◦ tables/llm_detailed.tex and tables/defi_detailed.tex were not uploaded, so the supplement used empty stand-ins for them.
+        ◦ The routing-cascade figure was a blank placeholder.
+        ◦ 006_tab_defi_tiers.tex and 034_tab_suppb_noiseless.tex aren't \input anywhere. The second one is only a "data not available" comment.
+If you want, I can regenerate both heatmaps from the tab:llm_ablation values and fix the captions. I'd leave the seed-sweep and architecture figures for you to check against the JSON and the intended design.
+
+go ahead
+
+I'm regenerating the two heatmaps from the table values. The colourbar was overlapping the right panel, so I fixed its placement and I'm now checking the new images.
+
+I regenerated both heatmaps from the values in tab:llm_ablation and fixed the captions and table notes to match. The main paper recompiles with no undefined references or citations, but only with font expansion switched off, because that is the only way it builds in this sandbox. I haven't tested it with expansion on, as in the delivered file.
+What changed in the paper
+    • Heatmaps. fig09 now has the 15 equation rows only; the five all-NaN domain rows are gone. fig18 now shows Chemistry as Easy (0.90 vs −12.56) and DeFi AMM (Hard) for PySR-only as −78.04, as the caption says.
+    • How they're made. make_heatmaps_from_table.py reads the numbers straight from the table, so the figures can't drift from it again. Cells that never completed (nan) are grey and hatched. Crashed cells are shown as −INF.
+    • Easy/Med/Hard tiers. The table has no difficulty column, so I used the old fig18 groupings. Those reproduce the old cell means from the old fig09 values, which is how I checked them.
+    • Constant Product. The table gives it finite values (−1.8×10⁴, −5.4×10³⁴, −1.9×10⁴⁶), not −∞. The text said six equations return nan or −∞. The table supports only five: Henderson–Hasselbalch, Logistic Growth, Michaelis–Menten, Rate Law and Gravitational Force. I changed the text, the table note and both captions to match. If _merged.json actually records a crash for Constant Product, tell me and I'll flip it back.
+Still open (I recorded this as item C10 in the post-submission report)
+    • Seed-sweep figure. PySR-only on seed 2024 plots at about −12, but the table and caption say −118.448. The figure looks wrong, and I didn't touch it.
+    • Architecture figure.
+        ◦ The caption lists four router outcomes and the figure draws three.
+        ◦ The arrows don't reach the Output box.
+        ◦ The introduction describes a residual MLP and a neural fallback that the figure doesn't show.
+        ◦ This needs your call on whether to fix the figure or the text.
+    • Not supplied. I still don't have the routing-cascade figure or the two detailed supplement tables (llm_detailed, defi_detailed), so the supplement built with empty stand-ins for those two tables.
+The regenerated figures and the script are in /mnt/user-data/outputs/figures/; the updated jmlr_paper_main.tex and post_submission_report.tex are in /mnt/user-data/outputs/tex/.
+Setting up the build: the figure copy failed, so I'm fixing that and working around the font-expansion error before recompiling all four documents.
+All four documents compile, and I regenerated three of the five figures because they didn't fit the text. The compile used font expansion switched off, because this sandbox fails on it. I didn't test the delivered microtype settings.
+The zip you uploaded is newer than my earlier edited copies. It already has the noise-table fixes, the shard paragraph and the C9 note about the six-method file. I used it as the base and didn't touch it except for one caption clause.
+Compile
+    • Main paper: 61 pages. Benchmark supplement: 35. Routing supplement: 18. Post-submission report: 34. 
+    • None of the four has an undefined reference or citation, and there are no BibTeX warnings. 
+    • The tables/llm_detailed.tex and tables/defi_detailed.tex files weren't supplied, so I used empty stand-ins for them in the supplement build. 
+Figures against the text
+Figure	Result
+fig09 and fig18 heatmaps	They fit. I checked every cell against tab:llm_ablation and the captions' quoted values (−12.56, −78.04, −9.3×10⁴⁵, −157 and the rest).
+fig1_seed_sweep	Regenerated. The old one plotted PySR seed 2024 at about −12, but the caption and Table 5 say −118.448. The new one reads the JSON and draws that point at the axis floor, labelled "−118.4 (off scale)".
+hypatiax_three_systems	Regenerated. The old figure drew three outcomes where the caption lists four, had arrows ending in empty space, and had overlapping boxes. The new one shows the four outcomes (fit, low confidence, LLM prior, hybrid path).
+hypatiax_algorithm1_routing_cascade_v2	Regenerated. The content is the same as before; I only fixed layout. The legend was clipped, the guarantee box cut off, and the output node overlapped the lock badge.
+Caption change
+The cascade figure has blue steps (Pareto de-duplication, the scale-compatibility check, the Instability Index) that the caption never explained. I added one clause saying so. This is the only edit to the .tex files.
+Needs your decision
+    • Introduction versus figure. 
+        ◦ The introduction (line ~852) describes "an LLM symbolic generator, a residual MLP, and a routing/ensembling layer" that can fall back to the neural network. 
+        ◦ The architecture figure and its caption describe PySR, an LLM prior, a hybrid fusion and a router. 
+        ◦ I matched the figure to its caption. Reconcile the introduction sentence yourself, because I can't tell which description you intend. 
+    • Fallback meaning. The caption doesn't say what "fall back on low PySR confidence" returns, so the figure labels that arrow only "fall back". Say what it returns if you want it drawn. 
+    • Difficulty tiers. The heatmap tiers (Easy/Med/Hard) come from the old fig18 groupings, because the table has no difficulty column. I couldn't verify them. 
+Everything is in /mnt/user-data/outputs/: figures/, tex/ and pdf/. The two generator scripts are in figures/ so the figures can be rebuilt.
+Hypatiax three systems
+Document·PDF 
+Hypatiax algorithm1 routing cascade v2
+Document·PDF 
+Fig1 seed sweep
+Document·PDF 
+Make architecture figures
+PY 
+Make seed sweep figure
+PY 
+Jmlr paper main
+TEX 
+Jmlr paper main
+Document·PDF 
+compile he supptoo
+Both supplements compile and are attached above, but the benchmark supplement has two empty tables.
+    • supp_benchmark_report: 35 pages, no undefined references or citations. 
+    • supp_routing_improvements: 18 pages, no undefined references or citations. 
+I compiled with font expansion switched off, because this sandbox fails with it on. I haven't tested the delivered microtype setting.
+Why two tables are empty (tab:llm_detailed and tab:defi_detailed).
+    • The supplement captions say these come from the pinned seed-42 DeFi file, hypatiax_defi_benchmark_v3_results_seed42.json (md5 cbf503d0…). 
+    • Neither file you uploaded matches that md5, so I didn't fill the tables from them. 
+    • v3c2 is labelled "Benchmark v4.0" with 74 cases. Your own notes say the v4 files carry the attribution-flag bug, so using it would be wrong. 
+    • v3c3 has 84 cases and only the pure-LLM method, so it can't support the HypatiaX table. 
+    • Upload the pinned seed-42 file and I'll generate both tables from it. The generator also needs a small fix, because these JSONs are stored as a dict with a cases list and the generator expects a plain list. 
+The compiled PDFs are in /mnt/user-data/outputs/pdf/, next to the main paper and post-submission report from before.
+

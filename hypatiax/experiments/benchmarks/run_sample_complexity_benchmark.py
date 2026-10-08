@@ -500,6 +500,7 @@ def _aggregate_results(
 
         for method in all_methods_sorted:
             r2_vals:   list[float] = []
+            time_vals: list[float] = []
             n_success  = 0
             n_total    = 0
             n_recovery = 0
@@ -507,6 +508,22 @@ def _aggregate_results(
             for eq_results in per_eq.values():
                 n_total += 1
                 res = eq_results.get(method, {})
+                # FIX-TIMING-DROPPED: 'time' is already recorded by the inner
+                # protocol_core_*.json runner (see res.get("time") below and
+                # the parallel per_equation fix) -- collect it here too so
+                # method_summary reports runtime stats, not just R^2 stats.
+                # Collected over ALL attempts (not gated on success), since
+                # wall-clock cost is incurred whether or not the fit
+                # ultimately passes the R^2 threshold -- this matches how
+                # tab:overall's Avg Runtime column is computed.
+                t = res.get("time")
+                if t is not None:
+                    try:
+                        tf = float(t)
+                        if np.isfinite(tf):
+                            time_vals.append(tf)
+                    except (TypeError, ValueError):
+                        pass
                 if res.get("success", False):
                     n_success += 1
                     r2 = res.get("r2")
@@ -528,6 +545,13 @@ def _aggregate_results(
                 "n_success":     n_success,
                 "n_total":       n_total,
                 "threshold_used": threshold,
+                # FIX-TIMING-DROPPED: runtime stats, computed the same way as
+                # the r2 stats above but over all attempts (see comment above
+                # the collection loop).
+                "mean_time_s":   float(np.mean(time_vals))          if time_vals          else None,
+                "median_time_s": float(np.median(time_vals))        if time_vals          else None,
+                "std_time_s":    float(np.std(time_vals, ddof=1))   if len(time_vals) > 1 else 0.0,
+                "n_timed":       len(time_vals),
             }
 
         per_n_data[n_str] = {
@@ -538,6 +562,13 @@ def _aggregate_results(
                         "r2":      r.get("r2"),
                         "rmse":    r.get("rmse"),
                         "success": r.get("success", False),
+                        # FIX-TIMING-DROPPED: the inner protocol_core_*.json
+                        # runner already records this per (equation, method);
+                        # it was being silently dropped here instead of
+                        # passed through. This is the root cause of Issue 3's
+                        # "no raw timing data" finding for suppB/suppB_sc --
+                        # see 03_ehsdefi_runtime_20v841_FIXED.tex.
+                        "time":    r.get("time"),
                     }
                     for m, r in mdict.items()
                 }
