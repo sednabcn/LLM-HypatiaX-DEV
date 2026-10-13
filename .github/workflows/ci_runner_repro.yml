@@ -292,7 +292,7 @@ jobs:
 
       - name: Restore shared checkpoint (plan)
         id: restore_plan
-        uses: actions/cache/restore@v4.2.3
+        uses: actions/cache/restore@v6
         with:
           path: checkpoint_plan.json
           key:  checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -885,7 +885,7 @@ jobs:
 
       - name: Save plan checkpoint cache
         if: always()
-        uses: actions/cache/save@v4.2.3
+        uses: actions/cache/save@v6
         with:
           path: checkpoint_plan.json
           key: checkpoint-plan-${{ github.event.inputs.experiment }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -955,7 +955,7 @@ jobs:
 
       - name: Cache Julia depot
         if: ${{ needs.plan.outputs.needs_julia == 'true' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.julia
           key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
@@ -1046,7 +1046,7 @@ jobs:
 
       - name: Restore shard checkpoint
         id: restore_worker
-        uses: actions/cache/restore@v4.2.3
+        uses: actions/cache/restore@v6
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key:  checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -2464,7 +2464,7 @@ jobs:
 
       - name: Persist shard checkpoint to cache
         if: always()
-        uses: actions/cache/save@v4.2.3
+        uses: actions/cache/save@v6
         with:
           path: checkpoint_worker_shard${{ matrix.shard }}.json
           key: checkpoint-worker-${{ github.event.inputs.experiment }}-shard${{ matrix.shard }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -2990,7 +2990,7 @@ jobs:
 
       - name: Cache Julia depot
         if: steps.check_exp2.outputs.already_done != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.julia
           key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
@@ -3173,7 +3173,7 @@ jobs:
 
       - name: Cache Julia depot
         if: steps.check_exp1.outputs.already_done != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.julia
           key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
@@ -3341,7 +3341,7 @@ jobs:
 
       - name: Cache Julia depot
         if: steps.check_exp1b.outputs.already_done != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.julia
           key: julia-depot-${{ runner.os }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
