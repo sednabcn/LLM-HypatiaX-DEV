@@ -41,7 +41,7 @@ def test_normalise_row_keeps_seed_as_part_of_task_identity():
 
     assert row is not None
     assert row["task_id"] == "N1__seed99"
-    assert row["domain"] is None
+    assert row["domain"] == "physics"
 
 
 def test_protocol_wrapper_uses_protocol_normalizer_and_preserves_equations():
@@ -160,7 +160,8 @@ def test_legacy_role_fallback_does_not_borrow_another_methods_train_score():
     paired = extrap_merge.merge(benchmark, {}, legacy)[0]
 
     assert paired["hypatia"]["extrap_r2_far"] is None
-    assert paired["hypatia"]["train_r2"] is None
+    assert paired["hypatia"]["train_r2"] == 0.91
+    assert paired["hypatia"]["train_source"] == "benchmark_results.json"
     assert paired["legacy_role_results"]["hypatia"]["extrap_r2_far"] == 0.8
     assert paired["legacy_role_results"]["hypatia"]["source"] == "legacy_role_only_no_method_identity"
 
