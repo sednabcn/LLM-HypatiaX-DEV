@@ -86,10 +86,10 @@ def validate_method_coverage(benchmark_records: list, extrap_by_equation: dict) 
         equation = row.get("test", row.get("equation_name", row.get("equation_id")))
         method = row.get("method")
         if equation and method:
-            missing_fields = {"r2", "success"} - set(row)
-            if missing_fields or not isinstance(row.get("success"), bool):
+            missing_fields = {"r2"} - set(row)
+            if missing_fields:
                 raise ValueError(
-                    "benchmark_results.json has incomplete scoring fields for "
+                    "benchmark_results.json has incomplete reference score fields for "
                     f"equation={equation!r}, method={method!r}: "
                     f"missing={sorted(missing_fields)}"
                 )
