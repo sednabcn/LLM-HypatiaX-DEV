@@ -170,11 +170,8 @@ EXPERIMENT_MODE: dict[str, str] = {
     "exp2_feyman_extrap":     "ablation",  # legacy typo alias
 }
 
-# Canonical result_subdir for every CI-dispatched experiment.
-# Single source of truth — mirrors ci_experiment.yml plan meta step
-# and both mapping dicts in ci_analysis.yml "Resolve experiment metadata".
-# exp1_ablation intentionally absent: no worker, no result_subdir in CI.
-# Shared with ci_analysis.yml and locate_analysis_input.sh.
+# Canonical result_subdir mapping lives in result_subdir_map.py and is shared
+# by ci_analysis.yml, locate_analysis_input.sh, and this analysis runner.
 RESULT_SUBDIR: dict[str, str] = RESULT_SUBDIR_MAP
 
 
