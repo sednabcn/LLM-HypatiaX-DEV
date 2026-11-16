@@ -351,13 +351,9 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
       neural_network → nn
       test_r2        → extrap_r2  (inside model sub-dicts)
 
-    BUG 3 FIX: the old return dict was hard-coded to 5 keys, so rows whose
-    domain == "hybrid" were extracted correctly by extract_rows but then
-    silently dropped here — the caller received a record with domain="hybrid"
-    but normalise_row returned a dict that omitted nothing wrong structurally;
-    the real issue is that hybrid tasks have no canonical task_id derivation
-    path and were returning None from canonical_task_id.  They are now
-    included via a fallback task_id derived from the domain field.
+    Task identity must come from an equation/task-specific field. A shared
+    domain label is never used as a fallback ID; records without a unique
+    identity are skipped rather than collapsed into a domain-level pseudo-task.
 
     BUG 4 FIX: difficulty, formula_type, and extrapolation_intractable were
     never included in the hard-coded return dict and were silently dropped on
@@ -400,12 +396,10 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
         task_id = row["name"]
     else:
         task_id = canonical_task_id(row)
-    # BUG 3 FIX: hybrid rows have domain="hybrid" but no equation_id /
-    # protocol that maps through EQ_ID_TO_DEFI, so canonical_task_id
-    # returned None and the row was discarded.  Fall back to domain so
-    # hybrid records survive the merge.
+    # If no equation_id/test_case/name is present, accept only an explicit
+    # row ID. Never synthesize an identity from the domain.
     if not task_id:
-        task_id = row.get("id") or row.get("name")
+        task_id = row.get("id")
     if not task_id:
         return None
     seed = row.get("seed", row.get("random_seed"))
