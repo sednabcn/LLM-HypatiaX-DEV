@@ -232,6 +232,9 @@ def test_result_subdirectory_rejects_symlink_escape(tmp_path):
 def test_analysis_workflow_does_not_swallow_stash_failures_or_duplicate_routing():
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci_analysis.yml").read_text()
     locate = (SCRIPTS_DIR / "locate_analysis_input.sh").read_text()
+    model_validation = (
+        REPO_ROOT / ".github" / "workflows" / "ci_model_validation.yml"
+    ).read_text()
 
     assert "git stash pop || true" not in workflow
     assert "SINGLE_SHARD_EXPERIMENTS" not in workflow
@@ -239,6 +242,10 @@ def test_analysis_workflow_does_not_swallow_stash_failures_or_duplicate_routing(
     assert "commit_analysis_outputs.sh" in workflow
     assert "EXPERIMENT=\"$EXPERIMENT\" python3 -c" in locate
     assert "'$EXPERIMENT' in MERGE_REQUIRED_EXPERIMENTS" not in locate
+    assert (
+        "ANTHROPIC_API_KEY: ${{ github.event_name == 'schedule' "
+        "&& secrets.ANTHROPIC_API_KEY || '' }}"
+    ) in model_validation
 
 
 def test_extrap_merge_rejects_conflicting_duplicate_method_rows():
