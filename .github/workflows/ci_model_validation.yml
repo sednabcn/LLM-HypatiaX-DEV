@@ -20,10 +20,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pytest anthropic pyyaml python-dotenv
+        run: pip install pytest anthropic pyyaml python-dotenv numpy
 
       - name: Run model validation tests
         run: pytest scripts/tests/test_model_validation.py -v
+
+      - name: Run offline analysis merge integrity tests
+        run: pytest hypatiax/experiments/tests/test_analysis_merge_integrity.py -v
         env:
           # Present on the scheduled run / repos with the secret set --
           # enables Tier 2 live API checks. Offline tier always runs.
