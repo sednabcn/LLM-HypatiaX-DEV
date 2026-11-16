@@ -24,7 +24,7 @@ Design goals
 1. Canonical normalisation layer
 2. Deterministic task identity
 3. Recursive extraction
-4. Duplicate-safe merge policy (highest-score row wins)
+4. Duplicate-safe merge policy (merge complementary rows; fail on conflicts)
 5. Basic aggregation stats only — no experiment-specific analysis
 6. Explicit diagnostics
 7. Schema-forward compatibility
@@ -38,10 +38,12 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,6 +105,120 @@ MERGE_REQUIRED_EXPERIMENTS: frozenset[str] = frozenset({
     "suppB",
     "suppB_sc",
 })
+
+# Only files emitted as worker result shards are eligible for consolidation.
+# This prevents old summaries, audit JSON, baseline snapshots, and prior
+# canonical merged outputs in the same result directory from being re-ingested.
+SHARD_FILE_GLOBS: dict[str, tuple[str, ...]] = {
+    "exp1b": (
+        "hypatiax_defi_benchmark_v3c3_results*shard*.json",
+        "portfolio_variance_seed_sweep*shard*.json",
+        "defi_v3_*shard*.json",
+    ),
+    "exp1_ablation": ("exp1_ablation_results*shard*.json",),
+    "exp3b": ("exp3_nguyen12_seed*shard*.json",),
+    "suppB": ("noise_sweep_*_nshards*.json",),
+    "suppB_sc": ("sample_complexity_*_nshards*.json",),
+}
+
+EXPECTED_SHARD_IDS: dict[str, frozenset[int]] = {
+    "exp1b": frozenset({0, 1, 2, 3}),
+    "exp1_ablation": frozenset({0, 1, 2, 3}),
+    "exp3b": frozenset({1, 2, 3, 4}),
+    "suppB": frozenset({1, 2, 3, 4, 5}),
+    "suppB_sc": frozenset({1, 2, 3, 4, 5, 6}),
+}
+
+EXPECTED_TASK_COUNTS = {"exp1_ablation": 15, "exp3b": 48}
+
+
+
+def _shard_id_from_filename(filename: str) -> Optional[int]:
+    match = re.search(r"(?:shard|nshards)[_-]?(\d+)", filename, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def validate_shard_coverage(experiment: str, files: List[Path]) -> set[int]:
+    """Fail closed unless the complete configured shard-index set is present."""
+    expected = EXPECTED_SHARD_IDS[experiment]
+    observed = {
+        shard_id
+        for path in files
+        if (shard_id := _shard_id_from_filename(path.name)) is not None
+    }
+    missing = sorted(expected - observed)
+    unexpected = sorted(observed - expected)
+    if missing or unexpected:
+        raise RuntimeError(
+            f"FATAL: incomplete shard coverage for {experiment}: "
+            f"expected={sorted(expected)}, observed={sorted(observed)}, "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    return observed
+
+
+def validate_task_coverage(experiment: str, merged: Dict[str, Dict[str, Any]]) -> None:
+    """Require complete task and arm coverage for fixed-size comparisons."""
+    expected_count = EXPECTED_TASK_COUNTS.get(experiment)
+    if expected_count is None:
+        return
+    if len(merged) != expected_count:
+        raise RuntimeError(
+            f"FATAL: {experiment} produced {len(merged)}/{expected_count} "
+            "required task records."
+        )
+
+    if experiment == "exp1_ablation":
+        required_fields = {"train_r2", "extrap_r2_far", "success"}
+        for task_id, row in merged.items():
+            for arm in ("hypatia", "pysr_only"):
+                record = row.get(arm)
+                if not isinstance(record, dict):
+                    raise RuntimeError(
+                        f"FATAL: {experiment} task {task_id!r} is missing arm {arm!r}"
+                    )
+                missing = required_fields - set(record)
+                if missing or not isinstance(record.get("success"), bool):
+                    raise RuntimeError(
+                        f"FATAL: {experiment} task {task_id!r}, arm {arm!r} "
+                        f"has incomplete scoring fields: missing={sorted(missing)}"
+                    )
+
+    elif experiment == "exp3b":
+        seed_equations: Dict[Any, set] = {}
+        equation_ids = set()
+        for task_id, row in merged.items():
+            seed = row.get("seed")
+            equation_id = row.get("nguyen_id")
+            systems = row.get("systems")
+            if seed is None or not equation_id:
+                raise RuntimeError(
+                    f"FATAL: exp3b task {task_id!r} lacks seed or Nguyen equation identity"
+                )
+            if not isinstance(systems, dict) or not {"hypatiax", "pysr"}.issubset(systems):
+                raise RuntimeError(
+                    f"FATAL: exp3b task {task_id!r} lacks both hypatiax and pysr records"
+                )
+            seed_equations.setdefault(seed, set()).add(equation_id)
+            equation_ids.add(equation_id)
+        reference_equations = next(iter(seed_equations.values()), set())
+        incomplete_seeds = {
+            seed: sorted(reference_equations - equations)
+            for seed, equations in seed_equations.items()
+            if equations != reference_equations
+        }
+        if (
+            len(seed_equations) != 4
+            or len(equation_ids) != 12
+            or any(len(equations) != 12 for equations in seed_equations.values())
+            or incomplete_seeds
+        ):
+            raise RuntimeError(
+                "FATAL: exp3b requires the same 12 Nguyen equations for each of "
+                f"four seeds; seed_equations={{{', '.join(f'{seed}: {len(eq)}' for seed, eq in seed_equations.items())}}}, "
+                f"unique_equations={len(equation_ids)}, incomplete_seeds={incomplete_seeds}"
+            )
+
 
 DEFI_IDS = {
     "amm",
@@ -190,33 +306,25 @@ def is_nan(v: Any) -> bool:
 # ============================================================
 
 def canonical_task_id(obj: Dict[str, Any]) -> Optional[str]:
-    """Return one deterministic task identity for a record."""
-    candidates = [
+    """Return a stable *equation/task* identity, never a broad domain alias.
+
+    EQ_ID_TO_DEFI is a domain/protocol classification map, not an identity
+    map. Applying it here collapsed distinct equations (for example two
+    portfolio-risk equations) into one task. Only equation/task-specific
+    fields are accepted; a shared domain or protocol label is not a task ID.
+    """
+    candidates = (
         obj.get("task_id"),
         obj.get("equation_id"),
-        obj.get("protocol"),
-        # BUG 6 FIX: exp1_ablation.py's run_instability_stats() writes
-        # core15_instability rows shaped {"equation": <eq name>, "domain": ...,
-        # "extrap_r2_near": ..., "extrap_r2_far": ..., "instability_index": ...}
-        # -- no "name"/"equation_id"/"task_id" key, just "equation". Before this
-        # fix, "equation" wasn't a candidate at all, so lookup fell through to
-        # "domain" (e.g. "Chemistry", "Biology") -- shared by 3 Core-15
-        # equations each, so merge_rows()'s same-task_id collapse turned 15
-        # instability rows (3 per domain x 5 domains) into 5 phantom
-        # domain-keyed entries (hypatia={}, nn={}, score 0) sitting alongside
-        # the 15 real ablation entries in _merged.json. Must be checked before
-        # "domain" so the real equation name wins; the real ablation row for
-        # the same equation still wins the merge on score (10+ vs 0) once both
-        # correctly resolve to the same task_id, so this only removes the
-        # phantom entries -- it doesn't change which row's data is kept.
         obj.get("equation"),
-        obj.get("domain"),
-        obj.get("id"),
+        obj.get("test_case"),
+        obj.get("test"),
         obj.get("name"),
-    ]
-    for c in candidates:
-        if c:
-            return EQ_ID_TO_DEFI.get(str(c), str(c))
+        obj.get("id"),
+    )
+    for candidate in candidates:
+        if candidate is not None and str(candidate).strip():
+            return str(candidate).strip()
     return None
 
 
@@ -243,13 +351,9 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
       neural_network → nn
       test_r2        → extrap_r2  (inside model sub-dicts)
 
-    BUG 3 FIX: the old return dict was hard-coded to 5 keys, so rows whose
-    domain == "hybrid" were extracted correctly by extract_rows but then
-    silently dropped here — the caller received a record with domain="hybrid"
-    but normalise_row returned a dict that omitted nothing wrong structurally;
-    the real issue is that hybrid tasks have no canonical task_id derivation
-    path and were returning None from canonical_task_id.  They are now
-    included via a fallback task_id derived from the domain field.
+    Task identity must come from an equation/task-specific field. A shared
+    domain label is never used as a fallback ID; records without a unique
+    identity are skipped rather than collapsed into a domain-level pseudo-task.
 
     BUG 4 FIX: difficulty, formula_type, and extrapolation_intractable were
     never included in the hard-coded return dict and were silently dropped on
@@ -292,14 +396,15 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
         task_id = row["name"]
     else:
         task_id = canonical_task_id(row)
-    # BUG 3 FIX: hybrid rows have domain="hybrid" but no equation_id /
-    # protocol that maps through EQ_ID_TO_DEFI, so canonical_task_id
-    # returned None and the row was discarded.  Fall back to domain so
-    # hybrid records survive the merge.
+    # If no equation_id/test_case/name is present, accept only an explicit
+    # row ID. Never synthesize an identity from the domain.
     if not task_id:
-        task_id = row.get("domain") or row.get("id") or row.get("name")
+        task_id = row.get("id")
     if not task_id:
         return None
+    seed = row.get("seed", row.get("random_seed"))
+    if seed is not None and not str(task_id).endswith(f"__seed{seed}"):
+        task_id = f"{task_id}__seed{seed}"
 
     # BUG 4 FIX: build the output from a copy of the full row so no fields
     # are silently dropped, then overwrite the keys we explicitly manage.
@@ -310,7 +415,7 @@ def normalise_row(raw: Any) -> Optional[Dict[str, Any]]:
     out.update({
         "task_id": task_id,
         "name":    row.get("name") or row.get("equation_id") or task_id,
-        "domain":  row.get("domain") or task_id,
+        "domain":  row.get("domain"),
         "hypatia": hyp,
         "nn":      nn,
     })
@@ -385,13 +490,16 @@ def _normalise_protocol_record(test: Dict[str, Any]) -> Dict[str, Any]:
 
     task_id = canonical_task_id(row)
     if not task_id:
-        task_id = row.get("domain") or row.get("equation_id") or row.get("name")
+        task_id = row.get("equation_id") or row.get("name")
+    seed = row.get("seed", row.get("random_seed"))
+    if task_id and seed is not None and not str(task_id).endswith(f"__seed{seed}"):
+        task_id = f"{task_id}__seed{seed}"
 
     out = {k: v for k, v in row.items() if k not in META_KEYS}
     out.update({
         "task_id": task_id,
         "name":    row.get("name") or row.get("equation_id") or task_id,
-        "domain":  row.get("domain") or task_id,
+        "domain":  row.get("domain"),
         "results": normalised_results,
         "hypatia": normalised_results.get("hypatia", {}),
         "nn":      normalised_results.get("nn", {}),
@@ -434,6 +542,18 @@ _SWEEP_AXIS_KEY = {
     "suppB_sc": ("sample_sizes", "per_n"),
 }
 
+EXPECTED_SWEEP_METHODS = frozenset({
+    "EnhancedHybridSystemDeFi (core)",
+    "HybridDiscoverySystem v50_2 (tools)",
+    "HybridSystemLLMNN all-domains (core)",
+    "ImprovedNN (core)",
+    "PureLLM Baseline (core)",
+    "SymbolicEngineWithLLM (tools)",
+})
+EXPECTED_SWEEP_EQUATION_COUNT = 30
+EXPECTED_SWEEP_POINT_COUNTS = {"suppB": 5, "suppB_sc": 6}
+
+
 
 def is_sweep_file(raw: Any, experiment: str) -> bool:
     """Return True if `raw` is a Shape S sweep-format wrapper for this experiment."""
@@ -470,15 +590,12 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
         try:
             raw = load_json(path)
         except Exception as e:
-            logger.warning(f"SWEEP MERGE: could not read {path}: {e}")
-            continue
+            raise RuntimeError(f"FATAL: cannot read sweep shard {path}: {e}") from e
         if not is_sweep_file(raw, experiment):
-            logger.info(
-                f"SWEEP MERGE: SKIP {path} — not a Shape S sweep file for "
-                f"{experiment!r} (missing '{list_key}' list and/or "
-                f"'{dict_key}' dict at top level)."
+            raise RuntimeError(
+                f"FATAL: expected a {experiment} sweep shard at {path}, "
+                f"but it does not contain '{list_key}' and '{dict_key}'."
             )
-            continue
 
         mode = raw.get("mode", mode)
         generated_at = raw.get("generated", generated_at)
@@ -511,19 +628,18 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
                 )
 
             if point_key in merged_points:
-                existing_methods = per_point_methods.get(point_key, set())
-                # Highest method-coverage shard for this point wins outright
-                # (mirrors merge_rows' highest-score-wins policy, but scored
-                # by method coverage since Shape S has no per-row R² score).
-                if len(point_methods) > len(existing_methods):
-                    merged_points[point_key] = point_val
-                    per_point_methods[point_key] = point_methods
-                elif len(point_methods) == len(existing_methods):
-                    logger.warning(
-                        f"SWEEP MERGE: duplicate sweep point {point_key!r} "
-                        f"from {path} with equal method coverage "
-                        f"({len(point_methods)}) — keeping first-seen."
+                existing = merged_points[point_key]
+                if existing != point_val:
+                    raise RuntimeError(
+                        f"FATAL: conflicting duplicate sweep point {point_key!r} "
+                        f"in {path}; refusing to keep one shard silently. "
+                        "Check that the input directory contains one authoritative "
+                        "file per sweep point."
                     )
+                logger.info(
+                    f"SWEEP MERGE: identical duplicate point {point_key!r} "
+                    f"in {path}; exact duplicate ignored."
+                )
             else:
                 merged_points[point_key] = point_val
                 per_point_methods[point_key] = point_methods
@@ -532,15 +648,38 @@ def merge_sweep_files(files: List[Path], experiment: str) -> Dict[str, Any]:
 
     sorted_points = sorted(merged_points.keys(), key=lambda k: float(k))
 
+    if all_methods != set(EXPECTED_SWEEP_METHODS):
+        raise RuntimeError(
+            f"FATAL: {experiment} method coverage is incomplete or unexpected; "
+            f"expected={sorted(EXPECTED_SWEEP_METHODS)}, observed={sorted(all_methods)}, "
+            f"missing={sorted(set(EXPECTED_SWEEP_METHODS) - all_methods)}, "
+            f"unexpected={sorted(all_methods - set(EXPECTED_SWEEP_METHODS))}"
+        )
+
     for point_key in sorted_points:
+        point_val = merged_points[point_key]
         found = per_point_methods.get(point_key, set())
-        missing = all_methods - found
-        if missing:
-            logger.warning(
-                f"SWEEP MERGE: sweep point {point_key!r} has only "
-                f"{len(found)}/{len(all_methods)} methods "
-                f"(missing: {sorted(missing)})."
+        if found != set(EXPECTED_SWEEP_METHODS):
+            raise RuntimeError(
+                f"FATAL: sweep point {point_key!r} has incomplete method_summary; "
+                f"expected={sorted(EXPECTED_SWEEP_METHODS)}, observed={sorted(found)}"
             )
+        per_equation = point_val.get("per_equation", {})
+        if not isinstance(per_equation, dict) or len(per_equation) != EXPECTED_SWEEP_EQUATION_COUNT:
+            raise RuntimeError(
+                f"FATAL: sweep point {point_key!r} has "
+                f"{len(per_equation) if isinstance(per_equation, dict) else 0}/"
+                f"{EXPECTED_SWEEP_EQUATION_COUNT} equation records"
+            )
+        for equation, method_rows in per_equation.items():
+            observed_methods = set(method_rows) if isinstance(method_rows, dict) else set()
+            if observed_methods != set(EXPECTED_SWEEP_METHODS):
+                raise RuntimeError(
+                    f"FATAL: sweep point {point_key!r}, equation {equation!r} "
+                    f"has incomplete method records; missing="
+                    f"{sorted(set(EXPECTED_SWEEP_METHODS) - observed_methods)}, "
+                    f"unexpected={sorted(observed_methods - set(EXPECTED_SWEEP_METHODS))}"
+                )
 
     # FIX-EMPTY-SWEEP-POINT-DIAGNOSTIC: count actual equation-level records
     # across all merged points so a "successful" merge that produced
@@ -699,6 +838,14 @@ def extract_rows(obj: Any) -> List[Dict[str, Any]]:
     if _is_pysr_nguyen_file(obj):
         return extract_pysr_nguyen_rows(obj)
 
+    if _is_protocol_file(obj):
+        protocol_rows = [
+            _normalise_protocol_record(test)
+            for test in obj.get("tests", [])
+            if isinstance(test, dict)
+        ]
+        return [row for row in protocol_rows if row.get("task_id")]
+
     found: List[Dict[str, Any]] = []
 
     def walk(x: Any) -> None:
@@ -723,29 +870,58 @@ def extract_rows(obj: Any) -> List[Dict[str, Any]]:
 # MERGE POLICY
 # ============================================================
 
-def score_row(row: Dict[str, Any]) -> int:
-    """Higher score = more complete record; wins in duplicate resolution."""
-    score = 0
-    h = row.get("hypatia") or {}
-    n = row.get("nn") or {}
-    if h.get("extrap_r2") is not None:
-        score += 10
-    if h.get("train_r2") is not None:
-        score += 5
-    if h.get("best_expression"):
-        score += 3
-    if n.get("extrap_r2") is not None:
-        score += 2
-    return score
+def _merge_complementary_values(left: Any, right: Any, path: str = "") -> Any:
+    """Merge non-conflicting fields; refuse to choose between conflicting data."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        out = dict(left)
+        for key, value in right.items():
+            if key not in out:
+                out[key] = value
+            else:
+                out[key] = _merge_complementary_values(out[key], value, f"{path}.{key}")
+        return out
+    if left == right:
+        return left
+    raise ValueError(
+        f"conflicting duplicate values at {path or '<root>'}: "
+        f"{left!r} != {right!r}"
+    )
 
 
 def merge_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Merge extracted rows; highest-score row wins per task_id."""
+    """Merge only exact/complementary duplicates; fail on conflicting repeats.
+
+    The former highest-score-wins rule silently discarded fields and could
+    select a train score from one attempt alongside extrapolation metrics from
+    another. A repeated task ID is now mergeable only when its overlapping
+    values agree. Conflicts stop consolidation and identify both sources.
+    """
     merged: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        tid = row["task_id"]
-        if tid not in merged or score_row(row) > score_row(merged[tid]):
+    for raw in rows:
+        row = dict(raw)
+        tid = str(row["task_id"])
+        source_file = row.pop("source_file", None)
+        row.setdefault("source_files", [])
+        if source_file and source_file not in row["source_files"]:
+            row["source_files"].append(source_file)
+        if tid not in merged:
             merged[tid] = row
+            continue
+
+        existing = merged[tid]
+        left = dict(existing)
+        right = dict(row)
+        left_sources = list(left.pop("source_files", []))
+        right_sources = list(right.pop("source_files", []))
+        try:
+            combined = _merge_complementary_values(left, right, tid)
+        except ValueError as exc:
+            raise ValueError(
+                f"FATAL: conflicting duplicate task_id={tid!r}; "
+                f"sources={left_sources + right_sources}. {exc}"
+            ) from exc
+        combined["source_files"] = sorted(set(left_sources + right_sources))
+        merged[tid] = combined
     return merged
 
 
@@ -827,19 +1003,48 @@ def write_csv(path: Path, merged: Dict[str, Any]) -> None:
 # CHECKPOINT
 # ============================================================
 
-def write_checkpoint(path: Path, experiment: str, result_subdir: str, merged: Dict[str, Any]) -> None:
-    # BUG 5 FIX: _checkpoint.json previously omitted result_subdir, so
-    # ci_analysis.yml's "Resolve experiment metadata" step always fell through
-    # to the dispatch-input fallback and failed on automatic workflow_run
-    # triggers where no inputs are provided.  result_subdir is now written
-    # here — the consolidate job already has it in scope — so the analysis
-    # workflow can resolve it from the artifact without needing manual inputs.
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_checkpoint(
+    path: Path,
+    experiment: str,
+    result_subdir: str,
+    merged: Dict[str, Any],
+    source_files: List[Path],
+    input_root: Path,
+) -> None:
+    """Write an auditable manifest of the exact files consumed by the merge."""
+    manifest_files = []
+    shard_ids = set()
+    for source in sorted(source_files):
+        resolved = source.resolve()
+        try:
+            relative = resolved.relative_to(input_root.resolve()).as_posix()
+        except ValueError:
+            relative = str(resolved)
+        match = __import__("re").search(r"(?:shard|nshards)[_-]?(\d+)", source.name, __import__("re").IGNORECASE)
+        if match:
+            shard_ids.add(int(match.group(1)))
+        manifest_files.append({
+            "path": relative,
+            "sha256": _sha256_file(source),
+            "size_bytes": source.stat().st_size,
+        })
     checkpoint = {
-        "experiment":    experiment,
+        "experiment": experiment,
         "result_subdir": result_subdir,
-        "generated_at":  datetime.now(timezone.utc).isoformat(),
-        "n_merged":      len(merged),
-        "task_ids":      sorted(merged.keys()),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "n_merged": len(merged),
+        "task_ids": sorted(merged.keys()),
+        "source_file_count": len(manifest_files),
+        "source_files": manifest_files,
+        "shard_ids_observed": sorted(shard_ids),
     }
     safe_write_json(path, checkpoint)
 
@@ -892,10 +1097,37 @@ def main() -> None:
     # `! -name '_*.json'` rule without needing that script's full
     # METADATA_EXCLUSIONS list (this script only ever sees files already
     # inside RESULT_DIR, not the metadata/summary files excluded upstream).
+    if (
+        set(SHARD_FILE_GLOBS) != set(MERGE_REQUIRED_EXPERIMENTS)
+        or set(EXPECTED_SHARD_IDS) != set(MERGE_REQUIRED_EXPERIMENTS)
+    ):
+        raise RuntimeError(
+            "FATAL: merge-required experiments, shard filename contracts, and "
+            "expected shard-index contracts are out of sync."
+        )
+    if config.experiment not in SHARD_FILE_GLOBS:
+        raise RuntimeError(
+            f"FATAL: no authoritative shard filename contract for {config.experiment!r}"
+        )
+    patterns = SHARD_FILE_GLOBS[config.experiment]
     all_files = sorted(
         glob.glob(f"{config.input_root}/**/*.json", recursive=True)
     )
-    files = [f for f in all_files if not os.path.basename(f).startswith("_")]
+    files = [
+        filename for filename in all_files
+        if any(Path(filename).match(pattern) for pattern in patterns)
+        and not os.path.basename(filename).startswith("_")
+        and not any(
+            part.startswith("_")
+            for part in Path(filename).relative_to(config.input_root).parts[:-1]
+        )
+    ]
+    if not files:
+        raise RuntimeError(
+            f"FATAL: no worker result shards matched {patterns!r} under {config.input_root}"
+        )
+    observed_shards = validate_shard_coverage(config.experiment, [Path(p) for p in files])
+    logger.info(f"SHARD COVERAGE: {sorted(observed_shards)}")
     skipped = sorted(set(all_files) - set(files))
     if skipped:
         logger.info(f"SKIPPED (underscore-prefixed, non-record files): {len(skipped)}")
@@ -972,7 +1204,8 @@ def main() -> None:
         # write_checkpoint() expects a task_id-keyed `merged` dict for
         # task_ids; sweep points (not task ids) are the natural analogue here.
         write_checkpoint(checkpoint_path, config.experiment, result_subdir,
-                          merged_sweep.get(dict_key, {}))
+                          merged_sweep.get(dict_key, {}), [Path(p) for p in files],
+                          config.input_root)
 
         logger.info("=" * 70)
         logger.info(f"WRITE OK: {merged_path}")
@@ -1000,10 +1233,13 @@ def main() -> None:
         try:
             data = load_json(Path(path))
             rows = list(extract_rows(data))
+            for row in rows:
+                row["source_file"] = str(Path(path).resolve().relative_to(config.input_root.resolve()))
             logger.info(f"ROWS EXTRACTED: {len(rows)}")
             all_rows.extend(rows)
         except Exception as e:
             logger.exception(f"FAILED TO READ: {path} :: {e}")
+            raise RuntimeError(f"FATAL: refusing partial merge after unreadable input {path}") from e
 
     merged = merge_rows(all_rows)
 
@@ -1026,7 +1262,8 @@ def main() -> None:
     safe_write_json(merged_path, merged)
     write_csv(csv_path, merged)
     safe_write_json(stats_path, stats)
-    write_checkpoint(checkpoint_path, config.experiment, result_subdir, merged)
+    write_checkpoint(checkpoint_path, config.experiment, result_subdir, merged,
+                     [Path(p) for p in files], config.input_root)
 
     logger.info("=" * 70)
     logger.info(f"WRITE OK: {merged_path}")

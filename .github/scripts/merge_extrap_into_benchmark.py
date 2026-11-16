@@ -52,8 +52,9 @@ Usage:
         --extrap-dir     <dir containing extrap_results_*.json>  \\
         --output         <path to write ablation_paired.json>
 
-    # Both supplied — benchmark_results_extrap.json wins per-equation,
-    # extrap_results_*.json fills any gaps:
+    # Both supplied — benchmark_results_extrap.json provides method-level
+    # pairs. Legacy extrap_results_*.json is retained separately for audit
+    # and is never used to fill a named method's missing score:
     python3 merge_extrap_into_benchmark.py \\
         --benchmark-dir        <dir> \\
         --extrap-benchmark-dir <dir> \\
@@ -69,55 +70,63 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from merge_shards import EXPECTED_SWEEP_METHODS as EXPECTED_METHOD_NAMES
+
 # Must match EXTRAP_SUCCESS_THRESHOLD in run_analysis.py (paper §10.7: "9/30
 # successes"). Duplicated here (not imported) because this script runs in a
 # separate CI step/venv from run_analysis.py. If you change one, change both.
 EXTRAP_SUCCESS_THRESHOLD = 0.99
+EXPECTED_EQUATION_COUNT = 30
+
+
+def validate_method_coverage(benchmark_records: list, extrap_by_equation: dict) -> None:
+    """Require the full 30-equation by six-method Feynman comparison matrix."""
+    benchmark_index: dict = defaultdict(set)
+    for row in benchmark_records:
+        equation = row.get("test", row.get("equation_name", row.get("equation_id")))
+        method = row.get("method")
+        if equation and method:
+            missing_fields = {"r2"} - set(row)
+            if missing_fields:
+                raise ValueError(
+                    "benchmark_results.json has incomplete reference score fields for "
+                    f"equation={equation!r}, method={method!r}: "
+                    f"missing={sorted(missing_fields)}"
+                )
+            benchmark_index[equation].add(method)
+
+    benchmark_equations = set(benchmark_index)
+    extrap_equations = set(extrap_by_equation)
+    if len(benchmark_equations) != EXPECTED_EQUATION_COUNT:
+        raise ValueError(
+            f"benchmark_results.json has {len(benchmark_equations)}/"
+            f"{EXPECTED_EQUATION_COUNT} equations"
+        )
+    if benchmark_equations != extrap_equations:
+        raise ValueError(
+            "benchmark/extrap equation sets differ; "
+            f"missing_extrap={sorted(benchmark_equations - extrap_equations)}, "
+            f"missing_benchmark={sorted(extrap_equations - benchmark_equations)}"
+        )
+
+    expected = set(EXPECTED_METHOD_NAMES)
+    for equation in sorted(benchmark_equations):
+        benchmark_methods = benchmark_index[equation]
+        extrap_methods = set(extrap_by_equation[equation])
+        if benchmark_methods != expected or extrap_methods != expected:
+            raise ValueError(
+                f"method coverage incomplete for {equation!r}; "
+                f"benchmark_missing={sorted(expected - benchmark_methods)}, "
+                f"benchmark_unexpected={sorted(benchmark_methods - expected)}, "
+                f"extrap_missing={sorted(expected - extrap_methods)}, "
+                f"extrap_unexpected={sorted(extrap_methods - expected)}"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Method name normalisation
 # ---------------------------------------------------------------------------
 
-def _classify_method(method_str: str) -> str:
-    """Return 'hypatia' | 'pysr_only' | 'other'.
-
-    Role mapping against the actual method names produced by
-    run_comparative_suite_benchmark_v2.py:
-
-      pysr_only  — HybridDiscoverySystem v50_2 (tools)
-                   Pure PySR run; SymbolicEngineWithLLM is called with
-                   llm_mode="none" inside the v50_2 subprocess path, so no
-                   LLM guidance is applied.  This is the PySR-baseline arm.
-
-      hypatia    — Everything else that uses LLM, hybrid, or neural components:
-                   SymbolicEngineWithLLM (tools), PureLLM Baseline,
-                   ImprovedNN, EnhancedHybridSystemDeFi,
-                   HybridSystemLLMNN all-domains, etc.
-
-    The old classifier required "pysr" or bare "symbolic" (without "llm"/"hybrid")
-    in the name — conditions never satisfied by any current method — so pysr_only
-    was always empty.  We now key on "v50_2" as the unambiguous PySR-baseline
-    marker, with "pysr" retained for forward-compat with any future method names.
-    """
-    m = method_str.lower()
-
-    # PySR-only baseline: v50_2 runs PySR with llm_mode="none" (no LLM loop).
-    # "pysr" kept for forward-compat with future method names.
-    if "v50_2" in m or "pysr" in m:
-        return "pysr_only"
-
-    # Hypatia: any method with LLM, hybrid, neural, or discovery components.
-    if any(k in m for k in ("llm", "hybrid", "neural", "nn", "hypatia",
-                             "improved", "enhanced", "discovery", "symbolic")):
-        return "hypatia"
-
-    return "other"
-
-
-# ---------------------------------------------------------------------------
-# Load helpers
-# ---------------------------------------------------------------------------
 
 def _load_benchmark(bench_dir: Path) -> list:
     """Load benchmark_results.json (flat list, train r2 / metadata)."""
@@ -136,83 +145,76 @@ def _load_benchmark(bench_dir: Path) -> list:
 
 
 def _load_extrap_benchmark(extrap_bench_dir: Path) -> dict:
-    """
-    Load benchmark_results_extrap.json written by run_comparative_suite_benchmark_v2.py
-    when --extrap is active.
+    """Load extrapolation rows keyed by (equation, exact method name).
 
-    Returns a dict keyed by equation name:
-        {
-          eq_name: {
-            "hypatia":   { "extrap_r2_far": float|None, "extrap_rmse_far": float|None,
-                           "train_r2": float|None, "success": bool },
-            "pysr_only": { ... },
-          }
-        }
-
-    When multiple methods map to the same role (e.g. several hypatia methods),
-    the one with the highest extrap_r2_far is kept (same tie-break as train_r2).
+    No best-of-method selection occurs here. Every method remains a separate
+    result and duplicate (equation, method) rows must agree exactly.
     """
     path = extrap_bench_dir / "benchmark_results_extrap.json"
     if not path.exists():
-        print(f"  benchmark_results_extrap.json not found in {extrap_bench_dir} "
-              f"— will fall back to extrap_results_*.json if supplied.", file=sys.stderr)
+        print(
+            f"  benchmark_results_extrap.json not found in {extrap_bench_dir} "
+            "— legacy role-only records will be retained separately, not paired to methods.",
+            file=sys.stderr,
+        )
         return {}
 
-    with open(path) as f:
-        rows = json.load(f)
+    with open(path, encoding="utf-8") as stream:
+        rows = json.load(stream)
     if not isinstance(rows, list):
-        print(f"  ::warning::benchmark_results_extrap.json is not a list — skipping.",
-              file=sys.stderr)
-        return {}
+        raise ValueError(f"{path} must contain a JSON list")
 
-    # Group by equation, then by role, keeping best extrap_r2_far per role.
-    results: dict = defaultdict(lambda: {"hypatia": None, "pysr_only": None})
-
-    def _better(a: dict | None, b: dict) -> dict:
-        """Return whichever candidate has the higher finite extrap_r2_far.
-        Non-finite values (-inf, nan) are treated the same as None so that a
-        method which failed extrapolation never blocks a finite result."""
-        import math as _math
-
-        def _fin(v):
-            return v if (v is not None and isinstance(v, float) and _math.isfinite(v)) else None
-
-        if a is None:
-            return b
-        a_far = _fin(a.get("extrap_r2_far"))
-        b_far = _fin(b.get("extrap_r2_far"))
-        if a_far is None and b_far is None:
-            # Fall back to train r2
-            return a if (a.get("train_r2") or 0) >= (b.get("train_r2") or 0) else b
-        if a_far is None:
-            return b
-        if b_far is None:
-            return a
-        return a if a_far >= b_far else b
-
-    for row in rows:
-        eq   = row.get("test", row.get("equation_name", "?"))
-        role = _classify_method(row.get("method", ""))
-        if role == "other":
-            continue
-
+    results: dict = defaultdict(dict)
+    for row_number, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise ValueError(f"{path}: row {row_number} is not an object")
+        equation = row.get("test", row.get("equation_name", row.get("equation_id")))
+        method = row.get("method")
+        if not equation or not method:
+            raise ValueError(
+                f"{path}: row {row_number} lacks an equation identity or method"
+            )
+        missing_fields = {"r2", "extrap_r2_far", "success"} - set(row)
+        if missing_fields or not isinstance(row.get("success"), bool):
+            raise ValueError(
+                f"{path}: row {row_number} has incomplete scoring fields; "
+                f"missing={sorted(missing_fields)}, success_type={type(row.get('success')).__name__}"
+            )
         candidate = {
-            "extrap_r2_far":     row.get("extrap_r2_far"),
-            "extrap_rmse_far":   row.get("extrap_rmse_far"),
-            # extrap_r2_near is not computed by the benchmark runner — leave None
-            "extrap_r2_near":    row.get("extrap_r2_near"),
-            "train_r2":          row.get("r2"),
-            "success":           row.get("success", False),
+            "method": method,
+            "extrap_r2_far": row.get("extrap_r2_far"),
+            "extrap_rmse_far": row.get("extrap_rmse_far"),
+            "extrap_r2_near": row.get("extrap_r2_near"),
+            "extrap_rmse_near": row.get("extrap_rmse_near"),
+            "train_r2": row.get("r2"),
+            "train_rmse": row.get("rmse"),
+            "success": row.get("success", False),
             "extrap_train_frac": row.get("extrap_train_frac"),
-            "extrap_n_train":    row.get("extrap_n_train"),
-            "extrap_n_test":     row.get("extrap_n_test"),
+            "extrap_n_train": row.get("extrap_n_train"),
+            "extrap_n_test": row.get("extrap_n_test"),
+            "formula": row.get("formula"),
+            "seed": row.get("seed", row.get("benchmark_seed")),
+            "protocol": row.get("protocol", row.get("protocol_id")),
+            "config_hash": row.get("config_hash"),
+            "split_hash": row.get("split_hash"),
         }
-        results[eq][role] = _better(results[eq][role], candidate)
+        previous = results[equation].get(method)
+        if previous is not None:
+            if json.dumps(previous, sort_keys=True, allow_nan=True) != json.dumps(
+                candidate, sort_keys=True, allow_nan=True
+            ):
+                raise ValueError(
+                    f"{path}: conflicting duplicate for equation={equation!r}, "
+                    f"method={method!r}; refusing retrospective selection"
+                )
+            continue
+        results[equation][method] = candidate
 
-    print(f"  Loaded extrap data for {len(results)} equations "
-          f"from {path}  ({len(rows)} rows)")
-    return dict(results)
-
+    print(
+        f"  Loaded {sum(len(v) for v in results.values())} method/equation "
+        f"rows across {len(results)} equations from {path}"
+    )
+    return {equation: dict(methods) for equation, methods in results.items()}
 
 def _load_extrap_results_legacy(extrap_dir: Path) -> dict:
     """
@@ -240,15 +242,25 @@ def _load_extrap_results_legacy(extrap_dir: Path) -> dict:
 
     for fp in files:
         try:
-            with open(fp) as f:
-                data = json.load(f)
+            with open(fp, encoding="utf-8") as stream:
+                data = json.load(stream)
         except Exception as e:
-            print(f"  ::warning::Could not read {fp.name}: {e}", file=sys.stderr)
-            continue
+            raise ValueError(f"Cannot read legacy extrapolation input {fp}: {e}") from e
         equations = data.get("equations", {})
+        if not isinstance(equations, dict):
+            raise ValueError(f"{fp} has no equations object")
         for eq_name, eq_data in equations.items():
-            if isinstance(eq_data, dict):
-                results[eq_name] = eq_data
+            if not isinstance(eq_data, dict):
+                continue
+            previous = results.get(eq_name)
+            if previous is not None and json.dumps(
+                previous, sort_keys=True, allow_nan=True
+            ) != json.dumps(eq_data, sort_keys=True, allow_nan=True):
+                raise ValueError(
+                    f"Conflicting legacy extrapolation rows for equation={eq_name!r}; "
+                    f"at least one source is {fp.name}"
+                )
+            results[eq_name] = eq_data
         print(f"  Loaded {len(equations)} extrap equations from {fp.name}")
 
     print(f"  Total extrap equations loaded (legacy): {len(results)}")
@@ -259,140 +271,168 @@ def _load_extrap_results_legacy(extrap_dir: Path) -> dict:
 # Main merge logic
 # ---------------------------------------------------------------------------
 
+PRIMARY_HYPATIA_METHOD = "SymbolicEngineWithLLM (tools)"
+PRIMARY_PYSR_METHOD = "HybridDiscoverySystem v50_2 (tools)"
+
+
+def _finite(value):
+    import math
+    return value is not None and isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _method_result(benchmark_row: dict | None, extrap_row: dict | None) -> dict:
+    """Pair train and extrapolation metrics from the same named method only."""
+    benchmark_row = benchmark_row or {}
+    extrap_row = extrap_row or {}
+    far = extrap_row.get("extrap_r2_far")
+    has_extrap_row = bool(extrap_row)
+    train_r2 = extrap_row.get("train_r2") if has_extrap_row else benchmark_row.get("r2")
+    train_rmse = extrap_row.get("train_rmse") if has_extrap_row else benchmark_row.get("rmse")
+    train_success = extrap_row.get("success", False) if has_extrap_row else benchmark_row.get("success", False)
+    return {
+        "method": benchmark_row.get("method") or extrap_row.get("method"),
+        "train_r2": train_r2,
+        "train_rmse": train_rmse,
+        "train_success": bool(train_success),
+        "benchmark_reference_train_r2": benchmark_row.get("r2"),
+        "benchmark_reference_success": benchmark_row.get("success"),
+        "extrap_r2_near": extrap_row.get("extrap_r2_near"),
+        "extrap_rmse_near": extrap_row.get("extrap_rmse_near"),
+        "extrap_r2_far": far,
+        "extrap_rmse_far": extrap_row.get("extrap_rmse_far"),
+        "extrap_success": bool(_finite(far) and far >= EXTRAP_SUCCESS_THRESHOLD),
+        "formula": benchmark_row.get("formula") or extrap_row.get("formula"),
+        "extrap_train_frac": extrap_row.get("extrap_train_frac"),
+        "extrap_n_train": extrap_row.get("extrap_n_train"),
+        "extrap_n_test": extrap_row.get("extrap_n_test"),
+        "seed": extrap_row.get("seed", benchmark_row.get("seed")),
+        "protocol": extrap_row.get("protocol", benchmark_row.get("protocol")),
+        "config_hash": extrap_row.get("config_hash", benchmark_row.get("config_hash")),
+        "split_hash": extrap_row.get("split_hash", benchmark_row.get("split_hash")),
+        "train_source": (
+            "benchmark_results_extrap.json" if has_extrap_row
+            else "benchmark_results.json" if benchmark_row else None
+        ),
+        "extrap_source": "benchmark_results_extrap.json" if has_extrap_row else None,
+    }
+
+
 def merge(
     benchmark_records: list,
-    extrap_new: dict,          # from benchmark_results_extrap.json  (preferred)
-    extrap_legacy: dict,       # from extrap_results_*.json           (fallback)
+    extrap_new: dict,
+    extrap_legacy: dict,
 ) -> list:
+    """Pair every method by exact equation and method identity.
+
+    The compatibility hypatia/pysr_only fields are populated only from the
+    explicitly named primary methods below. All other methods remain available
+    under method_results; no score-based winner is selected after evaluation.
+    Legacy role-only extrap data is retained separately and is not mixed with
+    a train score from a different method.
     """
-    Group benchmark_records by equation name, classify methods, and produce
-    one paired record per equation in the ablation schema.
+    benchmark_by_equation: dict = defaultdict(dict)
+    domains: dict = {}
 
-    extrap_new takes priority per-equation; extrap_legacy fills any gaps.
-    """
-    # ── Group train metrics by equation ─────────────────────────────────────
-    by_eq: dict = defaultdict(lambda: {
-        "equation_name":  None,
-        "domain":         None,
-        "hypatia_r2":     [],
-        "pysr_r2":        [],
-        "hypatia_success":[],
-        "pysr_success":   [],
-    })
+    for row_number, record in enumerate(benchmark_records, start=1):
+        if not isinstance(record, dict):
+            raise ValueError(f"benchmark_results.json row {row_number} is not an object")
+        equation = record.get(
+            "test", record.get("equation_name", record.get("equation_id"))
+        )
+        method = record.get("method")
+        if not equation or not method:
+            raise ValueError(
+                f"benchmark_results.json row {row_number} lacks equation or method"
+            )
+        previous = benchmark_by_equation[equation].get(method)
+        if previous is not None:
+            if json.dumps(previous, sort_keys=True, allow_nan=True) != json.dumps(
+                record, sort_keys=True, allow_nan=True
+            ):
+                raise ValueError(
+                    f"benchmark_results.json has conflicting duplicate for "
+                    f"equation={equation!r}, method={method!r}"
+                )
+            continue
+        benchmark_by_equation[equation][method] = record
+        domains[equation] = record.get("domain")
 
-    for rec in benchmark_records:
-        eq     = rec.get("test", rec.get("equation_name", rec.get("equation_id", "?")))
-        mtype  = _classify_method(rec.get("method", ""))
-        domain = rec.get("domain", "?")
+    all_equations = sorted(set(benchmark_by_equation) | set(extrap_new))
+    paired = []
 
-        g = by_eq[eq]
-        g["equation_name"] = eq
-        g["domain"]        = domain
+    for equation in all_equations:
+        bench_methods = benchmark_by_equation.get(equation, {})
+        extrap_methods = extrap_new.get(equation, {})
+        method_results = {}
+        for method in sorted(set(bench_methods) | set(extrap_methods)):
+            method_results[method] = _method_result(
+                bench_methods.get(method), extrap_methods.get(method)
+            )
 
-        r2      = rec.get("r2")
-        success = rec.get("success", False)
+        # Keep legacy role-only results separate and explicitly labelled.
+        legacy = extrap_legacy.get(equation, {})
+        legacy_roles = {}
+        if isinstance(legacy, dict):
+            for role in ("hypatia", "pysr_only"):
+                value = legacy.get(role)
+                if isinstance(value, dict):
+                    legacy_roles[role] = {
+                        "method": None,
+                        "train_r2": None,
+                        "train_success": None,
+                        "extrap_r2_near": value.get("extrap_r2_near"),
+                        "extrap_r2_far": value.get("extrap_r2_far"),
+                        "extrap_success": bool(
+                            _finite(value.get("extrap_r2_far"))
+                            and value.get("extrap_r2_far") >= EXTRAP_SUCCESS_THRESHOLD
+                        ),
+                        "source": "legacy_role_only_no_method_identity",
+                    }
 
-        if mtype == "hypatia":
-            if r2 is not None:
-                g["hypatia_r2"].append(float(r2))
-            g["hypatia_success"].append(success)
-        elif mtype == "pysr_only":
-            if r2 is not None:
-                g["pysr_r2"].append(float(r2))
-            g["pysr_success"].append(success)
+        def primary(method_name):
+            # Do not use legacy role-only metrics here: their method identity is
+            # unknown, so pairing them with a named method would reintroduce
+            # cross-method comparisons.
+            return dict(method_results.get(method_name) or _method_result(None, None))
 
-    # ── Build paired records ──────────────────────────────────────────────
-    paired: list = []
-    n_with_extrap   = 0
-    n_missing_extrap = 0
-
-    for eq_name, g in by_eq.items():
-        h_train_r2 = max(g["hypatia_r2"]) if g["hypatia_r2"] else None
-
-        # --- Resolve extrap values: new file first, legacy as fallback ------
-        # New source carries train_r2 too; we keep benchmark_results.json's
-        # train_r2 (max across all hypatia methods) as the canonical value.
-        new_eq    = extrap_new.get(eq_name, {})
-        legacy_eq = extrap_legacy.get(eq_name, {})
-
-        def _pick(new_role: dict | None, legacy_role: dict | None, key: str):
-            """Return value from new_role if finite, else try legacy_role.
-            Non-finite floats (-inf, nan) are treated as absent so they never
-            shadow a finite value from the legacy source."""
-            import math as _math
-
-            def _fin(v):
-                if v is None:
-                    return None
-                if isinstance(v, float) and not _math.isfinite(v):
-                    return None
-                return v
-
-            v = _fin((new_role or {}).get(key))
-            if v is not None:
-                return v
-            return _fin((legacy_role or {}).get(key))
-
-        h_new    = new_eq.get("hypatia")    or {}
-        p_new    = new_eq.get("pysr_only")  or {}
-        h_leg    = (legacy_eq.get("hypatia")   or {}) if isinstance(legacy_eq, dict) else {}
-        p_leg    = (legacy_eq.get("pysr_only") or {}) if isinstance(legacy_eq, dict) else {}
-
-        h_far    = _pick(h_new, h_leg, "extrap_r2_far")
-        h_near   = _pick(h_new, h_leg, "extrap_r2_near")
-        p_far    = _pick(p_new, p_leg, "extrap_r2_far")
-        p_near   = _pick(p_new, p_leg, "extrap_r2_near")
-
-        if h_far is not None or p_far is not None:
-            n_with_extrap += 1
-        else:
-            n_missing_extrap += 1
-
-        def _extrap_success(far):
-            """True iff far is a finite R2 at/above EXTRAP_SUCCESS_THRESHOLD.
-            Mirrors run_analysis.py's Tier-3 (success-subset) criterion exactly,
-            so a reader of this file alone can identify the same "9/30" rows
-            without cross-referencing run_analysis.py source."""
-            import math as _math
-            return far is not None and _math.isfinite(far) and far >= EXTRAP_SUCCESS_THRESHOLD
-
+        hypatia = primary(PRIMARY_HYPATIA_METHOD)
+        pysr_only = primary(PRIMARY_PYSR_METHOD)
         paired.append({
-            # "name" is what run_analysis.py's analyse_ablation() actually reads
-            # (r.get("name", r.get("task_id", "?"))) -- equation_name/equation_id
-            # alone silently fall through to "?" for every row. Keep all three
-            # keys so both this schema's original consumers and analyse_ablation()
-            # resolve the same value.
-            "name":          eq_name,
-            "equation_name": eq_name,
-            "equation_id":   eq_name,
-            "domain":        g["domain"],
-            "hypatia": {
-                "train_r2":       h_train_r2,
-                "extrap_r2_near": h_near,
-                "extrap_r2_far":  h_far,
-                # train_success: did the *fit* complete/converge (upstream benchmark
-                # flag). This is NOT extrapolation quality -- nearly every row is True
-                # here even when extrap_r2_far is terrible. Renamed from "success" to
-                # stop it being read as an extrapolation verdict.
-                "train_success":  any(g["hypatia_success"]),
-                # extrap_success: the actual extrapolation-quality verdict, i.e. the
-                # Tier-3 "success-subset" criterion used for the paper's "9/30
-                # successes" claim (extrap_r2_far >= EXTRAP_SUCCESS_THRESHOLD).
-                "extrap_success": _extrap_success(h_far),
+            "name": equation,
+            "equation_name": equation,
+            "equation_id": equation,
+            "domain": domains.get(equation),
+            "primary_methods": {
+                "hypatia": PRIMARY_HYPATIA_METHOD,
+                "pysr_only": PRIMARY_PYSR_METHOD,
             },
-            "pysr_only": {
-                "train_r2":       max(g["pysr_r2"]) if g["pysr_r2"] else None,
-                "extrap_r2_near": p_near,
-                "extrap_r2_far":  p_far,
-                "train_success":  any(g["pysr_success"]),
-                "extrap_success": _extrap_success(p_far),
-            },
+            "hypatia": hypatia,
+            "pysr_only": pysr_only,
+            "method_results": method_results,
+            "legacy_role_results": legacy_roles,
+            "method_count": len(method_results),
+            "methods_with_far_extrapolation": sorted(
+                method for method, result in method_results.items()
+                if _finite(result.get("extrap_r2_far"))
+            ),
         })
 
-    print(f"  Paired records   : {len(paired)}")
-    print(f"  With extrap_r2_far    : {n_with_extrap}")
-    print(f"  Missing extrap_r2_far : {n_missing_extrap}"
-          + (" ← run with --extrap to populate" if n_missing_extrap else ""))
+    n_with_far = sum(
+        1 for record in paired
+        if _finite(record.get("hypatia", {}).get("extrap_r2_far"))
+    )
+    n_with_primary_pair = sum(
+        1 for record in paired
+        if _finite(record.get("hypatia", {}).get("extrap_r2_far"))
+        and _finite(record.get("pysr_only", {}).get("extrap_r2_far"))
+    )
+    print(f"  Paired equation records : {len(paired)}")
+    print(f"  Primary Hypatia far-R²  : {n_with_far}")
+    print(f"  Primary method pairs    : {n_with_primary_pair}")
+    print(
+        "  All per-method train/extrap values remain separately recorded; "
+        "no best-of-method aggregation was performed."
+    )
     return paired
 
 
@@ -469,6 +509,13 @@ Examples
     if args.extrap_dir:
         extrap_legacy = _load_extrap_results_legacy(Path(args.extrap_dir))
 
+    if not extrap_new:
+        raise ValueError(
+            "No method-level benchmark_results_extrap.json was found. "
+            "Legacy role-only results cannot support a method-consistent paired comparison."
+        )
+    validate_method_coverage(benchmark_records, extrap_new)
+
     paired = merge(benchmark_records, extrap_new, extrap_legacy)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -497,19 +544,53 @@ Examples
 
     n_with_far = sum(
         1 for r in paired
-        if r.get("hypatia", {}).get("extrap_r2_far") is not None
+        if _finite(r.get("hypatia", {}).get("extrap_r2_far"))
     )
+    n_primary_pairs = sum(
+        1 for r in paired
+        if _finite(r.get("hypatia", {}).get("extrap_r2_far"))
+        and _finite(r.get("pysr_only", {}).get("extrap_r2_far"))
+    )
+    n_method_results_with_far = sum(
+        1
+        for record in paired
+        for result in record.get("method_results", {}).values()
+        if _finite(result.get("extrap_r2_far"))
+    )
+    method_names = sorted({
+        method
+        for record in paired
+        for method in record.get("method_results", {})
+    })
 
     bench_path        = bench_dir / "benchmark_results.json"
     extrap_bench_path = (Path(args.extrap_benchmark_dir) / "benchmark_results_extrap.json"
                           if args.extrap_benchmark_dir else None)
 
+    legacy_files = (
+        sorted(Path(args.extrap_dir).glob("extrap_results_*.json"))
+        if args.extrap_dir else []
+    )
     manifest = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "script": "merge_extrap_into_benchmark.py",
         "output_path": str(out_path),
+        "output_sha256": _sha256(out_path),
         "record_count": len(paired),
-        "n_with_extrap_r2_far": n_with_far,
+        "n_primary_hypatia_with_far_extrapolation": n_with_far,
+        "n_primary_method_pairs": n_primary_pairs,
+        "n_method_results_with_far_extrapolation": n_method_results_with_far,
+        "primary_methods": {
+            "hypatia": PRIMARY_HYPATIA_METHOD,
+            "pysr_only": PRIMARY_PYSR_METHOD,
+        },
+        "method_names_preserved": method_names,
+        "pairing_policy": (
+            "exact equation + exact method name; when extrapolation exists, train "
+            "and extrapolation metrics come from the same benchmark_results_extrap.json "
+            "row; benchmark_results.json is retained as reference metadata only; "
+            "no role-wise maximum or cross-method train/extrap pairing"
+        ),
         "inputs": {
             "benchmark_results.json": {
                 "path": str(bench_path),
@@ -519,7 +600,10 @@ Examples
                 "path": str(extrap_bench_path) if extrap_bench_path else None,
                 "sha256": _sha256(extrap_bench_path) if extrap_bench_path else None,
             },
-            "extrap_results_legacy_dir": str(args.extrap_dir) if args.extrap_dir else None,
+            "extrap_results_legacy": [
+                {"path": str(fp), "sha256": _sha256(fp)}
+                for fp in legacy_files
+            ],
         },
         "field_definitions": {
             "train_success": (
@@ -535,9 +619,9 @@ Examples
                 "Keep this constant in sync with run_analysis.py if it changes."
             ),
             "extrap_r2_near": (
-                "Not computed by the current benchmark runner (only "
-                "extrap_r2_far is produced). Always null until a near-domain "
-                "extrapolation split is implemented upstream."
+                "Copied from the same equation/method row in "
+                "benchmark_results_extrap.json. Null means the upstream runner "
+                "did not emit a near-domain score for that method."
             ),
         },
     }
@@ -547,22 +631,22 @@ Examples
     print(f"  Written provenance manifest → {manifest_path}")
 
     # Warn if Mann-Whitney will fail
-    if n_with_far == 0:
+    if n_primary_pairs == 0:
         print(
-            "::warning::ablation_paired.json has 0 equations with hypatia.extrap_r2_far. "
+            "::warning::ablation_paired.json has 0 complete primary-method pairs. "
             "run_analysis.py will emit TOO_FEW_MW_PAIRS. "
             "Ensure run_all.sh --step exp2_feynman_extrap ran successfully and "
             "benchmark_results_extrap.json was produced.",
             file=sys.stderr,
         )
-    elif n_with_far < 3:
+    elif n_primary_pairs < 3:
         print(
             f"::warning::Only {n_with_far} equation(s) have extrap_r2_far. "
             f"Mann-Whitney test needs ≥ 3 pairs.",
             file=sys.stderr,
         )
     else:
-        print(f"  OK: {n_with_far} equations have extrap_r2_far — "
+        print(f"  OK: {n_primary_pairs} equations have both primary methods' far-R² — "
               f"sufficient for Mann-Whitney test.")
 
 

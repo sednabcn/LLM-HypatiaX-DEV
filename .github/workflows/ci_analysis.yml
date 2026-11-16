@@ -211,42 +211,7 @@ jobs:
           # stripped only the minimum common YAML indent, leaving PYEOF with residual
           # leading spaces that bash never recognised as the closing delimiter).
           # python3 -c avoids all heredoc/YAML indentation interactions entirely.
-          RESULT_SUBDIR=$(python3 -c "
-          import os, sys
-          inp = os.environ.get('INPUT_RESULT_SUBDIR', '').strip()
-          if inp:
-              print(inp)
-              sys.exit(0)
-          MAPPING = {
-              'exp1':                'comparison_results/noise-noiseless/noiseless/defi',
-              'exp1b':               'comparison_results/noise-noiseless/15',
-              'exp1_pca':            'comparison_results/noise-noiseless/noiseless/defi_pca',
-              'exp1b_pca':           'comparison_results/noise-noiseless/15_pca',
-              'exp1_ablation':       'ablation/exp1_ablation',
-              'exp1_five':           'five_systems/exp1_five',
-              'exp2_feynman':        'comparison_results/feynman-tests/exp2',
-              'exp2_feyman':         'comparison_results/feynman-tests/exp2',           # typo alias (missing 'n')
-              'exp2_feynman_extrap': 'comparison_results/feynman-tests/exp2_extrap',
-              'exp2_feynman_pca':    'comparison_results/feynman-tests/exp2_pca_4060',
-              'exp2_feyman_pca':     'comparison_results/feynman-tests/exp2_pca_4060',  # typo alias (missing 'n')
-              'exp2_feyman_extrap':  'comparison_results/feynman-tests/exp2_extrap',    # typo alias (missing 'n')
-              'exp2':                'comparison_results/feynman-tests/exp2_multi',
-              'exp2_five':           'five_systems/exp2_five',
-              'exp3':                'extrapolation',
-              'exp3b':               'extrapolation/multi_seed',
-              'suppA':               'hybrid_pysr/defi',
-              'suppB':               'comparison_results/feynman-tests/noise-sweep',
-              'suppB_sc':            'comparison_results/feynman-tests/sample-complexity',
-              'hybrid_all_domains':  'hybrid_llm_nn/all_domains',
-              'instability':         'figures',
-              'extrap':              'comparison_results/extrapolation',
-          }
-          exp = os.environ['EXPERIMENT']
-          result = MAPPING.get(exp, exp)
-          if result == exp:
-              print(f'::warning::No canonical subdir mapping for \"{exp}\" — using experiment name as subdir.', file=sys.stderr)
-          print(result)
-          ")
+          RESULT_SUBDIR=$(python3 .github/scripts/result_subdir_map.py "$EXPERIMENT" --override "$INPUT_RESULT_SUBDIR")
 
           RESULT_DIR="hypatiax/data/results/${RESULT_SUBDIR}"
 
@@ -280,21 +245,9 @@ jobs:
       # the referenced run has been deleted by purge_old_runs.  The inline
       # "Merge shards" step reads directly from the committed repo files.
       - name: Download merged artifact (MERGE_REQUIRED_EXPERIMENTS only)
-        if: |
-          github.event.inputs.source_run_id != '' &&
-          (
-            github.event.inputs.experiment == 'exp1b' ||
-            github.event.inputs.experiment == 'exp1_ablation' ||
-            github.event.inputs.experiment == 'exp3b' ||
-            github.event.inputs.experiment == 'suppB' ||
-            github.event.inputs.experiment == 'suppB_sc'
-          )
-        # NOTE: the explicit list above mirrors MERGE_REQUIRED_EXPERIMENTS in
-        # merge_shards.py. If a new multi-shard experiment is added to that set,
-        # add it here too. The condition is intentionally kept as a literal list
-        # (rather than a shell script call) because GitHub Actions evaluates `if:`
-        # expressions before any run: steps execute — a script-based check is not
-        # possible at this point in the job lifecycle.
+        if: github.event.inputs.source_run_id != ''
+        # The artifact is optional; committed result files remain the fallback.
+        # Avoid duplicating merge-required experiment routing in workflow YAML.
         continue-on-error: true
         uses: actions/download-artifact@v4.1.8
         with:
@@ -367,37 +320,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          # FIX-NSHARDS1-NOMERGE: ci_runner.yml's EXP_SHARD_TABLE forces these
-          # experiments to N_SHARDS=1 unconditionally (dispatch input is ignored
-          # — see ci_runner.yml lines ~522-553). A single-shard experiment commits
-          # exactly one result set directly to RESULT_DIR; there is nothing to
-          # merge, and merge_shards.py's _find_shard_files() against that single
-          # committed tree legitimately finds zero shard files, hits "FATAL: merge
-          # produced zero rows", and aborts the workflow (see CI run 28255696132).
-          # This list is an explicit, YAML-side override of MERGE_REQUIRED_EXPERIMENTS
-          # for the single-shard table — it short-circuits BEFORE that check so a
-          # single-shard experiment can never be merge-routed even if it is ever
-          # mistakenly added to (or never excluded from) MERGE_REQUIRED_EXPERIMENTS
-          # in merge_shards.py. Keep this in sync with EXP_SHARD_TABLE entries
-          # whose value is 1 in ci_runner.yml.
-          SINGLE_SHARD_EXPERIMENTS="exp1 exp1_five exp2_feynman exp2_feyman exp2_feynman_extrap exp2_feyman_extrap exp2 exp2_five exp3 suppA instability hybrid_all_domains extrap"
-          for _s in $SINGLE_SHARD_EXPERIMENTS; do
-            if [[ "$EXPERIMENT" == "$_s" ]]; then
-              echo "Experiment '${EXPERIMENT}' is single-shard (N_SHARDS=1 per ci_runner.yml EXP_SHARD_TABLE) — no merge required, skipping."
-              exit 0
-            fi
-          done
-
-          # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is the single source
-          # of truth for which experiments need shard merging.  No hardcoded
-          # list here — adding an experiment to that set is the only change
-          # needed when a new multi-shard experiment is introduced.
-          NEEDS_MERGE=$(python3 -c "
-          import sys
-          sys.path.insert(0, '.github/scripts')
+          # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is authoritative.
+          NEEDS_MERGE=$(EXPERIMENT="$EXPERIMENT" python3 -c '
+          import os, sys
+          sys.path.insert(0, ".github/scripts")
           from merge_shards import MERGE_REQUIRED_EXPERIMENTS
-          print('true' if '${{ github.event.inputs.experiment }}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
-          ")
+          print("true" if os.environ["EXPERIMENT"] in MERGE_REQUIRED_EXPERIMENTS else "false")
+          ')
 
           if [[ "$NEEDS_MERGE" != "true" ]]; then
             echo "Experiment '${EXPERIMENT}' not in MERGE_REQUIRED_EXPERIMENTS — skipping."
@@ -421,7 +350,15 @@ jobs:
             # (0 equation records) caused "FATAL: EMPTY DATASET" in the analysis step.
             # Shape S (suppB/suppB_sc): count per_equation entries across sweep points.
             # Shape A/B: count non-underscore top-level keys.
-            _n_records=$(python3 -c "import json,sys; d=json.load(open('${MERGED_JSON}')); total=sum(len(pt.get('per_equation',{})) for ak in ('per_noise','per_n') for pt in d.get(ak,{}).values() if isinstance(pt,dict)); total=total or sum(1 for k in d if isinstance(k,str) and not k.startswith('_')); print(total)" 2>/dev/null || echo 0)
+            _n_records=$(MERGED_JSON="$MERGED_JSON" python3 -c '
+          import json, os
+          with open(os.environ["MERGED_JSON"], encoding="utf-8") as f:
+              d = json.load(f)
+          total = sum(len(pt.get("per_equation", {})) for axis in ("per_noise", "per_n")
+                      for pt in d.get(axis, {}).values() if isinstance(pt, dict))
+          total = total or sum(1 for k in d if isinstance(k, str) and not k.startswith("_"))
+          print(total)
+          ' 2>/dev/null || echo 0)
             if [[ "${_n_records:-0}" -gt 0 ]]; then
               echo "  _merged.json already produced by locate step (${_n_records} record(s)) — skipping re-merge."
               exit 0
@@ -457,28 +394,27 @@ jobs:
           # etc.) would pass this step with no signal until someone notices
           # a gap in a downstream figure.
           if [[ "$EXPERIMENT" == "suppB" || "$EXPERIMENT" == "suppB_sc" ]]; then
-            read N_MERGED N_METHODS_MERGED <<< "$(python3 -c "
-          import json, sys
-          d = json.load(open('${MERGED_JSON}'))
-          exp = '${EXPERIMENT}'
-          list_key = 'noise_levels' if exp == 'suppB' else 'sample_sizes'
-          dict_key = 'per_noise'    if exp == 'suppB' else 'per_n'
-          points  = d.get(dict_key, {})
-          methods = d.get('methods', [])
-          print(len(points), len(methods))
-          ")"
+            read N_MERGED N_METHODS_MERGED <<< "$(MERGED_JSON="$MERGED_JSON" EXPERIMENT="$EXPERIMENT" python3 -c '
+          import json, os
+          with open(os.environ["MERGED_JSON"], encoding="utf-8") as f:
+              d = json.load(f)
+          exp = os.environ["EXPERIMENT"]
+          dict_key = "per_noise" if exp == "suppB" else "per_n"
+          print(len(d.get(dict_key, {})), len(d.get("methods", [])))
+          ')"
             EXPECTED_POINTS=5
             [[ "$EXPERIMENT" == "suppB_sc" ]] && EXPECTED_POINTS=6
             echo "  _merged.json (Shape S): ${N_MERGED}/${EXPECTED_POINTS} sweep point(s), ${N_METHODS_MERGED} method(s)"
-            if [[ "$N_MERGED" -lt "$EXPECTED_POINTS" ]]; then
-              echo "::error::${EXPERIMENT} merge produced only ${N_MERGED}/${EXPECTED_POINTS} sweep points — at least one shard's output is missing, unreadable, or failed to write. Check the per-shard *_nshardsNN.json files in ${RESULT_DIR} (one expected per shard: nshards01..nshards0$([ "$EXPECTED_POINTS" = 6 ] && echo 6 || echo 5)) and re-run the missing shard(s) via ci_runner.yml before re-merging."
+            if [[ "$N_MERGED" -ne "$EXPECTED_POINTS" ]]; then
+              echo "::error::${EXPERIMENT} merge produced ${N_MERGED} sweep point(s); exactly ${EXPECTED_POINTS} are required. Check the per-shard *_nshardsNN.json files in ${RESULT_DIR} and resolve missing or unexpected points before re-merging."
               exit 1
             fi
-            if [[ "$N_METHODS_MERGED" -lt 6 ]]; then
-              echo "::warning::${EXPERIMENT} merge has all ${EXPECTED_POINTS} sweep points but only ${N_METHODS_MERGED}/6 methods — fig_runtime_comparison / fig_comparative_table may be incomplete. See FIX-suppB-ALL-METHODS / FIX-suppB_sc-ALL-METHODS comments in run_all.sh."
+            if [[ "$N_METHODS_MERGED" -ne 6 ]]; then
+              echo "::error::${EXPERIMENT} merge has ${N_METHODS_MERGED}/6 required methods."
+              exit 1
             fi
           else
-            N_MERGED=$(python3 -c "import json; d=json.load(open('${MERGED_JSON}')); print(len(d))")
+            N_MERGED=$(MERGED_JSON="$MERGED_JSON" python3 -c 'import json,os; print(len(json.load(open(os.environ["MERGED_JSON"], encoding="utf-8"))))')
             echo "  _merged.json: ${N_MERGED} unique task record(s)"
           fi
 
@@ -687,79 +623,24 @@ jobs:
           github.event.inputs.experiment == 'exp3' ||
           github.event.inputs.experiment == 'exp3b'
         shell: bash
+        env:
+          COMMIT_MESSAGE: "data: nguyen12 symequiv table ${{ github.event.inputs.experiment }} - run ${{ github.run_id }}"
         run: |
           set -euo pipefail
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Stash any unstaged changes written by the previous step so that
-          # git pull --rebase does not refuse with "You have unstaged changes."
-          git stash --include-untracked || true
-          git pull --rebase origin ${{ github.ref_name }}
-          git stash pop || true
-
-          git add -f "${RESULT_DIR}/tables/nguyen12_symequiv.tex"
-
-          if git diff --cached --quiet; then
-            echo "nguyen12_symequiv.tex unchanged — nothing to commit."
-          else
-            git commit -m "data: nguyen12 symequiv table ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed nguyen12_symequiv.tex to master."
-          fi
+          bash .github/scripts/commit_analysis_outputs.sh "$RESULT_DIR/tables/nguyen12_symequiv.tex"
 
       - name: Commit symbolic equivalence outputs (exp3 / exp3b)
         if: |
           github.event.inputs.experiment == 'exp3' ||
           github.event.inputs.experiment == 'exp3b'
         shell: bash
+        env:
+          COMMIT_MESSAGE: "data: symbolic equivalence outputs - run ${{ github.run_id }}"
         run: |
           set -euo pipefail
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git stash --include-untracked || true
-          git pull --rebase origin ${{ github.ref_name }}
-          git stash pop || true
-
-          git add -f \
-            "${RESULT_DIR}/symbolic_equivalence_report.csv" \
-            "${RESULT_DIR}/symbolic_equivalence_summary.txt"
-
-          if git diff --cached --quiet; then
-            echo "Symbolic equivalence outputs unchanged — nothing to commit."
-          else
-            git commit -m "data: symbolic equivalence ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed symbolic equivalence outputs."
-          fi
-
-      # -----------------------------------------------------------------------
-      # Merge extrap into benchmark (exp2_feynman_extrap only)
-      # -----------------------------------------------------------------------
-      # merge_extrap_into_benchmark.py joins benchmark_results.json (train r2)
-      # with benchmark_results_extrap.json (extrap_r2_far / extrap_r2_near) into
-      # ablation_paired.json -- the schema that analyse_ablation() in run_analysis.py
-      # requires.  After the merge, INPUT_JSON and INPUT_MODE are overridden so the
-      # analysis step reads the paired file rather than the raw benchmark JSON.
-      #
-      # Primary source  : benchmark_results_extrap.json  (v2.2+ runner --extrap flag)
-      # Legacy fallback : extrap_results_*.json           (passed via --extrap-dir)
-      # Both live in RESULT_DIR; the script picks extrap_benchmark_dir first per-eq.
-      #
-      # ALIAS GATE: the `experiment` dispatch input is a free-text `type: string`
-      # (unlike ci_postprocess.yml's `type: choice`), so the typo alias
-      # 'exp2_feyman_extrap' (missing 'n' — already resolved to the same subdir
-      # by the MAPPING in "Resolve result directory") can reach this step. Both
-      # spellings MUST be listed here. A single exact-match condition previously
-      # let 'exp2_feyman_extrap' runs silently skip this entire step (and the
-      # "Commit ablation_paired.json" step below): INPUT_MODE fell through to
-      # 'shards', run_analysis.py analysed the raw per-domain shards instead of
-      # the paired ablation schema, and emitted WARN_NO_METHOD_RECORDS with no
-      # ablation_paired.json ever produced. Fixed 2026-08-13 (run 86016837952).
-      # -----------------------------------------------------------------------
+          bash .github/scripts/commit_analysis_outputs.sh \
+            "$RESULT_DIR/symbolic_equivalence_report.csv" \
+            "$RESULT_DIR/symbolic_equivalence_summary.txt"
 
       - name: Merge extrap into benchmark (exp2_feynman_extrap)
         if: |
@@ -807,7 +688,7 @@ jobs:
             exit 1
           fi
 
-          N_RECORDS=$(python3 -c "import json; print(len(json.load(open('${PAIRED}'))))")
+          N_RECORDS=$(PAIRED="$PAIRED" python3 -c 'import json,os; print(len(json.load(open(os.environ["PAIRED"], encoding="utf-8"))))')
           echo "  ablation_paired.json: ${N_RECORDS} paired record(s) -> ${PAIRED}"
 
           # Override INPUT_JSON / INPUT_MODE so the analysis step reads the merged file.
@@ -831,41 +712,18 @@ jobs:
       # git add -f mirrors the flag used in "Commit analysis outputs" to bypass
       # any .gitignore patterns that exclude generated JSON files.
       # -----------------------------------------------------------------------
-      - name: Commit ablation_paired.json (exp2_feynman_extrap)
+      - name: Commit ablation_paired.json and provenance manifest
         if: |
           github.event.inputs.experiment == 'exp2_feynman_extrap' ||
           github.event.inputs.experiment == 'exp2_feyman_extrap'
         shell: bash
+        env:
+          COMMIT_MESSAGE: "data: ablation paired extrapolation results - run ${{ github.run_id }}"
         run: |
           set -euo pipefail
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Pull any commits that landed since checkout (other shards, racing workflows).
-          # Stash first so unstaged files written by the prior step do not block rebase.
-          git stash --include-untracked || true
-          git pull --rebase origin ${{ github.ref_name }}
-          git stash pop || true
-
-          git add -f "${RESULT_DIR}/ablation_paired.json"
-
-          if git diff --cached --quiet; then
-            echo "ablation_paired.json unchanged — nothing to commit."
-          else
-            git commit -m "data: ablation_paired.json ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed ablation_paired.json to master."
-          fi
-
-      # -----------------------------------------------------------------------
-      # Generate PCA comparison table (exp2_feynman_pca only)
-      # -----------------------------------------------------------------------
-      # Runs generate_exp2_pca_comparison_table.py to produce a side-by-side
-      # LaTeX/CSV/Markdown comparison of exp2-feynman (random_state=42, 80/20)
-      # vs exp2_feynman_pca (PCA-directed 40/60 split).  The script reads both
-      # result subtrees from the committed repo so it works in both scheduled
-      # and manual re-run modes with no source_run_id required.
+          PAIRED="$RESULT_DIR/ablation_paired.json"
+          bash .github/scripts/commit_analysis_outputs.sh \
+            "$PAIRED" "$PAIRED.manifest.json"
 
       - name: Generate PCA comparison table (exp2_feynman_pca)
         if: github.event.inputs.experiment == 'exp2_feynman_pca'
@@ -889,35 +747,15 @@ jobs:
       - name: Commit PCA comparison table (exp2_feynman_pca)
         if: github.event.inputs.experiment == 'exp2_feynman_pca'
         shell: bash
+        env:
+          COMMIT_MESSAGE: "data: exp2 PCA comparison table - run ${{ github.run_id }}"
         run: |
           set -euo pipefail
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Stash unstaged files written by the prior Generate step, pull to
-          # pick up any concurrent commits, then restore the generated files.
-          git stash --include-untracked || true
-          git pull --rebase origin ${{ github.ref_name }}
-          git stash pop || true
-
           OUTPUT_DIR="hypatiax/data/results/comparison_results/feynman-tests/exp2_pca_4060"
-          git add -f \
-            "${OUTPUT_DIR}/exp2_pca_comparison.tex" \
-            "${OUTPUT_DIR}/exp2_pca_comparison.csv" \
-            "${OUTPUT_DIR}/exp2_pca_comparison.md"
-
-          if git diff --cached --quiet; then
-            echo "PCA comparison table unchanged — nothing to commit."
-          else
-            git commit -m "data: exp2 PCA comparison table (FIX-C3) - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin HEAD:${{ github.ref_name }}
-            echo "Pushed PCA comparison table to master."
-          fi
-
-      # -----------------------------------------------------------------------
-      # Run analysis
-      # -----------------------------------------------------------------------
+          bash .github/scripts/commit_analysis_outputs.sh \
+            "$OUTPUT_DIR/exp2_pca_comparison.tex" \
+            "$OUTPUT_DIR/exp2_pca_comparison.csv" \
+            "$OUTPUT_DIR/exp2_pca_comparison.md"
 
       - name: Run statistical analysis
         shell: bash
@@ -1013,34 +851,26 @@ jobs:
 
       - name: Commit analysis outputs
         shell: bash
+        env:
+          COMMIT_MESSAGE: "analysis: ${{ github.event.inputs.experiment }} - run ${{ github.run_id }}"
         run: |
           set -euo pipefail
 
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -f \
-            "$RESULT_DIR/_report.md" \
+          OUTPUTS=(
+            "$RESULT_DIR/_report.md"
             "$RESULT_DIR/_analysis.json"
+          )
 
-          # Commit _merged.json for merge-required experiments (exp1b,
-          # exp1_ablation, exp3b, suppB, suppB_sc — see MERGE_REQUIRED_EXPERIMENTS
-          # in merge_shards.py) so that ci_postprocess.yml can read it without
-          # re-running ci_analysis.yml.
-          # merge_shards.py produces _merged.json in RESULT_DIR; it is never
-          # staged elsewhere, so this is the only place it reaches the repo.
-          NEEDS_MERGE=$(python3 -c "
-          import sys
-          sys.path.insert(0, '.github/scripts')
+          NEEDS_MERGE=$(EXPERIMENT="$EXPERIMENT" python3 -c '
+          import os, sys
+          sys.path.insert(0, ".github/scripts")
           from merge_shards import MERGE_REQUIRED_EXPERIMENTS
-          print('true' if '${EXPERIMENT}' in MERGE_REQUIRED_EXPERIMENTS else 'false')
-          ")
+          print("true" if os.environ["EXPERIMENT"] in MERGE_REQUIRED_EXPERIMENTS else "false")
+          ')
           if [[ "$NEEDS_MERGE" == "true" && -f "$RESULT_DIR/_merged.json" ]]; then
-            git add -f "$RESULT_DIR/_merged.json"
+            OUTPUTS+=("$RESULT_DIR/_merged.json")
           fi
 
-          # Also commit the canonical-named copy produced by "Rename merged
-          # JSON to canonical name" (e.g. exp1_ablation_results.json), if present.
           case "$EXPERIMENT" in
             exp1_ablation) CANONICAL_JSON="exp1_ablation_results.json" ;;
             exp1b)         CANONICAL_JSON="exp1b_results.json" ;;
@@ -1048,22 +878,10 @@ jobs:
             *)             CANONICAL_JSON="${EXPERIMENT}_results.json" ;;
           esac
           if [[ -f "$RESULT_DIR/$CANONICAL_JSON" ]]; then
-            git add -f "$RESULT_DIR/$CANONICAL_JSON"
+            OUTPUTS+=("$RESULT_DIR/$CANONICAL_JSON")
           fi
 
-          if git diff --cached --quiet; then
-            echo "No analysis changes to commit"
-            exit 0
-          fi
-
-          git commit -m "analysis: ${EXPERIMENT} - run ${{ github.run_id }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          git push origin HEAD:${{ github.ref_name }}
-          echo "Pushed analysis outputs to master."
-
-      # -----------------------------------------------------------------------
-      # Upload outputs
-      # -----------------------------------------------------------------------
+          bash .github/scripts/commit_analysis_outputs.sh "${OUTPUTS[@]}"
 
       - name: Upload analysis outputs
         uses: actions/upload-artifact@v4.3.6

@@ -88,6 +88,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from result_subdir_map import RESULT_SUBDIR_MAP
+
 import numpy as np
 
 try:
@@ -162,36 +167,12 @@ EXPERIMENT_MODE: dict[str, str] = {
     # exp2_feynman_extrap: OOD extrap step — produces ablation_paired.json;
     # run_analysis.py reads it in ablation mode (extrap_r2_far present).
     "exp2_feynman_extrap":    "ablation",
+    "exp2_feyman_extrap":     "ablation",  # legacy typo alias
 }
 
-# Canonical result_subdir for every CI-dispatched experiment.
-# Single source of truth — mirrors ci_experiment.yml plan meta step
-# and both mapping dicts in ci_analysis.yml "Resolve experiment metadata".
-# exp1_ablation intentionally absent: no worker, no result_subdir in CI.
-RESULT_SUBDIR: dict[str, str] = {
-    "exp1":               "comparison_results/noise-noiseless/noiseless/defi",
-    "exp1b":              "comparison_results/noise-noiseless/15",
-    "exp1_pca":           "comparison_results/noise-noiseless/noiseless/defi_pca",
-    "exp1b_pca":          "comparison_results/noise-noiseless/15_pca",
-    "exp2_feynman":           "comparison_results/feynman-tests/exp2",
-    # exp2_feynman_extrap: NSHARDS=1, DIRECT mode. ablation_paired.json written here
-    # after merge_extrap_into_benchmark.py. Mirrors ci_analysis.yml MAPPING.
-    "exp2_feynman_extrap":    "comparison_results/feynman-tests/exp2_extrap",
-    "exp2_feynman_pca":       "comparison_results/feynman-tests/exp2_pca_4060",
-    "exp2_feyman_pca":        "comparison_results/feynman-tests/exp2_pca_4060",  # typo alias (missing 'n')
-    "exp2":               "comparison_results/feynman-tests/exp2_multi",
-    "exp3":               "extrapolation",
-    "exp3b":              "extrapolation/multi_seed",
-    "suppA":              "hybrid_pysr/defi",
-    "suppB":              "comparison_results/feynman-tests/noise-sweep/noise-sweep",
-    "suppB_sc":           "comparison_results/feynman-tests/sample-complexity",
-    "hybrid_all_domains": "hybrid_llm_nn/all_domains",
-    "instability":        "figures",
-    "extrap":             "comparison_results/extrapolation",
-    # exp1_ablation: now CI-dispatched with NSHARDS=4; result_subdir mirrors
-    # ci_runner.yml plan meta step and ci_analysis.yml MAPPING exactly.
-    "exp1_ablation":      "ablation/exp1_ablation",
-}
+# Canonical result_subdir mapping lives in result_subdir_map.py and is shared
+# by ci_analysis.yml, locate_analysis_input.sh, and this analysis runner.
+RESULT_SUBDIR: dict[str, str] = RESULT_SUBDIR_MAP
 
 
 def _get_mode(experiment: str) -> str:
