@@ -459,29 +459,51 @@ def load_records(path):
 # Main
 # ---------------------------------------------------------------------------
 
+def _resolve_input_path(value, result_root, label):
+    """Resolve an analysis input and require it to remain inside RESULT_DIR."""
+    candidate = pathlib.Path(value)
+    if not candidate.is_absolute():
+        candidate = pathlib.Path.cwd() / candidate
+    root = pathlib.Path(result_root).resolve()
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{label} escapes RESULT_DIR: {value!r}") from exc
+    if not resolved.is_file():
+        raise ValueError(f"{label} is not an existing file: {resolved}")
+    return resolved
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
         _run_self_tests()
         return
 
     mode = os.environ["INPUT_MODE"]
+    result_root = os.environ.get("RESULT_DIR", "")
+    if not result_root:
+        print("::error::RESULT_DIR is required for input-path containment checks.")
+        sys.exit(1)
     total = 0
     summary_only_input = False
 
     if mode in ("merged", "direct"):
-        path = os.environ["INPUT_JSON"]
-        if not path or not pathlib.Path(path).is_file():
-            print(f"::error::INPUT_JSON='{path}' does not exist or is not a file.")
+        path = os.environ.get("INPUT_JSON", "")
+        try:
+            safe_path = _resolve_input_path(path, result_root, "INPUT_JSON")
+        except ValueError as exc:
+            print(f"::error::{exc}")
             sys.exit(1)
         label = "Merged" if mode == "merged" else "Direct"
-        print(f"{label} file: {path}")
-        records = load_records(path)
+        print(f"{label} file: {safe_path}")
+        records = load_records(str(safe_path))
         print(f"Records: {len(records)}")
         total += len(records)
 
         if len(records) == 0:
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(safe_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if (
                     isinstance(data, dict)
@@ -500,20 +522,38 @@ def main():
         if not manifest_path or not pathlib.Path(manifest_path).is_file():
             print(f"::error::SHARD_MANIFEST='{manifest_path}' is not a file.")
             sys.exit(1)
-        manifest = pathlib.Path(manifest_path)
+        try:
+            manifest = _resolve_input_path(manifest_path, result_root, "SHARD_MANIFEST")
+        except ValueError as exc:
+            print(f"::error::{exc}")
+            sys.exit(1)
         n_summary_shards = 0
-        for line in manifest.read_text().splitlines():
+        seen_shards = set()
+        for line in manifest.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
                 continue
-            print(f"Shard: {line}")
-            records = load_records(line)
+            try:
+                shard_path = _resolve_input_path(line, result_root, "shard manifest entry")
+            except ValueError as exc:
+                print(f"::error::{exc}")
+                sys.exit(1)
+            shard_identity = str(shard_path)
+            if shard_identity in seen_shards:
+                print(f"::error::Duplicate shard manifest entry: {shard_path}")
+                sys.exit(1)
+            seen_shards.add(shard_identity)
+            print(f"Shard: {shard_path}")
+            records = load_records(str(shard_path))
             print(f"Records: {len(records)}")
             total += len(records)
             # experiment_summary_dict shards legitimately return 0 records;
             # track them so we don't misfire FATAL: EMPTY DATASET.
             if len(records) == 0:
                 n_summary_shards += 1
+        if not seen_shards:
+            print("::error::SHARD_MANIFEST contains no usable shard entries.")
+            sys.exit(1)
 
     else:
         print(f"::error::Unknown INPUT_MODE='{mode}'. Expected: merged | direct | shards")

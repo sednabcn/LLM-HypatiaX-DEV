@@ -154,18 +154,12 @@ echo "=== DETERMINE INPUT MODE ==="
 # ── Determine whether this experiment requires a merge ───────────────────────
 # MERGE_REQUIRED_EXPERIMENTS in merge_shards.py is the single source of truth.
 # Reading it here avoids duplicating the list in the shell script.
-REQUIRE_MERGE=$(python3 -c "
-import sys
-sys.path.insert(0, '.github/scripts')
-try:
-    from merge_shards import MERGE_REQUIRED_EXPERIMENTS
-    print('true' if '$EXPERIMENT' in MERGE_REQUIRED_EXPERIMENTS else 'false')
-except Exception as e:
-    # Fallback: known merge experiments hard-coded as a safety net
-    print('true' if '$EXPERIMENT' in ('exp1b', 'exp1_ablation', 'exp3b') else 'false',
-          file=sys.stdout)
-    print(f'::warning::Could not import MERGE_REQUIRED_EXPERIMENTS: {e}', file=sys.stderr)
-")
+REQUIRE_MERGE=$(EXPERIMENT="$EXPERIMENT" python3 -c '
+import os, sys
+sys.path.insert(0, ".github/scripts")
+from merge_shards import MERGE_REQUIRED_EXPERIMENTS
+print("true" if os.environ["EXPERIMENT"] in MERGE_REQUIRED_EXPERIMENTS else "false")
+')
 echo "REQUIRE_MERGE=$REQUIRE_MERGE"
 
 # ==============================================================================
