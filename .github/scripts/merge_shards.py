@@ -185,7 +185,7 @@ def validate_task_coverage(experiment: str, merged: Dict[str, Dict[str, Any]]) -
                     )
 
     elif experiment == "exp3b":
-        seed_counts: Dict[Any, int] = {}
+        seed_equations: Dict[Any, set] = {}
         equation_ids = set()
         for task_id, row in merged.items():
             seed = row.get("seed")
@@ -199,12 +199,24 @@ def validate_task_coverage(experiment: str, merged: Dict[str, Dict[str, Any]]) -
                 raise RuntimeError(
                     f"FATAL: exp3b task {task_id!r} lacks both hypatiax and pysr records"
                 )
-            seed_counts[seed] = seed_counts.get(seed, 0) + 1
+            seed_equations.setdefault(seed, set()).add(equation_id)
             equation_ids.add(equation_id)
-        if len(seed_counts) != 4 or set(seed_counts.values()) != {12} or len(equation_ids) != 12:
+        reference_equations = next(iter(seed_equations.values()), set())
+        incomplete_seeds = {
+            seed: sorted(reference_equations - equations)
+            for seed, equations in seed_equations.items()
+            if equations != reference_equations
+        }
+        if (
+            len(seed_equations) != 4
+            or len(equation_ids) != 12
+            or any(len(equations) != 12 for equations in seed_equations.values())
+            or incomplete_seeds
+        ):
             raise RuntimeError(
-                "FATAL: exp3b requires 12 Nguyen equations for each of four seeds; "
-                f"seed_counts={seed_counts}, unique_equations={len(equation_ids)}"
+                "FATAL: exp3b requires the same 12 Nguyen equations for each of "
+                f"four seeds; seed_equations={{{', '.join(f'{seed}: {len(eq)}' for seed, eq in seed_equations.items())}}}, "
+                f"unique_equations={len(equation_ids)}, incomplete_seeds={incomplete_seeds}"
             )
 
 
