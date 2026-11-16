@@ -619,9 +619,9 @@ Examples
                 "Keep this constant in sync with run_analysis.py if it changes."
             ),
             "extrap_r2_near": (
-                "Not computed by the current benchmark runner (only "
-                "extrap_r2_far is produced). Always null until a near-domain "
-                "extrapolation split is implemented upstream."
+                "Copied from the same equation/method row in "
+                "benchmark_results_extrap.json. Null means the upstream runner "
+                "did not emit a near-domain score for that method."
             ),
         },
     }
